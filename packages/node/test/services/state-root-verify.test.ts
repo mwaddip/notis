@@ -1,9 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeBoxId, EMPTY_STATE_ROOT } from '@dagsocial/types';
-import type { CreditBox, OrderingBlock } from '@dagsocial/types';
+import type {
+  CandidateOf,
+  CreditBox,
+  OrderingBlock,
+} from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
-  fixtureProvenance, makeTestIdentity, makeApplicableBlock } from '../helpers.js';
+  fixtureProvenance,
+  makeApplicableBlock,
+  makeTestIdentity,
+  seedProvenance,
+} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Spec B P3 acceptance, verifier side: with VERIFY_STATE_ROOT on (the default
@@ -96,14 +104,13 @@ describe('stateRoot verification (P3 acceptance)', () => {
 
     // A seeded box so the tree is non-empty and the digest is a real root.
     const holder = makeTestIdentity();
-    const seeded: CreditBox = {
-      boxType: 'credit',
+    const seeded = seedProvenance<CreditBox>({
+      boxType: 'credit' as const,
       value: 100n,
       owner: holder.userId,
-      guard: 'owner_signature',
+      guard: 'owner_signature' as const,
       proofSource: 0,
-    };
-    Object.assign(seeded, fixtureProvenance(seeded, 1));
+    }, 1);
     seeded.id = computeBoxId(seeded);
     (await importUtxo()).insertBox(seeded);
 

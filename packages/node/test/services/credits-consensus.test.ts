@@ -36,6 +36,8 @@ import {
   makeTestConfig,
   makeTestIdentity,
   rawPublicKey,
+  seedProvenance,
+  type Stored,
 } from '../helpers.js';
 
 // Same shape as block-apply.test.ts — small epoch, internal miner. Every field
@@ -177,16 +179,14 @@ function seedCreditBox(
   insertBox: (box: CreditBox) => void,
   owner: Uint8Array,
   value: bigint,
-): CreditBox {
-  const box: CreditBox = {
-    boxType: 'credit',
+): Stored<CreditBox> {
+  const box = seedProvenance<CreditBox>({
+    boxType: 'credit' as const,
     value,
     owner,
-    guard: 'owner_signature',
+    guard: 'owner_signature' as const,
     proofSource: 0,
-  };
-  Object.assign(box, fixtureProvenance(box, 1));
-  box.id = computeBoxId(box);
+  }, 1);
   insertBox(box);
   return box;
 }

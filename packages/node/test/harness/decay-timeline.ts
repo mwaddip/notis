@@ -2,7 +2,10 @@ import { vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { computeBoxId } from '@dagsocial/types';
 import type { KarmaBox } from '@dagsocial/types';
-import { fixtureProvenance } from '../helpers.js';
+import {
+  fixtureProvenance,
+  seedProvenance,
+} from '../helpers.js';
 
 /**
  * Spec G phase D — the decay golden-output harness.
@@ -217,15 +220,13 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           }
           case 'seed': {
             const owner = ownerBytes(step.owner);
-            const box: KarmaBox = {
+            const box = seedProvenance<KarmaBox>({
               boxType: 'karma',
               value: step.amount,
               owner,
               guard: 'owner_signature',
               proofSource: step.tag,
-            };
-            Object.assign(box, fixtureProvenance(box, 1));
-            box.id = computeBoxId(box);
+            }, 1);
             m.utxo.insertBox(box);
             break;
           }

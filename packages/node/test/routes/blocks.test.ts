@@ -74,12 +74,20 @@ async function request(
             )
             .get() as { c: number }
         ).c,
+      // `.safeIntegers()` and the bigint row type, matching `server.ts:372-389`
+      // exactly. This mock was production's code with that one call removed, so
+      // it summed karma as a JS number and returned it where `BlocksDeps` says
+      // bigint — and the route renders it with `.toString()`, which is where a
+      // sum past 2^53 would start printing a different number than the node
+      // would. A mock that diverges from the interface it stands for is the
+      // hazard the Config fixtures had; this one was arithmetic, not shape.
       getTotalKarma: () => {
         const row = db
           .prepare(
             "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL",
           )
-          .get() as { s: number };
+          .safeIntegers()
+          .get() as { s: bigint };
         return row.s;
       },
       getTotalCredits: () => {
@@ -87,7 +95,8 @@ async function request(
           .prepare(
             "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'credit' AND spent_at_block IS NULL",
           )
-          .get() as { s: number };
+          .safeIntegers()
+          .get() as { s: bigint };
         return row.s;
       },
       networkType: 'testnet',

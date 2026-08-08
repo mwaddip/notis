@@ -1,6 +1,11 @@
 import {
   fixtureProvenance,
-  uid, txToJson, rawPublicKey, signTransaction } from '../helpers.js';
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  txToJson,
+  uid,
+} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -30,7 +35,13 @@ import {
   computeBoxId,
   POST_LOCK_THREAD_COST,
 } from '@dagsocial/types';
-import type { KarmaBox, PostLockBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type {
+  AnyBox,
+  CandidateOf,
+  KarmaBox,
+  PostLockBox,
+  UtxoTransaction,
+} from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
 import { unlinkSync } from 'fs';
 
@@ -214,15 +225,14 @@ describe('posts routes', () => {
     // Setup: identity
 
     // Setup: karma box
-    const karmaBox: KarmaBox = {
+    const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
       owner: userId,
       guard: 'owner_signature',
       proofSource: 'genesis',
-    };
-    Object.assign(karmaBox, fixtureProvenance(karmaBox, 1));
-    const karmaBoxId = computeBoxId(karmaBox);
+    }, 1);
+    const karmaBoxId = karmaBox.id;
     insertBox({ ...karmaBox, id: karmaBoxId });
 
     // Setup: challenge
@@ -233,17 +243,16 @@ describe('posts routes', () => {
     const timestamp = Date.now();
 
     // Build karma-lock tx
-    const newKarma: KarmaBox = {
+    const newKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n - POST_LOCK_THREAD_COST,
       owner: userId,
       guard: 'owner_signature',
       proofSource: 'post-lock',
-    };
-    Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-    const newKarmaId = computeBoxId(newKarma);
+    }, 1);
+    const newKarmaId = newKarma.id;
 
-    const postLockBox: PostLockBox = {
+    const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,

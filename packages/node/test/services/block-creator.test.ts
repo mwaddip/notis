@@ -1,6 +1,7 @@
 import {
   fixtureProvenance,
   makeTestConfig,
+  seedProvenance,
   signTransaction,
   uid,
 } from '../helpers.js';
@@ -203,15 +204,14 @@ function makeKarmaBox(
   owner: Uint8Array,
   seed: number,
 ): KarmaBox {
-  const box: KarmaBox = {
+  const box = seedProvenance<KarmaBox>({
     boxType: 'karma',
     value,
     owner,
     guard: 'owner_signature',
     proofSource: 'genesis',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
+  }, seed);
+  const id = box.id;
   box.id = id;
   return box;
 }

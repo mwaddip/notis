@@ -3,7 +3,10 @@ import express from 'express';
 import http from 'http';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
-import { fixtureProvenance } from '../helpers.js';
+import {
+  fixtureProvenance,
+  seedProvenance,
+} from '../helpers.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -262,15 +265,14 @@ describe('faucet route', () => {
 
   it('rejects an identity that already holds a settled faucet-origin box', async () => {
     const pk = generateKeyPair().publicKey;
-    const box: KarmaBox = {
-      boxType: 'karma',
+    const box = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
       value: 100n,
       owner: pk,
-      guard: 'owner_signature',
+      guard: 'owner_signature' as const,
       proofSource: 'faucet',
-    };
-    Object.assign(box, fixtureProvenance(box, 1));
-    insertBox({ ...box, id: computeBoxId(box) });
+    }, 1);
+    insertBox(box);
 
     const app = buildApp(deps);
     const res = await request(app, '/faucet', 'POST', { userId: hex(pk) });
@@ -279,15 +281,14 @@ describe('faucet route', () => {
 
   it('rejects an identity whose faucet grant has already been spent', async () => {
     const pk = generateKeyPair().publicKey;
-    const box: KarmaBox = {
-      boxType: 'karma',
+    const box = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
       value: 100n,
       owner: pk,
-      guard: 'owner_signature',
+      guard: 'owner_signature' as const,
       proofSource: 'faucet',
-    };
-    Object.assign(box, fixtureProvenance(box, 1));
-    const boxId = computeBoxId(box);
+    }, 1);
+    const boxId = box.id;
     insertBox({ ...box, id: boxId });
     getDb().prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(5, boxId);
 

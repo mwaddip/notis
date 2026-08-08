@@ -11,8 +11,16 @@
   //     mirroring the vitest alias. Without it `tsc` follows `exports` to the
   //     sibling's `dist` types — the stale-`dist` class rule 5 exists to kill,
   //     and the suite would be checked against types it never executes.
-  //  3. No `types: ["vitest/globals"]` — measured: no test file uses bare
-  //     globals, every one imports from 'vitest' explicitly.
+  //  3. No `types: ["vitest/globals"]`. The conclusion is right; the premise
+  //     recorded here was FALSE and is corrected. It read "measured: no test
+  //     file uses bare globals, every one imports from 'vitest' explicitly" —
+  //     but `test/config.test.ts:44` called `vi.resetModules()` while importing
+  //     only `{describe, it, expect, beforeEach}`, and compiling this tree
+  //     reported exactly one `TS2304: Cannot find name 'vi'` for it. The remedy
+  //     was to add that one import (done), NOT to admit an ambient global,
+  //     which would license the drift the explicit-import convention prevents
+  //     (ARCHITECTURE rule 5). Now measured true: every test file imports what
+  //     it uses, and this config is wired into `typecheck` at zero errors.
   //
   // `test/e2e/**` is excluded: it is parked until its post-P2-D rewrite, and
   // vitest excludes it from the run for the same reason (rule 4). Typechecking

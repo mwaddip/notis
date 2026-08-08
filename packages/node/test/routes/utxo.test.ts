@@ -167,26 +167,32 @@ describe('UTXO routes', () => {
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
-    const inviteBox: InviteBox = {
-      boxType: 'invite',
+    // Guard strings are box CONTENT — they sit inside the box-id preimage — so
+    // these two fixtures described boxes that could never exist. `hash_preimage`
+    // and `inviter_signature` are the pre-bond-dual names; `InviteBox.guard` is
+    // `hash_preimage_with_bond` and `BondBox.guard` is `bond_dual`. The bond was
+    // also missing `inviteOutputIndex`, which the guard error was masking: a
+    // bond resolves its invite through `(txId, inviteOutputIndex)`, so a bond
+    // without it cannot name the invite it shipped with.
+    const inviteBox = seedProvenance<InviteBox>({
+      boxType: 'invite' as const,
       value: 10n,
       secretHash: new Uint8Array(32).fill(0xaa),
       inviterId: inviteUserId,
-      guard: 'hash_preimage',
-    };
-    Object.assign(inviteBox, fixtureProvenance(inviteBox, 1));
-    insertBox({ ...inviteBox, id: computeBoxId(inviteBox) });
-    const bondBox: BondBox = {
-      boxType: 'bond',
+      guard: 'hash_preimage_with_bond' as const,
+    }, 1);
+    insertBox(inviteBox);
+    const bondBox = seedProvenance<BondBox>({
+      boxType: 'bond' as const,
       value: 5n,
       inviterId: inviteUserId,
+      inviteOutputIndex: 0,
       inviteePublicKey: new Uint8Array(32).fill(0xbb),
       probationStartBlock: 100,
       probationEndBlock: 1100,
-      guard: 'inviter_signature',
-    };
-    Object.assign(bondBox, fixtureProvenance(bondBox, 1));
-    insertBox({ ...bondBox, id: computeBoxId(bondBox) });
+      guard: 'bond_dual' as const,
+    }, 1);
+    insertBox(bondBox);
 
     // Initialize system keypair for faucet tests
     initSystemKeypair();

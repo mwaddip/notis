@@ -14,11 +14,12 @@ import {
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
-  Post,
-  KarmaBox,
+  CandidateOf,
   CreditBox,
-  PostLockBox,
+  KarmaBox,
   OrderingBlock,
+  Post,
+  PostLockBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
@@ -32,6 +33,7 @@ import {
   makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
+  seedProvenance,
   signTransaction,
   type TestIdentity,
 } from '../helpers.js';
@@ -339,15 +341,13 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     const minerB = makeTestIdentity();
     const utxo = await importUtxo();
-    const seeded: CreditBox = {
+    const seeded = seedProvenance<CreditBox>({
       boxType: 'credit',
       value: 100n,
       owner: minerB.userId,
       guard: 'owner_signature',
       proofSource: 0,
-    };
-    Object.assign(seeded, fixtureProvenance(seeded, 1));
-    seeded.id = computeBoxId(seeded);
+    }, 1);
     utxo.insertBox(seeded);
 
     const handle = await activateProver();
@@ -382,15 +382,13 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const recipient = makeTestIdentity();
     const utxo = await importUtxo();
 
-    const senderBox: CreditBox = {
+    const senderBox = seedProvenance<CreditBox>({
       boxType: 'credit',
       value: 100n,
       owner: sender.userId,
       guard: 'owner_signature',
       proofSource: 0,
-    };
-    Object.assign(senderBox, fixtureProvenance(senderBox, 1));
-    senderBox.id = computeBoxId(senderBox);
+    }, 1);
     utxo.insertBox(senderBox);
 
     const handle = await activateProver();
@@ -466,16 +464,14 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     // karma (merge target) and the post's lock box.
     const authorKarma = makeKarmaBox(20n, author.userId, 0);
     utxo.insertBox(authorKarma);
-    const lockBox: PostLockBox = {
+    const lockBox = seedProvenance<PostLockBox>({
       boxType: 'post_lock',
       value: 30n,
       originalValue: 30n,
       owner: author.userId,
       targetPostId: postId,
       guard: 'block_apply',
-    };
-    Object.assign(lockBox, fixtureProvenance(lockBox, 1));
-    lockBox.id = computeBoxId(lockBox);
+    }, 1);
     utxo.insertBox(lockBox);
 
     const handle = await activateProver();

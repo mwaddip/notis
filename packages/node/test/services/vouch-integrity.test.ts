@@ -29,15 +29,21 @@ import {
 } from '@dagsocial/types';
 import type {
   AnyBox,
-  KarmaBox,
-  InviteBox,
   BondBox,
-  VouchBox,
+  CandidateOf,
+  InviteBox,
+  KarmaBox,
   UtxoTransaction,
+  VouchBox,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
-import { fixtureProvenance, rawPublicKey } from '../helpers.js';
+import {
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  type Stored,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -127,8 +133,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       guard: 'owner_signature' as const,
       proofSource: 'test',
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as KarmaBox;
+    const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
     return box;
   }
@@ -155,7 +160,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       targetId: opts.targetId ?? target.pub,
       guard: 'owner_signature' as const,
     } as unknown as VouchBox;
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - stake,
       owner: karmaBox.owner,
@@ -309,7 +314,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const secretHash = new Uint8Array(
       createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32),
     );
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
       owner: inviter.pub,

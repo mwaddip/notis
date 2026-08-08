@@ -7,7 +7,12 @@
  * finalizeBlock, so no manual ingestion step is needed.
  */
 import {
-  fixtureProvenance, makeTestConfig, rawPublicKey, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  makeTestConfig,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+} from '../helpers.js';
 import {
   describe,
   it,
@@ -188,15 +193,13 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
   // longer a box property — it only varies the fixture's synthetic provenance,
   // so two boxes that differ solely by the height a caller passed still get
   // distinct ids rather than colliding on UNIQUE(tx_id, output_index).
-  const box: KarmaBox = {
+  const box = seedProvenance<KarmaBox>({
     boxType: 'karma',
     value,
     owner,
     guard: 'owner_signature',
     proofSource: 'genesis',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  box.id = computeBoxId(box);
+  }, seed);
   return box;
 }
 
