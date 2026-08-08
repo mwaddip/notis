@@ -71,6 +71,20 @@ function rawPublicKey(keyObj: KeyObject): Uint8Array {
 
 const bytes32 = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 
+// ---------------------------------------------------------------------------
+// The `as unknown as AnyBoxCandidate[]` casts below are DELIBERATE and must not
+// be "fixed" by a future type audit.
+//
+// This suite's subject is `checkOutputShape`, whose job is to reject decoded
+// CBOR that does not match a box type. Its inputs are therefore malformed BY
+// CONSTRUCTION — a field of the wrong type, a value past 2^64, a lying guard.
+// The cast is how the test says "this is the bad input"; making these literals
+// well-typed would delete the only cases the function exists to handle.
+//
+// The distinction that matters: a cast asserting a shape the code BELIEVES
+// (a candidate typed as a stored box) is the harness defect this unit removed.
+// A cast constructing a shape the code must REJECT is the test doing its job.
+// ---------------------------------------------------------------------------
 describe('field-type pin', () => {
   let db: Database.Database;
   let ownerPubKey: Uint8Array;

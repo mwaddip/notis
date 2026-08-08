@@ -281,7 +281,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     };
     const tx: UtxoTransaction = {
       inputs: ['ab'.repeat(32)],
-      outputs: [{ ...candidate, id: computeBoxId(candidate) }],
+      outputs: [candidate],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };

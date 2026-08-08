@@ -201,7 +201,7 @@ describe('vouch routes — the JSON edge', () => {
       guard: 'owner_signature',
       proofSource: `vouch:${target.hex}`,
     };
-    const vouchOut = {
+    const vouchOut: CandidateOf<VouchBox> = {
       boxType: 'vouch' as const,
       value: VOUCH_KARMA_AMOUNT,
       voucherId: voucher.pub,
@@ -210,7 +210,7 @@ describe('vouch routes — the JSON edge', () => {
     };
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
-      outputs: [change, vouchOut as unknown as VouchBox],
+      outputs: [change, vouchOut],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };

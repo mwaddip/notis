@@ -96,9 +96,9 @@ describe('invite id prediction carries transaction provenance', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { ...newKarma, id: computeBoxId(newKarma) },
-        { ...inviteBox, id: computeBoxId(inviteBox) },
-        { ...bondBox, id: computeBoxId(bondBox) },
+        newKarma,
+        inviteBox,
+        bondBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

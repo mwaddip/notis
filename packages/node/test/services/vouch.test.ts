@@ -174,7 +174,7 @@ describe('vouch service', () => {
     const tx: UtxoTransaction = {
       inputs: [karmaBoxId],
       outputs: [
-        { ...newKarma, id: computeBoxId(newKarma) },
+        newKarma,
         { ...vouchBox, id: computeBoxId(vouchBox) } as VouchBox,
       ],
       signatures: {},
@@ -432,7 +432,7 @@ describe('vouch service', () => {
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { ...newKarma, id: newKarmaId },
+          newKarma,
           { ...vouchBox, id: vouchBoxId } as VouchBox,
         ],
         signatures: {},
@@ -486,7 +486,7 @@ describe('vouch service', () => {
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { ...newKarma, id: newKarmaId },
+          newKarma,
           { ...vouchBox, id: vouchBoxId } as VouchBox,
         ],
         signatures: {},

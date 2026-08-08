@@ -260,8 +260,8 @@ describe('posts routes', () => {
     const karmaLockTx: UtxoTransaction = {
       inputs: [karmaBoxId],
       outputs: [
-        { ...newKarma, id: newKarmaId },
-        { ...postLockBox, id: computeBoxId(postLockBox) },
+        newKarma,
+        postLockBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

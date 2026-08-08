@@ -1377,7 +1377,7 @@ describe('validateAndApplyTx', () => {
       };
       return {
         inputs: [karmaInId, inviteBoxId, bondBoxId],
-        outputs: [{ ...karmaOut, id: computeBoxId(karmaOut) }],
+        outputs: [karmaOut],
         signatures: {},
         preimages: { [inviteBoxId]: secret, [bondBoxId]: secret },
         protocolVersion: 1,
