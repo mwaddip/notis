@@ -36,8 +36,13 @@ import { createInvite, claimInvite, cancelInvite, commitInvite } from '../../src
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
+  fixtureProvenance,
+  rawPublicKey,
   seedAsOneTx,
-  fixtureProvenance, rawPublicKey, signTransaction } from '../helpers.js';
+  seedProvenance,
+  signTransaction,
+  type Stored,
+} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,19 +54,19 @@ function createKarmaBox(
   value: bigint,
   seed: number,
   proofSource = 'test',
-): KarmaBox {
-  const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-    boxType: 'karma',
-    value,
-    owner,
-    guard: 'owner_signature',
-    proofSource,
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
-  const full: KarmaBox = { ...box, id, boxType: 'karma', guard: 'owner_signature' };
-  storeInsertBox(full);
-  return full;
+): Stored<KarmaBox> {
+  const box = seedProvenance<KarmaBox>(
+    {
+      boxType: 'karma',
+      value,
+      owner,
+      guard: 'owner_signature',
+      proofSource,
+    },
+    seed,
+  );
+  storeInsertBox(box);
+  return box;
 }
 
 /**

@@ -51,7 +51,12 @@ import type { AnyBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import { encode as cborEncode } from 'cbor-x';
 import Database from 'better-sqlite3';
 
-import { fixtureProvenance, rawPublicKey } from '../helpers.js';
+import {
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  type Stored,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -389,18 +394,16 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 
   let deps: ReturnType<typeof makeDeps>;
   let owner: TestKeys;
-  let seeded: KarmaBox;
+  let seeded: Stored<KarmaBox>;
 
-  function seedKarma(o: Uint8Array, value: bigint, nonce = 0): KarmaBox {
-    const candidate = {
+  function seedKarma(o: Uint8Array, value: bigint, nonce = 0): Stored<KarmaBox> {
+    const box = seedProvenance<KarmaBox>({
       boxType: 'karma' as const,
       value,
       owner: o,
       guard: 'owner_signature' as const,
       proofSource: 'test',
-    };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as KarmaBox;
+    }, 1, nonce);
     storeInsertBox(box);
     return box;
   }

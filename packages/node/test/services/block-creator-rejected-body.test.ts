@@ -20,6 +20,7 @@ import {
   makeTestIdentity,
   seedProvenance,
   signTransaction,
+  type Stored,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ function makeCommittedBond(
   inviteePublicKey: Uint8Array,
   probationStartBlock: number,
   probationEndBlock: number,
-): BondBox {
+): Stored<BondBox> {
   return seedProvenance<BondBox>(
     {
       boxType: 'bond' as const,

@@ -36,7 +36,9 @@ import {
   makeKarmaBox,
   makeTestConfig,
   makeTestIdentity,
+  seedProvenance,
   signTransaction,
+  type Stored,
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
 import { materializeOutput } from '../../src/services/utxo-engine.js';
@@ -118,16 +120,14 @@ function makeVouchBox(
   value: bigint,
   voucherId: Uint8Array,
   targetId: Uint8Array,
-): VouchBox {
-  const candidate = {
+): Stored<VouchBox> {
+  return seedProvenance<VouchBox>({
     boxType: 'vouch' as const,
     value,
     voucherId,
     targetId,
     guard: 'owner_signature' as const,
-  };
-  Object.assign(candidate, fixtureProvenance(candidate, 1));
-  return { ...candidate, id: computeBoxId(candidate) } as unknown as VouchBox;
+  }, 1);
 }
 
 /** A signed unvouch: the VouchBox spent to zero outputs. */
