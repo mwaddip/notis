@@ -36,7 +36,7 @@ function makeTemplate(): OrderingBlock {
       coinbaseOutputs: [
         {
           owner: new Uint8Array(32).fill(0x55),
-          value: 90,
+          value: 90n,
           lockedUntilBlock: 727,
           isTreasury: false,
         },

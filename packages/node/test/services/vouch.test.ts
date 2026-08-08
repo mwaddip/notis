@@ -211,7 +211,33 @@ describe('vouch service', () => {
   // -----------------------------------------------------------------------
 
   describe('castVouch', () => {
-    it('rejects if no VouchBox in outputs', () => {
+    // -------------------------------------------------------------------------
+  // Phase 4 deliverable — id integrity across a REAL store round-trip.
+  //
+  // Every fixture in this file used to be built by `createKarmaBox(owner, 10, 1)`
+  // — a NUMBER in a bigint `value`. The id was computed over that number; the
+  // store reads back through `.safeIntegers()` and hands out a bigint; so the
+  // box that came out did not derive the id it went in with. This suite seeds
+  // ten such boxes, which is why the check lives here and not in a fixture:
+  // the in-memory object is exactly what did NOT disagree.
+  //
+  // `types/src/utxo.ts:210-212` says this holds "by construction for every box
+  // in the UTXO set, checkable by any light client, indexer or AVL prover".
+  // Measured false for a number-valued box, true for a bigint-valued one.
+  // -------------------------------------------------------------------------
+  it('every seeded karma and vouch box still derives its own id after storage', () => {
+    const karma = createKarmaBox(voucherPubKey, 10n, 1);
+    const vouch = createVouchBox(voucherPubKey, targetPubKey, 2);
+
+    for (const seeded of [karma, vouch]) {
+      const stored = storeGetBox(seeded.id);
+      expect(stored).not.toBeNull();
+      expect(typeof stored!.value).toBe('bigint');
+      expect(computeBoxId(stored!)).toBe(stored!.id);
+    }
+  });
+
+  it('rejects if no VouchBox in outputs', () => {
       const tx: UtxoTransaction = {
         inputs: [],
         outputs: [],

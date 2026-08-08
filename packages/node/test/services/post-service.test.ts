@@ -16,7 +16,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
       expiresAtBlock: 9999,
       userId: new Uint8Array(32),
     }),
-    getKarmaBoxes: () => [{ value: 100 }],
+    getKarmaBoxes: () => [{ value: 100n }],
     getPost: () => ({ id: 'post-1', content: 'hello' }),
     getPostRaw: () => new Uint8Array(32).fill(0xaa),
     encodePost: () => new Uint8Array(10),
@@ -29,7 +29,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
     getBox: () =>
       ({
         boxType: 'karma',
-        value: 100,
+        value: 100n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
         proofSource: 'genesis',
@@ -61,15 +61,15 @@ function makeKarmaLockTx(): UtxoTransaction {
     outputs: [
       {
         boxType: 'karma',
-        value: 75,
+        value: 75n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
         proofSource: 'post-lock',
       } as KarmaBox,
       {
         boxType: 'post_lock',
-        value: 25,
-        originalValue: 25,
+        value: 25n,
+        originalValue: 25n,
         owner: new Uint8Array(32),
         targetPostId: '',
         guard: 'block_apply',
@@ -137,7 +137,7 @@ describe('PostService', () => {
 
   it('throws PostServiceError when first input is not a karma box', () => {
     const deps = mockDeps({
-      getBox: () => ({ boxType: 'credit', value: 100 }) as AnyBox,
+      getBox: () => ({ boxType: 'credit', value: 100n }) as AnyBox,
     });
     const post = makePost();
     const tx = makeKarmaLockTx();
@@ -152,7 +152,7 @@ describe('PostService', () => {
       getBox: () =>
         ({
           boxType: 'karma',
-          value: 100,
+          value: 100n,
           owner: otherKey,
         }) as AnyBox,
     });

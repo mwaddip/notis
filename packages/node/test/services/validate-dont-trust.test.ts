@@ -38,7 +38,7 @@ function mockDeps(
       expiresAtBlock: 9999,
       userId: new Uint8Array(32),
     }),
-    getKarmaBoxes: () => [{ value: 100 }],
+    getKarmaBoxes: () => [{ value: 100n }],
     getPost: (id: string) => {
       // Return a post-like object if raw bytes exist
       return store.posts.has(id) ? { id, content: 'stored-parent' } : null;
@@ -59,7 +59,7 @@ function mockDeps(
     getBox: () =>
       ({
         boxType: 'karma',
-        value: 100,
+        value: 100n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
         proofSource: 'genesis',
@@ -102,15 +102,15 @@ function makeKarmaLockTx(): UtxoTransaction {
     outputs: [
       {
         boxType: 'karma',
-        value: 75,
+        value: 75n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
         proofSource: 'post-lock',
       } as KarmaBox,
       {
         boxType: 'post_lock',
-        value: 25,
-        originalValue: 25,
+        value: 25n,
+        originalValue: 25n,
         owner: new Uint8Array(32),
         targetPostId: '',
         guard: 'block_apply',
