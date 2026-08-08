@@ -12,6 +12,8 @@ import {
   LIKE_KARMA_COST,
   CREDIT_MINER_REWARD_DELAY,
   EMPTY_STATE_ROOT,
+  INVITE_KARMA_AMOUNT,
+  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
@@ -20,7 +22,9 @@ import type { Config } from '../src/config.js';
 import type {
   UtxoTransaction,
   AnyBox,
+  BondBox,
   BoxId,
+  InviteBox,
   Post,
   KarmaBox,
   BlockHeader,
@@ -191,6 +195,84 @@ export function seedAsOneTx(candidates: object[], seedHeight = 1, nonce = 0): An
     const box = { ...candidate, txId, index } as AnyBox;
     return { ...box, id: computeBoxId(box) } as AnyBox;
   });
+}
+
+/**
+ * A `u32BE`-encodable nonce derived from a caller-supplied label.
+ *
+ * Deterministic, so a fixture built twice with the same label gets the same
+ * ids across runs and file orderings — the property `fixtureProvenance`
+ * documents and the reason a counter is **not** used here (a counter makes ids
+ * depend on how many boxes a test happened to build first).
+ *
+ * Masked to 31 bits so the value can never reach `U32_SENTINEL` (`0xffffffff`),
+ * which `u32BE` reserves for the un-encodable case.
+ */
+function labelNonce(label: string): number {
+  const h = createHash('blake2b512').update(label).digest();
+  return h.readUInt32BE(0) & 0x7fffffff;
+}
+
+/**
+ * Seed an invite and its bond as the two outputs of ONE synthetic transaction.
+ *
+ * The pairing is a property of the pair: a bond resolves its InviteBox through
+ * `(bond.txId, bond.inviteOutputIndex)`, so seeding the two with independent
+ * provenance leaves the bond pointing at an index of a transaction that has no
+ * invite at it — the mispairing the index form exists to make inexpressible.
+ * A caller cannot build half of this correctly, so there is no half to build.
+ *
+ * **`label` is required, and it is the whole point.** `seedAsOneTx` derives the
+ * shared txId from `candidates[0]` alone, so two pairs whose *invite* is
+ * structurally identical at the same `seedHeight` get the same txId — and
+ * therefore colliding box ids. Measured, and it is sharper than it first looks:
+ * because only `candidates[0]` feeds the txId, a difference confined to the
+ * **bond** does not separate the pairs either. Two such pairs produce bonds with
+ * *different ids* sharing one `(txId, index)`, which is exactly what
+ * `UNIQUE(tx_id, output_index)` forbids and what `getBoxByProvenance` resolves
+ * by. Centralising the pattern here would multiply that hazard across every
+ * caller, so `label` has no default: forgetting it is a compile error rather
+ * than a silent collision. Pinned by `helpers.test.ts`.
+ */
+export function seedInviteAndBond(opts: {
+  /** Distinguishes this pair from every other. Required — see above. */
+  label: string;
+  inviterId: Uint8Array;
+  inviteValue?: bigint;
+  bondValue?: bigint;
+  secretHash?: Uint8Array;
+  inviteePublicKey?: Uint8Array;
+  probationStartBlock?: number;
+  probationEndBlock?: number;
+  seedHeight?: number;
+}): { invite: Stored<InviteBox>; bond: Stored<BondBox> } {
+  const inviteCandidate = {
+    boxType: 'invite' as const,
+    value: opts.inviteValue ?? INVITE_KARMA_AMOUNT,
+    secretHash: opts.secretHash ?? new Uint8Array(32).fill(0xaa),
+    inviterId: opts.inviterId,
+    guard: 'hash_preimage_with_bond' as const,
+  };
+  const bondCandidate = {
+    boxType: 'bond' as const,
+    value: opts.bondValue ?? INVITE_BOND_KARMA,
+    inviterId: opts.inviterId,
+    // Index 0: the invite is output 0 of this same transaction, below.
+    inviteOutputIndex: 0,
+    inviteePublicKey: opts.inviteePublicKey ?? new Uint8Array(0),
+    probationStartBlock: opts.probationStartBlock ?? 0,
+    probationEndBlock: opts.probationEndBlock ?? 0,
+    guard: 'bond_dual' as const,
+  };
+  const [invite, bond] = seedAsOneTx(
+    [inviteCandidate, bondCandidate],
+    opts.seedHeight ?? 1,
+    labelNonce(opts.label),
+  );
+  return {
+    invite: invite as Stored<InviteBox>,
+    bond: bond as Stored<BondBox>,
+  };
 }
 
 export function makeKarmaBox(
