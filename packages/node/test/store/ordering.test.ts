@@ -113,7 +113,7 @@ describe('ordering store', () => {
         coinbaseOutputs: [
           {
             owner: uid('coinbase-recipient'),
-            value: 100,
+            value: 100n,
             lockedUntilBlock: 100,
             isTreasury: false,
           },
@@ -153,9 +153,19 @@ describe('ordering store', () => {
     expect(result!.subBlockTree.pruneEntries).toEqual([]);
 
     // utxoTxTree
+    //
+    // CHANGED 2026-08-08: the fixture wrote `value: 100` and this asserted
+    // `toBe(100)`. `CoinbaseOutput.value` is bigint, so a real block
+    // round-tripping through this store returns `100n` and the assertion would
+    // have FAILED on real data — it could only pass on a fixture lying in the
+    // same direction. Fixture and assertion agreed with each other while both
+    // diverged from the type, so the round-trip test could not detect the one
+    // thing it exists to check. `net`'s `headers.test.ts` carried the identical
+    // defect on the identical field (fixed in e9d4eda): Spec B P0's bigint
+    // migration left systematic residue in storage round-trip tests.
     expect(result!.utxoTxTree.utxoTxIds).toEqual(['tx-id-1']);
     expect(result!.utxoTxTree.coinbaseOutputs).toHaveLength(1);
-    expect(result!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100);
+    expect(result!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
 
     // getCurrentHeight should reflect the inserted block
     const { getCurrentHeight } = await importOrderingFresh();
