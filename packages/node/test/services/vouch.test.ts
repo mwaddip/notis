@@ -175,7 +175,7 @@ describe('vouch service', () => {
       inputs: [karmaBoxId],
       outputs: [
         newKarma,
-        { ...vouchBox, id: computeBoxId(vouchBox) } as VouchBox,
+        vouchBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -266,7 +266,7 @@ describe('vouch service', () => {
 
     it('rejects insufficient karma (< 11)', () => {
       // Create a karma box with only 10 karma (below VOUCH_MIN_BALANCE of 11)
-      createKarmaBox(voucherPubKey, 10, 1);
+      createKarmaBox(voucherPubKey, 10n, 1);
 
       const tx: UtxoTransaction = {
         inputs: [],
@@ -290,7 +290,7 @@ describe('vouch service', () => {
 
     it('rejects duplicate vouch (pair already exists)', () => {
       // Give voucher enough karma to pass the balance check
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
 
       // Create an existing vouch box for the same pair
       createVouchBox(voucherPubKey, targetPubKey, 5);
@@ -322,7 +322,7 @@ describe('vouch service', () => {
     // -------------------------------------------------------------------
 
     it('rejects a second vouch aimed at a different target', () => {
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
       const otherTarget = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
@@ -334,7 +334,7 @@ describe('vouch service', () => {
     });
 
     it('rejects a second vouch while the first is still pending in the mempool', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
       // First vouch — validated and queued, no VouchBox in the UTXO set yet.
       const firstTx = signedVouchTx(karma.id!, voucherPubKey, targetPubKey, 5);
@@ -347,18 +347,18 @@ describe('vouch service', () => {
     });
 
     it('control — a voucher with no active or pending vouch is accepted', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
       const tx = signedVouchTx(karma.id!, voucherPubKey, targetPubKey, 5);
       expect(castVouch(deps, tx, 5).status).toBe('pending');
     });
 
     it('control — a different voucher is unaffected by another identity vouching', () => {
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
       const otherKeys = generateKeyPairSync('ed25519');
       const otherPub = rawPublicKey(otherKeys.publicKey);
-      const otherKarma = createKarmaBox(otherPub, 100, 1);
+      const otherKarma = createKarmaBox(otherPub, 100n, 1);
       const tx = signedVouchTx(otherKarma.id!, otherPub, targetPubKey, 10, otherKeys.privateKey);
 
       expect(castVouch(deps, tx, 10).status).toBe('pending');
@@ -366,7 +366,7 @@ describe('vouch service', () => {
 
     it('rejects if cooldown active', () => {
       // Give voucher enough karma
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
 
       // Set up a different target that has an active cooldown
       const cooldownTarget = (() => {
@@ -407,7 +407,7 @@ describe('vouch service', () => {
     // -------------------------------------------------------------------
 
     it('accepts valid vouch and inserts into mempool', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
@@ -417,7 +417,6 @@ describe('vouch service', () => {
         proofSource: `vouch:${targetPubKeyHex}`,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-      const newKarmaId = computeBoxId(newKarma);
 
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
@@ -427,13 +426,12 @@ describe('vouch service', () => {
         guard: 'owner_signature',
       };
       Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
-      const vouchBoxId = computeBoxId(vouchBox);
 
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
           newKarma,
-          { ...vouchBox, id: vouchBoxId } as VouchBox,
+          vouchBox,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
@@ -461,7 +459,7 @@ describe('vouch service', () => {
     });
 
     it('karma is unchanged after castVouch (pending only)', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
@@ -471,7 +469,6 @@ describe('vouch service', () => {
         proofSource: `vouch:${targetPubKeyHex}`,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-      const newKarmaId = computeBoxId(newKarma);
 
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
@@ -481,13 +478,12 @@ describe('vouch service', () => {
         guard: 'owner_signature',
       };
       Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
-      const vouchBoxId = computeBoxId(vouchBox);
 
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
           newKarma,
-          { ...vouchBox, id: vouchBoxId } as VouchBox,
+          vouchBox,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,

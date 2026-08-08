@@ -272,7 +272,7 @@ describe('vouch routes — the JSON edge', () => {
     expect(edgeBox.id).toBe(rawBox.id);
 
     // And the field really is bytes on the far side, not a 64-char string.
-    const edgeVouch = throughEdge.outputs[1] as unknown as VouchBox;
+    const edgeVouch = throughEdge.outputs[1] as CandidateOf<VouchBox>;
     expect(edgeVouch.voucherId).toBeInstanceOf(Uint8Array);
     expect(edgeVouch.targetId).toBeInstanceOf(Uint8Array);
     expect(Buffer.from(edgeVouch.voucherId).toString('hex')).toBe(voucher.hex);
