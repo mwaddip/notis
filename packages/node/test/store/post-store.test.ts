@@ -54,8 +54,8 @@ describe('PostStore', () => {
       { typeId: 1, id: new Uint8Array(32).fill(2), sequence: 2, data: new Uint8Array([2]) },
     ];
     store.putBatch(entries);
-    expect(store.has(1, entries[0].id)).toBe(true);
-    expect(store.has(1, entries[1].id)).toBe(true);
+    expect(store.has(1, entries[0]!.id)).toBe(true);
+    expect(store.has(1, entries[1]!.id)).toBe(true);
   });
 
   it('schemaVersion returns the current version after init', () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { fixtureProvenance } from '../helpers.js';
 import Database from 'better-sqlite3';
 import express from 'express';
 import request from 'supertest';
@@ -23,13 +24,21 @@ describe('GET /api/v1/proof/:boxId', () => {
     const handle = createAvlProver(db);
 
     // Create a box at height 1
-    const box = {
-      id: 'aa'.repeat(32),
+    // Caller-chosen id: this suite queries the proof endpoint BY box id, so the
+    // key has to be known in advance. `txId`/`index` are real regardless — they
+    // ride the AVL value, and a fixture without them serializes to leaf bytes
+    // no production box could produce.
+    const candidate = {
       boxType: 'karma' as const,
       value: 100n,
       owner: new Uint8Array(32).fill(0xaa),
       guard: 'owner_signature' as const,
       proofSource: 'mint-1',
+    };
+    const box = {
+      id: 'aa'.repeat(32),
+      ...candidate,
+      ...fixtureProvenance(candidate, 1),
     };
     // Spec G phase D: the tree holds two entity kinds, so the fixture does too.
     applyBlockMutations(handle.prover, [], [box], [

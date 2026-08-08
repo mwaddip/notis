@@ -1,4 +1,4 @@
-import { uid } from '../helpers.js';
+import { ByteKeyedMap, uid } from '../helpers.js';
 import { describe, it, expect } from 'vitest';
 import {
   generateKeyPairSync,
@@ -14,7 +14,7 @@ import {
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
 } from '@dagsocial/types';
-import type { Post } from '@dagsocial/types';
+import type { Post, Stump } from '@dagsocial/types';
 import { verifyPoW } from '../../src/services/pow.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
@@ -63,10 +63,16 @@ function buildPowInput(post: Post): Buffer {
 // ---------------------------------------------------------------------------
 
 interface MockStore {
-  identities: Map<string, { userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
-  challenges: Map<string, { challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
+  // Byte-keyed, because the store they stand in for compares BLOBs by
+  // value. `karmaBoxes` below already hex-keys; these two did not.
+  identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
+  challenges: ByteKeyedMap<{ challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
   karmaBoxes: Map<string, { value: bigint }[]>; // keyed by hex(owner publicKey), now an array
-  posts: Map<string, unknown>;
+  // Typed as what the dep must return, not `unknown`. Nothing is ever put
+  // in it — `getPost` returns null throughout these suites — but a mock
+  // whose value type cannot satisfy the interface is a mock that would
+  // not compile the day a test starts using it.
+  posts: Map<string, Post | Stump>;
 }
 
 function createMockDeps(store: MockStore): VerifierDeps {
@@ -94,8 +100,8 @@ describe('verifyPost', () => {
   // Build a fresh mock store for each test
   function makeStore(): MockStore {
     return {
-      identities: new Map(),
-      challenges: new Map(),
+      identities: new ByteKeyedMap(),
+      challenges: new ByteKeyedMap(),
       karmaBoxes: new Map(),
       posts: new Map(),
     };

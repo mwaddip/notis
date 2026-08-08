@@ -30,7 +30,11 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
-import { fixtureProvenance } from '../helpers.js';
+import {
+  fixtureProvenance,
+  seedProvenance,
+  type Stored,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -268,32 +272,34 @@ describe('validateTx output shape (integration)', () => {
 
   afterEach(() => closeDb());
 
-  function seedKarma(value: bigint): KarmaBox {
-    const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-      boxType: 'karma',
-      value,
-      owner: ownerPubKey,
-      guard: 'owner_signature',
-      proofSource: 'test',
-    };
-    Object.assign(box, fixtureProvenance(box, 1));
-    const full = { ...box, id: computeBoxId(box) } as KarmaBox;
-    storeInsertBox(full);
-    return full;
+  function seedKarma(value: bigint): Stored<KarmaBox> {
+    const box = seedProvenance<KarmaBox>(
+      {
+        boxType: 'karma',
+        value,
+        owner: ownerPubKey,
+        guard: 'owner_signature',
+        proofSource: 'test',
+      },
+      1,
+    );
+    storeInsertBox(box);
+    return box;
   }
 
-  function seedCredit(value: bigint): CreditBox {
-    const box: Omit<CreditBox, 'id'> & { id?: string } = {
-      boxType: 'credit',
-      value,
-      owner: ownerPubKey,
-      guard: 'owner_signature',
-      proofSource: 1,
-    };
-    Object.assign(box, fixtureProvenance(box, 1));
-    const full = { ...box, id: computeBoxId(box) } as CreditBox;
-    storeInsertBox(full);
-    return full;
+  function seedCredit(value: bigint): Stored<CreditBox> {
+    const box = seedProvenance<CreditBox>(
+      {
+        boxType: 'credit',
+        value,
+        owner: ownerPubKey,
+        guard: 'owner_signature',
+        proofSource: 1,
+      },
+      1,
+    );
+    storeInsertBox(box);
+    return box;
   }
 
   function signedTx(inputs: string[], outputs: unknown[]): UtxoTransaction {

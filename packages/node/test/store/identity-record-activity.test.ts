@@ -2,10 +2,20 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { computeBoxId } from '@dagsocial/types';
-import type { AnyBox, CreditBox, KarmaBox, UserId } from '@dagsocial/types';
+import type {
+  AnyBox,
+  CandidateOf,
+  CreditBox,
+  KarmaBox,
+  UserId,
+} from '@dagsocial/types';
 import type { BlockJournal } from '../../src/store/journal.js';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
-import { fixtureProvenance } from '../helpers.js';
+import {
+  fixtureProvenance,
+  seedProvenance,
+  type Stored,
+} from '../helpers.js';
 
 /**
  * Spec G phase D2 — `insertBox` populates the identity record's activity clock.
@@ -32,10 +42,11 @@ async function importDbFresh() {
   };
 }
 
+// The module's own type, not a hand-written one-entry shape: this declaration
+// listed `insertBox` alone, so reading a box back to check its id was a compile
+// error rather than a missing test.
 async function importUtxoFresh() {
-  return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: AnyBox) => void;
-  };
+  return import('../../src/store/utxo.js');
 }
 
 async function importJournalFresh() {
@@ -58,8 +69,13 @@ function owner(label: string): UserId {
   return new Uint8Array(createHash('blake2b512').update(label).digest().subarray(0, 32));
 }
 
-function karmaBox(o: UserId, seed: number, value: bigint, decayBurn?: boolean): KarmaBox {
-  const box: KarmaBox = {
+function karmaBox(
+  o: UserId,
+  seed: number,
+  value: bigint,
+  decayBurn?: boolean,
+): Stored<KarmaBox> {
+  const candidate: CandidateOf<KarmaBox> = {
     boxType: 'karma',
     value,
     owner: o,
@@ -69,28 +85,59 @@ function karmaBox(o: UserId, seed: number, value: bigint, decayBurn?: boolean): 
     // and therefore distinct ids — but it is no longer a box field.
     proofSource: `p-${seed}-${value}-${decayBurn ?? 'n'}`,
   };
-  if (decayBurn !== undefined) box.decayBurn = decayBurn;
-  Object.assign(box, fixtureProvenance(box, seed));
-  box.id = computeBoxId(box);
-  return box;
+  if (decayBurn !== undefined) candidate.decayBurn = decayBurn;
+  return seedProvenance<KarmaBox>(candidate, seed);
 }
 
-function creditBox(o: UserId, value: bigint, seed: number): CreditBox {
-  const box: CreditBox = {
-    boxType: 'credit',
+function creditBox(o: UserId, value: bigint, seed: number): Stored<CreditBox> {
+  return seedProvenance<CreditBox>({
+    boxType: 'credit' as const,
     value,
     owner: o,
-    guard: 'owner_signature',
+    guard: 'owner_signature' as const,
     proofSource: seed,
-  };
-  Object.assign(box, fixtureProvenance(box, 1));
-  box.id = computeBoxId(box);
-  return box;
+  }, 1);
 }
 
 describe('insertBox populates the activity clock (Spec G phase D2)', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
+
+  // -------------------------------------------------------------------------
+  // Phase 4 deliverable: id integrity across the store round-trip.
+  //
+  // The point of fixing this file was not the `n` suffix — it was that
+  // `karmaBox(o, seed, value)` was called as `karmaBox(alice, 100n, 42)` at all
+  // thirteen sites, so `value` received the NUMBER 42 and `seed` the bigint
+  // 100n. Both halves did damage. `u32BE(100n)` is not a number, so provenance
+  // fell to the `0xffffffff` sentinel; and a number-valued box hashes
+  // differently from the same box read back, because the store reads through
+  // `.safeIntegers()` and hands back a bigint. The id was computed before that
+  // laundering, so `stored.id !== computeBoxId(stored)` — a box in the UTXO set
+  // no light client could validate, which `types/src/utxo.ts:210-212` says holds
+  // "by construction for every box".
+  //
+  // This asserts it against a REAL store round-trip rather than the in-memory
+  // fixture, because the in-memory object is exactly what did NOT disagree.
+  // -------------------------------------------------------------------------
+  it('a seeded box read back from the store still derives its own id', async () => {
+    const { initDb } = await importDbFresh();
+    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
+    const { insertBox, getBox } = await importUtxoFresh();
+    initDb(':memory:');
+
+    const alice = owner('alice');
+    const seeded = karmaBox(alice, 42, 100n);
+    beginBlockJournal(42);
+    insertBox(seeded);
+    finishBlockJournal();
+
+    const stored = getBox(seeded.id);
+    expect(stored).not.toBeNull();
+    expect(stored!.value).toBe(100n);
+    expect(typeof stored!.value).toBe('bigint');
+    expect(computeBoxId(stored!)).toBe(stored!.id);
+  });
 
   it('a non-decay karma box creates the record at the journal height', async () => {
     const { initDb } = await importDbFresh();
@@ -101,7 +148,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
 
     const alice = owner('alice');
     beginBlockJournal(42);
-    insertBox(karmaBox(alice, 100n, 42));
+    insertBox(karmaBox(alice, 42, 100n));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 0, likeCarry: 0n });
@@ -119,7 +166,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     // never depend on it.
     const alice = owner('alice');
     beginBlockJournal(90);
-    insertBox(karmaBox(alice, 100n, 7));
+    insertBox(karmaBox(alice, 7, 100n));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 90, lastDecayBlock: 0, likeCarry: 0n });
@@ -137,7 +184,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     // no second cycle could ever fire.
     const alice = owner('alice');
     beginBlockJournal(50);
-    insertBox(karmaBox(alice, 100n, 50, true));
+    insertBox(karmaBox(alice, 50, 100n, true));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toBeNull();
@@ -153,7 +200,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     // `!== true`, matching the old predicate — not `=== undefined`.
     const alice = owner('alice');
     beginBlockJournal(50);
-    insertBox(karmaBox(alice, 100n, 50, false));
+    insertBox(karmaBox(alice, 50, 100n, false));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 50, lastDecayBlock: 0, likeCarry: 0n });
@@ -168,11 +215,11 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
 
     const alice = owner('alice');
     beginBlockJournal(10);
-    insertBox(karmaBox(alice, 100n, 10));
+    insertBox(karmaBox(alice, 10, 100n));
     finishBlockJournal();
 
     beginBlockJournal(80);
-    insertBox(karmaBox(alice, 70n, 80, true));
+    insertBox(karmaBox(alice, 80, 70n, true));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n });
@@ -202,7 +249,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     // Genesis and bootstrap: `insertBox` behaves exactly as before, because
     // there is no settled height to record.
     const alice = owner('alice');
-    insertBox(karmaBox(alice, 100n, 1));
+    insertBox(karmaBox(alice, 1, 100n));
 
     expect(getIdentityRecord(alice)).toBeNull();
   });
@@ -220,7 +267,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     putIdentityRecord(alice, { lastActivityBlock: 5, lastDecayBlock: 33, likeCarry: 0n });
 
     beginBlockJournal(77);
-    insertBox(karmaBox(alice, 100n, 77));
+    insertBox(karmaBox(alice, 77, 100n));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 77, lastDecayBlock: 33, likeCarry: 0n });
@@ -236,10 +283,10 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const alice = owner('alice');
     const bob = owner('bob');
     beginBlockJournal(3);
-    insertBox(karmaBox(alice, 100n, 3));
+    insertBox(karmaBox(alice, 3, 100n));
     finishBlockJournal();
     beginBlockJournal(9);
-    insertBox(karmaBox(bob, 100n, 9));
+    insertBox(karmaBox(bob, 9, 100n));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 3, lastDecayBlock: 0, likeCarry: 0n });
@@ -256,7 +303,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     // Order matters: `revertBlock` replays in reverse, so the record inverse
     // must run before the box that caused it is deleted.
     const alice = owner('alice');
-    const box = karmaBox(alice, 100n, 4);
+    const box = karmaBox(alice, 4, 100n);
     beginBlockJournal(4);
     insertBox(box);
     const journal = finishBlockJournal();
@@ -283,7 +330,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     putIdentityRecord(alice, { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n });
 
     beginBlockJournal(6);
-    insertBox(karmaBox(alice, 10n, 6));
+    insertBox(karmaBox(alice, 6, 10n));
     const journal = finishBlockJournal();
 
     const records = journal.mutations.filter((m) => m.kind === 'record');
@@ -320,7 +367,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const alice = owner('alice');
     beginBlockJournal(0);
     expect(openBlockJournalHeight()).toBe(0);
-    insertBox(karmaBox(alice, 100n, 0));
+    insertBox(karmaBox(alice, 0, 100n));
     finishBlockJournal();
 
     expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, likeCarry: 0n });

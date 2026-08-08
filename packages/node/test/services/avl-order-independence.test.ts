@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { OrderingBlock } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
-import { uid, makeKarmaBox } from '../helpers.js';
+import type { Config } from '../../src/config.js';
+import {
+  makeKarmaBox,
+  makeTestConfig,
+  uid,
+} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Spec B P2 acceptance (M-12) — the audit escalation scenario, made
@@ -33,7 +38,11 @@ import { uid, makeKarmaBox } from '../helpers.js';
 // nodes stop presenting genuinely divergent feed orders.
 // ---------------------------------------------------------------------------
 
-const testConfig = {
+// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
+// `Config` requires this literal never stated. Hazard removal, not error removal:
+// as a bare literal its type is what `startBlockCreator`'s parameter was declared
+// against, so a newly-required `Config` field would have gone unnoticed here.
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -50,7 +59,7 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 type DbModule = {
   initDb: (path: string) => void;
@@ -64,7 +73,7 @@ async function importDb(): Promise<DbModule> {
 
 async function importBlockCreator() {
   return (await import('../../src/services/block-creator.js')) as unknown as {
-    startBlockCreator: (cfg: typeof testConfig) => void;
+    startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
   };

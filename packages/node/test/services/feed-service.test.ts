@@ -22,6 +22,21 @@ import { FeedService } from '../../src/services/feed-service.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * A returned DTO as a plain record.
+ *
+ * These tests assert on key **presence and absence** — `authorId` gone,
+ * `rootPostHash` gone, `kind` absent on a live post — which the declared
+ * `PostJson`/`StumpJson` interfaces cannot express, and an interface carries no
+ * index signature so it is not castable to `Record<string, unknown>` either.
+ * A shallow copy of the own enumerable properties is exactly the set `toEqual`
+ * compares, and it is obtained by running code rather than by asserting a type.
+ */
+function asRecord(v: object | null): Record<string, unknown> {
+  if (v === null) throw new Error('expected a DTO, got null');
+  return Object.fromEntries(Object.entries(v));
+}
+
 /** Extract raw 32-byte Ed25519 public key from SPKI DER KeyObject. */
 function rawPublicKey(keyObj: KeyObject): Uint8Array {
   const der = keyObj.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -112,7 +127,7 @@ describe('feed-service', () => {
   // -----------------------------------------------------------------------
 
   it('getPost returns a live post as serialized PostJson (control)', () => {
-    const r = feedService.getPost(liveRootId) as Record<string, unknown>;
+    const r = asRecord(feedService.getPost(liveRootId));
     expect(r).not.toBeNull();
     expect(r['id']).toBe(liveRootId);
     expect(r['content']).toBe('Live root');
@@ -126,7 +141,7 @@ describe('feed-service', () => {
     // → Posts). This test asserted "returns the Stump as-is" — the raw object,
     // `authorId` still a Uint8Array — which is exactly the defect: `res.json`
     // serialized it index-keyed (`{"0":…,"1":…}`) at the route above.
-    const r = feedService.getPost(prunedRootId) as Record<string, unknown>;
+    const r = asRecord(feedService.getPost(prunedRootId));
     expect(r).not.toBeNull();
     expect(r).toEqual({
       kind: 'stump',
@@ -144,7 +159,7 @@ describe('feed-service', () => {
   });
 
   it('a live post carries no `kind` — clients discriminate on its presence', () => {
-    const r = feedService.getPost(liveRootId) as Record<string, unknown>;
+    const r = asRecord(feedService.getPost(liveRootId));
     expect('kind' in r).toBe(false);
   });
 

@@ -27,9 +27,22 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
-import type { AnyBox, KarmaBox, UtxoTransaction, VouchBox } from '@dagsocial/types';
+import type {
+  AnyBox,
+  CandidateOf,
+  KarmaBox,
+  UtxoTransaction,
+  VouchBox,
+} from '@dagsocial/types';
 
-import { fixtureProvenance, rawPublicKey, signTransaction, txToJson } from '../helpers.js';
+import {
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  txToJson,
+  type Stored,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -140,30 +153,38 @@ describe('vouch routes — the JSON edge', () => {
     });
   }
 
-  function seedKarma(owner: Uint8Array, value: bigint, nonce = 0): KarmaBox {
-    const candidate = {
-      boxType: 'karma' as const,
-      value,
-      owner,
-      guard: 'owner_signature' as const,
-      proofSource: 'test',
-    };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as KarmaBox;
+  function seedKarma(owner: Uint8Array, value: bigint, nonce = 0): Stored<KarmaBox> {
+    const box = seedProvenance<KarmaBox>(
+      {
+        boxType: 'karma' as const,
+        value,
+        owner,
+        guard: 'owner_signature' as const,
+        proofSource: 'test',
+      },
+      1,
+      nonce,
+    );
     insertBox(box);
     return box;
   }
 
-  function seedVouchBox(voucherId: Uint8Array, targetId: Uint8Array, nonce = 0): VouchBox {
-    const candidate = {
-      boxType: 'vouch' as const,
-      value: VOUCH_KARMA_AMOUNT,
-      voucherId,
-      targetId,
-      guard: 'owner_signature' as const,
-    };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as unknown as VouchBox;
+  function seedVouchBox(
+    voucherId: Uint8Array,
+    targetId: Uint8Array,
+    nonce = 0,
+  ): Stored<VouchBox> {
+    const box = seedProvenance<VouchBox>(
+      {
+        boxType: 'vouch' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        voucherId,
+        targetId,
+        guard: 'owner_signature' as const,
+      },
+      1,
+      nonce,
+    );
     insertBox(box);
     return box;
   }
@@ -173,14 +194,14 @@ describe('vouch routes — the JSON edge', () => {
    * `txToJson` then hex-encodes it into what a client actually sends.
    */
   function rawVouchCast(karmaBox: KarmaBox): UtxoTransaction {
-    const change: KarmaBox = {
+    const change: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - VOUCH_KARMA_AMOUNT,
       owner: voucher.pub,
       guard: 'owner_signature',
       proofSource: `vouch:${target.hex}`,
     };
-    const vouchOut = {
+    const vouchOut: CandidateOf<VouchBox> = {
       boxType: 'vouch' as const,
       value: VOUCH_KARMA_AMOUNT,
       voucherId: voucher.pub,
@@ -189,7 +210,7 @@ describe('vouch routes — the JSON edge', () => {
     };
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
-      outputs: [change, vouchOut as unknown as VouchBox],
+      outputs: [change, vouchOut],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
@@ -251,7 +272,7 @@ describe('vouch routes — the JSON edge', () => {
     expect(edgeBox.id).toBe(rawBox.id);
 
     // And the field really is bytes on the far side, not a 64-char string.
-    const edgeVouch = throughEdge.outputs[1] as unknown as VouchBox;
+    const edgeVouch = throughEdge.outputs[1] as CandidateOf<VouchBox>;
     expect(edgeVouch.voucherId).toBeInstanceOf(Uint8Array);
     expect(edgeVouch.targetId).toBeInstanceOf(Uint8Array);
     expect(Buffer.from(edgeVouch.voucherId).toString('hex')).toBe(voucher.hex);

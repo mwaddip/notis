@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeBoxId } from '@dagsocial/types';
-import type { AnyBox, CreditBox, KarmaBox } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 /**
@@ -35,7 +35,11 @@ async function importUtxoFresh() {
 const user = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const TX_ID = 'fe'.repeat(32);
 
-function creditCandidate(value: bigint, owner: Uint8Array): CreditBox {
+// `CandidateOf<CreditBox>`, which is what the name has always said. The return
+// type said `CreditBox` — a stored box — while the body returns a literal with
+// no id and no provenance, which is precisely the distinction this suite exists
+// to pin (Spec G phase C3: outputs get their provenance from the transaction).
+function creditCandidate(value: bigint, owner: Uint8Array): CandidateOf<CreditBox> {
   return {
     boxType: 'credit',
     value,
@@ -147,16 +151,16 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     // producer-vs-`rowToBox` field order divergence (`originalValue` and
     // `createdAtBlock` swapped) that phase G owns (contract 1b), so byte
     // identity does not hold for it and never did.
-    const candidates: AnyBox[] = [
+    const candidates: AnyBoxCandidate[] = [
       {
         boxType: 'karma', value: 5n, owner: user(0xe1),
         guard: 'owner_signature', proofSource: 'p', 
-      } satisfies KarmaBox,
+      } satisfies CandidateOf<KarmaBox>,
       creditCandidate(7n, user(0xe2)),
       {
         boxType: 'credit', value: 8n, owner: user(0xe3),
         guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 900,
-      } satisfies CreditBox,
+      } satisfies CandidateOf<CreditBox>,
       {
         boxType: 'invite', value: 1n, secretHash: user(0xe5),
         inviterId: user(0xe6), guard: 'hash_preimage_with_bond',

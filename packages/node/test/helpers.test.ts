@@ -1,0 +1,68 @@
+import { describe, it, expect } from 'vitest';
+import { computeBoxId } from '@dagsocial/types';
+import { seedInviteAndBond, uid } from './helpers.js';
+
+/**
+ * Pins the fixture helpers themselves.
+ *
+ * `seedInviteAndBond` centralises a pattern that was written out by hand at 39
+ * sites. Centralising is what makes its provenance rule load-bearing: a shared
+ * helper that let two callers collide would produce the collision everywhere at
+ * once, where the hand-written version produced it only when two sites happened
+ * to match. These are the properties that make the consolidation safe.
+ */
+describe('seedInviteAndBond — distinct provenance per call', () => {
+  const inviterId = uid('alice');
+
+  it('two pairs built with different labels have four distinct ids', () => {
+    const a = seedInviteAndBond({ label: 'first', inviterId });
+    const b = seedInviteAndBond({ label: 'second', inviterId });
+
+    const ids = [a.invite.id, a.bond.id, b.invite.id, b.bond.id];
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  it('the two pairs are also distinct transactions, not just distinct boxes', () => {
+    const a = seedInviteAndBond({ label: 'first', inviterId });
+    const b = seedInviteAndBond({ label: 'second', inviterId });
+
+    // Same txId within a pair — the invite and bond are outputs of ONE tx, which
+    // is what makes `(bond.txId, bond.inviteOutputIndex)` resolve the invite.
+    expect(a.invite.txId).toBe(a.bond.txId);
+    expect(a.invite.index).toBe(0);
+    expect(a.bond.index).toBe(1);
+    expect(a.bond.inviteOutputIndex).toBe(0);
+
+    // Different txId across pairs — the property `label` exists to guarantee.
+    // Without it these two calls share a txId and both bonds land on
+    // (txId, index) = (same, 1), which `UNIQUE(tx_id, output_index)` forbids.
+    expect(a.invite.txId).not.toBe(b.invite.txId);
+  });
+
+  it('a difference confined to the BOND still separates the pairs', () => {
+    // The sharp case. `seedAsOneTx` derives the shared txId from
+    // `candidates[0]` — the invite — alone, so before `label` two pairs whose
+    // invites matched shared a txId even when their bonds differed, leaving two
+    // bonds with different ids on one `(txId, index)`.
+    const a = seedInviteAndBond({ label: 'bond-a', inviterId, bondValue: 5n });
+    const b = seedInviteAndBond({ label: 'bond-b', inviterId, bondValue: 99n });
+
+    expect(a.invite.txId).not.toBe(b.invite.txId);
+    expect(a.bond.id).not.toBe(b.bond.id);
+  });
+
+  it('every box it returns satisfies id integrity', () => {
+    const { invite, bond } = seedInviteAndBond({ label: 'integrity', inviterId });
+    expect(computeBoxId(invite)).toBe(invite.id);
+    expect(computeBoxId(bond)).toBe(bond.id);
+  });
+
+  it('is deterministic — the same label reproduces the same ids', () => {
+    // Not a counter: ids must not depend on how many fixtures a test happened
+    // to build first, or golden vectors move with file ordering.
+    const a = seedInviteAndBond({ label: 'stable', inviterId });
+    const b = seedInviteAndBond({ label: 'stable', inviterId });
+    expect(a.invite.id).toBe(b.invite.id);
+    expect(a.bond.id).toBe(b.bond.id);
+  });
+});

@@ -1,6 +1,11 @@
 import {
   fixtureProvenance,
-  uid, txToJson, rawPublicKey, signTransaction } from '../helpers.js';
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  txToJson,
+  uid,
+} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -9,7 +14,14 @@ import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, getPostRaw, queryPosts, getAncestors, getSubtree } from '../../src/store/posts.js';
 import { consumeChallenge, getActiveChallenge } from '../../src/store/challenges.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
-import { getKarmaBox, getKarmaBoxes, insertBox, getBox as storeGetBox } from '../../src/store/utxo.js';
+import {
+  getKarmaBox,
+  getKarmaBoxes,
+  insertBox,
+  getBox as storeGetBox,
+  getBoxByProvenance as storeGetBoxByProvenance,
+} from '../../src/store/utxo.js';
+import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
 import { metaPut, metaGet } from '../../src/store/meta.js';
@@ -23,7 +35,13 @@ import {
   computeBoxId,
   POST_LOCK_THREAD_COST,
 } from '@dagsocial/types';
-import type { KarmaBox, PostLockBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type {
+  AnyBox,
+  CandidateOf,
+  KarmaBox,
+  PostLockBox,
+  UtxoTransaction,
+} from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
 import { unlinkSync } from 'fs';
 
@@ -80,6 +98,17 @@ async function request(
               db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
             },
             getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
+            // The three the hand-written deps object had fallen behind on.
+            // Unreached by the karma-lock path this suite exercises, which is
+            // why it stayed green — but an incomplete deps object throws the
+            // moment a rule starts consulting one of them, and these wire to
+            // the same store functions production does.
+            getBoxByProvenance: (txId: string, index: number) =>
+              storeGetBoxByProvenance(txId, index),
+            getKarmaValue: (owner: Uint8Array) =>
+              getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+            hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) =>
+              hasActiveVouchCooldown(voucherId, targetId),
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();
             },
@@ -196,15 +225,14 @@ describe('posts routes', () => {
     // Setup: identity
 
     // Setup: karma box
-    const karmaBox: KarmaBox = {
+    const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
       owner: userId,
       guard: 'owner_signature',
       proofSource: 'genesis',
-    };
-    Object.assign(karmaBox, fixtureProvenance(karmaBox, 1));
-    const karmaBoxId = computeBoxId(karmaBox);
+    }, 1);
+    const karmaBoxId = karmaBox.id;
     insertBox({ ...karmaBox, id: karmaBoxId });
 
     // Setup: challenge
@@ -215,17 +243,16 @@ describe('posts routes', () => {
     const timestamp = Date.now();
 
     // Build karma-lock tx
-    const newKarma: KarmaBox = {
+    const newKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n - POST_LOCK_THREAD_COST,
       owner: userId,
       guard: 'owner_signature',
       proofSource: 'post-lock',
-    };
-    Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-    const newKarmaId = computeBoxId(newKarma);
+    }, 1);
+    const newKarmaId = newKarma.id;
 
-    const postLockBox: PostLockBox = {
+    const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
@@ -242,8 +269,8 @@ describe('posts routes', () => {
     const karmaLockTx: UtxoTransaction = {
       inputs: [karmaBoxId],
       outputs: [
-        { ...newKarma, id: newKarmaId },
-        { ...postLockBox, id: computeBoxId(postLockBox) },
+        newKarma,
+        postLockBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

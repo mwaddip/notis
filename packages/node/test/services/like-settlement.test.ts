@@ -17,16 +17,17 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
+  changeBoxOf,
   fixtureProvenance,
-  signTransaction,
-  makeTestIdentity,
-  makePost,
+  hex,
+  makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
-  changeBoxOf,
-  makeApplicableBlock,
+  makePost,
   makePruneEntry,
-  hex,
+  makeTestIdentity,
+  seedProvenance,
+  signTransaction,
   type TestIdentity,
 } from '../helpers.js';
 
@@ -224,16 +225,14 @@ async function seedLikers(n: number, nonceBase = 0): Promise<Array<{ id: TestIde
 }
 
 function seedPostLock(value: bigint, author: TestIdentity, postId: string): PostLockBox {
-  const lockBox: PostLockBox = {
+  const lockBox = seedProvenance<PostLockBox>({
     boxType: 'post_lock',
     value,
     originalValue: value,
     owner: author.userId,
     targetPostId: postId,
     guard: 'block_apply',
-  };
-  Object.assign(lockBox, fixtureProvenance(lockBox, 1));
-  lockBox.id = computeBoxId(lockBox);
+  }, 1);
   return lockBox;
 }
 

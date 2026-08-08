@@ -11,10 +11,12 @@ import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type Database from 'better-sqlite3';
 import {
   fixtureProvenance,
+  hex,
   makeApplicableBlock,
   makePruneEntry,
   makeTestIdentity,
-  hex,
+  seedProvenance,
+  type Stored,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -127,35 +129,29 @@ function makePostLockBox(
   owner: Uint8Array,
   targetPostId: string,
   seed: number,
-): PostLockBox {
-  const box: PostLockBox = {
-    boxType: 'post_lock',
+): Stored<PostLockBox> {
+  return seedProvenance<PostLockBox>({
+    boxType: 'post_lock' as const,
     value,
     originalValue: value,
     owner,
     targetPostId,
-    guard: 'block_apply',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  box.id = computeBoxId(box);
-  return box;
+    guard: 'block_apply' as const,
+  }, seed);
 }
 
 function makeKarmaBox(
   value: bigint,
   owner: Uint8Array,
   seed: number,
-): KarmaBox {
-  const box: KarmaBox = {
-    boxType: 'karma',
+): Stored<KarmaBox> {
+  return seedProvenance<KarmaBox>({
+    boxType: 'karma' as const,
     value,
     owner,
-    guard: 'owner_signature',
+    guard: 'owner_signature' as const,
     proofSource: 'genesis',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  box.id = computeBoxId(box);
-  return box;
+  }, seed);
 }
 
 /** Consensus-carried author for topology fixtures (hex(32)). */

@@ -7,7 +7,12 @@
  * finalizeBlock, so no manual ingestion step is needed.
  */
 import {
-  fixtureProvenance, rawPublicKey, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  makeTestConfig,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+} from '../helpers.js';
 import {
   describe,
   it,
@@ -45,7 +50,10 @@ import type Database from 'better-sqlite3';
 // Test config
 // ---------------------------------------------------------------------------
 
-const testConfig = {
+// Every field this literal already set is kept verbatim; `makeTestConfig` only
+// fills the thirteen `Config` requires and this never stated (see its comment
+// in helpers.ts — none of them is read from the argument).
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -62,44 +70,32 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers
 // ---------------------------------------------------------------------------
 
-type DbModule = {
-  initDb: (path: string) => void;
-  getDb: () => Database.Database;
-  closeDb: () => void;
-};
-
-async function importDb(): Promise<DbModule> {
-  return (await import('../../src/store/db.js')) as unknown as DbModule;
+// No hand-written module shapes below. Each of these carried one, and each had
+// drifted from the module it stands for — `importUtxo` was missing
+// `getKarmaBoxes` and `getBoxByProvenance` (both called in this file),
+// `importBlockCreator` typed `startBlockCreator` against `typeof testConfig`
+// rather than `Config`. A duplicate declaration of a module's surface cannot
+// help but rot; the module's own type cannot.
+async function importDb() {
+  return import('../../src/store/db.js');
 }
 
 async function importBlockCreator() {
-  return (await import('../../src/services/block-creator.js')) as {
-    startBlockCreator: (cfg: typeof testConfig) => void;
-    stopBlockCreator: () => void;
-    createOrderingBlock: () => unknown;
-  };
+  return import('../../src/services/block-creator.js');
 }
 
 async function importPosts() {
-  return (await import('../../src/store/posts.js')) as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
-    getPost: (id: string) => Post | null;
-  };
+  return import('../../src/store/posts.js');
 }
 
 async function importUtxo() {
-  return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: AnyBox) => void;
-    getBox: (id: string) => AnyBox | null;
-    getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
-    consumeBox: (boxId: string, consumedAtBlock: number) => void;
-  };
+  return import('../../src/store/utxo.js');
 }
 
 /** The read path as server.ts wires it (N4a): counts and likers from like_records. */
@@ -197,15 +193,13 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
   // longer a box property — it only varies the fixture's synthetic provenance,
   // so two boxes that differ solely by the height a caller passed still get
   // distinct ids rather than colliding on UNIQUE(tx_id, output_index).
-  const box: KarmaBox = {
+  const box = seedProvenance<KarmaBox>({
     boxType: 'karma',
     value,
     owner,
     guard: 'owner_signature',
     proofSource: 'genesis',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  box.id = computeBoxId(box);
+  }, seed);
   return box;
 }
 

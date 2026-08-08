@@ -8,13 +8,22 @@ import {
   INVITE_BOND_KARMA,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { BondBox, InviteBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
+import type {
+  BondBox,
+  CandidateOf,
+  InviteBox,
+  KarmaBox,
+  UtxoTransaction,
+} from '@dagsocial/types';
 import { initDb, closeDb } from '../../src/store/db.js';
 import { insertBox, getBox } from '../../src/store/utxo.js';
 import { createInvite } from '../../src/services/invites.js';
 import { validateTx, materializeOutput } from '../../src/services/utxo-engine.js';
 import {
-  fixtureProvenance, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  seedProvenance,
+  signTransaction,
+} from '../helpers.js';
 
 /**
  * Spec G phase C4 — the invite flow's *predicted* box ids.
@@ -54,32 +63,30 @@ describe('invite id prediction carries transaction provenance', () => {
 
   /** A valid invite tx: consumes one KarmaBox, produces karma + invite + bond. */
   function buildInviteTx(): UtxoTransaction {
-    const karma: KarmaBox = {
+    const karma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
       owner: inviterId,
       guard: 'owner_signature',
       proofSource: 'seed',
-    };
-    Object.assign(karma, fixtureProvenance(karma, 1));
-    karma.id = computeBoxId(karma);
+    }, 1);
     insertBox(karma);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
       owner: inviterId,
       guard: 'owner_signature',
       proofSource: 'create-invite',
     };
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: INVITE_KARMA_AMOUNT,
       secretHash: new Uint8Array(32).fill(0x99),
       inviterId,
       guard: 'hash_preimage_with_bond',
     };
-    const bondBox: BondBox = {
+    const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
@@ -96,9 +103,9 @@ describe('invite id prediction carries transaction provenance', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { ...newKarma, id: computeBoxId(newKarma) },
-        { ...inviteBox, id: computeBoxId(inviteBox) },
-        { ...bondBox, id: computeBoxId(bondBox) },
+        newKarma,
+        inviteBox,
+        bondBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

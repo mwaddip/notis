@@ -81,21 +81,28 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     // tests the record tag first) and make deserializeBox reject it outright.
     // Asserting only the tag literal would leave that consequence untested.
     const owner = new Uint8Array(randomBytes(32));
+    // `withProvenance` mirrors `makeKarmaBox` above: a caller-chosen id (the AVL
+    // key, controlled so the tag-collision assertions below are readable) plus
+    // real `txId`/`index`, which ride the AVL *value* and so must be present for
+    // the serialized leaf to be a shape production could produce.
+    const withProvenance = <B extends AnyBox>(id: string, c: object): B =>
+      ({ id, ...c, ...fixtureProvenance(c, 1, hashSeed(id)) }) as B;
+
     const boxes: AnyBox[] = [
       makeKarmaBox('01'.repeat(32)),
-      { id: '02'.repeat(32), boxType: 'credit', value: 5n,
-        owner, guard: 'owner_signature', proofSource: 1 },
+      withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n,
+        owner, guard: 'owner_signature', proofSource: 1 }),
       // 0x03 was 'like' — retired (P2-D), tag byte reserved.
-      { id: '04'.repeat(32), boxType: 'invite', value: 50n,
+      withProvenance('04'.repeat(32), { boxType: 'invite', value: 50n,
         secretHash: new Uint8Array(randomBytes(32)), inviterId: owner,
-        guard: 'hash_preimage_with_bond' },
-      { id: '05'.repeat(32), boxType: 'bond', value: 10n, 
+        guard: 'hash_preimage_with_bond' }),
+      withProvenance('05'.repeat(32), { boxType: 'bond', value: 10n,
         inviterId: owner, inviteOutputIndex: 0, inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' },
-      { id: '06'.repeat(32), boxType: 'post_lock', value: 5n, 
-        originalValue: 5n, owner, targetPostId: 'p1', guard: 'block_apply' },
-      { id: '07'.repeat(32), boxType: 'vouch', value: 1n, 
-        voucherId: owner, targetId: owner, guard: 'owner_signature' },
+        probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }),
+      withProvenance('06'.repeat(32), { boxType: 'post_lock', value: 5n,
+        originalValue: 5n, owner, targetPostId: 'p1', guard: 'block_apply' }),
+      withProvenance('07'.repeat(32), { boxType: 'vouch', value: 1n,
+        voucherId: owner, targetId: owner, guard: 'owner_signature' }),
     ];
 
     for (const box of boxes) {

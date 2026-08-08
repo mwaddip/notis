@@ -8,18 +8,26 @@ Decentralized social network. Phase 1: local HTTP node with identity, two-phase 
 
 ```bash
 pnpm build                # Build all five packages
-pnpm test                 # Run all tests (1847: types 199 · wire 73 · validation 196 · net 410 · node 969)
-pnpm typecheck            # Type-check all packages
+pnpm test                 # Run all tests (2055: types 199 · wire 73 · validation 196 · net 410 · node 1177)
+pnpm typecheck            # Type-check all packages — src AND test trees, both configs
 node packages/node/dist/index.js   # Start node on :3000
 ```
 
+`pnpm test` does **not** prove a package builds (test code resolves
+`@dagsocial/*` to `src`, never `dist`), so
+`pnpm -r build && pnpm -r typecheck && pnpm -r test` is the gate before any
+commit — see ARCHITECTURE → "Build and test resolution".
+
 ## Architecture
 
-Two packages:
-- `@dagsocial/types` — data structures, base58, CBOR, protocol constants. Pure functions only.
-- `@dagsocial/node` — Express server, PoW, verifier, SQLite store, block creator, demo UI.
+Five packages:
+- `@dagsocial/types` — data structures, base58, CBOR, hashing, protocol constants. Pure functions only.
+- `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
+- `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
+- `@dagsocial/net` — libp2p + Gossipsub relay, header-first sync, peer management.
+- `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
 
-Future: `@dagsocial/net` (libp2p), `@dagsocial/web` (React client).
+Future: `@dagsocial/web` (React client).
 
 ## Design by Contract
 
@@ -47,18 +55,35 @@ MAIN_WINDOW=$KITTY_WINDOW_ID
 NEW_WIN=$(kitty @ launch --type=window --cwd=/home/mwaddip/projects/dagsocial/packages/<component>)
 
 # Launch dclaude
-kitty @ send-text --match=id:$NEW_WIN 'dclaude'
+kitty @ send-text --match=id:$NEW_WIN 'ac'
 kitty @ send-text --match=id:$NEW_WIN $'\r'
 
 # Wait ~10s for Claude to come up, then inject prompt instruction
 kitty @ send-text --match=id:$NEW_WIN 'use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
 
-# HALT — confirm with user before submitting
-kitty @ send-text --match=id:$NEW_WIN $'\r'
+# HALT — confirm with user before submitting.
+# Then: delay, submit, and VERIFY (see the warning below).
+sleep 1; kitty @ send-text --match=id:$NEW_WIN $'\r'
+sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be EMPTY
 ```
 
+> ⚠ **A long `send-text` swallows the Enter, silently.** Anything long enough
+> arrives as a **bracketed paste**, and a `\r` chained in the same command
+> (`send-text '<long msg>' && send-text $'\r'`) lands *inside* the paste instead
+> of submitting it. The window then sits at `❯ [Pasted text #1 +N lines]`
+> forever while every `kitty @` call exits 0 — nothing reports failure. Measured
+> 2026-08-08; it cost ~18 minutes of executor idle time before anyone looked.
+> **Always put a delay between the text and the Enter, and always verify with
+> `kitty @ get-text` that the prompt line came back empty.** "The command
+> succeeded" is not evidence the message landed.
+>
+> `kitty @ get-text --match=id:N` is also the general way to see what a
+> component window is actually doing. Note that `kitty @ ls` **tab** titles
+> reflect the most recently active window in that tab — read the per-window
+> `title` before concluding you dispatched to the wrong session.
+
 4. Dispatch gate is `gate` mode — confirm with user before the final `$'\r'`
-5. Component session reads contracts, implements, tests, commits, reports back via kitty `send-text` to main window
+5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Main reviews and commits each phase; component sessions do not commit.**
 
 ### Prompt boilerplate
 

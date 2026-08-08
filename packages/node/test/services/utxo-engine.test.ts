@@ -1,5 +1,7 @@
 import {
   seedAsOneTx,
+  seedProvenance,
+  type Stored,
   fixtureProvenance,
   uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -26,6 +28,10 @@ import type {
   BondBox,
   PostLockBox,
   VouchBox,
+  AnyBoxCandidate,
+  CandidateOf,
+  CreditBox,
+  UserId,
   UtxoTransaction,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -88,7 +94,10 @@ describe('validateAndApplyTx', () => {
   let db: Database.Database;
   let ownerPubKey: Uint8Array;
   let ownerPrivKey: KeyObject;
-  let ownerUserId: string;
+  // Raw bytes, not hex: it is assigned `ownerPubKey` and every use feeds a
+  // `UserId` field. ARCHITECTURE's rule — typed `UserId` ⇒ raw bytes, typed
+  // `string` ⇒ lowercase hex — makes the declaration the thing that was wrong.
+  let ownerUserId: UserId;
 
   /**
    * Create deps that wrap the real store functions.
@@ -139,31 +148,39 @@ describe('validateAndApplyTx', () => {
     closeDb();
   });
 
-  /** Create a KarmaBox (without id), compute its id, and insert it. */
+  /** Create a KarmaBox, give it fixture provenance and its derived id, insert it. */
   function createAndInsertKarma(
     owner: Uint8Array,
     value: bigint,
     seed: number,
     proofSource = 'test',
-  ): KarmaBox {
-    const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-      boxType: 'karma',
-      value,
-      owner,
-      guard: 'owner_signature',
-      proofSource,
-    };
-    Object.assign(box, fixtureProvenance(box, seed));
-    const id = computeBoxId(box);
-    const full: KarmaBox = { ...box, id, boxType: 'karma', guard: 'owner_signature' };
-    storeInsertBox(full);
-    return full;
+  ): Stored<KarmaBox> {
+    const box = seedProvenance<KarmaBox>(
+      {
+        boxType: 'karma' as const,
+        value,
+        owner,
+        guard: 'owner_signature' as const,
+        proofSource,
+      },
+      seed,
+    );
+    storeInsertBox(box);
+    return box;
   }
 
-  /** Build a transaction with a valid signature for the given private key. */
+  /**
+   * Build a transaction with a valid signature for the given private key.
+   *
+   * `rawOutputs` is `AnyBoxCandidate[]`, matching `UtxoTransaction.outputs`. It
+   * said `AnyBox[]` — stored boxes — which is what forced every output literal
+   * in this file to be annotated as a stored box too, and is the same confusion
+   * the type distinction exists to prevent: an output's `txId` is the id of the
+   * transaction being built, so a signed output carrying one is circular.
+   */
   function buildSignedTx(
     inputs: string[],
-    rawOutputs: AnyBox[],
+    rawOutputs: AnyBoxCandidate[],
     privKey: KeyObject,
     pubKey: Uint8Array,
     protocolVersion = 1,
@@ -188,7 +205,7 @@ describe('validateAndApplyTx', () => {
   it('valid karma to karma (re-anchor, same owner, value conserved)', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
@@ -223,7 +240,7 @@ describe('validateAndApplyTx', () => {
   it('valid karma to karma+invite+bond (invite creation)', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 70n,
       owner: ownerPubKey,
@@ -232,17 +249,17 @@ describe('validateAndApplyTx', () => {
     };
 
     const secretHash = new Uint8Array(32).fill(0xaa);
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: 15n,
       secretHash,
       inviterId: ownerUserId,
       guard: 'hash_preimage_with_bond',
     };
-    Object.assign(inviteBox, fixtureProvenance(inviteBox, 1));
-    const inviteId = computeBoxId(inviteBox);
+    const seededInviteBox = seedProvenance<InviteBox>(inviteBox, 1);
+    const inviteId = seededInviteBox.id;
 
-    const bondBox: BondBox = {
+    const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: 15n,
       inviterId: ownerUserId,
@@ -279,7 +296,7 @@ describe('validateAndApplyTx', () => {
   it('valid like burn: karma → karma at −LIKE_KARMA_COST with likeTarget', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n - LIKE_KARMA_COST,
       owner: ownerPubKey,
@@ -316,7 +333,7 @@ describe('validateAndApplyTx', () => {
     // Consume the box first (mark as spent)
     storeConsumeBox(karma.id!, 5);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
@@ -338,7 +355,7 @@ describe('validateAndApplyTx', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
     // Output claims 120 from a 100 input — 20 karma minted from nothing.
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 120n,
       owner: ownerPubKey,
@@ -366,7 +383,7 @@ describe('validateAndApplyTx', () => {
     const { publicKey: otherPub } = generateKeyPairSync('ed25519');
     const otherPubRaw = rawPublicKey(otherPub);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: otherPubRaw,
@@ -387,7 +404,7 @@ describe('validateAndApplyTx', () => {
   it('rejects missing signature for owner_signature guard', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
@@ -414,7 +431,7 @@ describe('validateAndApplyTx', () => {
   it('transaction atomic: partial failure rolls back all changes', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
@@ -454,14 +471,14 @@ describe('validateAndApplyTx', () => {
 
     // A karma split — two same-owner outputs, so the per-output id derivation
     // is exercised at more than one index.
-    const splitA: KarmaBox = {
+    const splitA: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 60n,
       owner: ownerPubKey,
       guard: 'owner_signature',
       proofSource: 'test',
     };
-    const splitB: KarmaBox = {
+    const splitB: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 40n,
       owner: ownerPubKey,
@@ -497,7 +514,7 @@ describe('validateAndApplyTx', () => {
   it('validateTx checks guards and transitions but does not mutate state', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
@@ -551,7 +568,7 @@ describe('validateAndApplyTx', () => {
       secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
 
       // Create an invite box
-      const inviteBox: InviteBox = {
+      const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: 25n,
         secretHash,
@@ -583,7 +600,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('rejects tx with no BondBox input', () => {
-      const newKarmaBox: KarmaBox = {
+      const newKarmaBox: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 25n,
         owner: new Uint8Array(32),
@@ -604,7 +621,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('rejects tx with missing preimage', () => {
-      const bondOut: BondBox = {
+      const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: 25n,
         inviterId: inviterPubKey,
@@ -614,7 +631,7 @@ describe('validateAndApplyTx', () => {
         probationEndBlock: 0,
         guard: 'bond_dual',
       };
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 25n,
         owner: new Uint8Array(32),
@@ -636,7 +653,7 @@ describe('validateAndApplyTx', () => {
 
     it('rejects tx with wrong preimage', () => {
       const wrongSecret = new Uint8Array(32);
-      const bondOut: BondBox = {
+      const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: 25n,
         inviterId: inviterPubKey,
@@ -646,7 +663,7 @@ describe('validateAndApplyTx', () => {
         probationEndBlock: 0,
         guard: 'bond_dual',
       };
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 25n,
         owner: new Uint8Array(32),
@@ -682,7 +699,7 @@ describe('validateAndApplyTx', () => {
         bondBoxId,
       );
 
-      const bondOut: BondBox = {
+      const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: 25n,
         inviterId: inviterPubKey,
@@ -692,7 +709,7 @@ describe('validateAndApplyTx', () => {
         probationEndBlock: 1003,
         guard: 'bond_dual',
       };
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 25n,
         owner: inviteePubKey,
@@ -742,7 +759,7 @@ describe('validateAndApplyTx', () => {
       secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
 
       // Create invite box
-      const inviteBox: InviteBox = {
+      const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: 25n,
         secretHash,
@@ -769,9 +786,11 @@ describe('validateAndApplyTx', () => {
     });
 
     /** Build a signed reveal tx with preimages and invitee signature. */
+    // Candidates, like `buildSignedTx` above: these are the reveal
+    // transaction's outputs, not stored boxes.
     function buildRevealTx(
-      karmaOut: KarmaBox,
-      bondOut: BondBox,
+      karmaOut: CandidateOf<KarmaBox>,
+      bondOut: CandidateOf<BondBox>,
     ): UtxoTransaction {
       const tx: UtxoTransaction = {
         inputs: [inviteBoxId, bondBoxId],
@@ -801,14 +820,14 @@ describe('validateAndApplyTx', () => {
         bondBoxId,
       );
 
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 25n,
         owner: inviteePubKey,
         guard: 'owner_signature',
         proofSource: 'claim',
       };
-      const bondOut: BondBox = {
+      const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: 25n,
         inviterId: inviterPubKey,
@@ -827,7 +846,7 @@ describe('validateAndApplyTx', () => {
     it('rejects reveal with no bond output', () => {
       // karma output value matches total input value (50) to pass value conservation,
       // then the transition check catches the missing bond output
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 50n,
         owner: inviteePubKey,
@@ -852,14 +871,14 @@ describe('validateAndApplyTx', () => {
     });
 
     it('rejects reveal with uncommitted bond output (empty inviteePubKey)', () => {
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 25n,
         owner: inviteePubKey,
         guard: 'owner_signature',
         proofSource: 'claim',
       };
-      const bondOut: BondBox = {
+      const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: 25n,
         inviterId: inviterPubKey,
@@ -900,14 +919,14 @@ describe('validateAndApplyTx', () => {
 
       // The C-1 exploit: the change box keeps the full balance while a second
       // box conjures 2 more karma.
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n,
         owner: ownerPubKey,
         guard: 'owner_signature',
         proofSource: 'test',
       };
-      const conjured: KarmaBox = {
+      const conjured: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 2n,
         owner: ownerPubKey,
@@ -936,7 +955,7 @@ describe('validateAndApplyTx', () => {
     it('accepts the correct like burn K(v) -> K(v-1) with likeTarget (P2-D)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - LIKE_KARMA_COST,
         owner: ownerPubKey,
@@ -996,7 +1015,7 @@ describe('validateAndApplyTx', () => {
 
       // 15 + (-5) == 10, so a sum-only check would pass this — yet it hands
       // the owner a 15-karma box out of a 10-karma input.
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 15n,
         owner: ownerPubKey,
@@ -1030,14 +1049,14 @@ describe('validateAndApplyTx', () => {
     it('accepts a conserving post-lock tx K(v) -> K(v-5) + PostLock(5)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
         guard: 'owner_signature',
         proofSource: 'test',
       };
-      const postLock: PostLockBox = {
+      const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: POST_LOCK_THREAD_COST,
         originalValue: POST_LOCK_THREAD_COST,
@@ -1063,14 +1082,14 @@ describe('validateAndApplyTx', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
       const targetPubRaw = rawPublicKey(targetPub);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - VOUCH_KARMA_AMOUNT,
         owner: ownerPubKey,
         guard: 'owner_signature',
         proofSource: 'test',
       };
-      const vouchBox: VouchBox = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
@@ -1093,21 +1112,21 @@ describe('validateAndApplyTx', () => {
     it('accepts a conserving invite-create tx K(v) -> K(v-50) + Invite(25) + Bond(25)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
         owner: ownerPubKey,
         guard: 'owner_signature',
         proofSource: 'test',
       };
-      const inviteBox: InviteBox = {
+      const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: INVITE_KARMA_AMOUNT,
         secretHash: new Uint8Array(32).fill(0xbb),
         inviterId: ownerUserId,
         guard: 'hash_preimage_with_bond',
       };
-      const bondBox: BondBox = {
+      const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerUserId,
@@ -1135,21 +1154,21 @@ describe('validateAndApplyTx', () => {
 
       // invites.ts checks only that invite/bond equal 25 each — never that the
       // change box was debited. Conservation is what catches this.
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n,
         owner: ownerPubKey,
         guard: 'owner_signature',
         proofSource: 'test',
       };
-      const inviteBox: InviteBox = {
+      const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: INVITE_KARMA_AMOUNT,
         secretHash: new Uint8Array(32).fill(0xcc),
         inviterId: ownerUserId,
         guard: 'hash_preimage_with_bond',
       };
-      const bondBox: BondBox = {
+      const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerUserId,
@@ -1179,7 +1198,7 @@ describe('validateAndApplyTx', () => {
       // reach — their signature satisfies `bond_dual`, so they could torch the
       // inviter's stake. See test/services/bond-tightening.test.ts for the
       // attack form and its non-vacuity controls.
-      const bondBox: BondBox = {
+      const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerPubKey,
@@ -1189,9 +1208,9 @@ describe('validateAndApplyTx', () => {
         probationEndBlock: 0,
         guard: 'bond_dual',
       };
-      Object.assign(bondBox, fixtureProvenance(bondBox, 1));
-      const bondBoxId = computeBoxId(bondBox);
-      storeInsertBox({ ...bondBox, id: bondBoxId });
+      const seededBondBox = seedProvenance<BondBox>(bondBox, 1);
+      const bondBoxId = seededBondBox.id;
+      storeInsertBox(seededBondBox);
 
       const tx = buildSignedTx([bondBoxId], [], ownerPrivKey, ownerPubKey);
       const result = validateAndApplyTx(deps, tx, 10);
@@ -1204,16 +1223,16 @@ describe('validateAndApplyTx', () => {
 
     it('accepts a VouchBox burn (unvouch) — karma escrows into the cooldown', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
-      const vouchBox: VouchBox = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
         guard: 'owner_signature',
       };
-      Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
-      const vouchBoxId = computeBoxId(vouchBox);
-      storeInsertBox({ ...vouchBox, id: vouchBoxId });
+      const seededVouchBox = seedProvenance<VouchBox>(vouchBox, 1);
+      const vouchBoxId = seededVouchBox.id;
+      storeInsertBox(seededVouchBox);
 
       const tx = buildSignedTx([vouchBoxId], [], ownerPrivKey, ownerPubKey);
       const result = validateAndApplyTx(deps, tx, 10);
@@ -1250,9 +1269,9 @@ describe('validateAndApplyTx', () => {
         // checking credit proofSource's runtime type.
         proofSource: 1,
       };
-      Object.assign(creditBox, fixtureProvenance(creditBox, 1));
-      const creditBoxId = computeBoxId(creditBox);
-      storeInsertBox({ ...creditBox, id: creditBoxId } as AnyBox);
+      const seededCreditBox = seedProvenance<CreditBox>(creditBox, 1);
+      const creditBoxId = seededCreditBox.id;
+      storeInsertBox(seededCreditBox);
 
       const tx = buildSignedTx(
         [creditBoxId],
@@ -1315,7 +1334,7 @@ describe('validateAndApplyTx', () => {
         .digest()
         .subarray(0, 32);
 
-      const inviteBox: InviteBox = {
+      const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: INVITE_KARMA_AMOUNT,
         secretHash,
@@ -1349,7 +1368,7 @@ describe('validateAndApplyTx', () => {
      * secret. Returned unsigned — every test adds the signatures it is about.
      */
     function buildSweepTx(beneficiary: Uint8Array, karmaInId: string): UtxoTransaction {
-      const karmaOut: KarmaBox = {
+      const karmaOut: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: SWEPT_TOTAL,
         owner: beneficiary,
@@ -1358,7 +1377,7 @@ describe('validateAndApplyTx', () => {
       };
       return {
         inputs: [karmaInId, inviteBoxId, bondBoxId],
-        outputs: [{ ...karmaOut, id: computeBoxId(karmaOut) }],
+        outputs: [karmaOut],
         signatures: {},
         preimages: { [inviteBoxId]: secret, [bondBoxId]: secret },
         protocolVersion: 1,
@@ -1557,16 +1576,16 @@ describe('validateAndApplyTx', () => {
 
     it('likeTarget on a zero-output unvouch: invalid (no shelter under the vouch exemption)', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
-      const vouchBox: VouchBox = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
         guard: 'owner_signature',
       };
-      Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
-      const vouchBoxId = computeBoxId(vouchBox);
-      storeInsertBox({ ...vouchBox, id: vouchBoxId });
+      const seededVouchBox = seedProvenance<VouchBox>(vouchBox, 1);
+      const vouchBoxId = seededVouchBox.id;
+      storeInsertBox(seededVouchBox);
 
       const tx = buildSignedTx([vouchBoxId], [], ownerPrivKey, ownerPubKey, 1, TARGET);
       const result = validateTx(deps, tx, 10);
@@ -1590,7 +1609,7 @@ describe('validateAndApplyTx', () => {
 
     it('like with karma + another box type: invalid', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const postLock: PostLockBox = {
+      const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: 5n,
         originalValue: 5n,
@@ -1634,7 +1653,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('spending a block_apply-guarded PostLockBox is rejected at the guard (T2a)', () => {
-      const postLock: PostLockBox = {
+      const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: POST_LOCK_THREAD_COST,
         originalValue: POST_LOCK_THREAD_COST,
@@ -1642,9 +1661,9 @@ describe('validateAndApplyTx', () => {
         targetPostId: TARGET,
         guard: 'block_apply',
       };
-      Object.assign(postLock, fixtureProvenance(postLock, 1));
-      const postLockId = computeBoxId(postLock);
-      storeInsertBox({ ...postLock, id: postLockId } as AnyBox);
+      const seededPostLock = seedProvenance<PostLockBox>(postLock, 1);
+      const postLockId = seededPostLock.id;
+      storeInsertBox(seededPostLock);
 
       // The owner's own signature does not open a settlement-guarded box.
       // Conservation holds (5 in, 5 out), and the transition table would also

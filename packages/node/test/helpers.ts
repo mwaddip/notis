@@ -12,12 +12,19 @@ import {
   LIKE_KARMA_COST,
   CREDIT_MINER_REWARD_DELAY,
   EMPTY_STATE_ROOT,
+  INVITE_KARMA_AMOUNT,
+  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
+import { config } from '../src/config.js';
+import type { Config } from '../src/config.js';
 import type {
   UtxoTransaction,
   AnyBox,
+  BondBox,
+  BoxId,
+  InviteBox,
   Post,
   KarmaBox,
   BlockHeader,
@@ -139,17 +146,36 @@ export function fixtureProvenance(
 }
 
 /**
+ * A box as it exists once seeded or stored: `id` present.
+ *
+ * `BoxBase.id` is optional because it is genuinely absent for one expression —
+ * between building the candidate-plus-provenance object and hashing it. A box
+ * that has been through `seedProvenance` (or read back from a store, or handed
+ * to the AVL prover) is past that point, and saying so once here beats a `!` at
+ * every use site.
+ */
+export type Stored<B extends AnyBox = AnyBox> = B & { id: BoxId };
+
+/**
  * Give a hand-built candidate the provenance and id a stored box must have.
  *
  * The shape every local fixture factory needs since phase G3b: seeding a box
  * straight into the store now requires `tx_id`/`output_index` (NOT NULL) and an
  * `id` that actually derives from them. Mutates in place so a factory that
  * already holds a reference to the candidate keeps seeing the finished box.
+ *
+ * Returns `Stored<T>`: this function always assigns `id`, so a caller that then
+ * has to write `box.id!` is being told something false by the type.
+ * `computeBoxId(result) === result.id` holds for everything it returns.
  */
-export function seedProvenance<T extends AnyBox>(candidate: object, seedHeight = 1, nonce = 0): T {
+export function seedProvenance<T extends AnyBox>(
+  candidate: object,
+  seedHeight = 1,
+  nonce = 0,
+): Stored<T> {
   Object.assign(candidate, fixtureProvenance(candidate, seedHeight, nonce));
   Object.assign(candidate, { id: computeBoxId(candidate as T) });
-  return candidate as T;
+  return candidate as Stored<T>;
 }
 
 /**
@@ -169,6 +195,84 @@ export function seedAsOneTx(candidates: object[], seedHeight = 1, nonce = 0): An
     const box = { ...candidate, txId, index } as AnyBox;
     return { ...box, id: computeBoxId(box) } as AnyBox;
   });
+}
+
+/**
+ * A `u32BE`-encodable nonce derived from a caller-supplied label.
+ *
+ * Deterministic, so a fixture built twice with the same label gets the same
+ * ids across runs and file orderings — the property `fixtureProvenance`
+ * documents and the reason a counter is **not** used here (a counter makes ids
+ * depend on how many boxes a test happened to build first).
+ *
+ * Masked to 31 bits so the value can never reach `U32_SENTINEL` (`0xffffffff`),
+ * which `u32BE` reserves for the un-encodable case.
+ */
+export function labelNonce(label: string): number {
+  const h = createHash('blake2b512').update(label).digest();
+  return h.readUInt32BE(0) & 0x7fffffff;
+}
+
+/**
+ * Seed an invite and its bond as the two outputs of ONE synthetic transaction.
+ *
+ * The pairing is a property of the pair: a bond resolves its InviteBox through
+ * `(bond.txId, bond.inviteOutputIndex)`, so seeding the two with independent
+ * provenance leaves the bond pointing at an index of a transaction that has no
+ * invite at it — the mispairing the index form exists to make inexpressible.
+ * A caller cannot build half of this correctly, so there is no half to build.
+ *
+ * **`label` is required, and it is the whole point.** `seedAsOneTx` derives the
+ * shared txId from `candidates[0]` alone, so two pairs whose *invite* is
+ * structurally identical at the same `seedHeight` get the same txId — and
+ * therefore colliding box ids. Measured, and it is sharper than it first looks:
+ * because only `candidates[0]` feeds the txId, a difference confined to the
+ * **bond** does not separate the pairs either. Two such pairs produce bonds with
+ * *different ids* sharing one `(txId, index)`, which is exactly what
+ * `UNIQUE(tx_id, output_index)` forbids and what `getBoxByProvenance` resolves
+ * by. Centralising the pattern here would multiply that hazard across every
+ * caller, so `label` has no default: forgetting it is a compile error rather
+ * than a silent collision. Pinned by `helpers.test.ts`.
+ */
+export function seedInviteAndBond(opts: {
+  /** Distinguishes this pair from every other. Required — see above. */
+  label: string;
+  inviterId: Uint8Array;
+  inviteValue?: bigint;
+  bondValue?: bigint;
+  secretHash?: Uint8Array;
+  inviteePublicKey?: Uint8Array;
+  probationStartBlock?: number;
+  probationEndBlock?: number;
+  seedHeight?: number;
+}): { invite: Stored<InviteBox>; bond: Stored<BondBox> } {
+  const inviteCandidate = {
+    boxType: 'invite' as const,
+    value: opts.inviteValue ?? INVITE_KARMA_AMOUNT,
+    secretHash: opts.secretHash ?? new Uint8Array(32).fill(0xaa),
+    inviterId: opts.inviterId,
+    guard: 'hash_preimage_with_bond' as const,
+  };
+  const bondCandidate = {
+    boxType: 'bond' as const,
+    value: opts.bondValue ?? INVITE_BOND_KARMA,
+    inviterId: opts.inviterId,
+    // Index 0: the invite is output 0 of this same transaction, below.
+    inviteOutputIndex: 0,
+    inviteePublicKey: opts.inviteePublicKey ?? new Uint8Array(0),
+    probationStartBlock: opts.probationStartBlock ?? 0,
+    probationEndBlock: opts.probationEndBlock ?? 0,
+    guard: 'bond_dual' as const,
+  };
+  const [invite, bond] = seedAsOneTx(
+    [inviteCandidate, bondCandidate],
+    opts.seedHeight ?? 1,
+    labelNonce(opts.label),
+  );
+  return {
+    invite: invite as Stored<InviteBox>,
+    bond: bond as Stored<BondBox>,
+  };
 }
 
 export function makeKarmaBox(
@@ -233,6 +337,87 @@ export function makeLikeTx(
  */
 export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
   return materializeOutput(tx.outputs[0]!, computeTxId(tx), 0) as KarmaBox;
+}
+
+/**
+ * A complete `Config` for a test that has to hand one to production code.
+ *
+ * Derived from the loaded singleton rather than written out as a literal, so it
+ * cannot fall behind `Config`: a field added later arrives already holding the
+ * value the node would run with, and a fixture states only its deliberate
+ * deviations.
+ *
+ * Every hand-written config literal in this tree had already fallen behind —
+ * thirteen fields missing, including `verifyStateRoot`, `maxMempoolEntries` and
+ * `avlKeyLength`. **Measured inert:** `startBlockCreator` reads six fields
+ * (`orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`, `maxSubBlocksPerBlock`,
+ * `miningMode`, `creditTreasuryPct`, `treasuryPubKey`), every fixture supplies
+ * all six, and the three consumers of the missing fields
+ * (`block-apply.ts:341`, `store/mempool.ts:65`, `state/avl-prover.ts:41`) import
+ * the module-level `config` singleton, never the argument. No test mocks
+ * `src/config.js`, so nothing else could reach them either.
+ *
+ * What this removes is the hiding mechanism, not an error: the fixtures were
+ * passed to `startBlockCreator: (cfg: typeof testConfig) => void`, a parameter
+ * typed as the incomplete literal itself — a declaration that mentions `Config`
+ * nowhere and therefore checks the argument against itself. The parameter is
+ * `Config` now, in all twelve. Verified by probe rather than by argument:
+ * changing one `Config` field's type (`creditTreasuryPct: number → bigint`)
+ * failed all twelve; before, it could not have reached any of them.
+ *
+ * Note what this design does with a newly *required* field: it fills it with the
+ * value production runs with, silently and correctly, rather than failing the
+ * build. That is deliberate — the fixtures track production instead of drifting
+ * from it — but it means a field a test needs to *deviate* on must still be
+ * stated at the call site.
+ */
+export function makeTestConfig(overrides: Partial<Config> = {}): Config {
+  return { ...config, ...overrides };
+}
+
+/**
+ * A map keyed by **bytes**, for mocks that stand in for a store lookup.
+ *
+ * Production compares `user_id` as a SQLite BLOB — **by value**
+ * (`store/challenges.ts:25-34` binds `Buffer.from(userId)`). A plain `Map`
+ * keyed by a `Uint8Array` compares **by reference**, so a mock built that way
+ * is strictly *less* permissive than the thing it stands in for: it hits only
+ * while a test reuses one array instance, and the moment a key is built twice
+ * (`uid('alice')` returns a fresh array each call) the lookup returns
+ * `undefined` and the test reads "no active challenge" instead of failing.
+ *
+ * The verifier mocks got this right for `karmaBoxes` (hex key) and wrong for
+ * `identities`/`challenges` in the same object literal. Hex-keying at each call
+ * site would fix today's sites and leave the next one free to get it wrong
+ * again; converting on the way in cannot be forgotten.
+ */
+export class ByteKeyedMap<V> {
+  private readonly inner = new Map<string, V>();
+
+  private static key(k: Uint8Array): string {
+    return Buffer.from(k).toString('hex');
+  }
+
+  set(key: Uint8Array, value: V): this {
+    this.inner.set(ByteKeyedMap.key(key), value);
+    return this;
+  }
+
+  get(key: Uint8Array): V | undefined {
+    return this.inner.get(ByteKeyedMap.key(key));
+  }
+
+  has(key: Uint8Array): boolean {
+    return this.inner.has(ByteKeyedMap.key(key));
+  }
+
+  delete(key: Uint8Array): boolean {
+    return this.inner.delete(ByteKeyedMap.key(key));
+  }
+
+  get size(): number {
+    return this.inner.size;
+  }
 }
 
 export const ZERO_HASH = '0'.repeat(64);

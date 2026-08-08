@@ -89,6 +89,11 @@ function karmaSelfSpend(id: TestIdentity, box: KarmaBox): UtxoTransaction {
   return tx;
 }
 
+// ---------------------------------------------------------------------------
+// The `as unknown as KarmaBox` cast below is DELIBERATE — same reason as
+// `tx-envelope.test.ts`: the funnel's job is rejecting a malformed embedded
+// transaction, so the fixture has to be malformed. Not a typing defect.
+// ---------------------------------------------------------------------------
 describe('block funnel — a malformed envelope is skipped, not fatal', () => {
   beforeEach(() => {
     vi.resetModules();

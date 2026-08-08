@@ -1,5 +1,10 @@
 import {
-  fixtureProvenance, txToJson, rawPublicKey, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  txToJson,
+} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -172,18 +177,14 @@ describe('likes routes', () => {
     });
     likerPubKeyHex = Buffer.from(likerId).toString('hex');
 
-    karmaBox = {
-      boxType: 'karma',
+    karmaBox = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
       value: 100n,
       owner: likerKp.publicKey,
-      guard: 'owner_signature',
+      guard: 'owner_signature' as const,
       proofSource: 'test',
-    };
-    Object.assign(karmaBox, fixtureProvenance(karmaBox, 1));
-    const karmaBoxId = computeBoxId(karmaBox);
-    const karmaWithId: KarmaBox = { ...karmaBox, id: karmaBoxId };
-    insertBox(karmaWithId);
-    karmaBox = karmaWithId;
+    }, 1);
+    insertBox(karmaBox);
   });
 
   afterAll(() => {

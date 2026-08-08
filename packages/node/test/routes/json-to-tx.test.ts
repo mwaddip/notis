@@ -31,9 +31,13 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
 
   it('coerces a non-negative integer number to bigint', () => {
     const tx = jsonToTx(rawTx(42));
-    expect(tx.outputs[0]!.value).toBe(42n);
-    // Hex fields are still decoded to raw bytes.
-    expect(Buffer.from(tx.outputs[0]!.owner as Uint8Array).toString('hex')).toBe(ownerHex);
+    const out = tx.outputs[0]!;
+    expect(out.value).toBe(42n);
+    // Hex fields are still decoded to raw bytes. Narrow on the discriminant
+    // rather than asserting `owner` onto the union — three candidate members
+    // (invite, bond, vouch) genuinely have no `owner`.
+    if (out.boxType !== 'karma') throw new Error(`expected a karma candidate, got ${out.boxType}`);
+    expect(Buffer.from(out.owner).toString('hex')).toBe(ownerHex);
   });
 
   it('coerces a decimal string to bigint (canonical wire form)', () => {

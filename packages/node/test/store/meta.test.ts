@@ -50,7 +50,7 @@ describe('dag_meta', () => {
   });
 });
 
-import { writeSchemaVersion, ensureSchemaVersion, CURRENT_SCHEMA_VERSION } from '../../src/store/meta.js';
+import { writeSchemaVersion, ensureSchemaVersion } from '../../src/store/meta.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';

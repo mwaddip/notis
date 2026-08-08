@@ -12,12 +12,15 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
+import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
 import {
-  makeTestIdentity,
   makeKarmaBox,
+  makeTestConfig,
+  makeTestIdentity,
   seedProvenance,
   signTransaction,
+  type Stored,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -40,7 +43,11 @@ import {
 // next interval self-healed.
 // ---------------------------------------------------------------------------
 
-const testConfig = {
+// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
+// `Config` requires this literal never stated. Hazard removal, not error removal:
+// as a bare literal its type is what `startBlockCreator`'s parameter was declared
+// against, so a newly-required `Config` field would have gone unnoticed here.
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -57,7 +64,7 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 type DbModule = {
   initDb: (path: string) => void;
@@ -71,7 +78,7 @@ async function importDb(): Promise<DbModule> {
 
 async function importBlockCreator() {
   return (await import('../../src/services/block-creator.js')) as unknown as {
-    startBlockCreator: (cfg: typeof testConfig) => void;
+    startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
   };
@@ -147,7 +154,7 @@ function makeCommittedBond(
   inviteePublicKey: Uint8Array,
   probationStartBlock: number,
   probationEndBlock: number,
-): BondBox {
+): Stored<BondBox> {
   return seedProvenance<BondBox>(
     {
       boxType: 'bond' as const,

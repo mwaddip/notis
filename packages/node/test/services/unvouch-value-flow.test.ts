@@ -35,13 +35,21 @@ import type {
 } from '@dagsocial/types';
 import {
   fixtureProvenance,
-  signTransaction,
-  makeTestIdentity,
   hex,
+  makeTestConfig,
+  makeTestIdentity,
+  seedProvenance,
+  signTransaction,
+  type Stored,
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
+import type { Config } from '../../src/config.js';
 
-const testConfig = {
+// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
+// `Config` requires this literal never stated. Hazard removal, not error removal:
+// as a bare literal its type is what `startBlockCreator`'s parameter was declared
+// against, so a newly-required `Config` field would have gone unnoticed here.
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -58,7 +66,7 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 async function importDb() {
   return (await import('../../src/store/db.js')) as {
@@ -69,7 +77,7 @@ async function importDb() {
 
 async function importBlockCreator() {
   return (await import('../../src/services/block-creator.js')) as unknown as {
-    startBlockCreator: (cfg: typeof testConfig) => void;
+    startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
   };
@@ -113,16 +121,14 @@ function makeVouchBox(
   value: bigint,
   voucherId: Uint8Array,
   targetId: Uint8Array,
-): VouchBox {
-  const candidate = {
+): Stored<VouchBox> {
+  return seedProvenance<VouchBox>({
     boxType: 'vouch' as const,
     value,
     voucherId,
     targetId,
     guard: 'owner_signature' as const,
-  };
-  Object.assign(candidate, fixtureProvenance(candidate, 1));
-  return { ...candidate, id: computeBoxId(candidate) } as unknown as VouchBox;
+  }, 1);
 }
 
 /** A signed unvouch: the given VouchBoxes spent to zero outputs. */

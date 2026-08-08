@@ -1,8 +1,13 @@
-import { uid } from '../helpers.js';
+import { ByteKeyedMap, uid } from '../helpers.js';
 import { describe, it, expect } from 'vitest';
-import { generateKeyPairSync, createHash, sign as cryptoSign } from 'crypto';
+import {
+  generateKeyPairSync,
+  createHash,
+  sign as cryptoSign,
+  type KeyObject,
+} from 'crypto';
 import { signingHash, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { Post } from '@dagsocial/types';
+import type { Post, Stump } from '@dagsocial/types';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
 
@@ -11,10 +16,16 @@ import type { VerifierDeps } from '../../src/services/verifier.js';
 // ---------------------------------------------------------------------------
 
 interface MockStore {
-  identities: Map<string, { userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
-  challenges: Map<string, { challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
+  // Byte-keyed, because the store they stand in for compares BLOBs by
+  // value. `karmaBoxes` below already hex-keys; these two did not.
+  identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
+  challenges: ByteKeyedMap<{ challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
   karmaBoxes: Map<string, { value: bigint }[]>;
-  posts: Map<string, unknown>;
+  // Typed as what the dep must return, not `unknown`. Nothing is ever put
+  // in it — `getPost` returns null throughout these suites — but a mock
+  // whose value type cannot satisfy the interface is a mock that would
+  // not compile the day a test starts using it.
+  posts: Map<string, Post | Stump>;
 }
 
 function createMockDeps(store: MockStore): VerifierDeps {
@@ -30,14 +41,14 @@ function createMockDeps(store: MockStore): VerifierDeps {
 
 function makeStore(): MockStore {
   return {
-    identities: new Map(),
-    challenges: new Map(),
+    identities: new ByteKeyedMap(),
+    challenges: new ByteKeyedMap(),
     karmaBoxes: new Map(),
     posts: new Map(),
   };
 }
 
-function signPost(post: Post, privKey: Buffer | crypto.KeyObject): Post {
+function signPost(post: Post, privKey: Buffer | KeyObject): Post {
   const sig = cryptoSign(null, signingHash(post), privKey);
   return { ...post, signature: new Uint8Array(sig) };
 }
@@ -45,7 +56,7 @@ function signPost(post: Post, privKey: Buffer | crypto.KeyObject): Post {
 describe('verifier', () => {
   let userId: Uint8Array;
   let pubKeyRaw: Uint8Array;
-  let privKey: crypto.KeyObject;
+  let privKey: KeyObject;
   let challengeBytes: Uint8Array;
 
   // Generate a real Ed25519 keypair

@@ -35,7 +35,12 @@ import {
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
-  fixtureProvenance, rawPublicKey, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  type Stored,
+} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,19 +51,19 @@ function createKarmaBox(
   owner: Uint8Array,
   value: bigint,
   seed: number,
-): KarmaBox {
-  const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-    boxType: 'karma',
-    value,
-    owner,
-    guard: 'owner_signature',
-    proofSource: 'test',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
-  const full: KarmaBox = { ...box, id, boxType: 'karma', guard: 'owner_signature' };
-  insertBox(full);
-  return full;
+): Stored<KarmaBox> {
+  const box = seedProvenance<KarmaBox>(
+    {
+      boxType: 'karma',
+      value,
+      owner,
+      guard: 'owner_signature',
+      proofSource: 'test',
+    },
+    seed,
+  );
+  insertBox(box);
+  return box;
 }
 
 /** Create and insert a minimal test post. Returns the post ID. */

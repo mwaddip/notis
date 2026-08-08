@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { fixtureProvenance } from '../helpers.js';
 import {
   isIdentityStale,
   owedPeriods,
@@ -37,13 +38,27 @@ function clock(lastActivityBlock: number, lastDecayBlock = 0): IdentityRecord {
   return { lastActivityBlock, lastDecayBlock, likeCarry: 0n };
 }
 
+/**
+ * The `id` is a readable label, not a derived box id — this suite tests the
+ * decay predicate and its arithmetic, never identity, and a random label keeps
+ * boxes distinguishable in failure output. Provenance is real because
+ * `txId`/`index` are required box fields.
+ *
+ * The `...overrides` spread is what made the annotation unsatisfiable: spreading
+ * a `Partial<KarmaBox>` re-optionalises every key it names, including the two
+ * required provenance fields.
+ */
 function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
-  return {
-    boxType: 'karma',
+  const candidate = {
+    boxType: 'karma' as const,
     value: 100n,
     owner: OWNER,
-    guard: 'owner_signature',
+    guard: 'owner_signature' as const,
     proofSource: 'test',
+  };
+  return {
+    ...candidate,
+    ...fixtureProvenance(candidate, 1),
     id: 'box-' + Math.random().toString(36).slice(2, 8),
     ...overrides,
   };

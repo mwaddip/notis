@@ -10,7 +10,13 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { KarmaBox, VouchBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type {
+  AnyBox,
+  CandidateOf,
+  KarmaBox,
+  UtxoTransaction,
+  VouchBox,
+} from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
 import {
@@ -29,7 +35,12 @@ import {
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
-  fixtureProvenance, rawPublicKey, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  type Stored,
+} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,19 +51,19 @@ function createKarmaBox(
   owner: Uint8Array,
   value: bigint,
   seed: number,
-): KarmaBox {
-  const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-    boxType: 'karma',
-    value,
-    owner,
-    guard: 'owner_signature',
-    proofSource: 'test',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
-  const full: KarmaBox = { ...box, id, boxType: 'karma', guard: 'owner_signature' };
-  insertBox(full);
-  return full;
+): Stored<KarmaBox> {
+  const box = seedProvenance<KarmaBox>(
+    {
+      boxType: 'karma' as const,
+      value,
+      owner,
+      guard: 'owner_signature' as const,
+      proofSource: 'test',
+    },
+    seed,
+  );
+  insertBox(box);
+  return box;
 }
 
 /** Create and insert a vouch box, returning it with its computed id. */
@@ -60,19 +71,19 @@ function createVouchBox(
   voucherId: Uint8Array,
   targetId: Uint8Array,
   seed: number,
-): VouchBox {
-  const box: Omit<VouchBox, 'id'> & { id?: string } = {
-    boxType: 'vouch',
-    value: VOUCH_KARMA_AMOUNT,
-    voucherId,
-    targetId,
-    guard: 'owner_signature',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
-  const full: VouchBox = { ...box, id, boxType: 'vouch', guard: 'owner_signature' };
-  insertBox(full);
-  return full;
+): Stored<VouchBox> {
+  const box = seedProvenance<VouchBox>(
+    {
+      boxType: 'vouch' as const,
+      value: VOUCH_KARMA_AMOUNT,
+      voucherId,
+      targetId,
+      guard: 'owner_signature' as const,
+    },
+    seed,
+  );
+  insertBox(box);
+  return box;
 }
 
 /** An unsigned vouch tx — for rejections that fire before validateTx. */
@@ -146,14 +157,14 @@ describe('vouch service', () => {
     privKey?: KeyObject,
   ): UtxoTransaction {
     const ownerHex = Buffer.from(owner).toString('hex');
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 99n,
       owner,
       guard: 'owner_signature',
       proofSource: `vouch:${Buffer.from(targetId).toString('hex')}`,
     };
-    const vouchBox: Omit<VouchBox, 'id'> & { id?: string } = {
+    const vouchBox: CandidateOf<VouchBox> = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
       voucherId: owner,
@@ -163,8 +174,8 @@ describe('vouch service', () => {
     const tx: UtxoTransaction = {
       inputs: [karmaBoxId],
       outputs: [
-        { ...newKarma, id: computeBoxId(newKarma) },
-        { ...vouchBox, id: computeBoxId(vouchBox) } as VouchBox,
+        newKarma,
+        vouchBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -200,7 +211,33 @@ describe('vouch service', () => {
   // -----------------------------------------------------------------------
 
   describe('castVouch', () => {
-    it('rejects if no VouchBox in outputs', () => {
+    // -------------------------------------------------------------------------
+  // Phase 4 deliverable — id integrity across a REAL store round-trip.
+  //
+  // Every fixture in this file used to be built by `createKarmaBox(owner, 10, 1)`
+  // — a NUMBER in a bigint `value`. The id was computed over that number; the
+  // store reads back through `.safeIntegers()` and hands out a bigint; so the
+  // box that came out did not derive the id it went in with. This suite seeds
+  // ten such boxes, which is why the check lives here and not in a fixture:
+  // the in-memory object is exactly what did NOT disagree.
+  //
+  // `types/src/utxo.ts:210-212` says this holds "by construction for every box
+  // in the UTXO set, checkable by any light client, indexer or AVL prover".
+  // Measured false for a number-valued box, true for a bigint-valued one.
+  // -------------------------------------------------------------------------
+  it('every seeded karma and vouch box still derives its own id after storage', () => {
+    const karma = createKarmaBox(voucherPubKey, 10n, 1);
+    const vouch = createVouchBox(voucherPubKey, targetPubKey, 2);
+
+    for (const seeded of [karma, vouch]) {
+      const stored = storeGetBox(seeded.id);
+      expect(stored).not.toBeNull();
+      expect(typeof stored!.value).toBe('bigint');
+      expect(computeBoxId(stored!)).toBe(stored!.id);
+    }
+  });
+
+  it('rejects if no VouchBox in outputs', () => {
       const tx: UtxoTransaction = {
         inputs: [],
         outputs: [],
@@ -255,7 +292,7 @@ describe('vouch service', () => {
 
     it('rejects insufficient karma (< 11)', () => {
       // Create a karma box with only 10 karma (below VOUCH_MIN_BALANCE of 11)
-      createKarmaBox(voucherPubKey, 10, 1);
+      createKarmaBox(voucherPubKey, 10n, 1);
 
       const tx: UtxoTransaction = {
         inputs: [],
@@ -279,7 +316,7 @@ describe('vouch service', () => {
 
     it('rejects duplicate vouch (pair already exists)', () => {
       // Give voucher enough karma to pass the balance check
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
 
       // Create an existing vouch box for the same pair
       createVouchBox(voucherPubKey, targetPubKey, 5);
@@ -311,7 +348,7 @@ describe('vouch service', () => {
     // -------------------------------------------------------------------
 
     it('rejects a second vouch aimed at a different target', () => {
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
       const otherTarget = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
@@ -323,7 +360,7 @@ describe('vouch service', () => {
     });
 
     it('rejects a second vouch while the first is still pending in the mempool', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
       // First vouch — validated and queued, no VouchBox in the UTXO set yet.
       const firstTx = signedVouchTx(karma.id!, voucherPubKey, targetPubKey, 5);
@@ -336,18 +373,18 @@ describe('vouch service', () => {
     });
 
     it('control — a voucher with no active or pending vouch is accepted', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
       const tx = signedVouchTx(karma.id!, voucherPubKey, targetPubKey, 5);
       expect(castVouch(deps, tx, 5).status).toBe('pending');
     });
 
     it('control — a different voucher is unaffected by another identity vouching', () => {
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
       const otherKeys = generateKeyPairSync('ed25519');
       const otherPub = rawPublicKey(otherKeys.publicKey);
-      const otherKarma = createKarmaBox(otherPub, 100, 1);
+      const otherKarma = createKarmaBox(otherPub, 100n, 1);
       const tx = signedVouchTx(otherKarma.id!, otherPub, targetPubKey, 10, otherKeys.privateKey);
 
       expect(castVouch(deps, tx, 10).status).toBe('pending');
@@ -355,7 +392,7 @@ describe('vouch service', () => {
 
     it('rejects if cooldown active', () => {
       // Give voucher enough karma
-      createKarmaBox(voucherPubKey, 100, 1);
+      createKarmaBox(voucherPubKey, 100n, 1);
 
       // Set up a different target that has an active cooldown
       const cooldownTarget = (() => {
@@ -396,9 +433,9 @@ describe('vouch service', () => {
     // -------------------------------------------------------------------
 
     it('accepts valid vouch and inserts into mempool', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 99n,
         owner: voucherPubKey,
@@ -406,9 +443,8 @@ describe('vouch service', () => {
         proofSource: `vouch:${targetPubKeyHex}`,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-      const newKarmaId = computeBoxId(newKarma);
 
-      const vouchBox: Omit<VouchBox, 'id'> & { id?: string } = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
@@ -416,13 +452,12 @@ describe('vouch service', () => {
         guard: 'owner_signature',
       };
       Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
-      const vouchBoxId = computeBoxId(vouchBox);
 
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { ...newKarma, id: newKarmaId },
-          { ...vouchBox, id: vouchBoxId } as VouchBox,
+          newKarma,
+          vouchBox,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
@@ -450,9 +485,9 @@ describe('vouch service', () => {
     });
 
     it('karma is unchanged after castVouch (pending only)', () => {
-      const karma = createKarmaBox(voucherPubKey, 100, 1);
+      const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 99n,
         owner: voucherPubKey,
@@ -460,9 +495,8 @@ describe('vouch service', () => {
         proofSource: `vouch:${targetPubKeyHex}`,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-      const newKarmaId = computeBoxId(newKarma);
 
-      const vouchBox: Omit<VouchBox, 'id'> & { id?: string } = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
@@ -470,13 +504,12 @@ describe('vouch service', () => {
         guard: 'owner_signature',
       };
       Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
-      const vouchBoxId = computeBoxId(vouchBox);
 
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { ...newKarma, id: newKarmaId },
-          { ...vouchBox, id: vouchBoxId } as VouchBox,
+          newKarma,
+          vouchBox,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,

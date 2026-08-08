@@ -33,7 +33,11 @@ import { computeBoxId, computeTxId, VOUCH_KARMA_AMOUNT } from '@dagsocial/types'
 import type { AnyBox, KarmaBox, VouchBox, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
-import { fixtureProvenance, rawPublicKey } from '../helpers.js';
+import {
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -113,8 +117,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
       guard: 'owner_signature' as const,
       proofSource: 'test',
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as KarmaBox;
+    const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
     return box;
   }
@@ -133,8 +136,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
       targetId,
       guard: 'owner_signature' as const,
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as unknown as VouchBox;
+    const box = seedProvenance<VouchBox>(candidate, 1, nonce);
     storeInsertBox(box);
     return box;
   }

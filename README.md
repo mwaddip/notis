@@ -59,7 +59,7 @@ submit. Your solved post *is* a sub-block; a miner's ordering block anchors it.
 |---|---|---|
 | **Producer** | You (the poster) | Miner (PoW) |
 | **Frequency** | Per post | ~60 seconds |
-| **Contains** | One post | Batch of sub-block entries + likes + epoch processing |
+| **Contains** | One post | Batch of sub-block entries, transactions, prune entries |
 
 Posts link via `parentRefs` (up to 8 parents — a DAG, not a strict tree).
 Content is 1–300 UTF-8 bytes. Posting locks a little karma as skin in the
@@ -67,12 +67,20 @@ game, released back as the post accumulates likes.
 
 ### Likes and karma
 
-Karma is the non-tradeable social currency. Liking locks 2 karma from your
-box; at the next epoch the post's likes are tallied — reach the threshold and
-your karma comes back, the author earns a capped reward, and once a post is
-popular enough further likes are free. Rewards mint karma; invite-bond burns
-and inactivity decay destroy it. Dormant accounts bleed slowly down to a
-floor; any protocol action resets the clock.
+Karma is the non-tradeable social currency. **A like is a one-way burn.**
+Liking spends `LIKE_KARMA_COST` karma from your box in an ordinary UTXO
+transaction — the karma is destroyed, not locked, and there is no unlike and no
+free tier. One like per `(liker, post)` pair, forever.
+
+The author's side settles **per block, not per epoch**. Each like accrues on a
+per-identity carry in the state root, and for every `LIKES_PER_KARMA_PAYOUT`
+likes an author receives all but one of them as karma — so `x` likes burned
+mint `x−1`, and the remainder rides the carry to the next block. Every like is
+therefore slightly deflationary by construction, without a threshold to reach
+or a tally to wait for.
+
+Rewards mint karma; invite-bond burns and inactivity decay destroy it. Dormant
+accounts bleed slowly down to a floor; any protocol action resets the clock.
 
 You cannot buy, sell, or transfer karma. That's the point.
 
@@ -187,7 +195,7 @@ pnpm typecheck
 ### Single node (local dev)
 
 ```bash
-NETWORK_MODE=testnet NODE_ROLE=miner node packages/node/dist/index.js
+NETWORK_TYPE=testnet NODE_ROLE=miner node packages/node/dist/index.js
 ```
 
 Starts a miner node on `http://localhost:3000` with the demo UI at the same
@@ -232,28 +240,40 @@ Node 1 is the bootstrap seed; the rest dial it and join the mesh. Logs land in
 
 ### Environment variables
 
+**Consensus parameters are not configurable.** PoW targets, emission, decay,
+karma constants and AVL key length come from the **network profile** selected by
+`NETWORK_TYPE` — they are properties of the network, not of the operator, and
+two nodes that disagreed on them would partition permanently. Setting them by
+environment is not merely discouraged, it has no effect.
+
 | Variable | Default | Description |
 |---|---|---|
+| `NETWORK_TYPE` | `testnet` | `mainnet`, `testnet` or `devnet`. Selects the consensus profile. **An unrecognised value throws at startup** rather than defaulting. |
 | `PORT` | 3000 | HTTP API port |
 | `DB_PATH` | `dagsocial.db` | SQLite database path |
-| `NETWORK_MODE` | `testnet` | `testnet` or `mainnet` |
 | `NODE_ROLE` | `server` | `server` or `miner` |
-| `ORDERING_BLOCK_INTERVAL_MS` | 60000 | Block creation cooldown (ms) |
+| `ORDERING_BLOCK_INTERVAL_MS` | 60000 | Block creation cooldown (ms) — local pacing, not consensus |
+| `ORDERING_BLOCK_MIN_SUB_BLOCKS` | — | Minimum sub-blocks before a block is produced |
+| `MAX_SUB_BLOCKS_PER_BLOCK` | — | Upper bound on sub-blocks per ordering block |
 | `BOOTSTRAP_PEERS` | (empty) | Comma-separated libp2p multiaddrs |
 | `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen address |
-| `POST_POW_TARGET_BITS` | 20 | Post PoW difficulty |
+| `MAX_PEERS` | — | Peer connection ceiling |
 | `CHALLENGE_WINDOW_BLOCKS` | 10 | Challenge expiry blocks |
-| `CREDIT_INITIAL_REWARD` | 100 | Credits per block |
-| `CREDIT_TREASURY_PCT` | 10 | Percent of reward to treasury |
-| `KARMA_STALE_THRESHOLD_BLOCKS` | 20160 | Blocks before decay starts |
-| `KARMA_DECAY_INTERVAL_BLOCKS` | 720 | Blocks between decay burns |
-| `KARMA_DECAY_AMOUNT` | 5 | Karma burned per interval |
-| `KARMA_MINIMUM` | 10 | Decay floor |
+| `MAX_MEMPOOL_ENTRIES` | — | Mempool capacity; submissions beyond it are refused |
+| `MAX_PROOF_HISTORY` | — | Retained AVL+ proof history depth |
+| `VERIFY_STATE_ROOT` | on | Verify each block's committed `stateRoot` at apply |
 | `MINING_MODE` | `internal` | `internal` (in-process PoW, no mining API) or `external` (authenticated template API) |
 | `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty in external mode — startup fails without it. Unused in internal mode. |
-| `ORDERING_BLOCK_POW_TARGET_BITS` | 12 | Ordering block PoW difficulty |
-| `EPOCH_BLOCKS` | 60 | Blocks per epoch (like processing) |
+| `ADMIN_PORT` / `ADMIN_BIND_ADDRESS` | — | Separate bind for admin endpoints |
 | `PUBLIC_URL` | `/` | Base path for the demo UI (e.g. `/testnet/` behind nginx) |
+
+> **Removed, and silently ignored if set** — delete them from any existing env
+> file: `NETWORK_MODE` (renamed to `NETWORK_TYPE`), `POST_POW_TARGET_BITS`,
+> `ORDERING_BLOCK_POW_TARGET_BITS`, `CREDIT_INITIAL_REWARD`,
+> `CREDIT_TREASURY_PCT`, `TREASURY_PUBKEY`, `KARMA_STALE_THRESHOLD_BLOCKS`,
+> `KARMA_DECAY_INTERVAL_BLOCKS`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
+> `AVL_KEY_LENGTH`, `NETWORK_MAGIC`, and `EPOCH_BLOCKS` (like epochs no longer
+> exist — see *Likes and karma*).
 
 ### Demo UI
 
@@ -300,7 +320,8 @@ pnpm typecheck      # Type-check all packages
 - **`@dagsocial/net`** — libp2p + Gossipsub relay with two-stage validation,
   header-first sync, peer discovery and scoring.
 - **`@dagsocial/node`** — Express server, PoW challenges, UTXO engine, SQLite
-  store, AVL+ state root, block creator, epoch tally, decay, demo UI.
+  store, AVL+ state root, block creator, per-block like settlement, decay,
+  demo UI.
 
 ### Contracts
 
@@ -327,7 +348,7 @@ for every interface, and contracts are updated **before** implementation code.
 ## Roadmap
 
 Implemented (Phase 2): the dual ledger, sub-block + ordering-block consensus,
-verifiable pruning, likes/epochs, invites with bonds, vouches, karma decay,
+verifiable pruning, likes as per-block karma burns, invites with bonds, vouches, karma decay,
 credit emission, AVL+ state root with light-client proofs, libp2p networking
 with header-first sync, split mining, demo UI.
 

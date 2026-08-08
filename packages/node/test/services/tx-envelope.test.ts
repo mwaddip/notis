@@ -51,7 +51,12 @@ import type { AnyBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import { encode as cborEncode } from 'cbor-x';
 import Database from 'better-sqlite3';
 
-import { fixtureProvenance, rawPublicKey } from '../helpers.js';
+import {
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  type Stored,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -96,6 +101,14 @@ function reject(tx: unknown): string | null {
   return r.valid ? null : (r.error ?? '<no error string>');
 }
 
+// ---------------------------------------------------------------------------
+// The `as unknown as KarmaBox` casts below are DELIBERATE. `checkTxEnvelope`
+// is total over any decoded-CBOR value and this suite feeds it exactly the
+// values a well-typed literal cannot express — a present-`undefined` key, a
+// non-array `outputs`, an unexpected envelope key. See the note in
+// `field-type-pin.test.ts` for the rule that separates these from the harness
+// casts this unit removed.
+// ---------------------------------------------------------------------------
 describe('checkTxEnvelope — the closed envelope', () => {
   it('accepts the well-formed minimum', () => {
     expect(checkTxEnvelope(envelope())).toEqual({ valid: true });
@@ -389,18 +402,16 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 
   let deps: ReturnType<typeof makeDeps>;
   let owner: TestKeys;
-  let seeded: KarmaBox;
+  let seeded: Stored<KarmaBox>;
 
-  function seedKarma(o: Uint8Array, value: bigint, nonce = 0): KarmaBox {
-    const candidate = {
+  function seedKarma(o: Uint8Array, value: bigint, nonce = 0): Stored<KarmaBox> {
+    const box = seedProvenance<KarmaBox>({
       boxType: 'karma' as const,
       value,
       owner: o,
       guard: 'owner_signature' as const,
       proofSource: 'test',
-    };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as KarmaBox;
+    }, 1, nonce);
     storeInsertBox(box);
     return box;
   }

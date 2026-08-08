@@ -40,10 +40,12 @@ import type { AnyBox, AnyBoxCandidate, KarmaBox, UtxoTransaction } from '@dagsoc
 import Database from 'better-sqlite3';
 import {
   fixtureProvenance,
-  seedAsOneTx,
-  makeTestIdentity,
-  makeKarmaBox,
   makeApplicableBlock,
+  makeKarmaBox,
+  makeTestIdentity,
+  seedAsOneTx,
+  seedProvenance,
+  type Stored,
   type TestIdentity,
 } from '../helpers.js';
 import {
@@ -69,6 +71,20 @@ function rawPublicKey(keyObj: KeyObject): Uint8Array {
 
 const bytes32 = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 
+// ---------------------------------------------------------------------------
+// The `as unknown as AnyBoxCandidate[]` casts below are DELIBERATE and must not
+// be "fixed" by a future type audit.
+//
+// This suite's subject is `checkOutputShape`, whose job is to reject decoded
+// CBOR that does not match a box type. Its inputs are therefore malformed BY
+// CONSTRUCTION — a field of the wrong type, a value past 2^64, a lying guard.
+// The cast is how the test says "this is the bad input"; making these literals
+// well-typed would delete the only cases the function exists to handle.
+//
+// The distinction that matters: a cast asserting a shape the code BELIEVES
+// (a candidate typed as a stored box) is the harness defect this unit removed.
+// A cast constructing a shape the code must REJECT is the test doing its job.
+// ---------------------------------------------------------------------------
 describe('field-type pin', () => {
   let db: Database.Database;
   let ownerPubKey: Uint8Array;
@@ -105,18 +121,19 @@ describe('field-type pin', () => {
 
   afterEach(() => closeDb());
 
-  function seedKarma(value: bigint): KarmaBox {
-    const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-      boxType: 'karma',
-      value,
-      owner: ownerPubKey,
-      guard: 'owner_signature',
-      proofSource: 'test',
-    };
-    Object.assign(box, fixtureProvenance(box, 1));
-    const full = { ...box, id: computeBoxId(box) } as KarmaBox;
-    storeInsertBox(full);
-    return full;
+  function seedKarma(value: bigint): Stored<KarmaBox> {
+    const box = seedProvenance<KarmaBox>(
+      {
+        boxType: 'karma',
+        value,
+        owner: ownerPubKey,
+        guard: 'owner_signature',
+        proofSource: 'test',
+      },
+      1,
+    );
+    storeInsertBox(box);
+    return box;
   }
 
   function signedTx(inputs: string[], outputs: unknown[]): UtxoTransaction {

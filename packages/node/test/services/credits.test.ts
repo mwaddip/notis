@@ -8,7 +8,12 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { CandidateOf, CreditBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
+import type {
+  CandidateOf,
+  CreditBox,
+  KarmaBox,
+  UtxoTransaction,
+} from '@dagsocial/types';
 import { initDb, getDb, closeDb } from '../../src/store/db.js';
 import {
   getBox,
@@ -24,7 +29,12 @@ import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getPendingEntries } from '../../src/store/mempool.js';
 import { sendCredits } from '../../src/services/credits.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
-import { fixtureProvenance, rawPublicKey } from '../helpers.js';
+import {
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  type Stored,
+} from '../helpers.js';
 
 function signTxId(
   tx: UtxoTransaction,
@@ -66,8 +76,11 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     closeDb();
   });
 
-  function seedCredits(value: bigint, lockedUntilBlock?: number): CreditBox {
-    const box: CreditBox = {
+  function seedCredits(value: bigint, lockedUntilBlock?: number): Stored<CreditBox> {
+    // `lockedUntilBlock` is set BEFORE seeding on purpose: it is a box field, so
+    // it must be inside the bytes the id derives from. Seeding first would
+    // produce an id that does not cover it.
+    const candidate: CandidateOf<CreditBox> = {
       boxType: 'credit',
       value,
       owner: alicePubKey,
@@ -75,10 +88,9 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       proofSource: HEIGHT - 10,
     };
     if (lockedUntilBlock !== undefined) {
-      box.lockedUntilBlock = lockedUntilBlock;
+      candidate.lockedUntilBlock = lockedUntilBlock;
     }
-    Object.assign(box, fixtureProvenance(box, 1));
-    box.id = computeBoxId(box);
+    const box = seedProvenance<CreditBox>(candidate, 1);
     insertBox(box);
     return box;
   }
@@ -272,7 +284,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   it('computeTxId is invariant under output provenance', async () => {
     const { materializeOutput } = await import('../../src/services/utxo-engine.js');
 
-    const candidate: CreditBox = {
+    const candidate: CandidateOf<CreditBox> = {
       boxType: 'credit',
       value: 42n,
       owner: bobPubKey,
@@ -281,7 +293,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     };
     const tx: UtxoTransaction = {
       inputs: ['ab'.repeat(32)],
-      outputs: [{ ...candidate, id: computeBoxId(candidate) }],
+      outputs: [candidate],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };

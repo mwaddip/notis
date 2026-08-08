@@ -1,5 +1,4 @@
-import {
-  fixtureProvenance, txToJson, uid } from '../helpers.js';
+import { fixtureProvenance, seedProvenance, txToJson, uid } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -31,7 +30,15 @@ import {
   selectBoxes,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { KarmaBox, CreditBox, InviteBox, BondBox, NetworkType, UtxoTransaction } from '@dagsocial/types';
+import type {
+  BondBox,
+  CandidateOf,
+  CreditBox,
+  InviteBox,
+  KarmaBox,
+  NetworkType,
+  UtxoTransaction,
+} from '@dagsocial/types';
 import { createRouter } from '../../src/routes/utxo.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { unlinkSync } from 'fs';
@@ -124,65 +131,68 @@ describe('UTXO routes', () => {
     const kp1 = generateKeyPair();
     karmaUserId = kp1.publicKey;
     karmaUserIdHex = Buffer.from(karmaUserId).toString('hex');
-    const karmaBox: KarmaBox = {
+    const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 42n,
       owner: kp1.publicKey,
       guard: 'owner_signature',
       proofSource: 'test',
-    };
-    Object.assign(karmaBox, fixtureProvenance(karmaBox, 1));
-    insertBox({ ...karmaBox, id: computeBoxId(karmaBox) });
+    }, 1);
+    insertBox(karmaBox);
 
     // Second karma box for same user — multi-box total must sum across all boxes
-    const karmaBox2: KarmaBox = {
+    const karmaBox2 = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 58n,
       owner: kp1.publicKey,
       guard: 'owner_signature',
       proofSource: 'test',
-    };
-    Object.assign(karmaBox2, fixtureProvenance(karmaBox2, 1));
-    insertBox({ ...karmaBox2, id: computeBoxId(karmaBox2) });
+    }, 1);
+    insertBox(karmaBox2);
 
     // User with credits
     const kp2 = generateKeyPair();
     creditUserId = kp2.publicKey;
     creditUserIdHex = Buffer.from(creditUserId).toString('hex');
-    const creditBox: CreditBox = {
+    const creditBox = seedProvenance<CreditBox>({
       boxType: 'credit',
       value: 99n,
       owner: kp2.publicKey,
       guard: 'owner_signature',
       proofSource: 1,
-    };
-    Object.assign(creditBox, fixtureProvenance(creditBox, 1));
-    insertBox({ ...creditBox, id: computeBoxId(creditBox) });
+    }, 1);
+    insertBox(creditBox);
 
     // User with invites and bonds
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
-    const inviteBox: InviteBox = {
-      boxType: 'invite',
+    // Guard strings are box CONTENT — they sit inside the box-id preimage — so
+    // these two fixtures described boxes that could never exist. `hash_preimage`
+    // and `inviter_signature` are the pre-bond-dual names; `InviteBox.guard` is
+    // `hash_preimage_with_bond` and `BondBox.guard` is `bond_dual`. The bond was
+    // also missing `inviteOutputIndex`, which the guard error was masking: a
+    // bond resolves its invite through `(txId, inviteOutputIndex)`, so a bond
+    // without it cannot name the invite it shipped with.
+    const inviteBox = seedProvenance<InviteBox>({
+      boxType: 'invite' as const,
       value: 10n,
       secretHash: new Uint8Array(32).fill(0xaa),
       inviterId: inviteUserId,
-      guard: 'hash_preimage',
-    };
-    Object.assign(inviteBox, fixtureProvenance(inviteBox, 1));
-    insertBox({ ...inviteBox, id: computeBoxId(inviteBox) });
-    const bondBox: BondBox = {
-      boxType: 'bond',
+      guard: 'hash_preimage_with_bond' as const,
+    }, 1);
+    insertBox(inviteBox);
+    const bondBox = seedProvenance<BondBox>({
+      boxType: 'bond' as const,
       value: 5n,
       inviterId: inviteUserId,
+      inviteOutputIndex: 0,
       inviteePublicKey: new Uint8Array(32).fill(0xbb),
       probationStartBlock: 100,
       probationEndBlock: 1100,
-      guard: 'inviter_signature',
-    };
-    Object.assign(bondBox, fixtureProvenance(bondBox, 1));
-    insertBox({ ...bondBox, id: computeBoxId(bondBox) });
+      guard: 'bond_dual' as const,
+    }, 1);
+    insertBox(bondBox);
 
     // Initialize system keypair for faucet tests
     initSystemKeypair();
@@ -253,16 +263,15 @@ describe('UTXO routes', () => {
       receiverPubKey = receiver.publicKey;
 
       // Seed sender with 200 credits
-      const box: CreditBox = {
+      const box = seedProvenance<CreditBox>({
         boxType: 'credit',
         value: 200n,
         owner: senderPubKey,
         guard: 'owner_signature',
         proofSource: 10,
-      };
-      Object.assign(box, fixtureProvenance(box, 1));
-      seededBoxId = computeBoxId(box);
-      insertBox({ ...box, id: seededBoxId });
+      }, 1);
+      seededBoxId = box.id;
+      insertBox(box);
     });
 
     /** Build and sign the transfer the way the demo UI does. */
@@ -272,7 +281,7 @@ describe('UTXO routes', () => {
       const totalSelected = selected.reduce((s, b) => s + b.value, 0n);
       const change = totalSelected - amount;
 
-      const outputs: CreditBox[] = [{
+      const outputs: CandidateOf<CreditBox>[] = [{
         boxType: 'credit',
         value: amount,
         owner: receiverPubKey,
@@ -407,7 +416,10 @@ describe('UTXO routes', () => {
     });
 
     it('pools a valid transfer, answers pending, broadcasts — and settles nothing', async () => {
-      const broadcastTx = vi.fn(() => Promise.resolve());
+      // Declared with the parameter it is actually called with: a zero-arity
+      // mock types `mock.calls[0]` as the empty tuple, so the assertion below
+      // reads argument 0 of a call the type system says takes none.
+      const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
       setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
       const tx = buildSignedTransfer(50n);
