@@ -1547,9 +1547,18 @@ Six rules govern it:
    `paths` mapping `@dagsocial/*` to `../<pkg>/src/index.ts`, mirroring the vitest alias above —
    without it `tsc` follows `exports` to `dist` types and re-opens the stale-`dist` class this
    section exists to kill; and node's parked `test/e2e/**` stays excluded until its post-P2-D
-   rewrite. Baseline debt at decision time: **469 errors** (types 18 · wire 1 · validation 6 ·
-   net 21 · node 423), zero in any `src`; no test file uses bare vitest globals, so no
-   `types: ["vitest/globals"]` entry is needed.
+   rewrite. Baseline debt at decision time: **455 errors** (types 18 · wire 1 · validation 6 ·
+   net 21 · node 409 — the node figure re-derived on `57af44f`; two earlier readings of 423 and
+   434 were taken before the `Database`-namespace class was paid down and are superseded).
+   **No `types: ["vitest/globals"]` entry is needed** — but not for the reason first recorded
+   here. The original claim, "no test file uses bare vitest globals", is **false**:
+   `node/test/config.test.ts:44` calls `vi.resetModules()` while importing only
+   `{describe, it, expect, beforeEach}`, and `tsc` reports exactly one
+   `TS2304: Cannot find name 'vi'` for it. Every other file in every package imports what it
+   uses. The remedy is therefore to fix that one import, **not** to admit an ambient global —
+   which would silently license the drift the explicit-import convention prevents. Right
+   conclusion, wrong premise: the same shape as a fixture agreeing with its own assertion,
+   and caught only because node's tree was finally compiled.
 6. **Every package declares `@types/node` itself.** Not inherited, not assumed: TypeScript resolves
    ambient node typings by walking `node_modules` *upward without a repo boundary*, so a package that
    omits the dependency silently typechecks against whatever copy exists further up the filesystem —
