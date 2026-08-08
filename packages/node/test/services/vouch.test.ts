@@ -10,7 +10,13 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { KarmaBox, VouchBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type {
+  AnyBox,
+  CandidateOf,
+  KarmaBox,
+  UtxoTransaction,
+  VouchBox,
+} from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
 import {
@@ -29,7 +35,12 @@ import {
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
-  fixtureProvenance, rawPublicKey, signTransaction } from '../helpers.js';
+  fixtureProvenance,
+  rawPublicKey,
+  seedProvenance,
+  signTransaction,
+  type Stored,
+} from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,19 +51,19 @@ function createKarmaBox(
   owner: Uint8Array,
   value: bigint,
   seed: number,
-): KarmaBox {
-  const box: Omit<KarmaBox, 'id'> & { id?: string } = {
-    boxType: 'karma',
-    value,
-    owner,
-    guard: 'owner_signature',
-    proofSource: 'test',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
-  const full: KarmaBox = { ...box, id, boxType: 'karma', guard: 'owner_signature' };
-  insertBox(full);
-  return full;
+): Stored<KarmaBox> {
+  const box = seedProvenance<KarmaBox>(
+    {
+      boxType: 'karma' as const,
+      value,
+      owner,
+      guard: 'owner_signature' as const,
+      proofSource: 'test',
+    },
+    seed,
+  );
+  insertBox(box);
+  return box;
 }
 
 /** Create and insert a vouch box, returning it with its computed id. */
@@ -60,19 +71,19 @@ function createVouchBox(
   voucherId: Uint8Array,
   targetId: Uint8Array,
   seed: number,
-): VouchBox {
-  const box: Omit<VouchBox, 'id'> & { id?: string } = {
-    boxType: 'vouch',
-    value: VOUCH_KARMA_AMOUNT,
-    voucherId,
-    targetId,
-    guard: 'owner_signature',
-  };
-  Object.assign(box, fixtureProvenance(box, seed));
-  const id = computeBoxId(box);
-  const full: VouchBox = { ...box, id, boxType: 'vouch', guard: 'owner_signature' };
-  insertBox(full);
-  return full;
+): Stored<VouchBox> {
+  const box = seedProvenance<VouchBox>(
+    {
+      boxType: 'vouch' as const,
+      value: VOUCH_KARMA_AMOUNT,
+      voucherId,
+      targetId,
+      guard: 'owner_signature' as const,
+    },
+    seed,
+  );
+  insertBox(box);
+  return box;
 }
 
 /** An unsigned vouch tx — for rejections that fire before validateTx. */
@@ -146,14 +157,14 @@ describe('vouch service', () => {
     privKey?: KeyObject,
   ): UtxoTransaction {
     const ownerHex = Buffer.from(owner).toString('hex');
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 99n,
       owner,
       guard: 'owner_signature',
       proofSource: `vouch:${Buffer.from(targetId).toString('hex')}`,
     };
-    const vouchBox: Omit<VouchBox, 'id'> & { id?: string } = {
+    const vouchBox: CandidateOf<VouchBox> = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
       voucherId: owner,
@@ -398,7 +409,7 @@ describe('vouch service', () => {
     it('accepts valid vouch and inserts into mempool', () => {
       const karma = createKarmaBox(voucherPubKey, 100, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 99n,
         owner: voucherPubKey,
@@ -408,7 +419,7 @@ describe('vouch service', () => {
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
       const newKarmaId = computeBoxId(newKarma);
 
-      const vouchBox: Omit<VouchBox, 'id'> & { id?: string } = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
@@ -452,7 +463,7 @@ describe('vouch service', () => {
     it('karma is unchanged after castVouch (pending only)', () => {
       const karma = createKarmaBox(voucherPubKey, 100, 1);
 
-      const newKarma: KarmaBox = {
+      const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 99n,
         owner: voucherPubKey,
@@ -462,7 +473,7 @@ describe('vouch service', () => {
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
       const newKarmaId = computeBoxId(newKarma);
 
-      const vouchBox: Omit<VouchBox, 'id'> & { id?: string } = {
+      const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
