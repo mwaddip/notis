@@ -1,7 +1,11 @@
 import {
-  seedAsOneTx,
   fixtureProvenance,
-  txToJson, signTransaction } from '../helpers.js';
+  labelNonce,
+  seedAsOneTx,
+  seedProvenance,
+  signTransaction,
+  txToJson,
+} from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -26,7 +30,13 @@ import {
   INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
 import type {
-  CandidateOf, KarmaBox, InviteBox, BondBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+  AnyBox,
+  BondBox,
+  CandidateOf,
+  InviteBox,
+  KarmaBox,
+  UtxoTransaction,
+} from '@dagsocial/types';
 import { createRouter } from '../../src/routes/invites.js';
 import type { InvitesDeps } from '../../src/routes/invites.js';
 import { ClientError } from '../../src/services/client-error.js';
@@ -125,39 +135,34 @@ describe('invites routes', () => {
   });
 
   it('POST /invites creates invite and returns 201 with pending', async () => {
-    const karma: KarmaBox = {
+    const karma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
       owner: inviterId,
       guard: 'owner_signature',
       proofSource: 'test-create',
-    };
-    Object.assign(karma, fixtureProvenance(karma, 1));
-    const karmaId = computeBoxId(karma);
-    storeInsertBox({ ...karma, id: karmaId, boxType: 'karma', guard: 'owner_signature' } as KarmaBox);
+    }, 1);
+    const karmaId = karma.id;
+    storeInsertBox(karma);
 
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 50n,
       owner: inviterId,
       guard: 'owner_signature',
       proofSource: 'create-invite',
     };
-    Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-    const newKarmaId = computeBoxId(newKarma);
 
     const secretHash = new Uint8Array(32).fill(0x99);
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: INVITE_KARMA_AMOUNT,
       secretHash,
       inviterId,
       guard: 'hash_preimage_with_bond',
     };
-    Object.assign(inviteBox, fixtureProvenance(inviteBox, 1));
-    const inviteBoxId = computeBoxId(inviteBox);
 
-    const bondBox: BondBox = {
+    const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
@@ -167,15 +172,13 @@ describe('invites routes', () => {
       probationEndBlock: 0,
       guard: 'bond_dual',
     };
-    Object.assign(bondBox, fixtureProvenance(bondBox, 1));
-    const bondBoxId = computeBoxId(bondBox);
 
     const tx: UtxoTransaction = {
       inputs: [karmaId],
       outputs: [
-        { ...newKarma, id: newKarmaId },
-        { ...inviteBox, id: inviteBoxId },
-        { ...bondBox, id: bondBoxId },
+        newKarma,
+        inviteBox,
+        bondBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -203,7 +206,7 @@ describe('invites routes', () => {
     const secret = new Uint8Array(32).fill(0x66);
     const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
 
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: INVITE_KARMA_AMOUNT,
       secretHash,
@@ -225,7 +228,15 @@ describe('invites routes', () => {
       probationEndBlock: 0,
       guard: 'bond_dual' as const,
     };
-    const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate]);
+    // `label` gives this pair its own provenance. All four call sites in this
+    // file pass identical values, so without it they derive ONE txId and land
+    // two bonds on one `(txId, index)` — latent today only because each test
+    // re-inits `:memory:` and seeds a single pair.
+    const [seededInvite, seededBond] = seedAsOneTx(
+      [inviteBox, bondCandidate],
+      1,
+      labelNonce('routes-invites-1'),
+    );
     const inviteBoxId = seededInvite!.id!;
     const bondBoxId = seededBond!.id!;
     storeInsertBox(seededInvite!);
@@ -288,7 +299,7 @@ describe('invites routes', () => {
     const secret = new Uint8Array(32).fill(0x55);
     const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
 
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: INVITE_KARMA_AMOUNT,
       secretHash,
@@ -310,7 +321,15 @@ describe('invites routes', () => {
       probationEndBlock: 0,
       guard: 'bond_dual' as const,
     };
-    const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate]);
+    // `label` gives this pair its own provenance. All four call sites in this
+    // file pass identical values, so without it they derive ONE txId and land
+    // two bonds on one `(txId, index)` — latent today only because each test
+    // re-inits `:memory:` and seeds a single pair.
+    const [seededInvite, seededBond] = seedAsOneTx(
+      [inviteBox, bondCandidate],
+      1,
+      labelNonce('routes-invites-2'),
+    );
     const inviteBoxId = seededInvite!.id!;
     const bondBoxId = seededBond!.id!;
     storeInsertBox(seededInvite!);
@@ -340,17 +359,15 @@ describe('invites routes', () => {
       bondBoxId,
     );
 
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: INVITE_KARMA_AMOUNT,
       owner: inviteePubKey,
       guard: 'owner_signature',
       proofSource: `invite-claim:${inviteBoxId}`,
     };
-    Object.assign(karmaOut, fixtureProvenance(karmaOut, 1));
-    const karmaOutId = computeBoxId(karmaOut);
 
-    const bondOut: BondBox = {
+    const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
@@ -360,14 +377,12 @@ describe('invites routes', () => {
       probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
       guard: 'bond_dual',
     };
-    Object.assign(bondOut, fixtureProvenance(bondOut, 1));
-    const bondOutId = computeBoxId(bondOut);
 
     const tx: UtxoTransaction = {
       inputs: [inviteBoxId, bondBoxId],
       outputs: [
-        { ...karmaOut, id: karmaOutId },
-        { ...bondOut, id: bondOutId },
+        karmaOut,
+        bondOut,
       ],
       signatures: {},
       preimages: { [inviteBoxId]: secret },
@@ -391,7 +406,7 @@ describe('invites routes', () => {
 
     const blockHeight = 10;
 
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: INVITE_KARMA_AMOUNT,
       secretHash,
@@ -413,37 +428,42 @@ describe('invites routes', () => {
       probationEndBlock: 0,
       guard: 'bond_dual' as const,
     };
-    const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate]);
+    // `label` gives this pair its own provenance. All four call sites in this
+    // file pass identical values, so without it they derive ONE txId and land
+    // two bonds on one `(txId, index)` — latent today only because each test
+    // re-inits `:memory:` and seeds a single pair.
+    const [seededInvite, seededBond] = seedAsOneTx(
+      [inviteBox, bondCandidate],
+      1,
+      labelNonce('routes-invites-3'),
+    );
     const inviteBoxId = seededInvite!.id!;
     const bondBoxId = seededBond!.id!;
     storeInsertBox(seededInvite!);
     storeInsertBox(seededBond!);
 
-    const karmaIn: KarmaBox = {
+    const karmaIn = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 200n,
       owner: inviterId,
       guard: 'owner_signature',
       proofSource: 'test-cancel',
-    };
-    Object.assign(karmaIn, fixtureProvenance(karmaIn, 1));
-    const karmaInId = computeBoxId(karmaIn);
-    storeInsertBox({ ...karmaIn, id: karmaInId, boxType: 'karma', guard: 'owner_signature' } as KarmaBox);
+    }, 1);
+    const karmaInId = karmaIn.id;
+    storeInsertBox(karmaIn);
 
     const totalValue = 200n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: totalValue,
       owner: inviterId,
       guard: 'owner_signature',
       proofSource: `invite-cancel:${inviteBoxId}`,
     };
-    Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-    const newKarmaId = computeBoxId(newKarma);
 
     const tx: UtxoTransaction = {
       inputs: [karmaInId, inviteBoxId, bondBoxId],
-      outputs: [{ ...newKarma, id: newKarmaId }],
+      outputs: [newKarma],
       signatures: {},
       preimages: { [inviteBoxId]: secret },
       protocolVersion: PROTOCOL_VERSION,
@@ -464,7 +484,7 @@ describe('invites routes', () => {
 
     const blockHeight = 20;
 
-    const inviteBox: InviteBox = {
+    const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: INVITE_KARMA_AMOUNT,
       secretHash,
@@ -486,7 +506,15 @@ describe('invites routes', () => {
       probationEndBlock: 0,
       guard: 'bond_dual' as const,
     };
-    const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate]);
+    // `label` gives this pair its own provenance. All four call sites in this
+    // file pass identical values, so without it they derive ONE txId and land
+    // two bonds on one `(txId, index)` — latent today only because each test
+    // re-inits `:memory:` and seeds a single pair.
+    const [seededInvite, seededBond] = seedAsOneTx(
+      [inviteBox, bondCandidate],
+      1,
+      labelNonce('routes-invites-4'),
+    );
     const inviteBoxId = seededInvite!.id!;
     const bondBoxId = seededBond!.id!;
     storeInsertBox(seededInvite!);
@@ -501,31 +529,28 @@ describe('invites routes', () => {
       type: 'pkcs8',
     });
 
-    const wrongKarma: KarmaBox = {
+    const wrongKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 200n,
       owner: wrongPubKey,
       guard: 'owner_signature',
       proofSource: 'test-wrong',
-    };
-    Object.assign(wrongKarma, fixtureProvenance(wrongKarma, 1));
-    const wrongKarmaId = computeBoxId(wrongKarma);
-    storeInsertBox({ ...wrongKarma, id: wrongKarmaId, boxType: 'karma', guard: 'owner_signature' } as KarmaBox);
+    }, 1);
+    const wrongKarmaId = wrongKarma.id;
+    storeInsertBox(wrongKarma);
 
     const totalValue = 200n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-    const newKarma: KarmaBox = {
+    const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: totalValue,
       owner: wrongPubKey,
       guard: 'owner_signature',
       proofSource: `invite-cancel:${inviteBoxId}`,
     };
-    Object.assign(newKarma, fixtureProvenance(newKarma, 1));
-    const newKarmaId = computeBoxId(newKarma);
 
     const tx: UtxoTransaction = {
       inputs: [wrongKarmaId, inviteBoxId, bondBoxId],
-      outputs: [{ ...newKarma, id: newKarmaId }],
+      outputs: [newKarma],
       signatures: {},
       preimages: { [inviteBoxId]: secret },
       protocolVersion: PROTOCOL_VERSION,

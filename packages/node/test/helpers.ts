@@ -208,7 +208,7 @@ export function seedAsOneTx(candidates: object[], seedHeight = 1, nonce = 0): An
  * Masked to 31 bits so the value can never reach `U32_SENTINEL` (`0xffffffff`),
  * which `u32BE` reserves for the un-encodable case.
  */
-function labelNonce(label: string): number {
+export function labelNonce(label: string): number {
   const h = createHash('blake2b512').update(label).digest();
   return h.readUInt32BE(0) & 0x7fffffff;
 }
