@@ -143,6 +143,24 @@ const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside [0, 2³²−1)
 // bytes per field so a transposition is visible too.
 // ---------------------------------------------------------------------------
 
+/**
+ * Provenance for the four per-type coverage fixtures below.
+ *
+ * They are NOT outputs of `GOLDEN_UTXO_TX` — that transaction creates the karma
+ * box at index 0 and the credit box at index 1 and nothing else — so they carry
+ * their own synthetic creating transaction rather than claiming an index of one
+ * that has no output there.
+ *
+ * They previously carried no provenance at all, and that was not cosmetic:
+ * `computeBoxId` binds `txId`/`index`, and on a provenance-less box `u32BE`
+ * lands on the `0xffffffff` totality sentinel (types/src/utxo.ts:106-112) with
+ * an empty txId. So the `$name: ...encodes identically` case below compared the
+ * two implementations **on the sentinel path** for invite, bond, post_lock and
+ * vouch — it had never once checked that the UI encodes a real `txId`/`index`
+ * the way the node does for those four types.
+ */
+const COVERAGE_TX_ID = 'de'.repeat(32);
+
 const BYTES_SECRET = new Uint8Array(32).fill(0xa1);
 const BYTES_INVITEE = new Uint8Array(32).fill(0xb2);
 const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
@@ -150,6 +168,7 @@ const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
 const GOLDEN_INVITE_BOX: InviteBox = {
   boxType: 'invite', value: 10n, 
   secretHash: BYTES_SECRET, inviterId: GOLDEN_AUTHOR, guard: 'hash_preimage_with_bond',
+  txId: COVERAGE_TX_ID, index: 0,
 };
 
 const GOLDEN_BOND_BOX: BondBox = {
@@ -164,17 +183,20 @@ const GOLDEN_BOND_BOX: BondBox = {
   inviteOutputIndex: 1,
   inviteePublicKey: BYTES_INVITEE,
   probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual',
+  txId: COVERAGE_TX_ID, index: 1,
 };
 
 const GOLDEN_POST_LOCK_BOX: PostLockBox = {
   boxType: 'post_lock', value: 8n, 
   originalValue: 10n, owner: GOLDEN_AUTHOR, targetPostId: GOLDEN_POST_ID,
   guard: 'block_apply',
+  txId: COVERAGE_TX_ID, index: 2,
 };
 
 const GOLDEN_VOUCH_BOX: VouchBox = {
   boxType: 'vouch', value: 1n, 
   voucherId: GOLDEN_AUTHOR, targetId: BYTES_TARGET, guard: 'owner_signature',
+  txId: COVERAGE_TX_ID, index: 3,
 };
 
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> = [

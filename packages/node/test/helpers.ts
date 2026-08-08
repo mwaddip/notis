@@ -20,6 +20,7 @@ import type { Config } from '../src/config.js';
 import type {
   UtxoTransaction,
   AnyBox,
+  BoxId,
   Post,
   KarmaBox,
   BlockHeader,
@@ -141,17 +142,36 @@ export function fixtureProvenance(
 }
 
 /**
+ * A box as it exists once seeded or stored: `id` present.
+ *
+ * `BoxBase.id` is optional because it is genuinely absent for one expression —
+ * between building the candidate-plus-provenance object and hashing it. A box
+ * that has been through `seedProvenance` (or read back from a store, or handed
+ * to the AVL prover) is past that point, and saying so once here beats a `!` at
+ * every use site.
+ */
+export type Stored<B extends AnyBox = AnyBox> = B & { id: BoxId };
+
+/**
  * Give a hand-built candidate the provenance and id a stored box must have.
  *
  * The shape every local fixture factory needs since phase G3b: seeding a box
  * straight into the store now requires `tx_id`/`output_index` (NOT NULL) and an
  * `id` that actually derives from them. Mutates in place so a factory that
  * already holds a reference to the candidate keeps seeing the finished box.
+ *
+ * Returns `Stored<T>`: this function always assigns `id`, so a caller that then
+ * has to write `box.id!` is being told something false by the type.
+ * `computeBoxId(result) === result.id` holds for everything it returns.
  */
-export function seedProvenance<T extends AnyBox>(candidate: object, seedHeight = 1, nonce = 0): T {
+export function seedProvenance<T extends AnyBox>(
+  candidate: object,
+  seedHeight = 1,
+  nonce = 0,
+): Stored<T> {
   Object.assign(candidate, fixtureProvenance(candidate, seedHeight, nonce));
   Object.assign(candidate, { id: computeBoxId(candidate as T) });
-  return candidate as T;
+  return candidate as Stored<T>;
 }
 
 /**
@@ -271,6 +291,51 @@ export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
  */
 export function makeTestConfig(overrides: Partial<Config> = {}): Config {
   return { ...config, ...overrides };
+}
+
+/**
+ * A map keyed by **bytes**, for mocks that stand in for a store lookup.
+ *
+ * Production compares `user_id` as a SQLite BLOB — **by value**
+ * (`store/challenges.ts:25-34` binds `Buffer.from(userId)`). A plain `Map`
+ * keyed by a `Uint8Array` compares **by reference**, so a mock built that way
+ * is strictly *less* permissive than the thing it stands in for: it hits only
+ * while a test reuses one array instance, and the moment a key is built twice
+ * (`uid('alice')` returns a fresh array each call) the lookup returns
+ * `undefined` and the test reads "no active challenge" instead of failing.
+ *
+ * The verifier mocks got this right for `karmaBoxes` (hex key) and wrong for
+ * `identities`/`challenges` in the same object literal. Hex-keying at each call
+ * site would fix today's sites and leave the next one free to get it wrong
+ * again; converting on the way in cannot be forgotten.
+ */
+export class ByteKeyedMap<V> {
+  private readonly inner = new Map<string, V>();
+
+  private static key(k: Uint8Array): string {
+    return Buffer.from(k).toString('hex');
+  }
+
+  set(key: Uint8Array, value: V): this {
+    this.inner.set(ByteKeyedMap.key(key), value);
+    return this;
+  }
+
+  get(key: Uint8Array): V | undefined {
+    return this.inner.get(ByteKeyedMap.key(key));
+  }
+
+  has(key: Uint8Array): boolean {
+    return this.inner.has(ByteKeyedMap.key(key));
+  }
+
+  delete(key: Uint8Array): boolean {
+    return this.inner.delete(ByteKeyedMap.key(key));
+  }
+
+  get size(): number {
+    return this.inner.size;
+  }
 }
 
 export const ZERO_HASH = '0'.repeat(64);

@@ -12,6 +12,8 @@ import {
 } from '../../src/state/avl-prover.js';
 import { serializeBox } from '../../src/state/serialize-box.js';
 import { config } from '../../src/config.js';
+import { fixtureProvenance } from '../helpers.js';
+import type { AnyBox } from '@dagsocial/types';
 
 /** Storage codec config -- must match the prover createAvlProver() builds. */
 const AVL_CONFIG = { keyLength: config.avlKeyLength, valueLengthOpt: null };
@@ -347,13 +349,25 @@ function makeAvlDb(): Database.Database {
   return database;
 }
 
-function makeKarmaBox(id: string, value: bigint, height: number) {
-  return {
-    id,
+/**
+ * A karma box with a **caller-chosen id**, which is what this suite is for: the
+ * id is the AVL key, and the canonical-ordering tests (M-12) need to control
+ * sort order directly, so `BASE_IDS` is deliberately unsorted. These boxes
+ * therefore do NOT satisfy `id === computeBoxId(box)` — nothing here asserts
+ * that, and nothing here seeds a store.
+ *
+ * `txId`/`index` are real regardless: they are required box fields and they ride
+ * the AVL *value*, so a fixture without them serializes to leaf bytes no
+ * production box could produce. `height` finally has a job — it was an unused
+ * parameter, and it is the provenance seed.
+ */
+function makeKarmaBox(id: string, value: bigint, height: number): AnyBox & { id: string } {
+  const candidate = {
     boxType: 'karma' as const,
     value,
     owner: new Uint8Array(32).fill(0x77),
     guard: 'owner_signature' as const,
     proofSource: 'mint-1',
   };
+  return { id, ...candidate, ...fixtureProvenance(candidate, height) };
 }

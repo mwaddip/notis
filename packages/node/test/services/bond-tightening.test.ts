@@ -28,14 +28,16 @@ import {
 } from '@dagsocial/types';
 import type {
   AnyBox,
+  CandidateOf,
   KarmaBox,
   InviteBox,
   BondBox,
+  VouchBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
-import { seedAsOneTx, fixtureProvenance, rawPublicKey } from '../helpers.js';
+import { seedAsOneTx, fixtureProvenance, rawPublicKey, seedProvenance } from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -128,8 +130,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       guard: 'owner_signature' as const,
       proofSource: 'test',
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 1, nonce));
-    const box = { ...candidate, id: computeBoxId(candidate) } as KarmaBox;
+    const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
     return box;
   }
@@ -151,8 +152,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       probationEndBlock,
       guard: 'bond_dual' as const,
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 1));
-    const box = { ...candidate, id: computeBoxId(candidate) } as BondBox;
+    const box = seedProvenance<BondBox>(candidate, 1);
     storeInsertBox(box);
     return box;
   }
@@ -223,7 +223,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
 
   /** Build an unlocked settlement of `bond` paying `beneficiary`, invitee-signed. */
   function buildSettlementTx(bond: BondBox, beneficiary: Uint8Array): UtxoTransaction {
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: INVITE_BOND_KARMA,
       owner: beneficiary,
@@ -316,11 +316,10 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       probationEndBlock: 1005,
       guard: 'bond_dual' as const,
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 2));
-    const bondB = { ...candidate, id: computeBoxId(candidate) } as BondBox;
+    const bondB = seedProvenance<BondBox>(candidate, 2);
     storeInsertBox(bondB);
 
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: INVITE_BOND_KARMA * 2n,
       owner: inviter.pub,
@@ -347,7 +346,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     // standalone spend would strand the paired invite, which can never be
     // claimed without a bond input.
     const { bond } = seedInviteAndUncommittedBond();
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: INVITE_BOND_KARMA,
       owner: inviter.pub,
@@ -380,7 +379,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     const inviteeKarma = seedKarma(invitee.pub, 100n);
     const { invite, bond } = seedInviteAndCommittedBond(5, 1005);
 
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
       owner: invitee.pub,
@@ -408,7 +407,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     const inviterKarma = seedKarma(inviter.pub, 100n);
     const { invite, bond } = seedInviteAndCommittedBond(5, 1005);
 
-    const karmaOut: KarmaBox = {
+    const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
       owner: inviter.pub,
@@ -488,8 +487,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       targetId: invitee.pub,
       guard: 'owner_signature' as const,
     };
-    Object.assign(candidate, fixtureProvenance(candidate, 1));
-    const vouchBox = { ...candidate, id: computeBoxId(candidate) } as AnyBox;
+    const vouchBox = seedProvenance<VouchBox>(candidate, 1);
     storeInsertBox(vouchBox);
 
     const tx: UtxoTransaction = {
@@ -516,7 +514,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     probationStartBlock: number,
     probationEndBlock: number,
   ): UtxoTransaction {
-    const bondOut: BondBox = {
+    const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId: inviter.pub,
