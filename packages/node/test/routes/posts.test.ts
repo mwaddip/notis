@@ -9,7 +9,14 @@ import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, getPostRaw, queryPosts, getAncestors, getSubtree } from '../../src/store/posts.js';
 import { consumeChallenge, getActiveChallenge } from '../../src/store/challenges.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
-import { getKarmaBox, getKarmaBoxes, insertBox, getBox as storeGetBox } from '../../src/store/utxo.js';
+import {
+  getKarmaBox,
+  getKarmaBoxes,
+  insertBox,
+  getBox as storeGetBox,
+  getBoxByProvenance as storeGetBoxByProvenance,
+} from '../../src/store/utxo.js';
+import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
 import { metaPut, metaGet } from '../../src/store/meta.js';
@@ -80,6 +87,17 @@ async function request(
               db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
             },
             getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
+            // The three the hand-written deps object had fallen behind on.
+            // Unreached by the karma-lock path this suite exercises, which is
+            // why it stayed green — but an incomplete deps object throws the
+            // moment a rule starts consulting one of them, and these wire to
+            // the same store functions production does.
+            getBoxByProvenance: (txId: string, index: number) =>
+              storeGetBoxByProvenance(txId, index),
+            getKarmaValue: (owner: Uint8Array) =>
+              getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+            hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) =>
+              hasActiveVouchCooldown(voucherId, targetId),
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();
             },

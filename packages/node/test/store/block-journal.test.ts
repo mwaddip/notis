@@ -166,9 +166,9 @@ describe('block journal (store choke-point recording)', () => {
     const j = s.finishBlockJournal();
 
     expect(j.vouchCooldownInsertions).toHaveLength(1);
-    expect(j.vouchCooldownInsertions[0].voucherId).toEqual(voucher);
-    expect(j.vouchCooldownInsertions[0].targetId).toEqual(target);
-    expect(j.vouchCooldownInsertions[0].replaced).toBeUndefined();
+    expect(j.vouchCooldownInsertions[0]!.voucherId).toEqual(voucher);
+    expect(j.vouchCooldownInsertions[0]!.targetId).toEqual(target);
+    expect(j.vouchCooldownInsertions[0]!.replaced).toBeUndefined();
   });
 
   it('insertVouchCooldown over an existing row captures the replaced row', async () => {
@@ -184,7 +184,7 @@ describe('block journal (store choke-point recording)', () => {
     const j = s.finishBlockJournal();
 
     expect(j.vouchCooldownInsertions).toHaveLength(1);
-    expect(j.vouchCooldownInsertions[0].replaced).toEqual({
+    expect(j.vouchCooldownInsertions[0]!.replaced).toEqual({
       releaseAtBlock: 80,
       karmaAmount: 25n,
     });
@@ -192,8 +192,8 @@ describe('block journal (store choke-point recording)', () => {
     // The stored row carries the new values
     const rows = s.getVouchCooldowns(voucher);
     expect(rows).toHaveLength(1);
-    expect(rows[0].releaseAtBlock).toBe(200);
-    expect(rows[0].karmaAmount).toBe(60n);
+    expect(rows[0]!.releaseAtBlock).toBe(200);
+    expect(rows[0]!.karmaAmount).toBe(60n);
   });
 
   it('deleteVouchCooldown captures the deleted row while open', async () => {
@@ -209,7 +209,7 @@ describe('block journal (store choke-point recording)', () => {
     const j = s.finishBlockJournal();
 
     expect(j.vouchCooldownDeletions).toHaveLength(1);
-    const d = j.vouchCooldownDeletions[0];
+    const d = j.vouchCooldownDeletions[0]!;
     expect(d.voucherId).toEqual(voucher);
     expect(d.targetId).toEqual(target);
     expect(d.releaseAtBlock).toBe(120);

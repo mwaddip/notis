@@ -33,12 +33,15 @@ import {
   fixtureProvenance,
   makeApplicableBlock,
   makePost,
+  makeTestConfig,
   makeTestIdentity,
   rawPublicKey,
 } from '../helpers.js';
 
-// Same shape as block-apply.test.ts — small epoch, internal miner.
-const testConfig = {
+// Same shape as block-apply.test.ts — small epoch, internal miner. Every field
+// below is kept verbatim; `makeTestConfig` only fills the thirteen `Config`
+// requires this never stated (see helpers.ts — none is read from the argument).
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -55,7 +58,7 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers — fresh module world per test (vi.resetModules)

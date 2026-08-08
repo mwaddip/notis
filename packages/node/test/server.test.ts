@@ -1,4 +1,4 @@
-import { uid } from './helpers.js';
+import { makeTestConfig, uid } from './helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
@@ -11,8 +11,11 @@ import { profileFor } from '@dagsocial/types';
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Every field this literal already set is kept verbatim; `makeTestConfig` fills
+// the thirteen `Config` requires and it never stated (helpers.ts explains why
+// none of them was reachable).
 function makeConfig(overrides?: Partial<Config>): Config {
-  return {
+  return makeTestConfig({
     port: 0,
     dbPath: ':memory:',
     networkType: 'testnet',
@@ -31,7 +34,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     maxPeers: 50,
     ...overrides,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

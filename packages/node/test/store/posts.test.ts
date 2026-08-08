@@ -16,19 +16,11 @@ async function importDbFresh() {
   };
 }
 
+// No hand-written shape: the module's own type is the contract. A duplicate
+// declaration here drifts silently from the real signatures — this one had
+// `queryPosts({ author })` as `string` while production takes `Uint8Array`.
 async function importPostsFresh() {
-  const mod = await import('../../src/store/posts.js');
-  return mod as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
-    insertPostPlaceholder: (postId: string, parentRefs: string[]) => void;
-    getPost: (id: string) => Post | Stump | null;
-    queryPosts: (opts: { author?: string; limit?: number; offset?: number }) => Post[];
-    getPendingPosts: (limit: number) => Post[];
-    confirmPost: (postId: string, blockHeight: number) => void;
-    getParentRefs: (postId: string) => string[];
-    getSubtree: (postId: string) => Post[];
-    pruneSubtree: (rootPostId: string) => void;
-  };
+  return import('../../src/store/posts.js');
 }
 
 async function importStumpsFresh() {
@@ -197,11 +189,11 @@ describe('posts store', () => {
 
     const aliceResults = queryPosts({ author: uid('alice') });
     expect(aliceResults).toHaveLength(1);
-    expect(aliceResults[0].content).toBe('alice post');
+    expect(aliceResults[0]!.content).toBe('alice post');
 
     const bobResults = queryPosts({ author: uid('bob') });
     expect(bobResults).toHaveLength(1);
-    expect(bobResults[0].content).toBe('bob post');
+    expect(bobResults[0]!.content).toBe('bob post');
 
     const allResults = queryPosts({});
     expect(allResults).toHaveLength(2);
@@ -230,19 +222,19 @@ describe('posts store', () => {
     // Limit 2, offset 0 — newest 2
     const page1 = queryPosts({ limit: 2, offset: 0 });
     expect(page1).toHaveLength(2);
-    expect(page1[0].content).toBe('post-4'); // newest first
-    expect(page1[1].content).toBe('post-3');
+    expect(page1[0]!.content).toBe('post-4'); // newest first
+    expect(page1[1]!.content).toBe('post-3');
 
     // Limit 2, offset 2 — next 2
     const page2 = queryPosts({ limit: 2, offset: 2 });
     expect(page2).toHaveLength(2);
-    expect(page2[0].content).toBe('post-2');
-    expect(page2[1].content).toBe('post-1');
+    expect(page2[0]!.content).toBe('post-2');
+    expect(page2[1]!.content).toBe('post-1');
 
     // Limit 2, offset 4 — last 1
     const page3 = queryPosts({ limit: 2, offset: 4 });
     expect(page3).toHaveLength(1);
-    expect(page3[0].content).toBe('post-0');
+    expect(page3[0]!.content).toBe('post-0');
   });
 
   // 6. queryPosts excludes pruned posts
@@ -283,9 +275,9 @@ describe('posts store', () => {
 
     const pending = getPendingPosts(10);
     expect(pending).toHaveLength(3);
-    expect(pending[0].content).toBe('oldest');
-    expect(pending[1].content).toBe('middle');
-    expect(pending[2].content).toBe('newest');
+    expect(pending[0]!.content).toBe('oldest');
+    expect(pending[1]!.content).toBe('middle');
+    expect(pending[2]!.content).toBe('newest');
   });
 
   // 8. confirmPost updates status and blockHeight
@@ -508,9 +500,9 @@ describe('posts store', () => {
     const limited = getPendingPosts(3);
     expect(limited).toHaveLength(3);
     // Oldest first
-    expect(limited[0].content).toBe('pending-0');
-    expect(limited[1].content).toBe('pending-1');
-    expect(limited[2].content).toBe('pending-2');
+    expect(limited[0]!.content).toBe('pending-0');
+    expect(limited[1]!.content).toBe('pending-1');
+    expect(limited[2]!.content).toBe('pending-2');
   });
 
   // 15. insertPost upgrades an existing placeholder with real content

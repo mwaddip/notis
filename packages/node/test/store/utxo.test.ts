@@ -354,11 +354,11 @@ describe('utxo store', () => {
 
     const aliceInvites = getPendingInvites(uid('alice'));
     expect(aliceInvites).toHaveLength(1);
-    expect(aliceInvites[0].value).toBe(30n);
+    expect(aliceInvites[0]!.value).toBe(30n);
 
     const bobInvites = getPendingInvites(uid('bob'));
     expect(bobInvites).toHaveLength(1);
-    expect(bobInvites[0].value).toBe(40n);
+    expect(bobInvites[0]!.value).toBe(40n);
   });
 
   // --- getPendingInviteCount returns correct count --------------------------
@@ -414,12 +414,12 @@ describe('utxo store', () => {
 
     const charlieBonds = getBondBoxes(uid('charlie'));
     expect(charlieBonds).toHaveLength(2);
-    expect(charlieBonds[0].value).toBe(10n);
-    expect(charlieBonds[1].value).toBe(15n);
+    expect(charlieBonds[0]!.value).toBe(10n);
+    expect(charlieBonds[1]!.value).toBe(15n);
 
     const daveBonds = getBondBoxes(uid('dave'));
     expect(daveBonds).toHaveLength(1);
-    expect(daveBonds[0].value).toBe(20n);
+    expect(daveBonds[0]!.value).toBe(20n);
 
     // No bonds for unknown inviter
     const none = getBondBoxes(uid('nobody'));

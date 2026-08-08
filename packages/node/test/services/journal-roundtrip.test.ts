@@ -22,15 +22,17 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
+import type { Config } from '../../src/config.js';
 import {
   fixtureProvenance,
-  signTransaction,
-  makeTestIdentity,
-  makePost,
-  makeKarmaBox,
-  makeApplicableBlock,
-  makePruneEntry,
   hex,
+  makeApplicableBlock,
+  makeKarmaBox,
+  makePost,
+  makePruneEntry,
+  makeTestConfig,
+  makeTestIdentity,
+  signTransaction,
   type TestIdentity,
 } from '../helpers.js';
 
@@ -58,7 +60,11 @@ import {
 // empty tree and the bootstrap tree).
 // ---------------------------------------------------------------------------
 
-const plainConfig = {
+// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
+// `Config` requires this literal never stated. Hazard removal, not error removal:
+// as a bare literal its type is what `startBlockCreator`'s parameter was declared
+// against, so a newly-required `Config` field would have gone unnoticed here.
+const plainConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -75,7 +81,7 @@ const plainConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers
@@ -93,7 +99,7 @@ async function importDb(): Promise<DbModule> {
 
 async function importBlockCreator() {
   return (await import('../../src/services/block-creator.js')) as unknown as {
-    startBlockCreator: (cfg: typeof plainConfig) => void;
+    startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
   };
@@ -705,7 +711,9 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       const key = Buffer.from(recordStore.identityRecordKey(idle.userId), 'hex');
       const serialize = await import('../../src/state/serialize-box.js');
       const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
-      expect(lookup.success).toBe(true);
+      // Narrow on the discriminant: `value` lives on the success arm only, and
+      // `expect(...).toBe(true)` narrows nothing for the compiler.
+      if (!lookup.success) throw new Error('lookup failed');
       expect(lookup.value).toBeTruthy();
       expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
         lastActivityBlock: 4,

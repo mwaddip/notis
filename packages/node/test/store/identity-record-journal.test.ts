@@ -452,7 +452,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     // revertBlock refuses to run while a journal is open; that guard is what
     // makes it safe for the restore path to call the recording primitive.
     expect(isBlockJournalOpen()).toBe(false);
-    putIdentityRecord(id, j.mutations[0] && (j.mutations[0] as RecordMutation).replaced!);
+    putIdentityRecord(id, (j.mutations[0]! as RecordMutation).replaced!);
 
     beginBlockJournal(2);
     expect(finishBlockJournal().mutations).toEqual([]);

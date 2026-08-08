@@ -10,6 +10,15 @@ import {
   deserializeBox,
 } from '../../src/state/serialize-box.js';
 import type { AnyBox } from '@dagsocial/types';
+import { fixtureProvenance } from '../helpers.js';
+
+/**
+ * A box as it exists in the tree. `AnyBox.id` is optional — genuinely absent
+ * for the one expression between building a candidate and hashing it — but
+ * every box these fixtures hand the prover is already keyed, so the local type
+ * says so instead of every use site asserting it.
+ */
+type StoredBox = AnyBox & { id: string };
 
 /** Generate sequential, non-zero 64-char hex IDs starting from 1 to avoid
  *  the all-zeros key which collides with the AVL neg-inf sentinel. */
@@ -18,30 +27,41 @@ function makeIdGenerator() {
   return (): string => (counter++).toString(16).padStart(64, '0');
 }
 
-function makeKarmaBox(id: string, value: bigint, block: number, seed: number): AnyBox {
+/**
+ * The `id` here is the generator's, NOT `computeBoxId(box)`: this suite keys the
+ * AVL by a *controlled* 32-byte value (see `makeIdGenerator` above), which is
+ * what makes insertion order, rollback and per-height lookups readable. Nothing
+ * in the file asserts id integrity, and nothing seeds a store.
+ *
+ * `txId`/`index` are real all the same: they are required box fields, they ride
+ * the AVL value, and the round-trip assertion at the bottom of the suite reads
+ * them back — with no provenance on the fixture, that assertion compared
+ * `undefined` to `undefined`.
+ */
+function makeKarmaBox(id: string, value: bigint, block: number, seed: number): StoredBox {
   const owner = new Uint8Array(32);
   owner[0] = seed & 0xff;
-  return {
-    id,
-    boxType: 'karma',
+  const candidate = {
+    boxType: 'karma' as const,
     value,
     owner,
-    guard: 'owner_signature',
+    guard: 'owner_signature' as const,
     proofSource: `mint-${block}-${seed}`,
   };
+  return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }
 
-function makeCreditBox(id: string, value: bigint, block: number, seed: number): AnyBox {
+function makeCreditBox(id: string, value: bigint, block: number, seed: number): StoredBox {
   const owner = new Uint8Array(32);
   owner[0] = seed & 0xff;
-  return {
-    id,
-    boxType: 'credit',
+  const candidate = {
+    boxType: 'credit' as const,
     value,
     owner,
-    guard: 'owner_signature',
+    guard: 'owner_signature' as const,
     proofSource: block,
   };
+  return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }
 
 describe('AVL integration — full pipeline', () => {
@@ -71,11 +91,11 @@ describe('AVL integration — full pipeline', () => {
 
   it('simulates 10 blocks of UTXO mutations and verifies historical proofs', () => {
     const handle = createAvlProver(db);
-    const allBoxes = new Map<string, AnyBox>();
+    const allBoxes = new Map<string, StoredBox>();
     const nextId = makeIdGenerator();
 
     // -- Block 1: create 5 karma boxes -----------------------------------------
-    const created1: AnyBox[] = Array.from({ length: 5 }, (_, i) =>
+    const created1: StoredBox[] = Array.from({ length: 5 }, (_, i) =>
       makeKarmaBox(nextId(), BigInt(100 + i), 1, i),
     );
     for (const b of created1) allBoxes.set(b.id, b);
@@ -99,7 +119,7 @@ describe('AVL integration — full pipeline', () => {
     const consumed2 = [created1[0]!.id];
     allBoxes.delete(created1[0]!.id);
 
-    const created2: AnyBox[] = Array.from({ length: 3 }, (_, i) =>
+    const created2: StoredBox[] = Array.from({ length: 3 }, (_, i) =>
       makeCreditBox(nextId(), BigInt(50 + i), 2, i + 5),
     );
     for (const b of created2) allBoxes.set(b.id, b);
@@ -125,7 +145,7 @@ describe('AVL integration — full pipeline', () => {
     const blockDigests: Uint8Array[] = [d1, d2];
 
     for (let block = 3; block <= 10; block++) {
-      const created: AnyBox[] = Array.from({ length: 2 }, (_, i) =>
+      const created: StoredBox[] = Array.from({ length: 2 }, (_, i) =>
         makeKarmaBox(nextId(), BigInt(10 + i), block, block * 10 + i),
       );
 

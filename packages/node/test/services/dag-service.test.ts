@@ -467,8 +467,8 @@ describe('DagService', () => {
         .prepare('SELECT depth, post_id FROM canonical_branch ORDER BY depth ASC')
         .all() as Array<{ depth: number; post_id: string }>;
       expect(rows).toHaveLength(2);
-      expect(rows[0].post_id).toBe(G);
-      expect(rows[1].post_id).toBe(A);
+      expect(rows[0]!.post_id).toBe(G);
+      expect(rows[1]!.post_id).toBe(A);
     });
 
     it('throws when toUnconfirm diverges from depth-based query', () => {

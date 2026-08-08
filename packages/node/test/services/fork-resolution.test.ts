@@ -21,19 +21,25 @@ import type {
 } from '@dagsocial/types';
 import type { BlockJournal } from '../../src/store/journal.js';
 import type Database from 'better-sqlite3';
+import type { Config } from '../../src/config.js';
 import {
-  makeTestIdentity,
-  makePost,
+  makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
-  makeApplicableBlock,
+  makePost,
+  makeTestConfig,
+  makeTestIdentity,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
 // ---------------------------------------------------------------------------
 
-const testConfig = {
+// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
+// `Config` requires this literal never stated. Hazard removal, not error removal:
+// as a bare literal its type is what `startBlockCreator`'s parameter was declared
+// against, so a newly-required `Config` field would have gone unnoticed here.
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -50,7 +56,7 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers
@@ -63,7 +69,7 @@ type DbModule = {
 };
 
 type BlockCreatorModule = {
-  startBlockCreator: (cfg: typeof testConfig) => void;
+  startBlockCreator: (cfg: Config) => void;
   stopBlockCreator: () => void;
   onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;

@@ -407,7 +407,10 @@ describe('UTXO routes', () => {
     });
 
     it('pools a valid transfer, answers pending, broadcasts — and settles nothing', async () => {
-      const broadcastTx = vi.fn(() => Promise.resolve());
+      // Declared with the parameter it is actually called with: a zero-arity
+      // mock types `mock.calls[0]` as the empty tuple, so the assertion below
+      // reads argument 0 of a call the type system says takes none.
+      const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
       setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
       const tx = buildSignedTransfer(50n);

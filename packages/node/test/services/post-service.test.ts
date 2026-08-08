@@ -208,7 +208,7 @@ describe('PostService', () => {
 
   it('insertMempoolSubBlock and insertUtxoTx receive matching batchId', () => {
     let subBlockBatchId: string | null | undefined = undefined;
-    let utxoBatchId: string | null = undefined;
+    let utxoBatchId: string | null | undefined = undefined;
 
     const deps = mockDeps({
       insertMempoolSubBlock: (_sb, _exp, batchId) => {

@@ -15,6 +15,8 @@ import {
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
+import { config } from '../src/config.js';
+import type { Config } from '../src/config.js';
 import type {
   UtxoTransaction,
   AnyBox,
@@ -233,6 +235,42 @@ export function makeLikeTx(
  */
 export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
   return materializeOutput(tx.outputs[0]!, computeTxId(tx), 0) as KarmaBox;
+}
+
+/**
+ * A complete `Config` for a test that has to hand one to production code.
+ *
+ * Derived from the loaded singleton rather than written out as a literal, so it
+ * cannot fall behind `Config`: a field added later arrives already holding the
+ * value the node would run with, and a fixture states only its deliberate
+ * deviations.
+ *
+ * Every hand-written config literal in this tree had already fallen behind —
+ * thirteen fields missing, including `verifyStateRoot`, `maxMempoolEntries` and
+ * `avlKeyLength`. **Measured inert:** `startBlockCreator` reads six fields
+ * (`orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`, `maxSubBlocksPerBlock`,
+ * `miningMode`, `creditTreasuryPct`, `treasuryPubKey`), every fixture supplies
+ * all six, and the three consumers of the missing fields
+ * (`block-apply.ts:341`, `store/mempool.ts:65`, `state/avl-prover.ts:41`) import
+ * the module-level `config` singleton, never the argument. No test mocks
+ * `src/config.js`, so nothing else could reach them either.
+ *
+ * What this removes is the hiding mechanism, not an error: the fixtures were
+ * passed to `startBlockCreator: (cfg: typeof testConfig) => void`, a parameter
+ * typed as the incomplete literal itself — a declaration that mentions `Config`
+ * nowhere and therefore checks the argument against itself. The parameter is
+ * `Config` now, in all twelve. Verified by probe rather than by argument:
+ * changing one `Config` field's type (`creditTreasuryPct: number → bigint`)
+ * failed all twelve; before, it could not have reached any of them.
+ *
+ * Note what this design does with a newly *required* field: it fills it with the
+ * value production runs with, silently and correctly, rather than failing the
+ * build. That is deliberate — the fixtures track production instead of drifting
+ * from it — but it means a field a test needs to *deviate* on must still be
+ * stated at the call site.
+ */
+export function makeTestConfig(overrides: Partial<Config> = {}): Config {
+  return { ...config, ...overrides };
 }
 
 export const ZERO_HASH = '0'.repeat(64);

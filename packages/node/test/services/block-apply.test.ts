@@ -36,28 +36,34 @@ import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type { AnyBox } from '@dagsocial/types';
 import type { DecayJournalEntry } from '../../src/services/decay.js';
 import type Database from 'better-sqlite3';
+import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
 import {
-  seedProvenance,
-  signTransaction,
-  makeTestIdentity,
-  makePost,
+  ZERO_HASH,
+  changeBoxOf,
+  hex,
+  makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
-  changeBoxOf,
-  solveHeaderPow,
-  signHeader,
-  makeApplicableBlock,
+  makePost,
   makePruneEntry,
-  hex,
-  ZERO_HASH,
+  makeTestConfig,
+  makeTestIdentity,
+  seedProvenance,
+  signHeader,
+  signTransaction,
+  solveHeaderPow,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
 // ---------------------------------------------------------------------------
 
-const testConfig = {
+// Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
+// `Config` requires this literal never stated. Hazard removal, not error removal:
+// as a bare literal its type is what `startBlockCreator`'s parameter was declared
+// against, so a newly-required `Config` field would have gone unnoticed here.
+const testConfig = makeTestConfig({
   port: 3000,
   dbPath: ':memory:',
   networkType: 'testnet' as const,
@@ -74,7 +80,7 @@ const testConfig = {
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
-};
+});
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers
@@ -87,7 +93,7 @@ type DbModule = {
 };
 
 type BlockCreatorModule = {
-  startBlockCreator: (cfg: typeof testConfig) => void;
+  startBlockCreator: (cfg: Config) => void;
   stopBlockCreator: () => void;
   onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;
@@ -332,7 +338,7 @@ describe('block-apply journal recording', () => {
       block!.utxoTxTree.utxoTxIds.length,
     );
     for (let i = 0; i < block!.utxoTxTree.utxoTxs.length; i++) {
-      const tx = decodeTx(block!.utxoTxTree.utxoTxs[i]);
+      const tx = decodeTx(block!.utxoTxTree.utxoTxs[i]!);
       expect(computeTxId(tx)).toBe(block!.utxoTxTree.utxoTxIds[i]);
     }
 
@@ -530,6 +536,7 @@ describe('block-apply journal recording', () => {
           value: 0n,
           owner: new Uint8Array(32),
           lockedUntilBlock: 1 + CREDIT_MINER_REWARD_DELAY,
+          isTreasury: false,
         },
       ],
     };

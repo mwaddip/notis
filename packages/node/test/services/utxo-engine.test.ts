@@ -26,6 +26,7 @@ import type {
   BondBox,
   PostLockBox,
   VouchBox,
+  UserId,
   UtxoTransaction,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -88,7 +89,10 @@ describe('validateAndApplyTx', () => {
   let db: Database.Database;
   let ownerPubKey: Uint8Array;
   let ownerPrivKey: KeyObject;
-  let ownerUserId: string;
+  // Raw bytes, not hex: it is assigned `ownerPubKey` and every use feeds a
+  // `UserId` field. ARCHITECTURE's rule — typed `UserId` ⇒ raw bytes, typed
+  // `string` ⇒ lowercase hex — makes the declaration the thing that was wrong.
+  let ownerUserId: UserId;
 
   /**
    * Create deps that wrap the real store functions.
