@@ -2817,6 +2817,52 @@ Enforcing it in the funnel makes the guarantee path-independent, and is the
 same relocation already applied to the PoW target (M-2), coinbase maturity
 (M-3), and the validator signature (H-1).
 
+> ⚠ **VIOLATED — the ordering block has no closed key set at any layer, and
+> unknown keys are PERSISTED and RE-PROPAGATED.** Measured end-to-end on the
+> production inbound path 2026-08-08, not theorised.
+>
+> An ordering block carrying arbitrary extra keys (`stumpIds`, `attackerJunk`)
+> survives `decodeOrderingBlock`; `verifyOrderingBlockStructure` **accepts** it,
+> because it checks the presence and type of *known* fields and never asks
+> whether unknown ones exist; and `blockHash` is **byte-identical** to the clean
+> block —
+> `161602de2304b514a9e3cbc71bb1ce0a604d95c2f26f090def94d085f6a500a3` — while
+> the encodings differ, 891 bytes against 932. **Two distinct CBOR byte strings
+> carrying one block hash.**
+>
+> The mechanism: all six codecs in `types/src/serialization.ts` are bare
+> `cbor-x` `encode`/`decode` plus a cast — no schema, no key filter — so
+> `header`, `subBlockTree`, `utxoTxTree`, `post`, `stump` and `subBlock` all
+> round-trip keys they do not declare. `blockHash` covers the **header alone**,
+> so body junk rides free beneath the committed Merkle roots. (Header-level junk
+> *does* change the hash, and therefore fails PoW and signature checks — the gap
+> is the body.)
+>
+> **It is not confined to transit.** `createOrderingBlock`
+> (`node/src/store/ordering.ts:45`) re-encodes from the *parsed struct*, so
+> retained junk is written into `subblock_tree_cbor` on disk and re-propagated
+> when the block is served. Two honest nodes can therefore hold byte-different
+> blobs for the same block at the same height, with no way to tell which is
+> canonical, and an attacker can inflate stored bytes with payload that
+> validates.
+>
+> **This is exactly the property the tx envelope gate closed one layer up** —
+> see "Transaction envelope shape": the key set is closed *because*
+> `computeTxId` hashes only known fields, making an extra key free malleability.
+> The block layer has no equivalent gate.
+>
+> **Scope when fixed: a validation TIGHTENING, not a format break.** Honest
+> bytes do not move — no id derivation, no Merkle preimage, no CBOR shape
+> changes — so this lands independently and cheaply, exactly as the envelope
+> gate did, and does **not** need to ride the P2-C format-break bundle. It gets
+> expensive only once a second node exists.
+>
+> The lineage already solved this and the research is on record (see the
+> guard-shape pin's Ergo findings): **the serializer is the validator** —
+> closed positional formats, no maps anywhere, parse-time strictness, and
+> serializer-enforced rules explicitly non-soft-forkable. CBOR maps are open by
+> default, which is why this class keeps recurring here and cannot recur there.
+
 **Apply funnel: validation and mutation phases.** `applyBlockBody` is split so
 the state transition can be run without the header being final — that is what
 lets the block creator compute a post-block `stateRoot` through this same code
