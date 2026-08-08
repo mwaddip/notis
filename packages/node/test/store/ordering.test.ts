@@ -47,8 +47,8 @@ function makeOrderingBlock(
     },
     subBlockTree: {
       subBlockRefs: ['sb-1', 'sb-2'],
-      stumpIds: ['stump-1'],
       subBlockEntries: [],
+      pruneEntries: [],
     },
     utxoTxTree: {
       utxoTxIds: ['tx-1'],
@@ -104,8 +104,8 @@ describe('ordering store', () => {
       },
       subBlockTree: {
         subBlockRefs: ['sb-ref-1', 'sb-ref-2'],
-        stumpIds: ['stump-aaa'],
         subBlockEntries: [],
+        pruneEntries: [],
       },
       utxoTxTree: {
         utxoTxIds: ['tx-id-1'],
@@ -143,7 +143,14 @@ describe('ordering store', () => {
 
     // subBlockTree
     expect(result!.subBlockTree.subBlockRefs).toEqual(['sb-ref-1', 'sb-ref-2']);
-    expect(result!.subBlockTree.stumpIds).toEqual(['stump-aaa']);
+    // DELETED 2026-08-08: `expect(result!.subBlockTree.stumpIds).toEqual(['stump-aaa'])`.
+    // `stumpIds` is not a field of `SubBlockTree` (it is `subBlockRefs`,
+    // `subBlockEntries`, `pruneEntries`) and the string appears nowhere in any
+    // package's `src`. The assertion could only ever have passed because the
+    // storage codec preserved a key the fixture itself wrote — so it pinned the
+    // encoder's tolerance for unknown keys, not a protocol field. Prune
+    // commitments travel in `pruneEntries`, which the round-trip below covers.
+    expect(result!.subBlockTree.pruneEntries).toEqual([]);
 
     // utxoTxTree
     expect(result!.utxoTxTree.utxoTxIds).toEqual(['tx-id-1']);

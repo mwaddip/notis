@@ -36,8 +36,8 @@ function makeBlock(height: number, hash: string): OrderingBlock {
     },
     subBlockTree: {
       subBlockRefs: [],
-      stumpIds: [],
       subBlockEntries: [],
+      pruneEntries: [],
     },
     utxoTxTree: {
       utxoTxIds: [],

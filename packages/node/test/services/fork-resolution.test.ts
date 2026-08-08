@@ -347,7 +347,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], stumpIds: [] },
+      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
@@ -373,7 +373,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], stumpIds: [] },
+      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
