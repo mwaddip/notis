@@ -1528,15 +1528,24 @@ Six rules govern it:
    stays, **gated on the resolved exclude list**: it skips while `'test/e2e/**'` sits in
    `config.exclude`, and re-arms by itself when the post-P2-D rewrite removes that exclusion. The
    gate fails safe — an exclude string it does not recognise builds rather than skips.
-5. **Test trees are typechecked.** ⚠ **PARTIAL — four of five packages.** `types`, `wire`,
-   `validation` and `net` each carry the config below wired into `typecheck`, at zero errors.
-   **`node` is the exception**: its `tsconfig.test.json` exists and is correct, but the script stays
-   `tsc --noEmit` while **409 test-tree errors** remain (58 files, zero in `src`), so that
-   `pnpm -r typecheck` keeps saying something true. Wiring it is the closing act of the paydown unit
-   (`prompts/node-test-typecheck-paydown.md`). The debt does not come apart mechanically — a bulk
-   retype of all 133 missing-provenance box literals to `CandidateOf<>` drove the count UP (409 →
-   424), because node's fixtures are stored boxes and transaction candidates wearing one shape, told
-   apart only per site. Each package
+5. **Test trees are typechecked — all five packages, at zero.** Each `typecheck` script runs
+   `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
+   test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero
+   `src` edits**. The debt did not come apart mechanically — a bulk retype of all missing-provenance
+   box literals to `CandidateOf<>` drove the count UP (409 → 424), because node's fixtures are
+   stored boxes and transaction candidates wearing one shape, told apart only per site by asking
+   what reads the value.
+   **`packages/node/test/e2e/**` is the one piece of code in the repo that is NOT typechecked, and
+   that is a choice rather than an oversight.** It is excluded in both `tsconfig.test.json` and
+   `vitest.config.ts`, for the same reason in both: the suite is parked until its post-P2-D rewrite
+   (rule 4), so paying down type debt there would be paying it against code slated to be replaced.
+   When that rewrite lands, both exclusions come off together.
+   What the wired trees caught immediately, none of it visible before: a mock summing karma as a JS
+   number behind a `bigint` interface whose value the route renders with `.toString()` (wrong output
+   past 2^53); fixtures seeding boxes whose `stored.id !== computeBoxId(stored)`, violating the
+   invariant `types/src/utxo.ts:210-212` calls true by construction; and two fixtures carrying
+   retired guard strings, which are box CONTENT inside the id preimage and therefore described boxes
+   that cannot exist. Each package
    carries a `tsconfig.test.json` (`include: ["src", "test"]`) wired into its `typecheck` script, so
    `pnpm -r typecheck` covers what the suites actually execute — an unchecked test tree is exactly
    where a new *required* field (e.g. `UtxoDeps.networkType`) hides as a runtime surprise, and where
@@ -1547,9 +1556,8 @@ Six rules govern it:
    `paths` mapping `@dagsocial/*` to `../<pkg>/src/index.ts`, mirroring the vitest alias above —
    without it `tsc` follows `exports` to `dist` types and re-opens the stale-`dist` class this
    section exists to kill; and node's parked `test/e2e/**` stays excluded until its post-P2-D
-   rewrite. Baseline debt at decision time: **455 errors** (types 18 · wire 1 · validation 6 ·
-   net 21 · node 409 — the node figure re-derived on `57af44f`; two earlier readings of 423 and
-   434 were taken before the `Database`-namespace class was paid down and are superseded).
+   rewrite. Baseline debt when this rule was written: **455 errors** (types 18 · wire 1 ·
+   validation 6 · net 21 · node 409), **all now zero**.
    **No `types: ["vitest/globals"]` entry is needed** — but not for the reason first recorded
    here. The original claim, "no test file uses bare vitest globals", is **false**:
    `node/test/config.test.ts:44` calls `vi.resetModules()` while importing only
