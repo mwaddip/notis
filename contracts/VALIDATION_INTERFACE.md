@@ -201,6 +201,40 @@ that the verdict does not consult runtime category data.
 
 ## Structural Validation
 
+### verifyPostFieldDomains
+
+```
+verifyPostFieldDomains(post: unknown): { valid: boolean; error?: string }
+```
+
+The **fixed-width domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
+`isSignablePost` has always made, and adds three width rules:
+
+- `author` is a `Uint8Array` of **exactly 32 bytes**
+- `challenge` is a `Uint8Array` of **exactly 32 bytes**
+- every `parentRefs` entry matches `/^[0-9a-f]{64}$/` — 64 **lowercase** hex
+
+**Why lowercase is load-bearing, not stylistic.** `'AB…'` and `'ab…'` hex-decode
+to the same 32 bytes. Accepting both would make the hex→bytes conversion at the
+codec boundary non-injective: two distinct in-memory posts, one preimage, one
+id. That is precisely the malleability the M-1 field encoding exists to close,
+arriving from the codec side instead of the concatenation side.
+
+**Why it exists.** The positional wire format encodes these three fields
+fixed-width, and fixed-width writers cannot carry a sentinel, so they throw (see
+`TYPES_INTERFACE.md` → Totality). `signingHash` is reached with malformed posts
+by design, so without this pin the migration would put a throw in a path this
+contract requires never to throw — the M-5/M-6 regression.
+
+**This is not only tightening the already-unusable.** A post with a
+64-character *non-hex* `parentRef` passes the entire Stage-1 pipeline today —
+content, characters, ref count, version, PoW *and signature* — because the ref
+is hashed as UTF-8 text and the signature covers those same bytes. Rejecting it
+is a real behavioural change. `author` and `challenge` widths, by contrast, were
+already fatal two steps later at `verifyPostSignature`.
+
+Total on adversarial input, like every function here.
+
 ### verifySubBlockStructure
 
 ```
@@ -208,8 +242,20 @@ verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?: string }
 ```
 
 Checks: `post` present, `subBlockId` present, `protocolVersion` is a number,
-`producerId` present. Returns `{ valid, error }`. (The `likeBoxes` array check
-died with the sidecar field — P2-D.)
+`producerId` present, **and `verifyPostFieldDomains(sb.post)`**. Returns
+`{ valid, error }`. (The `likeBoxes` array check died with the sidecar field —
+P2-D.)
+
+The domain check is here rather than only in `isSignablePost` because this is
+the shared gate the relay path already passes through: `net`'s
+`runStage1SubBlock` calls it at `gossip.ts:201`, before `:222` builds the PoW
+preimage. Placing it here closes that path **without any edit to
+`@dagsocial/net`**.
+
+> ⚠ **It does NOT yet close the node's two verifier functions or the content
+> sweep.** `verifyPost`, `verifyPostForRelay` and `content-sweep.ts:92` reach
+> the preimage without passing through either entry point — booked to Phase 1d.
+> See `TYPES_INTERFACE.md` → Totality, obligation 2.
 
 ### verifyTxStructure
 
@@ -258,6 +304,49 @@ stateful and lives in `@dagsocial/node` (see `NODE_INTERFACE.md`).
 Every check is total: adversarial input yields `{ valid: false }`, never a
 throw. That is what lets the block-apply funnel treat this function as its
 gate (see `NODE_INTERFACE.md`, "Structure validation in the apply funnel").
+
+> ⚠ **AHEAD OF CODE — this function shrinks to its semantic residue.** Under the positional wire
+> format (`docs/specs/2026-08-09-positional-wire-format.md`), *structure* is guaranteed by the
+> decoder: a block that decodes has every declared field, at its declared type and length, with no
+> unknown keys. Field-presence checks, `typeof` checks, 64-char hex checks, `isBytes` checks and the
+> `trigger` enum check all become dead code and are deleted with it.
+>
+> **What survives, because a codec cannot know it:**
+>
+> | Check | Why the codec can't |
+> |---|---|
+> | `parentRefs.length ≤ 8` | `MAX_PARENT_REFS` is a protocol rule, not a shape |
+> | `height ≥ 1` | genesis is a semantic floor |
+> | `powTargetBits ≥ ORDERING_BLOCK_POW_TARGET_FLOOR` | a policy floor |
+> | `lockedUntilBlock ≥ block.height` | cross-field, needs the header |
+> | `utxoTxIds.length === utxoTxs.length` | two independently-counted arrays |
+> | **`Number.isSafeInteger(height)`** | see below — this one gets *more* important |
+>
+> **The safe-integer check must not be deleted as redundant.** Today it lives in net's gossip
+> validator as an add-on (audit M-6) because the structural bound `height ≥ 1` admits NaN and floats.
+> Under VLQ the hazard changes shape but grows: `vlqU` decodes the full u64 range, so a height above
+> 2^53 is *well-formed* at the codec layer and silently loses precision the moment it becomes a JS
+> `number`. Every VLQ-sourced value that reaches `number` needs this bound, and it belongs here
+> rather than only in net — the sync path does not pass through the gossip validator.
+>
+> Checks that die because the codec subsumes them: non-negative `value` and `powNonce` (`vlqU` is
+> unsigned by construction), `protocolVersion is a number`, every byte-length assertion, and the
+> `subBlockRefs`/`subBlockEntries` alignment — the latter because `subBlockRefs` no longer exists
+> (see `NODE_INTERFACE.md`).
+>
+> **Deleting checks needs the care of adding them.** Use the established deletion proof: exhaustive
+> grep-to-zero plus diff purity, mutation only where behaviour changes.
+>
+> ⚠ **Phase 8 must ADD as well as shrink, and the plan does not currently say so.** Flagged by Phase
+> 1c. This function checks `postId`, each `parentRefs` entry, and `author` with `.length !== 64` and
+> **no hex-alphabet check** (`verify.ts:361-377`). Under the new layout those strings become
+> hex→bytes inputs at the codec boundary, so a 64-character *non-hex* `postId` throws exactly the
+> way a post's `parentRef` would — the defect Phase 1c just closed for posts, reappearing on the
+> ordering-block path.
+>
+> A pure shrink phase would therefore *acquire* it. The alphabet checks must land before, or with,
+> the codec migration of the block structs — not after. Same reasoning as
+> `TYPES_INTERFACE.md` → Totality, obligation 2; same failure mode; different entry path.
 
 ### verifyBlockChainLink
 

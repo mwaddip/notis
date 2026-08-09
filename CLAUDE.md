@@ -8,7 +8,7 @@ Decentralized social network. Phase 1: local HTTP node with identity, two-phase 
 
 ```bash
 pnpm build                # Build all five packages
-pnpm test                 # Run all tests (2055: types 199 · wire 73 · validation 196 · net 410 · node 1177)
+pnpm test                 # Run all tests (2194: types 199 · wire 212 · validation 196 · net 410 · node 1177)
 pnpm typecheck            # Type-check all packages — src AND test trees, both configs
 node packages/node/dist/index.js   # Start node on :3000
 ```

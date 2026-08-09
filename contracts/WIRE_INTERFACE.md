@@ -12,8 +12,57 @@ framed message envelope encoding/decoding. Zero runtime dependencies.
 
 The hash function used for frame checksums is injectable.
 
-VLQ values are carried via JavaScript `number` (safe integer range, <= 2^53).
-BigInt paths for u64 wire values are deferred to a future version.
+VLQ values are carried via JavaScript `number` (safe integer range, <= 2^53)
+**or `bigint` (full u64 / i64 range)** — see "BigInt VLQ" below. The `number`
+form remains the default for framing; the `bigint` form exists because box
+`value` fields span the full u64.
+
+### BigInt VLQ (built 2026-08-09)
+
+`encodeVlqBigInt` / `encodeVlqZigZagBigInt` / `ByteReader.readVlqBigInt` /
+`readVlqBigIntSigned` / `ByteWriter.writeVlqBigInt` / `writeVlqBigIntSigned`.
+Re-imported from `@ergots/scorex` — the upstream this package was extracted
+from — so the `number` and `bigint` paths are **two views of one encoding, not
+two encodings**. The u64 ceiling guard on encode and the wrap-mod-2⁶⁴ decode
+semantics (`BigInt.asUintN(64, …)`, matching sigma-rust `get_u64` and JVM
+`getULong`) come with it.
+
+**The two paths MUST agree byte-for-byte on the overlapping domain.** That
+equivalence is the entire safety argument for adding a path rather than forking
+the encoding. Pinned at the boundaries across four surfaces (standalone
+encoders, both `ByteWriter` methods, both `ByteReader` methods), and
+cross-checked against the reference: 192-value sweep plus cross-decode, 0
+mismatches.
+
+**Two asymmetries are deliberate. Do not "fix" either.**
+
+- **Non-minimal encodings are accepted on decode.** `0x81 0x00` decodes to `1n`
+  exactly as `0x01` does. Canonicity is enforced one layer up by re-encoding and
+  byte-comparing, which works *only* because decode is permissive and re-encode
+  is minimal. Rejecting here would break that layering, not strengthen it.
+- **Encode rejects `> u64`; decode wraps mod 2⁶⁴.** So decode∘encode is identity
+  while encode∘decode is not — 10-byte inputs exist that decode fine and
+  re-encode to different bytes. Both halves match the references, and the
+  asymmetry is exactly what lets the layer above detect non-minimal input.
+
+> ⚠ **AHEAD OF CODE — this package gains a second consumer.**
+> From `docs/specs/2026-08-09-positional-wire-format.md`.
+>
+> **`@dagsocial/types` becomes a consumer**, which makes this the repo's **base codec layer**, not
+> only the transport-framing package. `net` is no longer the sole dependant. No cycle is introduced:
+> this package still has zero dependencies, and that must stay true — every consensus preimage in the
+> system will be built on it.
+>
+> **Consensus reach.** Until now this package's bytes were transport framing: a bug produced a
+> dropped message. After this, its writers produce **box ids, tx ids, post ids, Merkle roots and the
+> `stateRoot`**. A change to VLQ output here silently moves every id in the system. Treat any edit to
+> `vlq.ts`, `reader.ts` or `writer.ts` as a consensus change from that point on.
+>
+> **Writers throw and that is load-bearing to preserve.** `encodeVlqU` rejects non-integers,
+> negatives, and values past `MAX_SAFE_INTEGER`. Do **not** make them total here — totality is
+> supplied by wrappers in `types`' codec layer, which need the sentinel discipline that audits
+> M-5/M-6 established (see TYPES_INTERFACE → Totality). A writer that silently coerced instead of
+> throwing would defeat both layers.
 
 ---
 
@@ -25,8 +74,11 @@ BigInt paths for u64 wire values are deferred to a future version.
 | `ByteWriter` | Accumulator producing a single `Uint8Array` via `toBytes()` |
 | `encodeVlqU` / `decodeVlqU` | Standalone unsigned VLQ |
 | `encodeVlqZigZag` / `decodeVlqZigZag` | Standalone signed VLQ (ZigZag) |
+| `encodeVlqBigInt` | Standalone unsigned VLQ over the full **u64** domain |
+| `encodeVlqZigZagBigInt` | Standalone signed VLQ over the **i64** domain |
 | `ReaderError` | Typed error class with code taxonomy |
 | `MAX_ARRAY_LENGTH` | `1 << 24` — cap on VLQ-length-prefixed array **counts**. ⚠ Not a resource bound — see below |
+| `MAX_VLQ_BYTES` | `10` = `ceil(64 / 7)` — hard cap on the bytes one VLQ may occupy |
 | `encodeFrame(magic, code, body, hashFn)` | Encode a framed message |
 | `decodeFrame(magic, data, hashFn)` | Decode and validate a framed message |
 | `FRAME_VERSION` | `1` — current framing protocol version |
@@ -180,7 +232,16 @@ Not carried over:
 - `forkSubReader()` sub-reader creation
 - `positionLimit` setter (constructor-only)
 - `readVlqU32()` (32-bit variant)
-- `readVlqBigInt()` / `readVlqBigIntSigned()` (BigInt paths)
+- ~~`readVlqBigInt()` / `readVlqBigIntSigned()` (BigInt paths)~~ — **carried over 2026-08-09**; box
+  `value` fields need the full u64. See "BigInt VLQ" below.
+
+**One deliberate divergence from scorex**, in `encodeVlqZigZagBigInt`: it **throws** outside the i64
+domain where the reference masks silently. Outside i64 the mask is not injective — `2^63` and `0n`
+both encode to the single byte `0x00`, measured against the live reference — and these bytes are
+consensus preimages, so a writer that silently emits one value's encoding for another is the M-1
+defect class. The reference's own docstring states the i64 domain without enforcing it. Inside the
+domain the bytes are identical (378 in-domain values compared, 0 mismatches, both boundaries
+included).
 
 ---
 
@@ -405,6 +466,7 @@ See "ReaderError codes (audit L-15)" above for the normative meanings.
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `MAX_ARRAY_LENGTH` | `1 << 24` (16,777,216) | Hard cap on VLQ-length-prefixed array reads |
+| `MAX_VLQ_BYTES` | `10` (`ceil(64 / 7)`) | Hard cap on the bytes one VLQ may occupy — the exact width of a canonical u64. A `number`-range value needs at most 8, so for that path the remaining two are slack tolerating non-canonical zero-padding. Exceeding it raises `ReaderError('vlq-overflow')` |
 | `FRAME_VERSION` | `1` | Current framing protocol version |
 
 The network magics are **not** constants of this package — see §Exports.

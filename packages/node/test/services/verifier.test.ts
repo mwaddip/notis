@@ -215,8 +215,14 @@ describe('verifyPost', () => {
   // -----------------------------------------------------------------------
   it('rejects too many parent refs', () => {
     const store = makeStore();
+    // Nine distinct well-formed PostIds. The subject here is the count rule, so
+    // the refs must clear the step-0 domain pin to reach it — the old fixture
+    // ('post0'…'post8') was never emittable by any producer, since a real PostId
+    // is always `computePostId`'s 64-lowercase-hex digest.
     const post = makePost({
-      parentRefs: Array.from({ length: 9 }, (_, i) => `post${i}`),
+      parentRefs: Array.from({ length: 9 }, (_, i) =>
+        i.toString(16).padStart(2, '0').repeat(32),
+      ),
     });
     const deps = createMockDeps(store);
     const result = verifyPost(deps, post, 50);
@@ -383,7 +389,14 @@ describe('verifyPost', () => {
       store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
         { value: POST_LOCK_REPLY_COST },
       ]);
-      let post = makePost({ parentRefs: ['nonexistent-parent-id'] });
+      // A well-formed PostId that no post claims. It must be 64 lowercase hex:
+      // a real PostId is always `computePostId`'s hex digest, and since Phase 1d
+      // `verifyPostFieldDomains` rejects anything else at step 0 — before this
+      // test's actual subject, the step-8 parent-existence check, is reached.
+      // The old fixture ('nonexistent-parent-id', 21 chars) was never emittable
+      // by any producer.
+      const ABSENT_PARENT = 'de'.repeat(32);
+      let post = makePost({ parentRefs: [ABSENT_PARENT] });
       const powInput = buildPowInput(post);
       const nonce = solvePoW(powInput, 20);
       post = { ...post, powNonce: nonce };
@@ -392,7 +405,7 @@ describe('verifyPost', () => {
       const deps = createMockDeps(store);
       const result = verifyPost(deps, post, 50);
       expect(result.valid).toBe(false);
-      expect(result.error).toBe('Parent post not found: nonexistent-parent-id');
+      expect(result.error).toBe(`Parent post not found: ${ABSENT_PARENT}`);
     },
   );
 

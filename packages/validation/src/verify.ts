@@ -113,35 +113,111 @@ function hasLeadingZeroBits(hash: Uint8Array, targetBits: number): boolean {
 }
 
 /**
- * Guard the fields `signingHash` (via `postPowPreimage`) reads, so a malformed
- * post cannot throw inside `@dagsocial/types`: a non-array `parentRefs` throws
- * in `.map`, an absent `author`/`challenge` throws on `.length`, an `author`
- * that is not a byte view overruns the preimage buffer, and a symbol in
- * `content` / `parentRefs` / `protocolVersion` / `timestamp` throws in
- * `TextEncoder.encode` / `String()`.
+ * A `PostId` as it appears in `parentRefs`: exactly 64 lowercase hex
+ * characters, the output shape of `computePostId`'s `.toString('hex')`.
+ *
+ * Lowercase, not case-insensitive: uppercase hex decodes to the same 32 bytes,
+ * so accepting both would make `hexToBytes` non-injective at the codec boundary
+ * — two distinct in-memory posts encoding to one preimage, which is the
+ * malleability the M-1 encoding exists to close.
+ */
+const POST_ID_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * The `b32` string domain: exactly 64 lowercase hex characters.
+ *
+ * One predicate over `POST_ID_HEX` rather than a second regex, because it is
+ * the same domain reached from a different field. Every 32-byte value that
+ * stays a hex `string` in memory and crosses the wire as raw bytes lands here
+ * — post ids, the roots, `prevBlockHash`, tx ids, the consensus-carried
+ * `author`. `codec.ts`'s `hexToBytesExact` is the function on the other side
+ * and its accepted set is exactly this one, deliberately: a domain narrower
+ * than the writer's leaves a reachable throw, and a domain wider than the
+ * writer's is a check that rejects nothing.
+ */
+function isHex32(v: unknown): v is string {
+  return typeof v === 'string' && POST_ID_HEX.test(v);
+}
+
+/**
+ * `stateRoot`'s domain — **66** characters, not 64.
+ *
+ * The AVL+ digest is 33 bytes (`EMPTY_STATE_ROOT = '00'.repeat(33)`), so it is
+ * `b33` on the wire and `POST_ID_HEX` is the wrong width for it. The extra byte
+ * is the root node's height, carried inside the digest; it is not a 32-byte
+ * hash with a spare byte, so there is no "close enough" reading under which the
+ * 64-char form is acceptable.
+ */
+const STATE_ROOT_HEX = /^[0-9a-f]{66}$/;
+
+/**
+ * The domain of every field `postFieldBytes` encodes — the precondition of
+ * `signingHash`, `postPowPreimage` and `computePostId` in `@dagsocial/types`.
+ *
+ * **Type checks** (audit M-5/M-6): a malformed post must not throw inside
+ * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
+ * `author`/`challenge` throws on `.length`, an `author` that is not a byte view
+ * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
+ * `protocolVersion` / `timestamp` throws in `TextEncoder.encode` / `String()`.
  *
  * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. The loose
  * check admitted `NaN` / `Infinity` / negative / fractional values, which the
  * canonical encoder in `@dagsocial/types` has to absorb by writing an all-ones
  * sentinel to stay panic-free — and two such malformed posts then share an
  * encoding. Rejecting them here instead keeps that sentinel path out of reach
- * for anything that passes this guard, and matches the M-6 integer-guard
- * invariant already applied to `verifyPoW`'s nonce and target bits. No
- * well-formed post is affected: a timestamp is a non-negative safe integer and
- * `protocolVersion` must equal `PROTOCOL_VERSION` to pass Stage 1 at all.
+ * for anything that passes this guard.
+ *
+ * **Width checks** (positional wire format, spec §2.5 / §6.1): `author` and
+ * `challenge` become `b32` and `parentRefs` becomes `arr(refs, b32)`. A
+ * fixed-width writer has no unreachable sentinel — its wire domain *is* its
+ * encodable domain — so padding or truncating a 31-byte `author` would map it
+ * onto a well-formed post's encoding, a consensus-level collision strictly
+ * worse than the panic it avoids. The writer therefore throws, and the domain
+ * has to be established before the writer is reached. Establishing it here, one
+ * phase ahead of `post.ts` moving, is what keeps that throw unreachable rather
+ * than latent.
+ *
+ * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
+ * 31-byte one cannot verify a signature), `challenge` is `randomBytes(32)` from
+ * the issuing node, every `parentRef` is a `computePostId` output, a timestamp
+ * is a non-negative safe integer, and `protocolVersion` must equal
+ * `PROTOCOL_VERSION` to pass Stage 1 at all.
+ */
+export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: string } {
+  if (!isObject(post)) return { valid: false, error: 'Post is not an object' };
+  if (typeof post.content !== 'string') {
+    return { valid: false, error: 'Post content must be a string' };
+  }
+  if (!isBytes(post.author) || post.author.length !== 32) {
+    return { valid: false, error: 'Post author must be exactly 32 bytes' };
+  }
+  if (!Array.isArray(post.parentRefs)) {
+    return { valid: false, error: 'Post parentRefs must be an array' };
+  }
+  for (const ref of post.parentRefs) {
+    if (typeof ref !== 'string' || !POST_ID_HEX.test(ref)) {
+      return { valid: false, error: 'Post parentRef must be 64 lowercase hex characters' };
+    }
+  }
+  if (!isBytes(post.challenge) || post.challenge.length !== 32) {
+    return { valid: false, error: 'Post challenge must be exactly 32 bytes' };
+  }
+  if (!isU64Safe(post.protocolVersion)) {
+    return { valid: false, error: 'Post protocolVersion must be a non-negative safe integer' };
+  }
+  if (!isU64Safe(post.timestamp)) {
+    return { valid: false, error: 'Post timestamp must be a non-negative safe integer' };
+  }
+  return { valid: true };
+}
+
+/**
+ * The same predicate as a type guard, for the call sites that want narrowing
+ * rather than a message. One implementation, two shapes — a second copy of the
+ * domain rule is exactly the mirror `VALIDATION_INTERFACE` warns about.
  */
 function isSignablePost(post: unknown): post is Post {
-  if (!isObject(post)) return false;
-  if (typeof post.content !== 'string') return false;
-  if (!isBytes(post.author)) return false;
-  if (!Array.isArray(post.parentRefs)) return false;
-  for (const ref of post.parentRefs) {
-    if (typeof ref !== 'string') return false;
-  }
-  if (!isBytes(post.challenge)) return false;
-  if (!isU64Safe(post.protocolVersion)) return false;
-  if (!isU64Safe(post.timestamp)) return false;
-  return true;
+  return verifyPostFieldDomains(post as Post).valid;
 }
 
 /**
@@ -306,6 +382,15 @@ export function verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?:
   if (!sb.subBlockId) return { valid: false, error: 'Sub-block missing subBlockId' };
   if (typeof sb.protocolVersion !== 'number') return { valid: false, error: 'Sub-block missing protocolVersion' };
   if (!sb.producerId) return { valid: false, error: 'Sub-block missing producerId' };
+  // The post's field domains, checked here because this is the Stage-1 gate the
+  // relay path runs *before* it builds a PoW preimage from that post
+  // (`net/gossip.ts:201` gates `:222`). Under fixed-width writers a post outside
+  // the domain has no encoding and the writer throws — inside a topic validator
+  // whose catch arm bans the *forwarding* peer for a message it merely relayed.
+  // Rejecting it as invalid content is both the correct verdict and the correct
+  // penalty class.
+  const postDomains = verifyPostFieldDomains(sb.post);
+  if (!postDomains.valid) return postDomains;
   return { valid: true };
 }
 
@@ -343,7 +428,7 @@ export function verifyOrderingBlockStructure(
   if (!isObject(block)) return { valid: false, error: 'Ordering block is not an object' };
   const h = block.header;
   if (!h) return { valid: false, error: 'Ordering block missing header' };
-  if (!h.prevBlockHash || h.prevBlockHash.length !== 64) {
+  if (!isHex32(h.prevBlockHash)) {
     return { valid: false, error: 'Ordering block header missing or invalid prevBlockHash' };
   }
   if (!Array.isArray(block.subBlockTree?.subBlockRefs)) {
@@ -353,26 +438,50 @@ export function verifyOrderingBlockStructure(
       block.subBlockTree.subBlockEntries.length !== block.subBlockTree.subBlockRefs.length) {
     return { valid: false, error: 'Ordering block subBlockEntries must align with subBlockRefs' };
   }
-  // Validate each entry
+  // Validate each entry. All three fields are `b32` at the codec boundary —
+  // hex `string` in memory, raw bytes on the wire — so their domain is the hex
+  // alphabet, not a character count. A 64-character *non-hex* value has no
+  // encoding under a fixed-width writer and no sentinel to fall back on, so the
+  // writer throws (TYPES_INTERFACE → Totality).
+  //
+  // The count check was never the whole rule here, and the reachable path runs
+  // through the store rather than the preimage: `block-apply.ts:579` takes
+  // `subBlockId = entry.postId` and `:584` writes `insertPostPlaceholder(
+  // subBlockId, entry.parentRefs)` for any confirmed sub-block whose content
+  // has not arrived. `insertPost` deliberately does not overwrite `parent_refs`
+  // when the real post lands later (`store/posts.ts:91-92` says so), so the
+  // block's claim is what `rowToPost` → `computePostId` reads at feed-service
+  // and stump-engine, forever. Pinning here is what keeps that column inside
+  // the encodable domain.
   for (const entry of block.subBlockTree.subBlockEntries) {
     if (!isObject(entry)) {
       return { valid: false, error: 'Ordering block subBlockEntry is not an object' };
     }
-    if (typeof entry.postId !== 'string' || entry.postId.length !== 64) {
+    if (!isHex32(entry.postId)) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid postId' };
     }
-    if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > 8) {
+    // `MAX_PARENT_REFS`, not a literal `8`. Every other enforcement site imports
+    // the constant (`verifier.ts:137`, `:239`, `verifyParentRefsCount` above);
+    // this one had
+    // drifted to a literal, which is a no-op only while the constant is 8. The
+    // moment it moves, a literal here would cap the post path at the new value
+    // while this path — the one that feeds `insertPostPlaceholder` — kept
+    // accepting the old one.
+    if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > MAX_PARENT_REFS) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid parentRefs' };
     }
     for (const ref of entry.parentRefs) {
-      if (typeof ref !== 'string' || ref.length !== 64) {
-        return { valid: false, error: 'Ordering block subBlockEntry parentRef must be 64-char hex' };
+      if (!isHex32(ref)) {
+        return {
+          valid: false,
+          error: 'Ordering block subBlockEntry parentRef must be 64 lowercase hex characters',
+        };
       }
     }
     // Structure only: `author` is checked for shape here, not truth. Binding it
     // to the real post and to prune authorization is stateful (audit H-3) and
     // lives in @dagsocial/node.
-    if (typeof entry.author !== 'string' || entry.author.length !== 64) {
+    if (!isHex32(entry.author)) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid author' };
     }
   }
@@ -388,15 +497,18 @@ export function verifyOrderingBlockStructure(
     if (!isObject(entry)) {
       return { valid: false, error: 'Ordering block pruneEntry is not an object' };
     }
-    if (typeof entry.rootPostHash !== 'string' || entry.rootPostHash.length !== 64) {
+    if (!isHex32(entry.rootPostHash)) {
       return { valid: false, error: 'Ordering block pruneEntry has invalid rootPostHash' };
     }
     if (!Array.isArray(entry.subtreePostIds)) {
       return { valid: false, error: 'Ordering block pruneEntry has invalid subtreePostIds' };
     }
     for (const id of entry.subtreePostIds) {
-      if (typeof id !== 'string' || id.length !== 64) {
-        return { valid: false, error: 'Ordering block pruneEntry subtreePostId must be 64-char hex' };
+      if (!isHex32(id)) {
+        return {
+          valid: false,
+          error: 'Ordering block pruneEntry subtreePostId must be 64 lowercase hex characters',
+        };
       }
     }
     if (!isBytes(entry.subtreeMerkleRoot) || entry.subtreeMerkleRoot.length !== 32) {
@@ -412,7 +524,13 @@ export function verifyOrderingBlockStructure(
       return { valid: false, error: 'Ordering block pruneEntry has invalid trigger' };
     }
   }
-  if (!block.validatorSignature || block.validatorSignature.length !== 64) {
+  // `isBytes`, not a bare `.length` — the same rule the prune-entry block above
+  // states and these three fields (here, `validatorId`, `coinbaseOutput.owner`)
+  // did not follow. They are `b64`/`b32` *from a `Uint8Array`*, so the codec
+  // reaches `writeBytesNOrThrow`, which throws on anything that is not a byte
+  // view of that exact width; a 64-character string, `{length: 64}` and a
+  // 64-element `Array` all satisfy a length check and none of them encode.
+  if (!isBytes(block.validatorSignature) || block.validatorSignature.length !== 64) {
     return { valid: false, error: 'Ordering block missing or invalid validatorSignature' };
   }
   if (typeof h.height !== 'number' || h.height < 1) {
@@ -421,7 +539,7 @@ export function verifyOrderingBlockStructure(
   if (typeof h.protocolVersion !== 'number') {
     return { valid: false, error: 'Ordering block header missing protocolVersion' };
   }
-  if (!h.validatorId || h.validatorId.length !== 32) {
+  if (!isBytes(h.validatorId) || h.validatorId.length !== 32) {
     return { valid: false, error: 'Ordering block header missing or invalid validatorId' };
   }
   if (typeof h.powNonce !== 'number' || h.powNonce < 0) {
@@ -432,6 +550,23 @@ export function verifyOrderingBlockStructure(
   }
   if (!Array.isArray(block.utxoTxTree?.utxoTxIds)) {
     return { valid: false, error: 'Ordering block missing utxoTxTree.utxoTxIds' };
+  }
+  // The only array in this struct that had no per-element check at all, so an
+  // element could be a number, an object or `null`. Those reach `hexToBuf(id)`
+  // inside `computeUtxoTxRoot`'s Merkle build (`block-creator.ts:79`, called
+  // from `block-apply.ts:270`), where a non-string throws *today* — inside the
+  // apply transaction, so the funnel's totality catch turns a malformed block
+  // into an "unexpected failure" log rather than the stated rejection the
+  // spec's boundary check requires (§2.1 step 4). Register row C3 records this
+  // as subsumed by the migration, which is true from Phase 3 onward — the ids
+  // decode as raw bytes then — and not true in the window this phase covers.
+  for (const id of block.utxoTxTree.utxoTxIds) {
+    if (!isHex32(id)) {
+      return {
+        valid: false,
+        error: 'Ordering block utxoTxId must be 64 lowercase hex characters',
+      };
+    }
   }
   if (!Array.isArray(block.utxoTxTree.utxoTxs) ||
       block.utxoTxTree.utxoTxs.length !== block.utxoTxTree.utxoTxIds.length) {
@@ -444,7 +579,7 @@ export function verifyOrderingBlockStructure(
     if (!isObject(out)) {
       return { valid: false, error: 'Coinbase output is not an object' };
     }
-    if (!out.owner || out.owner.length !== 32) {
+    if (!isBytes(out.owner) || out.owner.length !== 32) {
       return { valid: false, error: 'Coinbase output missing or invalid owner' };
     }
     if (typeof out.value !== 'bigint' || out.value < 0n) {
@@ -454,11 +589,30 @@ export function verifyOrderingBlockStructure(
       return { valid: false, error: 'Coinbase output invalid lockedUntilBlock' };
     }
   }
-  if (!h.subBlockRoot || h.subBlockRoot.length !== 64) {
+  if (!isHex32(h.subBlockRoot)) {
     return { valid: false, error: 'Ordering block header missing subBlockRoot' };
   }
-  if (!h.utxoTxRoot || h.utxoTxRoot.length !== 64) {
+  if (!isHex32(h.utxoTxRoot)) {
     return { valid: false, error: 'Ordering block header missing utxoTxRoot' };
+  }
+  // `stateRoot` was not checked here at all — not the alphabet, not the width,
+  // not even the type. It belongs in this phase and not a later one because of
+  // *where* the next reader is: on the relay path this function is the topic
+  // validator's first step (`net/gossip.ts:98`) and `verifyOrderingBlockPoW` is
+  // its fourth (`:114`), and PoW runs `encodeHeader`. Once the header encodes
+  // positionally, `b33(stateRoot)` throws for a value outside this domain — and
+  // the throw lands in the validator's catch arm at `:123`, which bans the
+  // *forwarding* peer permanently for a message it merely relayed. Rejecting
+  // the block as invalid content is both the right verdict and the right
+  // penalty class; that is the same argument Phase 1c used to place the post
+  // pin in `verifySubBlockStructure`.
+  //
+  // Nothing else covers it. `isEncodableHeader` pins `typeof === 'string'` and
+  // no more, and node's apply-time digest comparison is gated on
+  // `config.verifyStateRoot` *and* on a prover being present
+  // (`block-apply.ts:341-343`) — with either off, the field is never read.
+  if (typeof h.stateRoot !== 'string' || !STATE_ROOT_HEX.test(h.stateRoot)) {
+    return { valid: false, error: 'Ordering block header missing or invalid stateRoot' };
   }
   return { valid: true };
 }

@@ -380,6 +380,24 @@ over views re-typed from storage.
 > (queued follow-up, with `validateTx`'s totality gap — see NODE_INTERFACE →
 > "Output shape").
 
+> ⚠ **AHEAD OF CODE — the inbound obligation becomes structural.** Under the positional wire format
+> (`docs/specs/2026-08-09-positional-wire-format.md`), "any path admitting client-supplied structure
+> into those bytes must hold it to a closed schema" stops being an obligation a check must enforce
+> and becomes a property of the encoding: a positional layout has nowhere to put an unknown field,
+> and a field's width and type are fixed by its writer. The closed-schema check remains as
+> defence-in-depth for JSON-sourced input, which does not pass through the codec.
+>
+> The outbound obligation is **unchanged and still carries its full weight**. A positional codec
+> guarantees that bytes *decode* to a well-formed value; it says nothing about whether a typed view
+> rebuilt from SQLite reproduces the bytes that were committed. `rowToBox` fabricating a value would
+> be exactly as wrong afterwards as before.
+>
+> Ergo's discipline is adopted one step further here than the paragraph above describes: not only
+> "store bytes, derive views", but **re-serialize and byte-compare at every decode boundary** — the
+> sigma-rust behaviour cited above, which is only meaningful over a schema-projecting decoder (a
+> lossless one round-trips junk to itself and the comparison is vacuous). See TYPES_INTERFACE →
+> "The boundary check".
+
 #### AVL+ State Root
 
 The UTXO set is indexed by an AVL+ authenticated dictionary. Every ordering
@@ -950,6 +968,45 @@ Bootstrap uses a **two-phase genesis committee** model:
 
 ---
 
+## Deploy gate — the standing chain-reset requirement
+
+> This section is new as of 2026-08-09. The requirement itself is not: it has been in force for
+> months, but was recorded **only** in a gitignored working file that carries its own warning about
+> being unreliable. An operational rule whose violation forks the network belongs in a contract.
+
+**A deployed node must start from a fresh chain with a wiped AVL store** whenever any committed byte
+has changed since it was deployed. Every one of the following moved committed bytes and is already
+outstanding against the live node, which still runs a pre-Spec-B chain:
+
+| Change | What moved |
+|---|---|
+| P0 | box values (bigint) |
+| P1 | journal shape |
+| P2 | AVL tree shape |
+| P3 | `stateRoot` semantics |
+| Spec G | box ids (provenance-derived) |
+| P2-D | sub-block and block-body CBOR shape, post-lock box ids |
+| **positional wire format** (AHEAD OF CODE) | **every committed byte** |
+
+> ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
+>
+> The reasoning was corrected on 2026-08-07 and the correction matters. This used to be justified by
+> a rebuild path (`bootstrapAvlProver`) that reconstructed the tree from state the headers no longer
+> commit to. That path is **dead** under `@ergots/avltree` 0.4.0 — the prover constructor writes the
+> empty-tree version to empty storage, so its `storage.version() === null` trigger is statically
+> false, and a lone wipe leaves the node running on an **empty tree**. It is also **unsound in
+> principle**: AVL+ shape is history-dependent, so a re-inserted set matched a live tree's digest in
+> only 6 of 10 measured rounds. The persisted tree (an ordinary restart) is the only sound resume;
+> journal replay is the only other sound option and is unbuilt.
+
+**A fresh `MINING_SECRET` is also required** — the previous value is burned in public git history.
+
+Nodes are cheap to reset today because there is one. **Every item in this table becomes a hard fork
+the moment a second node exists**, which is the reason format-breaking work is sequenced to land
+before multi-node operation rather than after it.
+
+---
+
 ## Data Flow
 
 ```
@@ -1005,6 +1062,33 @@ Bootstrap uses a **two-phase genesis committee** model:
 ### Wire Format
 
 Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip messages are raw CBOR. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
+
+> ⚠ **AHEAD OF CODE — gossip stops being CBOR, and `@dagsocial/wire` becomes the base codec layer.**
+> Per `docs/specs/2026-08-09-positional-wire-format.md`.
+>
+> **Every consensus preimage becomes a positional byte layout** built on `@dagsocial/wire` — the
+> normative per-struct tables live in `TYPES_INTERFACE.md` → Serialization. CBOR is retired from
+> every committed byte. It survives only where nothing is committed: local storage (the journal,
+> mempool blobs) and P2P transport framing in `net`, both explicitly out of scope.
+>
+> **The principle, and why CBOR could not satisfy it: the serializer is the validator.** A CBOR map
+> is open by default — unknown keys, key reordering, duplicate keys, indefinite-length forms and
+> non-minimal integers all decode to one struct from different bytes. Measured on the pre-migration
+> tree: an ordering block carrying arbitrary extra keys produced a byte-identical `blockHash` while
+> the encoding differed by 395 bytes. A positional format makes unknown keys *unrepresentable* and
+> gives key order no existence, which is a structural guarantee rather than a check somebody has to
+> remember to run.
+>
+> **Determinism gains a definition it did not have.** The invariant "the same value always produces
+> the same bytes" was true only of a particular library build: `cbor-x` emits non-canonical CBOR
+> (uint16 map counts where the shortest form is immediate), so the consensus format was *"whatever
+> `cbor-x` 1.6.4 emits"* — unwritable as a specification, and already reverse-engineered by hand once
+> in the demo UI. After this, the format is a byte layout an independent implementation can be
+> written against, which is the precondition for the light-client and browser-extension tracks.
+>
+> **Layering change:** `@dagsocial/types` gains a dependency on `@dagsocial/wire`, so wire is no
+> longer net-only — it is the base codec layer, and its writers produce box ids, tx ids, post ids,
+> Merkle roots and the `stateRoot`. It keeps zero dependencies. See `WIRE_INTERFACE.md`.
 
 ---
 

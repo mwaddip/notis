@@ -1,11 +1,13 @@
 export { ReaderError } from './errors.js';
-export { ByteReader, MAX_ARRAY_LENGTH } from './reader.js';
+export { ByteReader, MAX_ARRAY_LENGTH, MAX_VLQ_BYTES } from './reader.js';
 export { ByteWriter } from './writer.js';
 export {
   encodeVlqU,
   decodeVlqU,
   encodeVlqZigZag,
   decodeVlqZigZag,
+  encodeVlqBigInt,
+  encodeVlqZigZagBigInt,
 } from './vlq.js';
 export { encodeFrame, decodeFrame, FRAME_VERSION } from './frame.js';
 export type { HashFn } from './frame.js';

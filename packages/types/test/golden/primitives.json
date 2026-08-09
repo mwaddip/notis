@@ -1,0 +1,475 @@
+{
+  "$schema": "./README.md",
+  "$description": "Golden vectors for the positional wire format's primitives — TYPES_INTERFACE.md → Serialization → Primitives. Every entry is asserted both directions unless it sets \"decode\": false.",
+  "vectors": [
+    {
+      "name": "u8/zero",
+      "codec": "u8",
+      "value": 0,
+      "bytes": "00"
+    },
+    {
+      "name": "u8/one",
+      "codec": "u8",
+      "value": 1,
+      "bytes": "01"
+    },
+    {
+      "name": "u8/max",
+      "codec": "u8",
+      "value": 255,
+      "bytes": "ff",
+      "note": "A bare u8 spans the whole byte, which is why its writer throws rather than sentinelling: 0xff is a legal value, so it could not also mean 'malformed'. The u8 FIELDS in the layout tables are booleans and enum8 tags, whose domains are narrower and which stay total."
+    },
+
+    {
+      "name": "bool/false",
+      "codec": "bool",
+      "value": false,
+      "bytes": "00"
+    },
+    {
+      "name": "bool/true",
+      "codec": "bool",
+      "value": true,
+      "bytes": "01"
+    },
+
+    {
+      "name": "vlqU/zero",
+      "codec": "vlqU",
+      "value": 0,
+      "bytes": "00"
+    },
+    {
+      "name": "vlqU/one",
+      "codec": "vlqU",
+      "value": 1,
+      "bytes": "01"
+    },
+    {
+      "name": "vlqU/127-last-single-byte",
+      "codec": "vlqU",
+      "value": 127,
+      "bytes": "7f"
+    },
+    {
+      "name": "vlqU/128-first-two-byte",
+      "codec": "vlqU",
+      "value": 128,
+      "bytes": "8001"
+    },
+    {
+      "name": "vlqU/16383-last-two-byte",
+      "codec": "vlqU",
+      "value": 16383,
+      "bytes": "ff7f"
+    },
+    {
+      "name": "vlqU/16384-first-three-byte",
+      "codec": "vlqU",
+      "value": 16384,
+      "bytes": "808001"
+    },
+    {
+      "name": "vlqU/2097151-last-three-byte",
+      "codec": "vlqU",
+      "value": 2097151,
+      "bytes": "ffff7f"
+    },
+    {
+      "name": "vlqU/max-safe-integer",
+      "codec": "vlqU",
+      "value": 9007199254740991,
+      "bytes": "ffffffffffffff0f",
+      "note": "2^53-1, the top of the `number` encodable domain. Eight bytes — which is why the ten-byte sentinel is unreachable from a valid field."
+    },
+    {
+      "name": "vlqU/sentinel-nan",
+      "codec": "vlqU",
+      "value": { "$special": "NaN" },
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "The all-ones u64 sentinel. Ported from post.ts:41-57 — it is unreachable from a valid `number` field, so a malformed value never collides with a well-formed one."
+    },
+    {
+      "name": "vlqU/sentinel-infinity",
+      "codec": "vlqU",
+      "value": { "$special": "Infinity" },
+      "bytes": "ffffffffffffffffff01",
+      "decode": false
+    },
+    {
+      "name": "vlqU/sentinel-negative",
+      "codec": "vlqU",
+      "value": -1,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false
+    },
+    {
+      "name": "vlqU/sentinel-fractional",
+      "codec": "vlqU",
+      "value": 1.5,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false
+    },
+    {
+      "name": "vlqU/sentinel-past-safe-integer",
+      "codec": "vlqU",
+      "value": 9007199254740992,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "2^53 — one past the domain. The first value the sentinel has to catch rather than encode."
+    },
+    {
+      "name": "vlqU/sentinel-undefined",
+      "codec": "vlqU",
+      "value": { "$special": "undefined" },
+      "bytes": "ffffffffffffffffff01",
+      "decode": false
+    },
+    {
+      "name": "vlqU/sentinel-wrong-type",
+      "codec": "vlqU",
+      "value": "7",
+      "raw": true,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "A numeric string must not coerce — \"7\" and 7 would otherwise share an encoding."
+    },
+
+    {
+      "name": "vlqS/zero",
+      "codec": "vlqS",
+      "value": 0,
+      "bytes": "00"
+    },
+    {
+      "name": "vlqS/minus-one",
+      "codec": "vlqS",
+      "value": -1,
+      "bytes": "01",
+      "note": "The transfer sentinel `heightOrTransfer` carried by credit.proofSource — the reason that field is vlqS and not vlqU."
+    },
+    {
+      "name": "vlqS/one",
+      "codec": "vlqS",
+      "value": 1,
+      "bytes": "02"
+    },
+    {
+      "name": "vlqS/minus-two",
+      "codec": "vlqS",
+      "value": -2,
+      "bytes": "03"
+    },
+    {
+      "name": "vlqS/63-last-single-byte",
+      "codec": "vlqS",
+      "value": 63,
+      "bytes": "7e"
+    },
+    {
+      "name": "vlqS/minus-64-last-single-byte",
+      "codec": "vlqS",
+      "value": -64,
+      "bytes": "7f"
+    },
+    {
+      "name": "vlqS/64-first-two-byte",
+      "codec": "vlqS",
+      "value": 64,
+      "bytes": "8001"
+    },
+    {
+      "name": "vlqS/minus-65-first-two-byte",
+      "codec": "vlqS",
+      "value": -65,
+      "bytes": "8101"
+    },
+    {
+      "name": "vlqS/max-encodable",
+      "codec": "vlqS",
+      "value": 4503599627370495,
+      "bytes": "feffffffffffff0f",
+      "note": "2^52-1. ZigZag doubles before the VLQ sees it, so the signed domain is half the unsigned one."
+    },
+    {
+      "name": "vlqS/min-encodable",
+      "codec": "vlqS",
+      "value": -4503599627370496,
+      "bytes": "ffffffffffffff0f",
+      "note": "-2^52, whose zigzag is exactly 2^53-1 — the widest signed encoding, still eight bytes."
+    },
+    {
+      "name": "vlqS/sentinel-past-domain",
+      "codec": "vlqS",
+      "value": 4503599627370496,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "2^52 zigzags to 2^53, one past safe — so it sentinels rather than throwing."
+    },
+    {
+      "name": "vlqS/sentinel-nan",
+      "codec": "vlqS",
+      "value": { "$special": "NaN" },
+      "bytes": "ffffffffffffffffff01",
+      "decode": false
+    },
+
+    {
+      "name": "vlqU64/zero",
+      "codec": "vlqU64",
+      "value": "0",
+      "bytes": "00"
+    },
+    {
+      "name": "vlqU64/one",
+      "codec": "vlqU64",
+      "value": "1",
+      "bytes": "01"
+    },
+    {
+      "name": "vlqU64/max-safe-integer",
+      "codec": "vlqU64",
+      "value": "9007199254740991",
+      "bytes": "ffffffffffffff0f",
+      "note": "Byte-identical to vlqU/max-safe-integer. The two paths are two views of one encoding — WIRE_INTERFACE → BigInt VLQ."
+    },
+    {
+      "name": "vlqU64/first-past-safe-integer",
+      "codec": "vlqU64",
+      "value": "9007199254740992",
+      "bytes": "8080808080808010",
+      "note": "2^53 — the first value only the bigint path can carry."
+    },
+    {
+      "name": "vlqU64/u64-max",
+      "codec": "vlqU64",
+      "value": "18446744073709551615",
+      "bytes": "ffffffffffffffffff01",
+      "note": "⚠ These are the sentinel's bytes, and here they are a LEGAL value. That is precisely why the bigint writer throws instead of sentinelling — spec §2.5."
+    },
+
+    {
+      "name": "b32hex/zero",
+      "codec": "b32hex",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "b32hex/byte-ordered",
+      "codec": "b32hex",
+      "value": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "bytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "note": "The whole point of b32: an id's in-memory hex becomes 32 RAW bytes — no length prefix, and no second hexing. Under the old dialect this field cost 64 UTF-8 bytes."
+    },
+    {
+      "name": "b32hex/all-ones",
+      "codec": "b32hex",
+      "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "bytes": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "note": "In-domain, which is why a fixed-width field has no unreachable sentinel and its writer throws."
+    },
+    {
+      "name": "b33hex/empty-state-root",
+      "codec": "b33hex",
+      "value": "000000000000000000000000000000000000000000000000000000000000000000",
+      "bytes": "000000000000000000000000000000000000000000000000000000000000000000",
+      "note": "EMPTY_STATE_ROOT. The AVL+ digest is 33 bytes, not 32 — the single easiest field in the header to get wrong."
+    },
+    {
+      "name": "b32bytes/byte-ordered",
+      "codec": "b32bytes",
+      "value": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "bytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "note": "Post.author and Post.challenge are Uint8Array in memory, not hex — same 32 wire bytes, different in-memory type."
+    },
+    {
+      "name": "b64bytes/byte-ordered",
+      "codec": "b64bytes",
+      "value": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "bytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "note": "A 64-byte Ed25519 signature."
+    },
+
+    {
+      "name": "lp/empty",
+      "codec": "lp",
+      "value": "",
+      "bytes": "00"
+    },
+    {
+      "name": "lp/four-bytes",
+      "codec": "lp",
+      "value": "deadbeef",
+      "bytes": "04deadbeef"
+    },
+    {
+      "name": "lp/single-zero-byte",
+      "codec": "lp",
+      "value": "00",
+      "bytes": "0100",
+      "note": "Distinct from lp/empty: the length prefix is what keeps a zero byte from vanishing."
+    },
+    {
+      "name": "lp/sentinel-wrong-type",
+      "codec": "lp",
+      "value": null,
+      "raw": true,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "A length-prefixed field sentinels its LENGTH — a real byte length is a safe integer, so the all-ones u64 is unreachable there too."
+    },
+
+    {
+      "name": "lpUtf8/empty",
+      "codec": "lpUtf8",
+      "value": "",
+      "bytes": "00"
+    },
+    {
+      "name": "lpUtf8/ascii",
+      "codec": "lpUtf8",
+      "value": "a",
+      "bytes": "0161"
+    },
+    {
+      "name": "lpUtf8/two-byte-sequence",
+      "codec": "lpUtf8",
+      "value": "é",
+      "bytes": "02c3a9",
+      "note": "U+00E9. The prefix counts BYTES, not code points — 1 character, 2 bytes."
+    },
+    {
+      "name": "lpUtf8/three-byte-sequence",
+      "codec": "lpUtf8",
+      "value": "日",
+      "bytes": "03e697a5",
+      "note": "U+65E5."
+    },
+    {
+      "name": "lpUtf8/four-byte-sequence",
+      "codec": "lpUtf8",
+      "value": "😀",
+      "bytes": "04f09f9880",
+      "note": "U+1F600 — outside the BMP, so it is 2 UTF-16 units and 4 UTF-8 bytes. An implementation counting `.length` in JS would write 2 here."
+    },
+    {
+      "name": "lpUtf8/mixed-widths",
+      "codec": "lpUtf8",
+      "value": "héllo 日本 😀",
+      "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880",
+      "note": "18 bytes from 10 code points across all four UTF-8 widths."
+    },
+    {
+      "name": "lpUtf8/sentinel-wrong-type",
+      "codec": "lpUtf8",
+      "value": 42,
+      "raw": true,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "TextEncoder coerces through String(), so without the type check `undefined` and \"undefined\" would share bytes."
+    },
+
+    {
+      "name": "arr/empty",
+      "codec": { "arr": "b32hex" },
+      "value": [],
+      "bytes": "00",
+      "note": "An empty array is a one-byte count, not zero bytes — which is what makes it distinguishable from an omitted field."
+    },
+    {
+      "name": "arr/one-element",
+      "codec": { "arr": "b32hex" },
+      "value": ["000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"],
+      "bytes": "01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "name": "arr/two-elements",
+      "codec": { "arr": "b32hex" },
+      "value": [
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      ],
+      "bytes": "020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "note": "The count is what makes concatenated variable-length elements injective — audit M-1's fix, in the new dialect."
+    },
+    {
+      "name": "arr/of-vlqU",
+      "codec": { "arr": "vlqU" },
+      "value": [0, 127, 128],
+      "bytes": "03007f8001",
+      "note": "Count 3, then three variable-width elements — 1, 1 and 2 bytes."
+    },
+    {
+      "name": "arr/nested-empty-strings",
+      "codec": { "arr": "lpUtf8" },
+      "value": ["", ""],
+      "bytes": "020000",
+      "note": "Two empty elements are not the same bytes as an empty array — count 2, then two zero-length prefixes."
+    },
+
+    {
+      "name": "opt/absent",
+      "codec": { "opt": "vlqU" },
+      "value": null,
+      "bytes": "00"
+    },
+    {
+      "name": "opt/present-zero",
+      "codec": { "opt": "vlqU" },
+      "value": 0,
+      "bytes": "0100",
+      "note": "⚠ The pair that matters: absent is `00`, present-with-a-zero-value is `01 00`. A format that conflated them would let a field be dropped without changing the hash."
+    },
+    {
+      "name": "opt/present-empty-string",
+      "codec": { "opt": "lpUtf8" },
+      "value": "",
+      "bytes": "0100",
+      "note": "Present-but-empty again, this time where the value itself encodes to zero payload bytes."
+    },
+    {
+      "name": "opt/present-empty-array",
+      "codec": { "opt": { "arr": "b32hex" } },
+      "value": [],
+      "bytes": "0100"
+    },
+    {
+      "name": "opt/present-value",
+      "codec": { "opt": "vlqU" },
+      "value": 16384,
+      "bytes": "01808001"
+    },
+    {
+      "name": "opt/present-false",
+      "codec": { "opt": "bool" },
+      "value": false,
+      "bytes": "0100",
+      "note": "decayBurn?: boolean — `false` present must differ from absent, or a box loses a committed field silently."
+    },
+
+    {
+      "name": "enum8/trigger-author",
+      "codec": { "enum8": "trigger" },
+      "value": "author",
+      "bytes": "00"
+    },
+    {
+      "name": "enum8/trigger-storage-prune",
+      "codec": { "enum8": "trigger" },
+      "value": "storage_prune",
+      "bytes": "01"
+    },
+    {
+      "name": "enum8/sentinel-unknown-value",
+      "codec": { "enum8": "trigger" },
+      "value": "nonsense",
+      "raw": true,
+      "bytes": "ff",
+      "decode": false,
+      "note": "The tag set is narrower than the byte, so 0xff is a reachable sentinel here — and enum8() refuses to build a table that claims it."
+    }
+  ]
+}

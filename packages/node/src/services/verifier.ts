@@ -9,7 +9,12 @@ import {
   postPowPreimage,
 } from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
-import { verifyPoW, verifyPostSignature, verifyContentCharacters } from '@dagsocial/validation';
+import {
+  verifyPoW,
+  verifyPostSignature,
+  verifyContentCharacters,
+  verifyPostFieldDomains,
+} from '@dagsocial/validation';
 // The post PoW target comes from the shared config singleton — the same field
 // the challenge endpoint advertises — so the node cannot claim one difficulty
 // and enforce another (audit A6). Same pattern as difficulty.ts. Deliberately
@@ -104,6 +109,17 @@ export function verifyPost(
   post: Post,
   currentBlockHeight: number,
 ): VerificationResult {
+  // 0. Field domains — the precondition, not a courtesy of the caller. Under
+  //    the positional wire format `author`, `challenge` and every `parentRefs`
+  //    entry are fixed-width, and a fixed-width writer has no unreachable
+  //    sentinel, so it throws (TYPES_INTERFACE → Totality). Step 5 below builds
+  //    a preimage from this post, so the domain has to be established before
+  //    then — and it belongs here rather than at the callers, because a check
+  //    the caller must remember to invoke is the shape that produced this whole
+  //    defect class.
+  const domains = verifyPostFieldDomains(post);
+  if (!domains.valid) return domains;
+
   // 1. Content: 1–300 bytes UTF-8. Reject empty.
   const contentBytes = Buffer.byteLength(post.content, 'utf8');
   if (contentBytes === 0) {
@@ -200,6 +216,12 @@ export function verifyPostForRelay(
   post: Post,
   currentBlockHeight: number,
 ): VerificationResult {
+  // 0. Field domains — see verifyPost above. Sharper here than there: step 4 is
+  //    skipped by design, so on the `content-sweep` caller nothing upstream has
+  //    pinned any of the three fields, and step 5 still builds a preimage.
+  const domains = verifyPostFieldDomains(post);
+  if (!domains.valid) return domains;
+
   // 1. Content: already checked by Stage 1, but re-verify
   const contentBytes = Buffer.byteLength(post.content, 'utf8');
   if (contentBytes === 0) {

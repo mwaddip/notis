@@ -711,8 +711,257 @@ apply-time algorithm. Nothing epoch-shaped may return to the block structure.
 
 ## Serialization (`serialization.ts`)
 
-All wire format is CBOR via `cbor-x`. HTTP API is JSON. Signatures and public
-keys are hex-encoded on wire (HTTP JSON); raw bytes in CBOR.
+> ⚠ **AHEAD OF CODE — the positional wire format.** Everything from here to "Export table" below
+> describes the format being built by `docs/specs/2026-08-09-positional-wire-format.md`, not the
+> code as it stands. The code is still `cbor-x`. Do not read this section as a description of
+> current behaviour until this marker is removed.
+
+All wire format is a **positional byte layout** built on `@dagsocial/wire` (`ByteReader` /
+`ByteWriter` / VLQ — in-repo, zero dependencies, browser-clean). HTTP API is JSON. Signatures and
+public keys are hex-encoded on the HTTP wire; raw bytes in the binary format.
+
+`types` therefore depends on `wire`, promoting it from the transport-framing package to the base
+codec layer. No cycle: `wire` has no dependencies. `wire`'s VLQ gains a **bigint** path in the same
+work — its `number`-based one caps at 2⁵³ (an invariant stated in `WIRE_INTERFACE.md`) while
+`value: bigint` spans the full u64.
+
+**Why positional rather than CBOR.** CBOR maps are open by default: unknown keys, key reordering,
+duplicate keys, indefinite-length forms and non-minimal integers all decode to an identical struct
+from different bytes. Measured on the pre-migration tree, an ordering block carrying arbitrary extra
+keys produced a **byte-identical `blockHash`** while the encoding differed by 395 bytes. Worse,
+`cbor-x`'s own output is not canonical CBOR (it emits `b9` + uint16 map counts where the shortest
+form is `a1`), which made the consensus format "whatever `cbor-x` 1.6.4 emits" — a specification no
+independent implementation can be written against, and one the demo UI already had to reverse-engineer
+by hand. See spec §1.
+
+### The boundary check
+
+Every `decode` performs four steps, in one entry point. A separate "assert canonical" step that
+callers must remember to invoke is the shape that produced this defect class in the first place.
+
+1. **Project onto the schema** — read declared fields in normative order. Unknown keys are
+   unrepresentable; key order does not exist.
+2. **Assert `isExhausted`** — trailing bytes are a rejection, not slack.
+3. **Re-encode and byte-compare against the input.** Not redundant: VLQ accepts non-minimal
+   encodings (up to 10 bytes of padding per integer field), and only the compare catches them.
+4. **Callers convert `ReaderError` into a verdict.** The codec signals by throwing; the no-panic
+   invariant is discharged at each boundary. Node's apply funnel catches explicitly and returns
+   `false` rather than relying on its outer totality handler.
+
+### Primitives
+
+| Notation | Encoding |
+|---|---|
+| `u8(x)` | one byte |
+| `vlqU(x)` | unsigned VLQ, u64 domain |
+| `vlqS(x)` | ZigZag VLQ, signed i64 domain |
+| `b32` / `b33` / `b64` | fixed-length raw bytes, **no length prefix** |
+| `lp(x)` | `vlqU(byteLength) ‖ bytes` |
+| `lpUtf8(s)` | `vlqU(utf8ByteLength) ‖ utf8Bytes` |
+| `arr(xs, f)` | `vlqU(count) ‖ f(x)…` |
+| `opt(x, f)` | `u8(0)` absent, `u8(1) ‖ f(x)` present |
+| `enum8(x)` | `u8` from a reserved tag table |
+
+**Normative rules.**
+
+- **Field order IS the specification.** Reordering a struct is a consensus change with no compiler
+  signal.
+- **Ids are `b32` on the wire, hex `string` in memory.** The conversion lives in the codec layer and
+  nowhere else — a conversion at any other site is a double-hexing defect.
+- **Enum tags reserve retired values and are never renumbered.** A renumber silently moves every id
+  and `stateRoot` that covers the tag (the T2b `0x03` lesson, now applying inside the id preimage).
+- **Maps encode as arrays sorted by raw key bytes ascending.** A positional format has no maps, and
+  without a normative sort one transaction has two encodings — reopening the malleability being closed.
+- **Encoders are total** (sentinel discipline, per audits M-5/M-6), with one stated exception: see
+  "Totality" below.
+
+### Totality
+
+Integer writers are **total**: a value outside the encodable domain writes an all-ones sentinel
+rather than throwing. This is load-bearing — `signingHash` is reached with malformed posts, and a
+throwing writer turns a malformed post into a panic, breaking the no-panic contract
+`@dagsocial/validation` asserts.
+
+The sentinel works only where the encodable domain is **narrower** than the wire domain. Applied
+honestly that yields **four** non-total writers, not one — an earlier draft of this section said one,
+and Phase 1b corrected it:
+
+| Writer | Wire domain | Encodable domain | Total? |
+|---|---|---|---|
+| `vlqU` / `vlqS` (number) | u64 | non-negative safe integers | ✅ sentinel — ten bytes, unreachable from a value needing at most eight |
+| `lp` / `lpUtf8` | u64 length | safe-integer length | ✅ sentinel on the length prefix |
+| `enum8`, `bool` | one byte | closed tag set / `{0,1}` | ✅ sentinel `0xff` |
+| **`vlqU64` (bigint)** | u64 | u64 | ❌ **throws** |
+| **`b32` / `b33` / `b64`** | every value of that width | ditto | ❌ **throws** |
+| **`u8` (bare)** | one byte | one byte | ❌ **throws** |
+
+A fixed-width field has no unreachable sentinel for exactly the reason `bigint` has none: its wire
+domain is everything representable. Padding or truncating a malformed id to 32 bytes would map it
+onto a **well-formed id's encoding** — a consensus-level id collision, strictly worse than the panic
+it avoids. Throwing writers are named `…OrThrow` so the exception is visible at every call site.
+
+> ⚠ **Every throwing writer needs its domain established upstream, and two obligations are
+> outstanding.**
+>
+> **1. `bigint` at `block-apply.ts:867`** — `computeTxId` runs there behind `checkTxEnvelope` only,
+> which deliberately does not type output entries (`utxo-engine.ts:908`); the `u64` pin is
+> `checkOutputShape` at `validateTx` step 4, later. Booked to Phase 6.
+>
+> **2. `b32` on the post path — PARTIAL, and it inverted the migration order.**
+> Under the new layout `author` and `challenge` are `b32` and `parentRefs` is `arr(refs, b32)` —
+> three of `postFieldBytes`' six fields. Under the old dialect this could not bite: everything was
+> length-prefixed, so any width encoded faithfully and injectively.
+>
+> **The enumeration is `postFieldBytes`' four entry points — `signingHash`, `postPowPreimage`,
+> `computePostId` and `verifyPostId` — reaching it from 15 production call sites.** (An earlier
+> draft of this block said "eight further sites"; that was main's count, and it was wrong. It also
+> missed `verifyPostId` as an entry point altogether, and `store/posts.ts:82` `insertPost`, which is
+> the store-admission write that the whole downstream classification depends on.)
+>
+> **No site is independently structurally guaranteed.** The tail is safe only if everything written
+> to the store passed a domain check — and the store-admission write is itself one of the call
+> sites. The chain is non-circular only because three gates sit upstream of it.
+>
+> **Closed by Phase 1c** (`5c0bf71`): `verifyPostFieldDomains` in `@dagsocial/validation` pins
+> `author`/`challenge` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex. Lowercase is
+> load-bearing — `'AB…'` and `'ab…'` hex-decode to identical bytes, so accepting both would make the
+> codec boundary non-injective. It is reached from `isSignablePost` and from
+> `verifySubBlockStructure`, the latter closing the gossip relay path with no `net` edit
+> (`gossip.ts:201` runs it before `:222` builds the preimage).
+>
+> **Still open — the three gates, all in `@dagsocial/node`, booked to Phase 1d:**
+> `verifier.ts` `verifyPost` (:148) and `verifyPostForRelay` (:230), and `content-sweep.ts` (:92).
+> The last is the sharpest site in the tree: `verifyPostId` cold, zero prior checks, on a post whose
+> decoder explicitly declines to inspect the interior — and the sync path stays on `cbor-x`
+> permanently, so **no codec phase ever closes it**.
+>
+> **This is not merely tightening the already-unusable.** A post with a 64-character *non-hex*
+> `parentRef` passes the complete Stage-1 pipeline today, signature and PoW included, because the ref
+> is hashed as UTF-8 text and the signature covers those bytes. One third of the pin is a real
+> behavioural change.
+
+### Layout — Post
+
+`postFieldBytes` excludes `powNonce` (the miner varies it) and `signature` (never in any preimage).
+
+| # | Field | Encoding |
+|---|---|---|
+| 1 | `content` | `lpUtf8` |
+| 2 | `author` | `b32` |
+| 3 | `parentRefs` | `arr(refs, b32)` |
+| 4 | `challenge` | `b32` |
+| 5 | `protocolVersion` | `vlqU` |
+| 6 | `timestamp` | `vlqU` |
+
+- `postPowPreimage` = `postFieldBytes`; the PoW hash appends `vlqU(powNonce)`.
+- `computePostId` = `blake2b512(POST_ID_DOMAIN ‖ postFieldBytes ‖ vlqU(powNonce))[0..32]`.
+- Wire codec `encodePost` = fields 1–6 ‖ `vlqU(powNonce)` ‖ `b64(signature)`.
+
+The prior encoding was already positional and injective (audit M-1); this changes its *dialect*
+(fixed-width LE → VLQ, hex-text refs → raw bytes), not its coverage. **Post ids and PoW preimages
+move**; the frozen golden vectors reset to the new format and keep their role as the
+cross-implementation anchor.
+
+### Layout — Stump / PruneEntry
+
+`trigger` tags: `0 = author`, `1 = storage_prune`.
+
+**Stump:** `b32(rootPostHash)` ‖ `b32(authorId)` ‖ `vlqU(replyCount)` ‖ `vlqU(upvoteCount)` ‖
+`enum8(trigger)` ‖ `vlqU(protocolVersion)` ‖ `vlqU(compactedAtBlockHeight)`
+
+**PruneEntry** (`serializePruneEntry`): `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖
+`b32(subtreeMerkleRoot)` ‖ `b32(authorId)` ‖ `b64(authorSignature)` ‖ `enum8(trigger)`
+
+Field order matches the current object literal, so the change is dialect-only.
+
+### Layout — Boxes
+
+Two encodings, named separately so that "provenance is not in the id" is structural rather than a
+runtime strip somebody must remember:
+
+- **`boxContentBytes`** — candidate fields only. What `computeBoxId` and `computeTxId` hash.
+- **`boxRecordBytes`** — `boxContentBytes ‖ b32(txId) ‖ vlqU(index)`. What the AVL value and the
+  store hold. The `id` is never encoded: it *is* the hash.
+
+Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it is a pure function of
+`boxType` and carries zero information in a preimage (C10).
+
+| Tag | Type |
+|---|---|
+| 0 | `karma` |
+| 1 | `credit` |
+| 2 | `invite` |
+| 3 | **reserved — retired `like`, never reuse** |
+| 4 | `bond` |
+| 5 | `post_lock` |
+| 6 | `vouch` |
+
+| Type | Trailing fields |
+|---|---|
+| `karma` | `b32(owner)` ‖ `lpUtf8(proofSource)` ‖ `opt(decayBurn, u8)` |
+| `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
+| `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
+| `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ `b32(inviteePublicKey)` ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
+| `post_lock` | `vlqU(originalValue)` ‖ `b32(owner)` ‖ `b32(targetPostId)` |
+| `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
+
+`credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
+(`heightOrTransfer`). A `vlqU` there would throw on every user-path credit box.
+
+`karma.proofSource` is `lpUtf8` because it is typed `string` (`PostId | StumpHash | InviteTxId`) with
+no pinned length. ⚠ **Grep the producers before narrowing this to `b32`** — a bullet drafted from the
+type is a hypothesis, which is how the credit `proofSource` range broke 13 honest-path tests.
+
+### Layout — UtxoTransaction
+
+**Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
+
+`TX_ID_DOMAIN` ‖ `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖
+`opt(arr(preimages sorted, b32(boxId) ‖ lp(preimage)))` ‖ `vlqU(protocolVersion)` ‖
+`opt(likeTarget, b32)`
+
+Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
+`String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with
+no counts or length prefixes. `preimages` already sorted by key, so the normative sort **ratifies**
+existing behaviour there; for `signatures` it is new, because they were never hashed.
+
+**Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
+
+### Layout — Block
+
+| # | Field | Encoding |
+|---|---|---|
+| 1 | `protocolVersion` | `vlqU` — **first, so it is readable before any version dispatch** |
+| 2 | `height` | `vlqU` |
+| 3 | `prevBlockHash` | `b32` |
+| 4 | `subBlockRoot` | `b32` |
+| 5 | `utxoTxRoot` | `b32` |
+| 6 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
+| 7 | `validatorId` | `b32` |
+| 8 | `extensionDigest` | `b32` — **new (C11)**, the committed extension-section seam |
+| 9 | `powNonce` | `vlqU` |
+| 10 | `powTargetBits` | `vlqU` |
+| 11 | `createdAt` | `vlqU` |
+
+`blockHash` = `blake2b512(headerBytes)[0..32]`; `computePowHash` is the same with `powNonce = 0`.
+
+**SubBlockEntry:** `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)`
+**SubBlockTree:** `arr(subBlockEntries)` ‖ `arr(pruneEntries)` — **`subBlockRefs` is deleted**; it was
+uncommitted, redundant with `subBlockEntries`, and drove state mutation (see NODE_INTERFACE)
+**CoinbaseOutput:** `b32(owner)` ‖ `vlqU(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`
+**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(coinbaseOutputs)`
+**SubBlock:** `b32(subBlockId)` ‖ `postBytes` ‖ `b32(producerId)` ‖ `vlqU(protocolVersion)`
+**OrderingBlock:** `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`
+
+The ordering-block framing replaces `u32BE` length prefixes with `vlqU`. The boundary check runs at
+the outer level and at each nested `lp` section.
+
+### Export table
+
+> ⚠ **AHEAD OF CODE.** The signatures below are unchanged by the migration — every
+> `encodeX`/`decodeX` keeps its name and type. What changes is the bytes they produce and the
+> guarantees they carry: "CBOR encode" becomes the positional layout above, and every `decodeX`
+> gains the four-step boundary check. The rows are left describing CBOR until the code moves.
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in
