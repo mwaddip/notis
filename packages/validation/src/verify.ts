@@ -113,35 +113,84 @@ function hasLeadingZeroBits(hash: Uint8Array, targetBits: number): boolean {
 }
 
 /**
- * Guard the fields `signingHash` (via `postPowPreimage`) reads, so a malformed
- * post cannot throw inside `@dagsocial/types`: a non-array `parentRefs` throws
- * in `.map`, an absent `author`/`challenge` throws on `.length`, an `author`
- * that is not a byte view overruns the preimage buffer, and a symbol in
- * `content` / `parentRefs` / `protocolVersion` / `timestamp` throws in
- * `TextEncoder.encode` / `String()`.
+ * A `PostId` as it appears in `parentRefs`: exactly 64 lowercase hex
+ * characters, the output shape of `computePostId`'s `.toString('hex')`.
+ *
+ * Lowercase, not case-insensitive: uppercase hex decodes to the same 32 bytes,
+ * so accepting both would make `hexToBytes` non-injective at the codec boundary
+ * — two distinct in-memory posts encoding to one preimage, which is the
+ * malleability the M-1 encoding exists to close.
+ */
+const POST_ID_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * The domain of every field `postFieldBytes` encodes — the precondition of
+ * `signingHash`, `postPowPreimage` and `computePostId` in `@dagsocial/types`.
+ *
+ * **Type checks** (audit M-5/M-6): a malformed post must not throw inside
+ * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
+ * `author`/`challenge` throws on `.length`, an `author` that is not a byte view
+ * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
+ * `protocolVersion` / `timestamp` throws in `TextEncoder.encode` / `String()`.
  *
  * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. The loose
  * check admitted `NaN` / `Infinity` / negative / fractional values, which the
  * canonical encoder in `@dagsocial/types` has to absorb by writing an all-ones
  * sentinel to stay panic-free — and two such malformed posts then share an
  * encoding. Rejecting them here instead keeps that sentinel path out of reach
- * for anything that passes this guard, and matches the M-6 integer-guard
- * invariant already applied to `verifyPoW`'s nonce and target bits. No
- * well-formed post is affected: a timestamp is a non-negative safe integer and
- * `protocolVersion` must equal `PROTOCOL_VERSION` to pass Stage 1 at all.
+ * for anything that passes this guard.
+ *
+ * **Width checks** (positional wire format, spec §2.5 / §6.1): `author` and
+ * `challenge` become `b32` and `parentRefs` becomes `arr(refs, b32)`. A
+ * fixed-width writer has no unreachable sentinel — its wire domain *is* its
+ * encodable domain — so padding or truncating a 31-byte `author` would map it
+ * onto a well-formed post's encoding, a consensus-level collision strictly
+ * worse than the panic it avoids. The writer therefore throws, and the domain
+ * has to be established before the writer is reached. Establishing it here, one
+ * phase ahead of `post.ts` moving, is what keeps that throw unreachable rather
+ * than latent.
+ *
+ * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
+ * 31-byte one cannot verify a signature), `challenge` is `randomBytes(32)` from
+ * the issuing node, every `parentRef` is a `computePostId` output, a timestamp
+ * is a non-negative safe integer, and `protocolVersion` must equal
+ * `PROTOCOL_VERSION` to pass Stage 1 at all.
+ */
+export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: string } {
+  if (!isObject(post)) return { valid: false, error: 'Post is not an object' };
+  if (typeof post.content !== 'string') {
+    return { valid: false, error: 'Post content must be a string' };
+  }
+  if (!isBytes(post.author) || post.author.length !== 32) {
+    return { valid: false, error: 'Post author must be exactly 32 bytes' };
+  }
+  if (!Array.isArray(post.parentRefs)) {
+    return { valid: false, error: 'Post parentRefs must be an array' };
+  }
+  for (const ref of post.parentRefs) {
+    if (typeof ref !== 'string' || !POST_ID_HEX.test(ref)) {
+      return { valid: false, error: 'Post parentRef must be 64 lowercase hex characters' };
+    }
+  }
+  if (!isBytes(post.challenge) || post.challenge.length !== 32) {
+    return { valid: false, error: 'Post challenge must be exactly 32 bytes' };
+  }
+  if (!isU64Safe(post.protocolVersion)) {
+    return { valid: false, error: 'Post protocolVersion must be a non-negative safe integer' };
+  }
+  if (!isU64Safe(post.timestamp)) {
+    return { valid: false, error: 'Post timestamp must be a non-negative safe integer' };
+  }
+  return { valid: true };
+}
+
+/**
+ * The same predicate as a type guard, for the call sites that want narrowing
+ * rather than a message. One implementation, two shapes — a second copy of the
+ * domain rule is exactly the mirror `VALIDATION_INTERFACE` warns about.
  */
 function isSignablePost(post: unknown): post is Post {
-  if (!isObject(post)) return false;
-  if (typeof post.content !== 'string') return false;
-  if (!isBytes(post.author)) return false;
-  if (!Array.isArray(post.parentRefs)) return false;
-  for (const ref of post.parentRefs) {
-    if (typeof ref !== 'string') return false;
-  }
-  if (!isBytes(post.challenge)) return false;
-  if (!isU64Safe(post.protocolVersion)) return false;
-  if (!isU64Safe(post.timestamp)) return false;
-  return true;
+  return verifyPostFieldDomains(post as Post).valid;
 }
 
 /**
@@ -306,6 +355,15 @@ export function verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?:
   if (!sb.subBlockId) return { valid: false, error: 'Sub-block missing subBlockId' };
   if (typeof sb.protocolVersion !== 'number') return { valid: false, error: 'Sub-block missing protocolVersion' };
   if (!sb.producerId) return { valid: false, error: 'Sub-block missing producerId' };
+  // The post's field domains, checked here because this is the Stage-1 gate the
+  // relay path runs *before* it builds a PoW preimage from that post
+  // (`net/gossip.ts:201` gates `:222`). Under fixed-width writers a post outside
+  // the domain has no encoding and the writer throws — inside a topic validator
+  // whose catch arm bans the *forwarding* peer for a message it merely relayed.
+  // Rejecting it as invalid content is both the correct verdict and the correct
+  // penalty class.
+  const postDomains = verifyPostFieldDomains(sb.post);
+  if (!postDomains.valid) return postDomains;
   return { valid: true };
 }
 

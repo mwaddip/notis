@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createHash, sign, createPrivateKey } from 'crypto';
+import { createHash, sign, createPrivateKey, verify as cryptoVerify } from 'crypto';
 import { readFileSync } from 'fs';
 import {
   verifyPoW,
@@ -16,9 +16,11 @@ import {
   verifyOrderingBlockPoW,
   blockHash,
   isValidVouchTarget,
+  verifyPostFieldDomains,
+  ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, EMPTY_STATE_ROOT } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -1458,5 +1460,216 @@ describe('integer guards on protocolVersion and timestamp (M-6)', () => {
       verifyPostSignature(signedPost({ timestamp: Number.MAX_SAFE_INTEGER }), kp.publicKey),
     ).toBe(true);
     expect(verifyPostSignature(signedPost({ protocolVersion: 0 }), kp.publicKey)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fixed-width field domains — the b32 precondition (spec §2.5 / §6.1)
+// ---------------------------------------------------------------------------
+//
+// `author` and `challenge` become `b32`, `parentRefs` becomes `arr(refs, b32)`.
+// A fixed-width writer's wire domain IS its encodable domain, so it has no
+// unreachable sentinel and must throw rather than pad or truncate — padding
+// would map a malformed id onto a well-formed one's encoding. The domain has to
+// be established before that writer is reachable.
+//
+// The pin is only meaningful if it fires, so each case below is built to pass
+// every *other* check first: the signature is genuinely valid over the post's
+// own preimage (asserted with raw `crypto.verify`, so the rejection is provably
+// the domain pin and not a broken fixture), and the current encoder is shown to
+// encode the malformed post faithfully — which is exactly why nothing catches
+// it today.
+
+describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
+  const kp = generateKeyPair();
+  const priv = createPrivateKey({
+    key: Buffer.from(kp.secretKey),
+    format: 'der',
+    type: 'pkcs8',
+  });
+  const pubKeyObj = ed25519PublicKeyToKeyObject(kp.publicKey);
+
+  /** A post signed over its own stated fields, however malformed those are. */
+  const signedPost = (over: Partial<Post> = {}): Post => {
+    const post: Post = {
+      content: 'pin the domain',
+      author: kp.publicKey,
+      parentRefs: [],
+      challenge: new Uint8Array(32).fill(9),
+      powNonce: 0,
+      protocolVersion: 1,
+      timestamp: 1_700_000_000_000,
+      signature: new Uint8Array(64),
+      ...over,
+    };
+    post.signature = new Uint8Array(sign(null, signingHash(post), priv));
+    return post;
+  };
+
+  const subBlockOf = (post: Post): SubBlock => ({
+    subBlockId: computePostId(post),
+    post,
+    producerId: new Uint8Array(32).fill(3),
+    protocolVersion: 1,
+  });
+
+  /** The signature really does cover this post — nothing else can reject it. */
+  const signatureIsGenuine = (post: Post): boolean =>
+    cryptoVerify(null, signingHash(post), pubKeyObj, Buffer.from(post.signature));
+
+  // -------------------------------------------------------------------------
+  // The headline: a post that passes ALL of Stage 1 today
+  // -------------------------------------------------------------------------
+
+  it('TEETH: a post with a non-hex parentRef passes every other Stage-1 check and is now rejected', () => {
+    // 64 characters, count within MAX_PARENT_REFS, a string — so today it
+    // satisfies `verifyParentRefsCount`, the old `typeof ref === 'string'`
+    // guard, and `postFieldBytes`, which length-prefixes the UTF-8 of the text
+    // and encodes it faithfully. Under `arr(refs, b32)` it has no encoding.
+    const post = signedPost({ parentRefs: ['z'.repeat(64)] });
+    const sb = subBlockOf(post);
+
+    // Everything Stage 1 checks besides the domain still says yes:
+    expect(verifyContentLimits(post.content)).toEqual({ valid: true });
+    expect(verifyContentCharacters(post.content)).toEqual({ valid: true });
+    expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
+    expect(verifyProtocolVersion(post.protocolVersion)).toBe(true);
+    // …including the signature, which genuinely verifies over these bytes.
+    expect(signatureIsGenuine(post)).toBe(true);
+    // …and today's encoder builds a preimage for it without complaint.
+    expect(() => postPowPreimage(post)).not.toThrow();
+
+    // The pin is the only thing that rejects it — at all three entry points.
+    expect(verifyPostFieldDomains(post)).toEqual({
+      valid: false,
+      error: 'Post parentRef must be 64 lowercase hex characters',
+    });
+    expect(verifySubBlockStructure(sb).valid).toBe(false);
+    expect(verifyPostSignature(post, kp.publicKey)).toBe(false);
+  });
+
+  it('TEETH: `verifySubBlockStructure` rejected nothing about the post before — now it gates gossip', () => {
+    // This sub-block satisfies every check the function made prior to this
+    // phase: post present, subBlockId present, protocolVersion a number,
+    // producerId present. It is `net/gossip.ts:201`, which gates `:222`.
+    const sb = subBlockOf(signedPost({ author: new Uint8Array(31).fill(4) }));
+    expect(sb.post).toBeTruthy();
+    expect(sb.subBlockId).toBeTruthy();
+    expect(typeof sb.protocolVersion).toBe('number');
+    expect(sb.producerId).toBeTruthy();
+    expect(verifySubBlockStructure(sb)).toEqual({
+      valid: false,
+      error: 'Post author must be exactly 32 bytes',
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // author / challenge widths
+  // -------------------------------------------------------------------------
+
+  it.each([0, 1, 31, 33, 64])('rejects a %i-byte author', (n) => {
+    const post = signedPost({ author: new Uint8Array(n).fill(4) });
+    expect(signatureIsGenuine(post)).toBe(true);
+    expect(verifyPostFieldDomains(post).error).toBe('Post author must be exactly 32 bytes');
+  });
+
+  it.each([0, 1, 31, 33, 64])('rejects a %i-byte challenge', (n) => {
+    const post = signedPost({ challenge: new Uint8Array(n).fill(5) });
+    expect(signatureIsGenuine(post)).toBe(true);
+    expect(verifyPostFieldDomains(post).error).toBe('Post challenge must be exactly 32 bytes');
+  });
+
+  it('the widths it rejects encode faithfully today — this is a domain pin, not a collision fix', () => {
+    // Length prefixes make the current dialect injective across widths: a
+    // 31-byte and a 32-byte author produce *different* preimages. Nothing is
+    // colliding today; the fields simply acquire a narrower domain when the
+    // length prefix goes away. That is why no existing check caught this.
+    const short = signedPost({ author: new Uint8Array(31).fill(4) });
+    const full = signedPost({ author: new Uint8Array(32).fill(4) });
+    expect(Buffer.from(postPowPreimage(short)).equals(Buffer.from(postPowPreimage(full)))).toBe(false);
+    expect(verifyPostFieldDomains(short).valid).toBe(false);
+    expect(verifyPostFieldDomains(full).valid).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // parentRefs: 64 LOWERCASE hex
+  // -------------------------------------------------------------------------
+
+  it('rejects an uppercase-hex parentRef — hex→bytes must stay injective', () => {
+    // 'AB…' and 'ab…' decode to the same 32 bytes, so accepting both would let
+    // two distinct in-memory posts share one preimage. That is the malleability
+    // the M-1 encoding exists to close, arriving through the codec boundary.
+    const lower = 'ab'.repeat(32);
+    const upper = lower.toUpperCase();
+    expect(Buffer.from(upper, 'hex').equals(Buffer.from(lower, 'hex'))).toBe(true);
+    expect(verifyPostFieldDomains(signedPost({ parentRefs: [lower] })).valid).toBe(true);
+    expect(verifyPostFieldDomains(signedPost({ parentRefs: [upper] })).valid).toBe(false);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['63 hex chars', 'a'.repeat(63)],
+    ['65 hex chars', 'a'.repeat(65)],
+    ['64 chars with one non-hex', 'a'.repeat(63) + 'g'],
+    ['0x-prefixed', '0x' + 'a'.repeat(62)],
+    ['64 chars of whitespace padding', ' '.repeat(2) + 'a'.repeat(62)],
+  ])('rejects a parentRef that is %s', (_label, ref) => {
+    expect(verifyPostFieldDomains(signedPost({ parentRefs: [ref] })).valid).toBe(false);
+  });
+
+  it('rejects a malformed ref in any position, not just the first', () => {
+    const good = 'ab'.repeat(32);
+    expect(
+      verifyPostFieldDomains(signedPost({ parentRefs: [good, good, 'z'.repeat(64)] })).valid,
+    ).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Honest paths do not move — the prediction, pinned
+  // -------------------------------------------------------------------------
+
+  it('accepts a well-formed post: 32/32 bytes and real computePostId refs', () => {
+    // Every honest parentRef is a `computePostId` output, i.e. the hex string
+    // `.toString('hex')` produces — lowercase, 64 chars, by construction.
+    const parent = signedPost({ content: 'parent' });
+    const parentId = computePostId(parent);
+    expect(parentId).toMatch(/^[0-9a-f]{64}$/);
+
+    const child = signedPost({ content: 'child', parentRefs: [parentId] });
+    expect(verifyPostFieldDomains(child)).toEqual({ valid: true });
+    expect(verifyPostSignature(child, kp.publicKey)).toBe(true);
+    expect(verifySubBlockStructure(subBlockOf(child))).toEqual({ valid: true });
+  });
+
+  it('accepts the full MAX_PARENT_REFS-wide honest case', () => {
+    const refs = Array.from({ length: 8 }, (_, i) =>
+      computePostId(signedPost({ content: `parent ${i}` })),
+    );
+    const post = signedPost({ parentRefs: refs });
+    expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
+    expect(verifyPostFieldDomains(post)).toEqual({ valid: true });
+    expect(verifyPostSignature(post, kp.publicKey)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Still total on adversarial input (M-5)
+  // -------------------------------------------------------------------------
+
+  it('verifyPostFieldDomains survives every malformed argument', () => {
+    for (const bad of MALFORMED) {
+      expect(() => verifyPostFieldDomains(bad as unknown as Post)).not.toThrow();
+      expect(verifyPostFieldDomains(bad as unknown as Post).valid).toBe(false);
+      const good = signedPost();
+      expect(() => verifyPostFieldDomains({ ...good, author: bad } as unknown as Post)).not.toThrow();
+      expect(() => verifyPostFieldDomains({ ...good, challenge: bad } as unknown as Post)).not.toThrow();
+      expect(() => verifyPostFieldDomains({ ...good, parentRefs: bad } as unknown as Post)).not.toThrow();
+      expect(() => verifyPostFieldDomains({ ...good, parentRefs: [bad] } as unknown as Post)).not.toThrow();
+    }
+  });
+
+  it('verifySubBlockStructure stays total now that it reaches into the post', () => {
+    for (const bad of MALFORMED) {
+      expect(() => verifySubBlockStructure({ ...subBlockOf(signedPost()), post: bad } as unknown as SubBlock)).not.toThrow();
+    }
   });
 });

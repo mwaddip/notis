@@ -383,7 +383,14 @@ describe('verifyPost', () => {
       store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
         { value: POST_LOCK_REPLY_COST },
       ]);
-      let post = makePost({ parentRefs: ['nonexistent-parent-id'] });
+      // A well-formed PostId that no post claims. It must be 64 lowercase hex:
+      // a real PostId is always `computePostId`'s hex digest, and since Phase 1c
+      // `verifyPostFieldDomains` rejects anything else at step 6 — before this
+      // test's actual subject, the step-8 parent-existence check, is reached.
+      // The old fixture ('nonexistent-parent-id', 21 chars) was never emittable
+      // by any producer.
+      const ABSENT_PARENT = 'de'.repeat(32);
+      let post = makePost({ parentRefs: [ABSENT_PARENT] });
       const powInput = buildPowInput(post);
       const nonce = solvePoW(powInput, 20);
       post = { ...post, powNonce: nonce };
@@ -392,7 +399,7 @@ describe('verifyPost', () => {
       const deps = createMockDeps(store);
       const result = verifyPost(deps, post, 50);
       expect(result.valid).toBe(false);
-      expect(result.error).toBe('Parent post not found: nonexistent-parent-id');
+      expect(result.error).toBe(`Parent post not found: ${ABSENT_PARENT}`);
     },
   );
 

@@ -7,6 +7,7 @@ export {
   verifyContentLimits,
   verifyContentCharacters,
   verifyParentRefsCount,
+  verifyPostFieldDomains,
   verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
