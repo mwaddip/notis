@@ -782,12 +782,46 @@ rather than throwing. This is load-bearing — `signingHash` is reached with mal
 throwing writer turns a malformed post into a panic, breaking the no-panic contract
 `@dagsocial/validation` asserts.
 
-The sentinel works only where the encodable domain is narrower than the wire domain. **Exception:**
-`value: bigint` spans the full u64, so no sentinel is unreachable; `boxContentBytes` therefore
-throws on an out-of-domain bigint. Every call site must establish the domain first — including
-`block-apply`'s pre-validation `computeTxId`, which sits behind `checkTxEnvelope` only and so needs
-an explicit check (`checkTxEnvelope` does not type output entries; the `u64` pin is `checkOutputShape`
-at `validateTx` step 4, which runs later).
+The sentinel works only where the encodable domain is **narrower** than the wire domain. Applied
+honestly that yields **four** non-total writers, not one — an earlier draft of this section said one,
+and Phase 1b corrected it:
+
+| Writer | Wire domain | Encodable domain | Total? |
+|---|---|---|---|
+| `vlqU` / `vlqS` (number) | u64 | non-negative safe integers | ✅ sentinel — ten bytes, unreachable from a value needing at most eight |
+| `lp` / `lpUtf8` | u64 length | safe-integer length | ✅ sentinel on the length prefix |
+| `enum8`, `bool` | one byte | closed tag set / `{0,1}` | ✅ sentinel `0xff` |
+| **`vlqU64` (bigint)** | u64 | u64 | ❌ **throws** |
+| **`b32` / `b33` / `b64`** | every value of that width | ditto | ❌ **throws** |
+| **`u8` (bare)** | one byte | one byte | ❌ **throws** |
+
+A fixed-width field has no unreachable sentinel for exactly the reason `bigint` has none: its wire
+domain is everything representable. Padding or truncating a malformed id to 32 bytes would map it
+onto a **well-formed id's encoding** — a consensus-level id collision, strictly worse than the panic
+it avoids. Throwing writers are named `…OrThrow` so the exception is visible at every call site.
+
+> ⚠ **Every throwing writer needs its domain established upstream, and two obligations are
+> outstanding.**
+>
+> **1. `bigint` at `block-apply.ts:867`** — `computeTxId` runs there behind `checkTxEnvelope` only,
+> which deliberately does not type output entries (`utxo-engine.ts:908`); the `u64` pin is
+> `checkOutputShape` at `validateTx` step 4, later. Booked to Phase 6.
+>
+> **2. `b32` on the post path — AHEAD OF CODE, and it inverts the migration order.**
+> `@dagsocial/validation`'s `isSignablePost` (`verify.ts:133-145`) pins *types* but not *lengths*:
+> `isBytes(author)`, `isBytes(challenge)`, and `typeof ref === 'string'` all admit any width. Under
+> the new layout `author` and `challenge` are `b32` and `parentRefs` is `arr(refs, b32)` — three of
+> `postFieldBytes`' six fields. Under the old dialect this could not bite, because everything was
+> length-prefixed and any width encoded faithfully.
+>
+> The exposure is wider than `isSignablePost`, which gates only `verifyPostSignature`:
+> `computePostId` and `postPowPreimage` are called directly from eight further sites, and
+> `gossip.ts:222` reaches `postPowPreimage` behind content, character, ref-**count** and version
+> checks with no width check on any of the three fields — in Stage-1 relay validation, which
+> `VALIDATION_INTERFACE` requires never to throw.
+>
+> **Therefore the fixed-width domain must be pinned before `post.ts` moves to fixed-width writers.**
+> Doing it after would open a live M-5/M-6 panic regression in the window between.
 
 ### Layout — Post
 
