@@ -25,9 +25,34 @@ import { deleteVouchCooldown, insertVouchCooldown } from '../store/vouch-cooldow
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { applyOrderingBlock } from './block-apply.js';
+import {
+  MissingStoredBlockError,
+  UnhashableStoredHeaderError,
+} from './corrupt-state.js';
 import type { DagService } from './dag-service.js';
 
 export const MAX_REORG_DEPTH = 20;
+
+/**
+ * The hash of a header from our own chain.
+ *
+ * `blockHash` answers `null` for a header outside the encodable domain,
+ * and no *stored* header can be one: in `src` the ordering store has exactly one
+ * writer, `block-apply.ts`'s `storeCreateOrderingBlock`, downstream of the
+ * `verifyOrderingBlockStructure` gate whose header checks *are*
+ * `verifyHeaderFieldDomains`. So a `null` here is not a rejection to absorb — it
+ * is our own chain having become something apply could never have written, and
+ * every fork-choice answer computed from it would be computed from state we
+ * cannot hash. Say so and stop, rather than returning a verdict we have no basis
+ * for.
+ */
+function ourChainHash(header: BlockHeader, site: string): string {
+  const hash = blockHash(header);
+  if (hash === null) {
+    throw new UnhashableStoredHeaderError(site, header.height);
+  }
+  return hash;
+}
 
 /**
  * Does this block extend our current canonical tip?
@@ -35,13 +60,37 @@ export const MAX_REORG_DEPTH = 20;
 export function extendsOurTip(block: OrderingBlock): boolean {
   const ourTip = getOrderingBlock(getCurrentHeight());
   if (!ourTip) return false;
-  return block.header.prevBlockHash === blockHash(ourTip.header);
+  return block.header.prevBlockHash === ourChainHash(ourTip.header, 'extendsOurTip');
 }
 
 /**
  * Walk both chains back to find the common ancestor.
  * theirHeaders is newest-first (tip at index 0).
  * Returns fork height or null if deeper than MAX_REORG_DEPTH.
+ *
+ * `ourTip` is a header of ours; `theirHeaders` is not. It arrives from
+ * `net.requestHeaders`, which is `decode(response) as BlockHeader[]` — a raw
+ * cbor decode with a TypeScript cast and no runtime check of any kind — so
+ * every field in it is peer-chosen, and `verifyOrderingBlockStructure` cannot
+ * cover the path because it takes an `OrderingBlock` and this one carries bare
+ * headers.
+ *
+ * **A batch with an unhashable header in it is refused whole.** A header we
+ * cannot hash is not "a header that did not match": it is input we cannot
+ * interpret, and the difference decides fork depth. Skipping it and carrying on
+ * lets the peer choose *which* of our blocks becomes the fork point — poison the
+ * entry that would have matched at our height 8 and the scan falls through to an
+ * older match, so the node reverts back to height 5 instead of 8 (bounded only
+ * by MAX_REORG_DEPTH), and the poisoned entry stays in the array the caller
+ * hands to `cumulativeWork` for the heavier-chain comparison. Refusing the batch
+ * grants the peer nothing it does not already have: the same peer can answer
+ * with no headers, or with headers matching nothing, and both already end in "no
+ * reorg" — index.ts asks one peer and takes what it gets. So skip buys no
+ * liveness and costs fork-choice integrity.
+ *
+ * The whole batch is hashed before any of it is matched, deliberately: checking
+ * only until the first match would make the verdict depend on where the peer put
+ * the poison relative to the match, which is the peer's choice again.
  */
 export function findForkPoint(
   ourTip: BlockHeader,
@@ -50,19 +99,55 @@ export function findForkPoint(
   // Collect our chain hashes: height -> hash
   const ourHashes = new Map<string, number>();
   let cursor = getOrderingBlock(ourTip.height);
-  if (!cursor || blockHash(cursor.header) !== blockHash(ourTip)) {
+  if (
+    !cursor ||
+    ourChainHash(cursor.header, 'findForkPoint') !== ourChainHash(ourTip, 'findForkPoint')
+  ) {
     return null; // ourTip is stale — a reorg happened since caller fetched it
   }
+  // Walk our chain down from the tip. A missing block ends this loop, and the
+  // two reasons it can be missing are not the same thing: running off the
+  // bottom of the chain is how the walk terminates, while a height that should
+  // hold a block and does not is the contiguity invariant broken.
+  //
+  // The two are cleanly separable because heights start at 1 — genesis is
+  // accepted only at height 1 (`block-apply.ts:224`) and every stored header
+  // cleared `height >= 1` (`validation/verify.ts:643`) — so height 0 is the
+  // boundary and every height at or above 1 must be there. Those are the only
+  // two cases: stored heights are integers ≥ 1, so `height - 1` is either 0 or
+  // ≥ 1, with nothing in between and nothing outside.
+  //
+  // Truncating silently errs toward "no common ancestor", which is the safe
+  // direction and is exactly why it survived §12's sweep — but a node that can
+  // never reorg sits on the wrong chain permanently without knowing, which is
+  // the same silence the apply funnel's forever-rejection was condemned for.
   let depth = 0;
-  while (cursor && depth < MAX_REORG_DEPTH) {
-    ourHashes.set(blockHash(cursor.header), cursor.header.height);
-    cursor = getOrderingBlock(cursor.header.height - 1);
+  while (depth < MAX_REORG_DEPTH) {
+    ourHashes.set(ourChainHash(cursor.header, 'findForkPoint'), cursor.header.height);
     depth++;
+    const nextHeight = cursor.header.height - 1;
+    if (nextHeight < 1) break; // the bottom of the chain, not a gap
+    const next = getOrderingBlock(nextHeight);
+    if (!next) throw new MissingStoredBlockError('findForkPoint', nextHeight);
+    cursor = next;
+  }
+
+  // Hash their whole chain first — one unhashable entry refuses the batch
+  const theirHashes: string[] = [];
+  for (let i = 0; i < theirHeaders.length; i++) {
+    const h = blockHash(theirHeaders[i]!);
+    if (h === null) {
+      console.warn(
+        `Fork resolution: refusing peer header batch — entry ${i} of ` +
+        `${theirHeaders.length} is outside the encodable domain`,
+      );
+      return null;
+    }
+    theirHashes.push(h);
   }
 
   // Walk their chain, check for match
-  for (const header of theirHeaders) {
-    const h = blockHash(header);
+  for (const h of theirHashes) {
     const matchHeight = ourHashes.get(h);
     if (matchHeight !== undefined) return matchHeight;
   }

@@ -137,6 +137,7 @@ async function importOrdering() {
     getCurrentHeight: () => number;
     getOrderingBlock: (height: number) => OrderingBlock | null;
     deleteOrderingBlock: (height: number) => void;
+    createOrderingBlock: (block: OrderingBlock) => void;
   };
 }
 
@@ -161,6 +162,13 @@ async function importForkResolution() {
     revertBlock: (height: number) => void;
     reorg: (forkHeight: number, newBlocks: OrderingBlock[]) => void;
     MAX_REORG_DEPTH: number;
+  };
+}
+
+async function importCorruptState() {
+  return (await import('../../src/services/corrupt-state.js')) as unknown as {
+    UnhashableStoredHeaderError: new (site: string, height: number) => Error;
+    MissingStoredBlockError: new (site: string, height: number) => Error;
   };
 }
 
@@ -306,7 +314,7 @@ describe('extendsOurTip', () => {
       header: {
         ...block2!.header,
         height: ourTip!.header.height + 1,
-        prevBlockHash: blockHash(ourTip!.header),
+        prevBlockHash: blockHash(ourTip!.header)!,
       },
     };
     expect(forkResolution.extendsOurTip(candidate)).toBe(true);
@@ -429,7 +437,7 @@ describe('findForkPoint', () => {
     const forkBlock3: BlockHeader = {
       protocolVersion: PROTOCOL_VERSION,
       height: 3,
-      prevBlockHash: blockHash(block2!.header), // chains from our block 2
+      prevBlockHash: blockHash(block2!.header)!, // chains from our block 2
       subBlockRoot: 'ff'.repeat(32), // different content
       utxoTxRoot: 'ff'.repeat(32),
       stateRoot: 'ff'.repeat(33),
@@ -536,7 +544,7 @@ describe('findForkPoint', () => {
       {
         protocolVersion: PROTOCOL_VERSION,
         height: chainLength - MAX_DEPTH - 1 + 3,
-        prevBlockHash: blockHash(deepBlock!.header),
+        prevBlockHash: blockHash(deepBlock!.header)!,
         subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
@@ -551,6 +559,296 @@ describe('findForkPoint', () => {
     const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
     // The common ancestor (deepBlock) is beyond MAX_REORG_DEPTH from our tip
     expect(forkPoint).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 1f-2 — a peer header batch is accepted or refused whole.
+  //
+  // `theirHeaders` reaches this function as `decode(response) as BlockHeader[]`
+  // (net's `requestHeaders`): a raw cbor decode with a TypeScript cast and no
+  // runtime check, so every field in it is the peer's to choose. These two pin
+  // the answer to the question `blockHash` now forces — what an
+  // unhashable entry means — because the plausible alternative, skipping it and
+  // carrying on, hands the peer the fork depth.
+  // -------------------------------------------------------------------------
+
+  /** A three-block chain and the pieces every batch below is built from. */
+  async function threeBlockChain() {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    await importIdentities();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    for (let i = 0; i < 3; i++) {
+      const post = makePost(author.userId, `batch block ${i + 1}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      bc.createOrderingBlock();
+    }
+
+    const ordering = await importOrdering();
+    const block1 = ordering.getOrderingBlock(1);
+    const block2 = ordering.getOrderingBlock(2);
+    const ourTip = ordering.getOrderingBlock(3);
+    expect(block1).not.toBeNull();
+    expect(block2).not.toBeNull();
+    expect(ourTip).not.toBeNull();
+
+    // Their tip: a real-looking header on a chain that forked from ours, so the
+    // batch has a leading entry that matches nothing.
+    const theirTip: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 3,
+      prevBlockHash: blockHash(block2!.header)!,
+      subBlockRoot: 'ff'.repeat(32),
+      utxoTxRoot: 'ff'.repeat(32),
+      stateRoot: 'ff'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 999,
+      powTargetBits: 4,
+      createdAt: Date.now(),
+    };
+
+    return {
+      ourTip: ourTip!.header,
+      block1: block1!.header,
+      block2: block2!.header,
+      theirTip,
+      forkResolution: await importForkResolution(),
+    };
+  }
+
+  it('refuses the whole batch when any header is outside the encodable domain', async () => {
+    const { ourTip, block1, block2, theirTip, forkResolution } = await threeBlockChain();
+
+    // Control: this exact batch, unpoisoned, forks at 2.
+    expect(forkResolution.findForkPoint(ourTip, [theirTip, block2])).toBe(2);
+
+    // `createdAt` outside `vlqU`'s domain — the field nothing checked before
+    // Phase 1f. Placed AFTER the matching entry, where a check that stopped at
+    // the first match would never look, so answering null proves the whole
+    // batch is hashed before any of it is matched.
+    const poisoned: BlockHeader = { ...block1, createdAt: -1 };
+    expect(forkResolution.findForkPoint(ourTip, [theirTip, block2, poisoned])).toBeNull();
+  });
+
+  it('a corrupted header cannot push the fork point deeper', async () => {
+    const { ourTip, block1, block2, theirTip, forkResolution } = await threeBlockChain();
+
+    // Control: with the height-2 entry absent the batch legitimately forks at
+    // 1, so the deeper answer is reachable and null below is a refusal rather
+    // than "nothing matched".
+    expect(forkResolution.findForkPoint(ourTip, [theirTip, block1])).toBe(1);
+
+    // Same batch, except the entry that would have matched at height 2 is
+    // corrupted instead of absent. Skipping it answers 1 — a reorg two blocks
+    // deeper than the chains actually diverged, with the depth chosen by
+    // whoever served the headers. Refusing the batch is what this pins.
+    const poisonedAtTwo: BlockHeader = { ...block2, createdAt: Number.NaN };
+    expect(
+      forkResolution.findForkPoint(ourTip, [theirTip, poisonedAtTwo, block1]),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — the ordering store disagreeing with the apply gate
+//
+// `index.ts`'s ordering-block boundary fails the node stop on
+// `UnhashableStoredHeaderError` and warns-and-continues on everything else, so
+// what these pin is the half of that decision the boundary cannot make for
+// itself: that the fault arrives as a distinct *type* carrying the site and the
+// height, rather than as prose the boundary would have to match on.
+//
+// Reaching the state at all takes a write through the store, which is what
+// apply does — but *after* the structure gate whose header checks are the same
+// domain predicate. That is the only way past it, and it is exactly how the
+// double-width roots in `test/routes/blocks.test.ts` got into a stored header.
+// ---------------------------------------------------------------------------
+
+describe('a stored header that cannot be hashed', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => { vi.resetModules(); });
+
+  /** Store a height-1 block whose header is outside the encodable domain. */
+  async function storeCorruptTip() {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ordering = await importOrdering();
+
+    // Structurally valid in every respect `verifyOrderingBlockStructure`
+    // checks, so `createdAt` is the only thing wrong with it.
+    const buildBlock = (height: number, createdAt: number): OrderingBlock => ({
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height,
+        prevBlockHash: '00'.repeat(32),
+        subBlockRoot: '00'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 4,
+        createdAt,
+      },
+      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      validatorSignature: new Uint8Array(64),
+    });
+
+    // `createdAt: -1` is outside `vlqU`'s domain, and the field nothing checked
+    // before Phase 1f. cbor round-trips it, so the corruption survives the
+    // store — which is the only way in: `createOrderingBlock` is what apply
+    // calls *after* the gate that would have refused this header.
+    const block = buildBlock(1, -1);
+    ordering.createOrderingBlock(block);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    return {
+      block,
+      header: block.header,
+      buildBlock,
+      forkResolution: await importForkResolution(),
+      corruptState: await importCorruptState(),
+    };
+  }
+
+  /** Run `fn` and return what it threw, or `null` if it did not throw. */
+  function thrownBy(fn: () => unknown): unknown {
+    try {
+      fn();
+      return null;
+    } catch (err) {
+      return err;
+    }
+  }
+
+  it('extendsOurTip reports the site and height, as a typed error', async () => {
+    const { block, forkResolution, corruptState } = await storeCorruptTip();
+
+    const caught = thrownBy(() => forkResolution.extendsOurTip(block));
+    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
+    expect((caught as { site: string }).site).toBe('extendsOurTip');
+    expect((caught as { height: number }).height).toBe(1);
+  });
+
+  it('findForkPoint fails on our own chain before any peer header matters', async () => {
+    const { header, forkResolution, corruptState } = await storeCorruptTip();
+
+    // An empty peer batch: nothing here can be blamed on what a peer sent.
+    const caught = thrownBy(() => forkResolution.findForkPoint(header, []));
+    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
+    expect((caught as { site: string }).site).toBe('findForkPoint');
+    expect((caught as { height: number }).height).toBe(1);
+  });
+
+  it('applyOrderingBlock re-throws it instead of rejecting the arriving block', async () => {
+    const { buildBlock, corruptState } = await storeCorruptTip();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
+
+    // A structurally valid height-2 block arriving on a chain whose height-1
+    // header has no hash. It gets no further than the chain-link check, which
+    // is the point: the funnel's totality catch turns every other unexpected
+    // throw into `false`, and this one has to come out instead — otherwise
+    // local corruption becomes a permanent rejection of every subsequent block,
+    // logged as though the block were at fault.
+    const caught = thrownBy(() => applyOrderingBlock(buildBlock(2, 1)));
+    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
+    expect((caught as { site: string }).site).toBe('applyOrderingBlock');
+    expect((caught as { height: number }).height).toBe(1);
+  });
+
+  /** Three contiguous, well-formed stored blocks. */
+  async function storeThreeBlocks() {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ordering = await importOrdering();
+
+    const build = (height: number): OrderingBlock => ({
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height,
+        prevBlockHash: '00'.repeat(32),
+        subBlockRoot: '00'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: '00'.repeat(33),
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 4,
+        createdAt: 1,
+      },
+      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      validatorSignature: new Uint8Array(64),
+    });
+    for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h));
+
+    return {
+      ordering,
+      tip: build(3).header,
+      forkResolution: await importForkResolution(),
+      corruptState: await importCorruptState(),
+    };
+  }
+
+  it('a hole below the tip leaves getCurrentHeight unchanged', async () => {
+    const { ordering } = await storeThreeBlocks();
+
+    // Why the silent skip in the fork-resolution work comparison was invisible:
+    // `getCurrentHeight()` is `MAX(height)`, so removing a block *below* the tip
+    // changes nothing it reports. Nothing else notices either — which is why
+    // walking the range has to assert contiguity rather than tolerate a gap.
+    ordering.deleteOrderingBlock(2);
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect(ordering.getOrderingBlock(2)).toBeNull();
+    expect(ordering.getOrderingBlock(3)).not.toBeNull();
+  });
+
+  it('findForkPoint walks the whole chain down without a hole', async () => {
+    const { tip, forkResolution } = await storeThreeBlocks();
+
+    // The control the throw below needs: with the chain intact, the walk runs
+    // off the bottom at height 0 and returns an ordinary answer. Terminating on
+    // a missing block is normal *there* and only there.
+    expect(forkResolution.findForkPoint(tip, [])).toBeNull();
+  });
+
+  it('findForkPoint stops the node on a hole rather than reorging without it', async () => {
+    const { ordering, tip, forkResolution, corruptState } = await storeThreeBlocks();
+    ordering.deleteOrderingBlock(2);
+
+    // Truncating here loses our height-1 hash, so a peer chain that forks at 1
+    // reads as having no common ancestor and the node quietly declines to
+    // reorg — forever, on a chain it cannot leave. The genesis boundary is
+    // height 0; height 2 is a gap, and the two are told apart by `>= 1`.
+    const caught = thrownBy(() => forkResolution.findForkPoint(tip, []));
+    expect(caught).toBeInstanceOf(corruptState.MissingStoredBlockError);
+    expect((caught as { site: string }).site).toBe('findForkPoint');
+    expect((caught as { height: number }).height).toBe(2);
+  });
+
+  it('reorg propagates it instead of reporting a rejected block', async () => {
+    const { buildBlock, forkResolution, corruptState } = await storeCorruptTip();
+
+    // The reorg path is the one that would re-swallow this. `applyOrderingBlock`
+    // answering `false` makes `reorg` throw its own generic
+    // `reorg failed: block at height N rejected`, which `index.ts`'s
+    // fork-resolution catch logs as `Fork resolution error` and carries on —
+    // local corruption filed as a network problem. The typed error has to come
+    // out with its identity intact for the boundary to recognise it.
+    const caught = thrownBy(() => forkResolution.reorg(1, [buildBlock(2, 1)]));
+    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
+    expect((caught as { site: string }).site).toBe('applyOrderingBlock');
+    expect((caught as Error).message).not.toContain('reorg failed');
   });
 });
 
@@ -1116,7 +1414,7 @@ describe('reorg abort', () => {
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(3);
     const originalHashes = [1, 2, 3].map(
-      (h) => blockHash(ordering.getOrderingBlock(h)!.header),
+      (h) => blockHash(ordering.getOrderingBlock(h)!.header)!,
     );
 
     const preBoxes = db.getDb().prepare('SELECT * FROM utxo_boxes ORDER BY id').all();

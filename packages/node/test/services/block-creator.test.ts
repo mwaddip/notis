@@ -365,7 +365,7 @@ describe('block-creator', () => {
     expect(block!.validatorSignature.length).toBe(64);
     const h = blockHash(block!.header);
     expect(h).toBeTruthy();
-    expect(h.length).toBe(64); // 32 bytes hex = 64 chars
+    expect(h!.length).toBe(64); // 32 bytes hex = 64 chars
   });
 
   // -----------------------------------------------------------------------

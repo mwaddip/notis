@@ -20,7 +20,7 @@ import {
   INVITE_KARMA_THRESHOLD,
   INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
+import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   Post,
   KarmaBox,

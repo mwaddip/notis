@@ -20,6 +20,11 @@ import {
 } from '../store/vouch-cooldowns.js';
 import { VOUCH_COOLDOWN_BLOCKS } from '@dagsocial/types';
 import { settlePruneUtxo } from './settle-prune-utxo.js';
+import {
+  CorruptChainStateError,
+  MissingStoredBlockError,
+  UnhashableStoredHeaderError,
+} from './corrupt-state.js';
 import type { DecayDeps } from './decay.js';
 import { config } from '../config.js';
 import { computeBlockReward, computeSubBlockRoot, computeUtxoTxRoot, clearTemplate } from './block-creator.js';
@@ -167,6 +172,22 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
       restoreProver();
       return false;
     }
+    // The one throw this funnel does not convert into a rejection.
+    //
+    // Totality here is a promise about **untrusted input** — no block a peer can
+    // construct takes the node down. Our own stored header having no hash is not
+    // in that class and cannot be put in it: the store's only writer is this
+    // function, downstream of the gate that checks the same domain, so no peer
+    // can cause it. Answering `false` would turn local corruption into a
+    // permanent rejection of every subsequent block, logged as an unexpected
+    // failure — a node that rejects everything while staying up looks exactly
+    // like a quiet network. The unwinding below still runs, because the boundary
+    // is the caller's decision and not this function's to presume.
+    if (err instanceof CorruptChainStateError) {
+      abortBlockJournal();
+      restoreProver();
+      throw err;
+    }
     // better-sqlite3 has already rolled the transaction back by the time the
     // throw surfaces here (it issues ROLLBACK, or ROLLBACK TO for the nested
     // reorg savepoint, before re-throwing), so the node is on its pre-block
@@ -205,13 +226,27 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
       return false;
     }
   } else {
+    // `currentHeight` *is* `MAX(height)` over this table, so a missing block at
+    // exactly that height is not "we don't have it yet" — it is the row the tip
+    // was read from having gone. Same fault as the unhashable header below it,
+    // and it used to be reported the opposite way: as the arriving block's
+    // rejection, which blames a peer for our own store and then repeats for
+    // every block after it.
     const prevBlock = getOrderingBlock(currentHeight);
     if (!prevBlock) {
-      console.warn(`Rejected block height=${block.header.height}: cannot find previous block at height=${currentHeight}`);
-      abortBlockJournal();
-      return false;
+      throw new MissingStoredBlockError('applyOrderingBlock', currentHeight);
     }
-    if (block.header.prevBlockHash !== validation.blockHash(prevBlock.header)) {
+    // `prevBlock` is our own stored tip, not the arriving block, so a header
+    // outside the encodable domain here is not this block's fault and is not a
+    // rejection at all: the store has produced a header the gate above
+    // (`verifyOrderingBlockStructure`, same domain predicate) could never have
+    // let in. It leaves through the funnel's catch untouched — see the note
+    // there — and the node stops at the boundary.
+    const prevHash = validation.blockHash(prevBlock.header);
+    if (prevHash === null) {
+      throw new UnhashableStoredHeaderError('applyOrderingBlock', currentHeight);
+    }
+    if (block.header.prevBlockHash !== prevHash) {
       console.warn(`Rejected block height=${block.header.height}: prevBlockHash mismatch`);
       abortBlockJournal();
       return false;
@@ -359,7 +394,14 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   insertBlockJournal(journal);
   purgeOldJournals(block.header.height - 20);
 
-  console.log(`Applied ordering block height=${block.header.height} hash=${validation.blockHash(block.header)} (${block.subBlockTree.subBlockRefs.length} sub-blocks)`);
+  // The one site where an absence is simply printed. `applyOrderingBlock` ran
+  // `verifyOrderingBlockStructure` over this header before calling us, so it is
+  // inside the domain and this prints the hash. The block is applied and the
+  // transaction is about to commit; turning a log line into a throw would roll
+  // back a valid block, and inventing a placeholder would print a hash that is
+  // not one. If the impossible happens the line says `hash=null`, which is true.
+  const appliedHash = validation.blockHash(block.header);
+  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.subBlockTree.subBlockRefs.length} sub-blocks)`);
   return true;
 }
 

@@ -713,31 +713,46 @@ apply-time algorithm. Nothing epoch-shaped may return to the block structure.
 cumulativeWork(headers: BlockHeader[]): bigint
 ```
 
-Sum of expected hashes over a chain segment: `Σ 2^powTargetBits`. The fork-choice quantity — node
+Sum of expected hashes over a chain segment: `Σ 2^powTargetBits`. The fork-choice quantity — a node
 compares its own segment against a competing one and reorgs only on strictly greater work.
 
-Undocumented until 2026-08-09; added here because Phase 1f found it is **not total**, and it is
-reached with peer-supplied data.
+**Total.** A header whose `powTargetBits` falls outside `[0, MAX_SATISFIABLE_TARGET_BITS]`, or is not
+an integer, **contributes zero — per header, and the rest of the segment still counts.**
 
-> ⚠ **AHEAD OF CODE — Phase 1f-5. This is a live defect on `master`, not a migration concern.**
-> The implementation is `1n << BigInt(h.powTargetBits)` over headers that have passed **no
-> validation of any kind**: node's fork resolution obtains them from `net`'s `requestHeaders`, which
-> returns `decode(response) as BlockHeader[]` — a raw cbor decode and a TypeScript cast.
->
-> Measured 2026-08-09: `BigInt(1.5)` and `BigInt(NaN)` throw `RangeError`, `BigInt('abc')` throws
-> `SyntaxError`, and `BigInt(undefined)` / `BigInt(null)` throw `TypeError`. Separately,
-> `1n << BigInt(1e9)` **succeeds**, allocating roughly 125 MB — so the shift width is a
-> peer-controlled allocation knob, and that half is not fixed by guarding the throw.
->
-> The throw is caught by a broad `catch` in node's fork-resolution handler, so the visible outcome is
-> not a crash: the node logs and silently declines to reorg. One malformed header from the peer it
-> happens to ask is enough to wedge it off any heavier chain, which makes this a liveness defect
-> rather than a cosmetic one.
->
-> **The fix must state what a partial answer means.** Skipping non-conforming headers silently
-> understates a competing chain's work, which is a different wrong answer from refusing the batch.
-> Whichever is chosen, the caller's behaviour on it belongs in this contract — an unstated
-> convention here is what let the function be reached with unvalidated input in the first place.
+**That is arithmetic, not a validity rule.** A target wider than the digest cannot be met by any
+nonce (`hasLeadingZeroBits` returns `false` past the hash width), so no work can have been done on
+such a header and zero *is* its expected-hash count. Nothing rejects a block for exceeding it; the
+consensus minimum is `ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
+
+```
+MAX_SATISFIABLE_TARGET_BITS = 32 * 8   // 256 — the digest width in bits
+```
+
+**Why it has to be total.** `node/src/index.ts:261` calls it on `theirChainHeaders`, which arrive
+from `net`'s `requestHeaders` as `decode(response) as BlockHeader[]` — a raw cbor decode plus a cast.
+Phase 1f-2's batch refusal removed the *non-encodable* headers from that path, but the encodable
+domain is `isU64Safe`, so `powTargetBits` still arrives anywhere in `[0, 2⁵³)`.
+
+Measured 2026-08-09 (node v22.19.0), and the numbers decide the bound:
+
+| Input | Result |
+|---|---|
+| `1n << BigInt(2³⁰ − 1)` | allocates **128 MiB** |
+| `1n << BigInt(2³⁰)` | throws `RangeError` |
+| `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
+
+The wall is exactly 2³⁰ and it is one integer wide. **A per-term bound is not sufficient on its
+own** — two terms each below the wall sum past it — which is why the bound is the digest width
+rather than anything near the arithmetic limit. A peer controls roughly **18,900** terms, not the
+`MAX_REORG_DEPTH * 2` the caller asks for: `requestHeaders`' `maxCount` is not enforced on the
+response, only `MAX_STREAM_BYTES` is.
+
+> ⚠ **This CONTAINS the defect; it does not close it.** A peer claiming `powTargetBits: 200` sits
+> inside the domain, allocates nothing and throws nothing, and still outweighs an honest 12-bit chain
+> by 2¹⁸⁸ — buying a reorg *attempt* on every comparison. The blocks are then rejected at apply,
+> which enforces `expectedTarget(height)`, so the chain does not move; the cost is wasted work, not a
+> consensus break. **The root of that is comparing *claimed* work rather than verified work, and it
+> belongs to `@dagsocial/node`'s fork choice, not here.** Recorded so it is not mistaken for closed.
 
 ---
 

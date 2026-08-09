@@ -16,16 +16,37 @@ import {
   verifyOrderingBlockPoW,
   blockHash,
   computePowHash,
-  blockHashChecked,
-  computePowHashChecked,
   isValidVouchTarget,
   verifyPostFieldDomains,
   verifyHeaderFieldDomains,
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, encodeHeader } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
+
+/**
+ * `blockHash` for a fixture the test has just built and asserts is in-domain.
+ *
+ * The guarded function answers `null` on exactly the headers
+ * `verifyHeaderFieldDomains` rejects, so a `null` here means the *fixture* drifted
+ * out of the domain — not that the code under test is wrong. It says so at the
+ * fixture rather than surfacing as `Buffer.from(null)` three frames later, which
+ * is the same argument that produced this phase.
+ *
+ * Deliberately not used for the poison fixtures: those are outside the domain on
+ * purpose, and hash through the transcribed pre-change encoder instead.
+ */
+function mustHash(header: BlockHeader): string {
+  const hash = blockHash(header);
+  if (hash === null) {
+    throw new Error(
+      `fixture header is outside the encodable domain (blockHash returned null): ` +
+        `${verifyHeaderFieldDomains(header).error ?? 'no reason reported'}`,
+    );
+  }
+  return hash;
+}
 
 // ---------------------------------------------------------------------------
 // verifyPoW
@@ -147,7 +168,7 @@ describe('verifyValidatorSignature', () => {
 
   /** Sign exactly what the block creator signs: the 32 raw bytes of blockHash(header). */
   const signHeader = (header: BlockHeader, kp: KeyPair): Uint8Array =>
-    new Uint8Array(sign(null, Buffer.from(blockHash(header), 'hex'), privKeyOf(kp)));
+    new Uint8Array(sign(null, Buffer.from(mustHash(header), 'hex'), privKeyOf(kp)));
 
   it('accepts a correctly signed header', () => {
     const kp = generateKeyPair();
@@ -875,7 +896,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     createPrivateKey({ key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8' });
 
   const signHeader = (header: BlockHeader, kp: KeyPair): Uint8Array =>
-    new Uint8Array(sign(null, Buffer.from(blockHash(header), 'hex'), privKeyOf(kp)));
+    new Uint8Array(sign(null, Buffer.from(mustHash(header), 'hex'), privKeyOf(kp)));
 
   /** Mine the header for real against its own `powTargetBits`. */
   const solve = (header: BlockHeader): BlockHeader => {
@@ -1126,20 +1147,21 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       it('1f: the encoders now refuse it too, so it can no longer ride through PoW or the signature', () => {
         const block = makeBlock({}, {}, c.over);
         // Individually, so a failure names which one moved.
-        expect(blockHashChecked(block.header)).toBeNull();
-        expect(computePowHashChecked(block.header)).toBeNull();
+        expect(blockHash(block.header)).toBeNull();
+        expect(computePowHash(block.header)).toBeNull();
         expect(verifyOrderingBlockPoW(block.header)).toBe(false);
         expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(false);
         expect(verifyHeaderFieldDomains(block.header).valid).toBe(false);
       });
 
-      it('and the unguarded pair still encodes it — the expand step changed nothing there', () => {
-        // `blockHash` / `computePowHash` are untouched in 1f-1 and `node` / `net`
-        // are still on them. If this ever fails, the expand step has leaked.
-        const block = makeBlock({}, {}, c.over);
-        expect(typeof blockHash(block.header)).toBe('string');
-        expect(blockHash(block.header)).toHaveLength(64);
-      });
+      // Deleted in 1f-4: 'and the unguarded pair still encodes it — the expand
+      // step changed nothing there'. It asserted that the *unguarded*
+      // `blockHash` still returned a 64-char string for this poison while the
+      // guarded one returned null — i.e. that the expand step had not leaked
+      // into the old name. The contraction deleted the unguarded pair, so both
+      // halves of that comparison are now the same function and the property is
+      // unconstructible, not merely untested. No coverage is lost: the '1f'
+      // case directly above pins the surviving behaviour for this same poison.
     });
   }
 
@@ -1182,7 +1204,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
         const block = makeBlock({}, {}, { stateRoot: bad });
         expect(verifyOrderingBlockPoW(block.header)).toBe(false);
         expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(false);
-        expect(blockHashChecked(block.header)).toBeNull();
+        expect(blockHash(block.header)).toBeNull();
         const result = verifyOrderingBlockStructure(block);
         expect(result.valid).toBe(false);
         expect(result.error).toContain('invalid stateRoot');
@@ -1439,7 +1461,7 @@ describe('verifyBlockChainLink', () => {
 
   it('accepts a valid chain link', () => {
     const prev = makeBlock(1, GENESIS_PREV);
-    const prevHash = blockHash(prev.header);
+    const prevHash = mustHash(prev.header);
     const next = makeBlock(2, prevHash);
     expect(verifyBlockChainLink(next, prev)).toBe(true);
   });
@@ -1451,16 +1473,16 @@ describe('verifyBlockChainLink', () => {
     // both headers are inside the domain, and the hashes genuinely differ.
     expect(verifyHeaderFieldDomains(prev.header)).toEqual({ valid: true });
     expect(verifyHeaderFieldDomains(next.header)).toEqual({ valid: true });
-    expect(blockHashChecked(prev.header)).not.toBe(WRONG_HASH);
+    expect(mustHash(prev.header)).not.toBe(WRONG_HASH);
     expect(verifyBlockChainLink(next, prev)).toBe(false);
   });
 
   it('rejects non-sequential height', () => {
     const prev = makeBlock(1, GENESIS_PREV);
-    const prevHash = blockHash(prev.header);
+    const prevHash = mustHash(prev.header);
     const next = makeBlock(3, prevHash);
     // Same guard: the hash link is correct, so only the height can be rejecting.
-    expect(next.header.prevBlockHash).toBe(blockHashChecked(prev.header));
+    expect(next.header.prevBlockHash).toBe(mustHash(prev.header));
     expect(verifyBlockChainLink(next, prev)).toBe(false);
   });
 });
@@ -2504,13 +2526,37 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   // The rules Phase 1f replaced, transcribed from the code it deleted.
   //
   // Keeping them here is what makes "accepted today" a measurement rather than
-  // a memory — the 1c idiom. All three ran on the *pre-change* implementation
-  // and are reproduced verbatim, over the unguarded `blockHash` /
-  // `computePowHash` this phase deliberately leaves in place.
+  // a memory — the 1c idiom. All of them ran on the *pre-change* implementation
+  // and are reproduced verbatim.
+  //
+  // **1f-4 note.** These used to borrow the unguarded `blockHash` /
+  // `computePowHash`, which the contraction deleted. Borrowing was always the
+  // weak spot: a reference implementation that calls the code under test is not
+  // independent of it, and the deletion merely made that visible. The two
+  // encoders below are now transcribed like everything else in this section —
+  // they are the deleted functions verbatim, which is exactly `blockHash` /
+  // `computePowHash` minus the domain guard. That is what lets a poison fixture
+  // still be mined and signed here after the guarded pair refuses it, which is
+  // the whole mechanism these demonstrations need.
   // -------------------------------------------------------------------------
 
   /** `isEncodableHeader`'s rule for `createdAt`: `typeof h.createdAt !== 'number'`. */
   const preChangeCreatedAtRule = (v: unknown): boolean => typeof v === 'number';
+
+  /** `blockHash` exactly as it stood before Phase 1f — no domain guard, total. */
+  const preChangeBlockHash = (h: BlockHeader): string =>
+    createHash('blake2b512')
+      .update(Buffer.from(encodeHeader(h)))
+      .digest()
+      .subarray(0, 32)
+      .toString('hex');
+
+  /** `computePowHash` exactly as it stood before Phase 1f — no domain guard, total. */
+  const preChangePowHash = (h: BlockHeader): Buffer =>
+    createHash('blake2b512')
+      .update(Buffer.from(encodeHeader({ ...h, powNonce: 0 })))
+      .digest()
+      .subarray(0, 32);
 
   const leadingZeroBits = (hash: Uint8Array, bits: number): boolean => {
     if (bits > hash.length * 8) return false;
@@ -2527,18 +2573,18 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     const nonceBuf = Buffer.alloc(8);
     nonceBuf.writeBigUInt64LE(BigInt(h.powNonce));
     const hash = createHash('blake2b512')
-      .update(computePowHash(h))
+      .update(preChangePowHash(h))
       .update(nonceBuf)
       .digest()
       .subarray(0, 32);
     return leadingZeroBits(hash, h.powTargetBits);
   };
 
-  /** Raw `crypto.verify` over the unguarded `blockHash` — a rejection can never be a broken fixture. */
+  /** Raw `crypto.verify` over the pre-change `blockHash` — a rejection can never be a broken fixture. */
   const signatureIsGenuine = (h: BlockHeader, sig: Uint8Array): boolean =>
     cryptoVerify(
       null,
-      Buffer.from(blockHash(h), 'hex'),
+      Buffer.from(preChangeBlockHash(h), 'hex'),
       ed25519PublicKeyToKeyObject(kp.publicKey),
       Buffer.from(sig),
     );
@@ -2552,8 +2598,11 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     throw new Error('unsolvable fixture');
   };
 
+  // Pre-change, deliberately: this signs the poison fixtures, which the guarded
+  // `blockHash` refuses by design. A genuine signature over a header the new
+  // domain rejects is precisely what the teeth demonstrations need.
   const signHeader = (h: BlockHeader): Uint8Array =>
-    new Uint8Array(sign(null, Buffer.from(blockHash(h), 'hex'), privKeyOf(kp)));
+    new Uint8Array(sign(null, Buffer.from(preChangeBlockHash(h), 'hex'), privKeyOf(kp)));
 
   const blockOf = (h: BlockHeader, sig: Uint8Array): OrderingBlock => ({
     header: h,
@@ -2658,7 +2707,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   // -------------------------------------------------------------------------
   // Demonstration 1 — the throw case
   //
-  // A header accepted today whose `blockHashChecked` must be `null` after,
+  // A header accepted today whose `blockHash` must be `null` after,
   // built to pass everything else so the new check is provably the only thing
   // rejecting it.
   // -------------------------------------------------------------------------
@@ -2679,19 +2728,21 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       expect(signatureIsGenuine(poisoned, sig)).toBe(true);
     });
 
-    it('reaches the encoder today with nothing in front of it, and encodes', () => {
-      // This is the whole defect: `findForkPoint` calls `blockHash(header)` on a
-      // bare peer header that passed no check whatsoever. Today the encoder is
-      // happy, so nothing anywhere objects.
-      expect(() => blockHash(poisoned)).not.toThrow();
-      expect(blockHash(poisoned)).toHaveLength(64);
+    it('reached the encoder with nothing in front of it, and encoded', () => {
+      // This was the whole defect: `findForkPoint` called `blockHash(header)` on
+      // a bare peer header that had passed no check whatsoever, and the encoder
+      // was happy, so nothing anywhere objected. Stated over the transcribed
+      // pre-change encoder, because the guarded one now refuses this header —
+      // which is the fix, and is pinned in the next case.
+      expect(() => preChangeBlockHash(poisoned)).not.toThrow();
+      expect(preChangeBlockHash(poisoned)).toHaveLength(64);
     });
 
     it('and the header domain is the only thing that rejects it', () => {
       expect(verifyHeaderFieldDomains(poisoned).valid).toBe(false);
       expect(verifyHeaderFieldDomains(poisoned).error).toContain('stateRoot');
-      expect(blockHashChecked(poisoned)).toBeNull();
-      expect(computePowHashChecked(poisoned)).toBeNull();
+      expect(blockHash(poisoned)).toBeNull();
+      expect(computePowHash(poisoned)).toBeNull();
     });
 
     it('the same header without the poison passes all of it — so the poison is the only variable', () => {
@@ -2699,8 +2750,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       expect(preChangePoW(clean)).toBe(true);
       expect(signatureIsGenuine(clean, signHeader(clean))).toBe(true);
       expect(verifyHeaderFieldDomains(clean)).toEqual({ valid: true });
-      expect(blockHashChecked(clean)).toBe(blockHash(clean));
-      expect(computePowHashChecked(clean)).toEqual(computePowHash(clean));
+      expect(blockHash(clean)).toBe(preChangeBlockHash(clean));
+      expect(computePowHash(clean)).toEqual(preChangePowHash(clean));
     });
   });
 
@@ -2727,18 +2778,18 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       // `VLQ_SENTINEL` — one preimage, one PoW verdict, one signature verdict.
       // Pinning the *current* distinctness is what makes that a regression the
       // migration would cause rather than a defect it inherits.
-      const hashes = OUT_OF_DOMAIN.map(([, v]) => blockHash(header({ createdAt: v })));
+      const hashes = OUT_OF_DOMAIN.map(([, v]) => preChangeBlockHash(header({ createdAt: v })));
       expect(new Set(hashes).size).toBe(OUT_OF_DOMAIN.length);
       // And each differs from the in-domain control, so `createdAt` is genuinely
       // inside the preimage rather than being ignored by the encoder.
-      expect(hashes).not.toContain(blockHash(header()));
+      expect(hashes).not.toContain(preChangeBlockHash(header()));
     });
 
     it('AFTER, every one of them returns null — closed at its source, not deferred', () => {
       for (const [, v] of OUT_OF_DOMAIN) {
         const h = header({ createdAt: v });
-        expect(blockHashChecked(h)).toBeNull();
-        expect(computePowHashChecked(h)).toBeNull();
+        expect(blockHash(h)).toBeNull();
+        expect(computePowHash(h)).toBeNull();
         expect(verifyHeaderFieldDomains(h).error).toContain('createdAt');
       }
     });
@@ -2748,7 +2799,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       // all after. `computePowHash` zeroes `powNonce`, so `createdAt` is the only
       // varying field in these four.
       const preimages = OUT_OF_DOMAIN.map(([, v]) =>
-        Buffer.from(computePowHash(header({ createdAt: v }))).toString('hex'),
+        preChangePowHash(header({ createdAt: v })).toString('hex'),
       );
       expect(new Set(preimages).size).toBe(OUT_OF_DOMAIN.length);
       for (const [, v] of OUT_OF_DOMAIN) {
@@ -2810,7 +2861,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       expect(verifyOrderingBlockStructure(block).valid).toBe(false);
       expect(verifyOrderingBlockPoW(block.header)).toBe(false);
       expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(false);
-      expect(blockHashChecked(block.header)).toBeNull();
+      expect(blockHash(block.header)).toBeNull();
     });
 
     it('is a DOMAIN pin and not a clock policy', () => {
@@ -2836,14 +2887,16 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       const h = solvePreChange(header());
       const block = blockOf(h, signHeader(h));
       expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
-      expect(blockHashChecked(block.header)).toBe(blockHash(block.header));
+      expect(blockHash(block.header)).toBe(preChangeBlockHash(block.header));
       expect(verifyOrderingBlockPoW(block.header)).toBe(true);
       expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(true);
     });
 
-    it('the guarded pair agrees with the unguarded pair on every in-domain header', () => {
-      // The expand step's invariant: no honest byte moves in this phase. If this
-      // fails, `blockHashChecked` is not the same function plus a gate.
+    it('the guarded pair agrees with the pre-change encoders on every in-domain header', () => {
+      // The phase's invariant: no honest byte moves. If this fails, `blockHash`
+      // is not the same function plus a gate. Stated against the transcribed
+      // pre-change encoders now that the unguarded pair is deleted — the claim
+      // is unchanged, and it is still two independent sides.
       const variants: Partial<BlockHeader>[] = [
         {},
         { height: 1 },
@@ -2859,8 +2912,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       for (const over of variants) {
         const h = header(over);
         expect(verifyHeaderFieldDomains(h)).toEqual({ valid: true });
-        expect(blockHashChecked(h)).toBe(blockHash(h));
-        expect(computePowHashChecked(h)).toEqual(computePowHash(h));
+        expect(blockHash(h)).toBe(preChangeBlockHash(h));
+        expect(computePowHash(h)).toEqual(preChangePowHash(h));
       }
     });
 
@@ -2886,7 +2939,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
         const viaHeader = verifyHeaderFieldDomains(h).valid;
         expect(viaHeader).toBe(false);
         expect(viaBlock).toBe(false);
-        expect(blockHashChecked(h)).toBeNull();
+        expect(blockHash(h)).toBeNull();
       }
     });
   });
@@ -2928,24 +2981,24 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       }
     });
 
-    it('blockHashChecked and computePowHashChecked return null instead of throwing', () => {
+    it('blockHash and computePowHash return null instead of throwing', () => {
       for (const bad of MALFORMED) {
-        expect(() => blockHashChecked(bad as unknown as BlockHeader)).not.toThrow();
-        expect(blockHashChecked(bad as unknown as BlockHeader)).toBeNull();
-        expect(() => computePowHashChecked(bad as unknown as BlockHeader)).not.toThrow();
-        expect(computePowHashChecked(bad as unknown as BlockHeader)).toBeNull();
+        expect(() => blockHash(bad as unknown as BlockHeader)).not.toThrow();
+        expect(blockHash(bad as unknown as BlockHeader)).toBeNull();
+        expect(() => computePowHash(bad as unknown as BlockHeader)).not.toThrow();
+        expect(computePowHash(bad as unknown as BlockHeader)).toBeNull();
         for (const field of FIELDS) {
           const h = header({ [field]: bad } as Partial<BlockHeader>);
           const ok = CONFORMS[field]!(bad);
-          expect(() => blockHashChecked(h)).not.toThrow();
-          expect(() => computePowHashChecked(h)).not.toThrow();
-          expect(blockHashChecked(h) === null).toBe(!ok);
-          expect(computePowHashChecked(h) === null).toBe(!ok);
+          expect(() => blockHash(h)).not.toThrow();
+          expect(() => computePowHash(h)).not.toThrow();
+          expect(blockHash(h) === null).toBe(!ok);
+          expect(computePowHash(h) === null).toBe(!ok);
           // Where the corpus value conforms, the guard must be transparent —
-          // the whole point of the expand step is that no honest byte moves.
+          // the whole point of the phase is that no honest byte moves.
           if (ok) {
-            expect(blockHashChecked(h)).toBe(blockHash(h));
-            expect(computePowHashChecked(h)).toEqual(computePowHash(h));
+            expect(blockHash(h)).toBe(preChangeBlockHash(h));
+            expect(computePowHash(h)).toEqual(preChangePowHash(h));
           }
         }
       }
@@ -2956,8 +3009,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       // null": if no corpus value ever conformed, `CONFORMS` would be dead
       // weight and a regression that rejected *everything* would still pass.
       expect(MALFORMED.some((bad) => CONFORMS.createdAt!(bad))).toBe(true);
-      expect(blockHashChecked(header())).not.toBeNull();
-      expect(computePowHashChecked(header())).not.toBeNull();
+      expect(blockHash(header())).not.toBeNull();
+      expect(computePowHash(header())).not.toBeNull();
     });
   });
 });

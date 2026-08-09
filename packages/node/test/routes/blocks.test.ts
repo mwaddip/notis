@@ -26,8 +26,14 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       protocolVersion: PROTOCOL_VERSION,
       height,
       prevBlockHash: baseHash,
-      subBlockRoot: '00'.repeat(64),
-      utxoTxRoot: '00'.repeat(64),
+      // 32 bytes, so 64 hex characters — `'00'` repeated 32 times, not 64.
+      // These were double-width, and nothing noticed: this block is written
+      // straight through `createOrderingBlock` (the store), bypassing the apply
+      // gate that checks the header domain, and `blockHash` used to hash
+      // whatever it was handed. Since Phase 1f the route answers `hash: null`
+      // for a header it cannot encode, which is what surfaced them.
+      subBlockRoot: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: uid('validator-1'),
       powNonce: 0,

@@ -422,7 +422,17 @@ nothing.
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
 | `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 if NaN, 404 |
-| `GET` | `/blocks/current` | `{ height, hash }` | — |
+| `GET` | `/blocks/current` | `{ height, hash }` — **`hash` is nullable** | — |
+
+> ⚠ **AHEAD OF CODE — Phase 1f.** `hash` is `string | null`. It is `blockHash` of the stored tip
+> header, and that function now returns `null` for a header outside the encodable domain
+> (`VALIDATION_INTERFACE` → `blockHash`). A stored tip cannot be outside it — every header in the
+> store passed `verifyOrderingBlockStructure` at apply, whose header checks *are*
+> `verifyHeaderFieldDomains` — so `null` here means the node's own chain state is corrupt.
+>
+> It is exposed rather than suppressed deliberately. The alternatives were a 500, which conflates
+> "corrupt state" with "request failed", and a fabricated placeholder hash, which is the class of
+> lie this whole bundle exists to remove. A client seeing `null` learns something true.
 
 ### Faucet (faucet-bearing networks only)
 
@@ -736,6 +746,32 @@ tree collapse into clean rejections:
    reveal, karma, vouch, creation, commit, and settlement arms), so a missing
    or non-buffer field TypeErrors out of `validateTx` (HTTP 500; the block
    funnel's totality catch converts to a block rejection).
+
+> ⚠ **AHEAD OF CODE — Phase 1f. What the funnel's totality catch is FOR, stated because it was
+> never written down and the omission produced a real disagreement.**
+>
+> The catch converts an unexpected failure during apply into a block rejection, so that **no block a
+> peer can construct takes the node down**. Every instance documented in this contract is of that
+> kind: a poisoned tx that TypeErrors out of `validateTx`, two byte-identical boxes colliding on a
+> primary key, a stored lie that throws at read time. The property is *totality with respect to
+> untrusted input*.
+>
+> **It is not a promise that no condition may halt the node**, and one condition now deliberately
+> does. `UnhashableStoredHeaderError` — raised when a header **already in our own store** cannot be
+> hashed — escapes the catch and fail-stops. It is outside the property's scope by construction: every
+> stored header passed `verifyOrderingBlockStructure` at apply, whose header checks *are*
+> `verifyHeaderFieldDomains`, so no peer can cause it. It means corruption or a bug in us.
+>
+> **Why halting beats rejecting here.** A corrupt stored `prevBlock` at `block-apply.ts:214` would
+> otherwise reject every subsequent block, forever, logged as "unexpected failure during apply". A
+> node that stays up while rejecting everything is indistinguishable from a quiet network until
+> somebody reads logs. The failure is fail-stop, deliberate, and diagnostic-first — a typed error
+> carrying site and height, an explicit boundary at every caller, and a log before exit. It is
+> **not** an unhandled rejection, which is what it was when first written, and which would have
+> silently become a swallow the moment any caller started awaiting.
+>
+> Adding a new escape from this catch is a consensus-visible decision and needs the same argument:
+> show the condition cannot be caused by untrusted input.
 2. **Apply-time throws** — fields no arm reads reach `insertBox`, which
    `Buffer.from`s them mid-block-apply (e.g. a numeric `post_lock.owner`).
 3. **Read-time throws** — a stored lie poisons the row: `rowToBox` does

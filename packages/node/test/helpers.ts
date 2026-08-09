@@ -451,7 +451,15 @@ export function solveHeaderPow(header: BlockHeader): number {
  * field, so it is inside the hash being signed.
  */
 export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Array {
-  return new Uint8Array(cryptoSign(null, Buffer.from(blockHash(header), 'hex'), privateKey));
+  // A header outside the encodable domain has no hash, so there is nothing to
+  // sign. Said here rather than left to `Buffer.from(null, 'hex')`, because a
+  // test that hits this has built a header no producer could have built and
+  // wants to be told which of the two it meant.
+  const hash = blockHash(header);
+  if (hash === null) {
+    throw new Error('signHeader: header is outside the encodable domain — nothing to sign');
+  }
+  return new Uint8Array(cryptoSign(null, Buffer.from(hash, 'hex'), privateKey));
 }
 
 /**
@@ -541,7 +549,14 @@ export async function makeApplicableBlock(
     const { getOrderingBlock } = await import('../src/store/ordering.js');
     const prev = getOrderingBlock(height - 1) as OrderingBlock | null;
     if (!prev) throw new Error(`makeApplicableBlock: no stored block at height ${height - 1}`);
-    prevBlockHash = blockHash(prev.header);
+    const prevHash = blockHash(prev.header);
+    if (prevHash === null) {
+      throw new Error(
+        `makeApplicableBlock: stored block at height ${height - 1} has a header ` +
+        `outside the encodable domain`,
+      );
+    }
+    prevBlockHash = prevHash;
   }
   const miner = opts.miner ?? makeTestIdentity();
   const subBlockEntries = opts.subBlockEntries ?? [];

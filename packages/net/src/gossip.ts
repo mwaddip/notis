@@ -106,11 +106,14 @@ export function subscribeTopics(
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'unsupported protocol version');
         return TopicValidatorResult.Reject;
       }
-      if (!Number.isSafeInteger(block.header.height)) {
-        // Bogus — structure's `>= 1` bound admits NaN and floats (audit M-6).
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block height is not a safe integer');
-        return TopicValidatorResult.Reject;
-      }
+      // A `Number.isSafeInteger(block.header.height)` guard stood here until
+      // Phase 1f-3. It was added when structure's only height rule was `>= 1`,
+      // which admits NaN and floats (audit M-6). 1f-1 gave
+      // `verifyOrderingBlockStructure` the header's whole encodable domain, and
+      // its `height` rule is `isU64Safe` — a strict superset of what this guard
+      // rejected — running at `:98`, above. Every input that would have fired it
+      // is now rejected one gate earlier, so it was unreachable for all inputs,
+      // not merely for the NaN/1.5 cases the test below pins.
       if (!validators.verifyOrderingBlockPoW(block.header)) {
         // Bogus — a zero-work block must die at the first hop, not be
         // re-gossiped mesh-wide (audit M-9). Stage 1 checks the header's own
@@ -169,17 +172,46 @@ export function subscribeTopics(
     const { topic } = detail.msg;
     const raw = new Uint8Array(detail.msg.data);
 
-    try {
-      if (topic === TOPICS.subblock) {
-        handlers.onSubBlock(decodeSubBlock(raw));
-      } else if (topic === TOPICS.orderingBlock) {
-        handlers.onOrderingBlock(decodeOrderingBlock(raw));
-      } else if (topic === TOPICS.tx) {
-        handlers.onTx(decodeTx(raw));
+    // Decode and dispatch are separated because they fail for different
+    // reasons, and neither reason is the peer's.
+    //
+    // The single `try` that used to span both reported neither: its comment
+    // promised "Log and move on" and there was no log, so the one condition it
+    // names — a validator bug — produced complete silence. It also swallowed
+    // every throw out of the app-layer handlers, which the comment never
+    // claimed to cover.
+    //
+    // Both stay contained rather than propagating: this is a gossipsub event
+    // listener, and net's invariant is that one bad message degrades one
+    // message, not the subsystem. Contained is not the same as silent — both
+    // are `console.error`, because reaching either is a bug in our own code.
+    const deliver = <T>(decode: (b: Uint8Array) => T, handle: (v: T) => void): void => {
+      let value: T;
+      try {
+        value = decode(raw);
+      } catch (err) {
+        // Unreachable unless a topic validator is wrong: every message that
+        // gets here was already decoded once, by the validator that accepted
+        // it. So this is our bug and not the sender's — no penalty is
+        // recorded, and it is logged loudly rather than absorbed.
+        console.error(
+          `[net] BUG: '${topic}' message passed its topic validator and then failed to decode: ${String(err)}`,
+        );
+        return;
       }
-    } catch {
-      // Decode failure here would indicate a validator bug — the message
-      // already passed the topic validator.  Log and move on.
+      try {
+        handle(value);
+      } catch (err) {
+        console.error(`[net] handler for '${topic}' threw: ${String(err)}`);
+      }
+    };
+
+    if (topic === TOPICS.subblock) {
+      deliver(decodeSubBlock, (sb) => handlers.onSubBlock(sb));
+    } else if (topic === TOPICS.orderingBlock) {
+      deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block));
+    } else if (topic === TOPICS.tx) {
+      deliver(decodeTx, (tx) => handlers.onTx(tx));
     }
   });
 

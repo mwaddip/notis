@@ -39,6 +39,11 @@ import { expectedTarget } from './difficulty.js';
 import { getNet } from './net-instance.js';
 import { applyOrderingBlock, computePostBlockStateRoot } from './block-apply.js';
 import {
+  MissingStoredBlockError,
+  UnhashableStoredHeaderError,
+  failStopIfCorruptChain,
+} from './corrupt-state.js';
+import {
   getPendingEntries,
   purgeExpired,
   removeEntry,
@@ -199,8 +204,15 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
     return null;
   }
 
-  // Sign the header hash
+  // Sign the header hash. `verifyOrderingBlockPoW` above already established
+  // this exact domain — it computes the preimage with `computePowHash`
+  // and answers `false` for any header outside it, which is what keeps the
+  // route's `powNonce` (a JSON number, so a float or a value past 2^53 reaches
+  // here) from arriving unpinned. So `null` is unreachable; declining to sign is
+  // still the right answer if it ever is not, because the alternative is
+  // producing a signature over a hash we could not compute.
   const hh = blockHash(header);
+  if (hh === null) return null;
   const sig = cryptoSign(null, Buffer.from(hh, 'hex'), validatorPrivKey);
 
   const block: OrderingBlock = {
@@ -349,11 +361,28 @@ export function createOrderingBlock(): OrderingBlock | null {
   // 14. Difficulty — fixed by the height schedule, and enforced at apply
   const powTargetBits = expectedTarget(newHeight);
 
-  // 16. Previous block hash
+  // 16. Previous block hash. `prevBlock` is our own stored tip: `currentHeight`
+  // is `MAX(height)` over the same table, so on a non-empty chain the row is
+  // there by construction, and its header passed the apply gate on the way in.
+  // Either failure means the store is no longer what this node wrote.
+  //
+  // Both go to the boundary rather than declining to produce. Declining is the
+  // producer's mirror of the rejection the apply funnel used to make: the timer
+  // fires again, reads the same broken row, declines again, and a node that
+  // never produces while staying up is indistinguishable from an idle miner —
+  // the same silence, from the other end of the same fault.
   const prevBlock = currentHeight > 0 ? getOrderingBlock(currentHeight) : null;
+  if (currentHeight > 0 && !prevBlock) {
+    failStopIfCorruptChain(new MissingStoredBlockError('createOrderingBlock', currentHeight));
+  }
   const prevBlockHash = prevBlock
     ? blockHash(prevBlock.header)
     : '0000000000000000000000000000000000000000000000000000000000000000';
+  if (prevBlockHash === null) {
+    failStopIfCorruptChain(
+      new UnhashableStoredHeaderError('createOrderingBlock', currentHeight),
+    );
+  }
 
   const subBlockRefs = resolvedSubBlocks.map((sb) => sb.subBlockId);
 
@@ -472,8 +501,22 @@ export function createOrderingBlock(): OrderingBlock | null {
     return null; // Block not finalized yet
   }
 
-  // 22. Internal: mine PoW against the header
+  // 22. Internal: mine PoW against the header.
+  //
+  // `headerTemplate` is built field by field a few lines above, from constants,
+  // the height schedule and the AVL digest, with `prevBlockHash` already pinned
+  // at step 16 — so `null` here means this node's own creator emitted a header
+  // it cannot encode. Refuse rather than mine: the PoW would be spent on a block
+  // every peer rejects, and `solvePoW` would be handed a `null` preimage.
   const powPreimage = computePowHash(headerTemplate);
+  if (powPreimage === null) {
+    console.error(
+      `Not producing block at height ${newHeight}: the header this node built ` +
+      `is outside the encodable domain`,
+    );
+    currentTemplate = null;
+    return null;
+  }
   const powNonce = solvePoW(powPreimage, powTargetBits);
 
   const header: BlockHeader = {
@@ -481,8 +524,18 @@ export function createOrderingBlock(): OrderingBlock | null {
     powNonce,
   };
 
-  // 23. Sign the header hash
+  // 23. Sign the header hash. Only `powNonce` separates this header from the
+  // one just encoded, and `solvePoW` returns a counter — so this is the same
+  // refusal as above, one field later.
   const hh = blockHash(header);
+  if (hh === null) {
+    console.error(
+      `Not producing block at height ${newHeight}: the mined header is ` +
+      `outside the encodable domain`,
+    );
+    currentTemplate = null;
+    return null;
+  }
   const sig = cryptoSign(null, Buffer.from(hh, 'hex'), validatorPrivKey);
 
   const block: OrderingBlock = {
@@ -505,7 +558,20 @@ export function createOrderingBlock(): OrderingBlock | null {
 function finalizeBlock(block: OrderingBlock): void {
   // applyOrderingBlock handles validation, storage, coinbase, confirmations,
   // UTXO tx application, journal recording, and basic mempool cleanup
-  const applied = applyOrderingBlock(block, dagService);
+  //
+  // The boundary sits here rather than at this function's callers because there
+  // are three of them and each ends somewhere that swallows: the interval timer
+  // in `startBlockCreator` (an uncaught throw ends the process, but by Node's
+  // default rather than our decision), `POST /posts` via `onSubBlockReceived`,
+  // and `POST /mining/submit` via `submitMinedBlock` — both of those inside an
+  // Express handler, which turns a throw into a 500 and keeps the node running.
+  // One frame dominates all three, so the decision is made once.
+  let applied: boolean;
+  try {
+    applied = applyOrderingBlock(block, dagService);
+  } catch (err) {
+    failStopIfCorruptChain(err);
+  }
 
   // Clean up any remaining mempool entries that applyOrderingBlock didn't
   // remove (e.g. UTXO txs that were attached to sub-blocks and removed
