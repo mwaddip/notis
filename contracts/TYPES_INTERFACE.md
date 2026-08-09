@@ -657,7 +657,7 @@ OrderingBlock {
 }
 
 SubBlockTree {
-  subBlockRefs: PostId[]            // sub-block IDs anchored by this block (ordering)
+  subBlockRefs: PostId[]            // ⚠ DELETED BY PHASE 3 — see Layout — Block
   subBlockEntries: SubBlockEntry[]  // committed topology, aligned 1:1 with subBlockRefs
   pruneEntries: PruneEntry[]        // prune entries committed in this block
 }
@@ -1036,16 +1036,65 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 | # | Field | Encoding |
 |---|---|---|
 | 1 | `protocolVersion` | `vlqU` — **first, so it is readable before any version dispatch** |
-| 2 | `height` | `vlqU` |
-| 3 | `prevBlockHash` | `b32` |
-| 4 | `subBlockRoot` | `b32` |
-| 5 | `utxoTxRoot` | `b32` |
-| 6 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
-| 7 | `validatorId` | `b32` |
-| 8 | `extensionDigest` | `b32` — **new (C11)**, the committed extension-section seam |
+| 2 | `networkType` | **`enum8`** — which *chain*, beside `protocolVersion`'s which *rules* |
+| 3 | `height` | `vlqU` |
+| 4 | `prevBlockHash` | `b32` |
+| 5 | `subBlockRoot` | `b32` |
+| 6 | `utxoTxRoot` | `b32` |
+| 7 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
+| 8 | `validatorId` | `b32` |
 | 9 | `powNonce` | `vlqU` |
 | 10 | `powTargetBits` | `vlqU` |
 | 11 | `createdAt` | `vlqU` |
+
+| Tag | Network |
+|---|---|
+| 0 | `mainnet` |
+| 1 | `testnet` |
+| 2 | `devnet` |
+
+A retired network's tag is **reserved, never reused** — the discipline Layout — Boxes applies to the
+retired `like` box type.
+
+**⚠ Two corrections, 2026-08-09, and this table was wrong in both directions.**
+
+**`extensionDigest` is removed.** It was C11's committed extension-section seam, and it committed to
+nothing: no section layout, no digest preimage, no value for an honest block with no extension, and
+no validation rule — anywhere. The `OrderingBlock` framing below has no extension section for the
+header to commit to. Its stated justification was that NiPoPoW interlinks must be committed from
+genesis or retrofit is a hard fork, but an always-empty digest produces exactly the history a missing
+field produces, so it captured nothing of that window. The shape it copied is also not what Ergo's
+own verifier anchors to — `@ergots/nipopow`'s `checkInterlinksProof` verifies against an
+interlinks-only root, explicitly *not* `header.extensionRoot`. **A field that commits to nothing is
+the mirror image of `subBlockRefs`, which this same unit deletes for being uncommitted.** C11 returns
+to the P2-C register undone; re-derive it when there is a design to commit to.
+
+**`networkType` is added, and its absence was the `bond.inviteePublicKey` class again.** The
+BlockHeader definition above lists it — decided 2026-08-06, marked NOT IMPLEMENTED, and explicitly
+part of this break bundle — while this table one section down omitted it. **Both sections said
+eleven fields**, so a count check passed straight over a membership mismatch.
+
+**The root cause is a gate that was right and one-directional.** Phase 0's plan required every layout
+table to be cross-checked against `types/src` and said *"no table may be written from
+`TYPES_INTERFACE.md` alone"* — sound, and for a real reason: a bullet drafted from a contract is a
+hypothesis until the producers are grepped, which is the field-type unit's lesson and the same one
+that later corrected `karma.proofSource`. But the gate said nothing about the opposite direction, and
+a field the contract has **decided** while the code has **not yet implemented** it is invisible to a
+code-first draft *by construction*. `networkType` is the only such field in the header; it was
+dropped that way and rode the draft into committed contract text.
+
+**Both directions are now required** (plan, Phase 0 gate): draft from `types/src`, then diff the
+finished table against the contract's own type definition, and resolve every field present in one and
+absent from the other explicitly — addition, deletion, or stated deferral. Neither artifact is the
+authority alone.
+
+`enum8` rather than `lpUtf8`: it keeps the three-value domain **structural on the wire**, where a
+length-prefixed string would round-trip any junk and leave the domain wholly to validation — the same
+argument that put `bond.inviteePublicKey` on `opt(b32)`. It is also the idiom `boxType` already uses.
+**The in-memory type does not change**: `NetworkType` stays the string union, and the tag mapping is
+the encoder's. Note also that `enum8` is a **total** writer (closed tag set, sentinel `0xff`
+unreachable — see the totality table above), so this row adds nothing to the throwing-writer
+obligation Phase 3 must discharge against the block structs.
 
 `blockHash` = `blake2b512(headerBytes)[0..32]`; `computePowHash` is the same with `powNonce = 0`.
 

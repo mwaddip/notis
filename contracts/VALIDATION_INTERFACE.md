@@ -289,6 +289,7 @@ The domain, by field:
 | Field | Domain | Writer it feeds |
 |---|---|---|
 | `protocolVersion` | non-negative safe integer | `vlqU` |
+| **`networkType`** | ⚠ **AHEAD OF CODE (Phase 3)** — a member of `NetworkType`: `'mainnet'`, `'testnet'` or `'devnet'` | `enum8` |
 | `height` | non-negative safe integer | `vlqU` |
 | `prevBlockHash` | `/^[0-9a-f]{64}$/` | `b32` |
 | `subBlockRoot` | `/^[0-9a-f]{64}$/` | `b32` |
@@ -298,6 +299,13 @@ The domain, by field:
 | `powNonce` | non-negative safe integer | `vlqU` |
 | `powTargetBits` | non-negative safe integer | `vlqU` |
 | **`createdAt`** | **non-negative safe integer** — new in 1f | `vlqU` |
+
+**`networkType` is the only header field whose domain is a closed set rather than a shape**, and the
+distinction matters: this function pins that the value **encodes**. Whether it matches *this node's*
+network is a separate check and belongs at the structure gate (`TYPES_INTERFACE` → Block header) — a
+block for another chain is well-formed, just not ours. Folding the profile match in here would make
+an encodable header report as unencodable, which is the confusion `blockHash`'s `null` contract
+exists to avoid.
 
 **`createdAt` is the field nothing checked.** One occurrence in the whole package before 1f
 (`isEncodableHeader`, `typeof === 'number'`, which admits `NaN`, `±Infinity`, `-1` and `1.5`), none
@@ -310,7 +318,14 @@ record for explorers. 1f constrains it *only* to what `vlqU` can encode faithful
 adds **no monotonicity rule and no skew window** — those are consensus rule additions, not encoding
 constraints, and this contract's "never add checks the reference lacks" applies. Note also that the
 reason Bitcoin and Ergo *do* bound their timestamps — difficulty adjustment, and the timewarp class —
-has no analogue here: node derives the target from height, not time.
+has no analogue here. ⚠ **Corrected 2026-08-09: this previously said "node derives the target from
+height, not time", which is not what the code does.** `expectedTarget(_height)`
+(`node/src/services/difficulty.ts`) **ignores its argument** and returns
+`config.orderingBlockPowTargetBits` — a constant, sourced from the network profile, with the height
+parameter reserved as the seam a real retarget will need. The conclusion is unchanged and in fact
+stronger: a constant target has no adjustment algorithm for a timestamp to attack. **Revisit this
+paragraph if a retarget is ever designed**, because that is the change that makes `createdAt` a
+consensus input rather than a record.
 
 **Byte fields are checked with `isBytes`, never a bare `.length`.** Phase 1e found `validatorId`,
 coinbase `owner` and `validatorSignature` checked by character count, so a *string* of the right
