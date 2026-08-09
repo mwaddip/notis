@@ -15,6 +15,36 @@ The hash function used for frame checksums is injectable.
 VLQ values are carried via JavaScript `number` (safe integer range, <= 2^53).
 BigInt paths for u64 wire values are deferred to a future version.
 
+> ⚠ **AHEAD OF CODE — that deferral is being executed, and this package gains a second consumer.**
+> Both changes come from `docs/specs/2026-08-09-positional-wire-format.md`.
+>
+> **1. The bigint VLQ arrives.** `value: bigint` on a box spans the full u64, so the `number` path
+> above cannot carry it. `readVlqBigInt` / `writeVlqBigInt` / `encodeVlqBigInt` are added, ported
+> from `@ergots/scorex`'s implementation — the same upstream this package was extracted from, so the
+> port is a re-import rather than a reimplementation. Its u64 ceiling guard and its wrap-mod-2⁶⁴
+> decode semantics come with it.
+>
+> **The `number` and `bigint` paths MUST agree byte-for-byte on the overlapping domain.** That
+> equivalence is the entire safety argument for adding a path rather than forking the encoding, and
+> it is asserted exhaustively at the boundaries (0, 1, 127/128, 16383/16384, 2³¹, 2³², 2⁵³−1, and the
+> ZigZag mirror of each).
+>
+> **2. `@dagsocial/types` becomes a consumer**, which makes this the repo's **base codec layer**, not
+> only the transport-framing package. `net` is no longer the sole dependant. No cycle is introduced:
+> this package still has zero dependencies, and that must stay true — every consensus preimage in the
+> system will be built on it.
+>
+> **Consensus reach.** Until now this package's bytes were transport framing: a bug produced a
+> dropped message. After this, its writers produce **box ids, tx ids, post ids, Merkle roots and the
+> `stateRoot`**. A change to VLQ output here silently moves every id in the system. Treat any edit to
+> `vlq.ts`, `reader.ts` or `writer.ts` as a consensus change from that point on.
+>
+> **Writers throw and that is load-bearing to preserve.** `encodeVlqU` rejects non-integers,
+> negatives, and values past `MAX_SAFE_INTEGER`. Do **not** make them total here — totality is
+> supplied by wrappers in `types`' codec layer, which need the sentinel discipline that audits
+> M-5/M-6 established (see TYPES_INTERFACE → Totality). A writer that silently coerced instead of
+> throwing would defeat both layers.
+
 ---
 
 ## Exports

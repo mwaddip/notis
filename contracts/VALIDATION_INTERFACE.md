@@ -259,6 +259,38 @@ Every check is total: adversarial input yields `{ valid: false }`, never a
 throw. That is what lets the block-apply funnel treat this function as its
 gate (see `NODE_INTERFACE.md`, "Structure validation in the apply funnel").
 
+> ⚠ **AHEAD OF CODE — this function shrinks to its semantic residue.** Under the positional wire
+> format (`docs/specs/2026-08-09-positional-wire-format.md`), *structure* is guaranteed by the
+> decoder: a block that decodes has every declared field, at its declared type and length, with no
+> unknown keys. Field-presence checks, `typeof` checks, 64-char hex checks, `isBytes` checks and the
+> `trigger` enum check all become dead code and are deleted with it.
+>
+> **What survives, because a codec cannot know it:**
+>
+> | Check | Why the codec can't |
+> |---|---|
+> | `parentRefs.length ≤ 8` | `MAX_PARENT_REFS` is a protocol rule, not a shape |
+> | `height ≥ 1` | genesis is a semantic floor |
+> | `powTargetBits ≥ ORDERING_BLOCK_POW_TARGET_FLOOR` | a policy floor |
+> | `lockedUntilBlock ≥ block.height` | cross-field, needs the header |
+> | `utxoTxIds.length === utxoTxs.length` | two independently-counted arrays |
+> | **`Number.isSafeInteger(height)`** | see below — this one gets *more* important |
+>
+> **The safe-integer check must not be deleted as redundant.** Today it lives in net's gossip
+> validator as an add-on (audit M-6) because the structural bound `height ≥ 1` admits NaN and floats.
+> Under VLQ the hazard changes shape but grows: `vlqU` decodes the full u64 range, so a height above
+> 2^53 is *well-formed* at the codec layer and silently loses precision the moment it becomes a JS
+> `number`. Every VLQ-sourced value that reaches `number` needs this bound, and it belongs here
+> rather than only in net — the sync path does not pass through the gossip validator.
+>
+> Checks that die because the codec subsumes them: non-negative `value` and `powNonce` (`vlqU` is
+> unsigned by construction), `protocolVersion is a number`, every byte-length assertion, and the
+> `subBlockRefs`/`subBlockEntries` alignment — the latter because `subBlockRefs` no longer exists
+> (see `NODE_INTERFACE.md`).
+>
+> **Deleting checks needs the care of adding them.** Use the established deletion proof: exhaustive
+> grep-to-zero plus diff purity, mutation only where behaviour changes.
+
 ### verifyBlockChainLink
 
 > ⚠ **NEVER BUILT as described, and it has no production caller.** The function exists but

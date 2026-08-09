@@ -2863,6 +2863,61 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 > serializer-enforced rules explicitly non-soft-forkable. CBOR maps are open by
 > default, which is why this class keeps recurring here and cannot recur there.
 
+> ⚠ **AHEAD OF CODE — resolution of the marker above.** Being closed by
+> `docs/specs/2026-08-09-positional-wire-format.md`, which takes the lineage's answer literally:
+> the codecs become positional (see TYPES_INTERFACE → Serialization). Two corrections to the
+> marker, both measured 2026-08-09:
+>
+> 1. **Its header claim is wrong.** "Header-level junk *does* change the hash, and therefore fails
+>    PoW and signature checks" holds only for tampering in transit. A malicious validator mines and
+>    signs *with* the junk present — `computePowHash` spreads the header, so unknown keys survive
+>    into the preimage. Measured: header junk moves the hash and the block is still accepted. It is
+>    unbounded header bloat, not malleability.
+> 2. **It understates the reach.** Junk *inside* a Merkle-committed `subBlockEntry` also rides free,
+>    because the `subBlockRoot` leaf preimage is a three-field projection
+>    (`{postId, parentRefs, author}`), so committing the entry does not commit the entry object.
+
+**`subBlockRefs` is deleted from the block** (AHEAD OF CODE). It was never covered by any
+commitment — `computeSubBlockRoot` builds leaves from `subBlockEntries` and `pruneEntries` only —
+and the verifier checked its *length* against `subBlockEntries` and nothing else. Measured: a block
+whose refs name entirely different post ids is accepted with an unchanged `subBlockRoot` and an
+unchanged `blockHash`, and its element types were never checked at all.
+
+That mattered because the field drove state mutation on two paths:
+
+- `removeSubBlockEntries(...)` → `DELETE FROM mempool WHERE entry_type = 'subblock' AND subblock_id
+  IN (…)`, unguarded, committing with the accepted block — a mempool-eviction primitive that drops
+  unconfirmed sub-blocks network-wide without confirming them.
+- the journal's `confirmedSubBlockIds`, replayed on reorg as `unconfirmPost(id)`.
+
+The defect was an **asymmetry**: apply confirmed from `subBlockEntries` (committed) while rollback
+un-confirmed from `subBlockRefs` (uncommitted) — the inverse keyed on a different list than the
+forward operation. Both consumers now derive `subBlockEntries.map(e => e.postId)`. The two JSON
+routes that expose it derive it too, so HTTP response shape is unchanged.
+
+**Embedded transactions: a mismatch rejects the block** (AHEAD OF CODE, register row C4). The three
+arms in the block's tx loop — missing CBOR, decode failure, and `computeTxId(tx) !== txId` — no
+longer `continue`. Skipping was defensible when the alternative was an accidental throw, but the
+property it gives up is decisive: a body that does not match its committed ids **applies different
+state under the same block hash**.
+
+This also closes register row **C2** without touching any root preimage. `utxoTxRoot` commits the
+ids; once a mismatch kills the block rather than skipping the tx, the bytes are transitively
+committed through `computeTxId`, and "the body is swappable under an unchanged header" stops being
+true.
+
+> ⚠ **Rejection is of BYTES, not of the block hash.** A node that rejects a malformed body MUST
+> remain willing to accept a well-formed body for the same block hash from another peer. Caching
+> "block `abc…` is invalid" would hand an attacker who races the honest producer a permanent
+> per-height censorship primitive against that node.
+
+**The bigint domain check.** `computeTxId` runs in that same loop behind `checkTxEnvelope` only, and
+`checkTxEnvelope` deliberately does not type output entries — the `u64` pin is `checkOutputShape` at
+`validateTx` step 4, which runs later. Since `boxContentBytes` throws on an out-of-domain bigint
+(TYPES_INTERFACE → Totality, the one stated exception), this call site MUST check the domain
+explicitly, so a bad value produces a stated rejection instead of an exception caught by the funnel's
+totality handler.
+
 **Apply funnel: validation and mutation phases.** `applyBlockBody` is split so
 the state transition can be run without the header being final — that is what
 lets the block creator compute a post-block `stateRoot` through this same code
