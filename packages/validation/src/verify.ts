@@ -717,6 +717,13 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
 
 /**
  * The block hash IS the hash of the serialized header.
+ *
+ * @deprecated Phase 1f expand step — use {@link blockHashChecked}. This function
+ * checks **nothing**: it hands `header` straight to `encodeHeader`, so its
+ * precondition is the caller's to remember, which is the defect Phase 1f exists
+ * to close. It survives only until `node` and `net` have migrated (1f-2 / 1f-3);
+ * 1f-4 deletes it. During that window this is the *obvious* name and the *wrong*
+ * one — a new call site added here reintroduces the defect.
  */
 export function blockHash(header: BlockHeader): string {
   return createHash('blake2b512')
@@ -729,6 +736,10 @@ export function blockHash(header: BlockHeader): string {
 /**
  * Compute the PoW preimage — the serialized header with powNonce=0.
  * The miner hashes this against candidate nonces.
+ *
+ * @deprecated Phase 1f expand step — use {@link computePowHashChecked}. Same
+ * reasoning as {@link blockHash} above: unchecked input straight to
+ * `encodeHeader`. Deleted by 1f-4.
  */
 export function computePowHash(header: BlockHeader): Buffer {
   const template = { ...header, powNonce: 0 };
