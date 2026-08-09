@@ -118,6 +118,9 @@ importers:
 
   packages/types:
     dependencies:
+      '@dagsocial/wire':
+        specifier: workspace:*
+        version: link:../wire
       cbor-x:
         specifier: ^1.6.0
         version: 1.6.4

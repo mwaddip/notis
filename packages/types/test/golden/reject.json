@@ -1,0 +1,159 @@
+{
+  "$schema": "./README.md",
+  "$description": "Byte strings the boundary check MUST reject. `failure` names a CodecError.failure (the four-part check); `code` names a ReaderError.code raised by @dagsocial/wire itself. A vector here that starts passing means a guarantee was lost.",
+  "rejects": [
+    {
+      "name": "non-minimal/vlqU-one-padded",
+      "codec": "vlqU",
+      "bytes": "8100",
+      "failure": "non-canonical",
+      "note": "⚠ THE headline case. 0x81 0x00 decodes to 1 exactly as 0x01 does, and @dagsocial/wire accepts it DELIBERATELY (WIRE_INTERFACE → 'Two asymmetries are deliberate'). Nothing but step 3's re-encode-and-compare catches it. Delete that step and this vector is the one that stops failing."
+    },
+    {
+      "name": "non-minimal/vlqU-zero-max-padded",
+      "codec": "vlqU",
+      "bytes": "80808080808080808000",
+      "failure": "non-canonical",
+      "note": "Ten bytes encoding the value 0 — the widest padding MAX_VLQ_BYTES still admits."
+    },
+    {
+      "name": "non-minimal/vlqU-inside-array-element",
+      "codec": { "arr": "vlqU" },
+      "bytes": "02008100",
+      "failure": "non-canonical",
+      "note": "Padding on the SECOND element. The compare is over the whole byte string, so a non-minimal field buried mid-struct is caught the same as a leading one."
+    },
+    {
+      "name": "non-minimal/array-count-padded",
+      "codec": { "arr": "vlqU" },
+      "bytes": "810000",
+      "failure": "non-canonical",
+      "note": "The count itself padded: 0x81 0x00 = 1 element. The length prefix is as much a canonicity surface as the payload."
+    },
+    {
+      "name": "non-minimal/lp-length-padded",
+      "codec": "lp",
+      "bytes": "8000",
+      "failure": "non-canonical",
+      "note": "A padded zero-length prefix. `80 00` decodes to length 0 exactly as `00` does."
+    },
+    {
+      "name": "non-minimal/opt-payload-padded",
+      "codec": { "opt": "vlqU" },
+      "bytes": "018100",
+      "failure": "non-canonical"
+    },
+
+    {
+      "name": "trailing/one-byte-after-vlqU",
+      "codec": "vlqU",
+      "bytes": "0000",
+      "failure": "trailing-bytes",
+      "note": "Step 2. Without the isExhausted assertion, appended junk rides free — and any two byte strings sharing a prefix would decode to one value."
+    },
+    {
+      "name": "trailing/after-b32",
+      "codec": "b32hex",
+      "bytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fff",
+      "failure": "trailing-bytes"
+    },
+    {
+      "name": "trailing/after-empty-array",
+      "codec": { "arr": "b32hex" },
+      "bytes": "0000",
+      "failure": "trailing-bytes"
+    },
+
+    {
+      "name": "tag/bool-two",
+      "codec": "bool",
+      "bytes": "02",
+      "code": "invalid-tag",
+      "note": "Strict tags — no truthy coercion, per spec §2.3."
+    },
+    {
+      "name": "tag/opt-two",
+      "codec": { "opt": "vlqU" },
+      "bytes": "0200",
+      "code": "invalid-tag"
+    },
+    {
+      "name": "tag/enum8-unknown",
+      "codec": { "enum8": "trigger" },
+      "bytes": "02",
+      "code": "invalid-tag",
+      "note": "Tag 2 is not in the trigger table. Reserved tags stay unreadable rather than decoding to a neighbour."
+    },
+    {
+      "name": "tag/enum8-sentinel-byte",
+      "codec": { "enum8": "trigger" },
+      "bytes": "ff",
+      "code": "invalid-tag",
+      "note": "The encode-side sentinel must not decode back into a value — otherwise a malformed round trip would look clean."
+    },
+
+    {
+      "name": "truncated/b32-one-byte-short",
+      "codec": "b32hex",
+      "bytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e",
+      "code": "truncated"
+    },
+    {
+      "name": "truncated/empty-input",
+      "codec": "vlqU",
+      "bytes": "",
+      "code": "truncated"
+    },
+    {
+      "name": "truncated/lp-payload-short",
+      "codec": "lp",
+      "bytes": "04deadbe",
+      "code": "truncated",
+      "note": "Declared 4 bytes, supplied 3 — a length prefix that outruns the buffer."
+    },
+    {
+      "name": "truncated/arr-element-missing",
+      "codec": { "arr": "b32hex" },
+      "bytes": "02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "code": "truncated",
+      "note": "Count says 2, one element supplied."
+    },
+
+    {
+      "name": "overflow/vlqU-eleven-bytes",
+      "codec": "vlqU",
+      "bytes": "8080808080808080808000",
+      "code": "vlq-overflow",
+      "note": "Past MAX_VLQ_BYTES. Bounds the read loop on a malformed stream."
+    },
+    {
+      "name": "overflow/vlqU-past-safe-integer",
+      "codec": "vlqU",
+      "bytes": "ffffffffffffffffff01",
+      "code": "vlq-overflow",
+      "note": "The sentinel's own bytes on the `number` path. It must never decode into a plausible value — that is what keeps the sentinel one-way."
+    },
+    {
+      "name": "overflow/array-count-past-max",
+      "codec": { "arr": "vlqU" },
+      "bytes": "81808008",
+      "code": "array-too-large",
+      "note": "MAX_ARRAY_LENGTH + 1 = 2^24 + 1. Rejected on the count alone, before anything is allocated."
+    },
+
+    {
+      "name": "utf8/invalid-continuation",
+      "codec": "lpUtf8",
+      "bytes": "01ff",
+      "code": "invalid-tag",
+      "note": "0xff starts no UTF-8 sequence. A non-fatal decoder would substitute U+FFFD, mapping two distinct byte strings onto one string — decoded lossily, then re-encoded to different bytes."
+    },
+    {
+      "name": "utf8/truncated-sequence",
+      "codec": "lpUtf8",
+      "bytes": "02e697",
+      "code": "invalid-tag",
+      "note": "The first two bytes of a 3-byte sequence, with a length prefix that says the field ends there. The bytes are all present — it is the sequence that is incomplete — so this is a decode fault, not a short read."
+    }
+  ]
+}
