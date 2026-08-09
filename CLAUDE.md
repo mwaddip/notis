@@ -39,6 +39,7 @@ This project uses Design by Contract for multi-session workflow. The `contracts/
 - `contracts/NODE_INTERFACE.md` — node package contract (API, verifier, store interface)
 - `contracts/NET_INTERFACE.md` — networking contract (libp2p, gossip, sync)
 - `contracts/WEB_INTERFACE.md` — web client contract (Phase 2)
+- `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice (specified, nothing conforms yet)
 
 ### Workflow
 

@@ -1,148 +1,60 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" class="no-anim">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Karma — Notis Docs</title>
-<meta name="description" content="How karma works in Notis: standing that can't be bought, sold or transferred. Invites as bonds, likes that cost the liker, decay you can't fake your way out of, and what it costs to remove things.">
+<title>Karma — Notis docs</title>
+<meta name="description" content="How karma works in Notis: standing that can't be bought, sold or transferred. Invitations with a bond, likes that cost the liker, decay, and two different ways to remove things.">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Notis Docs">
-<meta property="og:title" content="Karma — Notis Docs">
-<meta property="og:description" content="Standing you can't buy. How karma is earned, spent, and lost — and why every mechanism makes honesty cheap and faking it expensive.">
+<meta property="og:site_name" content="Notis docs">
+<meta property="og:title" content="Karma — Notis docs">
+<meta property="og:description" content="Standing you can't buy. Karma is held, not computed — earned from other people and out of money's reach.">
 <meta property="og:url" content="https://docs.notis.fun/karma/">
 <meta name="twitter:card" content="summary">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/style.css">
+<!-- Not deferred: the theme has to be on <html> before the first paint, or every page in a
+     multi-page site flashes the default ground before settling into the stored one. -->
+<script src="/assets/site.js"></script>
 <style>
-  :root{
-    --bg:#020D07; --surface:#06160E; --surface-2:#0A1E13; --border:#143C28; --side:#04120B;
-    --hi:#EAFFF4; --text:#C8E9D8; --muted:#6FB894;
-    --k:#2CFF87; --c:#E8B84B;
-    --k-soft:rgba(44,255,135,.10); --c-soft:rgba(232,184,75,.10);
-    --glow:0 0 24px rgba(44,255,135,.28);
-    --mono:"JetBrains Mono",ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
-    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --side-w:250px;
-  }
-  @media (prefers-color-scheme: light){
-    :root:not([data-theme="dark"]){
-      --bg:#EDF3EE; --surface:#F5F9F6; --surface-2:#E4EFE8; --border:#CBDDD0; --side:#E7F0EA;
-      --hi:#0B2C1B; --text:#22402F; --muted:#557460;
-      --k:#0B8A46; --c:#8A5E12; --k-soft:rgba(11,138,70,.08); --c-soft:rgba(138,94,18,.09); --glow:none;
-    }
-  }
-  :root[data-theme="light"]{
-    --bg:#EDF3EE; --surface:#F5F9F6; --surface-2:#E4EFE8; --border:#CBDDD0; --side:#E7F0EA;
-    --hi:#0B2C1B; --text:#22402F; --muted:#557460;
-    --k:#0B8A46; --c:#8A5E12; --k-soft:rgba(11,138,70,.08); --c-soft:rgba(138,94,18,.09); --glow:none;
-  }
-  :root[data-theme="dark"]{
-    --bg:#020D07; --surface:#06160E; --surface-2:#0A1E13; --border:#143C28; --side:#04120B;
-    --hi:#EAFFF4; --text:#C8E9D8; --muted:#6FB894;
-    --k:#2CFF87; --c:#E8B84B; --k-soft:rgba(44,255,135,.10); --c-soft:rgba(232,184,75,.10);
-    --glow:0 0 24px rgba(44,255,135,.28);
-  }
-  *{box-sizing:border-box} html{-webkit-text-size-adjust:100%}
-  body{margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
-    font-size:17px; line-height:1.68; letter-spacing:.005em; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility}
-  .mono{font-family:var(--mono)}
-  .sidebar{position:fixed; top:0; left:0; width:var(--side-w); height:100vh; overflow-y:auto;
-    background:var(--side); border-right:1px solid var(--border); padding:26px 18px 40px; z-index:900; transition:transform .22s ease}
-  .side-brand{display:flex; align-items:center; gap:9px; font-family:var(--mono); font-weight:700;
-    font-size:14px; letter-spacing:.14em; color:var(--hi); text-decoration:none; padding:2px 8px 22px}
-  .side-brand .dot{color:var(--k)} .side-brand i{color:var(--muted); font-style:normal; font-weight:400}
-  .nav{display:flex; flex-direction:column; gap:2px}
-  .nav-cat{font-family:var(--mono); font-size:11px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); padding:16px 8px 6px}
-  .nav-item{display:block; text-decoration:none; color:var(--text); font-size:14.5px;
-    padding:7px 10px 7px 13px; border-radius:6px; border-left:2px solid transparent; transition:.12s}
-  .nav-item:hover{background:var(--surface); color:var(--hi)}
-  .nav-item.active{color:var(--k); border-left-color:var(--k); background:var(--k-soft); font-weight:600}
-  .content{margin-left:var(--side-w); padding:0 32px 100px; min-width:0}
-  .wrap{max-width:760px; margin:0 auto}
-  header.page{padding:70px 0 8px; border-bottom:1px solid var(--border); margin-bottom:8px}
-  .crumb{font-family:var(--mono); font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); margin-bottom:20px}
-  .crumb b{color:var(--k)}
-  h1{font-family:var(--mono); font-size:clamp(29px,5.4vw,44px); line-height:1.1; margin:0 0 18px;
-    color:var(--hi); font-weight:700; letter-spacing:-.01em; text-wrap:balance; text-shadow:var(--glow)}
-  .lede{font-size:clamp(17px,2.2vw,20px); color:var(--text); margin:0 0 20px; max-width:60ch}
-  .lede strong{color:var(--hi); font-weight:600}
-  section{padding:36px 0; border-bottom:1px solid var(--border)}
-  section:last-of-type{border-bottom:0}
-  h2{font-family:var(--mono); font-size:20px; color:var(--hi); margin:0 0 16px; font-weight:700}
-  h2::before{content:"// "; color:var(--k)}
-  h3{font-family:var(--mono); font-size:16px; color:var(--hi); margin:26px 0 10px; font-weight:600}
-  p{margin:0 0 16px} strong{color:var(--hi); font-weight:600} em{color:var(--muted); font-style:italic}
-  .accent-k{color:var(--k); font-weight:600} .accent-c{color:var(--c); font-weight:600}
-  .pull{border-left:3px solid var(--k); background:var(--k-soft); padding:16px 20px; margin:24px 0; border-radius:0 8px 8px 0}
-  .pull p{margin:0; color:var(--hi); font-family:var(--mono); font-size:16px; line-height:1.55}
-  .note{border-left:3px solid var(--c); background:var(--c-soft); padding:16px 20px; margin:24px 0; border-radius:0 8px 8px 0}
-  .note p{margin:0 0 10px} .note p:last-child{margin:0}
-  .note .tag{font-family:var(--mono); font-size:11.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--c); display:block; margin-bottom:8px}
-  .tbl-wrap{overflow-x:auto; margin:20px 0}
-  table{border-collapse:collapse; width:100%; font-size:15px; min-width:460px}
-  th,td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:top}
-  th{font-family:var(--mono); font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:600}
-  td.n{font-family:var(--mono); color:var(--k); white-space:nowrap; font-weight:600}
-  tbody tr:last-child td{border-bottom:0}
-  .ledger{font-family:var(--mono); font-size:14.5px; background:var(--surface); border:1px solid var(--border);
-    border-radius:10px; padding:18px 20px; margin:20px 0; overflow-x:auto; line-height:1.9}
-  .ledger .row{display:flex; justify-content:space-between; gap:24px; white-space:nowrap}
-  .ledger .row.total{border-top:1px solid var(--border); margin-top:8px; padding-top:8px; color:var(--hi); font-weight:700}
-  .ledger .neg{color:var(--c)} .ledger .pos{color:var(--k)}
-  .glance{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:8px}
-  @media (max-width:560px){.glance{grid-template-columns:1fr}}
-  a.card{display:block; text-decoration:none; background:var(--surface); border:1px solid var(--border); border-radius:10px;
-    padding:20px; position:relative; overflow:hidden; transition:transform .12s ease, border-color .12s ease}
-  a.card:hover{transform:translateY(-2px); border-color:var(--k)}
-  a.card.c:hover{border-color:var(--c)}
-  a.card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px}
-  a.card.k::before{background:var(--k)} a.card.c::before{background:var(--c)}
-  a.card .tag{font-family:var(--mono); font-size:11.5px; letter-spacing:.16em; text-transform:uppercase; margin-bottom:6px}
-  a.card.k .tag{color:var(--k)} a.card.c .tag{color:var(--c)}
-  a.card h4{margin:0 0 8px; font-size:19px; color:var(--hi); font-family:var(--mono); font-weight:700}
-  a.card p{margin:0; font-size:14.5px; color:var(--text)}
-  footer{padding:34px 0 0; color:var(--muted); font-size:13.5px}
-  footer a{color:var(--k); text-decoration:none; border-bottom:1px solid var(--border)}
-  .theme-toggle{position:fixed; top:16px; right:16px; z-index:950; width:40px; height:40px; border-radius:9px;
-    cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:18px; line-height:1;
-    background:var(--surface); color:var(--k); border:1px solid var(--border); transition:transform .12s ease}
-  .theme-toggle:hover{transform:translateY(-1px)}
-  .theme-toggle:focus-visible, .nav-btn:focus-visible{outline:2px solid var(--k); outline-offset:2px}
-  .nav-btn{display:none; position:fixed; top:16px; left:16px; z-index:950; width:40px; height:40px; border-radius:9px;
-    cursor:pointer; background:var(--surface); color:var(--k); border:1px solid var(--border); font-size:17px; line-height:1}
-  .backdrop{display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:880}
-  .backdrop.show{display:block}
-  @media (max-width:900px){
-    .sidebar{transform:translateX(-100%)} .sidebar.open{transform:translateX(0)}
-    .content{margin-left:0; padding:0 20px 90px}
-    .nav-btn{display:flex; align-items:center; justify-content:center}
-    header.page{padding-top:76px}
-  }
-  @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+  /* Page-local: worked examples as a running account. The labels are prose and the amounts
+     are quantities, so the labels stay proportional, the amounts go mono, and the row aligns
+     on the BASELINE — flex centring would position each side by its box, which depends on
+     each family's ascent and descent and silently breaks the day a face is swapped. */
+  .ledger{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+          padding:var(--s4) var(--s5);margin:var(--s5) 0;font-size:15px;max-width:var(--measure)}
+  .ledger .row{display:flex;align-items:baseline;justify-content:space-between;
+               gap:var(--s5);padding:5px 0}
+  .ledger .row span:last-child{font-family:var(--mono);font-size:14px;white-space:nowrap}
+  .ledger .head{font-weight:650;padding-bottom:var(--s2)}
+  .ledger .total{border-top:1px solid var(--border);margin-top:var(--s2);
+                 padding-top:var(--s3);font-weight:650}
+  /* Karma in green, karma out in clay. Never gold — gold means notis, and none of these
+     numbers are money. */
+  .ledger .pos{color:var(--greenText)}
+  .ledger .neg{color:var(--clay)}
 </style>
 </head>
 <body>
 
-<button class="nav-btn" id="navBtn" aria-label="Toggle navigation">☰</button>
-<button class="theme-toggle" id="themeToggle" title="Toggle light / dark" aria-label="Toggle theme">☀</button>
+<button class="nav-btn" id="navBtn" type="button" aria-label="Toggle navigation"
+        aria-expanded="false" aria-controls="sidebar">☰</button>
 <div class="backdrop" id="backdrop"></div>
 
 <aside class="sidebar" id="sidebar">
-  <a class="side-brand" href="/"><span class="dot">◈</span> NOTIS <i>//</i> docs</a>
   <!--#include virtual="/assets/_nav.html" -->
 </aside>
 
 <main class="content">
   <div class="wrap">
     <header class="page">
-      <div class="crumb"><b>Notis</b> // karma</div>
+      <div class="crumb"><b>Notis</b> / karma</div>
       <h1>Standing you can't buy.</h1>
       <p class="lede"><span class="accent-k">Karma</span> is what you've earned from other people, and it is the one thing in Notis that <strong>money cannot reach</strong>. It can't be bought, sold, transferred, or converted. What follows is how it's earned, what it costs to spend, and why every mechanism here is the same trick in a different costume.</p>
     </header>
 
-    <div class="note">
-      <span class="tag">Every number on this page is a placeholder</span>
+    <div class="note warn">
+      <div class="label">Every number on this page is a placeholder</div>
       <p>The mechanisms are settled. The <em>values</em> are not. Every figure below — grant sizes, bond sizes, the like ratio, decay rates — is illustrative, chosen to be internally consistent so the examples work out. They will be pinned in a dedicated pass and then tuned on a live testnet with real people, because no amount of arguing on a page tells you what a good decay rate feels like.</p>
       <p>What <em>is</em> fixed are the relationships between them. Several inequalities below have to hold across the whole tuning range or the design stops working, and those are called out where they appear.</p>
     </div>
@@ -164,13 +76,13 @@
       <p>Notis never verifies identity — no phone numbers, no documents, nothing. It doesn't need to, because inviting yourself is unprofitable in both directions it can be run.</p>
       <p>Say you invite an account you control. You lock a bond of 12 and it receives a grant of 10. You now have two options, and here's what each costs:</p>
       <div class="ledger">
-        <div class="row"><span>Abandon it — take the grant and walk away</span><span></span></div>
+        <div class="row head"><span>Abandon it — take the grant and walk away</span><span></span></div>
         <div class="row"><span>grant received</span><span class="pos">+10</span></div>
         <div class="row"><span>bond forfeited</span><span class="neg">−12</span></div>
         <div class="row total"><span>net</span><span class="neg">−2</span></div>
       </div>
       <div class="ledger">
-        <div class="row"><span>Like it yourself until the bond vests</span><span></span></div>
+        <div class="row head"><span>Like it yourself until the bond vests</span><span></span></div>
         <div class="row"><span>grant received</span><span class="pos">+10</span></div>
         <div class="row"><span>60 likes given, at 1 each</span><span class="neg">−60</span></div>
         <div class="row"><span>author reward from those likes</span><span class="pos">+48</span></div>
@@ -234,14 +146,14 @@
       <h3>Pruning a whole subtree</h3>
       <p>Pruning removes a post <em>and everything under it</em>, including other people's replies. It costs three things:</p>
       <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>What</th><th>Happens</th></tr></thead>
-        <tbody>
-          <tr><td>Your own post bonds — the root, and your own replies below it</td><td class="n">burned</td></tr>
-          <tr><td>Other people's post bonds</td><td class="n">returned to them</td></tr>
-          <tr><td>A price per post destroyed</td><td class="n">1 each</td></tr>
-        </tbody>
-      </table>
+        <table>
+          <thead><tr><th>What</th><th>Happens</th></tr></thead>
+          <tbody>
+            <tr><td>Your own post bonds — the root, and your own replies below it</td><td class="n">burned</td></tr>
+            <tr><td>Other people's post bonds</td><td class="n">returned to them</td></tr>
+            <tr><td>A price per post destroyed</td><td class="n">1 each</td></tr>
+          </tbody>
+        </table>
       </div>
       <p>The first two are one principle: <strong>you may destroy your own stake, never someone else's.</strong> Your bond is forfeited for changing your mind. Everyone else gets theirs back.</p>
       <p>The third one is less obvious and matters most. Without it, cost runs <em>backwards</em> to harm. A well-received post has had most of its bond already returned by likes — so the post whose destruction wipes out five hundred replies would be the <em>cheapest</em> one to destroy. Charging per descendant fixes the direction: your bond prices your change of mind, and the per-post charge prices the damage to everyone else. Two different things, and one curve shouldn't be doing both jobs.</p>
@@ -252,22 +164,22 @@
       <h2>The numbers, such as they are</h2>
       <p>Illustrative values, internally consistent so the examples above work. <strong>All subject to change.</strong></p>
       <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>Thing</th><th>Placeholder</th><th>What it's balancing</th></tr></thead>
-        <tbody>
-          <tr><td>Cost of a like</td><td class="n">1</td><td>The smallest unit — a like should be the cheapest meaningful act.</td></tr>
-          <tr><td>Author's share</td><td class="n">4 per 5</td><td>Most of it reaches the author; the rest is the deflation dial.</td></tr>
-          <tr><td>Invite grant</td><td class="n">10</td><td>A few posts plus enough to participate before earning anything.</td></tr>
-          <tr><td>Invite bond</td><td class="n">12</td><td>Must exceed the grant, or abandoning it pays.</td></tr>
-          <tr><td>Bond fully vests at</td><td class="n">60 likes</td><td>Must burn more than the grant, or self-liking pays.</td></tr>
-          <tr><td>Post bond</td><td class="n">3</td><td>Must exceed the decay it could dodge.</td></tr>
-          <tr><td>Post bond vests at</td><td class="n">15 likes</td><td>Reachable for a real post, expensive to fake.</td></tr>
-          <tr><td>Decay</td><td class="n">2 / 5 days</td><td>Slow enough to ignore if you're around, real if you're not.</td></tr>
-          <tr><td>Decay floor</td><td class="n">5</td><td>Nobody is decayed into being unable to act.</td></tr>
-          <tr><td>Prune, per post destroyed</td><td class="n">1</td><td>Scales with harm, not with what's left of your bond.</td></tr>
-          <tr><td>Withdraw your own post</td><td class="n">free</td><td>Regret shouldn't be expensive.</td></tr>
-        </tbody>
-      </table>
+        <table>
+          <thead><tr><th>Thing</th><th>Placeholder</th><th>What it's balancing</th></tr></thead>
+          <tbody>
+            <tr><td>Cost of a like</td><td class="n">1</td><td>The smallest unit — a like should be the cheapest meaningful act.</td></tr>
+            <tr><td>Author's share</td><td class="n">4 per 5</td><td>Most of it reaches the author; the rest is the deflation dial.</td></tr>
+            <tr><td>Invite grant</td><td class="n">10</td><td>A few posts plus enough to participate before earning anything.</td></tr>
+            <tr><td>Invite bond</td><td class="n">12</td><td>Must exceed the grant, or abandoning it pays.</td></tr>
+            <tr><td>Bond fully vests at</td><td class="n">60 likes</td><td>Must burn more than the grant, or self-liking pays.</td></tr>
+            <tr><td>Post bond</td><td class="n">3</td><td>Must exceed the decay it could dodge.</td></tr>
+            <tr><td>Post bond vests at</td><td class="n">15 likes</td><td>Reachable for a real post, expensive to fake.</td></tr>
+            <tr><td>Decay</td><td class="n">2 / 5 days</td><td>Slow enough to ignore if you're around, real if you're not.</td></tr>
+            <tr><td>Decay floor</td><td class="n">5</td><td>Nobody is decayed into being unable to act.</td></tr>
+            <tr><td>Prune, per post destroyed</td><td class="n">1</td><td>Scales with harm, not with what's left of your bond.</td></tr>
+            <tr><td>Withdraw your own post</td><td class="n">free</td><td>Regret shouldn't be expensive.</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -277,41 +189,25 @@
       <p>A like costs the same whether it's sincere or manufactured — but the sincere one was going to be spent anyway. A bond costs the same whether you vouched for a person or a puppet — but the person vests it back. A post bond costs the same for something worth reading and something posted to game a clock — but only one of them earns it back.</p>
       <p>Nowhere does the protocol decide who is genuine. It never has to. It just makes being fake cost full price, and being real cost almost nothing, for exactly the same move.</p>
       <div class="glance">
-        <a class="card c" href="/economy/">
-          <div class="tag">Read next →</div>
-          <h4>Economy</h4>
-          <p>The other ledger: <span class="accent-c">credits</span>, mining, storage rent, fees, and the fair launch.</p>
-        </a>
-        <a class="card k" href="/first-principles/">
-          <div class="tag">Back to →</div>
-          <h4>First principles</h4>
+        <div class="card c">
+          <div class="tag">Read next</div>
+          <h4><a href="/economy/">Economy →</a></h4>
+          <p>The other ledger: the <span class="accent-c">notis</span>, mining, storage rent, fees, and the fair launch.</p>
+        </div>
+        <div class="card k">
+          <div class="tag">Back to</div>
+          <h4><a href="/first-principles/">First principles →</a></h4>
           <p>Why any of this — decentralized community, common currency, and the firewall between them.</p>
-        </a>
+        </div>
       </div>
     </section>
 
     <footer>
-      <p class="mono">NOTIS // decentralized social network · dual-ledger · proof-of-work</p>
+      <p class="mono">NOTIS · decentralized social network · dual-ledger · proof-of-work</p>
       <p>Design in progress — some mechanics described in these docs are still being implemented, and every number on this page is a placeholder. · <a href="https://notis.fun">notis.fun</a></p>
     </footer>
   </div>
 </main>
 
-<script>
-(function(){
-  var root=document.documentElement, btn=document.getElementById("themeToggle");
-  function eff(){ var t=root.getAttribute("data-theme"); if(t==="dark"||t==="light") return t;
-    return (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark"; }
-  function apply(t){ root.setAttribute("data-theme",t); if(btn) btn.textContent=(t==="dark"?"☀":"☾");
-    try{ localStorage.setItem("notis-theme",t); }catch(e){} }
-  var saved=null; try{ saved=localStorage.getItem("notis-theme"); }catch(e){}
-  apply(saved||eff());
-  if(btn) btn.addEventListener("click",function(){ apply(eff()==="dark"?"light":"dark"); });
-  var sb=document.getElementById("sidebar"), nb=document.getElementById("navBtn"), bd=document.getElementById("backdrop");
-  function setNav(open){ sb.classList.toggle("open",open); bd.classList.toggle("show",open); }
-  if(nb) nb.addEventListener("click",function(){ setNav(!sb.classList.contains("open")); });
-  if(bd) bd.addEventListener("click",function(){ setNav(false); });
-})();
-</script>
 </body>
 </html>
