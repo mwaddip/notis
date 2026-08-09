@@ -85,7 +85,9 @@ describe('serializeBox', () => {
       value: 5n,
       originalValue: 5n,
       owner: new Uint8Array(32).fill(0x44),
-      targetPostId: 'post-2',
+      // `b32` in the id preimage, so `'post-2'` has no encoding — the id this
+      // fixture derives from itself could not be computed.
+      targetPostId: '44'.repeat(32),
       guard: 'block_apply' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);

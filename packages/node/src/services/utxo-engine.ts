@@ -646,6 +646,7 @@ type FieldType =
   | 'u64'
   | 'bytes32'
   | 'bytes0or32'
+  | 'hex32'
   | 'heightOrTransfer'
   | 'uint'
   | 'u32'
@@ -670,6 +671,30 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
   bytes0or32: {
     ok: (v) => v instanceof Uint8Array && (v.length === 0 || v.length === 32),
     expected: 'a Uint8Array of length 0 or 32',
+  },
+  /**
+   * A 32-byte id carried as **hex text** in memory — `post_lock.targetPostId`,
+   * and it is the only one. Distinct from `bytes32`, which is the same 32 bytes
+   * held as a `Uint8Array`; the pair is the whole reason this needs its own
+   * entry rather than reusing one.
+   *
+   * ⚠ **This closes a live no-panic violation, not a style gap.** The field was
+   * typed `'string'` here while `canonicalBoxBytes` writes it with
+   * `writeHexNOrThrow(…, 32)`, which throws on anything that is not exactly 64
+   * lowercase hex. Under the pre-migration encoder any string encoded, so the
+   * mismatch cost nothing; from Phase 2 on, a `post_lock` output carrying
+   * `targetPostId: 'hello'` clears step 4 and then makes `computeTxId` **throw**
+   * at `validateTx`'s last line — turning an invalid transaction into an
+   * exception on an adversary-supplied value. `VALIDATION_INTERFACE`'s no-panic
+   * rule forbids exactly that.
+   *
+   * The fix belongs here and not in the encoder: spec §2.5 is explicit that a
+   * throwing writer's domain is established upstream, and adding a guard inside
+   * `canonicalBoxBytes` is what the format forbids. The schema is the upstream.
+   */
+  hex32: {
+    ok: (v) => typeof v === 'string' && HEX64.test(v),
+    expected: '64 lowercase hex characters',
   },
   // Exactly one field: credit `proofSource` — a block height, or -1, the
   // "transfer" sentinel every user-path credit transfer and faucet grant
@@ -1056,7 +1081,9 @@ const OUTPUT_SHAPE: Record<
       value: 'u64',
       originalValue: 'u64',
       owner: 'bytes32',
-      targetPostId: 'string',
+      // NOT `'string'`: `canonicalBoxBytes` writes this with a throwing
+      // fixed-width writer, so a free string reaches `computeTxId` and panics.
+      targetPostId: 'hex32',
       guard: null,
     }),
     vouch: shape({

@@ -664,7 +664,7 @@ SubBlockTree {
 
 SubBlockEntry {
   postId: string        // hex(32) post ID
-  parentRefs: string[]  // hex(32) parent post IDs (0–8)
+  parentRefs: string[]  // hex(32) parent post IDs (0–MAX_PARENT_REFS)
   author: string        // hex(32) author public key of the post (consensus-carried, audit H-3)
 }
 
@@ -933,7 +933,7 @@ Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it 
 | `karma` | `b32(owner)` ‖ `lpUtf8(proofSource)` ‖ `opt(decayBurn, u8)` |
 | `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
-| `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ `b32(inviteePublicKey)` ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
+| `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
 | `post_lock` | `vlqU(originalValue)` ‖ `b32(owner)` ‖ `b32(targetPostId)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
 
@@ -943,6 +943,63 @@ Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it 
 `karma.proofSource` is `lpUtf8` because it is typed `string` (`PostId | StumpHash | InviteTxId`) with
 no pinned length. ⚠ **Grep the producers before narrowing this to `b32`** — a bullet drafted from the
 type is a hypothesis, which is how the credit `proofSource` range broke 13 honest-path tests.
+
+**`bond.inviteePublicKey` is `opt(b32)`, not `b32` — corrected 2026-08-09, and the error was this
+table's.** The field is **0-or-32 bytes**: this contract says so at the BondBox definition above
+("empty = unclaimed, 32 bytes = committed"), node types it `bytes0or32` in the output-shape schema
+(`utxo-engine.ts:1049`), and invite creation **requires** it empty — `utxo-engine.ts:403` rejects any
+invite-create whose bond output has a non-empty `inviteePublicKey`, because a pre-committed bond
+would let the inviter reclaim immediately and make the network's only sybil cost free.
+
+So this table specified a fixed-width writer for a field production guarantees is empty on the
+create path. `writeBytesNOrThrow` throws on a zero-length input, which made `computeTxId` — and
+therefore `createInvite` and `validateTx` — **throw on every invite creation**. Not a fixture
+problem: dead in production. Caught by the node session in Phase 2b, after the types session had
+implemented this table faithfully.
+
+`opt(b32)` rather than `lp`: it keeps the 0-or-32 domain **structural on the wire** (a decoder can
+produce only absence or exactly 32 bytes, where `lp` would round-trip a 5-byte value and leave the
+domain entirely to validation), it costs the same bytes, and it is the idiom three sibling fields
+already use — `karma.decayBurn`, `credit.lockedUntilBlock`, and `tx.likeTarget`, which is itself an
+optional 32-byte hex field. **The in-memory type does not change**: empty ↔ absent is the encoder's
+mapping, so `Uint8Array` stays and node's `bytes0or32` stays the domain gate.
+
+**The lesson, for every remaining layout row:** a `b32` row is a claim that the field is *always*
+exactly 32 bytes. This row was written from the field's *type* (`Uint8Array`) rather than its
+*domain*, and the domain was documented one section up. Check the producers before pinning a width —
+the same rule already stated above for `proofSource`, which was followed there and not here.
+
+⚠ **It was NOT the only one, and the way that claim failed is the lesson.** This block first said
+"it is the only one", on the strength of a search for `bytes0or32` — every byte-kind entry in node's
+output-shape schema is `bytes32` except `inviteePublicKey`. True, and the wrong shape: it searched a
+**name** (`bytes0or32`) rather than the **property** (a throwing writer whose schema type does not
+pin its domain). `post_lock.targetPostId` is a hex **string**, so it is not a byte-kind entry at all
+and no amount of searching that list could surface it. Found by the types session hours later, from
+the other direction.
+
+**The correct search, and the one to reuse: cross-check every throwing writer in the layout against
+the schema type of the field it writes.** Run over the box arms 2026-08-09:
+
+| Field | Writer | Schema type | |
+|---|---|---|---|
+| `karma.owner`, `credit.owner`, `invite.secretHash`, `invite.inviterId`, `bond.inviterId`, `post_lock.owner`, `vouch.voucherId`, `vouch.targetId` | `writeBytesNOrThrow(…, 32)` | `bytes32` | ✓ |
+| `bond.inviteePublicKey` | `opt(b32)` | `bytes0or32` | ✓ (this correction) |
+| `post_lock.originalValue` | `writeVlqU64OrThrow` | `u64` | ✓ |
+| **`post_lock.targetPostId`** | **`writeHexNOrThrow(…, 32)`** | **`'string'`** — `typeof v === 'string'`, no width, no alphabet | **✗** |
+
+`targetPostId` is therefore a second live throw of the same shape: `checkOutputShape` admits any
+string, nothing else constrains the field, and `computeTxId` runs after it — so `validateTx` throws
+on adversarial input where `cbor-x` encoded it faithfully. **The fix is in node's schema, not here:**
+the domain belongs upstream of the encoder (spec §2.5), so `OUTPUT_SHAPE` gains a `hex32` runtime
+type. A guard inside `canonicalBoxBytes` would be the band-aid.
+
+This also corrects the 2a report's §7.1, which concluded the user-transaction path was clean because
+`checkOutputShape` runs at step 4 before `computeTxId`. It does run first — it just does not pin this
+field.
+
+**Phase 3 must run the table above against the block structs before pinning any width**, and must run
+it in that shape: writer versus schema type, field by field. Two rows in this contract were wrong,
+and both were found by someone searching from a direction the previous searcher had not.
 
 ### Layout — UtxoTransaction
 
@@ -1187,7 +1244,7 @@ export const PROTOCOL_VERSION = 1;
 
 ```typescript
 export const MAX_CONTENT_BYTES = 300;
-export const MAX_PARENT_REFS = 8;
+export const MAX_PARENT_REFS = 1;
 ```
 
 ### State format

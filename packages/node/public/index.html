@@ -299,6 +299,12 @@ const encoder = new TextEncoder();
 // ===========================================================================
 
 const PROTOCOL_VERSION = 1;
+/**
+ * How many parents a post may name. 1 since the positional-format phase — the
+ * node rejects anything wider, so the composer must refuse to mine one rather
+ * than spend the PoW and have it bounced.
+ */
+const MAX_PARENT_REFS = 1;
 // Amount constants are bigint (box values are bigint — Spec B P0); block
 // counts stay plain numbers. Mirrors @dagsocial/types constants.ts.
 const LIKE_KARMA_COST = 1n;
@@ -365,94 +371,248 @@ function concatUint8Arrays(arrays) {
 }
 
 // ===========================================================================
-// Canonical post field encoding (audit M-1)
+// Positional wire codec — hand-written mirror of @dagsocial/types src/codec.ts
 // ===========================================================================
 //
-// Byte-identical mirror of postFieldBytes() in @dagsocial/types (src/post.ts).
-// See contracts/TYPES_INTERFACE.md → "Canonical field encoding (M-1)".
+// Every consensus preimage below is written in ONE encoding language (spec
+// `docs/specs/2026-08-09-positional-wire-format.md`): VLQ integers, raw bytes
+// for ids, count-prefixed arrays, tagged options. The dialect this replaced —
+// fixed-width little-endian integers and ids carried as the UTF-8 of their hex
+// text — is gone from the file entirely, which is the point: two dialects side
+// by side is what the migration exists to end.
 //
-// The old encoding concatenated fields with no delimiters, so distinct field
-// tuples collided — (powNonce=5, timestamp=23) and (52, 3) both produced
-// …"5""23"… == …"52""3"… → the same postId. Every variable-length field is now
-// length-prefixed and the ref array carries an explicit count.
+// **Hand-written on purpose.** Importing the real library would remove the
+// drift class this mirror polices, but it means giving `index.html` a build
+// step, and the demo UI is scaffolding until `@dagsocial/web` lands. So the
+// mirror and the test that polices it die together with the UI.
 //
 // A post mined here must verify on the node, so ANY change below must land in
-// packages/types/src/post.ts in the same commit. The golden vector frozen in
-// the types tests (and re-asserted against this file by the node package's
-// ui-crypto-mirror test) is the anchor that catches drift.
+// `packages/types/src/{codec,post,utxo}.ts` in the same commit. The frozen
+// golden vectors in the types tests — re-asserted against this file by the node
+// package's `ui-crypto-mirror` test, which extracts these declarations at
+// runtime — are the anchor that catches drift.
+//
+// ## Totality, and where it stops (spec §2.5)
+//
+// Split exactly as the TS side splits it, because a mirror that threw where the
+// node sentinels (or vice versa) would diverge on precisely the malformed input
+// a light client is most likely to be handed (audits M-5/M-6):
+//
+//  - `vlqU`, `vlqS`, `lp`, `lpUtf8`, `arr`, `enum8Tag`, `boolByte` are TOTAL.
+//    An out-of-domain value takes the all-ones sentinel, which is unreachable
+//    from a well-formed field because the encodable domain (non-negative safe
+//    integers, real byte lengths, a closed tag set) is narrower than the u64 or
+//    byte wire domain it is written into.
+//  - `vlqU64` (a bigint spans the whole u64) and the fixed-width `b32*` writers
+//    (a 32-byte field's wire domain IS every 32-byte value) have no unreachable
+//    sentinel, so they THROW. Padding a 31-byte key to 32 would map it onto a
+//    well-formed key's encoding — a consensus collision, strictly worse than
+//    the exception it would avoid.
 
 const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
 
 /**
- * Sentinel for a numeric field outside the encodable domain. The encoders are
- * total — they never throw — and the encodable domain is the non-negative safe
- * integers, whose top 11 bits are always zero, so no valid value can encode to
- * all-ones.
+ * The all-ones u64 a total writer emits for a value it cannot encode:
+ * `ff ff ff ff ff ff ff ff ff 01`, ten bytes. Unreachable from a well-formed
+ * field — the encodable `number` domain tops out at 2⁵³−1.
  */
-const U32_SENTINEL = 0xffffffff;
+const VLQ_SENTINEL = 0xffffffffffffffffn;
 
-function isEncodableU32(n) {
-  return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n < U32_SENTINEL;
-}
-
-function isEncodableU64(n) {
+function isEncodableVlqU(n) {
   return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
 }
 
-/** u32LE(n) — 4-byte little-endian. */
-function encodeU32LE(n) {
-  const v = isEncodableU32(n) ? n : U32_SENTINEL;
-  return new Uint8Array([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]);
-}
-
-/** u64LE(n) — 8-byte little-endian. The sole u64 encoder (PoW nonce + fields). */
-function encodeLE64(n) {
-  if (!isEncodableU64(n)) return new Uint8Array(8).fill(0xff);
-  const lo = n >>> 0;
-  const hi = Math.floor(n / 0x100000000) >>> 0;
-  return new Uint8Array([
-    lo & 0xff, (lo >>> 8) & 0xff, (lo >>> 16) & 0xff, (lo >>> 24) & 0xff,
-    hi & 0xff, (hi >>> 8) & 0xff, (hi >>> 16) & 0xff, (hi >>> 24) & 0xff,
-  ]);
+/**
+ * ZigZag doubles the magnitude before the VLQ sees it, so the faithful domain
+ * is the values whose zigzag is still a safe integer.
+ */
+function isEncodableVlqS(n) {
+  if (typeof n !== 'number' || !Number.isSafeInteger(n)) return false;
+  const zz = n >= 0 ? n * 2 : -n * 2 - 1;
+  return Number.isSafeInteger(zz);
 }
 
 /**
- * u32BE(n) — 4-byte big-endian. Mirror of the `u32BE` in @dagsocial/types
- * (src/utxo.ts), which is module-private there; node's `mint-provenance.ts`
- * mirrors the same writer.
- *
- * Big-endian, unlike every other numeric writer above: it feeds the Spec G box
- * and mint id preimages, which are specified big-endian
- * (TYPES_INTERFACE.md → Pinned byte forms). Shares `isEncodableU32` with the
- * little-endian writer so the two byte orders cannot drift on *domain*, only on
- * order — total, never throwing, out-of-domain values writing the all-ones
- * sentinel. A mirror that threw here would diverge on precisely the malformed
- * input a light client is most likely to be handed (M-5).
+ * Base-128 VLQ over a bigint — the raw writer every numeric path funnels into,
+ * mirroring `ByteWriter.writeVlqBigInt`. BigInt shifts are arbitrary-precision,
+ * so unlike `>>>` they do not silently coerce to 32 bits.
  */
-function u32BE(n) {
-  const v = isEncodableU32(n) ? n : U32_SENTINEL;
-  return new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff]);
+function vlqBigInt(value) {
+  if (value < 0n || value > 0xffffffffffffffffn) {
+    throw new Error('vlqBigInt: value outside u64: ' + value);
+  }
+  const out = [];
+  let v = value;
+  while (v >= 0x80n) { out.push(Number((v & 0x7fn) | 0x80n)); v >>= 7n; }
+  out.push(Number(v));
+  return new Uint8Array(out);
 }
 
-/** LP(bytes) = u32LE(byteLength) ‖ bytes. */
-function lengthPrefixed(bytes) {
-  return concatUint8Arrays([encodeU32LE(bytes.length), bytes]);
+/**
+ * vlqU(x) from a `number`. Total: sentinel, never throws.
+ *
+ * Arithmetic rather than bitwise, matching wire: `%`/`Math.floor` stay exact
+ * past 2³², where `&`/`>>>` would truncate every timestamp.
+ */
+function vlqU(value) {
+  if (!isEncodableVlqU(value)) return vlqBigInt(VLQ_SENTINEL);
+  const out = [];
+  let v = value;
+  while (v >= 0x80) { out.push((v % 128) + 0x80); v = Math.floor(v / 128); }
+  out.push(v);
+  return new Uint8Array(out);
+}
+
+/** vlqS(x) — ZigZag VLQ from a `number`. Total: sentinel, never throws. */
+function vlqS(value) {
+  if (!isEncodableVlqS(value)) return vlqBigInt(VLQ_SENTINEL);
+  return vlqU(value >= 0 ? value * 2 : -value * 2 - 1);
+}
+
+/**
+ * vlqU(x) from a **bigint**, over the full u64. THROWS — a box `value` spans
+ * the whole wire domain, so no sentinel is unreachable and writing one would
+ * give a malformed box a well-formed box's id.
+ */
+function vlqU64(value) {
+  if (typeof value !== 'bigint') throw new Error('vlqU64: not a bigint: ' + value);
+  return vlqBigInt(value);
+}
+
+/** b32/b64 from a Uint8Array — exactly n raw bytes. THROWS. */
+function b32Bytes(value, n) {
+  if (!(value instanceof Uint8Array) || value.length !== n) {
+    throw new Error('b32Bytes: expected ' + n + ' bytes, got ' +
+      (value instanceof Uint8Array ? value.length : typeof value));
+  }
+  return value;
+}
+
+/**
+ * b32/b64 from a lowercase-hex string — the hex→bytes half of the boundary.
+ * THROWS. Lowercase only: 'AB…' and 'ab…' decode to identical bytes, so
+ * accepting both would make the encoding non-injective at the hex boundary.
+ */
+function b32Hex(value, n) {
+  if (typeof value !== 'string' || value.length !== n * 2 || !/^[0-9a-f]+$/.test(value)) {
+    throw new Error('b32Hex: expected ' + (n * 2) + ' lowercase hex chars, got ' +
+      (typeof value === 'string' ? value.length + ' chars' : typeof value));
+  }
+  return hex2buf(value);
+}
+
+/**
+ * A fixed-width byte field in EITHER form. The UI's tx builders carry keys as
+ * hex strings (`pubKeyHex`, `secretHashHex`) while a server-returned box
+ * carries raw bytes, and both must reach the same 32 bytes — otherwise the
+ * client and the node derive different ids for one box. The TS side is stricter
+ * per field because its types are; this is the one deliberate widening, and the
+ * mirror test asserts both forms agree for every box type.
+ */
+function b32Either(value, n) {
+  return value instanceof Uint8Array ? b32Bytes(value, n) : b32Hex(value, n);
+}
+
+/**
+ * `opt(b32(x))` over a field whose *absence* is spelled empty in memory —
+ * `bond.inviteePublicKey`, and it is the only one.
+ *
+ * The field is **0-or-32 bytes**: empty = unclaimed, 32 bytes = committed. A
+ * plain `b32` here throws on every uncommitted bond, which is every bond an
+ * invite-create emits, so this is the one box field that is optional on the
+ * wire while staying non-optional in memory.
+ *
+ * Absence is "empty", nothing else: a *missing* field is out of domain, not
+ * unclaimed, and letting it take the absent branch would give a malformed box a
+ * well-formed box's id. Anything that is neither an empty byte view nor an empty
+ * string goes to the present branch and reaches the throwing writer. The empty
+ * *string* counts because the tx-builder form carries this field as hex.
+ */
+function optB32Either(value, n) {
+  const unclaimed =
+    (value instanceof Uint8Array && value.length === 0) || value === '';
+  return opt(unclaimed ? undefined : { present: value }, (w) => b32Either(w.present, n));
+}
+
+/** lp(x) = vlqU(byteLength) ‖ bytes. Total: a non-view sentinels its length. */
+function lp(bytes) {
+  if (!(bytes instanceof Uint8Array)) return vlqBigInt(VLQ_SENTINEL);
+  return concatUint8Arrays([vlqU(bytes.length), bytes]);
+}
+
+/**
+ * lpUtf8(s) = vlqU(utf8ByteLength) ‖ utf8Bytes. Total by the same route.
+ *
+ * The type check is not decoration: `TextEncoder.encode` coerces through
+ * `String()`, so without it `undefined` and the literal string "undefined"
+ * produce identical bytes.
+ */
+function lpUtf8(value) {
+  if (typeof value !== 'string') return vlqBigInt(VLQ_SENTINEL);
+  const bytes = encoder.encode(value);
+  return concatUint8Arrays([vlqU(bytes.length), bytes]);
+}
+
+/** arr(xs, f) = vlqU(count) ‖ f(x)… . Total: sentinel as the count. */
+function arr(items, f) {
+  if (!Array.isArray(items)) return vlqBigInt(VLQ_SENTINEL);
+  const parts = [vlqU(items.length)];
+  for (const item of items) parts.push(f(item));
+  return concatUint8Arrays(parts);
+}
+
+/**
+ * opt(x, f) — `00` absent, `01 ‖ f(x)` present. `undefined` counts as absent
+ * alongside `null`, so an omitted optional field does not take the present
+ * branch and serialize nothing after the tag.
+ */
+function opt(value, f) {
+  if (value === null || value === undefined) return new Uint8Array([0]);
+  return concatUint8Arrays([new Uint8Array([1]), f(value)]);
+}
+
+/** u8 from a boolean. Total: anything else takes the unreachable 0xff. */
+function boolByte(value) {
+  return new Uint8Array([value === true ? 1 : value === false ? 0 : 0xff]);
+}
+
+/**
+ * A closed u8 tag table. Total: a value outside the table writes the reserved
+ * 0xff, which no valid member may claim.
+ *
+ * **Tags reserve retired values and are never renumbered.** A renumber moves
+ * every id carrying the tag with no signal — the T2b 0x03 lesson, now inside
+ * the id preimage itself.
+ */
+function enum8Tag(table, value) {
+  const has = typeof value === 'string' && Object.prototype.hasOwnProperty.call(table, value);
+  return new Uint8Array([has ? table[value] : 0xff]);
 }
 
 /**
  * postFieldBytes — the canonical, injective encoding shared by the signing
- * hash, the PoW preimage, and the post id. Excludes powNonce (the author signs
- * before mining) and signature.
+ * hash, the PoW preimage, and the post id:
+ *
+ *   lpUtf8(content) ‖ b32(author) ‖ arr(parentRefs, b32) ‖ b32(challenge)
+ *     ‖ vlqU(protocolVersion) ‖ vlqU(timestamp)
+ *
+ * Field order IS the specification — reordering it is a consensus change with
+ * no signal, so the calls below are laid out to be read line-by-line against
+ * that table. Excludes powNonce (the author signs before mining) and signature.
+ *
+ * Injectivity here is **preserved, not introduced**: the pre-migration form was
+ * already positional and length-prefixed (audit M-1). What moved is the
+ * dialect — a parent ref stopped crossing as 68 bytes of `u32LE ‖ utf8(hex)`
+ * and crosses as the 32 raw bytes it names.
  */
 function postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
   return concatUint8Arrays([
-    lengthPrefixed(encoder.encode(content)),
-    lengthPrefixed(authorBytes),
-    encodeU32LE(parentRefs.length),
-    ...parentRefs.map(r => lengthPrefixed(encoder.encode(r))),
-    lengthPrefixed(challengeBytes),
-    encodeU32LE(protocolVersion),
-    encodeLE64(timestamp),
+    lpUtf8(content),
+    b32Bytes(authorBytes, 32),
+    arr(parentRefs, (ref) => b32Hex(ref, 32)),
+    b32Bytes(challengeBytes, 32),
+    vlqU(protocolVersion),
+    vlqU(timestamp),
   ]);
 }
 
@@ -461,9 +621,17 @@ function postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protoc
 // ===========================================================================
 
 /**
- * Key insight: cbor-x preserves JavaScript object insertion order for map
- * keys — it does NOT sort canonically.  We match by encoding keys in the
- * order Object.keys() returns them, which is insertion order.
+ * ⚠ **DEAD as of the positional-format phase — zero callers in this file.**
+ *
+ * `canonicalBoxBytes` was its only consumer and is positional now, so nothing
+ * here reaches an id, a signature or the wire. It is left standing only because
+ * its deletion is booked to the migration's Phase 7, whose entire remaining
+ * content this now is. **Do not route anything back through it**: a box encoded
+ * here would disagree with the node on every byte.
+ *
+ * Key insight (historical): cbor-x preserves JavaScript object insertion order
+ * for map keys — it does NOT sort canonically.  We match by encoding keys in
+ * the order Object.keys() returns them, which is insertion order.
  */
 
 /**
@@ -583,50 +751,99 @@ function cborEncode(value) {
 // ===========================================================================
 
 /**
+ * The `boxType` tag table. **Tag 3 is permanently burnt** for the retired
+ * `like` box type — reserve by leaving the number out, never by reusing it.
+ */
+const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, bond: 4, post_lock: 5, vouch: 6 };
+
+/**
  * Byte-identical mirror of `canonicalBoxBytes` in @dagsocial/types
- * (src/utxo.ts). See contracts/TYPES_INTERFACE.md → "Canonical encoding".
+ * (src/utxo.ts). See contracts/TYPES_INTERFACE.md → Layout — Boxes.
  *
- * Strips `id` **and the provenance keys `txId`/`index`**, then CBOR-encodes what
- * remains. The provenance strip is the fix Spec G phase C0 made in types: with
- * an id-only strip, the first *server-returned* box the UI hashes — those carry
- * `txId`/`index` from phase C on — would hash provenance into the id and
- * silently disagree with the node, surfacing as a dangling reference or an
- * unspendable box, never as an error.
- * Inert on client-built boxes: destructuring absent keys yields the same rest.
+ *   enum8(boxType) ‖ vlqU(value) ‖ <per-type>
  *
- * One rule with two callers, so box and tx derivation cannot drift — the same
- * reason types routes `computeTxId`'s outputs through it.
+ * **Provenance is structurally absent now, not stripped.** The old form
+ * destructured `id`/`txId`/`index` out of the object and CBOR-encoded the rest,
+ * so "provenance is not in the candidate bytes" was a rule someone had to
+ * remember — and the same was true of every stray key a display path might
+ * decorate a box with. Here the encoder reads the fields it declares and
+ * nothing else, so there is no branch that could write them.
  *
- * **Key order is imposed here, not inherited from the caller** (Spec G phase
- * G3b). The node sorts keys in its own `canonicalBoxBytes`, so this must sort
- * identically or every id diverges. `Array.prototype.sort` with no comparator
- * compares UTF-16 code units and is not locale-aware, so both sides agree; every
- * box field name is ASCII, so the order is plain byte order. Before this, key
- * order was consensus-visible and the UI had to match each producer's field
- * order by hand.
+ * **Key order is not a thing any more** either. The Spec G phase G3b sort
+ * existed because cbor-x emitted map keys in JS insertion order, which made a
+ * producer's field order consensus-visible; a positional format has fixed field
+ * order, so that whole class is retired by construction rather than by a sort.
  *
- * Also converts the hex-string form of binary fields — how the UI's tx builders
- * carry them — to the raw bytes cbor-x sees on the node.
+ * **`guard` has left the consensus bytes** (P2-C row C10). It is a pure
+ * function of `boxType`, so it carried zero information while costing 16–30
+ * bytes in every box id. The field stays on the objects the UI builds — the
+ * node's JSON routes still expect it — it simply stops being hashed.
+ *
+ * Total for an unknown `boxType`: `enum8Tag` writes the reserved 0xff and no
+ * per-type fields follow, so a malformed box still encodes and can never
+ * collide with a well-formed one.
  */
 function canonicalBoxBytes(box) {
-  const { id, txId, index, ...rest } = box;
-  // Every Uint8Array field across all seven box types. A field missing here is
-  // CBOR-encoded as *text* (major 3) where the node writes a *byte string*
-  // (major 2) — a silent id divergence that passes both sides' unit tests.
-  // `voucherId`/`targetId` were missing until Spec G phase E3; the mirror test
-  // now encodes all seven types in this form, so an omission fails mechanically.
-  const binaryFields = ['owner', 'likerId', 'secretHash', 'inviterId', 'inviteePublicKey',
-    'voucherId', 'targetId'];
-  const boxForCbor = {};
-  for (const k of Object.keys(rest).sort()) {
-    const v = rest[k];
-    if (binaryFields.includes(k) && typeof v === 'string') {
-      boxForCbor[k] = hex2buf(v);
-    } else {
-      boxForCbor[k] = v;
-    }
+  return concatUint8Arrays([
+    enum8Tag(BOX_TYPE_TAGS, box.boxType),
+    vlqU64(box.value),
+    boxTypeFields(box),
+  ]);
+}
+
+/** The per-type tail of `canonicalBoxBytes`. Field order is normative. */
+function boxTypeFields(box) {
+  switch (box.boxType) {
+    case 'karma':
+      // `lpUtf8`, not `b32`: production stamps `mint-<height>`, `decay-<height>`,
+      // `faucet:system`, `genesis:system` and `invite-cancel:<id>` here, so the
+      // field is genuinely free-form and a fixed-width writer would throw on
+      // every karma mint the node performs.
+      return concatUint8Arrays([
+        b32Either(box.owner, 32),
+        lpUtf8(box.proofSource),
+        opt(box.decayBurn, boolByte),
+      ]);
+    case 'credit':
+      // `vlqS`, not `vlqU`: this carries −1, the transfer sentinel stamped on
+      // every user-path credit box. A `vlqU` would sentinel every one of them.
+      return concatUint8Arrays([
+        b32Either(box.owner, 32),
+        vlqS(box.proofSource),
+        opt(box.lockedUntilBlock, vlqU),
+      ]);
+    case 'invite':
+      return concatUint8Arrays([
+        b32Either(box.secretHash, 32),
+        b32Either(box.inviterId, 32),
+      ]);
+    case 'bond':
+      return concatUint8Arrays([
+        b32Either(box.inviterId, 32),
+        vlqU(box.inviteOutputIndex),
+        // 0-or-32, not 32 — see `optB32Either`.
+        optB32Either(box.inviteePublicKey, 32),
+        vlqU(box.probationStartBlock),
+        vlqU(box.probationEndBlock),
+      ]);
+    case 'post_lock':
+      return concatUint8Arrays([
+        vlqU64(box.originalValue),
+        b32Either(box.owner, 32),
+        b32Hex(box.targetPostId, 32),
+      ]);
+    case 'vouch':
+      return concatUint8Arrays([
+        b32Either(box.voucherId, 32),
+        b32Either(box.targetId, 32),
+      ]);
+    default:
+      // Unreachable from a valid box. Returning rather than throwing is what
+      // keeps this total: the reserved 0xff tag is already written, so there are
+      // no declared fields to write and no well-formed box can produce these
+      // bytes.
+      return new Uint8Array(0);
   }
-  return cborEncode(boxForCbor);
 }
 
 // ===========================================================================
@@ -637,52 +854,47 @@ function canonicalBoxBytes(box) {
 const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
 
 /**
- * Deterministic transaction ID.
- * Hashes TX_ID_DOMAIN, inputs (hex strings), canonical output bytes (id +
- * provenance stripped), preimages (sorted by boxId), protocolVersion, and —
- * only when present — `likeTarget` behind an ASCII `like:` marker at the tail.
+ * Deterministic transaction ID:
+ *   blake2b512( TX_ID_DOMAIN ‖ txIdBytes(tx) )[0:32]
  *
- * The domain tag is applied as of Spec G phase G3b, in the same commit as the
- * node's. Box ids, transaction ids and identity-record keys share one 32-byte
- * keyspace, so the separation has to be in the preimage.
+ *   | 1 | inputs          | arr(ids, b32)                                |
+ *   | 2 | outputs         | arr(candidates, canonicalBoxBytes)           |
+ *   | 3 | preimages       | opt(arr(sorted, b32(boxId) ‖ lp(preimage)))  |
+ *   | 4 | protocolVersion | vlqU                                         |
+ *   | 5 | likeTarget      | opt(b32)                                     |
+ *
+ * Order preserves the pre-migration sequence, so the change is dialect-only in
+ * coverage — but it is the one place the dialect closes a real defect rather
+ * than only unifying a style (P2-C row C1, satisfied structurally):
+ *
+ *  - `inputs` and `outputs` were concatenated with no count and no length
+ *    prefix, and box bytes are variable-length, so two different output lists
+ *    could concatenate to identical bytes. `arr()`'s count prefix closes it.
+ *  - `protocolVersion` went in as unprefixed decimal text — the exact M-1
+ *    pattern, one struct over. It is `vlqU` now.
+ *  - `likeTarget` presence was marked by an ASCII `like:` tag chosen so a
+ *    decimal `protocolVersion` could not forge it. `opt()`'s 0/1 tag replaces
+ *    the trick and preserves the `!== undefined` distinction: an empty-string
+ *    target is out of the `b32` domain now, so it has no encoding at all rather
+ *    than a distinct one.
+ *
+ * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  */
 function computeTxId(tx) {
-  const parts = [TX_ID_DOMAIN];
-
-  // 1. Inputs — hash hex strings as UTF-8 text
-  for (const input of tx.inputs) {
-    parts.push(encoder.encode(input));
-  }
-
-  // 2. Outputs — canonical candidate bytes
-  for (const output of tx.outputs) {
-    parts.push(canonicalBoxBytes(output));
-  }
-
-  // 3. Preimages (sorted by boxId key, if present)
-  if (tx.preimages) {
-    const sortedKeys = Object.keys(tx.preimages).sort();
-    for (const boxId of sortedKeys) {
-      parts.push(encoder.encode(boxId));
-      const preimage = tx.preimages[boxId];
-      parts.push(typeof preimage === 'string' ? hex2buf(preimage) : preimage);
-    }
-  }
-
-  // 4. Protocol version as UTF-8 string
-  parts.push(encoder.encode(String(tx.protocolVersion)));
-
-  // 5. likeTarget tail (P2-D) — only when the field is present. Presence is
-  //    `!== undefined`, NOT truthiness: an empty-string target still appends
-  //    the marker, mirroring @dagsocial/types byte for byte. The target is
-  //    hashed as the UTF-8 text of its hex string, like the inputs above.
-  if (tx.likeTarget !== undefined) {
-    parts.push(encoder.encode('like:'));
-    parts.push(encoder.encode(tx.likeTarget));
-  }
-
-  // 6. Blake2b-512 → first 32 bytes → hex
-  const combined = concatUint8Arrays(parts);
+  const combined = concatUint8Arrays([
+    TX_ID_DOMAIN,
+    arr(tx.inputs, (input) => b32Hex(input, 32)),
+    arr(tx.outputs, (output) => canonicalBoxBytes(output)),
+    opt(tx.preimages, (preimages) => arr(Object.keys(preimages).sort(), (boxId) => {
+      const preimage = preimages[boxId];
+      return concatUint8Arrays([
+        b32Hex(boxId, 32),
+        lp(typeof preimage === 'string' ? hex2buf(preimage) : preimage),
+      ]);
+    })),
+    vlqU(tx.protocolVersion),
+    opt(tx.likeTarget, (target) => b32Hex(target, 32)),
+  ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
 }
@@ -702,7 +914,7 @@ function countLeadingZeroBits(buf) {
   return bits;
 }
 
-/** PoW preimage = postFieldBytes; solvePoW appends u64LE(nonce). */
+/** PoW preimage = postFieldBytes; solvePoW appends vlqU(nonce). */
 function buildPowInput(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
   return postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp);
 }
@@ -711,7 +923,7 @@ function solvePoW(powInput, targetBits, onProgress) {
   let nonce = 0;
   const start = performance.now();
   while (true) {
-    const nonceBytes = encodeLE64(nonce);
+    const nonceBytes = vlqU(nonce);
     const combined = concatUint8Arrays([powInput, nonceBytes]);
     const hash = blake2b(combined, null, 64).slice(0, 32);
     if (countLeadingZeroBits(hash) >= targetBits) return nonce;
@@ -928,7 +1140,15 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex) {
     value: INVITE_BOND_KARMA,
     inviterId: pubKeyHex,
     inviteOutputIndex: INVITE_OUTPUT_INDEX,
-    inviteePublicKey: '00'.repeat(32), // 32 zero bytes = unclaimed
+    // **Empty = unclaimed.** This said `'00'.repeat(32)`, and 32 zero bytes are
+    // not "unclaimed" to the node — they are a committed key that happens to be
+    // zero. `validateTx`'s invite-create arm requires `inviteePublicKey.length
+    // === 0` (a bond born committed would let the inviter reclaim immediately
+    // and make the bond, the network's only sybil cost, free), so every invite
+    // this page created was rejected with "Invite creation must emit an
+    // uncommitted bond". A standing bug, not one this phase introduced — the
+    // positional encoder is only what made the field worth reading twice.
+    inviteePublicKey: '',
     probationStartBlock: 0,
     probationEndBlock: 0,
     guard: 'bond_dual',
@@ -1067,27 +1287,35 @@ function computeBoxId(box) {
 /**
  * Spec G box id, derived from creating-transaction provenance:
  *
- *   blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes(candidate)
- *               ‖ utf8(txId) ‖ u32BE(index) )[0:32]
+ *   blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes )[0:32]
+ *   boxRecordBytes = canonicalBoxBytes(candidate) ‖ b32(txId) ‖ vlqU(index)
  *
- * This is now the live derivation — `computeBoxId` above delegates to it. No
- * flow predicts a box id anymore: the invite flow's bond names an output index
+ * This is the live derivation — `computeBoxId` above delegates to it. No flow
+ * predicts a box id anymore: the invite flow's bond names an output index
  * instead of a box id (user decision, 2026-08-06), and the unlike path died
  * with P2-D (a like is a one-way burn transaction, not a box).
  *
- * `txId` enters as the **UTF-8 bytes of its 64-char hex string**, not decoded:
- * consistent with how every other id enters a preimage here (`computeTxId`
- * hashes input box ids as text, `postFieldBytes` encodes parentRefs as text),
- * total on untrusted input where a hex decode would throw, and strictly more
- * injective — decoding would collapse `AB…` and `ab…` onto one id.
- * See contracts/TYPES_INTERFACE.md → "Pinned byte forms".
+ * **`txId` crosses as 32 raw bytes, not as the UTF-8 of its hex text.** The
+ * prior form was argued for on two grounds and the positional format answers
+ * both somewhere better:
+ *
+ *  - *"a hex decode throws on a malformed txId, so text keeps this total"* —
+ *    true, and now deliberate. Every `txId` reaching here is a blake2b digest
+ *    rendered with `buf2hex`, so it is 64 lowercase hex by construction; a
+ *    throwing writer with an established domain is the format's standard trade.
+ *  - *"decoding would map `AB…`/`ab…` onto one id"* — the collision is removed
+ *    rather than tolerated: `b32Hex` accepts lowercase only, so an uppercase id
+ *    has **no encoding at all** instead of sharing one.
+ *
+ * `index` is `vlqU`, still total by sentinel — an out-of-domain index cannot
+ * panic this function and cannot impersonate a valid one.
  */
 function computeCandidateBoxId(candidate, txId, index) {
   const combined = concatUint8Arrays([
     BOX_ID_DOMAIN,
     canonicalBoxBytes(candidate),
-    encoder.encode(txId),
-    u32BE(index),
+    b32Hex(txId, 32),
+    vlqU(index),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
@@ -1098,7 +1326,7 @@ function computeCandidateBoxId(candidate, txId, index) {
 // ===========================================================================
 
 /**
- * postId = blake2b512(POST_ID_DOMAIN ‖ postFieldBytes ‖ u64LE(powNonce))[0..32]
+ * postId = blake2b512(POST_ID_DOMAIN ‖ postFieldBytes ‖ vlqU(powNonce))[0..32]
  *
  * Domain-tagged, so the id is never equal to the PoW hash over the same post.
  */
@@ -1108,7 +1336,7 @@ function computePostId(post) {
   const combined = concatUint8Arrays([
     POST_ID_DOMAIN,
     postFieldBytes(post.content, aBytes, post.parentRefs, cBytes, post.protocolVersion, post.timestamp),
-    encodeLE64(post.powNonce),
+    vlqU(post.powNonce),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
@@ -1327,6 +1555,19 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     setStatus(`solving PoW (${targetBits} bits)...`, 'busy');
     const parentRefs = document.getElementById('parents').value
       .split(',').map(s => s.trim()).filter(Boolean);
+    // The composer used to split whatever was typed with no cap at all, so a
+    // second parent would be mined, signed, and then rejected by the node —
+    // after the PoW was already spent. Refuse before that, and refuse on the
+    // *domain* too: `b32Hex` has no encoding for a ref that is not 64 lowercase
+    // hex, so the alternative is an exception out of `buildPowInput`.
+    if (parentRefs.length > MAX_PARENT_REFS) {
+      setStatus(`at most ${MAX_PARENT_REFS} parent ref (got ${parentRefs.length})`, 'error');
+      return;
+    }
+    if (parentRefs.some(r => !/^[0-9a-f]{64}$/.test(r))) {
+      setStatus('each parent ref must be 64 lowercase hex characters', 'error');
+      return;
+    }
     const timestamp = Date.now();
     const powInput = buildPowInput(content, pubKeyRaw, parentRefs, challengeBytes, PROTOCOL_VERSION, timestamp);
 
@@ -2333,10 +2574,17 @@ document.getElementById('cancelInviteBtn').addEventListener('click', async () =>
       return;
     }
 
-    // Find the matching bond box (same inviterId, unclaimed)
+    // Find the matching bond box (same inviterId, unclaimed).
+    //
+    // Unclaimed is *absence*, and only absence: `GET /invites/:userId` sends
+    // `inviteePublicKey: null` when the stored key is empty. The second leg used
+    // to also accept `'00'.repeat(32)`, which is not unclaimed at all — under
+    // `opt(b32(inviteePublicKey))` those 32 zero bytes are a **committed** bond
+    // whose invitee key happens to be zero, so treating them as free would pick
+    // a bond that is already spoken for and build a cancel the node refuses.
+    // The write side had the mirror image of this bug; both are gone.
     const bondBox = inviteState.bonds.find(b =>
-      b.inviterId === invBox.inviterId &&
-      (!b.inviteePublicKey || b.inviteePublicKey === '00'.repeat(32))
+      b.inviterId === invBox.inviterId && !b.inviteePublicKey
     );
 
     const pubKeyHex = buf2hex(pubKeyRaw);

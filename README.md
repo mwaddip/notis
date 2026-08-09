@@ -61,7 +61,7 @@ submit. Your solved post *is* a sub-block; a miner's ordering block anchors it.
 | **Frequency** | Per post | ~60 seconds |
 | **Contains** | One post | Batch of sub-block entries, transactions, prune entries |
 
-Posts link via `parentRefs` (up to 8 parents — a DAG, not a strict tree).
+Posts link via `parentRefs` (one parent — a forest of threads, still a DAG).
 Content is 1–300 UTF-8 bytes. Posting locks a little karma as skin in the
 game, released back as the post accumulates likes.
 

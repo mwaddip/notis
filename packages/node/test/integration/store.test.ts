@@ -121,8 +121,11 @@ describe('posts store (integration)', () => {
   });
 
   it('getParentRefs returns correct parent IDs', () => {
-    const suffix = Date.now();
-    const refs = ['ref-a-' + suffix, 'ref-b-' + suffix];
+    // A ref is `b32` now, so the per-run uniqueness has to live inside the hex
+    // rather than in a `'ref-a-'` prefix. The suffix is what keeps two runs
+    // against the same (non-`:memory:`) database from colliding.
+    const suffix = Date.now().toString(16).padStart(16, '0').slice(-16);
+    const refs = ['a1'.repeat(24) + suffix, 'b2'.repeat(24) + suffix];
 
     const post = makePost({ parentRefs: refs });
     insertPost(post, bytes(8));

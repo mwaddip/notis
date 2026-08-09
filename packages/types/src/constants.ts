@@ -11,7 +11,25 @@ export const PROTOCOL_VERSION = 1;
 
 // Content limits
 export const MAX_CONTENT_BYTES = 300;
-export const MAX_PARENT_REFS = 8;
+/**
+ * A post names at most **one** parent (user decision, 2026-08-09; was 8).
+ *
+ * The 8 was never designed — it was inherited from a model's suggestion and
+ * never questioned, and multi-parent has no use case here beyond spam. It also
+ * carried a live authorization defect: `getSubtree` (node's `store/posts.ts`)
+ * is a recursive CTE with `UNION`/`DISTINCT` *because* a post could belong to
+ * several subtrees at once, so a reply naming parents A and B in different
+ * threads was inside A's subtree by that query — and A's author could prune it,
+ * deleting a reply that also hangs off B's thread. Capping at 1 makes subtrees
+ * disjoint, so pruning is well-defined and author sovereignty stops overreaching.
+ *
+ * The **type does not change**: `parentRefs` stays `PostId[]` and the wire
+ * layout stays `arr(refs, b32)`, whose size is identical to `opt(b32)`. A
+ * singular `parentRef?: PostId` refactor is a clarity change, not a format
+ * break, so it is ordinary work available at any time and deliberately not
+ * folded into the positional-format migration.
+ */
+export const MAX_PARENT_REFS = 1;
 
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot

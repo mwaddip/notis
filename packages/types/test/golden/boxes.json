@@ -1,0 +1,186 @@
+{
+  "$schema": "./README.md",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes — the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). RESET at Phase 2: cbor-x maps became a positional layout, `guard` left the consensus bytes (P2-C row C10), and every box id moved. One vector per box type, because the per-type field lists are six separate layouts sharing a two-field prefix — plus a second bond vector, because `bond.inviteePublicKey` is the one 0-or-32-byte field in the box arms and its two states are two encodings, not one.",
+  "vectors": [
+    {
+      "name": "box/karma-minimal",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "karma",
+        "value": "100",
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "proofSource": "genesis"
+      },
+      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300",
+      "note": "43 bytes, down from 114. The CBOR form spent a two-byte map header, five key names and nine bytes on a value of 100; this spends one tag byte, one value byte and no key names at all. Trailing 00 is the absent decayBurn option."
+    },
+    {
+      "name": "box/karma-decay-burn",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "karma",
+        "value": "5",
+        "owner": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "proofSource": "decay-70000",
+        "decayBurn": true
+      },
+      "bytes": "0005ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0b64656361792d37303030300101",
+      "note": "The option present, and a real production proofSource. `decay-70000` is what node's decay service actually stamps — which is the evidence that karma.proofSource is lpUtf8 and not b32: a fixed-width writer would throw on every karma mint the node performs."
+    },
+    {
+      "name": "box/karma-value-u64-max",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "karma",
+        "value": "18446744073709551615",
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "proofSource": ""
+      },
+      "bytes": "00ffffffffffffffffff01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000",
+      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a perfectly legal box value. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead — sentinelling would give a malformed box a well-formed box's id."
+    },
+    {
+      "name": "box/credit-transfer-sentinel",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "credit",
+        "value": "1",
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "proofSource": -1
+      },
+      "bytes": "0101000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0100",
+      "note": "Why credit.proofSource is vlqS. Production stamps -1 here as the transfer marker on every user-path credit box, so an unsigned writer would sentinel every transfer the node makes. ZigZag maps -1 to 1: one byte."
+    },
+    {
+      "name": "box/credit-wide",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "credit",
+        "value": "12345678900000000",
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "proofSource": 70000,
+        "lockedUntilBlock": 720
+      },
+      "bytes": "0180eae1eac58af715000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fe0c50801d005",
+      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. proofSource 70000 is above 65536 and carries the wide-int pin (it moved here from the deleted createdAtBlock). lockedUntilBlock present, so the option's other branch is covered on this type too."
+    },
+    {
+      "name": "box/invite",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "invite",
+        "value": "25",
+        "secretHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "inviterId": "5656565656565656565656565656565656565656565656565656565656565656"
+      },
+      "bytes": "0219bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb5656565656565656565656565656565656565656565656565656565656565656",
+      "note": "Two adjacent b32 fields with distinct values, so a swap of secretHash and inviterId shows up here rather than as a moved id much later."
+    },
+    {
+      "name": "box/bond-committed",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "bond",
+        "value": "25",
+        "inviterId": "5656565656565656565656565656565656565656565656565656565656565656",
+        "inviteOutputIndex": 2,
+        "inviteePublicKey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "probationStartBlock": 17,
+        "probationEndBlock": 1017
+      },
+      "bytes": "041956565656565656565656565656565656565656565656565656565656565656560201cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc11f907",
+      "note": "The widest layout: five fields after the prefix, alternating fixed-width and VLQ. Tag 4, not 3 — tag 3 is permanently burnt for the retired `like` type, and renumbering past a retired tag would silently move every box id covering it. The `01` before the invitee key is the option's PRESENT tag: this field is 0-or-32 bytes, so it is `opt(b32)` and not `b32`. 71 bytes, one more than the b32 form this replaced (2026-08-09)."
+    },
+    {
+      "name": "box/bond-unclaimed",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "bond",
+        "value": "25",
+        "inviterId": "5656565656565656565656565656565656565656565656565656565656565656",
+        "inviteOutputIndex": 2,
+        "inviteePublicKey": "",
+        "probationStartBlock": 17,
+        "probationEndBlock": 1017
+      },
+      "bytes": "04195656565656565656565656565656565656565656565656565656565656565656020011f907",
+      "note": "The SAME bond before commit, and the shape production actually creates: node rejects an invite-create whose bond output carries a key, because a pre-committed bond would let the inviter reclaim immediately and make the network's only sybil cost free. Under the b32 row this vector had no encoding at all — `writeBytesNOrThrow` threw on the empty field, so `computeTxId` threw on every invite creation. Both halves of the injectivity claim sit in these two vectors: `00` versus `01 ‖ 32 bytes`, differing in the first byte after `inviteOutputIndex`, so an unclaimed bond can never share an encoding with a committed one. Decode direction earns its keep here — absent must come back as EMPTY bytes, not null, or the re-encode compare fails."
+    },
+    {
+      "name": "box/post-lock",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "post_lock",
+        "value": "3",
+        "originalValue": "5",
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "targetPostId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "bytes": "050305000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "note": "value 3 and originalValue 5 are deliberately different — a lock that has vested. Two bigints back to back, so a swap is visible. targetPostId is the only hex-string field on any box type and crosses as 32 raw bytes like every other id."
+    },
+    {
+      "name": "box/vouch",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "vouch",
+        "value": "1",
+        "voucherId": "1111111111111111111111111111111111111111111111111111111111111111",
+        "targetId": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "bytes": "060111111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222",
+      "note": "Value is always 1 karma on this type, so the vector's job is the two identity fields and the tag."
+    }
+  ],
+  "rejects": [
+    {
+      "name": "box/reserved-tag-3",
+      "codec": "boxContent",
+      "bytes": "0301",
+      "failure": "reader-fault",
+      "note": "Tag 3 is the retired `like` box type, reserved forever. A future member added at 3 would silently take on every id the retired world computed — this vector is what makes reusing it fail loudly."
+    },
+    {
+      "name": "box/unknown-tag-255",
+      "codec": "boxContent",
+      "bytes": "ff01",
+      "failure": "reader-fault",
+      "note": "0xff is what enum8 WRITES for an unknown boxType, and it must not decode back into anything. That one-wayness is why the tag writer can stay total where the fixed-width writers cannot: a malformed box encodes, but never as a valid one."
+    },
+    {
+      "name": "box/non-minimal-value",
+      "codec": "boxContent",
+      "bytes": "00e400000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300",
+      "failure": "non-canonical",
+      "note": "box/karma-minimal with `value` padded from 64 to e4 00. It decodes to 100 either way — only the re-encode compare rejects it, and this is the field a malleability attempt would target because it is what a box is worth."
+    },
+    {
+      "name": "box/trailing-byte",
+      "codec": "boxContent",
+      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300ff",
+      "failure": "trailing-bytes",
+      "note": "box/karma-minimal plus a byte. Appended junk is a rejection, not slack — the defect class this format exists to close is junk riding inside a committed structure."
+    },
+    {
+      "name": "box/bond-option-tag-2",
+      "codec": "boxContent",
+      "bytes": "04195656565656565656565656565656565656565656565656565656565656565656020211f907",
+      "code": "invalid-tag",
+      "note": "box/bond-unclaimed with the option tag flipped from 00 to 02. `opt` has exactly two tags and a third is a rejection, not a third state — which is the property `opt(b32)` was chosen for over `lp`: an `lp` here would have accepted the byte as a length and round-tripped a 2-byte invitee key, leaving the 0-or-32 domain entirely to validation."
+    },
+    {
+      "name": "box/bond-committed-short-key",
+      "codec": "boxContent",
+      "bytes": "041956565656565656565656565656565656565656565656565656565656565656560201cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "code": "truncated",
+      "note": "The option's PRESENT branch with 31 bytes of key instead of 32. The other half of the structural claim: `00` means absent and `01` means exactly 32 bytes, so there is no third encoding and a short key has none at all rather than sharing one with a valid bond."
+    },
+    {
+      "name": "box/invalid-utf8-proofSource",
+      "codec": "boxContent",
+      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01ff00",
+      "code": "invalid-tag",
+      "note": "A one-byte proofSource of 0xff, which is not valid UTF-8 in any position. Rejected by readLpUtf8's fatal decoder rather than replaced with U+FFFD — a lossy decode would map two distinct byte strings onto one value and the re-encode compare could only report it as `non-canonical`, naming the wrong fault."
+    }
+  ]
+}

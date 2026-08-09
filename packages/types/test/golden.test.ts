@@ -20,13 +20,14 @@ import {
   loadVectors,
   resolveCodec,
 } from './golden/harness.js';
-import './golden/probe.js'; // registers the `probe` struct codec
+import './golden/probe.js';   // registers the `probe` struct codec
+import './golden/structs.js'; // registers `postFields` / `boxContent` / `pruneEntry`
 
 // ---------------------------------------------------------------------------
 // The corpus
 // ---------------------------------------------------------------------------
 
-const FILES = ['primitives.json', 'probe.json'] as const;
+const FILES = ['primitives.json', 'probe.json', 'post.json', 'boxes.json', 'prune.json'] as const;
 
 function runVectors(file: string, vectors: GoldenVector[]): void {
   describe(file, () => {
@@ -109,3 +110,6 @@ function runRejects(file: string, rejects: RejectVector[]): void {
 
 runRejects('reject.json', loadRejects('reject.json'));
 runRejects('probe.json', loadRejects('probe.json'));
+runRejects('post.json', loadRejects('post.json'));
+runRejects('boxes.json', loadRejects('boxes.json'));
+runRejects('prune.json', loadRejects('prune.json'));

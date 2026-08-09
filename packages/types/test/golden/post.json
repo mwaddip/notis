@@ -1,0 +1,109 @@
+{
+  "$schema": "./README.md",
+  "$description": "Struct-level golden vectors for postFieldBytes — the post id and PoW preimage (TYPES_INTERFACE -> Layout - Post). RESET at Phase 2: these bytes are the positional dialect, not the fixed-width-LE one, and every post id in the system moved with them. The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical.",
+  "vectors": [
+    {
+      "name": "post/minimal",
+      "codec": "postFields",
+      "value": {
+        "content": "",
+        "author": "0000000000000000000000000000000000000000000000000000000000000000",
+        "parentRefs": [],
+        "challenge": "0000000000000000000000000000000000000000000000000000000000000000",
+        "protocolVersion": 0,
+        "timestamp": 0
+      },
+      "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "note": "68 bytes: 1 + 0 content, 32 author, 1 count, 32 challenge, 1 version, 1 timestamp. The struct's own shape, with every field at its zero value — so the byte COUNT is what this pins, and nothing else can."
+    },
+    {
+      "name": "post/golden",
+      "codec": "postFields",
+      "value": {
+        "content": "dagsocial golden vector ✓",
+        "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "parentRefs": ["1111111111111111111111111111111111111111111111111111111111111111"],
+        "challenge": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "protocolVersion": 1,
+        "timestamp": 1767225600000
+      },
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f011111111111111111111111111111111111111111111111111111111111111111202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b733",
+      "note": "132 bytes, and THE cross-implementation anchor: the demo UI's hand-written mirror is asserted byte-identical to it. Adjacent fields hold distinct non-zero values (author 00..1f, ref 11.., challenge 20..3f), because an all-zeros vector cannot detect a field-order swap and field order IS the specification. One parent ref, not two: MAX_PARENT_REFS is 1."
+    },
+    {
+      "name": "post/no-refs",
+      "codec": "postFields",
+      "value": {
+        "content": "dagsocial golden vector ✓",
+        "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "parentRefs": [],
+        "challenge": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "protocolVersion": 1,
+        "timestamp": 1767225600000
+      },
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b733",
+      "note": "post/golden with the ref removed: exactly 32 bytes shorter. That delta is the dialect change with the largest byte impact — a ref used to cost u32LE(64) + the 64 characters of its hex TEXT, 68 bytes, and now costs the 32 raw bytes it names."
+    },
+    {
+      "name": "post/wide-numerics",
+      "codec": "postFields",
+      "value": {
+        "content": "x",
+        "author": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "parentRefs": [],
+        "challenge": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "protocolVersion": 9007199254740991,
+        "timestamp": 9007199254740991
+      },
+      "bytes": "0178ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fffffffffffffff0fffffffffffffff0f",
+      "note": "Both vlqU fields at MAX_SAFE_INTEGER — eight bytes each, the top of the encodable number domain. One byte more and readVlqU raises vlq-overflow, which is exactly what keeps the ten-byte all-ones sentinel from ever decoding back into a plausible value."
+    },
+    {
+      "name": "post/multibyte-content",
+      "codec": "postFields",
+      "value": {
+        "content": "héllo 日本 😀",
+        "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "parentRefs": [
+          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "challenge": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "protocolVersion": 1,
+        "timestamp": 128
+      },
+      "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f018001",
+      "note": "lpUtf8 counts BYTES, not characters: 11 characters encode as 0x12 = 18 bytes. Two refs so the array's count byte is not stuck at 0 or 1 (the ENCODER has no cap — MAX_PARENT_REFS is a validation rule, and putting it inside the writer would be a guard added to compensate for a domain, which the format forbids). timestamp 128 is the two-byte VLQ boundary."
+    }
+  ],
+  "rejects": [
+    {
+      "name": "post/non-minimal-content-length",
+      "codec": "postFields",
+      "bytes": "800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "failure": "non-canonical",
+      "note": "post/minimal with the content length written as the padded `80 00` instead of `00`. Decodes to a byte-identical value, so steps 1 and 2 both pass and only the re-encode compare separates it."
+    },
+    {
+      "name": "post/trailing-byte",
+      "codec": "postFields",
+      "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff",
+      "failure": "trailing-bytes",
+      "note": "post/minimal with one byte appended. The struct is fully satisfied before the input runs out — step 2."
+    },
+    {
+      "name": "post/truncated-author",
+      "codec": "postFields",
+      "bytes": "0000000000000000000000000000000000000000",
+      "code": "truncated",
+      "note": "Empty content and then 19 of the author's 32 bytes. Wire's own rejection, not a boundary-check one: a fixed-width read that runs off the end."
+    },
+    {
+      "name": "post/timestamp-past-safe-integer",
+      "codec": "postFields",
+      "bytes": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffff01",
+      "code": "vlq-overflow",
+      "note": "The timestamp written as u64-max — the ten bytes a malformed number field takes on the ENCODE side. It must not decode back into anything, which is the property that makes the sentinel unreachable from a well-formed post rather than merely unlikely."
+    }
+  ]
+}

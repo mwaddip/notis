@@ -569,18 +569,22 @@ describe('validateTx output shape (integration)', () => {
 
   it('rejects a missing required key through validateTx (post_lock without targetPostId)', () => {
     const karma = seedKarma(100n);
-    const lock = {
+    const lock: Record<string, unknown> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
+      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
     };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lock]),
-      10,
-    );
+    const tx = signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lock]);
+    // The key is removed AFTER signing: `targetPostId` is `b32` in the box-id
+    // preimage, so a box without it has no encoding and `signedTx` would die at
+    // `computeTxId` before `checkOutputShape` — the gate under test — ever ran.
+    // `checkOutputShape` is `validateTx` step 4 and signatures are read at step
+    // 6, so the rejection asserted below still happens first.
+    delete lock['targetPostId'];
+    const r = validateTx(deps, tx, 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/missing required key 'targetPostId'/);
   });

@@ -74,9 +74,17 @@ that reply lives under your subtree. You control everything under your root:
 - **You can delete (prune) your entire subtree** — the root post and every reply under it, regardless of who wrote the replies. This is the privacy model: you own the conversation space you started.
 - **Replying is consent** — when you reply to someone's post, you're accepting that they can prune the whole tree later. This is a social contract baked into the protocol.
 
-Posts link to each other via `parentRefs` — a post can reference up to 8 parent
-posts, creating a DAG (directed acyclic graph) rather than a strict tree. This
-lets a post be part of multiple conversations at once.
+Posts link to each other via `parentRefs` — a post names **one** parent, or none
+if it starts a thread. The result is a forest of threads, which is still a DAG
+(directed acyclic graph) rather than a strict tree, because pruning removes
+whole branches from it.
+
+A post used to be able to name several parents and so belong to several
+conversations at once. That is gone, and the consent rule above is why: if a
+reply named parents in two different threads, then one of those authors pruning
+their own thread would delete a reply that also hung off someone else's — one
+person's signature deleting content another person had accepted responsibility
+for. Consent only means something if each reply belongs to exactly one thread.
 
 ### The UTXO Ledger (Value Layer)
 

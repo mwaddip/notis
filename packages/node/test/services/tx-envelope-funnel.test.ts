@@ -117,12 +117,22 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
 
     const valid = karmaSelfSpend(alice, aliceBox);
 
-    // Envelope-invalid but still hashable and encodable, so the block's
-    // Merkle commitment over it is honest: an UPPERCASE input id names no box
-    // `computeBoxId` can ever emit. Pre-gate this reached `getBox`, returned
-    // "Input box not found", and rejected the ENTIRE block.
+    // Envelope-invalid but still hashable and encodable, so the block's Merkle
+    // commitment over it is honest: an UPPERCASE key in `signatures` names no
+    // public key any signer emits. Pre-gate this reached guard verification,
+    // found no usable signature, and rejected the ENTIRE block.
+    //
+    // It used to be an uppercase *input* id, and that no longer works: `inputs`
+    // is `arr(ids, b32)` in the txId preimage now, so an uppercase id has no
+    // encoding and the fixture could not be hashed — which is the one thing this
+    // test needs it to be. `signatures` is the natural home for the defect
+    // instead: the envelope gate types it, and it sits outside the preimage
+    // entirely (signatures are Ed25519 *over* the id), so the transaction stays
+    // hashable while staying envelope-invalid.
     const malformed = karmaSelfSpend(mallory, malloryBox);
-    malformed.inputs = [malloryBox.id!.toUpperCase()];
+    malformed.signatures = {
+      [Buffer.from(mallory.userId).toString('hex').toUpperCase()]: new Uint8Array(64),
+    };
 
     // The state assertions below cannot tell the gate apart from the apply
     // loop's input-liveness pre-pass: an id naming no live box also parks the
@@ -142,7 +152,7 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
       warnings.filter(
         (w) =>
           w.includes(`Rejected UTXO tx ${computeTxId(malformed)} from block`) &&
-          w.includes('Invalid tx envelope: inputs[0] must be 64 lowercase hex characters'),
+          w.includes('Invalid tx envelope: signatures key must be 64 lowercase hex characters'),
       ),
       // Exactly once — the real apply. `makeApplicableBlock`'s creator-side
       // speculation short-circuits at `no-prover` in a prover-less suite and
@@ -190,24 +200,36 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
     const valid = karmaSelfSpend(alice, aliceBox);
 
     // A decoy that also gets skipped, so the creator-side speculation and the
-    // apply-side run agree on the resulting state either way.
+    // apply-side run agree on the resulting state either way. Envelope-invalid
+    // in `signatures` rather than in `inputs`, for the reason given above: it
+    // has to stay hashable for `makeApplicableBlock` to commit it.
     const decoy = karmaSelfSpend(alice, aliceBox);
-    decoy.inputs = [aliceBox.id!.toUpperCase()];
+    decoy.signatures = {
+      [Buffer.from(alice.userId).toString('hex').toUpperCase()]: new Uint8Array(64),
+    };
 
     const block = await makeApplicableBlock({ utxoTxs: [valid, decoy] });
 
-    // Swap the decoy's CBOR for an envelope `computeTxId` cannot hash at all —
-    // `h.update(null)`. The tree's Merkle root commits to the tx IDS only, and
-    // the header signature covers the header, so the block stays internally
-    // consistent; the id simply no longer matches its body, which is exactly
-    // the malicious-producer shape. Pre-gate: this threw at block-apply's
+    // Swap the decoy's CBOR for an envelope `computeTxId` cannot hash at all.
+    // The tree's Merkle root commits to the tx IDS only, and the header
+    // signature covers the header, so the block stays internally consistent;
+    // the id simply no longer matches its body, which is exactly the
+    // malicious-producer shape. Pre-gate: this threw at block-apply's
     // `computeTxId(tx)` into the outer catch and killed the whole block.
-    // Its ONE defect is the field that makes the hasher throw — inputs,
-    // outputs, signatures and protocolVersion are all well-formed.
-    const poison = {
-      ...karmaSelfSpend(alice, aliceBox),
-      likeTarget: null,
-    } as unknown as UtxoTransaction;
+    //
+    // The defect must be one the envelope gate DOES catch and the hasher also
+    // chokes on — that pairing is the whole property: the gate has to fire
+    // first, so the throw never happens. It used to be `likeTarget: null`, which
+    // no longer chokes the hasher at all (`writeOpt` treats `null` as absent).
+    // An uppercase input id replaces it: `inputs` is `arr(ids, b32)` now, so it
+    // has no encoding, and the envelope pins the same 64-lowercase-hex domain.
+    //
+    // Note this poison is never handed to `makeApplicableBlock` — only its bytes
+    // are spliced in — which is why it may be unhashable where the decoy above
+    // may not.
+    const poison = karmaSelfSpend(alice, aliceBox);
+    poison.inputs = [aliceBox.id!.toUpperCase()];
+    expect(checkTxEnvelope(poison).valid, 'the gate must reject poison').toBe(false);
     expect(() => computeTxId(poison)).toThrow();
     block.utxoTxTree.utxoTxs[1] = encodeTx(poison);
 

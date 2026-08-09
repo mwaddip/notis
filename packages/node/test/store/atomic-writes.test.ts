@@ -98,9 +98,12 @@ describe('atomic writes', () => {
 
     initDb(':memory:');
 
+    // `b32` refs: `'parent-a'` has no encoding. The count still exceeds
+    // `MAX_PARENT_REFS` on purpose — what this test pins is that BOTH tables are
+    // written in one transaction, and a single ref cannot show a partial write.
     const post = makePost({
       content: 'post with refs',
-      parentRefs: ['parent-a', 'parent-b'],
+      parentRefs: ['a1'.repeat(32), 'b2'.repeat(32)],
     });
     const rawCbor = new Uint8Array([1, 2, 3]);
 
@@ -117,7 +120,7 @@ describe('atomic writes', () => {
     expect(postRow!.id).toBe(postId);
 
     const refs = getParentRefs(postId);
-    expect(refs).toEqual(['parent-a', 'parent-b']);
+    expect(refs).toEqual(['a1'.repeat(32), 'b2'.repeat(32)]);
   });
 
   it('insertPost that throws inside transaction rolls back completely', async () => {

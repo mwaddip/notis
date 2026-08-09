@@ -982,6 +982,17 @@ describe('validateAndApplyTx', () => {
     // L-11 — box `value` must be a non-negative integer. The rule moved from
     // `checkOutputValues` into the step-4 schema (field-type pin), so the
     // rejection is shape-worded now; the bound is the same.
+    //
+    // ⚠ **The malformed value is stamped AFTER signing**, here and in the
+    // balancing case below. `computeTxId` has no encoding for a `value` outside
+    // the u64 (`vlqU64` throws — a bigint spans the whole wire domain, so no
+    // sentinel is unreachable), so a fixture that signed over it would die in
+    // the helper without ever reaching the check under test. The signature not
+    // covering the mutation is immaterial to what is asserted: `checkOutputShape`
+    // is `validateTx` step 4 and `checkGuards` — the only thing that reads a
+    // signature — is step 6, so the rejection under test happens first either
+    // way. Under CBOR the malformed value encoded silently and the distinction
+    // never arose.
     // -----------------------------------------------------------------------
     for (const [label, badValue] of [
       ['negative', -1],
@@ -993,15 +1004,16 @@ describe('validateAndApplyTx', () => {
       it(`rejects a ${label} box value (${String(badValue)})`, () => {
         const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-        const newKarma = {
+        const newKarma: CandidateOf<KarmaBox> = {
           boxType: 'karma',
-          value: badValue,
+          value: 100n,
           owner: ownerPubKey,
           guard: 'owner_signature',
           proofSource: 'test',
-        } as unknown as KarmaBox;
+        };
 
         const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
+        Object.assign(tx.outputs[0]!, { value: badValue });
         const result = validateAndApplyTx(deps, tx, 10);
 
         expect(result.valid).toBe(false);
@@ -1022,13 +1034,13 @@ describe('validateAndApplyTx', () => {
         guard: 'owner_signature',
         proofSource: 'test',
       };
-      const negative = {
+      const negative: CandidateOf<KarmaBox> = {
         boxType: 'karma',
-        value: -5,
+        value: 0n,
         owner: ownerPubKey,
         guard: 'owner_signature',
         proofSource: 'test',
-      } as unknown as KarmaBox;
+      };
 
       const tx = buildSignedTx(
         [karma.id!],
@@ -1036,6 +1048,8 @@ describe('validateAndApplyTx', () => {
         ownerPrivKey,
         ownerPubKey,
       );
+      // −5 stamped after signing — see the note above the L-11 loop.
+      Object.assign(tx.outputs[1]!, { value: -5 });
       const result = validateAndApplyTx(deps, tx, 10);
 
       expect(result.valid).toBe(false);

@@ -416,14 +416,28 @@ describe('verifyParentRefsCount', () => {
     expect(verifyParentRefsCount([])).toEqual({ valid: true });
   });
 
-  it('accepts up to 8 parent refs', () => {
-    const refs = Array.from({ length: 8 }, (_, i) => `ref${i}`);
+  // Both bounds are written against the constant, the shape the ordering-block
+  // path already uses (`refs(n)`, below). The literals they replaced were `8`
+  // and `9`, and when `MAX_PARENT_REFS` moved to 1 they failed differently:
+  // `8` broke loudly, while `9` kept passing and quietly stopped testing the
+  // off-by-one it existed for — 9 is now eight *over* the bound, not one over.
+  // A test that still passes for a weaker reason than its name claims shows up
+  // in no failure list, which is why the bound is never spelled as a number.
+  //
+  // Placeholder refs, not hex ids, on purpose: `verifyParentRefsCount` checks
+  // array-ness and length and nothing else, and the fixtures say so.
+  it('accepts exactly MAX_PARENT_REFS parent refs', () => {
+    const refs = Array.from({ length: MAX_PARENT_REFS }, (_, i) => `ref${i}`);
+    expect(refs).toHaveLength(MAX_PARENT_REFS);
     expect(verifyParentRefsCount(refs)).toEqual({ valid: true });
   });
 
-  it('rejects 9 parent refs', () => {
-    const refs = Array.from({ length: 9 }, (_, i) => `ref${i}`);
-    expect(verifyParentRefsCount(refs).valid).toBe(false);
+  it('rejects one more than MAX_PARENT_REFS', () => {
+    const refs = Array.from({ length: MAX_PARENT_REFS + 1 }, (_, i) => `ref${i}`);
+    expect(verifyParentRefsCount(refs)).toEqual({
+      valid: false,
+      error: `Too many parent refs (max ${MAX_PARENT_REFS})`,
+    });
   });
 });
 
@@ -2047,12 +2061,35 @@ describe('integer guards on protocolVersion and timestamp (M-6)', () => {
 // would map a malformed id onto a well-formed one's encoding. The domain has to
 // be established before that writer is reachable.
 //
-// The pin is only meaningful if it fires, so each case below is built to pass
-// every *other* check first: the signature is genuinely valid over the post's
-// own preimage (asserted with raw `crypto.verify`, so the rejection is provably
-// the domain pin and not a broken fixture), and the current encoder is shown to
-// encode the malformed post faithfully — which is exactly why nothing catches
-// it today.
+// The pin is only meaningful if it fires, and proving that it fires got harder
+// in Phase 2, not easier. Before the migration each case was *signed over its
+// own malformed fields*, so raw `crypto.verify` could show the signature was
+// genuine and the domain pin was therefore the only thing rejecting the post.
+// That evidence no longer exists: a post outside the domain has no encoding, so
+// `signingHash` cannot be reached and such a post **cannot be signed at all**.
+// It is not weaker evidence obtained differently — the state it described is
+// unreachable now.
+//
+// What replaces it, per case:
+//
+//  1. **Build well-formed, sign, then poison.** The honest twin is kept and
+//     asserted `{ valid: true }`, so the two objects differ in exactly the one
+//     field under test and "the prior checks passed" is a measurement rather
+//     than a hope. `signatureIsGenuine` still runs — on the twin — because a
+//     silently broken builder would make every "rejects X" case below pass for
+//     the wrong reason.
+//  2. **Assert the error label, never just `valid: false`.** `verifyPostFieldDomains`
+//     returns at its first failure, so the label is positional evidence:
+//     `'Post challenge must be exactly 32 bytes'` can only be reached with
+//     content, author and every parentRef already in domain.
+//  3. **Assert the writer's own throw, with its width or char count in it.**
+//     That is what ties the rejection to the reason the rule exists — this post
+//     has no encoding — and it names the specific malformed value that reached
+//     the writer, so a case cannot quietly start testing a different one.
+//
+// `verifyPostSignature` returning `false` rather than throwing is the third
+// leg: it proves the domain gate runs *before* `signingHash`, since reaching
+// `signingHash` on these fixtures would panic.
 
 describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   const kp = generateKeyPair();
@@ -2063,7 +2100,14 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
   const pubKeyObj = ed25519PublicKeyToKeyObject(kp.publicKey);
 
-  /** A post signed over its own stated fields, however malformed those are. */
+  /**
+   * A post signed over its own stated fields.
+   *
+   * Every field passed here must be **in domain**: `signingHash` encodes the
+   * post, and a 31-byte author or a non-hex ref has no encoding, so this helper
+   * throws rather than producing the fixture. That is the whole reason
+   * `signedThenPoisoned` exists below.
+   */
   const signedPost = (over: Partial<Post> = {}): Post => {
     const post: Post = {
       content: 'pin the domain',
@@ -2087,54 +2131,107 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     protocolVersion: 1,
   });
 
-  /** The signature really does cover this post — nothing else can reject it. */
+  /**
+   * The signature really does cover this post. Only callable on an in-domain
+   * post now — `signingHash` is the same encoder that refuses the poisoned one
+   * — so its job has changed from "prove the malformed post is otherwise
+   * flawless" to "prove the builder these fixtures are cut from is sound".
+   */
   const signatureIsGenuine = (post: Post): boolean =>
     cryptoVerify(null, signingHash(post), pubKeyObj, Buffer.from(post.signature));
+
+  /**
+   * Build well-formed, sign, **then** poison — the only route to the domain
+   * check now that an out-of-domain post cannot be encoded, and so cannot be
+   * signed.
+   *
+   * Returns the honest twin alongside the poisoned post. The twin is not a
+   * convenience: "every prior check passed" is only evidence when it is
+   * asserted against an object that differs in exactly one field, and it is
+   * what stops a case from passing because the base fixture was broken.
+   *
+   * The signature is genuine over the *pre-poison* bytes and does not cover the
+   * poisoned field. These tests want that — they assert the **domain** rule
+   * rejects, and a signature covering a 31-byte author is not a thing that can
+   * exist.
+   */
+  const signedThenPoisoned = (
+    over: Record<string, unknown>,
+  ): { honest: Post; post: Post } => {
+    const honest = signedPost();
+    return { honest, post: { ...honest, ...over } as Post };
+  };
 
   // -------------------------------------------------------------------------
   // The headline: a post that passes ALL of Stage 1 today
   // -------------------------------------------------------------------------
 
   it('TEETH: a post with a non-hex parentRef passes every other Stage-1 check and is now rejected', () => {
-    // 64 characters, count within MAX_PARENT_REFS, a string — so today it
-    // satisfies `verifyParentRefsCount`, the old `typeof ref === 'string'`
-    // guard, and `postFieldBytes`, which length-prefixes the UTF-8 of the text
-    // and encodes it faithfully. Under `arr(refs, b32)` it has no encoding.
-    const post = signedPost({ parentRefs: ['z'.repeat(64)] });
-    const sb = subBlockOf(post);
+    // 64 characters, count within MAX_PARENT_REFS, a string — so it satisfies
+    // `verifyParentRefsCount` and the old `typeof ref === 'string'` guard, and
+    // before this phase `postFieldBytes` length-prefixed the UTF-8 of the text
+    // and encoded it faithfully. Under `arr(refs, b32)` it has no encoding —
+    // which is why the poison now goes on *after* the signature.
+    const { honest, post } = signedThenPoisoned({ parentRefs: ['z'.repeat(64)] });
+    const sb = { ...subBlockOf(honest), post };
+
+    // The builder is sound: the twin this post is cut from is signed, genuine
+    // and in domain, so nothing below is passing on a broken fixture.
+    expect(signatureIsGenuine(honest)).toBe(true);
+    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
 
     // Everything Stage 1 checks besides the domain still says yes:
     expect(verifyContentLimits(post.content)).toEqual({ valid: true });
     expect(verifyContentCharacters(post.content)).toEqual({ valid: true });
     expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
     expect(verifyProtocolVersion(post.protocolVersion)).toBe(true);
-    // …including the signature, which genuinely verifies over these bytes.
-    expect(signatureIsGenuine(post)).toBe(true);
-    // …and today's encoder builds a preimage for it without complaint.
-    expect(() => postPowPreimage(post)).not.toThrow();
+    // …and the encoder refuses it outright, naming the ref it choked on. This
+    // is the reason the pin must run first: there is no preimage to check
+    // anything else against.
+    expect(() => postPowPreimage(post)).toThrow(
+      'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
+    );
 
     // The pin is the only thing that rejects it — at all three entry points.
     expect(verifyPostFieldDomains(post)).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(verifySubBlockStructure(sb).valid).toBe(false);
+    expect(verifySubBlockStructure(sb)).toEqual({
+      valid: false,
+      error: 'Post parentRef must be 64 lowercase hex characters',
+    });
+    // `false`, and — the load-bearing half — *without throwing*. Reaching
+    // `signingHash` on this post would panic, so returning a verdict at all
+    // proves the domain gate ran ahead of the crypto.
+    expect(() => verifyPostSignature(post, kp.publicKey)).not.toThrow();
     expect(verifyPostSignature(post, kp.publicKey)).toBe(false);
+    expect(verifyPostSignature(honest, kp.publicKey)).toBe(true);
   });
 
   it('TEETH: `verifySubBlockStructure` rejected nothing about the post before — now it gates gossip', () => {
     // This sub-block satisfies every check the function made prior to this
     // phase: post present, subBlockId present, protocolVersion a number,
     // producerId present. It is `net/gossip.ts:201`, which gates `:222`.
-    const sb = subBlockOf(signedPost({ author: new Uint8Array(31).fill(4) }));
+    const { honest, post } = signedThenPoisoned({ author: new Uint8Array(31).fill(4) });
+    const sb = { ...subBlockOf(honest), post };
     expect(sb.post).toBeTruthy();
     expect(sb.subBlockId).toBeTruthy();
     expect(typeof sb.protocolVersion).toBe('number');
     expect(sb.producerId).toBeTruthy();
+    // Those four checks are exactly what the honest twin also passes, and the
+    // author width is the only difference between the two sub-blocks — so the
+    // verdict below can only be the post-domain leg.
+    expect(verifySubBlockStructure({ ...sb, post: honest })).toEqual({ valid: true });
     expect(verifySubBlockStructure(sb)).toEqual({
       valid: false,
       error: 'Post author must be exactly 32 bytes',
     });
+    // It reaches that verdict without encoding the post — which it could not
+    // do. This is the relay path, inside a topic validator whose catch arm
+    // bans the *forwarding* peer, so a throw here is the wrong penalty class.
+    expect(() => postPowPreimage(post)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
+    expect(() => verifySubBlockStructure(sb)).not.toThrow();
   });
 
   // -------------------------------------------------------------------------
@@ -2142,25 +2239,74 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   // -------------------------------------------------------------------------
 
   it.each([0, 1, 31, 33, 64])('rejects a %i-byte author', (n) => {
-    const post = signedPost({ author: new Uint8Array(n).fill(4) });
-    expect(signatureIsGenuine(post)).toBe(true);
-    expect(verifyPostFieldDomains(post).error).toBe('Post author must be exactly 32 bytes');
+    const { honest, post } = signedThenPoisoned({ author: new Uint8Array(n).fill(4) });
+    // The twin differs in the author width and nothing else, and it is signed,
+    // genuine and accepted — so the verdict below is about the width.
+    expect(signatureIsGenuine(honest)).toBe(true);
+    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
+    // `author` is the second rule in the chain, so this label also reports that
+    // `isObject` and the content-type rule passed.
+    expect(verifyPostFieldDomains(post)).toEqual({
+      valid: false,
+      error: 'Post author must be exactly 32 bytes',
+    });
+    // …and the width in the writer's own message is this case's `n`, so the
+    // rejection is tied to the value the test is named for rather than to some
+    // other malformed field drifting into the fixture.
+    expect(() => postPowPreimage(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
   });
 
   it.each([0, 1, 31, 33, 64])('rejects a %i-byte challenge', (n) => {
-    const post = signedPost({ challenge: new Uint8Array(n).fill(5) });
-    expect(signatureIsGenuine(post)).toBe(true);
-    expect(verifyPostFieldDomains(post).error).toBe('Post challenge must be exactly 32 bytes');
+    const { honest, post } = signedThenPoisoned({ challenge: new Uint8Array(n).fill(5) });
+    expect(signatureIsGenuine(honest)).toBe(true);
+    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
+    // `challenge` is the fourth rule, so reaching this label is positive
+    // evidence that content, author *and* every parentRef were in domain —
+    // `verifyPostFieldDomains` returns at its first failure.
+    expect(verifyPostFieldDomains(post)).toEqual({
+      valid: false,
+      error: 'Post challenge must be exactly 32 bytes',
+    });
+    // The writer message is width-only and does not name the field, but the
+    // author here is the honest 32-byte key, so `challenge` is the only `b32`
+    // in this post that can be `n` bytes wide.
+    expect(() => postPowPreimage(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
   });
 
-  it('the widths it rejects encode faithfully today — this is a domain pin, not a collision fix', () => {
-    // Length prefixes make the current dialect injective across widths: a
-    // 31-byte and a 32-byte author produce *different* preimages. Nothing is
-    // colliding today; the fields simply acquire a narrower domain when the
-    // length prefix goes away. That is why no existing check caught this.
-    const short = signedPost({ author: new Uint8Array(31).fill(4) });
-    const full = signedPost({ author: new Uint8Array(32).fill(4) });
-    expect(Buffer.from(postPowPreimage(short)).equals(Buffer.from(postPowPreimage(full)))).toBe(false);
+  it('the widths it rejects encoded faithfully before this phase, and have no encoding now — a domain pin, not a collision fix', () => {
+    // BOTH halves, because the pair is the claim.
+    //
+    // BEFORE: `author` went in length-prefixed, so a 31-byte and a 32-byte
+    // author produced *different* preimages. Nothing was colliding, and that is
+    // precisely why no existing check caught the narrowing — the field was
+    // encoded faithfully at every width, and it acquired a domain rather than
+    // losing an ambiguity. That assertion cannot be executed any more: the
+    // encoder it described is deleted, and re-implementing it here would be a
+    // mirror of a dead dialect, which is the drift class this format exists to
+    // remove. It is recorded here and pinned by its consequences below.
+    //
+    // AFTER: `b32` is fixed-width, so 31 bytes has no encoding at all.
+    //
+    // If this had been a *collision* fix, the honest 32-byte case would have
+    // had to move too — a colliding pair is repaired by changing what both
+    // members encode to. It does not move, and that asymmetry is the evidence.
+    const { honest: full, post: short } = signedThenPoisoned({
+      author: new Uint8Array(31).fill(4),
+    });
+
+    // Half one — the width that used to encode faithfully now has no encoding,
+    // and the writer says which width it refused.
+    expect(() => postPowPreimage(short)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
+
+    // Half two — the honest width is untouched. It still encodes, and it still
+    // encodes *faithfully*: the 32 author bytes cross the preimage unchanged,
+    // at the offset the layout fixes them at (field 2, straight after
+    // `lpUtf8(content)`; the content is 14 bytes so its VLQ length prefix is a
+    // single byte).
+    const bytes = postPowPreimage(full);
+    const authorAt = 1 + Buffer.byteLength(full.content, 'utf8');
+    expect(Buffer.from(bytes.subarray(authorAt, authorAt + 32))).toEqual(Buffer.from(full.author));
+
     expect(verifyPostFieldDomains(short).valid).toBe(false);
     expect(verifyPostFieldDomains(full).valid).toBe(true);
   });
@@ -2172,30 +2318,79 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   it('rejects an uppercase-hex parentRef — hex→bytes must stay injective', () => {
     // 'AB…' and 'ab…' decode to the same 32 bytes, so accepting both would let
     // two distinct in-memory posts share one preimage. That is the malleability
-    // the M-1 encoding exists to close, arriving through the codec boundary.
+    // the M-1 encoding exists to close, arriving through the codec boundary —
+    // and under `b32` the upper spelling has no encoding at all, so the
+    // collision is removed rather than merely rejected. The domain check is
+    // what keeps that unencodable state from ever reaching the writer.
     const lower = 'ab'.repeat(32);
     const upper = lower.toUpperCase();
     expect(Buffer.from(upper, 'hex').equals(Buffer.from(lower, 'hex'))).toBe(true);
-    expect(verifyPostFieldDomains(signedPost({ parentRefs: [lower] })).valid).toBe(true);
-    expect(verifyPostFieldDomains(signedPost({ parentRefs: [upper] })).valid).toBe(false);
+
+    // Lowercase is in domain, so it goes through the honest builder and is
+    // signable — the control that makes the rejection below about the case.
+    const good = signedPost({ parentRefs: [lower] });
+    expect(verifyPostFieldDomains(good)).toEqual({ valid: true });
+    expect(signatureIsGenuine(good)).toBe(true);
+
+    const { post } = signedThenPoisoned({ parentRefs: [upper] });
+    expect(verifyPostFieldDomains(post)).toEqual({
+      valid: false,
+      error: 'Post parentRef must be 64 lowercase hex characters',
+    });
+    // 64 characters, and still refused — so it is the alphabet, not the width.
+    expect(() => postPowPreimage(post)).toThrow(
+      'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
+    );
   });
 
+  // The third column is the writer's own message, which carries the *character
+  // count* it saw. That is what separates the width cases from the alphabet
+  // cases here: `verifyPostFieldDomains` gives all six the same label, so
+  // without it a case could silently start failing for the wrong reason —
+  // '65 hex chars' passing because the ref went missing, say — and nothing
+  // would show.
   it.each([
-    ['empty', ''],
-    ['63 hex chars', 'a'.repeat(63)],
-    ['65 hex chars', 'a'.repeat(65)],
-    ['64 chars with one non-hex', 'a'.repeat(63) + 'g'],
-    ['0x-prefixed', '0x' + 'a'.repeat(62)],
-    ['64 chars of whitespace padding', ' '.repeat(2) + 'a'.repeat(62)],
-  ])('rejects a parentRef that is %s', (_label, ref) => {
-    expect(verifyPostFieldDomains(signedPost({ parentRefs: [ref] })).valid).toBe(false);
+    ['empty', '', '0 chars'],
+    ['63 hex chars', 'a'.repeat(63), '63 chars'],
+    ['65 hex chars', 'a'.repeat(65), '65 chars'],
+    ['64 chars with one non-hex', 'a'.repeat(63) + 'g', '64 chars'],
+    ['0x-prefixed', '0x' + 'a'.repeat(62), '64 chars'],
+    ['64 chars of whitespace padding', ' '.repeat(2) + 'a'.repeat(62), '64 chars'],
+  ])('rejects a parentRef that is %s', (_label, ref, seenByWriter) => {
+    const { honest, post } = signedThenPoisoned({ parentRefs: [ref] });
+    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
+    expect(verifyPostFieldDomains(post)).toEqual({
+      valid: false,
+      error: 'Post parentRef must be 64 lowercase hex characters',
+    });
+    expect(() => postPowPreimage(post)).toThrow(
+      `writeHexNOrThrow: expected 64 lowercase hex chars, got ${seenByWriter}`,
+    );
   });
 
   it('rejects a malformed ref in any position, not just the first', () => {
     const good = 'ab'.repeat(32);
-    expect(
-      verifyPostFieldDomains(signedPost({ parentRefs: [good, good, 'z'.repeat(64)] })).valid,
-    ).toBe(false);
+    const { post } = signedThenPoisoned({ parentRefs: [good, good, 'z'.repeat(64)] });
+
+    // The control: same three positions, all well-formed, accepted. So a check
+    // that only inspected `parentRefs[0]` would pass the poisoned post too —
+    // it is position 2 that has to be found.
+    expect(verifyPostFieldDomains({ ...post, parentRefs: [good, good, good] })).toEqual({
+      valid: true,
+    });
+    expect(verifyPostFieldDomains(post)).toEqual({
+      valid: false,
+      error: 'Post parentRef must be 64 lowercase hex characters',
+    });
+    expect(() => postPowPreimage(post)).toThrow(
+      'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
+    );
+
+    // Three refs is over MAX_PARENT_REFS and that is deliberate: the count rule
+    // is `verifyParentRefsCount`'s and is *not* one of this function's, which
+    // is what lets a domain test reach a third position at all. Pinned so the
+    // separation is not "tidied away" by trimming the fixture to one ref.
+    expect(verifyParentRefsCount(post.parentRefs).valid).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -2216,9 +2411,22 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   it('accepts the full MAX_PARENT_REFS-wide honest case', () => {
-    const refs = Array.from({ length: 8 }, (_, i) =>
+    // Driven by the constant, not by `length: 8` — the shape `refs(n)` on the
+    // ordering-block path already uses. The literal made the test name false
+    // the moment the constant moved, and it is the name that carries the
+    // property: whatever the bound is, a post sitting exactly on it is accepted
+    // by all three checks at once.
+    //
+    // Honest about what this now proves: at MAX_PARENT_REFS = 1 it is a
+    // one-ref post, so it no longer discriminates "many refs" from "one ref"
+    // and largely overlaps the well-formed case above. What survives is the
+    // agreement of the three checks at the bound, plus a tripwire that
+    // self-adjusts if the bound ever moves back up.
+    const refs = Array.from({ length: MAX_PARENT_REFS }, (_, i) =>
       computePostId(signedPost({ content: `parent ${i}` })),
     );
+    expect(refs).toHaveLength(MAX_PARENT_REFS);
+    expect(new Set(refs).size).toBe(MAX_PARENT_REFS);
     const post = signedPost({ parentRefs: refs });
     expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
     expect(verifyPostFieldDomains(post)).toEqual({ valid: true });

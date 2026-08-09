@@ -317,14 +317,19 @@ describe('posts store', () => {
 
     initDb(':memory:');
 
-    const post = makePost({
-      parentRefs: ['parent1', 'parent2', 'parent3'],
-    });
+    // A ref is `b32` now, so `'parent1'` has no encoding — the placeholders had
+    // to become real 64-hex ids. The *count* deliberately still exceeds
+    // `MAX_PARENT_REFS`: the cap is the verifier's, not the store's, and the
+    // store's list machinery (`dag_parent_refs`, `getSubtree`'s UNION/DISTINCT)
+    // is kept for now, so pinning that it round-trips a list in order is still
+    // pinning live behaviour. One ref could not catch a truncation or a reorder.
+    const refs3 = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
+    const post = makePost({ parentRefs: refs3 });
     insertPost(post, bytes(8));
     const postId = computePostId(post);
 
     const refs = getParentRefs(postId);
-    expect(refs).toEqual(['parent1', 'parent2', 'parent3']);
+    expect(refs).toEqual(refs3);
   });
 
   // 10. getSubtree returns all descendants (multi-level)

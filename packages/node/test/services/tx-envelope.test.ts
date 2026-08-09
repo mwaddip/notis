@@ -279,10 +279,27 @@ describe('checkTxEnvelope — the closed envelope', () => {
   // 6. preimages
   // -------------------------------------------------------------------------
 
-  it('rejects a present-but-EMPTY preimages map — the CBOR malleability', () => {
+  it('still rejects a present-but-EMPTY preimages map, now as belt-and-braces — the malleability is gone', () => {
+    // ⚠ **The assertion here is INVERTED from what it was, and so is the name.**
+    //
+    // It used to read "…— the CBOR malleability" and assert
+    // `computeTxId(empty) === computeTxId(absent)`: under the old preimage an
+    // absent map and an empty one both appended *nothing*, so two distinct
+    // transactions shared an id and this gate was the only thing preventing it.
+    //
+    // `opt()` closes that structurally — absence is the tag byte `00`, an empty
+    // map is `01 00` — so the equality is now false by construction. A test
+    // called "the CBOR malleability" that proves the malleability is gone is a
+    // name that misleads the next reader, hence the rename rather than a quiet
+    // constant swap.
+    //
+    // The gate is kept and still asserted: it is a *semantic* rule (an empty
+    // preimages map means the sender built something incoherent) and it is
+    // cheaper to reject at the envelope than to let it reach guard evaluation.
+    // What changed is its standing — sole defence, now redundancy.
     const absent = envelope() as unknown as UtxoTransaction;
     const empty = envelope({ preimages: {} }) as unknown as UtxoTransaction;
-    expect(computeTxId(empty)).toBe(computeTxId(absent));
+    expect(computeTxId(empty)).not.toBe(computeTxId(absent));
     expect(reject(empty)).toContain('preimages is present but empty');
   });
 

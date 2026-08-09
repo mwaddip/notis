@@ -77,7 +77,7 @@ export function cumulativeWork(headers: BlockHeader[]): bigint {
  */
 export interface SubBlockEntry {
   postId: string;        // hex-encoded 32-byte post ID
-  parentRefs: string[];  // hex-encoded parent post IDs (0–8 entries)
+  parentRefs: string[];  // hex-encoded parent post IDs (0–MAX_PARENT_REFS entries)
   author: string;        // hex-encoded 32-byte author public key of the post
 }
 

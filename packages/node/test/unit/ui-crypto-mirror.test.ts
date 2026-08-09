@@ -1,15 +1,22 @@
 /**
- * TS ↔ JS mirror: the demo UI must encode posts byte-identically to
- * `@dagsocial/types` (audit M-1).
+ * TS ↔ JS mirror: the demo UI must encode posts, boxes and transactions
+ * byte-identically to `@dagsocial/types` (audit M-1, Spec G, positional format).
  *
- * The demo UI (`public/index.html`) mines PoW, signs, and computes post ids in
- * the browser; the node verifies all three. If the two encodings drift, every
- * post minted from the UI is rejected — and no unit test in either package
- * would notice, because neither exercises the other's code.
+ * The demo UI (`public/index.html`) mines PoW, signs, and computes post, box and
+ * transaction ids in the browser; the node verifies all three. If the two
+ * encodings drift, every post and every transaction minted from the UI is
+ * rejected — and no unit test in either package would notice, because neither
+ * exercises the other's code.
  *
  * This test closes that gap without a browser: it reads `index.html`, extracts
  * the actual crypto declarations from it, evaluates them, and asserts they
- * reproduce the golden vector frozen in the types tests.
+ * reproduce the golden vectors frozen in the types tests.
+ *
+ * **Why the UI is not simply importing the library.** It would remove this drift
+ * class outright, but it means giving `index.html` a build step, and the demo UI
+ * is scaffolding until `@dagsocial/web` lands (user decision, 2026-08-09). So the
+ * mirror stays hand-written and this test stays the thing that polices it; both
+ * die with the UI.
  *
  * The UI's `blake2b` comes from the `blakejs` CDN module, which is not
  * installed here, so it is injected as a Node `blake2b512` shim. Both are plain
@@ -23,7 +30,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   computePostId, signingHash, postPowPreimage, computeBoxId, computeTxId,
-  computeCandidateBoxId, canonicalBoxBytes,
+  computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS,
 } from '@dagsocial/types';
 import type {
   CandidateOf,
@@ -42,28 +49,28 @@ for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
 const GOLDEN_CHALLENGE = new Uint8Array(32);
 for (let i = 0; i < 32; i++) GOLDEN_CHALLENGE[i] = 0x20 + i;
 
+/** A well-formed `b32` parent ref: 64 lowercase hex characters. */
+const GOLDEN_REF = '11'.repeat(32);
+
 const GOLDEN_POST: Post = {
   content: 'dagsocial golden vector ✓',
   author: GOLDEN_AUTHOR,
-  parentRefs: [
-    '1111111111111111111111111111111111111111111111111111111111111111',
-    '2222222222222222222222222222222222222222222222222222222222222222',
-  ],
+  parentRefs: [GOLDEN_REF],
   challenge: GOLDEN_CHALLENGE,
-  powNonce: 4294967296,
+  powNonce: 4294967296,     // 2^32 — five VLQ bytes, so the wide path is covered
   protocolVersion: 1,
-  timestamp: 1767225600000,
+  timestamp: 1767225600000, // > 2^32 — six VLQ bytes
   signature: new Uint8Array(64).fill(0xcd),
 };
 
 const GOLDEN_SIGNING_HASH =
-  '24157bd74276c86556b41ce0402f8ef9ba4850fc086519c838eb77300ce681d0';
+  '3143d7a351cf2bb4cdbca49ba7aa994ce2e4fd1638a9322058d03fe87debc6b0';
 const GOLDEN_POST_ID =
-  '0150b9bf676c88c715f0b1fbdf142f8bd0ccf7bb8769e2059488d6c300b6b08f';
+  'fefac701207339ba5953fdfe98ed6212f7ead3025dc6e718878dc465ca06e8b0';
 
 // ---------------------------------------------------------------------------
 // Golden box vectors — must stay identical to packages/types/test/utxo.test.ts
-// (Spec B P0: bigint `value` → CBOR uint64, number fields → minimal-int)
+// (positional: enum8(boxType) ‖ vlqU(value) ‖ per-type, no `guard` — C10)
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
@@ -79,7 +86,7 @@ const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — the range P0 exists for
   owner: GOLDEN_AUTHOR,
   guard: 'owner_signature',
-  proofSource: 70000,             // > 65536 — locks the wide-int encoding path (L-5)
+  proofSource: 70000,             // > 65536 — a three-byte ZigZag VLQ
 };
 
 const GOLDEN_UTXO_TX: UtxoTransaction = {
@@ -90,11 +97,30 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '778a084f4d14df3118b1598cc9cdaac603d18412beb2de56d0290200e30c4622';
+  '4ac16757cfa8adb833a281bd48b917478457a93e21cc7b90cc7bb93cc03f423c';
 const GOLDEN_CREDIT_BOX_ID =
-  '14e4bdb5a820ddbc7c8f8e99d6bdac69fa5b5935b576949fbab53bae5323bc9d';
+  '38d81346e5a47c6043f51e1e15aee5c6048aec92b5eb07c14003ccbcd4bb2bc5';
 const GOLDEN_UTXO_TX_ID =
-  '43d122fc103ffb4931710add70c900ee14e0684de9a4b02eadb8a0ea437e47a0';
+  '09b0c0e3fb832cd886114f0d099ec751537cef8377d7bc5a935f1ddf9c8eef62';
+
+/**
+ * The exact canonical bytes for the two golden candidates, frozen. Stronger
+ * than the ids: a hash says "something moved", these say *which byte*. Read
+ * them against TYPES_INTERFACE → Layout — Boxes, field by field.
+ */
+const GOLDEN_KARMA_BOX_BYTES =
+  '00' +                                                               // enum8 karma
+  '64' +                                                               // vlqU value 100
+  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
+  '07' + '67656e65736973' +                                            // lpUtf8 'genesis'
+  '00';                                                                // opt decayBurn absent
+
+const GOLDEN_CREDIT_BOX_BYTES =
+  '01' +                                                               // enum8 credit
+  '80eae1eac58af715' +                                                 // vlqU value
+  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
+  'e0c508' +                                                           // vlqS 70000
+  '00';                                                                // opt lockedUntilBlock absent
 
 /** The candidates as block application materializes them out of GOLDEN_UTXO_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox =
@@ -103,43 +129,39 @@ const GOLDEN_CREDIT_BOX: CreditBox =
   { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_UTXO_TX_ID, index: 1 };
 
 // ---------------------------------------------------------------------------
-// Spec G provenance vectors — LIVE as of phase G3b.
+// Spec G provenance vectors.
 //
 // The provenance is the real one for these boxes: GOLDEN_UTXO_TX creates the
 // karma box at index 0 and the credit box at index 1. Values measured from
 // `computeCandidateBoxId` in @dagsocial/types, so both implementations are
 // pinned to a constant rather than only to each other.
 //
-// `GOLDEN_KARMA_CANDIDATE_ID` now equals `GOLDEN_KARMA_BOX_ID` above, and that
-// is the phase's whole point rather than a copy-paste slip: `computeBoxId` IS
+// `GOLDEN_KARMA_CANDIDATE_ID` equals `GOLDEN_KARMA_BOX_ID` above, and that is
+// phase G3b's whole point rather than a copy-paste slip: `computeBoxId` IS
 // `computeCandidateBoxId` applied to the box's own provenance, so the "legacy"
 // and "candidate" ids collapsed into one derivation on both sides.
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '778a084f4d14df3118b1598cc9cdaac603d18412beb2de56d0290200e30c4622';
+  '4ac16757cfa8adb833a281bd48b917478457a93e21cc7b90cc7bb93cc03f423c';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  '14e4bdb5a820ddbc7c8f8e99d6bdac69fa5b5935b576949fbab53bae5323bc9d';
-const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — endianness-visible
-  '9a61d4abc3ddd0684b2873b56ebcf77530853c0ec53817450f1fde678342310f';
-const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside [0, 2³²−1)
-  '6f86b05beaf09ce7cfc61add7ff3979fd4ced08527287786ebeef33b95419efb';
+  '38d81346e5a47c6043f51e1e15aee5c6048aec92b5eb07c14003ccbcd4bb2bc5';
+const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
+  'ca5af4ec56635f8b1731eec592e59bda4a8f0332ee7f75a8a13e44769b9a1fd0';
+const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
+  '555fa23925e32ddc4adb61422588088a410ea2196d05349d82b3034e197ad7f2';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type (Spec G phase E3)
 //
 // Both mirror blocks encoded karma and credit only, which is how a missing
-// `binaryFields` entry survived on `VouchBox`: with no vouch box ever encoded
+// binary-field conversion survived on `VouchBox`: with no vouch box ever encoded
 // through both implementations, nothing could observe that the UI wrote
-// `voucherId` as CBOR text where the node writes a byte string. Same shape as
-// phase C §4.2 — B3 round-tripped only a karma box, so an in-range tag at 0x03
-// could not collide with karma at 0x01.
+// `voucherId` in the wrong form. Same shape as phase C §4.2 — B3 round-tripped
+// only a karma box, so an in-range tag at 0x03 could not collide with karma.
 //
 // Every type is now encoded through both implementations in both forms, so the
-// next omission fails here instead of needing review to catch.
-//
-// Field order matches what the UI's tx builders emit — key order is
-// consensus-visible (NODE_INTERFACE 1b), not a stylistic choice. Distinct fill
+// next omission fails here instead of needing review to catch. Distinct fill
 // bytes per field so a transposition is visible too.
 // ---------------------------------------------------------------------------
 
@@ -150,14 +172,6 @@ const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside [0, 2³²−1)
  * box at index 0 and the credit box at index 1 and nothing else — so they carry
  * their own synthetic creating transaction rather than claiming an index of one
  * that has no output there.
- *
- * They previously carried no provenance at all, and that was not cosmetic:
- * `computeBoxId` binds `txId`/`index`, and on a provenance-less box `u32BE`
- * lands on the `0xffffffff` totality sentinel (types/src/utxo.ts:106-112) with
- * an empty txId. So the `$name: ...encodes identically` case below compared the
- * two implementations **on the sentinel path** for invite, bond, post_lock and
- * vouch — it had never once checked that the UI encodes a real `txId`/`index`
- * the way the node does for those four types.
  */
 const COVERAGE_TX_ID = 'de'.repeat(32);
 
@@ -166,20 +180,14 @@ const BYTES_INVITEE = new Uint8Array(32).fill(0xb2);
 const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
 
 const GOLDEN_INVITE_BOX: InviteBox = {
-  boxType: 'invite', value: 10n, 
+  boxType: 'invite', value: 10n,
   secretHash: BYTES_SECRET, inviterId: GOLDEN_AUTHOR, guard: 'hash_preimage_with_bond',
   txId: COVERAGE_TX_ID, index: 0,
 };
 
 const GOLDEN_BOND_BOX: BondBox = {
-  boxType: 'bond', value: 5n, 
+  boxType: 'bond', value: 5n,
   inviterId: GOLDEN_AUTHOR,
-  // Was `inviteBoxId: BoxId` — hex text, deliberately not a binary field. Now a
-  // plain integer (user decision, 2026-08-06), so this fixture no longer covers
-  // the "hex-string field that must NOT be treated as binary" case. `BondBox`
-  // has no such field left; `targetPostId` on post_lock still does, and
-  // `ALL_BOX_TYPES` runs every type through both encoders, so the case is still
-  // exercised — just not here.
   inviteOutputIndex: 1,
   inviteePublicKey: BYTES_INVITEE,
   probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual',
@@ -187,16 +195,30 @@ const GOLDEN_BOND_BOX: BondBox = {
 };
 
 const GOLDEN_POST_LOCK_BOX: PostLockBox = {
-  boxType: 'post_lock', value: 8n, 
+  boxType: 'post_lock', value: 8n,
   originalValue: 10n, owner: GOLDEN_AUTHOR, targetPostId: GOLDEN_POST_ID,
   guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 2,
 };
 
 const GOLDEN_VOUCH_BOX: VouchBox = {
-  boxType: 'vouch', value: 1n, 
+  boxType: 'vouch', value: 1n,
   voucherId: GOLDEN_AUTHOR, targetId: BYTES_TARGET, guard: 'owner_signature',
   txId: COVERAGE_TX_ID, index: 3,
+};
+
+/**
+ * The bond as invite creation emits it: `inviteePublicKey` **empty**, meaning
+ * unclaimed. It is the only 0-or-32 field in any box, `opt(b32)` is the only
+ * option-shaped field in the box arms, and until now no fixture anywhere
+ * exercised the absent branch through both implementations — which is exactly
+ * how a `b32` in that slot survived review and killed the whole invite path in
+ * production. One fixture per branch, so the next one cannot.
+ */
+const GOLDEN_BOND_BOX_UNCLAIMED: BondBox = {
+  ...GOLDEN_BOND_BOX,
+  inviteePublicKey: new Uint8Array(0),
+  index: 4,
 };
 
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> = [
@@ -204,6 +226,7 @@ const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> = [
   { name: 'credit', box: GOLDEN_CREDIT_BOX },
   { name: 'invite', box: GOLDEN_INVITE_BOX },
   { name: 'bond', box: GOLDEN_BOND_BOX },
+  { name: 'bond (unclaimed)', box: GOLDEN_BOND_BOX_UNCLAIMED },
   { name: 'post_lock', box: GOLDEN_POST_LOCK_BOX },
   { name: 'vouch', box: GOLDEN_VOUCH_BOX },
 ];
@@ -289,9 +312,17 @@ interface UiCrypto {
   ) => Uint8Array;
   buildPowInput: UiCrypto['postFieldBytes'];
   computePostId: (post: Record<string, unknown>) => string;
-  encodeLE64: (n: number) => Uint8Array;
-  encodeU32LE: (n: number) => Uint8Array;
-  cborEncode: (value: unknown) => Uint8Array;
+  vlqU: (n: number) => Uint8Array;
+  vlqS: (n: number) => Uint8Array;
+  vlqU64: (v: bigint) => Uint8Array;
+  lp: (b: Uint8Array) => Uint8Array;
+  lpUtf8: (s: string) => Uint8Array;
+  arr: <T>(items: T[], f: (x: T) => Uint8Array) => Uint8Array;
+  opt: <T>(v: T | null | undefined, f: (x: T) => Uint8Array) => Uint8Array;
+  boolByte: (v: boolean) => Uint8Array;
+  enum8Tag: (table: Record<string, number>, v: string) => Uint8Array;
+  b32Bytes: (v: Uint8Array, n: number) => Uint8Array;
+  b32Hex: (v: string, n: number) => Uint8Array;
   cborEncodeInt: (n: number) => Uint8Array;
   cborEncodeBigInt: (v: bigint) => Uint8Array;
   cborEncodeString: (str: string) => Uint8Array;
@@ -299,7 +330,6 @@ interface UiCrypto {
   canonicalBoxBytes: (box: Record<string, unknown>) => Uint8Array;
   computeBoxId: (box: Record<string, unknown>) => string;
   computeTxId: (tx: Record<string, unknown>) => string;
-  u32BE: (n: number) => Uint8Array;
   computeCandidateBoxId: (
     candidate: Record<string, unknown>, txId: string, index: number,
   ) => string;
@@ -322,38 +352,49 @@ function loadUiCrypto(): UiCrypto {
     extractConst(html, 'POST_ID_DOMAIN'),
     extractConst(html, 'BOX_ID_DOMAIN'),
     extractConst(html, 'TX_ID_DOMAIN'),
-    extractConst(html, 'U32_SENTINEL'),
+    extractConst(html, 'VLQ_SENTINEL'),
+    extractConst(html, 'BOX_TYPE_TAGS'),
     extractDeclaration(html, 'function buf2hex('),
     extractDeclaration(html, 'function hex2buf('),
     extractDeclaration(html, 'function concatUint8Arrays('),
-    extractDeclaration(html, 'function isEncodableU32('),
-    extractDeclaration(html, 'function isEncodableU64('),
-    extractDeclaration(html, 'function encodeU32LE('),
-    extractDeclaration(html, 'function encodeLE64('),
-    extractDeclaration(html, 'function u32BE('),
-    extractDeclaration(html, 'function lengthPrefixed('),
+    // The positional codec layer — the mirror of @dagsocial/types src/codec.ts.
+    extractDeclaration(html, 'function isEncodableVlqU('),
+    extractDeclaration(html, 'function isEncodableVlqS('),
+    extractDeclaration(html, 'function vlqBigInt('),
+    extractDeclaration(html, 'function vlqU('),
+    extractDeclaration(html, 'function vlqS('),
+    extractDeclaration(html, 'function vlqU64('),
+    extractDeclaration(html, 'function b32Bytes('),
+    extractDeclaration(html, 'function b32Hex('),
+    extractDeclaration(html, 'function b32Either('),
+    extractDeclaration(html, 'function optB32Either('),
+    extractDeclaration(html, 'function lp('),
+    extractDeclaration(html, 'function lpUtf8('),
+    extractDeclaration(html, 'function arr('),
+    extractDeclaration(html, 'function opt('),
+    extractDeclaration(html, 'function boolByte('),
+    extractDeclaration(html, 'function enum8Tag('),
+    // The three id preimages built on it.
     extractDeclaration(html, 'function postFieldBytes('),
     extractDeclaration(html, 'function buildPowInput('),
     extractDeclaration(html, 'function computePostId('),
-    // The box/tx encoding mirror (Spec B P0): the UI's CBOR encoder and the
-    // box/tx id functions built on it.
+    extractDeclaration(html, 'function canonicalBoxBytes('),
+    extractDeclaration(html, 'function boxTypeFields('),
+    extractDeclaration(html, 'function computeBoxId('),
+    extractDeclaration(html, 'function computeCandidateBoxId('),
+    extractDeclaration(html, 'function computeTxId('),
+    // The retired CBOR encoder. Extracted so the primitives it still exposes
+    // stay pinned while it lives; see the block comment on its own describe().
     extractDeclaration(html, 'function cborHead('),
     extractDeclaration(html, 'function cborEncodeString('),
     extractDeclaration(html, 'function cborEncodeBytes('),
     extractDeclaration(html, 'function cborEncodeInt('),
     extractDeclaration(html, 'function cborEncodeBigInt('),
-    extractDeclaration(html, 'function cborEncodeUndefined('),
-    extractDeclaration(html, 'function cborEncodeMap('),
-    extractDeclaration(html, 'function cborEncode('),
-    // Spec G phase E: the one strip rule, and the derivation phase G switches to.
-    extractDeclaration(html, 'function canonicalBoxBytes('),
-    extractDeclaration(html, 'function computeBoxId('),
-    extractDeclaration(html, 'function computeCandidateBoxId('),
-    extractDeclaration(html, 'function computeTxId('),
-    'return { postFieldBytes, buildPowInput, computePostId, encodeLE64, encodeU32LE,\n' +
-    '         cborEncode, cborEncodeInt, cborEncodeBigInt, cborEncodeString,\n' +
-    '         cborEncodeBytes, canonicalBoxBytes,\n' +
-    '         computeBoxId, computeTxId, u32BE, computeCandidateBoxId };',
+    'return { postFieldBytes, buildPowInput, computePostId,\n' +
+    '         vlqU, vlqS, vlqU64, lp, lpUtf8, arr, opt, boolByte, enum8Tag,\n' +
+    '         b32Bytes, b32Hex,\n' +
+    '         cborEncodeInt, cborEncodeBigInt, cborEncodeString, cborEncodeBytes,\n' +
+    '         canonicalBoxBytes, computeBoxId, computeTxId, computeCandidateBoxId };',
   ].join('\n\n');
 
   return new Function('blake2b', source)(blake2bShim) as UiCrypto;
@@ -369,6 +410,8 @@ function uiSigningHash(post: Post): string {
   );
   return Buffer.from(blake2bShim(input, null, 64).slice(0, 32)).toString('hex');
 }
+
+const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 // ---------------------------------------------------------------------------
 
@@ -393,8 +436,7 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
       GOLDEN_POST.content, GOLDEN_POST.author, GOLDEN_POST.parentRefs,
       GOLDEN_POST.challenge, GOLDEN_POST.protocolVersion, GOLDEN_POST.timestamp,
     );
-    expect(Buffer.from(uiBytes).toString('hex'))
-      .toBe(Buffer.from(postPowPreimage(GOLDEN_POST)).toString('hex'));
+    expect(hexOf(uiBytes)).toBe(hexOf(postPowPreimage(GOLDEN_POST)));
   });
 
   it('the UI accepts a hex-string author and challenge identically', () => {
@@ -409,17 +451,44 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
   });
 
   it('both implementations agree across a spread of posts', () => {
+    // Every variant is in-domain on both sides: a `parentRefs` entry is `b32`
+    // now, so the old `['ab', 'cd']` / `['']` cases have no encoding at all —
+    // they moved to the domain test below rather than being dropped.
     const variants: Post[] = [
       { ...GOLDEN_POST, content: 'a', parentRefs: [] },
-      { ...GOLDEN_POST, content: '', parentRefs: [''] },
-      { ...GOLDEN_POST, content: '🙂 multi-byte ✓ ünïcode', parentRefs: ['ab', 'cd'] },
+      { ...GOLDEN_POST, content: '', parentRefs: [] },
+      { ...GOLDEN_POST, content: '🙂 multi-byte ✓ ünïcode', parentRefs: ['ab'.repeat(32)] },
       { ...GOLDEN_POST, powNonce: 0, timestamp: 0 },
       { ...GOLDEN_POST, powNonce: Number.MAX_SAFE_INTEGER, timestamp: Number.MAX_SAFE_INTEGER },
-      { ...GOLDEN_POST, parentRefs: Array.from({ length: 8 }, (_, i) => String(i).repeat(64)) },
+      // At the cap. The encoder itself has no opinion on the count — the cap is
+      // validation's — so this pins the count prefix, not the rule.
+      {
+        ...GOLDEN_POST,
+        parentRefs: Array.from({ length: MAX_PARENT_REFS }, (_, i) => String(i).repeat(64)),
+      },
     ];
     for (const v of variants) {
       expect(ui.computePostId(v as unknown as Record<string, unknown>)).toBe(computePostId(v));
       expect(uiSigningHash(v)).toBe(signingHash(v).toString('hex'));
+    }
+  });
+
+  it('a parentRef outside the b32 domain has no encoding on EITHER side', () => {
+    // The mirror has to agree on which inputs are unencodable, not only on the
+    // bytes for the ones that are. A UI that padded `'ab'` to 32 bytes where the
+    // node throws would mint posts the node cannot verify — and the padding
+    // would map a malformed ref onto a well-formed ref's encoding, which is the
+    // reason a fixed-width field carries no sentinel (spec §2.5).
+    // `GOLDEN_REF` is all digits, so uppercasing it is a no-op — the case leg
+    // needs a ref that actually contains letters to be non-vacuous.
+    const MIXED_CASE_REF = 'ab'.repeat(32).toUpperCase();
+    for (const bad of ['', 'ab', 'abcd', 'z'.repeat(64), MIXED_CASE_REF]) {
+      const post = { ...GOLDEN_POST, parentRefs: [bad] };
+      expect(() => computePostId(post), `types accepted ${bad}`).toThrow();
+      expect(
+        () => ui.computePostId(post as unknown as Record<string, unknown>),
+        `ui accepted ${bad}`,
+      ).toThrow();
     }
   });
 
@@ -433,33 +502,74 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     expect(idB).toBe(computePostId(b));
   });
 
-  it('the UI fixed-width encoders match the TS ones bit for bit', () => {
-    const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
-    expect(hexOf(ui.encodeU32LE(0))).toBe('00000000');
-    expect(hexOf(ui.encodeU32LE(1))).toBe('01000000');
-    expect(hexOf(ui.encodeU32LE(0x12345678))).toBe('78563412');
-    expect(hexOf(ui.encodeLE64(0))).toBe('0000000000000000');
-    expect(hexOf(ui.encodeLE64(2 ** 32))).toBe('0000000001000000');
-    expect(hexOf(ui.encodeLE64(1767225600000))).toBe('00a8da769b010000');
-    // Out-of-domain values normalize to the sentinel rather than throwing.
-    for (const bad of [NaN, Infinity, -1, 1.5]) {
-      expect(hexOf(ui.encodeLE64(bad))).toBe('ffffffffffffffff');
-      expect(hexOf(ui.encodeU32LE(bad))).toBe('ffffffff');
+  it('the UI positional writers match the frozen byte forms', () => {
+    // Hand-derived from TYPES_INTERFACE → Primitives rather than measured off
+    // the UI, so this catches an encoder that is merely self-consistent.
+    expect(hexOf(ui.vlqU(0))).toBe('00');
+    expect(hexOf(ui.vlqU(1))).toBe('01');
+    expect(hexOf(ui.vlqU(127))).toBe('7f');
+    expect(hexOf(ui.vlqU(128))).toBe('8001');
+    expect(hexOf(ui.vlqU(300))).toBe('ac02');
+    // Past 2^32, where a bitwise implementation silently truncates.
+    expect(hexOf(ui.vlqU(2 ** 32))).toBe('8080808010');
+    expect(hexOf(ui.vlqU(1767225600000))).toBe('80d0eab6b733');
+    // ZigZag: the sign rides in bit 0.
+    expect(hexOf(ui.vlqS(0))).toBe('00');
+    expect(hexOf(ui.vlqS(-1))).toBe('01');
+    expect(hexOf(ui.vlqS(1))).toBe('02');
+    expect(hexOf(ui.vlqS(70000))).toBe('e0c508');
+    // The bigint path spans the whole u64, where the number path stops at 2^53.
+    expect(hexOf(ui.vlqU64(0n))).toBe('00');
+    expect(hexOf(ui.vlqU64(2n ** 64n - 1n))).toBe('ffffffffffffffffff01');
+    // Length prefixes, options and tags.
+    expect(hexOf(ui.lp(new Uint8Array([0xaa, 0xbb])))).toBe('02aabb');
+    expect(hexOf(ui.lpUtf8('✓'))).toBe('03e29c93');
+    expect(hexOf(ui.arr([1, 2], (n: number) => ui.vlqU(n)))).toBe('020102');
+    expect(hexOf(ui.opt(undefined, () => new Uint8Array([9])))).toBe('00');
+    expect(hexOf(ui.opt(null, () => new Uint8Array([9])))).toBe('00');
+    expect(hexOf(ui.opt(7, () => new Uint8Array([9])))).toBe('0109');
+    expect(hexOf(ui.boolByte(false))).toBe('00');
+    expect(hexOf(ui.boolByte(true))).toBe('01');
+    expect(hexOf(ui.enum8Tag({ a: 0, b: 4 }, 'b'))).toBe('04');
+  });
+
+  it('the totality split is mirrored: sentinel where types sentinels, throw where it throws', () => {
+    // A mirror that threw where the node sentinels (or the reverse) would
+    // diverge on exactly the malformed input a light client is handed — audits
+    // M-5/M-6. Total writers absorb it into the unreachable all-ones u64.
+    const SENTINEL = 'ffffffffffffffffff01';
+    for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(hexOf(ui.vlqU(bad)), `vlqU(${bad})`).toBe(SENTINEL);
     }
+    // `vlqS`'s domain is wider on the negative side and narrower at the top:
+    // ZigZag doubles the magnitude before the VLQ sees it, so −1 is faithful
+    // while ±2^52 is not. Sharing `vlqU`'s list would assert the wrong domain.
+    for (const bad of [NaN, Infinity, -Infinity, 1.5, 2 ** 52, -(2 ** 52) - 1]) {
+      expect(hexOf(ui.vlqS(bad)), `vlqS(${bad})`).toBe(SENTINEL);
+    }
+    expect(hexOf(ui.lp(undefined as unknown as Uint8Array))).toBe(SENTINEL);
+    expect(hexOf(ui.lpUtf8(undefined as unknown as string))).toBe(SENTINEL);
+    expect(hexOf(ui.arr(undefined as unknown as number[], () => new Uint8Array()))).toBe(SENTINEL);
+    expect(hexOf(ui.boolByte(undefined as unknown as boolean))).toBe('ff');
+    expect(hexOf(ui.enum8Tag({ a: 0 }, 'nope'))).toBe('ff');
+    // No unreachable sentinel exists for these, so they throw on both sides.
+    expect(() => ui.vlqU64(1 as unknown as bigint)).toThrow();
+    expect(() => ui.b32Bytes(new Uint8Array(31), 32)).toThrow();
+    expect(() => ui.b32Bytes('ab'.repeat(32) as unknown as Uint8Array, 32)).toThrow();
+    expect(() => ui.b32Hex('ab'.repeat(31), 32)).toThrow();
+    expect(() => ui.b32Hex('AB'.repeat(32), 32)).toThrow();
   });
 });
 
 // ---------------------------------------------------------------------------
 
 /**
- * Box-value mirror (Spec B P0): the UI's hand-rolled CBOR encoder must emit
- * bigint `value` as CBOR uint64 (0x1b + 8-byte BE) and `number` fields as
- * minimal-int, byte-identical to cbor-x in `@dagsocial/types` — otherwise
- * every client-built box id (and every signed txId) diverges from the node.
+ * Box and transaction encoding mirror. The UI's hand-written positional writers
+ * must produce the same bytes as `@dagsocial/types` for every box type and every
+ * transaction shape — otherwise every client-built box id (and every signed
+ * txId) diverges from the node and the UI's transactions are simply rejected.
  */
-describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', () => {
-  const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
-
+describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => {
   it('the UI reproduces the frozen golden karma boxId', () => {
     expect(ui.computeBoxId(GOLDEN_KARMA_BOX as unknown as Record<string, unknown>))
       .toBe(GOLDEN_KARMA_BOX_ID);
@@ -476,6 +586,16 @@ describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', (
     expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
   });
 
+  it('golden vector: the canonical box bytes are frozen on both sides', () => {
+    // Field-by-field, which an id comparison cannot be: this says *which byte*.
+    expect(hexOf(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE))).toBe(GOLDEN_KARMA_BOX_BYTES);
+    expect(hexOf(canonicalBoxBytes(GOLDEN_CREDIT_CANDIDATE))).toBe(GOLDEN_CREDIT_BOX_BYTES);
+    expect(hexOf(ui.canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE as unknown as Record<string, unknown>)))
+      .toBe(GOLDEN_KARMA_BOX_BYTES);
+    expect(hexOf(ui.canonicalBoxBytes(GOLDEN_CREDIT_CANDIDATE as unknown as Record<string, unknown>)))
+      .toBe(GOLDEN_CREDIT_BOX_BYTES);
+  });
+
   it('the UI accepts hex-string binary fields identically (the tx-builder form)', () => {
     // The UI's tx builders pass `owner` as a hex string straight from state.
     const hexBox = { ...GOLDEN_KARMA_BOX, owner: Buffer.from(GOLDEN_AUTHOR).toString('hex') };
@@ -486,9 +606,8 @@ describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', (
   it.each(ALL_BOX_TYPES)(
     '$name: the tx-builder hex form encodes identically to the byte form (E3)',
     ({ box }) => {
-      // The form that catches a missing `binaryFields` entry. With the field
-      // absent from the list the UI writes CBOR text (0x78 + 64 ASCII bytes)
-      // where the node writes a byte string (0x58 + 32 raw), and every id
+      // The form that catches a byte field the UI converts differently: it would
+      // write 64 bytes of ASCII where the node writes 32 raw, and every id
       // derived from that box diverges — while both sides' own tests still pass.
       expect(hexOf(ui.canonicalBoxBytes(toUiForm(box)))).toBe(hexOf(canonicalBoxBytes(box)));
       expect(ui.computeBoxId(toUiForm(box))).toBe(computeBoxId(box));
@@ -498,30 +617,150 @@ describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', (
     },
   );
 
+  it('guard has left the consensus bytes on both sides (C10)', () => {
+    // `guard` is a pure function of `boxType` — one string per type, with no box
+    // choosing between two — so it carried zero information while costing bytes
+    // in every box id. Both halves are pinned: the string is absent from the
+    // bytes, *and* changing it moves no id.
+    const bytes = hexOf(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE));
+    expect(bytes).not.toContain(Buffer.from('owner_signature').toString('hex'));
+    const reguarded = { ...GOLDEN_KARMA_BOX, guard: 'block_apply' as never };
+    expect(ui.computeBoxId(reguarded as unknown as Record<string, unknown>))
+      .toBe(GOLDEN_KARMA_BOX_ID);
+    expect(computeBoxId(reguarded)).toBe(GOLDEN_KARMA_BOX_ID);
+  });
+
+  it('a stray key is unrepresentable — the encoder reads only what it declares', () => {
+    // Under the CBOR form this needed an explicit strip of `id`/`txId`/`index`,
+    // and any *other* decoration a display path added still entered the hash.
+    // Positional has no branch that could write one.
+    const decorated = {
+      ...GOLDEN_KARMA_BOX, id: GOLDEN_KARMA_BOX_ID, createdAtBlock: 99, junk: 'x',
+    };
+    expect(hexOf(ui.canonicalBoxBytes(decorated as unknown as Record<string, unknown>)))
+      .toBe(GOLDEN_KARMA_BOX_BYTES);
+    expect(hexOf(canonicalBoxBytes(decorated as never))).toBe(GOLDEN_KARMA_BOX_BYTES);
+  });
+
+  it('the lpUtf8 length ladder agrees across implementations at every VLQ width', () => {
+    // `proofSource` is the only variable-length field left in a box, so it is
+    // the only place a length prefix can change width. The old cbor-x ladder
+    // (0x18/0x19/0x1a rungs) is gone; VLQ steps at 2^7 and 2^14 instead.
+    const prefixAt = (b: Uint8Array): string => hexOf(b.subarray(34, 37));
+    for (const [len, prefix] of [
+      [127, '7f7878'], [128, '800178'], [16383, 'ff7f78'], [16384, '808001'],
+    ] as Array<[number, string]>) {
+      const box: CandidateOf<KarmaBox> = {
+        ...GOLDEN_KARMA_CANDIDATE, proofSource: 'x'.repeat(len),
+      };
+      const fromUi = ui.canonicalBoxBytes(box as unknown as Record<string, unknown>);
+      const fromTypes = canonicalBoxBytes(box);
+      expect(hexOf(fromUi), `len=${len}`).toBe(hexOf(fromTypes));
+      expect(prefixAt(fromTypes), `len=${len}`).toBe(prefix);
+    }
+  });
+
+  it('an out-of-domain box field has no encoding on EITHER side', () => {
+    const short = { ...GOLDEN_KARMA_BOX, owner: new Uint8Array(31) };
+    expect(() => canonicalBoxBytes(short as never)).toThrow();
+    expect(() => ui.canonicalBoxBytes(short as unknown as Record<string, unknown>)).toThrow();
+    for (const value of [-1n, 2n ** 64n]) {
+      const bad = { ...GOLDEN_KARMA_BOX, value };
+      expect(() => canonicalBoxBytes(bad as never), `value=${value}`).toThrow();
+      expect(
+        () => ui.canonicalBoxBytes(bad as unknown as Record<string, unknown>),
+        `value=${value}`,
+      ).toThrow();
+    }
+  });
+
+  it('an unclaimed bond takes the absent branch, and is distinguishable from every committed one', () => {
+    // Both directions of the `opt(b32)` injectivity argument, on both sides.
+    const unclaimed = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX_UNCLAIMED));
+    const committed = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX));
+    expect(hexOf(ui.canonicalBoxBytes(GOLDEN_BOND_BOX_UNCLAIMED as unknown as Record<string, unknown>)))
+      .toBe(unclaimed);
+    // Unclaimed ends `00 00 00` — absent tag, then the two zero probation
+    // fields — and carries no key bytes at all. The tag byte is present either
+    // way, so committed is exactly 32 bytes longer, not 33.
+    expect(unclaimed.length + 32 * 2).toBe(committed.length);
+    expect(unclaimed).not.toBe(committed);
+    // The tx-builder form spells the same absence as an empty hex string, and
+    // must reach the same bytes — otherwise a client-built invite derives a bond
+    // id the node never agrees with.
+    expect(hexOf(ui.canonicalBoxBytes({ ...toUiForm(GOLDEN_BOND_BOX), inviteePublicKey: '' })))
+      .toBe(unclaimed);
+    // A *missing* field is out of domain, not unclaimed: letting it take the
+    // absent branch would give a malformed box a well-formed box's id.
+    const missing = { ...GOLDEN_BOND_BOX } as Partial<BondBox>;
+    delete missing.inviteePublicKey;
+    expect(() => canonicalBoxBytes(missing as never)).toThrow();
+    expect(() => ui.canonicalBoxBytes(missing as unknown as Record<string, unknown>)).toThrow();
+  });
+
+  it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
+    // Total, and the reserved tag is what keeps a malformed box from colliding
+    // with a well-formed one: no valid boxType is 0xff.
+    const bogus = { ...GOLDEN_KARMA_BOX, boxType: 'like' };
+    expect(hexOf(ui.canonicalBoxBytes(bogus as unknown as Record<string, unknown>))).toBe('ff64');
+    expect(hexOf(canonicalBoxBytes(bogus as never))).toBe('ff64');
+  });
+
   it('the UI reproduces the frozen golden txId (what signTxId signs)', () => {
     expect(ui.computeTxId(GOLDEN_UTXO_TX as unknown as Record<string, unknown>))
       .toBe(GOLDEN_UTXO_TX_ID);
     expect(computeTxId(GOLDEN_UTXO_TX)).toBe(GOLDEN_UTXO_TX_ID);
   });
 
-  it('bigint value serializes as 0x1b uint64; number fields stay minimal-int', () => {
-    const karmaHex = hexOf(ui.cborEncode(GOLDEN_KARMA_BOX));
-    const creditHex = hexOf(ui.cborEncode(GOLDEN_CREDIT_BOX));
-    // value 100n → 1b + u64BE(100); value 12345678900000000n → 1b + u64BE
-    expect(karmaHex).toContain('1b0000000000000064');
-    expect(creditHex).toContain('1b002bdc545d587500');
-    // A number field above 65536 stays minimal-int (uint32 form 1a00011170, not
-    // the 1b… uint64 form `value` uses). Asserted on the credit box:
-    // `proofSource` carries this pin since phase G3b deleted `createdAtBlock`,
-    // after which a karma box's canonical bytes hold no number field at all.
-    expect(creditHex).toContain('1a00011170');
-    expect(creditHex).not.toContain('1b0000000000011170');
+  it('the txId counts its entries — two output lists cannot concatenate alike (C1)', () => {
+    // Pre-migration the inputs and outputs were concatenated with no count and
+    // no length prefix, and box bytes are variable-length. `arr()` closes it.
+    const one = { ...GOLDEN_UTXO_TX, outputs: [GOLDEN_KARMA_CANDIDATE] };
+    const two = { ...GOLDEN_UTXO_TX, outputs: [GOLDEN_KARMA_CANDIDATE, GOLDEN_KARMA_CANDIDATE] };
+    expect(ui.computeTxId(one as unknown as Record<string, unknown>))
+      .not.toBe(ui.computeTxId(two as unknown as Record<string, unknown>));
+    expect(ui.computeTxId(one as unknown as Record<string, unknown>)).toBe(computeTxId(one));
+    expect(ui.computeTxId(two as unknown as Record<string, unknown>)).toBe(computeTxId(two));
   });
 
+  it('the preimages map agrees, and absence differs from empty (no malleability)', () => {
+    const withPreimages: UtxoTransaction = {
+      ...GOLDEN_UTXO_TX,
+      preimages: {
+        [GOLDEN_KARMA_BOX_ID]: new Uint8Array([1, 2, 3]),
+        [GOLDEN_CREDIT_BOX_ID]: new Uint8Array([4, 5]),
+      },
+    };
+    const empty: UtxoTransaction = { ...GOLDEN_UTXO_TX, preimages: {} };
+    expect(ui.computeTxId(withPreimages as unknown as Record<string, unknown>))
+      .toBe(computeTxId(withPreimages));
+    expect(ui.computeTxId(empty as unknown as Record<string, unknown>)).toBe(computeTxId(empty));
+    // `opt()` tags presence, so `{}` is `01 00` and absence is `00`. Under the
+    // pre-migration form both appended nothing and the two hashed alike.
+    expect(computeTxId(empty)).not.toBe(GOLDEN_UTXO_TX_ID);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+/**
+ * ⚠ **The UI's hand-written CBOR encoder is DEAD** as of this phase — zero
+ * callers in `index.html`, because `canonicalBoxBytes` is positional now. Its
+ * deletion is booked to the migration's Phase 7, whose entire remaining content
+ * this is.
+ *
+ * These four cases stay only so the encoder is not silently untested while it
+ * lives, and they are deliberately narrowed to the encoder's own primitives: the
+ * box-shaped assertions that used to sit here ("bigint value serializes as 0x1b
+ * uint64", "an over-cap field still encodes byte-identically to cbor-x") made a
+ * claim about *box identity* that is no longer true of this code, and moved to
+ * the positional block above. They go together with the encoder in Phase 7.
+ */
+describe('demo UI CBOR encoder — retired, pinned until Phase 7 deletes it', () => {
   it('cborEncodeInt matches cbor-x across the full number range (L-5)', () => {
-    // Byte forms measured against cbor-x 1.6.4 with the computeBoxId encoder
-    // config. Note the float64 (0xfb) forms past ±2^32: cbor-x never emits
-    // 0x1b uint64 for a JS number — that form is exclusively the bigint path.
+    // Byte forms measured against cbor-x 1.6.4. Note the float64 (0xfb) forms
+    // past ±2^32: cbor-x never emits 0x1b uint64 for a JS number — that form is
+    // exclusively the bigint path.
     const cases: Array<[number, string]> = [
       [0, '00'], [23, '17'], [24, '1818'], [255, '18ff'],
       [256, '190100'], [65535, '19ffff'],
@@ -534,18 +773,10 @@ describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', (
       [-Number.MAX_SAFE_INTEGER, 'fbc33fffffffffffff'],
     ];
     for (const [n, hex] of cases) expect(hexOf(ui.cborEncodeInt(n)), `n=${n}`).toBe(hex);
-    // Non-integers are a UI bug, not an encodable value.
     expect(() => ui.cborEncodeInt(1.5)).toThrow();
     expect(() => ui.cborEncodeInt(NaN)).toThrow();
   });
 
-  /**
-   * L-5's other half. `cborEncodeInt` was widened to the full range in Spec B
-   * P0; the byte/text encoders still capped their length prefix at 255 and threw
-   * beyond. Unreachable today — every box string field is a 64-char hex at most,
-   * every byte field is 32, and post content never goes through this encoder —
-   * so these pin a foot-gun shut rather than fixing a live divergence.
-   */
   const headOf = (b: Uint8Array, n: number): string => Buffer.from(b.subarray(0, n)).toString('hex');
 
   it('cborEncodeBytes follows the cbor-x length ladder past the old 255 cap (L-5)', () => {
@@ -573,20 +804,6 @@ describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', (
     expect(ui.cborEncodeString('✓'.repeat(200)).length).toBe(3 + 600);
   });
 
-  it('an over-cap field still encodes byte-identically to cbor-x', () => {
-    // The ladder measured against the real encoder rather than against itself,
-    // at each rung and either side of the old cap.
-    for (const len of [255, 256, 65535, 65536]) {
-      const box: KarmaBox = {
-        ...GOLDEN_KARMA_BOX, owner: new Uint8Array(len), proofSource: 'x'.repeat(len),
-      };
-      const fromUi = Buffer.from(ui.canonicalBoxBytes(box as unknown as Record<string, unknown>));
-      const fromTypes = Buffer.from(canonicalBoxBytes(box));
-      expect(fromUi.length, `len=${len}`).toBe(fromTypes.length);
-      expect(Buffer.compare(fromUi, fromTypes), `len=${len}`).toBe(0);
-    }
-  });
-
   it('cborEncodeBigInt always emits the 8-byte uint64 form, and only that', () => {
     expect(hexOf(ui.cborEncodeBigInt(0n))).toBe('1b0000000000000000');
     expect(hexOf(ui.cborEncodeBigInt(2n))).toBe('1b0000000000000002');
@@ -600,87 +817,36 @@ describe('demo UI ↔ @dagsocial/types box-value encoding mirror (Spec B P0)', (
 // ---------------------------------------------------------------------------
 
 /**
- * Box-identity mirror (Spec G phase E). Two things are pinned here and only one
- * of them is live:
+ * Box-identity mirror (Spec G phase E). The derivation binds content *and* the
+ * position that content was created at:
  *
- * - **The strip rule** is live. `canonicalBoxBytes` drops `id` *and* the
- *   provenance keys `txId`/`index`, the fix phase C0 made in types. It moves no
- *   id today — every box the UI hashes is client-built and carries no
- *   provenance — and it stops the UI diverging the first time it hashes a
- *   **server-returned** box, which has carried provenance since phase C.
- * - **`computeCandidateBoxId`** is *not wired to anything*. The UI still
- *   computes legacy ids because the node still does; phase G flips both sides in
- *   one commit. Switching only the client would break the two flows that predict
- *   an id the node must later agree with — the invite flow baked a predicted
- *   `inviteBoxId` into `bond.inviteBoxId`, and the retired unlike path spent a
- *   cached like-box id. (Both flows are since gone: bond pairing is by output
- *   index, and unlike is not a feature.)
+ *   blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes ‖ b32(txId) ‖ vlqU(index) )
  *
- * So every assertion in the preceding two blocks must keep passing untouched: a
- * moved golden vector here means the cutover happened early.
+ * Provenance is no longer *stripped* before hashing — it is structurally absent
+ * from `canonicalBoxBytes` and appended afterwards, which is what keeps the
+ * derivation non-circular without anyone having to remember a strip rule.
  */
 describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', () => {
-  const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
   const asUi = (box: object): Record<string, unknown> => box as unknown as Record<string, unknown>;
 
-  /** The same boxes as above, carrying the provenance phase C's producers set. */
-  const KARMA_WITH_PROVENANCE = { ...GOLDEN_KARMA_BOX, txId: GOLDEN_UTXO_TX_ID, index: 0 };
-  const CREDIT_WITH_PROVENANCE = { ...GOLDEN_CREDIT_BOX, txId: GOLDEN_UTXO_TX_ID, index: 1 };
-
-  // --- the strip rule -------------------------------------------------------
-
-  it('the UI canonical box bytes are byte-identical to canonicalBoxBytes', () => {
-    expect(hexOf(ui.canonicalBoxBytes(asUi(GOLDEN_KARMA_BOX))))
-      .toBe(hexOf(canonicalBoxBytes(GOLDEN_KARMA_BOX)));
-    expect(hexOf(ui.canonicalBoxBytes(asUi(GOLDEN_CREDIT_BOX))))
-      .toBe(hexOf(canonicalBoxBytes(GOLDEN_CREDIT_BOX)));
-  });
-
-  it('provenance is stripped, so a stored box encodes to its candidate bytes', () => {
-    // The non-vacuous case: a box that *does* carry txId/index. With the old
-    // id-only strip these bytes gain two map entries and every derived id moves.
-    const bare = hexOf(canonicalBoxBytes(GOLDEN_KARMA_BOX));
-    expect(hexOf(ui.canonicalBoxBytes(asUi(KARMA_WITH_PROVENANCE)))).toBe(bare);
-    expect(hexOf(canonicalBoxBytes(KARMA_WITH_PROVENANCE))).toBe(bare);
-    // `id` too — the key the strip already handled before phase C0.
-    const stored = { ...KARMA_WITH_PROVENANCE, id: GOLDEN_KARMA_BOX_ID };
-    expect(hexOf(ui.canonicalBoxBytes(asUi(stored)))).toBe(bare);
-  });
-
   it('the legacy boxId is unmoved by provenance on both sides', () => {
-    expect(ui.computeBoxId(asUi(KARMA_WITH_PROVENANCE))).toBe(GOLDEN_KARMA_BOX_ID);
-    expect(computeBoxId(KARMA_WITH_PROVENANCE)).toBe(GOLDEN_KARMA_BOX_ID);
-    expect(ui.computeBoxId(asUi(CREDIT_WITH_PROVENANCE))).toBe(GOLDEN_CREDIT_BOX_ID);
-    expect(computeBoxId(CREDIT_WITH_PROVENANCE)).toBe(GOLDEN_CREDIT_BOX_ID);
+    expect(ui.computeBoxId(asUi(GOLDEN_KARMA_BOX))).toBe(GOLDEN_KARMA_BOX_ID);
+    expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
+    expect(ui.computeBoxId(asUi(GOLDEN_CREDIT_BOX))).toBe(GOLDEN_CREDIT_BOX_ID);
+    expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
   });
 
-  it('the txId is unmoved by output provenance too — one strip rule, two callers', () => {
-    // The UI's second copy of the strip. types routes computeTxId's outputs
-    // through canonicalBoxBytes for exactly this reason; the UI now does too.
+  it('the txId is unmoved by output provenance too — one encoder, two callers', () => {
+    // types routes `computeTxId`'s outputs through `canonicalBoxBytes` for
+    // exactly this reason; the UI does too, so a materialized output and the
+    // candidate it came from hash the same.
     const tx: UtxoTransaction = {
       ...GOLDEN_UTXO_TX,
-      outputs: [KARMA_WITH_PROVENANCE, CREDIT_WITH_PROVENANCE],
+      outputs: [GOLDEN_KARMA_BOX, GOLDEN_CREDIT_BOX],
     };
     expect(ui.computeTxId(asUi(tx))).toBe(GOLDEN_UTXO_TX_ID);
     expect(computeTxId(tx)).toBe(GOLDEN_UTXO_TX_ID);
   });
-
-  // --- u32BE ----------------------------------------------------------------
-
-  it('the UI u32BE writes big-endian and normalizes to the sentinel', () => {
-    expect(hexOf(ui.u32BE(0))).toBe('00000000');
-    expect(hexOf(ui.u32BE(1))).toBe('00000001');          // '01000000' if little-endian
-    expect(hexOf(ui.u32BE(0x12345678))).toBe('12345678'); // '78563412' if little-endian
-    expect(hexOf(ui.u32BE(0xfffffffe))).toBe('fffffffe'); // top of the encodable domain
-    // Out of domain — including 2³²−1 itself, which is the sentinel, so a
-    // well-formed index can never collide with a malformed one.
-    for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, 0xffffffff, 2 ** 32,
-      Number.MAX_SAFE_INTEGER]) {
-      expect(hexOf(ui.u32BE(bad)), `n=${bad}`).toBe('ffffffff');
-    }
-  });
-
-  // --- the Spec G derivation (present, unused) -------------------------------
 
   it('the UI computeCandidateBoxId matches types on the golden vectors', () => {
     expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, 0))
@@ -695,8 +861,8 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
 
   it('a stored box re-derives its own id — the derivation is total over both forms', () => {
     // What a light client does: take a box off the wire, re-derive from its own
-    // provenance. Only works because the strip is provenance-wide.
-    expect(ui.computeCandidateBoxId(asUi(KARMA_WITH_PROVENANCE), GOLDEN_UTXO_TX_ID, 0))
+    // provenance.
+    expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, 0))
       .toBe(GOLDEN_KARMA_CANDIDATE_ID);
   });
 
@@ -722,8 +888,9 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
   });
 
   it('a wide index agrees byte for byte across implementations', () => {
-    // 0x12345678 is asymmetric, so a little-endian mirror fails here even though
-    // it agrees on index 0 — the index every mint and most single-output txs use.
+    // 0x12345678 needs five VLQ bytes, so a mirror that stopped at one
+    // continuation byte fails here even though it agrees on index 0 — the index
+    // every mint and most single-output transactions use.
     expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, 0x12345678))
       .toBe(GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX);
     expect(computeCandidateBoxId(GOLDEN_KARMA_BOX, GOLDEN_UTXO_TX_ID, 0x12345678))
@@ -731,26 +898,43 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
   });
 
   it('a malformed index derives the sentinel id rather than throwing (M-5)', () => {
-    for (const bad of [NaN, Infinity, -1, 1.5, 0xffffffff, 2 ** 32]) {
+    // `index` is `vlqU`, which is total: the encodable domain is the
+    // non-negative safe integers, so the all-ones u64 stays unreachable from a
+    // valid index and a malformed one cannot impersonate a valid one.
+    //
+    // Note 0xffffffff and 2^32 are NOT in this list any more, and that is the
+    // change rather than an omission: under the old `u32BE` the sentinel WAS
+    // 0xffffffff, so those two collided with malformed input. `vlqU` encodes
+    // both faithfully.
+    for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, bad), `index=${bad}`)
         .toBe(GOLDEN_KARMA_CANDIDATE_ID_SENTINEL);
       expect(computeCandidateBoxId(GOLDEN_KARMA_BOX, GOLDEN_UTXO_TX_ID, bad), `index=${bad}`)
         .toBe(GOLDEN_KARMA_CANDIDATE_ID_SENTINEL);
     }
+    // …and 2^32 is now a real index, distinct from the sentinel.
+    expect(computeCandidateBoxId(GOLDEN_KARMA_BOX, GOLDEN_UTXO_TX_ID, 2 ** 32))
+      .not.toBe(GOLDEN_KARMA_CANDIDATE_ID_SENTINEL);
+    expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, 2 ** 32))
+      .toBe(computeCandidateBoxId(GOLDEN_KARMA_BOX, GOLDEN_UTXO_TX_ID, 2 ** 32));
   });
 
-  it('txId enters as the UTF-8 bytes of its hex text, not as decoded bytes', () => {
-    // Case is the observable: hex decoding would collapse these onto one id.
-    // (TYPES_INTERFACE.md → Pinned byte forms — also why derivation stays total
-    // on an attacker-supplied txId, where a decode would throw.)
-    const upper = GOLDEN_UTXO_TX_ID.toUpperCase();
-    const uiUpper = ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), upper, 0);
-    expect(uiUpper).not.toBe(GOLDEN_KARMA_CANDIDATE_ID);
-    expect(uiUpper).toBe(computeCandidateBoxId(GOLDEN_KARMA_BOX, upper, 0));
-    // Odd-length and non-hex text derive an id instead of throwing.
-    for (const weird of ['', 'abc', 'zz']) {
-      expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), weird, 0), `txId=${weird}`)
-        .toBe(computeCandidateBoxId(GOLDEN_KARMA_BOX, weird, 0));
+  it('txId enters as 32 RAW bytes — an out-of-domain txId has no encoding at all', () => {
+    // Was "txId enters as the UTF-8 bytes of its hex text, not as decoded
+    // bytes", and the case-sensitivity it proved is the reason the name had to
+    // change rather than the constant: `AB…` and `ab…` used to derive two
+    // distinct ids for one transaction, and the old form kept that collision
+    // *visible* instead of removing it. Under `b32` the uppercase spelling has
+    // no encoding, so the ambiguity is unconstructible rather than distinguished.
+    //
+    // The cost is stated where it is paid: derivation is no longer total on an
+    // attacker-supplied txId, so every call site must establish the domain. Every
+    // txId reaching here is a blake2b digest rendered lowercase, by construction.
+    for (const weird of [GOLDEN_UTXO_TX_ID.toUpperCase(), '', 'abc', 'zz', 'ab'.repeat(31)]) {
+      expect(() => computeCandidateBoxId(GOLDEN_KARMA_BOX, weird, 0), `types txId=${weird}`)
+        .toThrow();
+      expect(() => ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), weird, 0), `ui txId=${weird}`)
+        .toThrow();
     }
   });
 
@@ -775,11 +959,10 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
 
 /**
  * likeTarget tail mirror (P2-D). The like transaction's target sits inside the
- * `computeTxId` preimage behind an ASCII `like:` marker, appended only when
- * the field is present — presence is `!== undefined`, NOT truthiness. The UI
- * signs what it builds, so a mirror that dropped the tail (or gated it on
- * truthiness) would sign ids the node never computes, and every like from the
- * demo UI would be rejected.
+ * `computeTxId` preimage as `opt(b32)`, so the signature covers the target and a
+ * relay cannot re-point a like. The UI signs what it builds, so a mirror that
+ * dropped the tail (or gated it on truthiness) would sign ids the node never
+ * computes, and every like from the demo UI would be rejected.
  */
 describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   const asUi = (tx: object): Record<string, unknown> => tx as unknown as Record<string, unknown>;
@@ -787,9 +970,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    'a126fd5ef4e1ae9b7044d1e9685f2b8d5f99736027b31d51d7a2cf1d98307c72';
-  const GOLDEN_EMPTY_TARGET_TX_ID =
-    '42ff2ed25e1000a5334659d3084d230a4179af0563a635d7a28250cf6eba4bc0';
+    '724fcce0c711683d05f6f099584d30704f99ca2f41251d9a69757119f2ae84ee';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,
@@ -801,16 +982,21 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
     expect(computeTxId(GOLDEN_LIKE_TX)).toBe(GOLDEN_LIKE_TX_ID);
   });
 
-  it('absence appends nothing — the un-targeted tx keeps its pre-P2-D id', () => {
+  it('absence appends nothing but the tag — the un-targeted tx keeps its id', () => {
     expect(ui.computeTxId(asUi(GOLDEN_UTXO_TX))).toBe(GOLDEN_UTXO_TX_ID);
     expect(GOLDEN_LIKE_TX_ID).not.toBe(GOLDEN_UTXO_TX_ID);
   });
 
-  it('presence is not truthiness — an empty-string target still appends the marker', () => {
+  it('an empty-string target has no encoding — the truthiness trap is gone', () => {
+    // Was "presence is not truthiness — an empty-string target still appends the
+    // marker". Under the ASCII `like:` marker an empty target was *encodable*,
+    // so the pin had to be that presence is `!== undefined` rather than truthy.
+    // `opt(b32)` still distinguishes presence from absence by a tag byte, but
+    // `''` is out of the `b32` domain, so the case the old pin guarded is
+    // unconstructible rather than merely handled.
     const emptyTarget: UtxoTransaction = { ...GOLDEN_UTXO_TX, likeTarget: '' };
-    expect(ui.computeTxId(asUi(emptyTarget))).toBe(GOLDEN_EMPTY_TARGET_TX_ID);
-    expect(computeTxId(emptyTarget)).toBe(GOLDEN_EMPTY_TARGET_TX_ID);
-    expect(GOLDEN_EMPTY_TARGET_TX_ID).not.toBe(GOLDEN_UTXO_TX_ID);
+    expect(() => computeTxId(emptyTarget)).toThrow();
+    expect(() => ui.computeTxId(asUi(emptyTarget))).toThrow();
   });
 
   it('the target binds — re-pointing the like moves the id identically on both sides', () => {
