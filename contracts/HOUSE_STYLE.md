@@ -178,14 +178,22 @@ one body, closer up it becomes individuals.
 
 | Tier | Size | Contents |
 |---|---|---|
-| full | ≥ 256px | recursion, hollow banner, keyline, six figures |
-| mid | 128–256 | hollow banner, keyline, six figures |
-| small | 32–128 | six figures; no banner, no keyline |
+| full | ≥ 160px | recursion, hollow banner, keyline, six figures |
+| mid | 96–160 | hollow banner, keyline, six figures |
+| small | 32–96 | six figures; no banner, no keyline |
 | micro | ≤ 32 | continuous ring with heads, N only |
 
-**The banner leaves at 128, not at 32.** Rendered at 4×, a solid banner is already a lump on
-the N's counter by 64px and reads as damage to the letterform by 32; the hollow one turns to
-dirt sooner still. Dropping it beats simplifying it — that comparison was made, not assumed.
+Both cut points were rendered and measured rather than reasoned about, and the first one was
+wrong to begin with.
+
+**The recursion survives to 160px.** The nested mark is 6.58% of the whole, so at 160px it is
+about 11px across — abstract, but still reading as a mark inside the banner. At 128 it is a dot
+with no structure, and at 96 a smudge. An earlier draft of this document put the boundary at
+256, extrapolating from the small-size tests instead of rendering the range.
+
+**The banner leaves at 96.** A solid banner is already a lump on the N's counter by 64px and
+reads as damage to the letterform by 32. Dropping it beats simplifying it — that comparison was
+made, not assumed.
 
 Colours are driven by the CSS custom properties `--notis-green` and `--notis-keyline`, so the
 artwork is inlined as SVG rather than referenced as an `<img>`; custom properties do not cross
