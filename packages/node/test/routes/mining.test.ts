@@ -189,6 +189,35 @@ describe('mining routes — auth', () => {
 });
 
 // ---------------------------------------------------------------------------
+// `subBlockRefs` is served from the committed entries
+// ---------------------------------------------------------------------------
+
+describe('mining routes — template subBlockRefs', () => {
+  it('serves subBlockRefs derived from the template\'s committed entries', async () => {
+    const committedId = 'aa'.repeat(32);
+    const poisonId = 'bb'.repeat(32);
+
+    // A template whose refs disagree with its entries. `subBlockRoot` covers
+    // the entries and not the refs, so an external miner has no way to tell
+    // from the block itself which list the node believes — the response has to
+    // be the committed one.
+    const tpl = makeTemplate();
+    tpl.subBlockTree.subBlockEntries = [
+      { postId: committedId, parentRefs: [], author: 'cc'.repeat(32) },
+    ];
+    tpl.subBlockTree.subBlockRefs = [poisonId];
+
+    const res = await request(makeApp(makeDeps({ getCurrentTemplate: () => tpl })))
+      .get('/template')
+      .set('Authorization', `Bearer ${SECRET}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.subBlockRefs).toEqual([committedId]);
+    expect(res.body.subBlockRefs).not.toContain(poisonId);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mount policy (audit M-7) — internal miners expose no mining surface at all.
 // An unmounted path 404s; a mounted one 401s. That is the discriminator.
 // ---------------------------------------------------------------------------

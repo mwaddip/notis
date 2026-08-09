@@ -19,6 +19,10 @@ const TEST_DB = '/tmp/dagsocial-test-routes-blocks.sqlite';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** The id an honest entry commits to, and the unrelated id a liar's refs name. */
+const COMMITTED_ID = 'aa'.repeat(32);
+const POISON_ID = 'bb'.repeat(32);
+
 function makeBlock(height: number, hash: string): OrderingBlock {
   const baseHash = height === 1 ? '0'.repeat(64) : `block-${height - 1}`;
   return {
@@ -148,8 +152,17 @@ describe('blocks routes', () => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
     initDb(TEST_DB);
 
-    // Create an ordering block
+    // Create an ordering block, with refs that disagree with the entries they
+    // are supposed to mirror. `subBlockRefs` is outside `subBlockRoot`, so
+    // nothing in the block's own commitments contradicts this; the store
+    // persists the CBOR-encoded tree, so the disagreement survives read-back.
+    // Carried by the height-1 block rather than a second one on purpose — a
+    // block at height 2 would move the tip `/blocks/current` asserts on.
     const block = makeBlock(1, 'a'.repeat(64));
+    block.subBlockTree.subBlockEntries = [
+      { postId: COMMITTED_ID, parentRefs: [], author: 'cc'.repeat(32) },
+    ];
+    block.subBlockTree.subBlockRefs = [POISON_ID];
     createOrderingBlock(block);
 
     // Create an identity
@@ -170,6 +183,21 @@ describe('blocks routes', () => {
     expect(header.height).toBe(1);
     expect(typeof body.validatorSignature).toBe('string');
     expect(body.validatorSignature).toBeDefined();
+  });
+
+  it('GET /blocks/:height serves subBlockRefs derived from the committed entries', async () => {
+    const res = await request('/blocks/1');
+    expect(res.status).toBe(200);
+    const tree = (res.data as Record<string, unknown>).subBlockTree as Record<
+      string,
+      unknown
+    >;
+
+    // The stored block says `[POISON_ID]`. The response says what the block
+    // actually committed to. Serving the carried field would hand every client
+    // — the demo UI, a light client, an indexer — an id no entry names.
+    expect(tree.subBlockRefs).toEqual([COMMITTED_ID]);
+    expect(tree.subBlockRefs).not.toContain(POISON_ID);
   });
 
   it('GET /blocks/:height with invalid height returns 400', async () => {
