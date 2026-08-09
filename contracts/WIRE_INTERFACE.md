@@ -45,18 +45,21 @@ mismatches.
   re-encode to different bytes. Both halves match the references, and the
   asymmetry is exactly what lets the layer above detect non-minimal input.
 
-> ⚠ **AHEAD OF CODE — this package gains a second consumer.**
-> From `docs/specs/2026-08-09-positional-wire-format.md`.
+> ⚠ **THIS PACKAGE IS A CONSENSUS DEPENDENCY.** Per
+> `docs/specs/2026-08-09-positional-wire-format.md`; landed in Phase 1b.
 >
-> **`@dagsocial/types` becomes a consumer**, which makes this the repo's **base codec layer**, not
-> only the transport-framing package. `net` is no longer the sole dependant. No cycle is introduced:
-> this package still has zero dependencies, and that must stay true — every consensus preimage in the
-> system will be built on it.
+> **`@dagsocial/types` is a consumer** — it declares the workspace dependency and `codec.ts`,
+> `post.ts`, `stump.ts` and `utxo.ts` all import from here. That makes this the repo's **base codec
+> layer**, not only the transport-framing package; `net` is no longer the sole dependant. No cycle is
+> introduced: this package still has zero dependencies, and that must stay true.
 >
-> **Consensus reach.** Until now this package's bytes were transport framing: a bug produced a
-> dropped message. After this, its writers produce **box ids, tx ids, post ids, Merkle roots and the
-> `stateRoot`**. A change to VLQ output here silently moves every id in the system. Treat any edit to
-> `vlq.ts`, `reader.ts` or `writer.ts` as a consensus change from that point on.
+> **Consensus reach — this is now fact, not a warning about the future.** This package's bytes used
+> to be transport framing, where a bug produced a dropped message. As of Phase 2 its writers produce
+> **box ids, tx ids, post ids, post PoW preimages and the prune-entry Merkle leaf**. Still to come:
+> the block header and `blockHash` (Phase 3), the `subBlockRoot` / `utxoTxRoot` leaf preimages
+> (Phase 4, still `JSON.stringify` today), and the `stateRoot` (Phase 5). A change to VLQ output here
+> silently moves every id in the system. **Treat any edit to `vlq.ts`, `reader.ts` or `writer.ts` as
+> a consensus change.**
 >
 > **Writers throw and that is load-bearing to preserve.** `encodeVlqU` rejects non-integers,
 > negatives, and values past `MAX_SAFE_INTEGER`. Do **not** make them total here — totality is

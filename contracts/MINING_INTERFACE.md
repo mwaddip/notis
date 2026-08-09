@@ -191,17 +191,17 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
 the fixed 32-byte preimage the miner hashes with the nonce. The miner never
 touches CBOR. 404 when no template is available yet.
 
-> ⚠ **AHEAD OF CODE — Phase 1f. This endpoint gains a 500.** `computePowHash` returns
-> `Buffer | null`, `null` for a header outside the encodable domain
-> (`VALIDATION_INTERFACE` → `computePowHash`). The template header is built locally by
-> `block-creator.ts`, so `null` means this node built a header it cannot itself encode — a bug in
-> the creator, not a client error.
->
-> **500, not 404.** They are different claims: 404 says no template exists yet and the miner should
-> retry, which is routine. 500 says a template exists and is malformed, which is not. A miner that
-> retried a 404 forever against a broken creator would never learn anything — and silently omitting
-> `powPreimage` would be worse still, because the miner would mine against `undefined` and submit
-> nonces that can never verify.
+**This endpoint also returns 500** (Phase 1f), with `{ error: 'Block template header is not
+encodable' }`. `computePowHash` returns `Buffer | null`, `null` for a header outside the encodable
+domain (`VALIDATION_INTERFACE` → `computePowHash`). The template header is built locally by
+`block-creator.ts`, so `null` means this node built a header it cannot itself encode — a bug in the
+creator, not a client error.
+
+**500, not 404.** They are different claims: 404 says no template exists yet and the miner should
+retry, which is routine. 500 says a template exists and is malformed, which is not. A miner that
+retried a 404 forever against a broken creator would never learn anything — and silently omitting
+`powPreimage` would be worse still, because the miner would mine against `undefined` and submit
+nonces that can never verify.
 
 ### POST /mining/submit
 

@@ -368,17 +368,24 @@ obligations — and journal replay and any future snapshot sync must be designed
 over **recorded bytes** (the journal's box records, a transferred tree), never
 over views re-typed from storage.
 
-> ⚠ **PARTIAL.** Both halves run for keys and guards: the outbound half since
-> P2-B (value fabrication fixed; `rowToBox` reproduces honest boxes
-> byte-exactly), the inbound half since the guard-shape pin landed
-> (2026-08-08: closed per-boxType key sets, canonical-guard equality, pinned
-> by `computeBoxId(rowToBox(row)) === row.id` discriminator tests — which also
-> caught a live instance: an integration fixture had carried a lying invite
-> shape since before the check existed). Still open: field **types** — nothing
-> yet checks that `owner` is 32 bytes or `originalValue` is a bigint, so a
-> malformed-typed field still enters the id and the `stateRoot` verbatim
-> (queued follow-up, with `validateTx`'s totality gap — see NODE_INTERFACE →
-> "Output shape").
+**Both halves run, in all three respects.** The outbound half since P2-B (value
+fabrication fixed; `rowToBox` reproduces honest boxes byte-exactly). The inbound
+half since the guard-shape pin landed (2026-08-08: closed per-boxType key sets,
+canonical-guard equality, pinned by `computeBoxId(rowToBox(row)) === row.id`
+discriminator tests — which also caught a live instance: an integration fixture
+had carried a lying invite shape since before the check existed). Field **types**
+since the field-type pin (2026-08-08, PR #16): `OUTPUT_SHAPE` carries a runtime
+type per field — `owner` is `bytes32`, `originalValue` is `u64`, every predicate
+total — and `checkOutputShape` moved to `validateTx` **step 4**, ahead of the
+transition arms that dereference those fields, which is what closed the totality
+gap the same marker used to book as a queued follow-up.
+
+Two corrections that phase produced are worth keeping, because both were
+type-versus-domain errors of the kind this section is about: credit
+`proofSource` is `heightOrTransfer`, not a plain height, because production
+stamps `-1` as the transfer sentinel; and `post_lock.targetPostId` needed a
+`hex32` type added in the wire-format bundle, having been admitted as any
+`string` while `canonicalBoxBytes` wrote it with a throwing fixed-width writer.
 
 > ⚠ **AHEAD OF CODE — the inbound obligation becomes structural.** Under the positional wire format
 > (`docs/specs/2026-08-09-positional-wire-format.md`), "any path admitting client-supplied structure

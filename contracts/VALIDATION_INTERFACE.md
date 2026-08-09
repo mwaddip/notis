@@ -60,9 +60,9 @@ the block creator to verify externally-submitted mining solutions.
 computePowHash(header: BlockHeader): Buffer | null
 ```
 
-> ⚠ **AHEAD OF CODE — Phase 1f.** The return type is `Buffer` today. It becomes `Buffer | null`
-> when this function establishes its own domain; see `blockHash` below for the full reasoning, which
-> applies identically here. Returns `null` on exactly the inputs `verifyHeaderFieldDomains` rejects.
+**This function establishes its own domain** (Phase 1f). It returns `null` on exactly the inputs
+`verifyHeaderFieldDomains` rejects and the 32-byte preimage otherwise — see `blockHash` below for the
+full reasoning, which applies identically here.
 
 Computes the preimage the PoW nonce hashes against: takes the header with
 `powNonce` set to `0`, CBOR-encodes it (`encodeHeader`), and returns
@@ -89,22 +89,23 @@ and as the message the validator signs — `verifyValidatorSignature` recomputes
 Because `validatorSignature` lives on the block and not in the header, `blockHash`
 is stable before and after signing.
 
-> ⚠ **AHEAD OF CODE — Phase 1f.** The return type is `string` today, and the function performs **no
-> input check at all**: it hands `header` straight to `encodeHeader`. It becomes `string | null`,
-> returning `null` exactly when `verifyHeaderFieldDomains` rejects the header.
->
-> **Why the guard moves inside rather than being required of callers.** `blockHash` has an
+**This function establishes its own domain** (Phase 1f). It returns `null` exactly when
+`verifyHeaderFieldDomains` rejects the header and the 64-char hex hash otherwise. Before Phase 1f it
+returned `string` and performed **no input check at all**, handing `header` straight to `encodeHeader`.
+
+> **Why the guard went inside rather than being required of callers.** `blockHash` had an
 > unenforced precondition and 13 `src` call sites, each independently responsible for remembering it.
-> `isEncodableHeader` is that precondition written down — and applied at three of them. The
+> `isEncodableHeader` was that precondition written down — and applied at three of them. The
 > enumeration behind Phase 1f (spec §6.2) found a caller that reaches this function with peer-supplied
 > data that has passed no check whatsoever: `net`'s `requestHeaders` returns
 > `decode(response) as BlockHeader[]` — a raw cbor decode with a cast, not even an `Array.isArray` —
 > and node's fork resolution hands those bare headers straight here.
 > `verifyOrderingBlockStructure` **cannot** cover that path: it takes an `OrderingBlock` and the path
 > carries bare headers. A check the caller must remember to invoke is the shape the spec blames for
-> this whole defect class (§2.1), and Phase 1d already ruled the same way for `verifyPostFieldDomains`.
+> this whole defect class (§2.1), and Phase 1d had already ruled the same way for
+> `verifyPostFieldDomains`.
 >
-> **Two distinct failures this closes, and only one of them is a panic.** After Phase 3 the
+> **Two distinct failures this closed, and only one of them is a panic.** After Phase 3 the
 > fixed-width header fields become `b32`/`b33` writers, which throw — that is the visible half. The
 > half a panic-shaped search cannot see is `createdAt`: it has **no domain check anywhere in the
 > repo**, and its writer is `vlqU`, which is total *by sentinel*. So it does not throw — it
@@ -156,12 +157,14 @@ authorship) fails this check. Mirrors `verifyPostSignature`; like it, the caller
 supplies the public key (here the header's own `validatorId`) and the function
 performs no I/O.
 
-**No-panic (M-5).** Returns `false` — never throws — on malformed input: a header
-that is not CBOR-encodable (so `blockHash` / `encodeHeader` cannot run), a
-`validatorId` that is not exactly 32 bytes (the SPKI wrap / `createPublicKey`
-would otherwise throw), or a `signature` that is not a byte view. A wrong-*length*
-signature is left to `crypto.verify`, which rejects it cleanly, matching
-`verifyPostSignature`.
+**No-panic (M-5).** Returns `false` — never throws — on malformed input: a
+`signature` that is not a byte view, or any header outside the domain, which
+since Phase 1f is **one** guard rather than two. `blockHash` returns `null` on
+exactly the headers `verifyHeaderFieldDomains` rejects, and its non-null return
+*proves* `validatorId` is exactly 32 bytes — which is what keeps the SPKI wrap and
+`createPublicKey` ("Failed to read asymmetric key") out of reach without a
+separate length check here. A wrong-*length* signature is left to `crypto.verify`,
+which rejects it cleanly, matching `verifyPostSignature`.
 
 ---
 
@@ -271,15 +274,15 @@ Total on adversarial input, like every function here.
 verifyHeaderFieldDomains(header: unknown): { valid: boolean; error?: string }
 ```
 
-> ⚠ **AHEAD OF CODE — Phase 1f.** Does not exist yet. It **replaces** `isEncodableHeader`
-> (`verify.ts:232`, private) and becomes the single source of the header's encodable domain.
+Added by Phase 1f. It **replaced** the private `isEncodableHeader`, which is deleted, and is the
+single source of the header's encodable domain.
 
 The header's counterpart to `verifyPostFieldDomains`, and the reason it is one function rather than
-two: **the header domain is currently written down twice.** `isEncodableHeader` states it as types
+two: **the header domain used to be written down twice.** `isEncodableHeader` stated it as types
 only — `typeof prevBlockHash === 'string'` with no width and no alphabet, a bare `isBytes(validatorId)`
-with no length. `verifyOrderingBlockStructure` states it again with widths and alphabets (Phase 1e).
+with no length. `verifyOrderingBlockStructure` stated it again with widths and alphabets (Phase 1e).
 Two implementations of one domain drift; that is the class the positional format exists to close, so
-1f collapses them and both callers use this.
+1f collapsed them and both callers use this.
 
 The domain, by field:
 
@@ -348,11 +351,20 @@ preimage. Placing it here closes that path **without any edit to
 verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?: string }
 ```
 
-Checks: `inputs` is a non-empty array, `outputs` is a non-empty array,
-no duplicate inputs, `protocolVersion` is a number, and `likeTarget` — when
-present — is a 64-char hex string (P2-D). Does NOT check UTXO conservation,
-guard satisfaction, or the like biconditional (`likeTarget` ⟺ deficit) — those
-are Stage 2 (stateful) checks.
+Checks: `tx` is an object, `inputs` is a non-empty array, `outputs` is a
+non-empty array, no duplicate inputs, and `protocolVersion` is a number. That is
+the whole list.
+
+**It does not check `likeTarget`**, and this contract wrongly said it did until
+2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
+field *is* domain-pinned, just not here: node's `checkTxEnvelope` requires it to
+be 64 lowercase hex when present (`utxo-engine.ts`, `validateTx` step 0), which
+is what establishes the domain for the `opt(b32)` writer in `txIdBytes`. The
+claim was misplaced, not a missing check — but a contract that names the wrong
+layer is how a later reader deletes the real check as redundant.
+
+Also does NOT check UTXO conservation, guard satisfaction, or the like
+biconditional (`likeTarget` ⟺ deficit) — those are Stage 2 (stateful) checks.
 
 ### verifyOrderingBlockStructure
 
@@ -397,15 +409,16 @@ block hash is *derived* from the header by `blockHash`, never carried in it, and
 hash field would be exactly the "trust the object's own claim" pattern this package exists to
 refuse. Recorded because it is the second contract-vs-code divergence found in this file during the
 wire-format bundle; the first (`verifyTxStructure` documented as checking `likeTarget`, which it does
-not) is still open.
+not) was **closed 2026-08-09** — see that function above. Both were found by reading the code beside
+the claim rather than by any sweep, which is the argument for the standing contract-vs-code audit.
 
-> ⚠ **AHEAD OF CODE — Phase 1f.** The header-field checks in this function
-> (`prevBlockHash`, `subBlockRoot`, `utxoTxRoot`, `stateRoot`, `validatorId`, `height`,
-> `protocolVersion`, `powNonce`, `powTargetBits`) are **delegated to `verifyHeaderFieldDomains`**,
-> which becomes the single statement of that domain. The error labels this function emits do not
-> change — that is why the predicate returns a reason rather than a boolean. The block-level checks
-> (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `coinbaseOutputs`, `validatorSignature`)
-> stay here: they are not header fields and no header predicate can see them.
+**The header-field checks in this function** (`prevBlockHash`, `subBlockRoot`, `utxoTxRoot`,
+`stateRoot`, `validatorId`, `height`, `protocolVersion`, `powNonce`, `powTargetBits`) are
+**delegated to `verifyHeaderFieldDomains`** (Phase 1f), which is the single statement of that
+domain. The error labels this function emits did not change — that is why the predicate returns a
+reason rather than a boolean, and Phase 1e's teeth demonstration asserts those strings exactly. The
+block-level checks (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `coinbaseOutputs`,
+`validatorSignature`) stay here: they are not header fields and no header predicate can see them.
 
 > ⚠ **AHEAD OF CODE — this function shrinks to its semantic residue.** Under the positional wire
 > format (`docs/specs/2026-08-09-positional-wire-format.md`), *structure* is guaranteed by the
@@ -591,12 +604,12 @@ verified at receipt time only.
   (`Buffer.byteLength`, `createPublicKey`, `encodeHeader`,
   `BigInt`/`writeBigUInt64LE`, `.length`) with type/shape checks first.
 
-  > ⚠ **AHEAD OF CODE — Phase 1f extends this rule past the `verify*` functions.** "No exported
-  > verify function throws" left `blockHash` and `computePowHash` outside the guarantee, because
-  > they are not verifiers — and they are the two that call `encodeHeader` directly, with no check
-  > at all. The rule is therefore **no exported function throws on adversarial input**, and a
-  > function with no `false` to return says so with `null`. This is not a new principle; it is the
-  > existing one applied where the naming convention had quietly exempted it.
+  **Phase 1f extended this rule past the `verify*` functions.** "No exported verify function
+  throws" left `blockHash` and `computePowHash` outside the guarantee, because they are not
+  verifiers — and they are the two that call `encodeHeader` directly, with no check at all. The rule
+  is therefore **no exported function throws on adversarial input**, and a function with no `false`
+  to return says so with `null`. This was not a new principle; it is the existing one applied where
+  the naming convention had quietly exempted it.
 
 ## Invariants
 - All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
