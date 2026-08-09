@@ -546,7 +546,13 @@ describe('block-apply journal recording', () => {
       prevBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
       subBlockRoot: computeSubBlockRoot(subBlockTree),
       utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
-      stateRoot: '0000000000000000000000000000000000000000000000000000000000000000',
+      // EMPTY_STATE_ROOT, not a hand-written literal: stateRoot is hex(33) = 66
+      // characters, and this site carried 64 (a 32-byte root) while :386 and
+      // :433 in this same file use the constant correctly. Since Phase 1e pins
+      // the width, the 64-char value rejects the block one gate EARLIER than the
+      // validator signature — reintroducing exactly the vacuity the comment
+      // below guards against, while the test stayed green.
+      stateRoot: EMPTY_STATE_ROOT,
       validatorId: miner.userId,
       powNonce: 0,
       powTargetBits: expectedTarget(1),

@@ -124,6 +124,33 @@ function hasLeadingZeroBits(hash: Uint8Array, targetBits: number): boolean {
 const POST_ID_HEX = /^[0-9a-f]{64}$/;
 
 /**
+ * The `b32` string domain: exactly 64 lowercase hex characters.
+ *
+ * One predicate over `POST_ID_HEX` rather than a second regex, because it is
+ * the same domain reached from a different field. Every 32-byte value that
+ * stays a hex `string` in memory and crosses the wire as raw bytes lands here
+ * — post ids, the roots, `prevBlockHash`, tx ids, the consensus-carried
+ * `author`. `codec.ts`'s `hexToBytesExact` is the function on the other side
+ * and its accepted set is exactly this one, deliberately: a domain narrower
+ * than the writer's leaves a reachable throw, and a domain wider than the
+ * writer's is a check that rejects nothing.
+ */
+function isHex32(v: unknown): v is string {
+  return typeof v === 'string' && POST_ID_HEX.test(v);
+}
+
+/**
+ * `stateRoot`'s domain — **66** characters, not 64.
+ *
+ * The AVL+ digest is 33 bytes (`EMPTY_STATE_ROOT = '00'.repeat(33)`), so it is
+ * `b33` on the wire and `POST_ID_HEX` is the wrong width for it. The extra byte
+ * is the root node's height, carried inside the digest; it is not a 32-byte
+ * hash with a spare byte, so there is no "close enough" reading under which the
+ * 64-char form is acceptable.
+ */
+const STATE_ROOT_HEX = /^[0-9a-f]{66}$/;
+
+/**
  * The domain of every field `postFieldBytes` encodes — the precondition of
  * `signingHash`, `postPowPreimage` and `computePostId` in `@dagsocial/types`.
  *
@@ -401,7 +428,7 @@ export function verifyOrderingBlockStructure(
   if (!isObject(block)) return { valid: false, error: 'Ordering block is not an object' };
   const h = block.header;
   if (!h) return { valid: false, error: 'Ordering block missing header' };
-  if (!h.prevBlockHash || h.prevBlockHash.length !== 64) {
+  if (!isHex32(h.prevBlockHash)) {
     return { valid: false, error: 'Ordering block header missing or invalid prevBlockHash' };
   }
   if (!Array.isArray(block.subBlockTree?.subBlockRefs)) {
@@ -411,26 +438,50 @@ export function verifyOrderingBlockStructure(
       block.subBlockTree.subBlockEntries.length !== block.subBlockTree.subBlockRefs.length) {
     return { valid: false, error: 'Ordering block subBlockEntries must align with subBlockRefs' };
   }
-  // Validate each entry
+  // Validate each entry. All three fields are `b32` at the codec boundary —
+  // hex `string` in memory, raw bytes on the wire — so their domain is the hex
+  // alphabet, not a character count. A 64-character *non-hex* value has no
+  // encoding under a fixed-width writer and no sentinel to fall back on, so the
+  // writer throws (TYPES_INTERFACE → Totality).
+  //
+  // The count check was never the whole rule here, and the reachable path runs
+  // through the store rather than the preimage: `block-apply.ts:579` takes
+  // `subBlockId = entry.postId` and `:584` writes `insertPostPlaceholder(
+  // subBlockId, entry.parentRefs)` for any confirmed sub-block whose content
+  // has not arrived. `insertPost` deliberately does not overwrite `parent_refs`
+  // when the real post lands later (`store/posts.ts:91-92` says so), so the
+  // block's claim is what `rowToPost` → `computePostId` reads at feed-service
+  // and stump-engine, forever. Pinning here is what keeps that column inside
+  // the encodable domain.
   for (const entry of block.subBlockTree.subBlockEntries) {
     if (!isObject(entry)) {
       return { valid: false, error: 'Ordering block subBlockEntry is not an object' };
     }
-    if (typeof entry.postId !== 'string' || entry.postId.length !== 64) {
+    if (!isHex32(entry.postId)) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid postId' };
     }
-    if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > 8) {
+    // `MAX_PARENT_REFS`, not a literal `8`. Every other enforcement site imports
+    // the constant (`verifier.ts:137`, `:239`, `verifyParentRefsCount` above);
+    // this one had
+    // drifted to a literal, which is a no-op only while the constant is 8. The
+    // moment it moves, a literal here would cap the post path at the new value
+    // while this path — the one that feeds `insertPostPlaceholder` — kept
+    // accepting the old one.
+    if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > MAX_PARENT_REFS) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid parentRefs' };
     }
     for (const ref of entry.parentRefs) {
-      if (typeof ref !== 'string' || ref.length !== 64) {
-        return { valid: false, error: 'Ordering block subBlockEntry parentRef must be 64-char hex' };
+      if (!isHex32(ref)) {
+        return {
+          valid: false,
+          error: 'Ordering block subBlockEntry parentRef must be 64 lowercase hex characters',
+        };
       }
     }
     // Structure only: `author` is checked for shape here, not truth. Binding it
     // to the real post and to prune authorization is stateful (audit H-3) and
     // lives in @dagsocial/node.
-    if (typeof entry.author !== 'string' || entry.author.length !== 64) {
+    if (!isHex32(entry.author)) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid author' };
     }
   }
@@ -446,15 +497,18 @@ export function verifyOrderingBlockStructure(
     if (!isObject(entry)) {
       return { valid: false, error: 'Ordering block pruneEntry is not an object' };
     }
-    if (typeof entry.rootPostHash !== 'string' || entry.rootPostHash.length !== 64) {
+    if (!isHex32(entry.rootPostHash)) {
       return { valid: false, error: 'Ordering block pruneEntry has invalid rootPostHash' };
     }
     if (!Array.isArray(entry.subtreePostIds)) {
       return { valid: false, error: 'Ordering block pruneEntry has invalid subtreePostIds' };
     }
     for (const id of entry.subtreePostIds) {
-      if (typeof id !== 'string' || id.length !== 64) {
-        return { valid: false, error: 'Ordering block pruneEntry subtreePostId must be 64-char hex' };
+      if (!isHex32(id)) {
+        return {
+          valid: false,
+          error: 'Ordering block pruneEntry subtreePostId must be 64 lowercase hex characters',
+        };
       }
     }
     if (!isBytes(entry.subtreeMerkleRoot) || entry.subtreeMerkleRoot.length !== 32) {
@@ -470,7 +524,13 @@ export function verifyOrderingBlockStructure(
       return { valid: false, error: 'Ordering block pruneEntry has invalid trigger' };
     }
   }
-  if (!block.validatorSignature || block.validatorSignature.length !== 64) {
+  // `isBytes`, not a bare `.length` — the same rule the prune-entry block above
+  // states and these three fields (here, `validatorId`, `coinbaseOutput.owner`)
+  // did not follow. They are `b64`/`b32` *from a `Uint8Array`*, so the codec
+  // reaches `writeBytesNOrThrow`, which throws on anything that is not a byte
+  // view of that exact width; a 64-character string, `{length: 64}` and a
+  // 64-element `Array` all satisfy a length check and none of them encode.
+  if (!isBytes(block.validatorSignature) || block.validatorSignature.length !== 64) {
     return { valid: false, error: 'Ordering block missing or invalid validatorSignature' };
   }
   if (typeof h.height !== 'number' || h.height < 1) {
@@ -479,7 +539,7 @@ export function verifyOrderingBlockStructure(
   if (typeof h.protocolVersion !== 'number') {
     return { valid: false, error: 'Ordering block header missing protocolVersion' };
   }
-  if (!h.validatorId || h.validatorId.length !== 32) {
+  if (!isBytes(h.validatorId) || h.validatorId.length !== 32) {
     return { valid: false, error: 'Ordering block header missing or invalid validatorId' };
   }
   if (typeof h.powNonce !== 'number' || h.powNonce < 0) {
@@ -490,6 +550,23 @@ export function verifyOrderingBlockStructure(
   }
   if (!Array.isArray(block.utxoTxTree?.utxoTxIds)) {
     return { valid: false, error: 'Ordering block missing utxoTxTree.utxoTxIds' };
+  }
+  // The only array in this struct that had no per-element check at all, so an
+  // element could be a number, an object or `null`. Those reach `hexToBuf(id)`
+  // inside `computeUtxoTxRoot`'s Merkle build (`block-creator.ts:79`, called
+  // from `block-apply.ts:270`), where a non-string throws *today* — inside the
+  // apply transaction, so the funnel's totality catch turns a malformed block
+  // into an "unexpected failure" log rather than the stated rejection the
+  // spec's boundary check requires (§2.1 step 4). Register row C3 records this
+  // as subsumed by the migration, which is true from Phase 3 onward — the ids
+  // decode as raw bytes then — and not true in the window this phase covers.
+  for (const id of block.utxoTxTree.utxoTxIds) {
+    if (!isHex32(id)) {
+      return {
+        valid: false,
+        error: 'Ordering block utxoTxId must be 64 lowercase hex characters',
+      };
+    }
   }
   if (!Array.isArray(block.utxoTxTree.utxoTxs) ||
       block.utxoTxTree.utxoTxs.length !== block.utxoTxTree.utxoTxIds.length) {
@@ -502,7 +579,7 @@ export function verifyOrderingBlockStructure(
     if (!isObject(out)) {
       return { valid: false, error: 'Coinbase output is not an object' };
     }
-    if (!out.owner || out.owner.length !== 32) {
+    if (!isBytes(out.owner) || out.owner.length !== 32) {
       return { valid: false, error: 'Coinbase output missing or invalid owner' };
     }
     if (typeof out.value !== 'bigint' || out.value < 0n) {
@@ -512,11 +589,30 @@ export function verifyOrderingBlockStructure(
       return { valid: false, error: 'Coinbase output invalid lockedUntilBlock' };
     }
   }
-  if (!h.subBlockRoot || h.subBlockRoot.length !== 64) {
+  if (!isHex32(h.subBlockRoot)) {
     return { valid: false, error: 'Ordering block header missing subBlockRoot' };
   }
-  if (!h.utxoTxRoot || h.utxoTxRoot.length !== 64) {
+  if (!isHex32(h.utxoTxRoot)) {
     return { valid: false, error: 'Ordering block header missing utxoTxRoot' };
+  }
+  // `stateRoot` was not checked here at all — not the alphabet, not the width,
+  // not even the type. It belongs in this phase and not a later one because of
+  // *where* the next reader is: on the relay path this function is the topic
+  // validator's first step (`net/gossip.ts:98`) and `verifyOrderingBlockPoW` is
+  // its fourth (`:114`), and PoW runs `encodeHeader`. Once the header encodes
+  // positionally, `b33(stateRoot)` throws for a value outside this domain — and
+  // the throw lands in the validator's catch arm at `:123`, which bans the
+  // *forwarding* peer permanently for a message it merely relayed. Rejecting
+  // the block as invalid content is both the right verdict and the right
+  // penalty class; that is the same argument Phase 1c used to place the post
+  // pin in `verifySubBlockStructure`.
+  //
+  // Nothing else covers it. `isEncodableHeader` pins `typeof === 'string'` and
+  // no more, and node's apply-time digest comparison is gated on
+  // `config.verifyStateRoot` *and* on a prover being present
+  // (`block-apply.ts:341-343`) — with either off, the field is never read.
+  if (typeof h.stateRoot !== 'string' || !STATE_ROOT_HEX.test(h.stateRoot)) {
+    return { valid: false, error: 'Ordering block header missing or invalid stateRoot' };
   }
   return { valid: true };
 }
