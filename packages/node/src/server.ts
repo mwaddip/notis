@@ -20,7 +20,6 @@ import { createInvite, claimInvite, cancelInvite, commitInvite } from './service
 import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
-import { computePostId } from '@dagsocial/types';
 import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
 import { createAdminRouter } from './routes/admin.js';
