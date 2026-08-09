@@ -308,8 +308,29 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 - **A grid or layout system.** Owned by each surface.
 - **Iconography.** Whether the illustration technique scales down to UI icons at 16–24px is
   untested and may need a separate, plainer treatment.
-- **Where the artwork lives in-repo.** The generated mark tiers, the traced letterform, the
-  build script and the font files currently sit outside version control. Landing them is a
-  follow-up decision, not part of this contract.
 - **Data visualisation.** Nothing here covers charts; a categorical palette drawn from one hue
   at three stops will not stretch far.
+
+## Where the artwork lives
+
+**Output is tracked; the pipeline that makes it is not.** A surface commits the artwork it
+serves — the inlined mark sprite, `favicon.svg`, the font files — and the build script, the
+traced letterform and the parametric source stay outside version control with whoever holds
+them. This was a decision (2026-08-10), taken after the docs site landed; it was listed as
+undecided in earlier drafts of this contract.
+
+The consequence is worth stating plainly, because it is the sort of thing a contributor
+discovers the hard way: **generated artwork cannot be regenerated from a clone.** Every
+generated file says so in its own header. Hand-editing one is not a fix — it works until the
+next regeneration elsewhere overwrites it, with nothing to flag that a change was lost. A
+change to the mark has to go back through whoever holds the pipeline.
+
+Each generated file also carries the parameters it was built from, so the drawing stays
+reproducible on paper even where the script is absent.
+
+**`favicon.svg` is the one piece with its colours baked in as literals.** Everything else
+drives the mark through `--notis-green` and `--notis-keyline`, but a favicon is fetched
+standalone and has no page to inherit custom properties from; left unbaked it renders in the
+fallback bright green instead of Fern. The same applies to any future artwork loaded as a file
+rather than inlined — social avatars, share cards, anything an `<img>` or a platform fetches
+on its own.
