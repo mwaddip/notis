@@ -1,0 +1,233 @@
+/* docs.notis.fun — shared foundation, built to contracts/HOUSE_STYLE.md.
+ *
+ * What lives here: the token set, the theme mechanism, the page shell, and every component
+ * that appears on three or more pages. What stays in a page's own <style>: components only
+ * that page uses — karma's ledger and tables, economy's two-column comparison, and so on.
+ *
+ * The split is deliberate and it replaces the older "CSS is deliberately not factored out"
+ * convention, which was written before there was a fixed token set. Five copies of a token
+ * block drift, and nothing tells you when they have. Page-local components do not drift,
+ * because there is only ever one copy.
+ *
+ * No ambient motion anywhere: nothing moves that the reader did not ask to move. Hover
+ * changes appearance only, never layout, and is suppressed while the page is scrolling.
+ */
+
+/* ---------- faces ----------
+   Self-hosted, always. A platform whose pitch is that it does not sell its users out cannot
+   load its fonts from Google on every page view. Both are SIL OFL 1.1 and ship with the site. */
+@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:400 700;font-display:swap;
+           src:url('/assets/fonts/Plus-Jakarta-Sans.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;
+           src:url('/assets/fonts/JetBrains-Mono.woff2') format('woff2')}
+
+/* ---------- tokens ----------
+   Every value was solved numerically for the lightness landing closest to its contrast target
+   at a held hue. Do not nudge them by eye; regenerate if you need a new one. */
+:root{
+  --ground:#E7DCC6; --surface:#EFE7D5; --border:#CFC1A6; --borderStrong:#8B7A61;
+  --ink:#2A2419; --inkMute:#696051;
+  --green:#5E8C3A; --greenText:#476A2C; --onGreen:#FAF6EC;
+  --gold:#7F5A1C; --goldFill:#9B762D; --clay:#9A4A2F; --keyline:#1B2A12;
+  --notis-green:var(--green); --notis-keyline:var(--keyline);
+  --sans:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  /* Fixed handles for both grounds. The theme control renders the theme you would get, not
+     the one you are in, so it needs the other palette regardless of which is active. */
+  --sand:#E7DCC6; --sand-ink:#2A2419; --bistre:#211E18; --bistre-ink:#E9E1CF;
+  --measure:62ch; --gut:48px; --side-w:250px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:64px; --s9:96px;
+}
+:root[data-theme="dark"]{
+  --ground:#211E18; --surface:#2A261D; --border:#3D3830; --borderStrong:#746857;
+  --ink:#E9E1CF; --inkMute:#918570;
+  --greenText:#63933D; --onGreen:#141A0C; --gold:#AF7D26; --goldFill:#E8B84B; --clay:#C96D4E;
+}
+
+/* Applying a stored theme on load would otherwise animate every transitioned property from
+   the default palette to the chosen one — a flash of the wrong state, and motion nobody asked
+   for. Killed until after first paint. site.js removes the class. */
+.no-anim *{transition:none !important}
+@media (prefers-reduced-motion: reduce){ *{transition:none !important} }
+
+/* ---------- base ---------- */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+     font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+p{margin:0 0 var(--s4);max-width:var(--measure)}
+strong{font-weight:650}
+/* Emphasis keeps ink. The CRT pages muted it, which made the emphasised words the faintest
+   on the line — italics already carry the job. */
+em{font-style:italic}
+a{color:var(--greenText);text-decoration:none}
+/* A link in running prose carries a rule under it. Colour alone is a weak signal at this
+   saturation — and holding saturation low is the point, so the affordance has to come from
+   somewhere else. Links that are already obviously controls (nav, card titles) do not. */
+p a,li a{border-bottom:1px solid color-mix(in srgb,var(--greenText) 32%,transparent);
+         transition:border-color .15s ease}
+p a:hover,li a:hover{border-bottom-color:var(--greenText)}
+/* Mono is machine data only — hashes, keys, heights, amounts. Holding that line is what
+   makes it meaningful rather than decorative. */
+.mono{font-family:var(--mono)}
+code{font-family:var(--mono);font-size:.9em;background:var(--surface);
+     border:1px solid var(--border);border-radius:4px;padding:.06em .38em}
+/* Rows mixing mono with proportional type align on the baseline, never centred: flex centring
+   positions each item by its box, so the result depends on each family's ascent and descent. */
+.baseline{display:flex;align-items:baseline}
+
+/* ---------- shell ----------
+   The content column is capped and centred, which leaves inert space either side: no handlers,
+   no hover states, always somewhere safe to click to focus the window or drop focus. The empty
+   space is not waste, it is a control surface. */
+.content{margin-left:var(--side-w);padding:0 var(--gut) var(--s9);min-width:0}
+.wrap{max-width:calc(var(--measure) + 8ch);margin:0 auto}
+
+.sidebar{position:fixed;top:0;left:0;width:var(--side-w);height:100vh;overflow-y:auto;
+         background:var(--surface);border-right:1px solid var(--border);
+         padding:var(--s5) var(--s4) var(--s7);z-index:900;
+         display:flex;flex-direction:column;transition:transform .15s ease}
+.side-brand{display:flex;align-items:center;gap:var(--s2);color:var(--ink);
+            font-weight:700;font-size:16px;letter-spacing:.01em;padding:2px var(--s2) var(--s5)}
+.side-brand svg{width:26px;height:26px;display:block;flex:none}
+.side-brand i{color:var(--inkMute);font-style:normal;font-weight:400}
+
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav-cat{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+         color:var(--inkMute);padding:var(--s4) var(--s2) 6px}
+.nav-item{display:block;color:var(--ink);font-size:14.5px;padding:7px 10px 7px 13px;
+          border-radius:6px;border-left:2px solid transparent;
+          transition:background-color .15s ease,color .15s ease}
+.nav-item:hover{background:var(--ground);color:var(--greenText)}
+.nav-item.active{color:var(--greenText);border-left-color:var(--greenText);
+                 background:color-mix(in srgb,var(--greenText) 10%,transparent);font-weight:650}
+
+/* ---------- controls ----------
+   The control is the click target, never the container. */
+.btn{font-family:inherit;font-size:14px;font-weight:600;padding:8px 14px;border-radius:8px;
+     border:1px solid var(--borderStrong);color:var(--ink);background:none;cursor:pointer;
+     transition:background-color .15s ease,border-color .15s ease,color .15s ease}
+.btn:hover{border-color:var(--ink)}
+.btn:focus-visible{outline:2px solid var(--greenText);outline-offset:2px}
+/* The theme control is styled as the inverse of the active ground and labelled with the theme
+   it would switch TO, so appearance and label agree and it explains itself without an icon
+   anyone has to learn. It sits in the sidebar: the sidebar is chrome, the gutters are not. */
+#theme{margin:auto var(--s2) 0;align-self:start;
+       background:var(--bistre);color:var(--bistre-ink);border-color:var(--bistre)}
+#theme:hover{opacity:.86}
+:root[data-theme="dark"] #theme{background:var(--sand);color:var(--sand-ink);border-color:var(--sand)}
+
+.nav-btn{display:none;position:fixed;top:var(--s4);left:var(--s4);z-index:950;
+         width:40px;height:40px;border-radius:9px;align-items:center;justify-content:center;
+         background:var(--surface);color:var(--ink);border:1px solid var(--borderStrong);
+         font-size:17px;line-height:1;cursor:pointer;font-family:inherit}
+.nav-btn:focus-visible{outline:2px solid var(--greenText);outline-offset:2px}
+.backdrop{display:none;position:fixed;inset:0;background:color-mix(in srgb,var(--keyline) 55%,transparent);z-index:880}
+.backdrop.show{display:block}
+
+/* ---------- page furniture ---------- */
+header.page{padding:var(--s9) 0 var(--s2);border-bottom:1px solid var(--border);margin-bottom:var(--s2)}
+.crumb{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+       color:var(--inkMute);margin-bottom:var(--s5)}
+.crumb b{color:var(--greenText);font-weight:500}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.1;letter-spacing:-.02em;font-weight:700;
+   margin:0 0 var(--s4);text-wrap:balance}
+h2{font-size:clamp(23px,3vw,29px);line-height:1.18;letter-spacing:-.015em;font-weight:700;
+   margin:0 0 var(--s4);text-wrap:balance}
+/* Bigger than it looks like it needs to be. At 18.5px an h3 was indistinguishable from a
+   bolded phrase inside a paragraph, which on a page this long costs the reader the whole
+   sub-structure. Mono would separate them instantly and is not available — mono is machine
+   data — so the separation has to come from size and the space above it. */
+h3{font-size:20.5px;font-weight:700;margin:var(--s6) 0 var(--s2);letter-spacing:-.01em}
+h4{font-size:15.5px;font-weight:700;margin:0 0 6px}
+.lede{font-size:19px;max-width:var(--measure)}
+section{padding:var(--s6) 0;border-bottom:1px solid var(--border)}
+section:last-of-type{border-bottom:0}
+
+/* Karma is green, notis is gold, and gold means notis and nothing else: in a system where
+   gold means money, a gold warning would read as being about the reader's balance. */
+.accent-k{color:var(--greenText);font-weight:650}
+.accent-c{color:var(--gold);font-weight:650}
+
+/* A pull quote and a soft callout. Prose furniture rather than page components, so they live
+   here even though only some pages reach for them. */
+.pull{border-left:2px solid var(--greenText);padding:var(--s2) var(--s5);margin:var(--s5) 0}
+.pull p{margin:0;font-size:18px;line-height:1.5;max-width:none}
+.note{border-left:2px solid var(--borderStrong);padding-left:var(--s4);margin:var(--s5) 0}
+.note .label{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+             color:var(--inkMute);margin-bottom:6px}
+.note p{font-size:15px;margin:0 0 var(--s3);max-width:none}
+.note p:last-child{margin-bottom:0}
+/* A heads-up, in clay. Clay carries warning and error both, separated by weight — a soft tint
+   here, the full rule for anything destructive. Never gold: gold means notis, so a gold
+   warning reads as being about the reader's balance. That is a comprehension failure, not a
+   matter of taste. There is no red anywhere. */
+.note.warn{border-left-color:var(--clay);background:color-mix(in srgb,var(--clay) 7%,transparent);
+           border-radius:0 8px 8px 0;padding:var(--s3) var(--s4)}
+.note.warn .label{color:var(--clay)}
+
+/* ---------- cards ----------
+   Two uses, one component: a read-next pair that ends most pages, and side-by-side feature
+   cards whose body is a list rather than a paragraph.
+   The card is not a link. Its title is. Cards and rows are not buttons: text stays selectable,
+   the pointer can be parked on it, and the accidental-click pattern that quietly inflates
+   engagement figures goes away. Hover changes colour only — nothing moves. */
+.glance{display:grid;grid-template-columns:1fr 1fr;gap:var(--s4);margin-top:var(--s5)}
+@media (max-width:640px){ .glance{grid-template-columns:1fr} }
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+      padding:var(--s5);position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+.card.k::before{background:var(--greenText)}
+.card.c::before{background:var(--goldFill)}
+.card .tag{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+           margin-bottom:6px;color:var(--inkMute)}
+.card h4{margin:0 0 var(--s2);font-size:19px}
+.card h4 a{transition:color .15s ease}
+.card.k h4 a{color:var(--greenText)}
+.card.c h4 a{color:var(--gold)}
+.card h4 a:hover{color:var(--ink)}
+.card p{margin:0;font-size:14.5px;max-width:none}
+.card ul{list-style:none;margin:0;padding:0}
+.card li{font-size:14.5px;padding:7px 0;border-top:1px solid var(--border)}
+.card li:first-child{border-top:0}
+.card li b{font-weight:650}
+.glance + p{margin-top:var(--s5)}
+
+/* ---------- tables ----------
+   A table is wide by nature and the page body must never scroll sideways, so the scroll lives
+   in the wrapper. Headers take the same mono micro-label register as .tag and .crumb. */
+.tbl-wrap{overflow-x:auto;margin:var(--s5) 0}
+table{border-collapse:collapse;width:100%;font-size:15px;min-width:460px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+   color:var(--inkMute);font-weight:500;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td b{font-weight:650}
+/* A value column. Mono because these are quantities, which is what mono is for. */
+td.n{font-family:var(--mono);font-size:14px;white-space:nowrap}
+.muted{color:var(--inkMute)}
+
+/* ---------- footer ---------- */
+footer{padding:var(--s7) 0 0;color:var(--inkMute);font-size:13.5px}
+footer p{max-width:none}
+footer a{border-bottom:1px solid color-mix(in srgb,var(--greenText) 32%,transparent)}
+
+/* Suppress hover while the wheel is moving and briefly after it stops: a wheel-scrolling
+   reader leaves the pointer parked, and without this whatever lands beneath it fires the
+   moment scrolling stops. */
+body.scrolling *{pointer-events:none !important}
+
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+
+/* ---------- narrow ----------
+   Inert gutters are impossible on a phone, but the problems they solve — focusing a window,
+   parking a pointer — do not exist on touch. The rule relaxes here on purpose; this is a
+   reasoned exemption, not a compromise, so nobody later "fixes" the missing gutters. */
+@media (max-width:900px){
+  :root{--gut:20px}
+  .sidebar{transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .content{margin-left:0}
+  .nav-btn{display:flex}
+  header.page{padding-top:var(--s8)}
+}
