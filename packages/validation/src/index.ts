@@ -8,6 +8,7 @@ export {
   verifyContentCharacters,
   verifyParentRefsCount,
   verifyPostFieldDomains,
+  verifyHeaderFieldDomains,
   verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
@@ -15,6 +16,10 @@ export {
   verifyOrderingBlockPoW,
   blockHash,
   computePowHash,
+  // Phase 1f expand step — the guarded pair. `blockHash` / `computePowHash`
+  // above are deleted in 1f-4, once `node` and `net` have migrated onto these.
+  blockHashChecked,
+  computePowHashChecked,
   ed25519PublicKeyToKeyObject,
   isValidVouchTarget,
 } from './verify.js';

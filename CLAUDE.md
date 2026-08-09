@@ -61,8 +61,10 @@ kitty @ send-text --match=id:$NEW_WIN $'\r'
 # Wait ~10s for Claude to come up, then inject prompt instruction
 kitty @ send-text --match=id:$NEW_WIN 'use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
 
-# HALT — confirm with user before submitting.
-# Then: delay, submit, and VERIFY (see the warning below).
+# Delay, submit, and VERIFY (see the warning below). No approval gate — main
+# dispatches autonomously (user, 2026-08-09). The verification below is NOT the
+# gate and is not waived: it guards the swallowed-Enter trap, which is a
+# mechanical failure, not an approval question.
 sleep 1; kitty @ send-text --match=id:$NEW_WIN $'\r'
 sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be EMPTY
 ```
@@ -82,7 +84,9 @@ sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be 
 > reflect the most recently active window in that tab — read the per-window
 > `title` before concluding you dispatched to the wrong session.
 
-4. Dispatch gate is `gate` mode — confirm with user before the final `$'\r'`
+4. **No dispatch gate** — main dispatches autonomously (user, 2026-08-09; previously waived
+   per-session at Phase 1d, now standing). The post-submit `get-text` verification is separate
+   and still required.
 5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Main reviews and commits each phase; component sessions do not commit.**
 
 ### Prompt boilerplate
