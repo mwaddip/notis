@@ -62,6 +62,15 @@ These generated everything else. When a case is not covered, decide from these.
 
 Two grounds. **Sand** is the primary; **Bistre** is the dark theme. There is no third.
 
+**Sand and Bistre are internal names.** They name the token sets and belong in this document,
+in design studies and in code. What a reader sees is **light** and **dark**, lowercase, because
+surrounding UI labels are lowercase and a capitalised control sits oddly among them.
+
+**A theme control names and shows the theme it would switch _to_**, never the one already
+active, and it is styled as the inverse of the current ground — so on Sand the control is dark
+and reads `dark`. Appearance and label then agree, and the control explains itself without a
+tooltip or an icon that has to be learned.
+
 ### Light — Sand
 
 | Token | Value | vs ground | Role |
@@ -214,6 +223,12 @@ Every rule here is a prohibition, and together they are most of what keeps the p
 - **150ms ceiling, ease-out. `prefers-reduced-motion` means none** — not less, none.
 - **Honest loading.** No fake progress, no skeleton shimmer. Shimmer is decorative motion
   impersonating progress.
+- **Restoring a stored preference is not motion.** A theme recovered from storage or a URL must
+  be *painted*, not transitioned into. Otherwise every transitioned property animates from the
+  default palette to the chosen one on load — a visible flash of the wrong state, and movement
+  nobody asked for. Suppress transitions until after the first paint. This one was found by
+  measuring a screenshot that had caught the animation 11% of the way through, which is also a
+  reminder that a rendered check catches what reasoning about the CSS does not.
 
 ## Interaction
 
