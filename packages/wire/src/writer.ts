@@ -1,3 +1,5 @@
+import { encodeVlqBigInt, encodeVlqZigZagBigInt } from './vlq.js';
+
 export class ByteWriter {
   private chunks: Uint8Array[] = [];
   private _length = 0;
@@ -48,6 +50,31 @@ export class ByteWriter {
     // instead of truncating. Keep in sync with encodeVlqZigZag.
     const zz = value >= 0 ? value * 2 : -value * 2 - 1;
     this.writeVlqU(zz);
+  }
+
+  /**
+   * Writes an unsigned VLQ from a `bigint` over the full u64 range.
+   *
+   * Delegates to `encodeVlqBigInt` rather than carrying its own loop. The
+   * `number` pair above duplicates its loop and keeps the two in sync by
+   * comment; that is the existing shape and is left alone, but it is not the
+   * shape to extend into a path whose bytes are consensus — box ids, tx ids,
+   * post ids, Merkle roots and the `stateRoot` all ride on these. One loop
+   * cannot drift from itself.
+   *
+   * - **Throws:** `Error` if negative or above `2^64 - 1`
+   */
+  writeVlqBigInt(value: bigint): void {
+    this.writeBytes(encodeVlqBigInt(value));
+  }
+
+  /**
+   * Writes a ZigZag-encoded signed VLQ from a `bigint` over the i64 range.
+   *
+   * - **Throws:** `Error` if outside `[-2^63, 2^63 - 1]`
+   */
+  writeVlqBigIntSigned(value: bigint): void {
+    this.writeBytes(encodeVlqZigZagBigInt(value));
   }
 
   writeArray<T>(items: T[], serializer: (w: ByteWriter, item: T) => void): void {
