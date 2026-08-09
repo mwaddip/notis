@@ -289,19 +289,24 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
 
   it('class-4a mutant, now closed: hex-string post_lock owner is rejected, nothing applied', () => {
     const karma = seedKarma(100n);
-    const lyingLock = {
+    const lyingLock: Record<string, unknown> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
-      owner: Buffer.from(ownerPubKey).toString('hex'), // 64-char string, not bytes
+      owner: ownerPubKey,
       targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
     };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lyingLock]),
-      10,
-    );
+    const tx = signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lyingLock]);
+    // The lie is stamped AFTER signing. `owner` is `b32` from a `Uint8Array` in
+    // the box-id preimage, so a hex *string* has no encoding at all now and
+    // `signedTx` would throw before `checkOutputShape` saw it. That is itself
+    // the class-4a defect closing a second time, one layer lower: what used to
+    // be "stored, then reconstructed to different bytes" is now "cannot be
+    // hashed". The gate is still what this test measures, so the fixture has to
+    // reach it — `checkOutputShape` is step 4, signature reads are step 6.
+    lyingLock['owner'] = Buffer.from(ownerPubKey).toString('hex'); // 64-char string, not bytes
+    const r = validateTx(deps, tx, 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/\(post_lock\): field 'owner' must be a 32-byte Uint8Array/);
     // On the pre-pin tree this box was stored and its row reconstructed to

@@ -33,6 +33,7 @@ import {
   generateKeyPair,
   PROTOCOL_VERSION,
   computeBoxId,
+  computePostId,
   POST_LOCK_THREAD_COST,
 } from '@dagsocial/types';
 import type {
@@ -252,18 +253,34 @@ describe('posts routes', () => {
     }, 1);
     const newKarmaId = newKarma.id;
 
+    // The lock names the post it locks, computed from the very fields posted
+    // below. It used to be `targetPostId: ''` with a comment saying it "will be
+    // filled by postId after submission" — nothing ever filled it, and CBOR
+    // encoded the empty string without complaint, so the fixture had been
+    // locking *no post* since it was written. `b32` has no encoding for it,
+    // which is what surfaced that. A client genuinely can compute this: the post
+    // id is a function of fields it already holds, which is the whole reason the
+    // lock can be submitted in the same batch as the post.
+    const targetPostId = computePostId({
+      content: 'hello mempool',
+      author: userId,
+      parentRefs: [],
+      challenge: challengeBytes,
+      powNonce: 42,
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp,
+      signature: new Uint8Array(64),
+    });
+
     const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: userId,
-      targetPostId: '', // Will be filled by postId after submission
+      targetPostId,
       guard: 'block_apply',
     };
 
-    // Use a placeholder postId for the lock box (the tx is validated before the
-    // post ID is known, but the lock box must reference a valid post ID)
-    // We'll compute it from the post so it matches
     const challengeHex = Buffer.from(challengeBytes).toString('hex');
 
     const karmaLockTx: UtxoTransaction = {

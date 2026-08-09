@@ -208,7 +208,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
   it.each([
     ['NaN', Number.NaN],
     ['1.5', 1.5],
-  ])('rejects height %s via the height guard, attributably', (_label, badHeight) => {
+  ])('rejects height %s at the structure gate, attributably', (_label, badHeight) => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(TOPICS.orderingBlock)!;
     const peer = newPeer(peerMgr);
@@ -222,10 +222,18 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     // What moved in Phase 1f is *which* gate supplies it.
     // `verifyOrderingBlockStructure` now states the header's encodable domain,
     // so `isU64Safe` refuses NaN and 1.5 at `gossip.ts:98`, before net's own
-    // `Number.isSafeInteger` add-on at `:109`. That add-on is therefore dead
-    // code — deleting it, and renaming this test off "via the height guard",
-    // belong together in Phase 1f-3 with net's own deletion proof and a check
-    // of the sync path, which is why neither is done here.
+    // `Number.isSafeInteger` add-on at `:109` ever ran. 1f-3 deleted that
+    // add-on and renamed this test off "via the height guard" — a test named
+    // for a gate that no longer exists is the vacuity pattern, and the name is
+    // the last thing to go stale because nothing type-checks it.
+    //
+    // This test is also the deletion's standing evidence. It drives the real
+    // `verifyOrderingBlockStructure` (the harness injects the package, not a
+    // stub) and asserts the *structure gate's* message. It passed before the
+    // deletion, which is what proved the guard never fired for these inputs;
+    // it must keep passing after, which is what proves nothing was lost. The
+    // general case is a subset argument rather than these two values:
+    // `isU64Safe` rejects everything `Number.isSafeInteger` rejects, and more.
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce, height: badHeight });
     const result = validate(peer, { data: encodeOrderingBlock(block) });
 
@@ -443,5 +451,153 @@ describe('sub-block topic validator (per-network post difficulty)', () => {
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, 'Proof of Work invalid');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dispatch listener — Phase 1f-3b, the catch whose comment promised a log
+//
+// The catch at the end of the `gossipsub:message` listener read:
+//
+//     } catch {
+//       // Decode failure here would indicate a validator bug — the message
+//       // already passed the topic validator.  Log and move on.
+//     }
+//
+// There was no log. So the one condition the comment names produced complete
+// silence, and — because the `try` spanned the handler call as well, which the
+// comment never claimed — so did every throw out of an app-layer handler.
+//
+// These tests drive the REAL listener registered by subscribeTopics. The
+// harness above stubs `addEventListener`, so the listener was never captured
+// and none of this path had any coverage; this one captures it.
+// ---------------------------------------------------------------------------
+
+type GossipListener = (evt: {
+  detail: { msg: { topic: string; data: Uint8Array; from?: { toString(): string } } };
+}) => void;
+
+function makeDispatchHarness(handlers: {
+  onSubBlock?: (sb: SubBlock) => void;
+  onOrderingBlock?: (block: OrderingBlock) => void;
+  onTx?: (tx: unknown) => void;
+} = {}) {
+  let listener: GossipListener | null = null;
+  const stub = {
+    services: {
+      pubsub: {
+        topicValidators: new Map(),
+        subscribe: () => {},
+        addEventListener: (_name: string, fn: GossipListener) => {
+          listener = fn;
+        },
+      },
+    },
+  } as unknown as Libp2pGossip;
+
+  const peerMgr = new PeerManager(makeConfig());
+  subscribeTopics(
+    stub,
+    validators,
+    peerMgr,
+    {
+      onSubBlock: handlers.onSubBlock ?? (() => {}),
+      onOrderingBlock: handlers.onOrderingBlock ?? (() => {}),
+      onTx: handlers.onTx ?? (() => {}),
+    },
+    POST_POW_TARGET_BITS,
+  );
+
+  // `from` is left undefined so the Active-peer filter is skipped — this suite
+  // is about what happens after a message is accepted for dispatch, and peer
+  // state has its own tests.
+  const deliver = (topic: string, data: Uint8Array): void => {
+    if (!listener) throw new Error('subscribeTopics registered no message listener');
+    listener({ detail: { msg: { topic, data } } });
+  };
+
+  return { deliver };
+}
+
+describe('gossip dispatch listener', () => {
+  const dispatchHeader: BlockHeader = {
+    protocolVersion: 1,
+    height: 3,
+    prevBlockHash: '44'.repeat(32),
+    subBlockRoot: '55'.repeat(32),
+    utxoTxRoot: '66'.repeat(32),
+    stateRoot: EMPTY_STATE_ROOT,
+    validatorId: new Uint8Array(32).fill(1),
+    powNonce: 0,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    createdAt: 1_722_470_400_000,
+  };
+  const dispatchBlock: OrderingBlock = {
+    header: dispatchHeader,
+    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+    validatorSignature: new Uint8Array(64),
+  };
+
+  it('delivers a decoded ordering block to the handler', () => {
+    // Positive control: the routing still works after the restructure. Without
+    // this, a `deliver` that silently did nothing would satisfy the two
+    // error-path tests below.
+    const seen: OrderingBlock[] = [];
+    const { deliver } = makeDispatchHarness({ onOrderingBlock: (b) => seen.push(b) });
+
+    deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.header.height).toBe(3);
+  });
+
+  it('logs when a handler throws, instead of absorbing it silently', () => {
+    // Pre-fix this produced no output of any kind: the handler call sat inside
+    // a `try` whose `catch` had an empty body.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { deliver } = makeDispatchHarness({
+      onOrderingBlock: () => {
+        throw new Error('handler exploded');
+      },
+    });
+
+    // Contained, not propagated — this is a gossipsub event listener, and one
+    // bad message must degrade one message rather than the subsystem.
+    expect(() => deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock))).not.toThrow();
+
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('handler exploded'),
+    );
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`handler for '${TOPICS.orderingBlock}' threw`),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('logs a post-validator decode failure as the validator bug it is', () => {
+    // Reaching the decode catch means a topic validator accepted bytes it could
+    // not itself decode. The comment always said so; now the code says it too,
+    // and says it loudly, because silence is the worst possible response to
+    // "one of our own gates is wrong".
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let handlerCalls = 0;
+    const { deliver } = makeDispatchHarness({ onOrderingBlock: () => { handlerCalls++; } });
+
+    expect(() => deliver(TOPICS.orderingBlock, new Uint8Array([0xff, 0xff, 0xff]))).not.toThrow();
+
+    expect(handlerCalls).toBe(0);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('BUG'));
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('passed its topic validator and then failed to decode'),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('ignores a topic it does not route', () => {
+    const { deliver } = makeDispatchHarness({
+      onOrderingBlock: () => { throw new Error('must not run'); },
+    });
+    expect(() => deliver('/dagsocial/not-a-topic/1', new Uint8Array([1, 2, 3]))).not.toThrow();
   });
 });

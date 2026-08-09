@@ -1,4 +1,12 @@
 import { createHash } from 'crypto';
+import { ByteWriter } from '@dagsocial/wire';
+import {
+  writeArr,
+  writeBytesNOrThrow,
+  writeHexNOrThrow,
+  writeLpUtf8,
+  writeVlqU,
+} from './codec.js';
 import type { UserId } from './identity.js';
 
 export type PostId = string;
@@ -15,134 +23,101 @@ export interface Post {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical field encoding (audit M-1)
+// Canonical field encoding (audit M-1, positional dialect since Phase 2)
 // ---------------------------------------------------------------------------
 //
-// The previous preimages concatenated fields with no delimiters, so distinct
+// The pre-M-1 preimages concatenated fields with no delimiters, so distinct
 // field tuples produced identical bytes: (powNonce=5, timestamp=23) and
-// (52, 3) both yielded …"5""23"… == …"52""3"… → the same postId. Every
-// variable-length field is now length-prefixed and the ref array carries an
-// explicit count, so `postFieldBytes` is injective: no two distinct posts
-// share an encoding.
+// (52, 3) both yielded …"5""23"… == …"52""3"… → the same postId. M-1 closed
+// that by making every variable-length field length-prefixed and giving the
+// ref array an explicit count.
 //
-// This encoding is protocol-breaking and unversioned. It MUST stay
-// byte-identical here and in the demo-UI JS (packages/node/public/index.html);
-// the frozen golden vector in the tests is the cross-implementation anchor.
+// ⚠ **This phase changes the DIALECT, not the coverage.** `postFieldBytes` was
+// already positional and injective, and it did not need migrating to close any
+// defect — see spec §3.1. It moves so that the repo has exactly *one* encoding
+// language: fixed-width little-endian integers become VLQ, and ids stop
+// crossing a preimage as the UTF-8 of their hex text (68 bytes per parent ref)
+// and cross as the 32 raw bytes they name. Injectivity is therefore
+// **preserved, not introduced** — the M-1 collision pair must still yield
+// distinct ids after the move, which the tests pin.
+//
+// Encoding is protocol-breaking and unversioned. It MUST stay byte-identical
+// here and in the demo-UI JS (packages/node/public/index.html); the frozen
+// golden vectors in the tests are the cross-implementation anchor.
 
 const encoder = new TextEncoder();
 
 /**
  * Domain separator for the post id. Prefixing it makes the id a distinct hash
- * from the PoW hash `blake2b512(postFieldBytes ‖ u64LE(powNonce))`, which
+ * from the PoW hash `blake2b512(postFieldBytes ‖ vlqU(powNonce))`, which
  * otherwise shares the entire tail.
  */
 const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
 
 /**
- * Sentinel written for a numeric field outside the encodable domain.
+ * The canonical, injective field encoding — `postFieldBytes` in
+ * TYPES_INTERFACE.md → Layout — Post:
  *
- * The fixed-width writers below are deliberately *total*: `BigInt()` /
- * `writeBigUInt64LE` throw on NaN, ±Infinity, fractional, and negative input,
- * which would turn a malformed post into a panic inside `signingHash` and
- * break the no-panic contract `@dagsocial/validation` asserts (audit M-5/M-6).
+ *   | 1 | content         | lpUtf8         |
+ *   | 2 | author          | b32   (bytes)  |
+ *   | 3 | parentRefs      | arr(refs, b32) |
+ *   | 4 | challenge       | b32   (bytes)  |
+ *   | 5 | protocolVersion | vlqU           |
+ *   | 6 | timestamp       | vlqU           |
  *
- * An all-ones sentinel is unreachable from a valid field — the encodable
- * domain is the non-negative safe integers (≤ 2^53−1), whose top 11 bits are
- * always zero — so a malformed post can never encode to the same bytes as a
- * well-formed one. Two *malformed* posts can share an encoding; they are
- * rejected upstream on protocol version, PoW, and signature, and tightening
- * `isSignablePost` in `@dagsocial/validation` to `Number.isSafeInteger` would
- * close that residue at its root.
+ * **Field order IS the specification** (spec §2.3): reordering it is a
+ * consensus change with no compiler signal, so the calls below are laid out to
+ * be read line-by-line against that table.
+ *
+ * `powNonce` is excluded — the author signs before mining, and the PoW hash
+ * appends the nonce itself. `signature` is excluded from every preimage.
+ *
+ * ## Totality — which writers throw here, and why that is safe
+ *
+ * Split, deliberately (spec §2.5, TYPES_INTERFACE → Totality):
+ *
+ * - `lpUtf8`, `vlqU` are **total**. A value outside the encodable domain takes
+ *   the all-ones sentinel instead of throwing, because the encodable domain
+ *   (non-negative safe integers, real byte lengths) is narrower than the u64
+ *   wire domain, so the sentinel is unreachable from a well-formed field.
+ *   That is what keeps `NaN`/`-1`/`1.5` timestamps out of a panic — audits
+ *   M-5/M-6, and the property the no-panic contract in
+ *   `@dagsocial/validation` rests on.
+ * - `b32` — `author`, `challenge`, every `parentRefs` entry — **throws**. A
+ *   fixed-width field's wire domain *is* its encodable domain, so it has no
+ *   unreachable sentinel; padding or truncating a 31-byte author to 32 would
+ *   map it onto a **well-formed post's** encoding, a consensus-level collision
+ *   strictly worse than the panic it avoids.
+ *
+ * The three throwing fields therefore have their domain established upstream,
+ * one phase ahead of this one: `verifyPostFieldDomains` in
+ * `@dagsocial/validation` (Phase 1c) pins `author`/`challenge` at 32 bytes and
+ * every ref at 64 **lowercase** hex characters, and node's `verifyPost`,
+ * `verifyPostForRelay` and `content-sweep` gates call it (Phase 1d). Lowercase
+ * is load-bearing: `'AB…'` and `'ab…'` decode to identical bytes, so accepting
+ * both would make this encoding non-injective at the hex boundary.
  */
-const U32_SENTINEL = 0xffffffff;
-
-/** True for the values `writeU32LE` encodes faithfully. */
-function isEncodableU32(n: unknown): n is number {
-  return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n < U32_SENTINEL;
-}
-
-/** True for the values `writeU64LE` encodes faithfully. */
-function isEncodableU64(n: unknown): n is number {
-  return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
-}
-
-/** Write `n` as 4-byte little-endian at `off`; returns the next offset. */
-function writeU32LE(out: Uint8Array, off: number, n: number): number {
-  const v = isEncodableU32(n) ? n : U32_SENTINEL;
-  out[off] = v & 0xff;
-  out[off + 1] = (v >>> 8) & 0xff;
-  out[off + 2] = (v >>> 16) & 0xff;
-  out[off + 3] = (v >>> 24) & 0xff;
-  return off + 4;
-}
-
-/** Write `n` as 8-byte little-endian at `off`; returns the next offset. */
-function writeU64LE(out: Uint8Array, off: number, n: number): number {
-  if (!isEncodableU64(n)) {
-    out.fill(0xff, off, off + 8);
-    return off + 8;
-  }
-  const lo = n >>> 0;
-  const hi = Math.floor(n / 0x100000000) >>> 0;
-  out[off] = lo & 0xff;
-  out[off + 1] = (lo >>> 8) & 0xff;
-  out[off + 2] = (lo >>> 16) & 0xff;
-  out[off + 3] = (lo >>> 24) & 0xff;
-  out[off + 4] = hi & 0xff;
-  out[off + 5] = (hi >>> 8) & 0xff;
-  out[off + 6] = (hi >>> 16) & 0xff;
-  out[off + 7] = (hi >>> 24) & 0xff;
-  return off + 8;
-}
-
-/** Write `u32LE(byteLength) ‖ bytes` at `off`; returns the next offset. */
-function writeLengthPrefixed(out: Uint8Array, off: number, bytes: Uint8Array): number {
-  const next = writeU32LE(out, off, bytes.length);
-  out.set(bytes, next);
-  return next + bytes.length;
-}
-
-/** Encode `powNonce` as the trailing 8 bytes of the post-id preimage. */
-function powNonceBytes(powNonce: number): Uint8Array {
-  const out = new Uint8Array(8);
-  writeU64LE(out, 0, powNonce);
-  return out;
+function postFieldBytes(post: Post): Uint8Array {
+  const w = new ByteWriter();
+  writeLpUtf8(w, post.content);
+  writeBytesNOrThrow(w, post.author, 32);
+  writeArr(w, post.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
+  writeBytesNOrThrow(w, post.challenge, 32);
+  writeVlqU(w, post.protocolVersion);
+  writeVlqU(w, post.timestamp);
+  return w.toBytes();
 }
 
 /**
- * The canonical, injective field encoding — `postFieldBytes` in
- * TYPES_INTERFACE.md:
+ * Encode `powNonce` as the preimage tail the post id and the PoW hash append.
  *
- *   LP(utf8(content)) ‖ LP(author) ‖ u32LE(parentRefs.length)
- *   ‖ LP(utf8(ref))… ‖ LP(challenge) ‖ u32LE(protocolVersion)
- *   ‖ u64LE(timestamp)
- *
- * `powNonce` is excluded — the author signs before mining, and PoW appends the
- * nonce itself. `signature` is excluded from every preimage.
+ * `vlqU`, so total: an out-of-domain nonce sentinels rather than throwing. The
+ * miner varies this field freely and a malformed one must not become a panic.
  */
-function postFieldBytes(post: Post): Uint8Array {
-  const content = encoder.encode(post.content);
-  const refs = post.parentRefs.map((r) => encoder.encode(r));
-
-  let total =
-    4 + content.length +           // LP(content)
-    4 + post.author.length +       // LP(author)
-    4 +                            // u32LE(refCount)
-    4 + post.challenge.length +    // LP(challenge)
-    4 +                            // u32LE(protocolVersion)
-    8;                             // u64LE(timestamp)
-  for (const ref of refs) total += 4 + ref.length;
-
-  const out = new Uint8Array(total);
-  let off = 0;
-  off = writeLengthPrefixed(out, off, content);
-  off = writeLengthPrefixed(out, off, post.author);
-  off = writeU32LE(out, off, refs.length);
-  for (const ref of refs) off = writeLengthPrefixed(out, off, ref);
-  off = writeLengthPrefixed(out, off, post.challenge);
-  off = writeU32LE(out, off, post.protocolVersion);
-  off = writeU64LE(out, off, post.timestamp);
-  return out;
+function powNonceBytes(powNonce: number): Uint8Array {
+  const w = new ByteWriter();
+  writeVlqU(w, powNonce);
+  return w.toBytes();
 }
 
 /**
@@ -169,7 +144,7 @@ export function signingHash(post: Post): Buffer {
 
 /**
  * Deterministic post ID:
- *   blake2b512(POST_ID_DOMAIN ‖ postFieldBytes(post) ‖ u64LE(powNonce))[0..32]
+ *   blake2b512(POST_ID_DOMAIN ‖ postFieldBytes(post) ‖ vlqU(powNonce))[0..32]
  *
  * Includes powNonce (excluded from signingHash) and is domain-tagged, so the
  * id is never equal to the PoW hash over the same post.

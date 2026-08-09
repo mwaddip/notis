@@ -130,8 +130,15 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
 /**
  * Lazy adapter implementing SyncStore by delegating to functions that are set
  * after construction (via setSyncHandler / setHeadersHandler).
+ *
+ * Exported for the same reason `servePeersBody` and `decodeHandshakePayload`
+ * are: so tests drive **this** code rather than a copy of it. It is not part of
+ * net's published surface — `src/index.ts` is an explicit named allowlist, not
+ * `export *`, and `package.json` publishes only `"."` → `dist/index.js`, so this
+ * class is reachable only by a source-relative import from inside the package.
+ * `dist/index.d.ts` is asserted free of it by `sync-store.test.ts`.
  */
-class LazySyncStore implements SyncStore {
+export class LazySyncStore implements SyncStore {
   private _getOrderingBlock: ((height: number) => unknown | null) | null = null;
   private _getSubBlock: ((id: string) => unknown | null) | null = null;
   private _blocksHandler: ((block: OrderingBlock) => void) | null = null;
@@ -171,11 +178,21 @@ class LazySyncStore implements SyncStore {
     if (block && typeof block === 'object' && 'header' in block) {
       const header = (block as { header: unknown }).header;
       if (header && typeof header === 'object') {
-        try {
-          return blockHash(header as Parameters<typeof blockHash>[0]);
-        } catch {
-          return null;
-        }
+        // The `try`/`catch` this replaces solved the problem locally before the
+        // library did: it existed because `blockHash` handed the header straight
+        // to `encodeHeader` with an unenforced precondition, so an unencodable
+        // header threw here. Phase 1f moved that precondition inside
+        // `blockHash`, which returns `null` on exactly the headers
+        // `verifyHeaderFieldDomains` rejects — so this method absorbs an
+        // *absence* and gains no knowledge of what a well-formed header is.
+        //
+        // The guarded call rejects strictly more than the `catch` did: a header
+        // that is out of domain but still CBOR-encodable (`createdAt: NaN`, a
+        // negative `height`, a non-hex `prevBlockHash`) used to yield an id and
+        // now yields `null`. That is the point of 1f — under a positional
+        // encoder those headers share one `blockHash` by sentinel collision, so
+        // serving an id for them would be advertising a colliding anchor.
+        return blockHash(header as Parameters<typeof blockHash>[0]);
       }
     }
     return null;
@@ -235,12 +252,41 @@ class LazySyncStore implements SyncStore {
     if (!this._blocksHandler) return;
     for (const raw of _blocks) {
       if (!(raw instanceof Uint8Array)) continue;
+
+      // The `try` covers the decode and nothing else. It used to span the
+      // handler call as well, so every throw out of `applyOrderingBlock` —
+      // node's block-apply funnel — was reported as "failed to decode block".
+      // Malformed peer bytes and a failure inside consensus apply are
+      // different events with different owners; one label for both is a
+      // misattribution that sends the reader to the wrong package.
+      let block: OrderingBlock;
       try {
-        const block = decodeOrderingBlock(raw);
-        this._blocksHandler(block);
+        block = decodeOrderingBlock(raw);
       } catch (err) {
+        // This one really is the sender's fault, and it is per-modifier: the
+        // other blocks in the batch decode independently, so skipping this
+        // entry costs nothing and loses nothing.
         console.warn(`[net] appendBlocks: failed to decode block: ${String(err)}`);
+        continue;
       }
+
+      // A handler throw is deliberately NOT caught here.
+      //
+      // `applyOrderingBlock` is contractually total: it returns `false` for a
+      // block it rejects and reserves throwing for conditions that are not
+      // about this block's validity — corrupt local state, or a bug. Catching
+      // those here would hide exactly the class of failure that must not be
+      // hidden, and — because the old catch sat inside the loop — would carry
+      // on and apply the *following* blocks, which are chain-linked to the one
+      // that just failed.
+      //
+      // Propagating lands in `SyncMachine.dispatchDataEvent`, which logs the
+      // event type and the peer and contains the failure to one message. That
+      // is net's "one bad message degrades one message, not the subsystem"
+      // invariant, already built there and covering both drain paths (the
+      // background loop and `flush()`). Stopping the rest of the batch is then
+      // a consequence of a stated design rather than of where a brace sits.
+      this._blocksHandler(block);
     }
   }
 
@@ -787,9 +833,26 @@ export class NetNode {
     libp2p.handle(SYNC_PROTOCOL, async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
 
+      /**
+       * "I have no answer for you" — the protocol courtesy that stops the peer
+       * hanging until its own timeout. Used only on paths that failed to
+       * produce a real response; the success paths sink their own frames.
+       *
+       * The empty frame is not the problem this phase fixes and is kept
+       * everywhere it was. What is fixed is that sending it used to be the
+       * *whole* response to a failure, with nothing written down anywhere.
+       */
+      const replyEmpty = async (): Promise<void> => {
+        try {
+          await stream.sink([new Uint8Array(0)]);
+        } catch {
+          // The peer is already gone. Nothing left to say, and no way to say it.
+        }
+      };
+
       // Drop messages from peers that are not in Active state
       if (!this.peerMgr.isPeerActive(peerId)) {
-        try { await stream.sink([new Uint8Array(0)]); } catch { /* ignore */ }
+        await replyEmpty();
         return;
       }
 
@@ -879,7 +942,18 @@ export class NetNode {
             console.warn(`[net] GetPosts request with ${request.postIds.length} IDs exceeds limit, dropping`);
             return;
           }
-          const entries = this.postsHandler(request.postIds);
+          // The app-layer callback gets its own span. It is node's code, not
+          // ours and not the peer's, so a throw here is neither a wire fault
+          // nor a reason to penalise the sender — but folding it into the
+          // outer catch made it indistinguishable from a broken stream.
+          let entries;
+          try {
+            entries = this.postsHandler(request.postIds);
+          } catch (err) {
+            console.error(`[net] posts handler threw for ${peerId}: ${String(err)}`);
+            await replyEmpty();
+            return;
+          }
           const response = encodePosts(this.config.magic, { entries });
           await stream.sink([response]);
           return;
@@ -887,9 +961,25 @@ export class NetNode {
 
         // Dispatch to sync machine for all other message types
         console.log(`[net] sync handler: received code=${code} body_len=${body.length} from ${peerId}`);
-        this.syncMachine?.handleMessage(peerId, code, body);
-      } catch {
-        try { await stream.sink([new Uint8Array(0)]); } catch { /* ignore */ }
+        // Its own span, for the same reason. `handleMessage` decodes the body
+        // and applies the inbound caps, then enqueues — the queued work is
+        // isolated later by `dispatchDataEvent`. So a throw *here* is a bug in
+        // net's own decode/guard layer, which is exactly the thing that must
+        // not be answered with a silent empty frame.
+        try {
+          this.syncMachine?.handleMessage(peerId, code, body);
+        } catch (err) {
+          console.error(`[net] sync dispatch failed for code=${code} from ${peerId}: ${String(err)}`);
+          await replyEmpty();
+        }
+      } catch (err) {
+        // What is left after the two narrow spans above: stream I/O, the frame
+        // decode fallback, and the sub-block / peer-exchange serve paths. A
+        // dropped connection mid-stream is ordinary and lands here, which is
+        // why this is `warn` rather than `error` — but it is no longer
+        // nothing, which is what it was.
+        console.warn(`[net] sync stream handler failed for ${peerId}: ${String(err)}`);
+        await replyEmpty();
       }
     });
 

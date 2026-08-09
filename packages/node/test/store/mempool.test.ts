@@ -44,8 +44,10 @@ async function importMempoolWithRow() {
 // whose outputs the insert chokepoint lifts them from.
 // ---------------------------------------------------------------------------
 
-const TARGET = 'post_target_1';
-const OTHER_TARGET = 'post_target_2';
+// Post ids, so they must be real 64-hex: `likeTarget` is `opt(b32)` in the txId
+// preimage, and `'post_target_1'` has no encoding there.
+const TARGET = '10'.repeat(32);
+const OTHER_TARGET = '20'.repeat(32);
 const LIKER_A = 'aa'.repeat(32);
 const LIKER_B = 'bb'.repeat(32);
 const INVITER_A = 'cc'.repeat(32);
@@ -67,7 +69,9 @@ function likeTx(targetPostId: string, likerHex: string) {
     outputs: [
       {
         boxType: 'karma',
-        value: 99,
+        // `bigint`, as the type declares. It was `99` — CBOR encoded the number
+        // silently; the positional writer has no `number` branch for a u64.
+        value: 99n,
         owner: bytes(likerHex),
         guard: 'owner_signature',
         proofSource: targetPostId,
@@ -113,6 +117,11 @@ function vouchTx(voucherHex: string, targetHex: string) {
   };
 }
 
+// Root post hashes: `serializePruneEntry` writes `rootPostHash` as `b32`, so
+// `'root_1'` has no encoding.
+const ROOT_1 = '31'.repeat(32);
+const ROOT_2 = '32'.repeat(32);
+
 function pruneEntry(rootPostHash: string) {
   return {
     rootPostHash,
@@ -120,7 +129,12 @@ function pruneEntry(rootPostHash: string) {
     authorId: new Uint8Array(32),
     subtreeMerkleRoot: new Uint8Array(32),
     subtreePostIds: [rootPostHash],
-    signature: new Uint8Array(64),
+    // `authorSignature`, which is what `PruneEntry` actually declares. The
+    // fixture said `signature` and the `as any` hid it; cbor-x encoded whatever
+    // keys were present, so a misnamed field was simply a differently-shaped map
+    // that still serialized. The positional writer reads declared fields by
+    // name, so the typo became `undefined` at a fixed-width writer.
+    authorSignature: new Uint8Array(64),
     protocolVersion: 1,
   } as any;
 }
@@ -506,14 +520,14 @@ describe('mempool store', () => {
       // Control: inserts below the cap succeed.
       expect(() => mem.insertSubBlock('sb_1', 100)).not.toThrow();
       expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, null, 100)).not.toThrow();
-      expect(() => mem.insertMempoolPrune(pruneEntry('root_1'), 100)).not.toThrow();
+      expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_1), 100)).not.toThrow();
 
       // At the cap (3 entries), each insert path rejects.
       expect(() => mem.insertSubBlock('sb_2', 100)).toThrow(mem.MempoolFullError);
       expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, null, 100)).toThrow(
         mem.MempoolFullError,
       );
-      expect(() => mem.insertMempoolPrune(pruneEntry('root_2'), 100), ).toThrow(
+      expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_2), 100), ).toThrow(
         mem.MempoolFullError,
       );
 

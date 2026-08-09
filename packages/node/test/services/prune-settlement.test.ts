@@ -124,8 +124,15 @@ function makeUserId(label: string): Uint8Array {
   return new Uint8Array(buf);
 }
 
+/**
+ * `value` is `bigint`, as `PostLockBox` declares it — it was `number` here, and
+ * `makeKarmaBox` right below always had it right. `seedProvenance` takes an
+ * `object`, so the type lie survived the compiler; CBOR then encoded the number
+ * silently and the fixture pinned nothing about the u64 wire domain. The
+ * positional writer has no `number` branch, which is what surfaced it.
+ */
 function makePostLockBox(
-  value: number,
+  value: bigint,
   owner: Uint8Array,
   targetPostId: string,
   seed: number,
@@ -316,7 +323,7 @@ describe('settlePruneUtxo', () => {
 
     // Insert a PostLockBox for the author, plus pre-existing karma the refund
     // mint will merge in (seeded outside the journal, like any pre-block state)
-    const lockBox = makePostLockBox(100, authorId, rootPostId, 1);
+    const lockBox = makePostLockBox(100n, authorId, rootPostId, 1);
     utxo.insertBox(lockBox);
     const oldKarma = makeKarmaBox(40n, authorId, 1);
     utxo.insertBox(oldKarma);
@@ -359,7 +366,7 @@ describe('settlePruneUtxo', () => {
     const authorId = makeUserId('author2');
 
     // Insert a PostLockBox and spend it beforehand
-    const lockBox = makePostLockBox(50, authorId, rootPostId, 1);
+    const lockBox = makePostLockBox(50n, authorId, rootPostId, 1);
     utxo.insertBox(lockBox);
     utxo.consumeBox(lockBox.id!, 5); // Already spent at block 5
 
@@ -375,13 +382,15 @@ describe('settlePruneUtxo', () => {
     const utxo = await importUtxo();
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
-    const postId1 = 'p'.repeat(64);
-    const postId2 = 'q'.repeat(64);
+    // Right length, wrong alphabet: `'p'.repeat(64)` looked like a post id and
+    // is not one. `b32` has no encoding for it — a placeholder has to be hex.
+    const postId1 = 'ab'.repeat(32);
+    const postId2 = 'cd'.repeat(32);
     const authorId = makeUserId('author3');
 
     // Two PostLockBoxes for the same author on two posts
-    const lb1 = makePostLockBox(100, authorId, postId1, 1);
-    const lb2 = makePostLockBox(50, authorId, postId2, 1);
+    const lb1 = makePostLockBox(100n, authorId, postId1, 1);
+    const lb2 = makePostLockBox(50n, authorId, postId2, 1);
     utxo.insertBox(lb1);
     utxo.insertBox(lb2);
 
@@ -419,7 +428,7 @@ describe('settlePruneUtxo', () => {
     const rootPostId = 'f'.repeat(64);
     const authorId = makeUserId('author4');
 
-    const lockBox = makePostLockBox(0, authorId, rootPostId, 1);
+    const lockBox = makePostLockBox(0n, authorId, rootPostId, 1);
     utxo.insertBox(lockBox);
 
     const journal = await journaled(10, () => settlePruneUtxo(rootPostId, [rootPostId], 10));
@@ -540,8 +549,8 @@ describe('settlePruneUtxo — refund provenance', () => {
     const rootB = 'b'.repeat(64);
     const authorId = makeUserId('author-in-both-subtrees');
 
-    utxo.insertBox(makePostLockBox(100, authorId, rootA, 1));
-    utxo.insertBox(makePostLockBox(50, authorId, rootB, 1));
+    utxo.insertBox(makePostLockBox(100n, authorId, rootA, 1));
+    utxo.insertBox(makePostLockBox(50n, authorId, rootB, 1));
 
     // One journal, one height, two entries — exactly the loop in block-apply.
     const journal = await journaled(10, () => {
@@ -580,7 +589,7 @@ describe('settlePruneUtxo — refund provenance', () => {
     const authorId = makeUserId('author-liked');
     const likerId = makeUserId('liker-liked');
 
-    utxo.insertBox(makePostLockBox(100, authorId, root, 1));
+    utxo.insertBox(makePostLockBox(100n, authorId, root, 1));
     likes.insertLikeRecord(root, likerId, 3);
 
     await journaled(10, () => settlePruneUtxo(root, [root], 10));
@@ -629,8 +638,8 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     expect(subtree).toEqual(new Set([rootId, replyId]));
 
     // 3. Seed UTXO: PostLockBox for each post
-    const lb1 = makePostLockBox(50, authorId, rootId, 1);
-    const lb2 = makePostLockBox(50, authorId, replyId, 1);
+    const lb1 = makePostLockBox(50n, authorId, rootId, 1);
+    const lb2 = makePostLockBox(50n, authorId, replyId, 1);
     utxo.insertBox(lb1);
     utxo.insertBox(lb2);
 

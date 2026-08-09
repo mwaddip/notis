@@ -100,7 +100,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
         inviterId: owner, inviteOutputIndex: 0, inviteePublicKey: new Uint8Array(0),
         probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }),
       withProvenance('06'.repeat(32), { boxType: 'post_lock', value: 5n,
-        originalValue: 5n, owner, targetPostId: 'p1', guard: 'block_apply' }),
+        // `b32` in the id preimage — `'p1'` has no encoding.
+        originalValue: 5n, owner, targetPostId: '66'.repeat(32), guard: 'block_apply' }),
       withProvenance('07'.repeat(32), { boxType: 'vouch', value: 1n,
         voucherId: owner, targetId: owner, guard: 'owner_signature' }),
     ];

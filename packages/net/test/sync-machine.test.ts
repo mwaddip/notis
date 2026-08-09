@@ -1053,6 +1053,40 @@ describe('SyncMachine', () => {
 
       errSpy.mockRestore();
     });
+
+    it('isolates a throwing appendBlocks on the DATA path', () => {
+      // The two tests above throw from `chainHeight` during `onPeerActive` — a
+      // *control* event, so they exercise `dispatchControlEvent`. Phase 1f-3b
+      // made `LazySyncStore.appendBlocks` propagate a block-handler throw
+      // instead of swallowing it, and the frame that must then contain it is
+      // `dispatchDataEvent`. Structurally identical helper, but the claim is
+      // about the data path, so it is measured on the data path.
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { machine } = makeMachine({
+        store: {
+          chainHeight: () => 0,
+          appendBlocks: () => { throw new Error('apply exploded'); },
+        },
+      });
+
+      peerActive(machine, 'peer1', 100);
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+      const body = new Uint8Array(
+        encode({
+          typeId: MODIFIER_ORDERING_BLOCK,
+          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
+        }),
+      );
+
+      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
+      expect(() => machine.flush()).not.toThrow();
+
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining("data event 'modifier-response' from peer1 failed"),
+      );
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('apply exploded'));
+      errSpy.mockRestore();
+    });
   });
 
   // -----------------------------------------------------------------------

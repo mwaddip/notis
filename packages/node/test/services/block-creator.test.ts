@@ -365,7 +365,7 @@ describe('block-creator', () => {
     expect(block!.validatorSignature.length).toBe(64);
     const h = blockHash(block!.header);
     expect(h).toBeTruthy();
-    expect(h.length).toBe(64); // 32 bytes hex = 64 chars
+    expect(h!.length).toBe(64); // 32 bytes hex = 64 chars
   });
 
   // -----------------------------------------------------------------------
@@ -539,7 +539,11 @@ describe('block-creator', () => {
     // Set up: standalone UTXO transaction in mempool
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, 'some_post_id_not_matching');
+    // A real post id that is deliberately not `postId` — `likeTarget` is
+    // `opt(b32)` in the txId preimage now, so the old `'some_post_id_not_matching'`
+    // placeholder has no encoding. What the test needs is "not this post", and a
+    // well-formed id that differs says that just as well.
+    const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
     mempool.insertUtxoTx(likeTx, null, 1000);
 
     bc.startBlockCreator(testConfig);
@@ -594,7 +598,8 @@ describe('block-creator', () => {
     // Create a UTXO transaction with batch_id "batch1"
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, 'unrelated_post_id');
+    // Well-formed and deliberately unrelated — see the note above.
+    const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
     mempool.insertUtxoTx(likeTx, 'batch1', 1000);
 
     bc.startBlockCreator(testConfig);

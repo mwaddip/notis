@@ -98,7 +98,9 @@ describe('post', () => {
   });
 
   it('post with parentRefs hashes differently', () => {
-    const withRefs = { ...post, parentRefs: ['ref1'] };
+    // A ref is `b32` now, so it must be 64 lowercase hex characters to have an
+    // encoding at all — see the domain tests below.
+    const withRefs = { ...post, parentRefs: ['a1'.repeat(32)] };
     expect(computePostId(post)).not.toBe(computePostId(withRefs));
   });
 
@@ -133,35 +135,59 @@ function legacyPostId(p: Post): string {
 /**
  * Frozen golden vector — the cross-implementation anchor.
  *
- * These three hex strings are reproduced by the demo-UI JS mirror
+ * These hex strings are reproduced by the demo-UI JS mirror
  * (packages/node/public/index.html, asserted in the node package's
  * ui-crypto-mirror test). A change to either implementation that is not
  * mirrored in the other breaks this vector. Do not "fix" a failure by editing
  * the constants — the encoding is protocol-breaking and unversioned.
+ *
+ * **Reset for the positional dialect (Phase 2).** Two things moved at once and
+ * the movement table in `prompts/types-id-preimages-REPORT.md` separates them:
+ * the encoding (fixed-width LE → VLQ, hex-text refs → raw bytes) and the
+ * fixture (`MAX_PARENT_REFS` 8 → 1, so one ref rather than two).
+ *
+ * Adjacent fields carry **distinct non-zero values** — `author` is `00..1f`,
+ * `challenge` is `20..3f`, the ref is `11…`, `protocolVersion` is 1 and the
+ * timestamp is wide — because an all-zeros vector cannot detect a field-order
+ * swap, and field order *is* the specification here.
  */
 const GOLDEN_AUTHOR = new Uint8Array(32);
 for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
 const GOLDEN_CHALLENGE = new Uint8Array(32);
 for (let i = 0; i < 32; i++) GOLDEN_CHALLENGE[i] = 0x20 + i;
 
+/** A well-formed `b32` parent ref: 64 lowercase hex characters. */
+const GOLDEN_REF = '11'.repeat(32);
+
 const GOLDEN_POST: Post = {
   content: 'dagsocial golden vector ✓',
   author: GOLDEN_AUTHOR,
-  parentRefs: [
-    '1111111111111111111111111111111111111111111111111111111111111111',
-    '2222222222222222222222222222222222222222222222222222222222222222',
-  ],
+  parentRefs: [GOLDEN_REF],
   challenge: GOLDEN_CHALLENGE,
-  powNonce: 4294967296,     // 2^32 — the nonce's u64 high half must be written
+  powNonce: 4294967296,     // 2^32 — five VLQ bytes, so the wide path is covered
   protocolVersion: 1,
-  timestamp: 1767225600000, // > 2^32 — the timestamp's high half must be written
+  timestamp: 1767225600000, // > 2^32 — six VLQ bytes
   signature: new Uint8Array(64).fill(0xcd),
 };
 
 const GOLDEN_SIGNING_HASH =
-  '24157bd74276c86556b41ce0402f8ef9ba4850fc086519c838eb77300ce681d0';
+  '3143d7a351cf2bb4cdbca49ba7aa994ce2e4fd1638a9322058d03fe87debc6b0';
 const GOLDEN_POST_ID =
-  '0150b9bf676c88c715f0b1fbdf142f8bd0ccf7bb8769e2059488d6c300b6b08f';
+  'fefac701207339ba5953fdfe98ed6212f7ead3025dc6e718878dc465ca06e8b0';
+
+/**
+ * The exact preimage bytes, frozen. Stronger than the two hashes above: a hash
+ * says "something moved", these say *which byte*.
+ */
+const GOLDEN_PREIMAGE =
+  '1b' +                                                     // vlqU(27) content length
+  '646167736f6369616c20676f6c64656e20766563746f7220e29c93' + // utf8 content
+  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 author
+  '01' +                                                     // arr count = 1
+  '1111111111111111111111111111111111111111111111111111111111111111' + // b32 ref, RAW
+  '202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f' + // b32 challenge
+  '01' +                                                     // vlqU protocolVersion
+  '80d0eab6b733';                                            // vlqU timestamp
 
 describe('canonical field encoding (M-1)', () => {
   it('golden vector: signingHash is frozen', () => {
@@ -172,16 +198,34 @@ describe('canonical field encoding (M-1)', () => {
     expect(computePostId(GOLDEN_POST)).toBe(GOLDEN_POST_ID);
   });
 
-  it('golden vector: preimage is the exact length-prefixed layout', () => {
+  it('golden vector: preimage is the exact positional layout', () => {
     const pre = postPowPreimage(GOLDEN_POST);
-    // LP(content 27) + LP(author 32) + u32(refCount) + 2×LP(ref 64)
-    // + LP(challenge 32) + u32(protocolVersion) + u64(timestamp)
-    expect(pre.length).toBe(31 + 36 + 4 + 2 * 68 + 36 + 4 + 8);
-    expect(Buffer.from(pre.subarray(0, 4)).toString('hex')).toBe('1b000000');   // u32LE(27)
-    expect(Buffer.from(pre.subarray(-8)).toString('hex')).toBe('00a8da769b010000'); // u64LE(ts)
+    expect(Buffer.from(pre).toString('hex')).toBe(GOLDEN_PREIMAGE);
+    //  1 + 27 content, 32 author, 1 + 32 refs, 32 challenge, 1 version, 6 ts
+    expect(pre.length).toBe(28 + 32 + 33 + 32 + 1 + 6);
   });
 
-  it('the M-1 collision pair now yields distinct ids', () => {
+  it('an id crosses the preimage as 32 RAW bytes, not as 64 hex characters', () => {
+    // The dialect change with the largest byte impact, and the one a mirror
+    // implementation is most likely to get wrong: under the old encoding a
+    // parent ref cost `u32LE(64) ‖ utf8(hex)` = 68 bytes, and it now costs 32.
+    // Asserted as a length delta rather than against a constant so it stays
+    // true if the fixture's other fields change.
+    const withRef = postPowPreimage(GOLDEN_POST);
+    const without = postPowPreimage({ ...GOLDEN_POST, parentRefs: [] });
+    expect(withRef.length - without.length).toBe(32);
+    // And the raw bytes really are in there — not their hex text.
+    expect(Buffer.from(withRef).toString('hex')).toContain('11'.repeat(32));
+    expect(Buffer.from(withRef).toString('hex')).not.toContain(
+      Buffer.from(GOLDEN_REF, 'utf8').toString('hex'),
+    );
+  });
+
+  it('the M-1 collision pair still yields distinct ids — preserved, not introduced', () => {
+    // The defect M-1 closed, re-checked after the dialect moved. `postFieldBytes`
+    // was ALREADY injective before this migration (spec §3.1) — it moved for one
+    // encoding language, not to fix anything — so the job of this assertion is
+    // to prove the property survived rather than that it arrived.
     const a: Post = { ...GOLDEN_POST, powNonce: 5, timestamp: 23 };
     const b: Post = { ...GOLDEN_POST, powNonce: 52, timestamp: 3 };
     expect(computePostId(a)).not.toBe(computePostId(b));
@@ -189,32 +233,61 @@ describe('canonical field encoding (M-1)', () => {
     expect(legacyPostId(a)).toBe(legacyPostId(b));
   });
 
-  it('parentRef boundaries are unambiguous', () => {
+  it('a parentRef outside the b32 domain has NO encoding — the ambiguity is unconstructible', () => {
+    // Restates "parentRef boundaries are unambiguous". That test compared
+    // `['ab','cd']` against `['abcd']` and proved the *length prefix* kept them
+    // apart. Under `arr(refs, b32)` neither input exists: a ref that is not
+    // exactly 64 lowercase hex characters has no encoding, so the collision is
+    // prevented one layer earlier, by the domain rather than by a delimiter.
+    // A fixed-width writer cannot pad or truncate to close the gap — that would
+    // map a malformed ref onto a well-formed post's encoding.
     const split: Post = { ...GOLDEN_POST, parentRefs: ['ab', 'cd'] };
     const joined: Post = { ...GOLDEN_POST, parentRefs: ['abcd'] };
-    expect(computePostId(split)).not.toBe(computePostId(joined));
-    // Vacuity check: undelimited concatenation made these identical.
+    expect(() => computePostId(split)).toThrow(/64 lowercase hex chars/);
+    expect(() => computePostId(joined)).toThrow(/64 lowercase hex chars/);
+    // Vacuity check: the pair really did collide under the old concatenation,
+    // which is what makes "unconstructible" an improvement and not a dodge.
     expect(legacyPostId(split)).toBe(legacyPostId(joined));
+    // Uppercase hex is out of domain too: 'AB…' and 'ab…' decode to identical
+    // bytes, so admitting both would make the boundary non-injective.
+    expect(() => computePostId({ ...GOLDEN_POST, parentRefs: ['AB'.repeat(32)] }))
+      .toThrow(/64 lowercase hex chars/);
   });
 
-  it('the content/author boundary is unambiguous', () => {
-    const a: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: ['cd'] };
-    const b: Post = { ...GOLDEN_POST, content: 'abcd', parentRefs: [] };
-    // Different ref counts alone are enough; the explicit count seals it.
+  it('the content/parentRefs boundary is unambiguous — the one leg still earned by a prefix', () => {
+    // Restates "the content/author boundary is unambiguous". `author`,
+    // `challenge` and every ref are fixed-width now, so their boundaries are
+    // structural and nothing can test them. `content` is the sole remaining
+    // variable-length field, so it is the only place where the M-1 argument is
+    // still load-bearing: without its length prefix, moving a ref's text into
+    // the content would produce the same byte stream.
+    const a: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: [GOLDEN_REF] };
+    const b: Post = { ...GOLDEN_POST, content: `ab${GOLDEN_REF}`, parentRefs: [] };
     expect(computePostId(a)).not.toBe(computePostId(b));
+    // …and the count prefix seals the other direction: same content, ref
+    // present versus absent.
+    const c: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: [] };
+    expect(computePostId(a)).not.toBe(computePostId(c));
   });
 
-  it('an empty parentRefs array is distinguishable from an empty ref', () => {
+  it('an empty parentRef is unrepresentable, and absence is still distinguishable', () => {
+    // Restates "an empty parentRefs array is distinguishable from an empty
+    // ref". `''` was a legal ref under the old dialect — `LP(utf8(''))` is four
+    // zero bytes — and the explicit count was what separated `[]` from `['']`.
+    // `b32` removes the input instead of distinguishing it.
     const none: Post = { ...GOLDEN_POST, parentRefs: [] };
     const empty: Post = { ...GOLDEN_POST, parentRefs: [''] };
-    expect(computePostId(none)).not.toBe(computePostId(empty));
+    expect(() => computePostId(empty)).toThrow(/64 lowercase hex chars/);
     // Vacuity check: both appended nothing under the old encoding.
     expect(legacyPostId(none)).toBe(legacyPostId(empty));
+    // The count prefix still does its job for the in-domain pair.
+    expect(computePostId(none)).not.toBe(computePostId({ ...GOLDEN_POST, parentRefs: [GOLDEN_REF] }));
   });
 
   it('the post id is domain-tagged — it is not the PoW hash', () => {
-    const nonce = Buffer.alloc(8);
-    nonce.writeBigUInt64LE(BigInt(GOLDEN_POST.powNonce));
+    // The PoW hash appends `vlqU(powNonce)` to the same preimage and carries no
+    // domain tag; 2^32 encodes as five VLQ bytes.
+    const nonce = Buffer.from([0x80, 0x80, 0x80, 0x80, 0x10]);
     const powHash = createHash('blake2b512')
       .update(postPowPreimage(GOLDEN_POST))
       .update(nonce)
@@ -294,8 +367,12 @@ describe('constants', () => {
     expect(MAX_CONTENT_BYTES).toBe(300);
   });
 
-  it('MAX_PARENT_REFS is 8', () => {
-    expect(MAX_PARENT_REFS).toBe(8);
+  it('MAX_PARENT_REFS is 1', () => {
+    // Was 8 (never designed — inherited from a model's suggestion). Capping at
+    // 1 makes reply subtrees disjoint, which is what stops one author's prune
+    // signature from authorising the deletion of a reply that also hangs off
+    // another author's thread.
+    expect(MAX_PARENT_REFS).toBe(1);
   });
 
   it('PoW constants are defined', () => {

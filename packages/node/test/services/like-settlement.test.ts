@@ -4,6 +4,7 @@ import {
   computeTxId,
   computeMintTxId,
   computeBoxId,
+  canonicalBoxBytes,
   encodePost,
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
@@ -797,7 +798,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(utxo.getKarmaBox(author.userId)!.value).toBe(9n);
   });
 
-  it('T2a re-guard: the vesting remainder is block_apply-guarded, content-true, and the guard is id-bearing', async () => {
+  it('T2a re-guard: the vesting remainder is block_apply-guarded and content-true; the guard has LEFT the id (C10)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -829,17 +830,34 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(remainder).not.toBeNull();
     expect(remainder!.guard).toBe('block_apply');
 
-    // The store fabricates the guard on read, so the line above alone cannot
-    // catch a producer still writing the retired guard — this one does: the
-    // stored id was hashed over the producer's bytes, and it must equal the
-    // hash of the reconstructed content.
+    // The stored id was hashed over the producer's bytes, and it must equal the
+    // hash of the content the store reconstructs.
     expect(computeBoxId(remainder!)).toBe(remainder!.id);
 
-    // The consensus fact the phase turns on: the guard string sits inside the
-    // box-id preimage, so identical content under the retired guard hashes to
-    // a different id (and therefore a different stateRoot).
+    // ⚠ **INVERTED by P2-C row C10, and the test name changed with it.** This
+    // read "…and the guard is id-bearing", and asserted that identical content
+    // under the retired guard hashed to a *different* id. `guard` has left the
+    // consensus bytes: it is a pure function of `boxType` — one guard string per
+    // type, with no box choosing between two — so it carried zero information
+    // while costing 16–30 bytes in every box id.
+    //
+    // Both halves of C10 are pinned here, because "the field stopped being
+    // hashed" is only half a claim: the id does not move…
     const underRetiredGuard = { ...remainder!, guard: 'epoch_tally' } as unknown as PostLockBox;
-    expect(computeBoxId(underRetiredGuard)).not.toBe(computeBoxId(remainder!));
+    expect(computeBoxId(underRetiredGuard)).toBe(computeBoxId(remainder!));
+    // …and the string is absent from the bytes rather than merely inert.
+    expect(Buffer.from(canonicalBoxBytes(remainder!)).toString('hex'))
+      .not.toContain(Buffer.from('block_apply').toString('hex'));
+
+    // ⚠ **What this costs, stated rather than left implicit.** `remainder!.guard`
+    // is fabricated by the store on read (`store/utxo.ts:219` returns the
+    // per-boxType constant), and the id no longer covers the guard either — so
+    // as of C10 **nothing** here can catch a producer that writes the retired
+    // `epoch_tally` into the `guard` column. That is not a regression this test
+    // can close: the column is now derived data on both sides, and the honest
+    // remedy is to stop storing it. Flagged for whichever phase owns C8's
+    // neighbourhood; recorded here so the gap is visible at the site that used
+    // to cover it.
   });
 
   // -------------------------------------------------------------------------

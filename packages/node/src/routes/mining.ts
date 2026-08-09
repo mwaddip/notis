@@ -76,8 +76,18 @@ export function createRouter(deps: MiningDeps): Router {
       return;
     }
 
-    // Compute PoW preimage from the header
+    // Compute PoW preimage from the header.
+    //
+    // The template is this node's own; the creator refuses to store one it
+    // cannot encode, so `null` is our fault and not the miner's request. It is
+    // therefore a 5xx and not the 404 above: "no template available" would be
+    // false — there is one, and it is broken. Answering with a preimage-shaped
+    // absence would be worse still, since a miner would burn hashes on it.
     const powPreimage = computePowHash(tpl.header);
+    if (powPreimage === null) {
+      res.status(500).json({ error: 'Block template header is not encodable' });
+      return;
+    }
 
     res.json({
       header: {

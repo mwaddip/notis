@@ -197,6 +197,13 @@ describe('field-type pin', () => {
       ['credit lockedUntilBlock as -0', { ...honest('credit'), lockedUntilBlock: -0 }],
       ['post_lock originalValue as string (the class-3 poison)', { ...honest('post_lock'), originalValue: 'x' }],
       ['post_lock targetPostId as number', { ...honest('post_lock'), targetPostId: 123 }],
+      // `hex32`, not `string`. Every one of these was ACCEPTED by the schema
+      // until this phase, and each one now makes `computeTxId` throw at the last
+      // line of `validateTx` — so the schema is what has to reject them.
+      ['post_lock targetPostId non-hex', { ...honest('post_lock'), targetPostId: 'hello' }],
+      ['post_lock targetPostId uppercase', { ...honest('post_lock'), targetPostId: 'A'.repeat(64) }],
+      ['post_lock targetPostId 63 chars', { ...honest('post_lock'), targetPostId: 'a'.repeat(63) }],
+      ['post_lock targetPostId empty', { ...honest('post_lock'), targetPostId: '' }],
       ['bond inviteOutputIndex above u32', { ...honest('bond'), inviteOutputIndex: 0x1_0000_0000 }],
       ['bond inviteOutputIndex as string', { ...honest('bond'), inviteOutputIndex: '0' }],
       ['bond inviteOutputIndex NaN', { ...honest('bond'), inviteOutputIndex: Number.NaN }],
@@ -456,11 +463,92 @@ describe('field-type pin', () => {
   });
 
   // -------------------------------------------------------------------------
+  // No-panic: a rejected value must produce a VERDICT, never an exception
+  // -------------------------------------------------------------------------
+
+  describe('validateTx returns a verdict for an adversarial targetPostId (no-panic)', () => {
+    /**
+     * The property the `hex32` schema entry exists for, tested end to end rather
+     * than through `checkOutputShape` alone — because the failure it closes is
+     * not "the schema was loose", it is "`validateTx` throws".
+     *
+     * `canonicalBoxBytes` writes `targetPostId` with `writeHexNOrThrow(…, 32)`,
+     * and `computeTxId` runs at `validateTx`'s LAST line, after every check. So
+     * with the field typed `'string'` — as it was — an adversarial value cleared
+     * step 4 and then panicked on the way out, on attacker-supplied input, in a
+     * function `VALIDATION_INTERFACE` requires never to throw. Step 4 rejecting
+     * first is what makes the throw unreachable.
+     *
+     * Note the fixture signs a well-formed lock and stamps the bad id after: the
+     * signature could not be computed over an unencodable transaction, and it
+     * does not need to be — step 4 precedes step 6.
+     */
+    for (const bad of ['hello', 'A'.repeat(64), 'a'.repeat(63), '', 'zz'.repeat(32)]) {
+      it(`targetPostId=${JSON.stringify(bad)} → {valid:false}, not a throw`, () => {
+        const karma = makeKarmaBox(100n, ownerPubKey, 0);
+        storeInsertBox(karma);
+        const lock: Record<string, unknown> = {
+          boxType: 'post_lock',
+          value: POST_LOCK_THREAD_COST,
+          originalValue: POST_LOCK_THREAD_COST,
+          owner: ownerPubKey,
+          targetPostId: 'b'.repeat(64),
+          guard: 'block_apply',
+        };
+        const tx = signedTx(
+          [karma.id!],
+          [
+            {
+              boxType: 'karma',
+              value: 100n - POST_LOCK_THREAD_COST,
+              owner: ownerPubKey,
+              guard: 'owner_signature',
+              proofSource: 'test',
+            },
+            lock,
+          ] as unknown as UtxoTransaction['outputs'],
+        );
+        lock['targetPostId'] = bad;
+
+        let r: ReturnType<typeof validateTx> | undefined;
+        expect(() => { r = validateTx(deps, tx, 10); }).not.toThrow();
+        expect(r!.valid).toBe(false);
+        expect(r!.error).toMatch(/targetPostId/);
+      });
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // CBOR ingress: the block funnel inherits the gate from validateTx
   // -------------------------------------------------------------------------
 
   describe('CBOR ingress (block funnel)', () => {
-    it('a block embedding the class-3 poison tx is REJECTED cleanly — nothing lands, no totality catch', async () => {
+    /**
+     * ⚠ **The poison changed field, and the reason is worth reading.**
+     *
+     * This carried the class-3 poison — a string `originalValue` on the
+     * post_lock — and it cannot any more: `originalValue` is `vlqU64`, which
+     * **throws** on a non-bigint, so the block is unbuildable at the producer
+     * and, if the bytes were spliced in afterwards, `computeTxId` would throw at
+     * `block-apply.ts:867` into the funnel's *totality catch* — the exact path
+     * this test exists to prove is not taken.
+     *
+     * So the poison has to be one whose writer is **total**, or the funnel never
+     * reaches the gate under test. `proofSource` on karma is `lpUtf8`: a number
+     * takes the unreachable sentinel instead of throwing, the transaction hashes
+     * and signs normally, and `checkOutputShape` (validateTx step 4) rejects it
+     * for being a number where the schema says string. Same property, same clean
+     * path, a poison the encoder can carry.
+     *
+     * **What is no longer covered here:** class-3 itself. A string
+     * `originalValue` clears `checkTxEnvelope` — which deliberately does not
+     * type output entries — and then throws inside `computeTxId`, so the funnel
+     * kills the whole block through the totality catch rather than rejecting the
+     * transaction cleanly. That is spec §2.5's known gap at `block-apply.ts:867`,
+     * booked to Phase 6, and it is live: measured, not inferred. When Phase 6
+     * adds the domain check there, class-3 belongs back in this test.
+     */
+    it('a block embedding a poison tx is REJECTED cleanly — nothing lands, no totality catch', async () => {
       const attacker = makeTestIdentity();
       const karma = makeKarmaBox(100n, attacker.userId, 0);
       storeInsertBox(karma);
@@ -472,12 +560,12 @@ describe('field-type pin', () => {
             value: 100n - POST_LOCK_THREAD_COST,
             owner: attacker.userId,
             guard: 'owner_signature',
-            proofSource: 'test',
+            proofSource: 42, // total writer (lpUtf8 sentinels), schema says string
           },
           {
             boxType: 'post_lock',
             value: POST_LOCK_THREAD_COST,
-            originalValue: 'x', // the read-time poison of the before-leg
+            originalValue: POST_LOCK_THREAD_COST,
             owner: attacker.userId,
             targetPostId: 'b'.repeat(64),
             guard: 'block_apply',

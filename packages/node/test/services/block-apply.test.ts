@@ -20,7 +20,7 @@ import {
   INVITE_KARMA_THRESHOLD,
   INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
+import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   Post,
   KarmaBox,
@@ -839,7 +839,9 @@ describe('block-apply embedded tx re-validation', () => {
           value: 5n,
           originalValue: 5n,
           owner: attacker.userId,
-          targetPostId: 'target_post',
+          // `b32` in the box-id preimage — `'target_post'` has no encoding, and
+          // the tx has to be *hashable* for the value check to be what rejects it.
+          targetPostId: '7a'.repeat(32),
           guard: 'block_apply',
         } as PostLockBox,
       ],
@@ -1735,14 +1737,22 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
   // Entry-vs-post verification — content-holders keep lying entries out
   // -----------------------------------------------------------------------
 
+  // ⚠ Every fixture in this cluster carries ONE parent ref, and that is
+  // load-bearing rather than cosmetic. `MAX_PARENT_REFS` is 1, and
+  // `verifyOrderingBlockStructure` enforces it at `block-apply.ts:143` — ahead
+  // of the entry-vs-post comparison at `:599` that these tests exist for. A
+  // two-ref fixture is therefore rejected for its COUNT, so the three
+  // `toBe(false)` cases below would keep passing with the H-3 comparison
+  // deleted entirely. Only the control fails loudly; the rest fail silently, so
+  // the width is what keeps them honest.
+
   it('accepts a block whose entry matches the local post (control)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
-    const parentB = 'b2'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA, parentB] };
+    const post = { ...makePost(author.userId), parentRefs: [parentA] };
     const postId = computePostId(post);
 
     const posts = await importPosts();
@@ -1751,7 +1761,7 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const blockApply = await importBlockApply();
     const block = await makeApplicableBlock({
       subBlockEntries: [
-        { postId, parentRefs: [parentA, parentB], author: hex(author.userId) },
+        { postId, parentRefs: [parentA], author: hex(author.userId) },
       ],
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
@@ -1770,8 +1780,7 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const author = makeTestIdentity();
     const attacker = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
-    const parentB = 'b2'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA, parentB] };
+    const post = { ...makePost(author.userId), parentRefs: [parentA] };
     const postId = computePostId(post);
 
     const posts = await importPosts();
@@ -1780,7 +1789,7 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const blockApply = await importBlockApply();
     const block = await makeApplicableBlock({
       subBlockEntries: [
-        { postId, parentRefs: [parentA, parentB], author: hex(attacker.userId) },
+        { postId, parentRefs: [parentA], author: hex(attacker.userId) },
       ],
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(false);
@@ -1803,9 +1812,8 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     // inside the subtree their own prune signature covers.
     const author = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
-    const parentB = 'b2'.repeat(32);
     const attackerRoot = 'cc'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA, parentB] };
+    const post = { ...makePost(author.userId), parentRefs: [parentA] };
     const postId = computePostId(post);
 
     const posts = await importPosts();
@@ -1823,32 +1831,27 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     expect(ordering.getCurrentHeight()).toBe(0);
   });
 
-  it('rejects a block whose entry reorders the post parentRefs', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    // Same set, different order. parentRefs are a postId-preimage field, so the
-    // order is part of the post's identity and the comparison is sequence-wise.
-    const author = makeTestIdentity();
-    const parentA = 'a1'.repeat(32);
-    const parentB = 'b2'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA, parentB] };
-    const postId = computePostId(post);
-
-    const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
-
-    const blockApply = await importBlockApply();
-    const block = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId, parentRefs: [parentB, parentA], author: hex(author.userId) },
-      ],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(0);
-  });
+  // ⚠ **DELETED: "rejects a block whose entry reorders the post parentRefs".**
+  //
+  // It built `[parentA, parentB]` on the post and `[parentB, parentA]` on the
+  // entry and asserted rejection. Under `MAX_PARENT_REFS = 1` you cannot reorder
+  // a one-element array, so the only way to keep the fixture compiling was to
+  // keep it two wide — and then the block is rejected for its COUNT, by the
+  // structure gate, before the comparison it was written for ever runs. It would
+  // have gone on passing with the property deleted. That is worse than failing,
+  // and it is why this is a deletion rather than a re-fixture.
+  //
+  // **What is no longer covered, stated plainly:** the H-3 comparison at
+  // `block-apply.ts:599` is sequence-wise —
+  // `entry.parentRefs.every((ref, j) => ref === realParents[j])` — and at width
+  // 1 sequence-wise and set-wise are indistinguishable. So nothing now
+  // distinguishes the current implementation from a set comparison; if
+  // `MAX_PARENT_REFS` ever widens, this test has to come back with it.
+  //
+  // What survives: the grafting case above still proves the comparison reads
+  // the *values* (entry names a different parent → rejected), and the
+  // author-contradiction case still proves it reads the author. Only ordering
+  // went unconstructible.
 
   // -----------------------------------------------------------------------
   // Placeholder path — a node without the content still records the author
@@ -1939,28 +1942,80 @@ describe('block-apply funnel totality', () => {
   // The kill shot: a prune entry whose subtreeMerkleRoot is not bytes
   // -----------------------------------------------------------------------
 
-  it('rejects — without throwing — a block whose prune entry carries a non-Uint8Array subtreeMerkleRoot', async () => {
+  /**
+   * Build the block a malicious producer actually ships: honest roots over an
+   * honest entry, then the hostile entry swapped into the body afterwards.
+   *
+   * The entry can no longer be present while the block is built —
+   * `computeSubBlockRoot` runs `serializePruneEntry`, which has no encoding for
+   * a non-byte root — so the swap is the only way to construct the case at all.
+   * `expectUnbuildable` below pins that, because it is half the property.
+   */
+  async function killBlockAtHeight2(
+    postId: string,
+    author: TestIdentity,
+  ): Promise<{ block: OrderingBlock; killEntry: PruneEntry }> {
+    const killEntry = {
+      ...makePruneEntry(postId, [postId], author),
+      subtreeMerkleRoot: 42,
+    } as unknown as PruneEntry;
+    const block = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [makePruneEntry(postId, [postId], author)],
+    });
+    block.subBlockTree.pruneEntries[0] = killEntry;
+    return { block, killEntry };
+  }
+
+  const STRUCTURE_REJECTION =
+    'Rejected block: invalid structure: Ordering block pruneEntry has invalid subtreeMerkleRoot';
+
+  it('rejects a non-Uint8Array subtreeMerkleRoot at the structure gate, before any Merkle work', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const { postId, author } = await confirmedPost();
     const blockApply = await importBlockApply();
+    const { block, killEntry } = await killBlockAtHeight2(postId, author);
 
-    // Valid in every respect a node checks: real PoW at the scheduled target,
-    // a real validator signature, the scheduled coinbase with the scheduled
-    // maturity lock, and Merkle roots computed over this very tree. The prune
-    // entry names the root's genuine consensus-recorded author, so the H-3
-    // binding check — the only total check standing in front of the prune
-    // loop — passes. `subtreeMerkleRoot` is a CBOR integer, which is what
-    // `Buffer.from` throws on.
-    const killEntry = {
-      ...makePruneEntry(postId, [postId], author),
-      subtreeMerkleRoot: 42,
-    } as unknown as PruneEntry;
-    const killBlock = await makeApplicableBlock({ height: 2, pruneEntries: [killEntry] });
+    // Half the property: the honest producer cannot build this block at all now.
+    await expect(
+      makeApplicableBlock({ height: 2, pruneEntries: [killEntry] }),
+    ).rejects.toThrow();
 
-    expect(() => blockApply.applyOrderingBlock(killBlock)).not.toThrow();
-    expect(blockApply.applyOrderingBlock(killBlock)).toBe(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let applied: boolean | undefined;
+    expect(() => { applied = blockApply.applyOrderingBlock(block); }).not.toThrow();
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    const errors = error.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    error.mockRestore();
+
+    expect(applied).toBe(false);
+
+    // ---- the verdict, by its exact label -----------------------------------
+    // `verifyOrderingBlockStructure` owns this rejection (`verify.ts:619`), and
+    // naming the string is what stops the test passing on some *other*
+    // rejection — a root mismatch, say, which is what a fixture that injected
+    // the entry and asserted only `false` would silently have settled for.
+    expect(warnings, `got ${JSON.stringify(warnings)}`).toContain(STRUCTURE_REJECTION);
+
+    // ---- THE ORDERING PIN --------------------------------------------------
+    // Structure at `block-apply.ts:143`, Merkle recomputation at `:269`. That
+    // ordering only became load-bearing in this phase: `computeSubBlockRoot`
+    // used to CBOR-encode anything and is now partial, so if the two ever swap,
+    // this block throws into the funnel's totality catch instead of producing a
+    // verdict. Nothing else in the suite would notice — `applyOrderingBlock`
+    // answers `false` either way — so the absence of that catch's log line is
+    // the whole signal.
+    expect(errors.filter((e) => e.includes('unexpected failure during apply'))).toEqual([]);
+
+    // …and the reason the ordering matters, stated rather than assumed. Without
+    // this line the pin above is vacuous: it would also hold if the Merkle
+    // computation were still total.
+    const { computeSubBlockRoot } = await import('../../src/services/block-creator.js');
+    expect(() => computeSubBlockRoot(block.subBlockTree)).toThrow();
 
     // Rolled back whole: the chain does not move and no journal is written.
     const ordering = await importOrdering();
@@ -2012,11 +2067,7 @@ describe('block-apply funnel totality', () => {
     const { postId, author } = await confirmedPost();
     const blockApply = await importBlockApply();
 
-    const killEntry = {
-      ...makePruneEntry(postId, [postId], author),
-      subtreeMerkleRoot: 42,
-    } as unknown as PruneEntry;
-    const killBlock = await makeApplicableBlock({ height: 2, pruneEntries: [killEntry] });
+    const { block: killBlock } = await killBlockAtHeight2(postId, author);
 
     // What `NetNode.appendBlocks` does with a peer's Modifier response: decode
     // the bytes and hand the result straight to the apply handler. No topic
@@ -2027,8 +2078,21 @@ describe('block-apply funnel totality', () => {
     // integer decodes back to a number, not to bytes.
     expect(typeof decoded.subBlockTree.pruneEntries[0]!.subtreeMerkleRoot).toBe('number');
 
-    expect(() => blockApply.applyOrderingBlock(decoded)).not.toThrow();
-    expect(blockApply.applyOrderingBlock(decoded)).toBe(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let applied: boolean | undefined;
+    expect(() => { applied = blockApply.applyOrderingBlock(decoded); }).not.toThrow();
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    const errors = error.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    error.mockRestore();
+
+    expect(applied).toBe(false);
+    // Same verdict and same ordering pin as the direct path — that identity is
+    // the point of the test: the guarantee is path-independent because it lives
+    // in the funnel, not in the gossip validator.
+    expect(warnings, `got ${JSON.stringify(warnings)}`).toContain(STRUCTURE_REJECTION);
+    expect(errors.filter((e) => e.includes('unexpected failure during apply'))).toEqual([]);
 
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(1);

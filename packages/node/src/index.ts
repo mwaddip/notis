@@ -23,6 +23,11 @@ import { DagService } from './services/dag-service.js';
 import { SqlitePostStore } from './store/sqlite-store.js';
 import { extendsOurTip, findForkPoint, reorg, MAX_REORG_DEPTH } from './services/fork-resolution.js';
 import {
+  CorruptChainStateError,
+  MissingStoredBlockError,
+  failStopIfCorruptChain,
+} from './services/corrupt-state.js';
+import {
   getKarmaBox,
   getKarmaBoxes,
   getKarmaValue,
@@ -39,7 +44,7 @@ import {
   peerStorage,
 } from './store/index.js';
 import { encodePost, cumulativeWork, MEMPOOL_EXPIRY_BLOCKS, subBlockFromPost, verifyPostId, VOUCH_COOLDOWN_BLOCKS } from '@dagsocial/types';
-import type { BlockHeader } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 
 const config = loadConfig();
 const startTime = Date.now();
@@ -197,7 +202,28 @@ net.onSubBlock((sb) => {
   console.log(`Relayed sub-block queued in mempool: ${sb.subBlockId}`);
 });
 
+/**
+ * The ordering-block boundary.
+ *
+ * Being unable to hash our own stored chain is fatal, and this is where that is
+ * *decided* rather than inherited. Without it the outcome would be whatever
+ * `@dagsocial/net` happens to do with a rejected promise from its handler —
+ * today `for (const cb of handlers) cb(block)` with nothing awaiting, so the
+ * rejection goes unhandled and Node ends the process. That is the right end by
+ * the wrong mechanism: this handler is `async`, which is the only reason the
+ * rejection escapes gossip's empty dispatch catch at all (`net/gossip.ts:184`),
+ * and the day `net` awaits its handlers the fail-stop would silently become a
+ * swallow with nothing to say so.
+ */
 net.onOrderingBlock(async (block) => {
+  try {
+    await handleOrderingBlock(block);
+  } catch (err) {
+    failStopIfCorruptChain(err);
+  }
+});
+
+async function handleOrderingBlock(block: OrderingBlock): Promise<void> {
   const currentHeight = getCurrentHeight();
 
   // Genesis or extends our tip: apply normally
@@ -245,11 +271,24 @@ net.onOrderingBlock(async (block) => {
       return;
     }
 
-    // Build our chain headers from fork+1 to current tip
+    // Build our chain headers from fork+1 to current tip.
+    //
+    // Every height in this range must hold a block. `forkHeight` is a height of
+    // *ours* (findForkPoint only returns heights out of our own hash map), the
+    // block at `currentHeight` was just read above, and the store is contiguous
+    // between them — and nothing awaits between that read and this loop, so it
+    // cannot move underneath us.
+    //
+    // Skipping a missing one is the worst available handling, because of which
+    // way it errs: `ourHeaders` feeds `cumulativeWork(ourHeaders)`, so a skipped
+    // block *understates our own chain's work* and tips `theirWork > ourWork`
+    // toward abandoning our chain — silently, on a comparison we got wrong in
+    // the one direction that costs us the chain rather than the reorg.
     const ourHeaders: BlockHeader[] = [];
     for (let h = forkHeight + 1; h <= currentHeight; h++) {
       const b = getOrderingBlock(h);
-      if (b) ourHeaders.push(b.header);
+      if (!b) throw new MissingStoredBlockError('fork resolution', h);
+      ourHeaders.push(b.header);
     }
 
     // Extract competing chain headers above fork point (theirHeaders is newest-first)
@@ -296,9 +335,14 @@ net.onOrderingBlock(async (block) => {
       `Reorg complete: new tip at height=${forkHeight + newBlocks.length}`,
     );
   } catch (err) {
+    // This catch is for the peer and the network — a request that timed out, a
+    // response that would not decode, a reorg the apply path refused. Failing to
+    // hash our *own* chain is none of those, and warning about it here would put
+    // the boundary's decision back in the hands of whichever line noticed first.
+    if (err instanceof CorruptChainStateError) throw err;
     console.warn(`Fork resolution error: ${String(err)}`);
   }
-});
+}
 
 net.onTx((tx) => {
   const deps = {
@@ -353,8 +397,18 @@ net.onTx((tx) => {
 
   // Register blocks handler — bridges sync machine's pull path
   // (ModifierResponse) to the node's applyOrderingBlock pipeline.
+  //
+  // Same boundary as the gossip handler above, and this path needs it more: net
+  // calls this inside `appendBlocks`, whose catch logs any throw as
+  // `failed to decode block` and then applies the *next* block in the batch
+  // (`net/src/node.ts:255-260`). A corrupt chain would be reported as a codec
+  // problem and the sync would keep going over it.
   net.setBlocksHandler((block) => {
-    applyOrderingBlock(block, dagService);
+    try {
+      applyOrderingBlock(block, dagService);
+    } catch (err) {
+      failStopIfCorruptChain(err);
+    }
   });
   net.setHeadersHandler(getOrderingBlock);
 

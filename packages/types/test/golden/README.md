@@ -20,10 +20,30 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `primitives.json` | One group per row of the Primitives table, at its boundaries |
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
+| `post.json` | `postFieldBytes` — the post id and PoW preimage (Phase 2) |
+| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type (Phase 2), and both states of `bond.inviteePublicKey` |
+| `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage (Phase 2) |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |
 | `probe.ts` | The probe struct — a synthetic struct with a field of every kind |
+| `structs.ts` | The three Phase 2 struct codecs |
 
-Phases 2–5 add `post.json`, `boxes.json`, `block.json` beside these, in the same shape.
+Phase 3 adds `block.json` beside these, in the same shape.
+
+### Two kinds of struct codec, and the difference is the point
+
+`probe.ts` writes **and** reads test-side. It is synthetic, so both halves are the harness's own
+regression test.
+
+`structs.ts` is the opposite, deliberately: **its write half IS the production function**
+(`postPowPreimage`, `canonicalBoxBytes`, `serializePruneEntry`), and only the reader is written
+test-side, from the layout tables in `contracts/TYPES_INTERFACE.md`. An encode assertion therefore
+pins the shipped encoder rather than a lookalike, and the decode direction — parse with the
+independent reader, assert exhaustion, re-encode through the *production* writer, byte-compare —
+proves the preimage is self-delimiting and canonical, which a one-directional "these bytes are
+frozen" assertion cannot. None of those three preimages is decoded anywhere in production; the
+readers exist for that check and for the conformance role the corpus takes on afterwards.
+
+Register a Phase 3 struct the same way: production writer, independent reader, `registerStruct`.
 
 ## Adding a vector
 

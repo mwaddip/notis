@@ -379,11 +379,11 @@ export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Ar
   // A non-byte signature throws in `Buffer.from`; a wrong-*length* signature is
   // left to `crypto.verify`, which rejects it cleanly (as in verifyPostSignature).
   if (!isBytes(signature)) return false;
-  // `blockHashChecked` establishes the header domain itself, so a malformed
+  // `blockHash` establishes the header domain itself, so a malformed
   // header yields `null` rather than throwing inside `encodeHeader`. Its
   // non-null return also proves `validatorId` is exactly 32 bytes, which is what
   // keeps `createPublicKey` ("Failed to read asymmetric key") out of reach.
-  const hash = blockHashChecked(header);
+  const hash = blockHash(header);
   if (hash === null) return false;
   const pubKeyObj = ed25519PublicKeyToKeyObject(header.validatorId);
   const message = Buffer.from(hash, 'hex');
@@ -712,20 +712,30 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Block hash
+// Block hash and PoW preimage — the guarded encoders
 // ---------------------------------------------------------------------------
+//
+// These are the only two functions in this package that hand a header to
+// `encodeHeader`. That precondition used to be the *caller's* to remember, at
+// thirteen `src` lines — and the reachable path where nobody did is fork
+// resolution, which carries bare peer headers that `net` obtained from a raw
+// `cbor-x` decode with a TypeScript cast. `verifyOrderingBlockStructure` cannot
+// cover it: it takes an `OrderingBlock` and that path has only headers.
+//
+// So the guard goes inside the encoder-backed functions rather than at their
+// callers. A consumer then absorbs an *absence* — it does not learn the header
+// domain, call a predicate, or decide what well-formed means. This extends the
+// contract's no-panic rule (M-5) past the `verify*` naming convention that had
+// quietly exempted these two: a function with no `false` to return says so with
+// `null`.
 
 /**
- * The block hash IS the hash of the serialized header.
- *
- * @deprecated Phase 1f expand step — use {@link blockHashChecked}. This function
- * checks **nothing**: it hands `header` straight to `encodeHeader`, so its
- * precondition is the caller's to remember, which is the defect Phase 1f exists
- * to close. It survives only until `node` and `net` have migrated (1f-2 / 1f-3);
- * 1f-4 deletes it. During that window this is the *obvious* name and the *wrong*
- * one — a new call site added here reintroduces the defect.
+ * The block hash IS the hash of the serialized header, with its precondition
+ * enforced: `null` on exactly the headers `verifyHeaderFieldDomains` rejects,
+ * the canonical 64-char hex hash otherwise.
  */
-export function blockHash(header: BlockHeader): string {
+export function blockHash(header: BlockHeader): string | null {
+  if (firstHeaderDomainFailure(header) !== null) return null;
   return createHash('blake2b512')
     .update(Buffer.from(encodeHeader(header)))
     .digest()
@@ -734,60 +744,18 @@ export function blockHash(header: BlockHeader): string {
 }
 
 /**
- * Compute the PoW preimage — the serialized header with powNonce=0.
- * The miner hashes this against candidate nonces.
- *
- * @deprecated Phase 1f expand step — use {@link computePowHashChecked}. Same
- * reasoning as {@link blockHash} above: unchecked input straight to
- * `encodeHeader`. Deleted by 1f-4.
+ * The PoW preimage — the serialized header with powNonce=0, which the miner
+ * hashes against candidate nonces. Precondition enforced as in `blockHash`:
+ * `null` on exactly the headers `verifyHeaderFieldDomains` rejects, the 32-byte
+ * preimage otherwise.
  */
-export function computePowHash(header: BlockHeader): Buffer {
+export function computePowHash(header: BlockHeader): Buffer | null {
+  if (firstHeaderDomainFailure(header) !== null) return null;
   const template = { ...header, powNonce: 0 };
   return createHash('blake2b512')
     .update(Buffer.from(encodeHeader(template)))
     .digest()
     .subarray(0, 32);
-}
-
-// ---------------------------------------------------------------------------
-// The guarded encoders (Phase 1f, expand step)
-// ---------------------------------------------------------------------------
-//
-// `blockHash` and `computePowHash` above are the only two functions in this
-// package that hand a header to `encodeHeader`, and neither checks anything.
-// That precondition is currently the *caller's* to remember, at thirteen `src`
-// lines — and the reachable path where nobody does is fork resolution, which
-// carries bare peer headers that `net` obtained from a raw `cbor-x` decode with
-// a TypeScript cast. `verifyOrderingBlockStructure` cannot cover it: it takes an
-// `OrderingBlock` and that path has only headers.
-//
-// So the guard goes inside the encoder-backed functions rather than at their
-// callers. A consumer then absorbs an *absence* — it does not learn the header
-// domain, call a predicate, or decide what well-formed means. This extends the
-// contract's no-panic rule (M-5) past the `verify*` naming convention that had
-// quietly exempted these two: a function with no `false` to return says so with
-// `null`.
-//
-// Temporary names. `blockHash` / `computePowHash` stay in place and unchanged
-// until `node` and `net` have migrated (Phases 1f-2 / 1f-3); 1f-4 deletes the
-// unguarded pair and the compiler proves nobody is left.
-
-/**
- * `blockHash`, with its precondition enforced: `null` on exactly the headers
- * `verifyHeaderFieldDomains` rejects, the canonical 64-char hex hash otherwise.
- */
-export function blockHashChecked(header: BlockHeader): string | null {
-  if (firstHeaderDomainFailure(header) !== null) return null;
-  return blockHash(header);
-}
-
-/**
- * `computePowHash`, with its precondition enforced: `null` on exactly the
- * headers `verifyHeaderFieldDomains` rejects, the 32-byte preimage otherwise.
- */
-export function computePowHashChecked(header: BlockHeader): Buffer | null {
-  if (firstHeaderDomainFailure(header) !== null) return null;
-  return computePowHash(header);
 }
 
 // ---------------------------------------------------------------------------
@@ -798,7 +766,7 @@ export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
   // One gate, not two: the guarded preimage establishes the whole header domain,
   // which includes `powNonce` / `powTargetBits` as non-negative safe integers
   // (M-6) — the bound that keeps `BigInt` / `writeBigUInt64LE` from throwing.
-  const preimage = computePowHashChecked(header);
+  const preimage = computePowHash(header);
   if (preimage === null) return false;
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));
@@ -822,7 +790,7 @@ export function verifyBlockChainLink(
   if (!isObject(block.header)) return false;
   // `prevBlock.header` is CBOR-encoded by the hash; `block.header` is only read
   // from, so it needs no encodability guard.
-  const prevHash = blockHashChecked(prevBlock.header);
+  const prevHash = blockHash(prevBlock.header);
   if (prevHash === null) return false;
   return (
     block.header.prevBlockHash === prevHash &&

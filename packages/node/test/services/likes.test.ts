@@ -216,8 +216,15 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     const karma = createKarmaBox(likerPubKey, 100n, 1);
     createTestPost(likerId);
 
+    // Stamped after signing: `likeTarget` is `opt(b32)` in the txId preimage
+    // now, so none of these four has an encoding and `buildBurnLikeTx` would
+    // die at `computeTxId` before `castLike` ever saw them. That is not a
+    // weakening — `castLike` takes a decoded transaction off the wire and must
+    // still refuse one carrying any of these, and its `LIKE_TARGET_RE` check is
+    // step 1, ahead of every id derivation and every signature read.
     for (const bad of ['short', 'A'.repeat(64), 'zz'.repeat(32), '']) {
-      const tx = buildBurnLikeTx(karma, bad);
+      const tx = buildBurnLikeTx(karma, 'ab'.repeat(32));
+      tx.likeTarget = bad;
       expect(() => castLike(deps, tx, 5)).toThrow('likeTarget missing or malformed');
     }
   });

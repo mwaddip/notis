@@ -74,6 +74,13 @@ export function createRouter(deps: BlocksDeps): Router {
       return;
     }
 
+    // `hash` is already `string | null` here, and its `null` already means "we
+    // have no hash to give you": height 0 above, and a height whose block is
+    // missing from the store below. A stored header outside the encodable
+    // domain is the third case of the same thing, so it reports the same way
+    // rather than changing the response shape or the status code. A client
+    // reads `height > 0 && hash === null` as this node's chain being
+    // inconsistent — which it already had to, for the missing-block case.
     const block = deps.getOrderingBlock(height);
     res.json({
       height,

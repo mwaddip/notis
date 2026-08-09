@@ -195,7 +195,7 @@ in UTF-8 byte length. Accepts 1–300 bytes inclusive.
 verifyParentRefsCount(refs: string[]): { valid: boolean; error?: string }
 ```
 
-Rejects if `refs.length > MAX_PARENT_REFS` (8). Accepts 0–8 refs.
+Rejects if `refs.length > MAX_PARENT_REFS` (**1**). Accepts 0 or 1 refs.
 
 ### verifyContentCharacters
 
@@ -362,7 +362,7 @@ verifyOrderingBlockStructure(block: OrderingBlock): { valid: boolean; error?: st
 
 Checks: `prevBlockHash` present and non-empty, `subBlockRefs` is an array,
 `subBlockEntries` is an array aligned 1:1 with `subBlockRefs` where every entry
-has a 64-char `postId`, a `parentRefs` array of ≤ 8 64-char strings, and a
+has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char strings, and a
 64-char `author` (the consensus-carried authorship claim, audit H-3),
 `validatorSignature` is 64 bytes, `height` ≥ 1, `protocolVersion` is a number,
 `powNonce` is a non-negative number,
@@ -417,7 +417,7 @@ not) is still open.
 >
 > | Check | Why the codec can't |
 > |---|---|
-> | `parentRefs.length ≤ 8` | `MAX_PARENT_REFS` is a protocol rule, not a shape |
+> | `parentRefs.length ≤ MAX_PARENT_REFS` | it is a protocol rule, not a shape |
 > | `height ≥ 1` | genesis is a semantic floor |
 > | `powTargetBits ≥ ORDERING_BLOCK_POW_TARGET_FLOOR` | a policy floor |
 > | `lockedUntilBlock ≥ block.height` | cross-field, needs the header |

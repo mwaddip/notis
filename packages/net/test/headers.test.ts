@@ -10,6 +10,30 @@ import { mergeUint8Arrays } from '../src/util.js';
 // Mock data helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * `blockHash` for fixtures that are inside the header domain by
+ * construction.
+ *
+ * Every header this suite hashes is a `makeMockHeader` product or a cbor-x
+ * round-trip of one, so the Phase 1f guard can never fire here. A bare `!`
+ * would hide the day that stops being true: it types `null` as `string`, and
+ * the `null` then surfaces as a failed hash comparison several assertions
+ * later, blaming the chain link rather than the fixture. Throwing at the
+ * fixture names the real cause.
+ *
+ * The two calls over *decoded* headers (the round-trip chain-link assertions)
+ * get something extra for free: they now also prove the header survives CBOR
+ * still inside the encodable domain, since a `validatorId` that came back as
+ * anything but 32 bytes would trip this instead of hashing.
+ */
+function mockBlockHash(header: BlockHeader): string {
+  const hash = blockHash(header);
+  if (hash === null) {
+    throw new Error('fixture header is outside the encodable header domain');
+  }
+  return hash;
+}
+
 function makeMockHeader(
   height: number,
   prevBlockHash: string,
@@ -167,7 +191,7 @@ describe('headers response encode/decode', () => {
   it('encodes and decodes a blocks response wrapper', () => {
     const blocks: OrderingBlock[] = [
       makeMockOrderingBlock(1, '00'.repeat(32)),
-      makeMockOrderingBlock(2, blockHash(makeMockHeader(1, '00'.repeat(32)))),
+      makeMockOrderingBlock(2, mockBlockHash(makeMockHeader(1, '00'.repeat(32)))),
     ];
 
     const response = { blocks };
@@ -223,7 +247,7 @@ describe('handler: requestHeaders (simulated)', () => {
     for (let h = 1; h <= 5; h++) {
       const prev = prevHashes[h - 1]!;
       store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(blockHash(makeMockHeader(h, prev)));
+      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
     }
 
     // Request headers starting from height 5, max 3
@@ -247,7 +271,7 @@ describe('handler: requestHeaders (simulated)', () => {
     for (let h = 1; h <= 10; h++) {
       const prev = prevHashes[h - 1]!;
       store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(blockHash(makeMockHeader(h, prev)));
+      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
     }
 
     // Request at most 2 headers
@@ -271,7 +295,7 @@ describe('handler: requestHeaders (simulated)', () => {
       2,
       makeMockOrderingBlock(
         2,
-        blockHash(makeMockHeader(1, '00'.repeat(32))),
+        mockBlockHash(makeMockHeader(1, '00'.repeat(32))),
       ),
     );
 
@@ -293,17 +317,17 @@ describe('handler: requestHeaders (simulated)', () => {
     store.set(1, makeMockOrderingBlock(1, '00'.repeat(32)));
     const h2 = makeMockOrderingBlock(
       2,
-      blockHash(makeMockHeader(1, '00'.repeat(32))),
+      mockBlockHash(makeMockHeader(1, '00'.repeat(32))),
     );
     store.set(2, h2);
     // Height 3 is missing
     store.set(
       4,
-      makeMockOrderingBlock(4, blockHash(makeMockHeader(2, blockHash(makeMockHeader(1, '00'.repeat(32)))))),
+      makeMockOrderingBlock(4, mockBlockHash(makeMockHeader(2, mockBlockHash(makeMockHeader(1, '00'.repeat(32)))))),
     );
     store.set(
       5,
-      makeMockOrderingBlock(5, blockHash(makeMockHeader(4, 'ff'.repeat(32)))),
+      makeMockOrderingBlock(5, mockBlockHash(makeMockHeader(4, 'ff'.repeat(32)))),
     );
 
     // Request from height 5
@@ -326,7 +350,7 @@ describe('handler: requestHeaders (simulated)', () => {
     for (let h = 1; h <= 25; h++) {
       const prev = prevHashes[h - 1]!;
       store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(blockHash(makeMockHeader(h, prev)));
+      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
     }
 
     // Request without maxCount
@@ -355,7 +379,7 @@ describe('handler: requestBlocks (simulated)', () => {
     for (let h = 1; h <= 5; h++) {
       const prev = prevHashes[h - 1]!;
       store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(blockHash(makeMockHeader(h, prev)));
+      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
     }
 
     // Request blocks from height 2 to 4
@@ -383,7 +407,7 @@ describe('handler: requestBlocks (simulated)', () => {
       3,
       makeMockOrderingBlock(
         3,
-        blockHash(makeMockHeader(1, '00'.repeat(32))),
+        mockBlockHash(makeMockHeader(1, '00'.repeat(32))),
       ),
     );
     store.set(
@@ -472,10 +496,10 @@ describe('handler round-trip', () => {
     const store = new Map<number, OrderingBlock>();
     const h1 = makeMockOrderingBlock(1, '00'.repeat(32));
     store.set(1, h1);
-    const h1Hash = blockHash(h1.header);
+    const h1Hash = mockBlockHash(h1.header);
     const h2 = makeMockOrderingBlock(2, h1Hash);
     store.set(2, h2);
-    const h2Hash = blockHash(h2.header);
+    const h2Hash = mockBlockHash(h2.header);
     const h3 = makeMockOrderingBlock(3, h2Hash);
     store.set(3, h3);
 
@@ -496,8 +520,8 @@ describe('handler round-trip', () => {
     expect(headers[2]!.height).toBe(1);
     // Chain links are correct
     expect(headers[2]!.prevBlockHash).toBe('00'.repeat(32));
-    expect(headers[1]!.prevBlockHash).toBe(blockHash(headers[2]!));
-    expect(headers[0]!.prevBlockHash).toBe(blockHash(headers[1]!));
+    expect(headers[1]!.prevBlockHash).toBe(mockBlockHash(headers[2]!));
+    expect(headers[0]!.prevBlockHash).toBe(mockBlockHash(headers[1]!));
   });
 
   it('encode blocks request, serve response, decode full blocks', () => {
@@ -507,7 +531,7 @@ describe('handler round-trip', () => {
     store.set(1, h1);
     const h2 = makeMockOrderingBlock(
       2,
-      blockHash(h1.header),
+      mockBlockHash(h1.header),
     );
     store.set(2, h2);
 
@@ -548,7 +572,7 @@ describe('handler round-trip', () => {
     const h1 = makeMockOrderingBlock(1, '00'.repeat(32));
     store.set(1, h1);
     // Height 2 is missing
-    const h3 = makeMockOrderingBlock(3, blockHash(h1.header));
+    const h3 = makeMockOrderingBlock(3, mockBlockHash(h1.header));
     store.set(3, h3);
 
     const request = { startHeight: 1, endHeight: 3, mode: 'blocks' };

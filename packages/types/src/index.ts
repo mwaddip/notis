@@ -102,10 +102,15 @@ export type {
 
 // Stumps
 export { computePruneEntryId, serializePruneEntry } from './stump.js';
-export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry } from './stump.js';
+export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger } from './stump.js';
 
 // Blocks
-export { EMPTY_STATE_ROOT, cumulativeWork, subBlockFromPost } from './block.js';
+export {
+  EMPTY_STATE_ROOT,
+  MAX_SATISFIABLE_TARGET_BITS,
+  cumulativeWork,
+  subBlockFromPost,
+} from './block.js';
 export type {
   SubBlock,
   SubBlockEntry,
