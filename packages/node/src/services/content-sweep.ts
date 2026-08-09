@@ -1,4 +1,5 @@
 import { verifyPostId, encodePost } from '@dagsocial/types';
+import { verifyPostFieldDomains } from '@dagsocial/validation';
 import type { NetNode } from '@dagsocial/net';
 import { verifyPostForRelay, type VerifierDeps } from './verifier.js';
 import { insertPost } from '../store/posts.js';
@@ -87,6 +88,22 @@ export async function sweepPlaceholders(
           // Avoid processing the same post twice from different peers
           if (seen.has(entry.postId)) continue;
           seen.add(entry.postId);
+
+          // Field domains first. `entry.post` arrives from net.requestPosts via
+          // sync-codec's decodePosts, which states outright that it does not
+          // inspect the Post interior — so this is the first check of any kind
+          // this post meets, and verifyPostId below already builds a preimage
+          // from it. Guard-first rather than reordering the relay check ahead of
+          // it: verifyPostId answers "does this post match its claimed id",
+          // which is not the question "is this post well-formed", and it should
+          // not be the thing that discovers malformedness.
+          const domains = verifyPostFieldDomains(entry.post);
+          if (!domains.valid) {
+            console.warn(
+              `[content-sweep] post field domains invalid for ${entry.postId}: ${domains.error}`,
+            );
+            continue;
+          }
 
           // Verify post ID matches claimed ID
           if (!verifyPostId(entry.post, entry.postId)) {
