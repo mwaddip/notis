@@ -28,6 +28,7 @@ import {
 import type { DecayDeps } from './decay.js';
 import { config } from '../config.js';
 import { computeBlockReward, computeSubBlockRoot, computeUtxoTxRoot, clearTemplate } from './block-creator.js';
+import { subBlockIdsOf } from './sub-block-ids.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
 import { applyTx, checkTxEnvelope, materializeOutput, validateTx } from './utxo-engine.js';
@@ -401,7 +402,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // back a valid block, and inventing a placeholder would print a hash that is
   // not one. If the impossible happens the line says `hash=null`, which is true.
   const appliedHash = validation.blockHash(block.header);
-  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.subBlockTree.subBlockRefs.length} sub-blocks)`);
+  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.subBlockTree.subBlockEntries.length} sub-blocks)`);
   return true;
 }
 
@@ -590,9 +591,14 @@ function applyMutationPhase(
   height: number,
   dagService?: DagService,
 ): boolean {
-  // All refs, independent of per-post confirm outcomes — same semantics as
-  // the confirm loop in §7, which tolerates per-post failures.
-  recordConfirmedSubBlocks([...block.subBlockTree.subBlockRefs]);
+  // Every id the block commits to, independent of per-post confirm outcomes —
+  // same semantics as the confirm loop in §7, which tolerates per-post
+  // failures. Derived from `subBlockEntries` because the journal is the
+  // *inverse* of that loop: rollback un-confirms exactly what apply confirmed,
+  // and the confirm loop iterates entries. Keying the inverse on the
+  // uncommitted `subBlockRefs` made the two disagree for any block that lied
+  // (`subBlockIdsOf`).
+  recordConfirmedSubBlocks(subBlockIdsOf(block.subBlockTree));
 
   // 7. Apply coinbase — mint credits for each output. The store choke point
   // journals both the pre-existing boxes the mint merges in and the new box.
@@ -659,7 +665,7 @@ function applyMutationPhase(
   // One DELETE keyed by subblock_id — the former fetch-1000-and-find loop
   // silently stopped removing entries past row 1000 (audit M-8, bookkeeping
   // only: those entries lingered until expiry, no consensus effect).
-  removeSubBlockEntries(block.subBlockTree.subBlockRefs);
+  removeSubBlockEntries(subBlockIdsOf(block.subBlockTree));
 
   // 8. Compute DAG scores and evaluate canonical tip
   if (dagService) {

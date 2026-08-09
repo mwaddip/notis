@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { computePowHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
+import { subBlockIdsOf } from '../services/sub-block-ids.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -101,7 +102,9 @@ export function createRouter(deps: MiningDeps): Router {
         powTargetBits: tpl.header.powTargetBits,
         createdAt: tpl.header.createdAt,
       },
-      subBlockRefs: tpl.subBlockTree.subBlockRefs,
+      // Response shape unchanged; the value now comes from the committed
+      // entries rather than the uncommitted field the template carries.
+      subBlockRefs: subBlockIdsOf(tpl.subBlockTree),
       subBlockEntries: tpl.subBlockTree.subBlockEntries,
       pruneEntries: tpl.subBlockTree.pruneEntries,
       utxoTxIds: tpl.utxoTxTree.utxoTxIds,
