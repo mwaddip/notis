@@ -174,11 +174,18 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 
   it('rejects the same block with powNonce NaN (M-6 — pre-fix code Accepted this)', () => {
     // Vacuity evidence: against pre-fix gossip.ts this exact message was
-    // ACCEPTED and forwarded mesh-wide. verifyOrderingBlockStructure guards
+    // ACCEPTED and forwarded mesh-wide. verifyOrderingBlockStructure guarded
     // powNonce with `typeof !== 'number' || < 0`, and `typeof NaN ===
     // 'number'` while `NaN < 0` is false — so structure passed, the version
     // check passed, and nothing else ran before Accept. The single-field-delta
     // control that Accepts is the mined-nonce case above.
+    //
+    // Phase 1f moved the rejection one gate earlier. `verifyOrderingBlockStructure`
+    // now states the header's whole encodable domain, and `powNonce` is a
+    // `vlqU` field, so `isU64Safe` refuses NaN at `gossip.ts:98` — before
+    // net's own PoW check at `:114` ever runs. Same `Reject`, same kind, peer
+    // and weight; the attribution improved, because the gate now names the
+    // field instead of blaming PoW for a header that never reached it.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(TOPICS.orderingBlock)!;
     const peer = newPeer(peerMgr);
@@ -194,7 +201,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'ordering block PoW invalid',
+      'misbehavior', peer.id, 100, 'Ordering block missing or invalid powNonce',
     );
   });
 
@@ -208,15 +215,23 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 
     // Single-field delta from the accepted anchor: only height changes.
     // Pre-fix, height NaN/floats passed structure (`< 1` is false for NaN;
-    // 1.5 >= 1) and were forwarded. The distinct reason string proves the
-    // rejection comes from the height guard, not from PoW (which the height
-    // change also breaks).
+    // 1.5 >= 1) and were forwarded. The distinct reason string still proves the
+    // rejection is attributable to height rather than to PoW (which the height
+    // change also breaks) — that property is what this test is for.
+    //
+    // What moved in Phase 1f is *which* gate supplies it.
+    // `verifyOrderingBlockStructure` now states the header's encodable domain,
+    // so `isU64Safe` refuses NaN and 1.5 at `gossip.ts:98`, before net's own
+    // `Number.isSafeInteger` add-on at `:109`. That add-on is therefore dead
+    // code — deleting it, and renaming this test off "via the height guard",
+    // belong together in Phase 1f-3 with net's own deletion proof and a check
+    // of the sync path, which is why neither is done here.
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce, height: badHeight });
     const result = validate(peer, { data: encodeOrderingBlock(block) });
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'ordering block height is not a safe integer',
+      'misbehavior', peer.id, 100, 'Ordering block invalid height',
     );
   });
 });

@@ -707,6 +707,38 @@ CoinbaseOutput {
 — see `ARCHITECTURE §Likes` for the accrual arithmetic and `NODE_INTERFACE.md` for the
 apply-time algorithm. Nothing epoch-shaped may return to the block structure.
 
+### cumulativeWork
+
+```
+cumulativeWork(headers: BlockHeader[]): bigint
+```
+
+Sum of expected hashes over a chain segment: `Σ 2^powTargetBits`. The fork-choice quantity — node
+compares its own segment against a competing one and reorgs only on strictly greater work.
+
+Undocumented until 2026-08-09; added here because Phase 1f found it is **not total**, and it is
+reached with peer-supplied data.
+
+> ⚠ **AHEAD OF CODE — Phase 1f-5. This is a live defect on `master`, not a migration concern.**
+> The implementation is `1n << BigInt(h.powTargetBits)` over headers that have passed **no
+> validation of any kind**: node's fork resolution obtains them from `net`'s `requestHeaders`, which
+> returns `decode(response) as BlockHeader[]` — a raw cbor decode and a TypeScript cast.
+>
+> Measured 2026-08-09: `BigInt(1.5)` and `BigInt(NaN)` throw `RangeError`, `BigInt('abc')` throws
+> `SyntaxError`, and `BigInt(undefined)` / `BigInt(null)` throw `TypeError`. Separately,
+> `1n << BigInt(1e9)` **succeeds**, allocating roughly 125 MB — so the shift width is a
+> peer-controlled allocation knob, and that half is not fixed by guarding the throw.
+>
+> The throw is caught by a broad `catch` in node's fork-resolution handler, so the visible outcome is
+> not a crash: the node logs and silently declines to reorg. One malformed header from the peer it
+> happens to ask is enough to wedge it off any heavier chain, which makes this a liveness defect
+> rather than a cosmetic one.
+>
+> **The fix must state what a partial answer means.** Skipping non-conforming headers silently
+> understates a competing chain's work, which is a different wrong answer from refusing the batch.
+> Whichever is chosen, the caller's behaviour on it belongs in this contract — an unstated
+> convention here is what let the function be reached with unvalidated input in the first place.
+
 ---
 
 ## Serialization (`serialization.ts`)

@@ -150,6 +150,16 @@ function isHex32(v: unknown): v is string {
  */
 const STATE_ROOT_HEX = /^[0-9a-f]{66}$/;
 
+/** `stateRoot`'s domain as a predicate — the `b33` counterpart to `isHex32`. */
+function isHex33(v: unknown): v is string {
+  return typeof v === 'string' && STATE_ROOT_HEX.test(v);
+}
+
+/** A `Uint8Array` of exactly `n` bytes — type first, width second (see `isBytes`). */
+function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
+  return isBytes(v) && v.length === n;
+}
+
 /**
  * The domain of every field `postFieldBytes` encodes — the precondition of
  * `signingHash`, `postPowPreimage` and `computePostId` in `@dagsocial/types`.
@@ -220,28 +230,100 @@ function isSignablePost(post: unknown): post is Post {
   return verifyPostFieldDomains(post as Post).valid;
 }
 
+// ---------------------------------------------------------------------------
+// The block header's encodable domain (Phase 1f)
+// ---------------------------------------------------------------------------
+//
+// One statement of the domain, two callers. It replaced `isEncodableHeader`,
+// which stated the same domain as *types only* (`typeof prevBlockHash ===
+// 'string'`, with no width and no alphabet; a bare `isBytes(validatorId)`, with
+// no length) while `verifyOrderingBlockStructure` stated it again with widths
+// and alphabets. Two implementations of one domain drift — the class the
+// positional wire format exists to close — so both now consult this table.
+//
+// Each rule names the writer its field feeds under that format, because that is
+// what fixes the domain: `b32`/`b33` are fixed-width and have no unreachable
+// sentinel, so they throw outside their domain (TYPES_INTERFACE → Totality);
+// `vlqU` is total *by sentinel*, so it does not throw — it collides, mapping
+// every out-of-domain value onto one encoding. A pin is needed either way, and
+// the second case is the one a search for panics cannot see.
+
+type HeaderField =
+  | 'protocolVersion'
+  | 'height'
+  | 'prevBlockHash'
+  | 'subBlockRoot'
+  | 'utxoTxRoot'
+  | 'stateRoot'
+  | 'validatorId'
+  | 'powNonce'
+  | 'powTargetBits'
+  | 'createdAt';
+
+interface HeaderDomainRule {
+  readonly field: HeaderField;
+  readonly ok: (v: unknown) => boolean;
+  /** The reason `verifyHeaderFieldDomains` reports for this field. */
+  readonly error: string;
+}
+
+const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
+  // vlqU
+  { field: 'protocolVersion', ok: isU64Safe, error: 'Block header protocolVersion must be a non-negative safe integer' },
+  { field: 'height', ok: isU64Safe, error: 'Block header height must be a non-negative safe integer' },
+  // b32 — 32 bytes carried as hex in memory
+  { field: 'prevBlockHash', ok: isHex32, error: 'Block header prevBlockHash must be 64 lowercase hex characters' },
+  { field: 'subBlockRoot', ok: isHex32, error: 'Block header subBlockRoot must be 64 lowercase hex characters' },
+  { field: 'utxoTxRoot', ok: isHex32, error: 'Block header utxoTxRoot must be 64 lowercase hex characters' },
+  // b33 — the AVL+ digest carries a height byte, so 66 characters, not 64
+  { field: 'stateRoot', ok: isHex33, error: 'Block header stateRoot must be 66 lowercase hex characters' },
+  // b32 — already bytes, so type before width (a 32-char string is not 32 bytes)
+  { field: 'validatorId', ok: (v) => isBytesOfLength(v, 32), error: 'Block header validatorId must be exactly 32 bytes' },
+  // vlqU
+  { field: 'powNonce', ok: isU64Safe, error: 'Block header powNonce must be a non-negative safe integer' },
+  { field: 'powTargetBits', ok: isU64Safe, error: 'Block header powTargetBits must be a non-negative safe integer' },
+  // vlqU, and the field nothing checked anywhere in the repo before Phase 1f.
+  // A domain pin, not a clock policy: no monotonicity rule and no skew window —
+  // those are consensus rule additions, and "never add checks the reference
+  // lacks" applies. `createdAt` stays a producer-set record that no node
+  // validates against anything, as in every chain in the lineage.
+  { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
+];
+
 /**
- * Guard the declared `BlockHeader` fields before the header is CBOR-encoded —
- * `cbor-x` throws on symbol and function values.
+ * The first rule the header violates, or `null` if it is inside the domain.
+ *
+ * A non-object reads as a header with every field absent, so it fails the first
+ * rule rather than slipping through as "no failure" — the shape that would let
+ * a `null`/`42`/`'header'` reach `encodeHeader`.
+ */
+function firstHeaderDomainFailure(h: unknown): HeaderDomainRule | null {
+  const fields: Record<string, unknown> = isObject(h) ? h : {};
+  for (const rule of HEADER_DOMAIN) {
+    if (!rule.ok(fields[rule.field])) return rule;
+  }
+  return null;
+}
+
+/**
+ * The domain of every field `encodeHeader` writes — the precondition of
+ * `blockHash` and `computePowHash`, and the single source of the header's
+ * encodable domain.
  *
  * Only declared fields are checked. A header carrying an *extra* property that
- * holds a symbol, function, or reference cycle would still throw, but such a
- * header cannot arrive over the wire (CBOR encodes none of those); it can only
- * be built in-process, which is trusted.
+ * holds a symbol, function, or reference cycle would still throw inside
+ * `cbor-x`, but such a header cannot arrive over the wire (CBOR encodes none of
+ * those); it can only be built in-process, which is trusted.
+ *
+ * Returns a **reason**, not a boolean, because a rejection's diagnosis is not
+ * subsumed by the rejection (Phase 1c): `verifyOrderingBlockStructure` re-labels
+ * the failure with its own long-standing per-field message rather than emitting
+ * a bare "invalid header".
  */
-function isEncodableHeader(h: unknown): h is BlockHeader {
-  if (!isObject(h)) return false;
-  if (typeof h.protocolVersion !== 'number') return false;
-  if (typeof h.height !== 'number') return false;
-  if (typeof h.prevBlockHash !== 'string') return false;
-  if (typeof h.subBlockRoot !== 'string') return false;
-  if (typeof h.utxoTxRoot !== 'string') return false;
-  if (typeof h.stateRoot !== 'string') return false;
-  if (!isBytes(h.validatorId)) return false;
-  if (typeof h.powNonce !== 'number') return false;
-  if (typeof h.powTargetBits !== 'number') return false;
-  if (typeof h.createdAt !== 'number') return false;
-  return true;
+export function verifyHeaderFieldDomains(header: unknown): { valid: boolean; error?: string } {
+  if (!isObject(header)) return { valid: false, error: 'Block header is not an object' };
+  const failed = firstHeaderDomainFailure(header);
+  return failed ? { valid: false, error: failed.error } : { valid: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,18 +376,17 @@ export function verifyPostSignature(post: Post, publicKey: Uint8Array): boolean 
  * that binds a block to the holder of `validatorId`'s private key.
  */
 export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Array): boolean {
-  // `blockHash` runs `encodeHeader(header)`; `isEncodableHeader` guards every
-  // field it reads, so a malformed header returns false rather than throwing
-  // (same guard style as `verifyOrderingBlockPoW`).
-  if (!isEncodableHeader(header)) return false;
-  // `createPublicKey` throws unless the SPKI envelope carries exactly 32 raw
-  // bytes. `isEncodableHeader` already proved `validatorId` is a byte view.
-  if (header.validatorId.length !== 32) return false;
   // A non-byte signature throws in `Buffer.from`; a wrong-*length* signature is
   // left to `crypto.verify`, which rejects it cleanly (as in verifyPostSignature).
   if (!isBytes(signature)) return false;
+  // `blockHashChecked` establishes the header domain itself, so a malformed
+  // header yields `null` rather than throwing inside `encodeHeader`. Its
+  // non-null return also proves `validatorId` is exactly 32 bytes, which is what
+  // keeps `createPublicKey` ("Failed to read asymmetric key") out of reach.
+  const hash = blockHashChecked(header);
+  if (hash === null) return false;
   const pubKeyObj = ed25519PublicKeyToKeyObject(header.validatorId);
-  const message = Buffer.from(blockHash(header), 'hex');
+  const message = Buffer.from(hash, 'hex');
   return cryptoVerify(null, message, pubKeyObj, Buffer.from(signature));
 }
 
@@ -422,14 +503,38 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
 // verifyOrderingBlockStructure
 // ---------------------------------------------------------------------------
 
+/**
+ * This function's own message for each header field, so the header domain can
+ * be stated once (`HEADER_DOMAIN`) without moving any rejection's diagnosis.
+ * Phase 1e's teeth demonstration asserts these strings exactly.
+ */
+const BLOCK_HEADER_FIELD_ERROR: Record<HeaderField, string> = {
+  protocolVersion: 'Ordering block header missing protocolVersion',
+  height: 'Ordering block invalid height',
+  prevBlockHash: 'Ordering block header missing or invalid prevBlockHash',
+  subBlockRoot: 'Ordering block header missing subBlockRoot',
+  utxoTxRoot: 'Ordering block header missing utxoTxRoot',
+  stateRoot: 'Ordering block header missing or invalid stateRoot',
+  validatorId: 'Ordering block header missing or invalid validatorId',
+  powNonce: 'Ordering block missing or invalid powNonce',
+  powTargetBits: 'Ordering block missing or invalid powTargetBits',
+  // New in Phase 1f — the field this function never touched.
+  createdAt: 'Ordering block header missing or invalid createdAt',
+};
+
 export function verifyOrderingBlockStructure(
   block: OrderingBlock,
 ): { valid: boolean; error?: string } {
   if (!isObject(block)) return { valid: false, error: 'Ordering block is not an object' };
   const h = block.header;
   if (!h) return { valid: false, error: 'Ordering block missing header' };
-  if (!isHex32(h.prevBlockHash)) {
-    return { valid: false, error: 'Ordering block header missing or invalid prevBlockHash' };
+  // Every header field's domain, delegated to the one place it is stated
+  // (`verifyHeaderFieldDomains`) and re-labelled with this function's own
+  // messages. What stays below are the *semantic* floors a domain check cannot
+  // know: `height >= 1` (genesis) and `powTargetBits >= the policy floor`.
+  const headerFailure = firstHeaderDomainFailure(h);
+  if (headerFailure) {
+    return { valid: false, error: BLOCK_HEADER_FIELD_ERROR[headerFailure.field] };
   }
   if (!Array.isArray(block.subBlockTree?.subBlockRefs)) {
     return { valid: false, error: 'Ordering block missing subBlockTree.subBlockRefs' };
@@ -533,19 +638,14 @@ export function verifyOrderingBlockStructure(
   if (!isBytes(block.validatorSignature) || block.validatorSignature.length !== 64) {
     return { valid: false, error: 'Ordering block missing or invalid validatorSignature' };
   }
-  if (typeof h.height !== 'number' || h.height < 1) {
+  // Genesis floor — semantic, not a domain: `vlqU` encodes 0 perfectly well and
+  // the header predicate accepts it, but no block may claim height 0.
+  if (h.height < 1) {
     return { valid: false, error: 'Ordering block invalid height' };
   }
-  if (typeof h.protocolVersion !== 'number') {
-    return { valid: false, error: 'Ordering block header missing protocolVersion' };
-  }
-  if (!isBytes(h.validatorId) || h.validatorId.length !== 32) {
-    return { valid: false, error: 'Ordering block header missing or invalid validatorId' };
-  }
-  if (typeof h.powNonce !== 'number' || h.powNonce < 0) {
-    return { valid: false, error: 'Ordering block missing or invalid powNonce' };
-  }
-  if (typeof h.powTargetBits !== 'number' || h.powTargetBits < ORDERING_BLOCK_POW_TARGET_FLOOR) {
+  // A policy floor, likewise: the header domain admits any u64 target, and this
+  // is the gossip pre-filter that refuses a trivially cheap one.
+  if (h.powTargetBits < ORDERING_BLOCK_POW_TARGET_FLOOR) {
     return { valid: false, error: 'Ordering block missing or invalid powTargetBits' };
   }
   if (!Array.isArray(block.utxoTxTree?.utxoTxIds)) {
@@ -589,31 +689,6 @@ export function verifyOrderingBlockStructure(
       return { valid: false, error: 'Coinbase output invalid lockedUntilBlock' };
     }
   }
-  if (!isHex32(h.subBlockRoot)) {
-    return { valid: false, error: 'Ordering block header missing subBlockRoot' };
-  }
-  if (!isHex32(h.utxoTxRoot)) {
-    return { valid: false, error: 'Ordering block header missing utxoTxRoot' };
-  }
-  // `stateRoot` was not checked here at all — not the alphabet, not the width,
-  // not even the type. It belongs in this phase and not a later one because of
-  // *where* the next reader is: on the relay path this function is the topic
-  // validator's first step (`net/gossip.ts:98`) and `verifyOrderingBlockPoW` is
-  // its fourth (`:114`), and PoW runs `encodeHeader`. Once the header encodes
-  // positionally, `b33(stateRoot)` throws for a value outside this domain — and
-  // the throw lands in the validator's catch arm at `:123`, which bans the
-  // *forwarding* peer permanently for a message it merely relayed. Rejecting
-  // the block as invalid content is both the right verdict and the right
-  // penalty class; that is the same argument Phase 1c used to place the post
-  // pin in `verifySubBlockStructure`.
-  //
-  // Nothing else covers it. `isEncodableHeader` pins `typeof === 'string'` and
-  // no more, and node's apply-time digest comparison is gated on
-  // `config.verifyStateRoot` *and* on a prover being present
-  // (`block-apply.ts:341-343`) — with either off, the field is never read.
-  if (typeof h.stateRoot !== 'string' || !STATE_ROOT_HEX.test(h.stateRoot)) {
-    return { valid: false, error: 'Ordering block header missing or invalid stateRoot' };
-  }
   return { valid: true };
 }
 
@@ -642,6 +717,13 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
 
 /**
  * The block hash IS the hash of the serialized header.
+ *
+ * @deprecated Phase 1f expand step — use {@link blockHashChecked}. This function
+ * checks **nothing**: it hands `header` straight to `encodeHeader`, so its
+ * precondition is the caller's to remember, which is the defect Phase 1f exists
+ * to close. It survives only until `node` and `net` have migrated (1f-2 / 1f-3);
+ * 1f-4 deletes it. During that window this is the *obvious* name and the *wrong*
+ * one — a new call site added here reintroduces the defect.
  */
 export function blockHash(header: BlockHeader): string {
   return createHash('blake2b512')
@@ -654,6 +736,10 @@ export function blockHash(header: BlockHeader): string {
 /**
  * Compute the PoW preimage — the serialized header with powNonce=0.
  * The miner hashes this against candidate nonces.
+ *
+ * @deprecated Phase 1f expand step — use {@link computePowHashChecked}. Same
+ * reasoning as {@link blockHash} above: unchecked input straight to
+ * `encodeHeader`. Deleted by 1f-4.
  */
 export function computePowHash(header: BlockHeader): Buffer {
   const template = { ...header, powNonce: 0 };
@@ -664,13 +750,56 @@ export function computePowHash(header: BlockHeader): Buffer {
 }
 
 // ---------------------------------------------------------------------------
+// The guarded encoders (Phase 1f, expand step)
+// ---------------------------------------------------------------------------
+//
+// `blockHash` and `computePowHash` above are the only two functions in this
+// package that hand a header to `encodeHeader`, and neither checks anything.
+// That precondition is currently the *caller's* to remember, at thirteen `src`
+// lines — and the reachable path where nobody does is fork resolution, which
+// carries bare peer headers that `net` obtained from a raw `cbor-x` decode with
+// a TypeScript cast. `verifyOrderingBlockStructure` cannot cover it: it takes an
+// `OrderingBlock` and that path has only headers.
+//
+// So the guard goes inside the encoder-backed functions rather than at their
+// callers. A consumer then absorbs an *absence* — it does not learn the header
+// domain, call a predicate, or decide what well-formed means. This extends the
+// contract's no-panic rule (M-5) past the `verify*` naming convention that had
+// quietly exempted these two: a function with no `false` to return says so with
+// `null`.
+//
+// Temporary names. `blockHash` / `computePowHash` stay in place and unchanged
+// until `node` and `net` have migrated (Phases 1f-2 / 1f-3); 1f-4 deletes the
+// unguarded pair and the compiler proves nobody is left.
+
+/**
+ * `blockHash`, with its precondition enforced: `null` on exactly the headers
+ * `verifyHeaderFieldDomains` rejects, the canonical 64-char hex hash otherwise.
+ */
+export function blockHashChecked(header: BlockHeader): string | null {
+  if (firstHeaderDomainFailure(header) !== null) return null;
+  return blockHash(header);
+}
+
+/**
+ * `computePowHash`, with its precondition enforced: `null` on exactly the
+ * headers `verifyHeaderFieldDomains` rejects, the 32-byte preimage otherwise.
+ */
+export function computePowHashChecked(header: BlockHeader): Buffer | null {
+  if (firstHeaderDomainFailure(header) !== null) return null;
+  return computePowHash(header);
+}
+
+// ---------------------------------------------------------------------------
 // verifyOrderingBlockPoW
 // ---------------------------------------------------------------------------
 
 export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
-  if (!isEncodableHeader(header)) return false;
-  if (!isU64Safe(header.powNonce) || !isU64Safe(header.powTargetBits)) return false;
-  const preimage = computePowHash(header);
+  // One gate, not two: the guarded preimage establishes the whole header domain,
+  // which includes `powNonce` / `powTargetBits` as non-negative safe integers
+  // (M-6) — the bound that keeps `BigInt` / `writeBigUInt64LE` from throwing.
+  const preimage = computePowHashChecked(header);
+  if (preimage === null) return false;
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));
   const hash = createHash('blake2b512')
@@ -691,11 +820,12 @@ export function verifyBlockChainLink(
 ): boolean {
   if (!isObject(block) || !isObject(prevBlock)) return false;
   if (!isObject(block.header)) return false;
-  // `prevBlock.header` is CBOR-encoded by `blockHash`; `block.header` is only
-  // read from, so it needs no encodability guard.
-  if (!isEncodableHeader(prevBlock.header)) return false;
+  // `prevBlock.header` is CBOR-encoded by the hash; `block.header` is only read
+  // from, so it needs no encodability guard.
+  const prevHash = blockHashChecked(prevBlock.header);
+  if (prevHash === null) return false;
   return (
-    block.header.prevBlockHash === blockHash(prevBlock.header) &&
+    block.header.prevBlockHash === prevHash &&
     block.header.height === prevBlock.header.height + 1
   );
 }
