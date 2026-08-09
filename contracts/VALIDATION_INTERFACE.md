@@ -57,8 +57,12 @@ the block creator to verify externally-submitted mining solutions.
 ### computePowHash
 
 ```
-computePowHash(header: BlockHeader): Buffer
+computePowHash(header: BlockHeader): Buffer | null
 ```
+
+> ⚠ **AHEAD OF CODE — Phase 1f.** The return type is `Buffer` today. It becomes `Buffer | null`
+> when this function establishes its own domain; see `blockHash` below for the full reasoning, which
+> applies identically here. Returns `null` on exactly the inputs `verifyHeaderFieldDomains` rejects.
 
 Computes the preimage the PoW nonce hashes against: takes the header with
 `powNonce` set to `0`, CBOR-encodes it (`encodeHeader`), and returns
@@ -75,7 +79,7 @@ it never enters the preimage. Exposed to external miners (hex) at
 ### blockHash
 
 ```
-blockHash(header: BlockHeader): string
+blockHash(header: BlockHeader): string | null
 ```
 
 The canonical block hash: `blake2b512(encodeHeader(header)).subarray(0, 32)` as a
@@ -84,6 +88,32 @@ preimage, which zeroes it). Used as the next block's `prevBlockHash` chain link,
 and as the message the validator signs — `verifyValidatorSignature` recomputes it.
 Because `validatorSignature` lives on the block and not in the header, `blockHash`
 is stable before and after signing.
+
+> ⚠ **AHEAD OF CODE — Phase 1f.** The return type is `string` today, and the function performs **no
+> input check at all**: it hands `header` straight to `encodeHeader`. It becomes `string | null`,
+> returning `null` exactly when `verifyHeaderFieldDomains` rejects the header.
+>
+> **Why the guard moves inside rather than being required of callers.** `blockHash` has an
+> unenforced precondition and 13 `src` call sites, each independently responsible for remembering it.
+> `isEncodableHeader` is that precondition written down — and applied at three of them. The
+> enumeration behind Phase 1f (spec §6.2) found a caller that reaches this function with peer-supplied
+> data that has passed no check whatsoever: `net`'s `requestHeaders` returns
+> `decode(response) as BlockHeader[]` — a raw cbor decode with a cast, not even an `Array.isArray` —
+> and node's fork resolution hands those bare headers straight here.
+> `verifyOrderingBlockStructure` **cannot** cover that path: it takes an `OrderingBlock` and the path
+> carries bare headers. A check the caller must remember to invoke is the shape the spec blames for
+> this whole defect class (§2.1), and Phase 1d already ruled the same way for `verifyPostFieldDomains`.
+>
+> **Two distinct failures this closes, and only one of them is a panic.** After Phase 3 the
+> fixed-width header fields become `b32`/`b33` writers, which throw — that is the visible half. The
+> half a panic-shaped search cannot see is `createdAt`: it has **no domain check anywhere in the
+> repo**, and its writer is `vlqU`, which is total *by sentinel*. So it does not throw — it
+> **collides**. `NaN`, `-1`, `1.5` and `2^60` all encode to `VLQ_SENTINEL`, giving distinct headers
+> one `blockHash`, one PoW preimage and one signature verdict. `cbor-x` distinguishes those values
+> today, so Phase 3 would *introduce* that malleability rather than inherit it.
+>
+> **Consumers absorb an absence, not a rule.** No caller learns the header domain or decides what
+> well-formed means; that knowledge stays in this package. `net` gains no validation logic at all.
 
 ---
 
@@ -235,6 +265,61 @@ already fatal two steps later at `verifyPostSignature`.
 
 Total on adversarial input, like every function here.
 
+### verifyHeaderFieldDomains
+
+```
+verifyHeaderFieldDomains(header: unknown): { valid: boolean; error?: string }
+```
+
+> ⚠ **AHEAD OF CODE — Phase 1f.** Does not exist yet. It **replaces** `isEncodableHeader`
+> (`verify.ts:232`, private) and becomes the single source of the header's encodable domain.
+
+The header's counterpart to `verifyPostFieldDomains`, and the reason it is one function rather than
+two: **the header domain is currently written down twice.** `isEncodableHeader` states it as types
+only — `typeof prevBlockHash === 'string'` with no width and no alphabet, a bare `isBytes(validatorId)`
+with no length. `verifyOrderingBlockStructure` states it again with widths and alphabets (Phase 1e).
+Two implementations of one domain drift; that is the class the positional format exists to close, so
+1f collapses them and both callers use this.
+
+The domain, by field:
+
+| Field | Domain | Writer it feeds |
+|---|---|---|
+| `protocolVersion` | non-negative safe integer | `vlqU` |
+| `height` | non-negative safe integer | `vlqU` |
+| `prevBlockHash` | `/^[0-9a-f]{64}$/` | `b32` |
+| `subBlockRoot` | `/^[0-9a-f]{64}$/` | `b32` |
+| `utxoTxRoot` | `/^[0-9a-f]{64}$/` | `b32` |
+| `stateRoot` | `/^[0-9a-f]{66}$/` — **66, not 64** (`hex(33)`) | `b33` |
+| `validatorId` | `Uint8Array`, exactly 32 bytes | `b32` |
+| `powNonce` | non-negative safe integer | `vlqU` |
+| `powTargetBits` | non-negative safe integer | `vlqU` |
+| **`createdAt`** | **non-negative safe integer** — new in 1f | `vlqU` |
+
+**`createdAt` is the field nothing checked.** One occurrence in the whole package before 1f
+(`isEncodableHeader`, `typeof === 'number'`, which admits `NaN`, `±Infinity`, `-1` and `1.5`), none
+in `net`, and `verifyOrderingBlockStructure` never touched it. Every other `vlqU` header field is
+pinned on both the gossip and apply paths; this one was pinned on neither.
+
+**It is a domain pin, not a clock policy.** `createdAt` is a producer-set wall-clock value that no
+node validates against anything, exactly as in every chain in the lineage, where it exists as a
+record for explorers. 1f constrains it *only* to what `vlqU` can encode faithfully. It deliberately
+adds **no monotonicity rule and no skew window** — those are consensus rule additions, not encoding
+constraints, and this contract's "never add checks the reference lacks" applies. Note also that the
+reason Bitcoin and Ergo *do* bound their timestamps — difficulty adjustment, and the timewarp class —
+has no analogue here: node derives the target from height, not time.
+
+**Byte fields are checked with `isBytes`, never a bare `.length`.** Phase 1e found `validatorId`,
+coinbase `owner` and `validatorSignature` checked by character count, so a *string* of the right
+length satisfied a check whose purpose was establishing bytes. A 64-character string, `{length: 64}`
+and a 64-element `Array` all pass a length check and none of them encode.
+
+**Returns a reason, not a boolean.** `verifyOrderingBlockStructure` must keep emitting its existing
+error labels unchanged — Phase 1c established that a rejection's *diagnosis* is not subsumed by the
+rejection, and Phase 1e's teeth demonstration asserts exact labels.
+
+Total on adversarial input, like every function here.
+
 ### verifySubBlockStructure
 
 ```
@@ -280,7 +365,7 @@ Checks: `prevBlockHash` present and non-empty, `subBlockRefs` is an array,
 has a 64-char `postId`, a `parentRefs` array of ≤ 8 64-char strings, and a
 64-char `author` (the consensus-carried authorship claim, audit H-3),
 `validatorSignature` is 64 bytes, `height` ≥ 1, `protocolVersion` is a number,
-`hash` present and non-empty, `powNonce` is a non-negative number,
+`powNonce` is a non-negative number,
 `powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (4), `coinbaseOutputs` is
 an array with each output having a 32-byte `owner` and a non-negative `bigint`
 `value` (P0; box/coinbase values are `bigint` — this is the loose structural
@@ -304,6 +389,23 @@ stateful and lives in `@dagsocial/node` (see `NODE_INTERFACE.md`).
 Every check is total: adversarial input yields `{ valid: false }`, never a
 throw. That is what lets the block-apply funnel treat this function as its
 gate (see `NODE_INTERFACE.md`, "Structure validation in the apply funnel").
+
+**Correction, 2026-08-09.** This description previously listed *"`hash` present and non-empty"*.
+There is no `hash` field on `BlockHeader` or `OrderingBlock` and this function has never checked
+one — grep-verified against the types and the implementation. Removed rather than implemented: the
+block hash is *derived* from the header by `blockHash`, never carried in it, and a self-reported
+hash field would be exactly the "trust the object's own claim" pattern this package exists to
+refuse. Recorded because it is the second contract-vs-code divergence found in this file during the
+wire-format bundle; the first (`verifyTxStructure` documented as checking `likeTarget`, which it does
+not) is still open.
+
+> ⚠ **AHEAD OF CODE — Phase 1f.** The header-field checks in this function
+> (`prevBlockHash`, `subBlockRoot`, `utxoTxRoot`, `stateRoot`, `validatorId`, `height`,
+> `protocolVersion`, `powNonce`, `powTargetBits`) are **delegated to `verifyHeaderFieldDomains`**,
+> which becomes the single statement of that domain. The error labels this function emits do not
+> change — that is why the predicate returns a reason rather than a boolean. The block-level checks
+> (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `coinbaseOutputs`, `validatorSignature`)
+> stay here: they are not header fields and no header predicate can see them.
 
 > ⚠ **AHEAD OF CODE — this function shrinks to its semantic residue.** Under the positional wire
 > format (`docs/specs/2026-08-09-positional-wire-format.md`), *structure* is guaranteed by the
@@ -488,6 +590,13 @@ verified at receipt time only.
   rejection, never an exception. Guard the throwing operations
   (`Buffer.byteLength`, `createPublicKey`, `encodeHeader`,
   `BigInt`/`writeBigUInt64LE`, `.length`) with type/shape checks first.
+
+  > ⚠ **AHEAD OF CODE — Phase 1f extends this rule past the `verify*` functions.** "No exported
+  > verify function throws" left `blockHash` and `computePowHash` outside the guarantee, because
+  > they are not verifiers — and they are the two that call `encodeHeader` directly, with no check
+  > at all. The rule is therefore **no exported function throws on adversarial input**, and a
+  > function with no `false` to return says so with `null`. This is not a new principle; it is the
+  > existing one applied where the naming convention had quietly exempted it.
 
 ## Invariants
 - All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
