@@ -807,21 +807,38 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > which deliberately does not type output entries (`utxo-engine.ts:908`); the `u64` pin is
 > `checkOutputShape` at `validateTx` step 4, later. Booked to Phase 6.
 >
-> **2. `b32` on the post path — AHEAD OF CODE, and it inverts the migration order.**
-> `@dagsocial/validation`'s `isSignablePost` (`verify.ts:133-145`) pins *types* but not *lengths*:
-> `isBytes(author)`, `isBytes(challenge)`, and `typeof ref === 'string'` all admit any width. Under
-> the new layout `author` and `challenge` are `b32` and `parentRefs` is `arr(refs, b32)` — three of
-> `postFieldBytes`' six fields. Under the old dialect this could not bite, because everything was
-> length-prefixed and any width encoded faithfully.
+> **2. `b32` on the post path — PARTIAL, and it inverted the migration order.**
+> Under the new layout `author` and `challenge` are `b32` and `parentRefs` is `arr(refs, b32)` —
+> three of `postFieldBytes`' six fields. Under the old dialect this could not bite: everything was
+> length-prefixed, so any width encoded faithfully and injectively.
 >
-> The exposure is wider than `isSignablePost`, which gates only `verifyPostSignature`:
-> `computePostId` and `postPowPreimage` are called directly from eight further sites, and
-> `gossip.ts:222` reaches `postPowPreimage` behind content, character, ref-**count** and version
-> checks with no width check on any of the three fields — in Stage-1 relay validation, which
-> `VALIDATION_INTERFACE` requires never to throw.
+> **The enumeration is `postFieldBytes`' four entry points — `signingHash`, `postPowPreimage`,
+> `computePostId` and `verifyPostId` — reaching it from 15 production call sites.** (An earlier
+> draft of this block said "eight further sites"; that was main's count, and it was wrong. It also
+> missed `verifyPostId` as an entry point altogether, and `store/posts.ts:82` `insertPost`, which is
+> the store-admission write that the whole downstream classification depends on.)
 >
-> **Therefore the fixed-width domain must be pinned before `post.ts` moves to fixed-width writers.**
-> Doing it after would open a live M-5/M-6 panic regression in the window between.
+> **No site is independently structurally guaranteed.** The tail is safe only if everything written
+> to the store passed a domain check — and the store-admission write is itself one of the call
+> sites. The chain is non-circular only because three gates sit upstream of it.
+>
+> **Closed by Phase 1c** (`5c0bf71`): `verifyPostFieldDomains` in `@dagsocial/validation` pins
+> `author`/`challenge` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex. Lowercase is
+> load-bearing — `'AB…'` and `'ab…'` hex-decode to identical bytes, so accepting both would make the
+> codec boundary non-injective. It is reached from `isSignablePost` and from
+> `verifySubBlockStructure`, the latter closing the gossip relay path with no `net` edit
+> (`gossip.ts:201` runs it before `:222` builds the preimage).
+>
+> **Still open — the three gates, all in `@dagsocial/node`, booked to Phase 1d:**
+> `verifier.ts` `verifyPost` (:148) and `verifyPostForRelay` (:230), and `content-sweep.ts` (:92).
+> The last is the sharpest site in the tree: `verifyPostId` cold, zero prior checks, on a post whose
+> decoder explicitly declines to inspect the interior — and the sync path stays on `cbor-x`
+> permanently, so **no codec phase ever closes it**.
+>
+> **This is not merely tightening the already-unusable.** A post with a 64-character *non-hex*
+> `parentRef` passes the complete Stage-1 pipeline today, signature and PoW included, because the ref
+> is hashed as UTF-8 text and the signature covers those bytes. One third of the pin is a real
+> behavioural change.
 
 ### Layout — Post
 
