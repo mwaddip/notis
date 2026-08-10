@@ -605,7 +605,6 @@ same object.
 ```
 BlockHeader {
   protocolVersion: number        // 1
-  networkType: NetworkType       // ⚠ NOT IMPLEMENTED — 'mainnet' | 'testnet' | 'devnet'
   height: number                 // Monotonically increasing, starting from 1
   prevBlockHash: string          // hex(32) — hash of the previous block's header
   subBlockRoot: string           // hex(32) — Merkle root over the sub-block tree (DAG content)
@@ -618,21 +617,46 @@ BlockHeader {
 }
 ```
 
-> ⚠ **NOT IMPLEMENTED — `networkType` is new, decided 2026-08-06.** It sits beside
-> `protocolVersion` because it answers the sibling question: `protocolVersion` is *which
-> rules*, `networkType` is *which chain*. Rejected at the structure gate when it does not
-> match the node's own profile.
+> ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
+> 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
+> code. **The header is ten fields.** Read this before proposing it a third time.
 >
-> **It is not redundant.** Id derivation is network-agnostic by decision (§Domain tags are
-> network-agnostic), so this field is the **only** consensus-visible network commitment
-> short of genesis. Without it a wrong-network block is rejected as a chain-link failure —
-> true, but opaque.
+> The argument for it was legibility: id derivation is network-agnostic by decision (§Domain
+> tags are network-agnostic), so a header field would be the only consensus-visible network
+> commitment short of genesis, and without it a wrong-network block is rejected as a
+> chain-link failure — true, but opaque.
 >
-> This is a **divergence from Ergo**, whose header carries no network field. Recorded so it
-> is not later "corrected" by someone checking Ergo and finding no such field. Ergo can omit
-> it because its network separation rides in address serialization and genesis; Notis has no
-> address layer, since a box `owner` is a raw pubkey. ⚠ **Adding a header field changes
-> `blockHash` and the PoW preimage** — it is part of the P2-C break bundle.
+> **What sank it is that an attacker fills the field in correctly, for free.** Writing
+> `networkType: 'mainnet'` on a forged mainnet block costs nothing, so the field never
+> catches an adversary. Its entire population is honest misconfiguration — and every member
+> of that population is already caught earlier, by the two mechanisms `ARCHITECTURE §How the
+> network is committed` lists beside it:
+>
+> - **p2p** — the wire magic gates frame assembly; foreign-network peers do not connect.
+> - **HTTP** — no route accepts a block. `blocks.ts` is three `GET`s, and `/mining/submit`
+>   takes a nonce and a height against the node's *own* template, so the header is
+>   self-supplied.
+> - **operator flips `NETWORK_TYPE` against an existing store** — the stored genesis is the
+>   old network's, so it fails at the chain link.
+>
+> That left the field's whole marginal value as the *wording of an error message*, bought
+> with a byte in every header forever. **`extensionDigest` was deleted from the same header for
+> committing to nothing** (§Layout — Block below; spec §5.1), and that spec's third point
+> retires the "add it now
+> while header breaks are free" defence: the cost of a later header change is a second fresh
+> chain, which stays cheap until a live multi-node network exists.
+>
+> **The rule had no home, which is how the gap survived into three contracts.** Both this
+> section and `VALIDATION_INTERFACE` said the profile match belongs "at the structure gate" —
+> but `verifyOrderingBlockStructure` lives in `@dagsocial/validation`, which is contractually
+> pure and stateless and cannot read the node's profile. A field whose enforcement point does
+> not exist is inert regardless of its merits.
+>
+> **This restores agreement with Ergo**, whose header also carries no network field, so the
+> divergence note this block used to carry is retired with it. **What would reopen the
+> question:** a consumer that must reject a foreign header *without* the chain. Light clients
+> and NiPoPoW proofs both anchor at genesis by construction, so neither is one — a new
+> argument needs a consumer that genuinely is.
 
 The header is what gets hashed. `blockHash(header) = blake2b512(encodeHeader(header))[:32]`
 (hex) is both the block's canonical hash — the next block's `prevBlockHash` — and the
@@ -1036,27 +1060,22 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 | # | Field | Encoding |
 |---|---|---|
 | 1 | `protocolVersion` | `vlqU` — **first, so it is readable before any version dispatch** |
-| 2 | `networkType` | **`enum8`** — which *chain*, beside `protocolVersion`'s which *rules* |
-| 3 | `height` | `vlqU` |
-| 4 | `prevBlockHash` | `b32` |
-| 5 | `subBlockRoot` | `b32` |
-| 6 | `utxoTxRoot` | `b32` |
-| 7 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
-| 8 | `validatorId` | `b32` |
-| 9 | `powNonce` | `vlqU` |
-| 10 | `powTargetBits` | `vlqU` |
-| 11 | `createdAt` | `vlqU` |
+| 2 | `height` | `vlqU` |
+| 3 | `prevBlockHash` | `b32` |
+| 4 | `subBlockRoot` | `b32` |
+| 5 | `utxoTxRoot` | `b32` |
+| 6 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
+| 7 | `validatorId` | `b32` |
+| 8 | `powNonce` | `vlqU` |
+| 9 | `powTargetBits` | `vlqU` |
+| 10 | `createdAt` | `vlqU` |
 
-| Tag | Network |
-|---|---|
-| 0 | `mainnet` |
-| 1 | `testnet` |
-| 2 | `devnet` |
+**Ten fields, and the count is now the same ten in both places** — this table and the BlockHeader
+definition above. The pair previously said "eleven" and meant two different elevens; see below.
 
-A retired network's tag is **reserved, never reused** — the discipline Layout — Boxes applies to the
-retired `like` box type.
-
-**⚠ Two corrections, 2026-08-09, and this table was wrong in both directions.**
+**⚠ This table was wrong in both directions, and the second correction was itself reversed.** Read
+all three notes together — the method lesson in the middle one is the durable part and it survives
+its own example being withdrawn.
 
 **`extensionDigest` is removed.** It was C11's committed extension-section seam, and it committed to
 nothing: no section layout, no digest preimage, no value for an honest block with no extension, and
@@ -1069,10 +1088,14 @@ interlinks-only root, explicitly *not* `header.extensionRoot`. **A field that co
 the mirror image of `subBlockRefs`, which this same unit deletes for being uncommitted.** C11 returns
 to the P2-C register undone; re-derive it when there is a design to commit to.
 
-**`networkType` is added, and its absence was the `bond.inviteePublicKey` class again.** The
-BlockHeader definition above lists it — decided 2026-08-06, marked NOT IMPLEMENTED, and explicitly
-part of this break bundle — while this table one section down omitted it. **Both sections said
-eleven fields**, so a count check passed straight over a membership mismatch.
+**`networkType` was added 2026-08-09 and REJECTED 2026-08-10 — see the BlockHeader definition above
+for why the field itself does not survive.** What follows is about how its *absence from this table*
+went unnoticed, which is a separate finding and still stands.
+
+Its absence was the `bond.inviteePublicKey` class again. The BlockHeader definition above listed it —
+decided 2026-08-06, marked NOT IMPLEMENTED, and explicitly part of this break bundle — while this
+table one section down omitted it. **Both sections said eleven fields**, so a count check passed
+straight over a membership mismatch.
 
 **The root cause is a gate that was right and one-directional.** Phase 0's plan required every layout
 table to be cross-checked against `types/src` and said *"no table may be written from
@@ -1088,13 +1111,16 @@ finished table against the contract's own type definition, and resolve every fie
 absent from the other explicitly — addition, deletion, or stated deferral. Neither artifact is the
 authority alone.
 
-`enum8` rather than `lpUtf8`: it keeps the three-value domain **structural on the wire**, where a
-length-prefixed string would round-trip any junk and leave the domain wholly to validation — the same
-argument that put `bond.inviteePublicKey` on `opt(b32)`. It is also the idiom `boxType` already uses.
-**The in-memory type does not change**: `NetworkType` stays the string union, and the tag mapping is
-the encoder's. Note also that `enum8` is a **total** writer (closed tag set, sentinel `0xff`
-unreachable — see the totality table above), so this row adds nothing to the throwing-writer
-obligation Phase 3 must discharge against the block structs.
+⚠ **Every remaining header row is either a throwing writer or total-by-sentinel, and the
+throwing-writer obligation is now larger in proportion, not smaller.** The withdrawn `networkType`
+row was the header's only `enum8` — a **total** writer whose presence was explicitly argued to add
+nothing to that obligation. Removing it removes the one row that was already discharged. What is left
+is **five throwing rows** (`b32` ×4 — `prevBlockHash`, `subBlockRoot`, `utxoTxRoot`, `validatorId` —
+plus `b33` ×1) and **five `vlqU`**, which are total *by sentinel* and
+therefore **collide rather than throw** — the `createdAt` failure mode Phase 1f closed, and the
+reason a panic-shaped search is not sufficient here. **Phase 3 must still run the writer-versus-schema-type
+table against the block structs before pinning any width**, exactly as stated at the end of
+Layout — Boxes.
 
 `blockHash` = `blake2b512(headerBytes)[0..32]`; `computePowHash` is the same with `powNonce = 0`.
 
@@ -1275,7 +1301,8 @@ attractive and will recur:
   that do not exist. The only gap left open is cross-network **post** replay, accepted as a
   spam vector rather than a value defect.
 
-Network separation lives in genesis, the header `networkType`, and the wire magic. See
+Network separation lives in **genesis and the wire magic** — two layers, not three. The proposed
+header `networkType` field was rejected 2026-08-10 (see the Block header section above). See
 `ARCHITECTURE §Network Identity → How the network is committed`.
 
 ### Denomination (P0 — Spec B)

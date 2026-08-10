@@ -289,7 +289,6 @@ The domain, by field:
 | Field | Domain | Writer it feeds |
 |---|---|---|
 | `protocolVersion` | non-negative safe integer | `vlqU` |
-| **`networkType`** | ⚠ **AHEAD OF CODE (Phase 3)** — a member of `NetworkType`: `'mainnet'`, `'testnet'` or `'devnet'` | `enum8` |
 | `height` | non-negative safe integer | `vlqU` |
 | `prevBlockHash` | `/^[0-9a-f]{64}$/` | `b32` |
 | `subBlockRoot` | `/^[0-9a-f]{64}$/` | `b32` |
@@ -300,12 +299,22 @@ The domain, by field:
 | `powTargetBits` | non-negative safe integer | `vlqU` |
 | **`createdAt`** | **non-negative safe integer** — new in 1f | `vlqU` |
 
-**`networkType` is the only header field whose domain is a closed set rather than a shape**, and the
-distinction matters: this function pins that the value **encodes**. Whether it matches *this node's*
-network is a separate check and belongs at the structure gate (`TYPES_INTERFACE` → Block header) — a
-block for another chain is well-formed, just not ours. Folding the profile match in here would make
-an encodable header report as unencodable, which is the confusion `blockHash`'s `null` contract
-exists to avoid.
+⛔ **The table used to carry a `networkType` row, marked AHEAD OF CODE for Phase 3. That header field
+is REJECTED (2026-08-10)** — see `TYPES_INTERFACE` → Block header and `ARCHITECTURE §How the network
+is committed`. The row is deleted rather than deferred; there is no header field for it to describe.
+
+**This package's part in why it failed is worth keeping.** The note here used to say the profile
+match — whether a block's network is *ours* — "is a separate check and belongs at the structure
+gate", on the sound reasoning that a block for another chain is well-formed, just not ours, and that
+folding the match into this function would make an encodable header report as unencodable. That
+reasoning was right; the destination was not. **`verifyOrderingBlockStructure` is in this package,
+which is contractually pure and stateless and cannot read the node's profile**, so the check had
+nowhere to live. Two other contracts pointed at the same non-existent home. **A rule routed to a
+package that structurally cannot run it reads as scheduled work and is actually a dead end** — worth
+checking for directly, because nothing about the wording distinguishes the two.
+
+**Every remaining field's domain is a shape, not a closed set**, so this function is uniformly a
+well-formedness check with no membership tests left in it.
 
 **`createdAt` is the field nothing checked.** One occurrence in the whole package before 1f
 (`isEncodableHeader`, `typeof === 'number'`, which admits `NaN`, `±Infinity`, `-1` and `1.5`), none
