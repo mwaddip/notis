@@ -21,12 +21,8 @@ import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
 import { SqlitePostStore } from './store/sqlite-store.js';
-import { extendsOurTip, findForkPoint, reorg, MAX_REORG_DEPTH } from './services/fork-resolution.js';
-import {
-  CorruptChainStateError,
-  MissingStoredBlockError,
-  failStopIfCorruptChain,
-} from './services/corrupt-state.js';
+import { extendsOurTip, resolveFork, MAX_REORG_DEPTH } from './services/fork-resolution.js';
+import { failStopIfCorruptChain } from './services/corrupt-state.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -43,8 +39,8 @@ import {
   getOrderingBlock,
   peerStorage,
 } from './store/index.js';
-import { encodePost, cumulativeWork, MEMPOOL_EXPIRY_BLOCKS, subBlockFromPost, verifyPostId, VOUCH_COOLDOWN_BLOCKS } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
+import { encodePost, MEMPOOL_EXPIRY_BLOCKS, subBlockFromPost, verifyPostId, VOUCH_COOLDOWN_BLOCKS } from '@dagsocial/types';
+import type { OrderingBlock } from '@dagsocial/types';
 
 const config = loadConfig();
 const startTime = Date.now();
@@ -232,116 +228,7 @@ async function handleOrderingBlock(block: OrderingBlock): Promise<void> {
     return;
   }
 
-  // Fork detected
-  console.log(
-    `Fork detected: our height=${currentHeight}, ` +
-    `competing block height=${block.header.height}`,
-  );
-
-  const peers = net.peers();
-  if (peers.length === 0) {
-    console.warn('Fork resolution failed: no connected peers');
-    return;
-  }
-  const peerId = peers[0]!.id;
-
-  try {
-    // Request headers from competing tip going backward (newest-first)
-    const theirHeaders = await net.requestHeaders(
-      block.header.height,
-      MAX_REORG_DEPTH * 2,
-      peerId,
-    );
-    if (theirHeaders.length === 0) {
-      console.warn('Fork resolution failed: no headers from peer');
-      return;
-    }
-
-    const ourTip = getOrderingBlock(currentHeight);
-    if (!ourTip) {
-      console.warn('Fork resolution failed: cannot retrieve our tip');
-      return;
-    }
-
-    const forkHeight = findForkPoint(ourTip.header, theirHeaders);
-    if (forkHeight === null) {
-      console.warn(
-        `Fork resolution failed: no common ancestor within ${MAX_REORG_DEPTH} blocks`,
-      );
-      return;
-    }
-
-    // Build our chain headers from fork+1 to current tip.
-    //
-    // Every height in this range must hold a block. `forkHeight` is a height of
-    // *ours* (findForkPoint only returns heights out of our own hash map), the
-    // block at `currentHeight` was just read above, and the store is contiguous
-    // between them — and nothing awaits between that read and this loop, so it
-    // cannot move underneath us.
-    //
-    // Skipping a missing one is the worst available handling, because of which
-    // way it errs: `ourHeaders` feeds `cumulativeWork(ourHeaders)`, so a skipped
-    // block *understates our own chain's work* and tips `theirWork > ourWork`
-    // toward abandoning our chain — silently, on a comparison we got wrong in
-    // the one direction that costs us the chain rather than the reorg.
-    const ourHeaders: BlockHeader[] = [];
-    for (let h = forkHeight + 1; h <= currentHeight; h++) {
-      const b = getOrderingBlock(h);
-      if (!b) throw new MissingStoredBlockError('fork resolution', h);
-      ourHeaders.push(b.header);
-    }
-
-    // Extract competing chain headers above fork point (theirHeaders is newest-first)
-    const theirChainHeaders = theirHeaders
-      .filter((h) => h.height > forkHeight)
-      .reverse(); // chronological order for cumulativeWork
-
-    const ourWork = cumulativeWork(ourHeaders);
-    const theirWork = cumulativeWork(theirChainHeaders);
-
-    if (theirWork <= ourWork) {
-      console.log(
-        `Fork resolution: our chain has more or equal work ` +
-        `(ours=${ourWork}, theirs=${theirWork}), ignoring`,
-      );
-      return;
-    }
-
-    console.log(
-      `Fork resolution: competing chain has more work ` +
-      `(ours=${ourWork}, theirs=${theirWork}), reorging...`,
-    );
-
-    // Request blocks from fork+1 to competing tip
-    const theirTipHeight = theirHeaders[0]!.height;
-    const newBlocks = await net.requestBlocks(
-      forkHeight + 1,
-      theirTipHeight,
-      peerId,
-    );
-
-    // Re-check tip — our chain may have advanced during the async requests
-    const heightNow = getCurrentHeight();
-    if (heightNow !== currentHeight) {
-      console.warn(
-        `Tip changed during fork resolution ` +
-        `(was ${currentHeight}, now ${heightNow}), aborting reorg`,
-      );
-      return;
-    }
-
-    reorg(forkHeight, newBlocks, dagService);
-    console.log(
-      `Reorg complete: new tip at height=${forkHeight + newBlocks.length}`,
-    );
-  } catch (err) {
-    // This catch is for the peer and the network — a request that timed out, a
-    // response that would not decode, a reorg the apply path refused. Failing to
-    // hash our *own* chain is none of those, and warning about it here would put
-    // the boundary's decision back in the hands of whichever line noticed first.
-    if (err instanceof CorruptChainStateError) throw err;
-    console.warn(`Fork resolution error: ${String(err)}`);
-  }
+  await resolveFork(block, net, dagService);
 }
 
 net.onTx((tx) => {

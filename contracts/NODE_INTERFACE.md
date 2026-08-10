@@ -2354,6 +2354,24 @@ also identity records (see "Two entity kinds" below).
   rolls the DB (including AVL storage rows) back wholesale, and the reorg's
   catch restores the in-memory prover to the pre-reorg digest — the per-block
   funnel restore only covers the failing block, not the applied prefix
+- **A reorg must never leave us worse off than it found us.** `reorg()` reverts above `forkHeight`
+  and then applies exactly what it is handed, so an **empty** `newBlocks` truncates our own chain
+  to the fork point inside a committed transaction, and a short-but-nonempty answer truncates it
+  partway. `net` bounds the response count but never *requires* one, and a peer that serves headers
+  claiming more work then answers the block request with a short list is not sending malformed
+  bytes — nothing upstream can tell it from a peer that legitimately has nothing. The check belongs
+  at the caller, the only site that knows what the reorg was *for* and which peer to name.
+
+  ⚠ **The criterion is WORK; the implemented check is HEIGHT, and that is a proxy with an
+  expiry.** Fork choice selects on `cumulativeWork`, so the honest rule is *the resulting chain
+  must carry strictly more work than the one it replaces*. `forkHeight + newBlocks.length >
+  currentHeight` is equivalent **only because `expectedTarget` is a network constant today**, which
+  makes every block worth the same work. ⚠ **The deferred difficulty retarget breaks the
+  equivalence**: under a variable target a shorter chain can carry more work, and this check would
+  then reject a legitimate reorg — silently, with no compiler signal, in the forever-rejecting
+  direction that looks like a quiet network. **Whoever lands retargeting must revisit this bullet
+  and the check together.** Raised by the implementing session, 2026-08-10; see also the carried
+  `cumulativeWork` item, which is the same height-versus-work seam from the other side.
 
 #### Two entity kinds (Spec G phase B)
 
