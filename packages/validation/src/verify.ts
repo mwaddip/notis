@@ -6,7 +6,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
-import { signingHash } from '@dagsocial/types';
+import { signingHash, powNonceBytes } from '@dagsocial/types';
 import { encodeHeader } from '@dagsocial/types';
 import type { Post, SubBlock, BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
@@ -78,8 +78,10 @@ function isBytes(v: unknown): v is Uint8Array {
 }
 
 /**
- * Guard for every value that reaches `BigInt(...)` + `writeBigUInt64LE`, and
- * for bit-count arguments (audit M-6).
+ * Guard for every value that reaches `BigInt(...)` + `writeBigUInt64LE`, for
+ * bit-count arguments (audit M-6), and for the post PoW nonce — whose `vlqU`
+ * writer cannot throw but takes every out-of-domain value to one sentinel tail
+ * (VALIDATION_INTERFACE → verifyPoW).
  *
  * `Number.isSafeInteger`, not a loose `typeof === 'number'` — the loose check
  * admits `NaN`, `Infinity`, and floats, each of which throws in `BigInt()`, and
@@ -344,13 +346,26 @@ export function verifyHeaderFieldDomains(header: unknown): { valid: boolean; err
 // verifyPoW
 // ---------------------------------------------------------------------------
 
+/**
+ * Post PoW: `blake2b512(input ‖ powNonceBytes(nonce))[0..32]` opens with at
+ * least `targetBits` zero bits.
+ *
+ * The tail is `@dagsocial/types`' to write — TYPES_INTERFACE → Serialization →
+ * "Layout — Post" is the layout, and `powNonceBytes` its only writer, so this
+ * predicate and `computePostId` cannot state it differently.
+ *
+ * `isU64Safe(nonce)` is **not** redundant with that writer, which is total by
+ * sentinel: it is what stops every out-of-domain nonce sharing one tail and so
+ * one verdict (VALIDATION_INTERFACE → verifyPoW).
+ *
+ * The ordering-block nonce is `encodeLE64` and has its own predicate below —
+ * two encodings, each specified, sharing no code.
+ */
 export function verifyPoW(input: Uint8Array, nonce: number, targetBits: number): boolean {
   if (!isBytes(input)) return false;
   if (!isU64Safe(nonce)) return false;
   if (!isU64Safe(targetBits)) return false;
-  const nonceBuf = Buffer.alloc(8);
-  nonceBuf.writeBigUInt64LE(BigInt(nonce));
-  const buf = Buffer.concat([Buffer.from(input), nonceBuf]);
+  const buf = Buffer.concat([Buffer.from(input), Buffer.from(powNonceBytes(nonce))]);
   const hash = createHash('blake2b512').update(buf).digest().subarray(0, 32);
   return hasLeadingZeroBits(hash, targetBits);
 }
