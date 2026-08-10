@@ -1000,8 +1000,18 @@ runtime strip somebody must remember:
 > Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
 > in `node` even as a stopgap.
 
-Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it is a pure function of
-`boxType` and carries zero information in a preimage (C10).
+Shared prefix: `enum8(boxType)` ‖ **`vlqU64(value)`**. **`guard` is absent** — it is a pure function
+of `boxType` and carries zero information in a preimage (C10).
+
+⚠ **`value` is `vlqU64`, not `vlqU` — corrected 2026-08-10, and the distinction is a domain, not a
+width.** This cell and the `post_lock.originalValue` cell below both said `vlqU` while the code has
+always called `writeVlqU64OrThrow` (`utxo.ts:128`, `:167`); both fields are `bigint`. **The bytes are
+identical over the overlapping range, so nothing was broken** — which is exactly why it survived. But
+`vlqU` is total by sentinel and collapses anything past `MAX_SAFE_INTEGER`, while `vlqU64` **throws**
+outside `[0, 2⁶⁴)`, and spec §2.5 names the `OrThrow` writers precisely so that a totality exception
+is visible at the call site. A contract that writes `vlqU` where the code throws hides the one thing
+the naming convention exists to show. Found by the Phase 5 executor while hand-deriving golden bytes
+from this table — a use that reads every cell as an instruction rather than as prose.
 
 | Tag | Type |
 |---|---|
@@ -1019,7 +1029,7 @@ Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it 
 | `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
 | `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
-| `post_lock` | `vlqU(originalValue)` ‖ `b32(owner)` ‖ `b32(targetPostId)` |
+| `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` ‖ `b32(targetPostId)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
 
 `credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
