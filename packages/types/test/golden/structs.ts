@@ -44,14 +44,16 @@ import {
   encodeSubBlock,
   encodeOrderingBlock,
 } from '../../src/serialization.js';
-import type {
-  BlockHeader,
-  CoinbaseOutput,
-  OrderingBlock,
-  SubBlock,
-  SubBlockEntry,
-  SubBlockTree,
-  UtxoTxTree,
+import {
+  coinbaseOutputBytes,
+  subBlockEntryBytes,
+  type BlockHeader,
+  type CoinbaseOutput,
+  type OrderingBlock,
+  type SubBlock,
+  type SubBlockEntry,
+  type SubBlockTree,
+  type UtxoTxTree,
 } from '../../src/block.js';
 import { hex, registerStruct, type ValueCodec } from './harness.js';
 
@@ -415,6 +417,39 @@ function parseCoinbase(j: Record<string, unknown>): CoinbaseOutput {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The two element preimages — TYPES_INTERFACE → Layout — Merkle leaf preimages
+// ---------------------------------------------------------------------------
+//
+// `subBlockEntryBytes` and `coinbaseOutputBytes` are the block's other two
+// Merkle leaf preimages: `leafHash('subblock', …)` under `subBlockRoot` and
+// `leafHash('coinbase', …)` under `utxoTxRoot`, exactly as `serializePruneEntry`
+// is the `'prune'` one. They earn their own vectors rather than riding inside
+// `subBlockTree` / `utxoTxTree` because from Phase 4 node hashes them directly,
+// so they need the same cross-implementation anchor every other preimage here
+// has — a conformance reader must be able to check one leaf without building a
+// tree around it.
+//
+// The readers and parsers are the tree codecs' own (`readEntry` / `readCoinbase`,
+// written independently from the layout table at Phase 3b), which is what makes
+// a moved element byte fail here **and** in the enclosing tree vector.
+
+const subBlockEntryCodec: ValueCodec<SubBlockEntry> = {
+  parse: (json: unknown): SubBlockEntry => parseEntry(json as Record<string, unknown>),
+  write(w: ByteWriter, e: SubBlockEntry): void {
+    w.writeBytes(subBlockEntryBytes(e));
+  },
+  read: readEntry,
+};
+
+const coinbaseOutputCodec: ValueCodec<CoinbaseOutput> = {
+  parse: (json: unknown): CoinbaseOutput => parseCoinbase(json as Record<string, unknown>),
+  write(w: ByteWriter, o: CoinbaseOutput): void {
+    w.writeBytes(coinbaseOutputBytes(o));
+  },
+  read: readCoinbase,
+};
+
 const subBlockTreeCodec: ValueCodec<SubBlockTree> = {
   parse(json: unknown): SubBlockTree {
     const j = json as Record<string, unknown>;
@@ -547,6 +582,8 @@ registerStruct('postFields', postFieldsCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);
+registerStruct('subBlockEntry', subBlockEntryCodec);
+registerStruct('coinbaseOutput', coinbaseOutputCodec);
 registerStruct('subBlockTree', subBlockTreeCodec);
 registerStruct('utxoTxTree', utxoTxTreeCodec);
 registerStruct('subBlock', subBlockCodec);

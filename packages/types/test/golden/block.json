@@ -37,6 +37,31 @@
       "note": "Every vlqU field at 0 — one byte each. stateRoot is 33 bytes, not 32."
     },
     {
+      "name": "subBlockEntry/typical",
+      "codec": "subBlockEntry",
+      "value": {
+        "postId": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+        "parentRefs": [
+          "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+        ],
+        "author": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3"
+      },
+      "bytes": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a302a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+      "note": "The 'subblock' Merkle leaf preimage, tag excluded: leafHash('subblock', these bytes) is the leaf. postId, both parentRefs and author are four distinct b32 values, so a transposition of the two same-width id rows moves the bytes."
+    },
+    {
+      "name": "subBlockEntry/thread-root",
+      "codec": "subBlockEntry",
+      "value": {
+        "postId": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+        "parentRefs": [],
+        "author": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4"
+      },
+      "bytes": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a400b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
+      "note": "arr is the only variable-length row; a thread root is its empty case, a bare zero count between two b32 rows."
+    },
+    {
       "name": "subBlockTree/empty",
       "codec": "subBlockTree",
       "value": {
@@ -79,6 +104,30 @@
       },
       "bytes": "02a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101",
       "note": "The prune entry is serializePruneEntry verbatim — the committed Merkle leaf preimage."
+    },
+    {
+      "name": "coinbaseOutput/miner",
+      "codec": "coinbaseOutput",
+      "value": {
+        "owner": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
+        "value": "1250000000000",
+        "lockedUntilBlock": 720,
+        "isTreasury": false
+      },
+      "bytes": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b580a8b9ceb024d00500",
+      "note": "The 'coinbase' Merkle leaf preimage, tag excluded. value (vlqU64, throwing) and lockedUntilBlock (vlqU, total by sentinel) hold different values at different widths, so swapping them is visible; isTreasury false is writeBool's 0x00 branch."
+    },
+    {
+      "name": "coinbaseOutput/treasury",
+      "codec": "coinbaseOutput",
+      "value": {
+        "owner": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
+        "value": "138888888888",
+        "lockedUntilBlock": 1441,
+        "isTreasury": true
+      },
+      "bytes": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b884b1b38504a10b01",
+      "note": "isTreasury true — writeBool's 0x01 branch, the only byte that separates a treasury output from a miner one. readBool refuses every other byte, which is why 0xff is unreachable here rather than merely unused."
     },
     {
       "name": "utxoTxTree/empty",

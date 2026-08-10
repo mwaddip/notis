@@ -109,10 +109,19 @@ export { computePruneEntryId, serializePruneEntry } from './stump.js';
 export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger } from './stump.js';
 
 // Blocks
+//
+// `subBlockEntryBytes` and `coinbaseOutputBytes` are the two block elements
+// whose wire bytes are also Merkle leaf preimages (`'subblock'` under
+// `subBlockRoot`, `'coinbase'` under `utxoTxRoot`). They are exported for the
+// same reason `serializePruneEntry` is: node builds those leaves and must not
+// hold a second statement of either layout. The `leafHash` domain tag is the
+// caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
 export {
   EMPTY_STATE_ROOT,
   MAX_SATISFIABLE_TARGET_BITS,
+  coinbaseOutputBytes,
   cumulativeWork,
+  subBlockEntryBytes,
   subBlockFromPost,
 } from './block.js';
 export type {

@@ -42,11 +42,17 @@ value path. Node-side obligations:
   `total` is serialized as a **decimal string**; the demo UI parses them with `BigInt()`
   (its phase). Same for the SQLite `extra_data` `originalValue` (coerce before
   `JSON.stringify`) and any stdout log field carrying an amount.
-- **`block-creator.computeUtxoTxRoot` coinbase leaf** serializes `value` as
-  `value.toString()` in its `JSON.stringify` preimage (bigint throws otherwise). This
-  is the `utxoTxRoot` coinbase Merkle leaf — **consensus**; the *same* function is both
-  producer (block build) and verifier (`block-apply` recompute), so the leaf bytes
-  cannot diverge.
+- **`block-creator.computeUtxoTxRoot` coinbase leaf** — ⚠ **AHEAD OF CODE until Phase 4
+  (C7).** The leaf preimage is `coinbaseOutputBytes(output)` from `@dagsocial/types`, so
+  `value` rides as `vlqU64` and **the decimal-string workaround is retired**: the
+  bigint-cannot-cross-JSON constraint that produced it does not apply to a byte encoder.
+  The bullet above still governs every *JSON* boundary; this one is no longer among them.
+  Until Phase 4 lands, the code serializes `value` as `value.toString()` inside a
+  `JSON.stringify` preimage. Either way this is the `utxoTxRoot` coinbase Merkle leaf —
+  **consensus**; the *same* function is both producer (block build) and verifier
+  (`block-apply` recompute), so the leaf bytes cannot diverge between the two roles. What
+  Phase 4 adds is that they cannot diverge from the **wire** encoding of the same struct
+  either — see `TYPES_INTERFACE` → "Merkle leaf preimages are the struct's own wire bytes".
 - **SQLite `.safeIntegers()`** on every `value`-column read and on `SUM(value)`
   (`getTotalKarma` / `getTotalCredits`) — without it better-sqlite3 returns a lossy
   `number` and loses precision above 2⁵³.
@@ -3108,9 +3114,12 @@ block rolls back to a no-op.
 
 **Sub-block entry integrity + prune authorship (H-3).** `SubBlockEntry` carries
 a consensus-recorded `author` (see `TYPES_INTERFACE.md`), committed under
-`subBlockRoot`. The `'subblock'` Merkle leaf serializes
-`{ postId, parentRefs, author }` (JSON, exactly this key order). Enforcement has
-three legs, all inside the `applyOrderingBlock` funnel:
+`subBlockRoot`. The `'subblock'` Merkle leaf is
+`leafHash('subblock', subBlockEntryBytes(entry))` — ⚠ **AHEAD OF CODE until Phase 4
+(C7)**; today it is `JSON.stringify({ postId, parentRefs, author })` in exactly that
+key order. Under either encoding the committed field set is the same three, and after
+Phase 4 **field order is normative** rather than key order (`TYPES_INTERFACE` → Layout —
+Block). Enforcement has three legs, all inside the `applyOrderingBlock` funnel:
 
 1. **Producer honesty (fill).** The block creator fills `entry.author` from the
    resolved sub-block's post — never from a client-supplied claim.
