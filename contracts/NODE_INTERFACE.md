@@ -2982,9 +2982,28 @@ Enforcing it in the funnel makes the guarantee path-independent, and is the
 same relocation already applied to the PoW target (M-2), coinbase maturity
 (M-3), and the validator signature (H-1).
 
-> ⚠ **VIOLATED — the ordering block has no closed key set at any layer, and
-> unknown keys are PERSISTED and RE-PROPAGATED.** Measured end-to-end on the
-> production inbound path 2026-08-08, not theorised.
+> ✅ **RESOLVED — verified 2026-08-10. Closed by Phase 3b's positional codecs, at all three
+> layers this marker names.** Everything below the next two paragraphs is kept as the record of a
+> real, measured defect and reads in the past tense.
+>
+> **Why it cannot recur.** `decodeStruct` (`types/src/codec.ts:578-624`) runs a four-part boundary
+> check on every struct: schema projection — unknown keys are unrepresentable, a positional layout
+> has no names to carry them; `isExhausted`, so trailing bytes reject rather than pad; and a
+> **re-encode and byte-compare** against the input. Two distinct byte strings therefore cannot
+> decode to one block — whichever is not its own canonical encoding dies at step 3. The measured
+> artifact, 891 bytes against 932 both hashing to `161602de…`, is unreachable by construction.
+>
+> **All three named layers.** *Inbound:* every path decodes (`net/src/gossip.ts:97,212`,
+> `net/src/node.ts:266`, `net/src/sync-codec.ts:358`). *Persist:* `store/ordering.ts:85-87`
+> re-encodes from the decoded value into three BLOBs — peer bytes are never stored. *Re-propagate:*
+> `net/src/gossip.ts:279` re-encodes. The `AHEAD OF CODE` marker below records the mechanism and is
+> Phase 9's to retire.
+>
+> ---
+>
+> ⚠ **VIOLATED (historical — measured end-to-end on the production inbound path 2026-08-08, not
+> theorised). The ordering block had no closed key set at any layer, and unknown keys were
+> PERSISTED and RE-PROPAGATED.**
 >
 > An ordering block carrying arbitrary extra keys (`stumpIds`, `attackerJunk`)
 > survives `decodeOrderingBlock`; `verifyOrderingBlockStructure` **accepts** it,

@@ -1323,11 +1323,14 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 
 ### Network profiles
 
-> ⚠ **NOT IMPLEMENTED — decided 2026-08-06.** No profile type, table or selector exists.
-> Today the values marked per-network below are plain module constants, and nine of them
-> are additionally overridable per-process from the environment in the node
-> (`⚠ VIOLATED`, `NODE_INTERFACE §Configuration`). See `ARCHITECTURE §Network Identity`
-> for the mechanism and the reasoning; this section is the type surface only.
+> ✅ **IMPLEMENTED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10.** It
+> read "No profile type, table or selector exists"; all three do — `NetworkType`,
+> `NETWORK_PROFILES` and `profileFor` in `types/src/network.ts` — and the node resolves the
+> profile once at startup from `NETWORK_TYPE`, freezing it into `Config`
+> (`node/src/config.ts:63`), which is the resolution rule stated at the end of this section.
+> Consensus constants are no longer environment-readable either — `NODE_INTERFACE §Configuration`
+> records P2-A removing all ten (PR #8, verified 2026-08-07). See `ARCHITECTURE §Network Identity`
+> for the mechanism and the reasoning.
 
 ```typescript
 export type NetworkType = 'mainnet' | 'testnet' | 'devnet';

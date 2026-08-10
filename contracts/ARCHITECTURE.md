@@ -282,15 +282,16 @@ Classes are defined in `NODE_INTERFACE.md → Configuration`.
 | `KARMA_DECAY_AMOUNT` | **consensus** | 5 | Karma burned per period |
 | `KARMA_MINIMUM` | **consensus** | 10 | Floor — decay never reduces below this |
 
-> ⚠ **VIOLATED — all four are environment-readable** (`config.ts:106-119`), and none of
-> them appeared in `NODE_INTERFACE.md`'s Configuration table until 2026-08-06. This
-> section is **right** that they are fixed protocol parameters; the code ignores it.
-> Phase 2 promotes them to `@dagsocial/types` constants and removes the `process.env`
-> reads.
+> ✅ **RESOLVED — verified 2026-08-10, closed by P2-A.** None of the four is
+> environment-readable. `config.ts:107-108` take the two `*_BLOCKS` values from the network
+> profile; `:109-110` take `KARMA_DECAY_AMOUNT` and `KARMA_MINIMUM` as `@dagsocial/types`
+> constants, and the code states the rule in place. *Historical:* all four were `process.env`
+> reads, and none appeared in `NODE_INTERFACE.md`'s Configuration table until 2026-08-06.
 
 > ✅ **RESOLVED 2026-08-06 — the target block time is 60 seconds, and the two `*_BLOCKS`
-> values are recomputed above.** The code still holds the pre-correction values
-> (`20160` / `720`); Phase 2 changes `constants.ts`.
+> values are recomputed above.** ✅ **Landed — `constants.ts:43-44` hold `40320` and `1440`**
+> (checked 2026-08-10; this sentence said "the code still holds `20160` / `720`; Phase 2
+> changes `constants.ts`" and was never updated after Phase 2 did).
 >
 > The karma pair were the **only** constants on a 2-minute basis — `CREDIT_MINER_REWARD_DELAY`
 > and `MEMPOOL_EXPIRY_BLOCKS` (both `720` = ~12h), `CREDIT_EPOCH_BLOCKS` (`129_600` = ~90d)
@@ -1101,12 +1102,14 @@ Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum
 
 ## Network Identity
 
-> ⚠ **PARTIAL — and the reason changed on 2026-08-10.** It used to be "one of the three
-> commitment layers remains"; that layer is now **withdrawn by decision**, so the commitment
-> table is complete at two layers. What keeps this marker open is the *selection* half:
-> **nine consensus parameters are still independently environment-readable**, marked
-> `⚠ VIOLATED` in `NODE_INTERFACE §Configuration`, which breaks the guarantee stated under
-> §Selection below. (P2-A: PR #8, `4670ae5`.)
+> ⚠ **PARTIAL — the reason has changed twice, most recently 2026-08-10.** It used to be "one of
+> the three commitment layers remains"; that layer is now **withdrawn by decision**, so the
+> commitment table is complete at two layers. The *selection* half then kept it open on the
+> grounds that **nine consensus parameters were still independently environment-readable** —
+> that is now false, and the PR cited in the same sentence is what closed it: P2-A (PR #8,
+> `4670ae5`) removed all ten, verified 2026-08-07 (`NODE_INTERFACE §Configuration`). What keeps
+> this marker open instead is the **bypass** — three profile fields are read as module constants
+> and never reach the profile at all; see the note under §Network identity.
 >
 > **Built.** `NETWORK_TYPE` selects a `NetworkProfile` that carries the wire magic and every
 > consensus parameter together; an unrecognised value throws at startup. `NetConfig.magic` is
@@ -1148,8 +1151,13 @@ only environment variable that may change a consensus parameter, and it does so 
 a table rather than by setting a value. **Two operators who differ on it are on different
 networks; two operators who agree on it cannot differ on anything below it.** That is the
 property the class exists to guarantee, and it is why individual consensus parameters must
-not be independently readable — nine of them are today, marked `⚠ VIOLATED` in
-`NODE_INTERFACE §Configuration`.
+not be independently readable.
+
+> ✅ **The count that stood here — "nine of them are today" — was stale; corrected 2026-08-10.
+> It is zero.** P2-A removed all ten consensus values from the environment (PR #8, `4670ae5`),
+> five to the profile and five to universal constants, verified 2026-08-07 that none is read
+> anywhere in `packages/node/src` (`NODE_INTERFACE §Configuration`). The guarantee is still
+> broken, but by a **bypass rather than a read** — see the note under §Network identity.
 
 ### What varies per network, and what must not
 
@@ -1320,10 +1328,14 @@ forever. A node rejects objects with an unsupported protocol version.
   > found by accident while implementing. **Do not read "closes by feature removal" as "the
   > class is handled."**
 - Credits are freely tradeable
-  > ⚠ **VIOLATED on-chain.** `sendCredits` mutates the UTXO set **outside block
-  > application** — no block, no journal entry, no AVL feed. Credits are tradeable on one
-  > node's disk and nowhere else, so the transfer is invisible to consensus and lost on
-  > any rebuild from committed state.
+  > ✅ **RESOLVED — verified 2026-08-10, closed by P2-B phase 3.** `sendCredits`
+  > (`services/credits.ts:108`) validates the client's transaction and then calls
+  > `insertUtxoTx`, which is `INSERT INTO mempool … 'utxo_tx'` (`store/mempool.ts:140-143`);
+  > it returns `status: 'pending'` and the route broadcasts. Every remaining `consumeBox` /
+  > `insertBox` caller is block application, revert, or genesis bootstrap — none is reachable
+  > from a route. *Historical:* it mutated the UTXO set **outside block application** — no
+  > block, no journal entry, no AVL feed — so a transfer lived on one node's disk, invisible
+  > to consensus and lost on any rebuild from committed state.
 - A post's cryptographic identity (hash) survives pruning — parent refs remain valid
 - The DAG's merkle integrity is independent of content availability
 - The UTXO ledger's correctness is independent of the DAG's index state
@@ -1381,11 +1393,18 @@ forever. A node rejects objects with an unsupported protocol version.
   > lines above it.
 - Invite bonds are lost if the invitee's karma drops below the posting minimum
   during probation
-  > ⚠ **VIOLATED — and the failure is the opposite of the rule.** The bond transition
-  > checks **no recipient, no probation height and no karma threshold**, so rather than
-  > being forfeited the bond can be **taken by the invitee**. The rule is right — the
-  > design has the bond vesting back to the inviter as the invitee earns likes, forfeited
-  > if they never engage — and stays.
+  > ⚠ **VIOLATED — narrowed 2026-08-10. The failure this marker described is closed; a
+  > different one remains, and it is the rule itself.** All three checks it called missing
+  > exist: `utxo-engine.ts:520-526` requires the settlement karma output be owned by the
+  > **inviter**, which closes "the bond can be taken by the invitee" outright; `:531` requires
+  > probation to have expired; `:532-533` requires the invitee's karma to meet
+  > `INVITE_KARMA_THRESHOLD`.
+  >
+  > **What remains unimplemented is forfeiture — there is no such path at all.** Nothing burns
+  > the bond when the invitee's karma drops below the posting minimum during probation.
+  > Settlement returns it to the inviter once probation expires *or* the threshold is met, so
+  > an invitee who never engages costs the inviter a wait rather than the bond. The rule is
+  > right and stays.
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
   > ⚠ **SUPERSEDED (2026-08-06).** Usernames become a **UTXO asset**: tradeable for
   > credits, free to claim while unused, burnable by the owner. Not a claim post, so
@@ -1461,18 +1480,35 @@ See `SUBBLOCK_INTERFACE.md` for the full contract.
 
 ### Network identity
 
-> ⚠ **NOT IMPLEMENTED — added 2026-08-06, after the audit. These four are NOT part of the
-> 48 verified above and carry no audit verdict**, because nothing they describe exists yet.
-> They are the rules P2-A and P2-C build to. See §Network Identity for the mechanism.
+> ⚠ **PARTLY IMPLEMENTED — corrected 2026-08-10. These four are NOT part of the 48 verified
+> above and carry no audit verdict.** Bullets 2, 3 and 4 hold today; bullet 1 does not, and
+> carries its own note.
+>
+> **How the text under this marker went stale is the lesson, not the staleness.** The marker
+> read "nothing they describe exists yet" — so when P2-A landed the profile and PR #26 rejected
+> the header field, nobody re-read the bullets. A disclaimer that tells readers the text beneath
+> it is inert creates an **unreviewed region**, and unrelated changes land without propagating
+> in. Bullet 2 named the rejected header field as a live separation mechanism for four days.
 
 - **`NETWORK_TYPE` is the only environment variable that may change a consensus parameter,
   and it changes all of them together.** No individual consensus parameter is
   environment-readable. Two nodes agreeing on `NETWORK_TYPE` cannot differ on any value it
   selects.
+
+  > ⚠ **VIOLATED — but not in the way this bullet anticipates, and not by the failure it
+  > names.** Environment-readability is **closed**: P2-A removed all ten consensus values from
+  > the environment (PR #8, verified 2026-08-07 — `NODE_INTERFACE §Configuration`). The live
+  > violation is the opposite shape — three profile fields are **bypassed entirely**.
+  > `creditFixedRateBlocks`, `creditEpochBlocks` and `creditMinerRewardDelay` are read as module
+  > constants (`MINING_INTERFACE §Configuration`), so `NETWORK_TYPE` does not change all of them
+  > together; it does not change those three at all. They are absent from that section's "where
+  > each consensus value went" table — profile fields that were never among the ten, which is
+  > why an enumeration built from that table cannot find them.
 - **Id derivation is network-agnostic.** No domain tag, box id, transaction id, post id or
   identity record key carries the network. `@dagsocial/types` stays pure — no module-level
   state, no network argument on a derivation function. Network separation is carried by
-  genesis, the header field and the wire magic instead.
+  genesis and the wire magic instead — **not** a header field: `networkType` was proposed
+  2026-08-09 and rejected 2026-08-10 (PR #26), and `BlockHeader` has ten fields.
 - **The per-network parameter set covers timescale, difficulty and genesis only.** Costs and
   format limits are universal across networks. Adding a parameter to the per-network set
   requires justifying why devnet may behave differently from mainnet in that respect.
