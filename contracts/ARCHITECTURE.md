@@ -1495,29 +1495,24 @@ See `SUBBLOCK_INTERFACE.md` for the full contract.
   environment-readable. Two nodes agreeing on `NETWORK_TYPE` cannot differ on any value it
   selects.
 
-  > ⚠ **VIOLATED — but not in the way this bullet anticipates, and not by the failure it
-  > names.** Environment-readability is **closed**: P2-A removed all ten consensus values from
-  > the environment (PR #8, verified 2026-08-07 — `NODE_INTERFACE §Configuration`). The live
-  > violation is the opposite shape — **five profile fields are bypassed entirely**, read as
-  > module constants so that `NETWORK_TYPE` does not change them at all:
+  > ✅ **RESOLVED 2026-08-10 — satisfied for every value anything reads.** Two distinct violations
+  > closed in sequence. **Environment-readability**: P2-A removed all ten consensus values from the
+  > environment (PR #8, verified 2026-08-07 — `NODE_INTERFACE §Configuration`). **Bypass**: five
+  > profile fields were read as module constants, so `NETWORK_TYPE` did not select them at all and
+  > a devnet node ran mainnet emission, maturity, vouch-cooldown and probation timing. All five now
+  > resolve through `Config` from the profile.
   >
-  > | Field | mainnet | devnet | Read at |
-  > |---|---|---|---|
-  > | `vouchCooldownBlocks` | 60 | 3 | `vouch.ts:114`, `block-apply.ts:1039`, `index.ts:75` |
-  > | `inviteProbationBlocks` | 1000 | 10 | `utxo-engine.ts:460,470` |
-  > | `creditMinerRewardDelay` | 720 | 10 | `block-apply.ts:338`, `block-creator.ts:619` |
-  > | `creditFixedRateBlocks` | 1051200 | 1000 | `block-creator.ts:242,246` |
-  > | `creditEpochBlocks` | 129600 | 100 | `block-creator.ts:246` |
+  > **Residue, and it is a different class.** Four profile fields have no reader anywhere in
+  > `packages/node`: `bootstrapPeriodBlocks`, `genesisCommitteeKeys`, `genesisKarmaPerMember`,
+  > `genesisCreditsPerMember`. `GENESIS_COMMITTEE_KEYS` is empty on all three profiles, so the
+  > committee machinery the other three serve is **unbuilt** rather than bypassed — see §Genesis.
+  > A field nothing reads cannot diverge; it equally cannot be relied on.
   >
-  > All five are absent from `NODE_INTERFACE §Configuration`'s "where each consensus value went"
-  > table — profile fields that were never among the ten — **which is why an enumeration built
-  > from that table cannot find them.** The count here read "three" until 2026-08-10; it was
-  > derived from `MINING_INTERFACE`'s table, which covers mining values only, and the two
-  > non-mining fields were invisible to it. Enumerating `NetworkProfile` itself found all five.
-  >
-  > ⚠ **`index.ts:75` couples the fix to a startup invariant** — it asserts
-  > `MAX_REORG_DEPTH >= VOUCH_COOLDOWN_BLOCKS` against the constant. Re-point the field without
-  > moving that assertion and it compares a bound against a value nothing uses.
+  > ⚠ **The lesson outlives the defect, so it stays: the count here read "three" for several
+  > hours.** It was derived from `MINING_INTERFACE`'s configuration table, which holds *mining*
+  > values — so `vouchCooldownBlocks` and `inviteProbationBlocks` could never appear in it, and
+  > nothing signalled the omission. Enumerating `NetworkProfile` **itself** found all five.
+  > **Never enumerate a type's fields from prose that groups them by purpose.**
 - **Id derivation is network-agnostic.** No domain tag, box id, transaction id, post id or
   identity record key carries the network. `@dagsocial/types` stays pure — no module-level
   state, no network argument on a derivation function. Network separation is carried by

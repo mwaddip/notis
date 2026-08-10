@@ -109,6 +109,7 @@ async function request(
         return row.s;
       },
       networkType: 'testnet',
+      inviteProbationBlocks: 1000,
     };
 
     const app = express();
@@ -238,5 +239,9 @@ describe('blocks routes', () => {
     expect(typeof body.totalKarma).toBe('string');
     expect(typeof body.totalCredits).toBe('string');
     expect(body.networkType).toBe('testnet');
+    // A number, not a decimal string — the two above are bigint server-side and
+    // this one is not (NODE_INTERFACE §Status).
+    expect(body.inviteProbationBlocks).toBe(1000);
+    expect(typeof body.inviteProbationBlocks).toBe('number');
   });
 });

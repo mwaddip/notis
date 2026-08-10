@@ -387,6 +387,7 @@ export function createApp(config: Config): express.Express {
         return row.s;
       },
       networkType: config.networkType,
+      inviteProbationBlocks: config.inviteProbationBlocks,
     }),
   );
 

@@ -15,6 +15,13 @@ export interface BlocksDeps {
   getTotalKarma(): bigint;
   getTotalCredits(): bigint;
   networkType: string;
+  /**
+   * A per-network consensus value the client must reproduce is served by the
+   * node, never held as a client constant (NODE_INTERFACE §Status). The demo UI
+   * builds bond commits, and `utxo-engine` requires the window to equal
+   * `config.inviteProbationBlocks` exactly.
+   */
+  inviteProbationBlocks: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +124,9 @@ export function createRouter(deps: BlocksDeps): Router {
       pendingPosts: deps.getPendingPostCount(),
       totalKarma: deps.getTotalKarma().toString(),
       totalCredits: deps.getTotalCredits().toString(),
+      // A plain number, unlike the two decimal strings above — it is not a
+      // bigint server-side (`Config.inviteProbationBlocks`).
+      inviteProbationBlocks: deps.inviteProbationBlocks,
     });
   });
 

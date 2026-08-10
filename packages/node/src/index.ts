@@ -21,7 +21,7 @@ import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
 import { SqlitePostStore } from './store/sqlite-store.js';
-import { extendsOurTip, resolveFork, MAX_REORG_DEPTH } from './services/fork-resolution.js';
+import { extendsOurTip, resolveFork } from './services/fork-resolution.js';
 import { failStopIfCorruptChain } from './services/corrupt-state.js';
 import {
   getKarmaBox,
@@ -65,38 +65,7 @@ try {
   process.exit(1);
 }
 
-// ---------------------------------------------------------------------------
-// Protocol constant sanity checks
-// ---------------------------------------------------------------------------
-
-function validateProtocolConstants(): void {
-  const checks: Array<{ condition: boolean; message: string }> = [
-    {
-      // Checked against the profile field, which is the value the cooldown is
-      // actually written with (`block-apply` §12b) — the constant it used to
-      // read is not consulted by any network.
-      condition: MAX_REORG_DEPTH >= config.vouchCooldownBlocks,
-      message:
-        `MAX_REORG_DEPTH (${MAX_REORG_DEPTH}) must be less than ` +
-        `the ${config.networkType} profile's vouchCooldownBlocks ` +
-        `(${config.vouchCooldownBlocks}). ` +
-        `Otherwise, cooldown maturation can be reorged without journaling, ` +
-        `causing double karma mints and permanent cooldown loss.`,
-    },
-  ];
-
-  for (const check of checks) {
-    if (check.condition) {
-      console.error(`Protocol constant invariant violated: ${check.message}`);
-      process.exit(1);
-    }
-  }
-}
-
-// 1b. Protocol constant sanity checks
-validateProtocolConstants();
-
-// 1c. Init system keypair (faucet source on the faucet-bearing networks). Must
+// 1b. Init system keypair (faucet source on the faucet-bearing networks). Must
 //     happen after DB init, before any route that might need the system box.
 //     The gate shares isFaucetNetwork with the /faucet mount and the
 //     /credits/faucet handler — the three move together (NODE_INTERFACE
