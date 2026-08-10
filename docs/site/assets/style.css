@@ -39,9 +39,9 @@
   --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:64px; --s9:96px;
 }
 :root[data-theme="dark"]{
-  --ground:#211E18; --surface:#2A261D; --border:#3D3830; --borderStrong:#746857;
-  --ink:#E9E1CF; --inkMute:#918570;
-  --greenText:#63933D; --onGreen:#141A0C; --gold:#AF7D26; --goldFill:#E8B84B; --clay:#C96D4E;
+  --ground:#211E18; --surface:#2A261D; --border:#3D3830; --borderStrong:#7A6E5C;
+  --ink:#E9E1CF; --inkMute:#978B77;
+  --greenText:#679A40; --onGreen:#141A0C; --gold:#B78328; --goldFill:#E8B84B; --clay:#CC7658;
 }
 
 /* Applying a stored theme on load would otherwise animate every transitioned property from

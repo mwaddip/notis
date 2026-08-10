@@ -107,31 +107,62 @@ tooltip or an icon that has to be learned.
 
 ### Dark — Bistre
 
-| Token | Value | vs ground | Role |
-|---|---|---|---|
-| `ground` | `#211E18` | — | page |
-| `surface` | `#2A261D` | — | cards, panels |
-| `border` | `#3D3830` | — | card hairlines — decorative |
-| `borderStrong` | `#746857` | 3.06 | a control's *sole* boundary |
-| `ink` | `#E9E1CF` | 12.77 | body text |
-| `inkMute` | `#918570` | 4.58 | timestamps, captions, hashes |
-| `green` | `#5E8C3A` | 4.19 | **the mark only** — logotype |
-| `greenText` | `#63933D` | 4.57 | links, chips, buttons, standing |
-| `onGreen` | `#141A0C` | 4.88¹ | text on a green fill |
-| `gold` | `#AF7D26` | 4.58 | credits |
-| `goldFill` | `#E8B84B` | 9.01 | gold as a fill, never as text |
-| `clay` | `#C96D4E` | 4.58 | warning and error |
+Measured against **`surface`**, not against `ground` — see "Which background a token is solved
+against" below. `ground` figures are given alongside because they are strictly better here.
 
-¹ measured against the green fill, not against the ground.
+| Token | Value | vs surface | vs ground | Role |
+|---|---|---|---|---|
+| `ground` | `#211E18` | — | — | page |
+| `surface` | `#2A261D` | — | — | cards, panels |
+| `border` | `#3D3830` | — | — | card hairlines — decorative |
+| `borderStrong` | `#7A6E5C` | 3.02 | 3.33 | a control's *sole* boundary |
+| `ink` | `#E9E1CF` | 11.58 | 12.77 | body text |
+| `inkMute` | `#978B77` | 4.50 | 4.97 | timestamps, captions, hashes |
+| `green` | `#5E8C3A` | 3.80 | 4.19 | **the mark only** — logotype |
+| `greenText` | `#679A40` | 4.50 | 4.96 | links, chips, buttons, standing |
+| `onGreen` | `#141A0C` | 5.30¹ | 5.30¹ | text on a green fill |
+| `gold` | `#B78328` | 4.51 | 4.98 | credits |
+| `goldFill` | `#E8B84B` | 8.17 | 9.01 | gold as a fill, never as text |
+| `clay` | `#CC7658` | 4.52 | 4.99 | warning and error |
+
+¹ measured against the green fill, not against either ground.
 
 Every value was solved numerically for the lightness landing closest to its target while
 holding the hue — not chosen by eye and checked afterwards.
+
+**Solve against the *quantised* value, not the continuous one.** A lightness that hits exactly
+4.50 before rounding can land at 4.49 once it is written as an 8-bit hex triple. The first pass
+at these five values did precisely that and three of them came out a hundredth under. Step the
+lightness, round to hex, and measure *that* — the boundary is only real after quantisation.
+
+### Which background a token is solved against
+
+**Solve every token against whichever of `ground` / `surface` gives the *worse* ratio.** That is
+`ground` on Sand and `surface` on Bistre, and the asymmetry is not a quirk — it falls out of
+which way each theme's `surface` moves:
+
+- On **Sand**, `surface` is *lighter* than `ground` and the text is dark, so text on a card has
+  **more** contrast than text on the page. `ground` is the worst case.
+- On **Bistre**, `surface` is also lighter than `ground` but the text is *light*, so text on a
+  card has **less** contrast. `surface` is the worst case.
+
+> ⚠ **This was got wrong, shipped, and is why five Bistre values changed on 2026-08-10.** Both
+> themes were originally solved against `ground` alone. On Sand that was correct and the tokens
+> measure 5.03 on a card. On Bistre it put `inkMute`, `greenText`, `gold` and `clay` at ~4.15
+> against the 4.5 floor and `borderStrong` at 2.77 against its 3.0 floor — on cards and panels,
+> which is where those tokens are mostly used. `docs.notis.fun` served that in dark mode from
+> the day the theme landed.
+>
+> It was not caught by inspection because the two themes fail in opposite directions, so a
+> spot-check of Sand confirms the method and says nothing about Bistre. It was found by
+> computing the full matrix while solving an unrelated colour question, which is the second time
+> a rendered or computed check has caught what reading the CSS did not.
 
 ### One green, three stops
 
 Fern `#5E8C3A` (h 94°, s 41%, l 39%) is the brand green and **the mark's colour**. It measures
 2.92:1 on Sand, which is legitimate for a logotype — WCAG exempts them — and unusable for
-text. So the same hue carries two reading stops: `#476A2C` deep for light, `#63933D` lift for
+text. So the same hue carries two reading stops: `#476A2C` deep for light, `#679A40` lift for
 dark. This is one green at three lightnesses, not three greens; do not introduce a fourth.
 
 The mark's keyline is **Bottle `#1B2A12`**.
@@ -312,10 +343,13 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 
 ## Accessibility contract
 
-- Text meets **4.5:1** against its ground.
-- A border meets **3:1** only when it is a control's *sole* boundary. A ghost button has
-  nothing but its outline and qualifies; a card hairline does not, because the card is
-  identified by its surface tint and the line is decoration.
+- Text meets **4.5:1** against **whichever of `ground` / `surface` it can actually land on** —
+  not against `ground` alone. In practice that means `ground` on Sand and `surface` on Bistre;
+  see "Which background a token is solved against". A token that clears the floor on the page
+  and misses it on a card has not met this rule, and cards are where most muted text lives.
+- A border meets **3:1**, under the same worst-case reading, only when it is a control's *sole*
+  boundary. A ghost button has nothing but its outline and qualifies; a card hairline does not,
+  because the card is identified by its surface tint and the line is decoration.
 - The mark is exempt as a logotype, which is what licenses Fern at 2.92:1 on Sand.
 - `prefers-reduced-motion` removes motion entirely.
 - Hover is never the only route to anything.
