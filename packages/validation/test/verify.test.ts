@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, encodeHeader, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 /**
@@ -2684,6 +2684,245 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   it('verifySubBlockStructure stays total now that it reaches into the post', () => {
     for (const bad of MALFORMED) {
       expect(() => verifySubBlockStructure({ ...subBlockOf(signedPost()), post: bad } as unknown as SubBlock)).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The three SubBlock domain pins (spec §2.5)
+//
+// `SUB_BLOCK` is `b32(subBlockId) ‖ postBytes ‖ b32(producerId) ‖
+// vlqU(protocolVersion)`. The embedded post was pinned by Phase 1c; its three
+// siblings were pinned by nothing — truthiness on the two `b32` rows and
+// `typeof === 'number'` on the `vlqU` one.
+//
+// The two failure modes are different and both are demonstrated below, because
+// a test that only chases panics can see one of them:
+//
+//   - `b32` is fixed-width, so it has no unreachable sentinel and the writer
+//     THROWS.
+//   - `vlqU` is total by sentinel, so it does not throw — it COLLIDES, mapping
+//     the whole out-of-domain set onto one encoding, and onto bytes our own
+//     `readVlqU` refuses.
+//
+// Neither is reachable from an *arriving gossip message*: `decodeSubBlock`
+// establishes all three domains before `verifySubBlockStructure` sees the
+// object — `readHexN` yields lowercase hex, `readBytesN(32)` yields 32 bytes,
+// and `readVlqU` throws past `MAX_SAFE_INTEGER`. The pins are the stated
+// rejection for every path that builds a `SubBlock` some other way, of which
+// `net/node.ts:951` / `:960` — a store read cast `as SubBlock` and handed
+// straight to `encodeSubBlock` — is the one with no check between.
+// ---------------------------------------------------------------------------
+
+describe('the SubBlock domain pins have teeth (spec §2.5)', () => {
+  const kp = generateKeyPair();
+  const priv = createPrivateKey({
+    key: Buffer.from(kp.secretKey),
+    format: 'der',
+    type: 'pkcs8',
+  });
+
+  const signedPost = (): Post => {
+    const post: Post = {
+      content: 'pin the sub-block',
+      author: kp.publicKey,
+      parentRefs: [],
+      challenge: new Uint8Array(32).fill(9),
+      powNonce: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: 1_700_000_000_000,
+      signature: new Uint8Array(64),
+    };
+    post.signature = new Uint8Array(sign(null, signingHash(post), priv));
+    return post;
+  };
+
+  const POST = signedPost();
+
+  /** In domain in all four fields, so every rejection below is about the poison. */
+  const goodSubBlock = (): SubBlock => ({
+    subBlockId: computePostId(POST),
+    post: POST,
+    producerId: kp.publicKey,
+    protocolVersion: PROTOCOL_VERSION,
+  });
+
+  const poison = (over: Record<string, unknown>): SubBlock =>
+    ({ ...goodSubBlock(), ...over }) as unknown as SubBlock;
+
+  const hexOf = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+
+  /** The truthiness test the two `b32` rows carried, run on the poison itself. */
+  const wasAccepted = (sb: SubBlock, field: 'subBlockId' | 'producerId'): boolean =>
+    Boolean((sb as unknown as Record<string, unknown>)[field]);
+
+  it('the honest sub-block is accepted, encodes, and round-trips', () => {
+    const sb = goodSubBlock();
+    expect(sb.subBlockId).toMatch(/^[0-9a-f]{64}$/);
+    expect(sb.producerId).toBeInstanceOf(Uint8Array);
+    expect(sb.producerId.length).toBe(32);
+    expect(verifySubBlockStructure(sb)).toEqual({ valid: true });
+    expect(decodeSubBlock(encodeSubBlock(sb))).toEqual(sb);
+  });
+
+  // -------------------------------------------------------------------------
+  // subBlockId — `writeHexNOrThrow(…, 32)`
+  // -------------------------------------------------------------------------
+
+  describe('subBlockId: 64 lowercase hex', () => {
+    const OUT_OF_DOMAIN: unknown[] = [
+      'x',                            // the contract's own example
+      '',                             // falsy, so the old check caught this one
+      'z'.repeat(64),                 // right width, wrong alphabet
+      'ab'.repeat(31),                // 62 characters
+      'ab'.repeat(33),                // 66 — `stateRoot`'s width, not this one
+      1,
+      new Uint8Array(32).fill(7),     // 32 bytes, but this row is hex
+      { length: 64 },
+    ];
+
+    it('MUTATION: without the pin each of these reaches the writer, which throws', () => {
+      for (const v of OUT_OF_DOMAIN) {
+        expect(() => encodeSubBlock(poison({ subBlockId: v }))).toThrow(
+          'writeHexNOrThrow: expected 64 lowercase hex chars',
+        );
+      }
+    });
+
+    it('the pin refuses every one of them, and all but the empty string were accepted before', () => {
+      for (const v of OUT_OF_DOMAIN) {
+        const sb = poison({ subBlockId: v });
+        expect(wasAccepted(sb, 'subBlockId')).toBe(v !== '');
+        expect(verifySubBlockStructure(sb)).toEqual({
+          valid: false,
+          error: 'Sub-block subBlockId must be 64 lowercase hex characters',
+        });
+      }
+    });
+
+    it('uppercase hex is refused, and that is malleability rather than width', () => {
+      // `'AB…'` and `'ab…'` name the same 32 bytes, so admitting both would make
+      // the hex→bytes conversion non-injective at the codec boundary — the M-1
+      // class, arriving from the codec side. The honest twin differs only in
+      // case, which is what makes this a rule about the alphabet.
+      const lower = computePostId(POST);
+      const upper = lower.toUpperCase();
+      expect(upper).toHaveLength(64);
+      expect(upper.toLowerCase()).toBe(lower);
+      expect(verifySubBlockStructure(poison({ subBlockId: lower }))).toEqual({ valid: true });
+      expect(verifySubBlockStructure(poison({ subBlockId: upper }))).toEqual({
+        valid: false,
+        error: 'Sub-block subBlockId must be 64 lowercase hex characters',
+      });
+      expect(() => encodeSubBlock(poison({ subBlockId: upper }))).toThrow(
+        'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // producerId — `writeBytesNOrThrow(…, 32)`
+  // -------------------------------------------------------------------------
+
+  describe('producerId: exactly 32 bytes', () => {
+    const OUT_OF_DOMAIN: unknown[] = [
+      'user1',                                    // what this test tree carried until T2b
+      Buffer.alloc(32).toString('hex'),           // 64 characters, zero bytes
+      new Uint8Array(0),
+      new Uint8Array(31).fill(7),
+      new Uint8Array(33).fill(7),
+      new Uint32Array(8),                         // 32 bytes of memory, 8 elements
+      new ArrayBuffer(32),                        // a buffer, not a view
+      { length: 32 },
+      Array.from({ length: 32 }, () => 0),
+    ];
+
+    it('MUTATION: without the pin each of these reaches the writer, which throws', () => {
+      for (const v of OUT_OF_DOMAIN) {
+        expect(() => encodeSubBlock(poison({ producerId: v }))).toThrow(
+          'writeBytesNOrThrow: expected 32 bytes',
+        );
+      }
+    });
+
+    it('the pin refuses every one of them, and every one was truthy', () => {
+      for (const v of OUT_OF_DOMAIN) {
+        const sb = poison({ producerId: v });
+        expect(wasAccepted(sb, 'producerId')).toBe(true);
+        expect(verifySubBlockStructure(sb)).toEqual({
+          valid: false,
+          error: 'Sub-block producerId must be exactly 32 bytes',
+        });
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // protocolVersion — `writeVlqU`, the row that collides instead of throwing
+  // -------------------------------------------------------------------------
+
+  describe('protocolVersion: isU64Safe', () => {
+    const OUT_OF_DOMAIN: Array<[string, number]> = [
+      ['NaN', NaN],
+      ['-1', -1],
+      ['1.5', 1.5],
+      ['2^60', 2 ** 60],
+    ];
+
+    it('MUTATION: without the pin all four encode — to ONE encoding, which our own reader refuses', () => {
+      const encodings = OUT_OF_DOMAIN.map(([, v]) =>
+        hexOf(encodeSubBlock(poison({ protocolVersion: v }))),
+      );
+      expect(new Set(encodings).size).toBe(1);
+      expect(encodings[0]).not.toBe(hexOf(encodeSubBlock(goodSubBlock())));
+      // A genuine collision and not the encoder ignoring the field: two
+      // in-domain versions still produce two encodings.
+      expect(hexOf(encodeSubBlock(poison({ protocolVersion: 1 }))))
+        .not.toBe(hexOf(encodeSubBlock(poison({ protocolVersion: 2 }))));
+      // The sentinel overflows `readVlqU`, so the bytes we just wrote are bytes
+      // we cannot read back — the same shape as the `utxoTxs` and `isTreasury`
+      // rows closed in #32.
+      for (const [, v] of OUT_OF_DOMAIN) {
+        expect(() => decodeSubBlock(encodeSubBlock(poison({ protocolVersion: v })))).toThrow();
+      }
+    });
+
+    it('the pin refuses all four, and `typeof === \'number\'` accepted all four', () => {
+      for (const [, v] of OUT_OF_DOMAIN) {
+        expect(typeof v).toBe('number');
+        expect(verifySubBlockStructure(poison({ protocolVersion: v }))).toEqual({
+          valid: false,
+          error: 'Sub-block protocolVersion must be a non-negative safe integer',
+        });
+      }
+    });
+
+    it('is a domain pin and not a version check — 0 and 2 are accepted here', () => {
+      // `verifyProtocolVersion` is the membership test and it is a separate
+      // function, run separately on the relay path (`gossip.ts:247`). Pinning
+      // membership here would be a second statement of that rule.
+      for (const v of [0, 2, Number.MAX_SAFE_INTEGER]) {
+        expect(verifySubBlockStructure(poison({ protocolVersion: v }))).toEqual({ valid: true });
+        expect(verifyProtocolVersion(v)).toBe(false);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Totality (M-5) — the pins are checks, not new panics
+  // -------------------------------------------------------------------------
+
+  it('stays total on every malformed value in all three fields', () => {
+    for (const bad of MALFORMED) {
+      for (const field of ['subBlockId', 'producerId', 'protocolVersion']) {
+        expect(() => verifySubBlockStructure(poison({ [field]: bad }))).not.toThrow();
+      }
+      // A verdict as well as a non-throw for the two `b32` rows, which have no
+      // in-domain member in this list. `protocolVersion` is deliberately not
+      // asserted here: `0` is in the list and is a perfectly encodable version,
+      // and this function is the domain check, not the membership check.
+      expect(verifySubBlockStructure(poison({ subBlockId: bad })).valid).toBe(false);
+      expect(verifySubBlockStructure(poison({ producerId: bad })).valid).toBe(false);
     }
   });
 });

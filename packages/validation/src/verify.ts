@@ -474,9 +474,23 @@ export function verifyParentRefsCount(refs: string[]): { valid: boolean; error?:
 export function verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?: string } {
   if (!isObject(sb)) return { valid: false, error: 'Sub-block is not an object' };
   if (!sb.post) return { valid: false, error: 'Sub-block missing post' };
-  if (!sb.subBlockId) return { valid: false, error: 'Sub-block missing subBlockId' };
-  if (typeof sb.protocolVersion !== 'number') return { valid: false, error: 'Sub-block missing protocolVersion' };
-  if (!sb.producerId) return { valid: false, error: 'Sub-block missing producerId' };
+  // The struct's own three fields, each pinned to the domain of the writer it
+  // feeds in the `SUB_BLOCK` codec. `b32` from hex and `b32` from bytes are
+  // fixed-width and throw outside their domain; `vlqU` is total by sentinel and
+  // collides instead (TYPES_INTERFACE → Totality). Both need the domain
+  // established upstream of the encoder — spec §2.5.
+  if (!isHex32(sb.subBlockId)) {
+    return { valid: false, error: 'Sub-block subBlockId must be 64 lowercase hex characters' };
+  }
+  if (!isU64Safe(sb.protocolVersion)) {
+    return { valid: false, error: 'Sub-block protocolVersion must be a non-negative safe integer' };
+  }
+  // Type before width: `producerId` is `UserId` bytes, not the hex its
+  // table-neighbour `subBlockId` carries, so a 32-character string is not 32
+  // bytes and `writeBytesNOrThrow` refuses it.
+  if (!isBytesOfLength(sb.producerId, 32)) {
+    return { valid: false, error: 'Sub-block producerId must be exactly 32 bytes' };
+  }
   // The post's field domains, checked here because this is the Stage-1 gate the
   // relay path runs *before* it builds a PoW preimage from that post
   // (`net/gossip.ts:201` gates `:222`). Under fixed-width writers a post outside
