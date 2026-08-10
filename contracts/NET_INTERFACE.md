@@ -762,15 +762,47 @@ node operator may choose to link them (same keypair) or keep them separate.
 |----------|---------|---------|
 | `/dagsocial/handshake/1` | Frame | Post-identify peer handshake |
 | `/dagsocial/sync/1` | Frame | Historical sync + peer discovery (codes 2-9) |
+| **`/dagsocial/headers/1`** | **Request raw CBOR, responses positional** | **LIVE — the only path fork resolution uses** |
 
 All stream protocols multiplex over the sync stream. The frame `code`
 byte disambiguates message types.
 
+### `/dagsocial/headers/1` responses — positional, `arr(item, lp)`
+
+**Landed 2026-08-10.** Both arms previously answered in a **second wire format** — `encode({ blocks })`
+/ `encode(headers)` out, `decode(raw) as {…}` back — bare `cbor-x` plus a TypeScript cast, while every
+other whole-block path in this package used `encode`/`decodeOrderingBlock`. A cast is not a check, and
+the gap was **measured**: it was the sole delivery path for a remote fail-stop
+(`prompts/node-fail-stop-reachability-measure-REPORT.md`). Shape-validating the CBOR would have been
+the band-aid; the root cause was the second dialect, so the dialect is gone.
+
+- **Blocks:** `arr(blocks, lp(encodeOrderingBlock))`. **Headers:** `arr(headers, lp(encodeHeader))`.
+- **The per-element `lp` is load-bearing**: it gives each item its own byte span, so the four-part
+  boundary check (spec §2.1) runs over exactly that span — exhaustion and re-encode compare included —
+  and a malformed block is rejected at its own offset rather than as an outer mismatch.
+- **The request stays raw CBOR.** It is a control message carrying no consensus bytes
+  (`{ startHeight, maxCount, endHeight, mode }`) and is shape-checked by
+  `decodeLegacyHeadersRequest`.
+- ⚠ **Zero bytes and `vlqU(0)` are DISTINCT and consumers depend on it.** Zero bytes is the handler's
+  *"I cannot answer"*; `vlqU(0)` is *"no items"*. Collapsing them is a live defect — see below.
+- **`MAX_LEGACY_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap is
+  `min(requested, 400)` **checked before the first element is read**. A peer answering a 40-header
+  request with 18,900 headers is not answering the question, and the count is a `vlqU` the peer
+  chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds at `MAX_ARRAY_LENGTH` (2²⁴) and
+  pre-sizes the array, so four peer-chosen bytes buy a sixteen-million-slot allocation.
+- **A response that does not decode THROWS; it must never resolve to `[]`.** `requestBlocks`' result
+  goes straight to `reorg(forkHeight, newBlocks)`, which reverts above the fork point and applies what
+  it is given — so an empty array *truncates our own chain* instead of failing to extend it.
+
 Removed protocols:
 - Old `/dagsocial/sync/1` (individual sub-block request/response) —
   replaced by framed GetSubBlock/SubBlockResponse (codes 6-7)
-- `/dagsocial/headers/1` — replaced by framed
-  SyncInfo/Inv/ModifierRequest/ModifierResponse (codes 2-5)
+- ~~`/dagsocial/headers/1` — replaced by framed SyncInfo/Inv/ModifierRequest/ModifierResponse
+  (codes 2-5)~~ ⚠ **WRONG, and it was wrong when written.** The framed codes exist; nothing routes
+  fork resolution through them. This row said "removed" of the one protocol the live path depends on,
+  while a ⚠ note ~600 lines up already said so — **the contract contradicted itself in two places and
+  the table half was never corrected.** Retiring it in favour of codes 2-5 is a real question and is
+  still open; until then this table describes what runs.
 
 ---
 

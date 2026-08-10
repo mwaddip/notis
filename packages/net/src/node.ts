@@ -6,7 +6,6 @@ import { identify } from '@libp2p/identify';
 import { ping } from '@libp2p/ping';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr } from '@multiformats/multiaddr';
-import { encode } from 'cbor-x';
 
 import type { Libp2p } from 'libp2p';
 import type { SubBlock, OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
@@ -35,10 +34,13 @@ import {
   encodePosts,
   decodePosts,
   decodeLegacyHeadersRequest,
+  encodeLegacyBlocksResponse,
+  encodeLegacyHeadersResponse,
 } from './sync-codec.js';
+import type { LegacyHeadersRequest } from './sync-codec.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
-import { MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_LEGACY_RESPONSE_ITEMS, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -297,6 +299,64 @@ export class LazySyncStore implements SyncStore {
   flush(): void {
     // Node layer flushes via its own DB lifecycle.
   }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy /dagsocial/headers/1 serve side
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the body of a legacy headers-protocol response.
+ *
+ * Module-level and exported for the reason `servePeersBody`,
+ * `decodeHandshakePayload` and `LazySyncStore` are: the tests drive **this**
+ * function rather than a copy of the serve loops. That was not an abstract
+ * preference here — `headers.test.ts` held a `simulateHeadersHandler`
+ * re-implementation, so the whole suite stayed green while the response wire
+ * format changed underneath it, which is the one thing a protocol suite exists
+ * to notice.
+ *
+ * Both arms are bounded twice: by what the peer asked for, and by
+ * `MAX_LEGACY_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
+ * each loop reads the store once per height into an in-memory array, so the
+ * second bound is what keeps the size of that array — and of the bytes we then
+ * hold — off the peer's control panel.
+ *
+ * `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
+ * have, so this never truncates a legitimate request, and a peer asking for
+ * height 1e15 costs us nothing.
+ *
+ * Throws only if a block *we* hold has no encoding — a corrupt local store, not
+ * a peer's doing. The caller's `catch` answers with zero bytes, as it does for
+ * every other local failure.
+ */
+export function serveLegacyHeadersBody(
+  request: LegacyHeadersRequest,
+  ourHeight: number,
+  getBlock: (height: number) => OrderingBlock | null,
+): Uint8Array {
+  if (request.mode === 'blocks') {
+    const blocks: OrderingBlock[] = [];
+    const endHeight = Math.min(request.endHeight ?? ourHeight, ourHeight);
+    for (
+      let h = request.startHeight;
+      h <= endHeight && blocks.length < MAX_LEGACY_RESPONSE_ITEMS;
+      h++
+    ) {
+      const block = getBlock(h);
+      if (block) blocks.push(block);
+    }
+    return encodeLegacyBlocksResponse(blocks);
+  }
+
+  const headers: BlockHeader[] = [];
+  const maxCount = Math.min(request.maxCount ?? 20, MAX_LEGACY_RESPONSE_ITEMS);
+  for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
+    const block = getBlock(h);
+    if (block) headers.push(block.header);
+    else break; // gap — the chain below this height is not ours to serve
+  }
+  return encodeLegacyHeadersResponse(headers);
 }
 
 // ---------------------------------------------------------------------------
@@ -1358,30 +1418,12 @@ export class NetNode {
             return;
           }
 
-          // Both loops below read the store once per height. Clamp them to our
-          // own tip: we cannot serve what we do not have, so this never
-          // truncates a legitimate request, and a peer asking for height 1e15
-          // costs us nothing.
-          const ourHeight = this.syncStore.chainHeight();
-
-          if (request.mode === 'blocks') {
-            const blocks: OrderingBlock[] = [];
-            const endHeight = Math.min(request.endHeight ?? ourHeight, ourHeight);
-            for (let h = request.startHeight; h <= endHeight; h++) {
-              const block = getBlock(h);
-              if (block) blocks.push(block);
-            }
-            await stream.sink([Buffer.from(encode({ blocks }))] as any);
-          } else {
-            const headers: BlockHeader[] = [];
-            const maxCount = request.maxCount ?? 20;
-            for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
-              const block = getBlock(h);
-              if (block) headers.push(block.header);
-              else break;
-            }
-            await stream.sink([Buffer.from(encode(headers))] as any);
-          }
+          const body = serveLegacyHeadersBody(
+            request,
+            this.syncStore.chainHeight(),
+            getBlock,
+          );
+          await stream.sink([body]);
         } catch {
           await stream.sink([new Uint8Array(0)]);
         }

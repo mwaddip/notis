@@ -1,10 +1,11 @@
 import { decodeSubBlock, encodeSubBlock } from '@dagsocial/types';
 import type { SubBlock, BlockHeader, OrderingBlock } from '@dagsocial/types';
-import { encode, decode } from 'cbor-x';
+import { encode } from 'cbor-x';
 import type { Libp2p } from 'libp2p';
 import type { Stream } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
 import { readStreamBounded } from './util.js';
+import { decodeLegacyBlocksResponse, decodeLegacyHeadersResponse } from './sync-codec.js';
 import { MAX_STREAM_BYTES } from './msg-guards.js';
 
 export const SYNC_PROTOCOL = '/dagsocial/sync/1';
@@ -68,7 +69,21 @@ export async function requestSubBlock(
 }
 
 // ---------------------------------------------------------------------------
-// Header/block requests (legacy CBOR protocol — kept for backward compat)
+// Header/block requests (legacy /dagsocial/headers/1 protocol)
+//
+// The **request** is still raw CBOR — a `{ startHeight, maxCount, endHeight,
+// mode }` control message with no consensus bytes in it, shape-checked at the
+// far end by `decodeLegacyHeadersRequest`. The **responses** carry whole blocks
+// and headers and are positional: see `sync-codec.ts` →
+// "Legacy /dagsocial/headers/1 responses" for what that closed and why a shape
+// check on the cbor path would have been the wrong fix.
+//
+// An unparseable response **throws** rather than resolving to `[]`. The two are
+// not interchangeable here: `index.ts`'s fork resolution feeds `requestBlocks`'
+// result straight to `reorg(forkHeight, newBlocks)`, so an empty array would
+// roll our chain back to the fork point and apply nothing — a peer sending
+// junk would truncate our chain instead of failing to extend it. The throw
+// lands in that function's existing catch and abandons the reorg.
 // ---------------------------------------------------------------------------
 
 /**
@@ -99,8 +114,16 @@ export async function requestHeaders(
       throw new Error(`Headers response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
     }
 
+    // Zero bytes is the handler's "I cannot answer" signal (an over-cap
+    // request, an undecodable one, or a local failure), and it is distinct from
+    // an empty response — an empty header list encodes as `vlqU(0)`, one byte.
     if (response.length === 0) return [];
-    return decode(response) as BlockHeader[];
+
+    const headers = decodeLegacyHeadersResponse(response, maxCount);
+    if (headers === null) {
+      throw new Error(`Headers response from peer ${peerId} is not a well-formed headers response`);
+    }
+    return headers;
   } finally {
     if (stream) await stream.close();
   }
@@ -133,9 +156,14 @@ export async function requestBlocks(
       throw new Error(`Blocks response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
     }
 
+    // See `requestHeaders` — zero bytes is "no answer", `vlqU(0)` is "no blocks".
     if (raw.length === 0) return [];
-    const response = decode(raw) as { blocks: OrderingBlock[] };
-    return response.blocks;
+
+    const blocks = decodeLegacyBlocksResponse(raw, endHeight - startHeight + 1);
+    if (blocks === null) {
+      throw new Error(`Blocks response from peer ${peerId} is not a well-formed blocks response`);
+    }
+    return blocks;
   } finally {
     if (stream) await stream.close();
   }

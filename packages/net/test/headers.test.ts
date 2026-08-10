@@ -1,9 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { encode, decode } from 'cbor-x';
+import { encode } from 'cbor-x';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
-import { PROTOCOL_VERSION, CREDIT_MINER_REWARD_DELAY } from '@dagsocial/types';
+import {
+  PROTOCOL_VERSION,
+  CREDIT_MINER_REWARD_DELAY,
+  ByteWriter,
+  writeVlqU,
+  encodeOrderingBlock,
+  encodeUtxoTxTree,
+} from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { HEADERS_PROTOCOL } from '../src/sync.js';
+import { serveLegacyHeadersBody } from '../src/node.js';
+import {
+  decodeLegacyHeadersRequest,
+  decodeLegacyBlocksResponse,
+  decodeLegacyHeadersResponse,
+  encodeLegacyBlocksResponse,
+  encodeLegacyHeadersResponse,
+} from '../src/sync-codec.js';
+import { MAX_LEGACY_RESPONSE_ITEMS } from '../src/msg-guards.js';
 import { mergeUint8Arrays } from '../src/util.js';
 
 // ---------------------------------------------------------------------------
@@ -14,15 +30,15 @@ import { mergeUint8Arrays } from '../src/util.js';
  * `blockHash` for fixtures that are inside the header domain by
  * construction.
  *
- * Every header this suite hashes is a `makeMockHeader` product or a cbor-x
- * round-trip of one, so the Phase 1f guard can never fire here. A bare `!`
- * would hide the day that stops being true: it types `null` as `string`, and
- * the `null` then surfaces as a failed hash comparison several assertions
- * later, blaming the chain link rather than the fixture. Throwing at the
- * fixture names the real cause.
+ * Every header this suite hashes is a `makeMockHeader` product or a round-trip
+ * of one, so the Phase 1f guard can never fire here. A bare `!` would hide the
+ * day that stops being true: it types `null` as `string`, and the `null` then
+ * surfaces as a failed hash comparison several assertions later, blaming the
+ * chain link rather than the fixture. Throwing at the fixture names the real
+ * cause.
  *
- * The two calls over *decoded* headers (the round-trip chain-link assertions)
- * get something extra for free: they now also prove the header survives CBOR
+ * The calls over *decoded* headers (the round-trip chain-link assertions) get
+ * something extra for free: they now also prove the header survives the wire
  * still inside the encodable domain, since a `validatorId` that came back as
  * anything but 32 bytes would trip this instead of hashing.
  */
@@ -83,46 +99,57 @@ function makeMockOrderingBlock(
   };
 }
 
+/** A store of contiguous blocks 1..n, each linked to the one below it. */
+function makeChain(n: number): Map<number, OrderingBlock> {
+  const store = new Map<number, OrderingBlock>();
+  let prev = '00'.repeat(32);
+  for (let h = 1; h <= n; h++) {
+    const block = makeMockOrderingBlock(h, prev);
+    store.set(h, block);
+    prev = mockBlockHash(block.header);
+  }
+  return store;
+}
+
 /**
- * Simulate the headers protocol handler with the given blocks in the store.
- * Returns the CBOR-encoded response bytes.
+ * Serve one legacy request through the **production** serve path.
+ *
+ * This used to be `simulateHeadersHandler`, a re-implementation of the two
+ * serve loops plus their own `cbor-x` calls. It is why the suite that exists to
+ * police this protocol stayed green through a response wire-format change: the
+ * copy and the assertions agreed with each other and neither one touched the
+ * encoder production runs. `serveLegacyHeadersBody` is now exported for exactly
+ * this, and the request goes through the real `decodeLegacyHeadersRequest` too,
+ * so the boundary a peer actually hits is the boundary under test.
  */
-function simulateHeadersHandler(
-  requestBytes: Uint8Array,
+function serve(
+  request: Record<string, unknown>,
   store: Map<number, OrderingBlock>,
 ): Uint8Array {
-  const getOrderingBlock = (height: number): OrderingBlock | null =>
-    store.get(height) ?? null;
+  const decoded = decodeLegacyHeadersRequest(new Uint8Array(encode(request)));
+  if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
 
-  const request = decode(requestBytes) as {
-    startHeight: number;
-    maxCount?: number;
-    endHeight?: number;
-    mode?: string;
-  };
+  // The handler clamps both serve loops to our own tip; `chainHeight()` walks up
+  // from 1 until it finds a gap, so a store with a hole reports the height below
+  // it — mirrored here rather than assumed.
+  let ourHeight = 0;
+  while (store.has(ourHeight + 1)) ourHeight++;
 
-  if (request.mode === 'blocks') {
-    // Return full blocks
-    const blocks: OrderingBlock[] = [];
-    for (let h = request.startHeight; h <= request.endHeight!; h++) {
-      const block = getOrderingBlock(h);
-      if (block) blocks.push(block);
-    }
-    return Buffer.from(encode({ blocks }));
-  } else {
-    // Return headers only (newest-first)
-    const headers: BlockHeader[] = [];
-    for (
-      let h = request.startHeight;
-      h > 0 && headers.length < (request.maxCount || 20);
-      h--
-    ) {
-      const block = getOrderingBlock(h);
-      if (block) headers.push(block.header);
-      else break; // gap — stop
-    }
-    return Buffer.from(encode(headers));
-  }
+  return serveLegacyHeadersBody(decoded, ourHeight, (h) => store.get(h) ?? null);
+}
+
+/** What `requestHeaders` does with a served body: cap = what it asked for. */
+function receiveHeaders(body: Uint8Array, maxCount: number): BlockHeader[] | null {
+  return decodeLegacyHeadersResponse(body, maxCount);
+}
+
+/** What `requestBlocks` does with a served body: cap = the range it asked for. */
+function receiveBlocks(
+  body: Uint8Array,
+  startHeight: number,
+  endHeight: number,
+): OrderingBlock[] | null {
+  return decodeLegacyBlocksResponse(body, endHeight - startHeight + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,73 +163,285 @@ describe('HEADERS_PROTOCOL', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — CBOR encode/decode of requests
+// Tests — the request is still CBOR, and still shape-checked
 // ---------------------------------------------------------------------------
 
 describe('headers request encode/decode', () => {
   it('encodes and decodes a headers request', () => {
-    const request = { startHeight: 10, maxCount: 5 };
-    const encoded = Buffer.from(encode(request));
-    const decoded = decode(new Uint8Array(encoded)) as {
-      startHeight: number;
-      maxCount: number;
-    };
-    expect(decoded.startHeight).toBe(10);
-    expect(decoded.maxCount).toBe(5);
+    const decoded = decodeLegacyHeadersRequest(
+      new Uint8Array(encode({ startHeight: 10, maxCount: 5 })),
+    );
+    expect(decoded).toEqual({ startHeight: 10, maxCount: 5 });
   });
 
   it('encodes and decodes a blocks request', () => {
-    const request = { startHeight: 1, endHeight: 3, mode: 'blocks' };
-    const encoded = Buffer.from(encode(request));
-    const decoded = decode(new Uint8Array(encoded)) as {
-      startHeight: number;
-      endHeight: number;
-      mode: string;
-    };
-    expect(decoded.startHeight).toBe(1);
-    expect(decoded.endHeight).toBe(3);
-    expect(decoded.mode).toBe('blocks');
+    const decoded = decodeLegacyHeadersRequest(
+      new Uint8Array(encode({ startHeight: 1, endHeight: 3, mode: 'blocks' })),
+    );
+    expect(decoded).toEqual({ startHeight: 1, endHeight: 3, mode: 'blocks' });
+  });
+
+  it('rejects a request whose heights are not heights', () => {
+    expect(decodeLegacyHeadersRequest(new Uint8Array(encode({ startHeight: -1 })))).toBeNull();
+    expect(
+      decodeLegacyHeadersRequest(new Uint8Array(encode({ startHeight: 1, endHeight: 'x' }))),
+    ).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests — header response encode/decode
+// Tests — response framing round-trip
+//
+// The responses are `arr(item, lp)` over the same positional codec gossip and
+// the store use, not a second `cbor-x` dialect. See `sync-codec.ts` →
+// "Legacy /dagsocial/headers/1 responses".
 // ---------------------------------------------------------------------------
 
-describe('headers response encode/decode', () => {
-  it('encodes and decodes a BlockHeader array', () => {
-    const headers: BlockHeader[] = [
+describe('legacy response framing', () => {
+  it('round-trips a multi-block response', () => {
+    const store = makeChain(3);
+    const blocks = [store.get(1)!, store.get(2)!, store.get(3)!];
+
+    const decoded = decodeLegacyBlocksResponse(encodeLegacyBlocksResponse(blocks), 3);
+
+    expect(decoded).not.toBeNull();
+    expect(decoded).toHaveLength(3);
+    expect(decoded!.map((b) => b.header.height)).toEqual([1, 2, 3]);
+    // The whole block survives, not just the header — this is the payload the
+    // ordering store writes.
+    expect(decoded![0]!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
+    expect(decoded![0]!.utxoTxTree.coinbaseOutputs[0]!.isTreasury).toBe(false);
+    expect(decoded![0]!.validatorSignature).toBeInstanceOf(Uint8Array);
+    expect(decoded![0]!.validatorSignature.length).toBe(64);
+    expect(decoded![2]!.header.prevBlockHash).toBe(mockBlockHash(decoded![1]!.header));
+  });
+
+  it('round-trips an EMPTY block list, distinctly from no answer at all', () => {
+    const empty = encodeLegacyBlocksResponse([]);
+
+    // `vlqU(0)` — one byte, not zero bytes. The handler answers zero bytes when
+    // it cannot answer at all (over-cap request, undecodable request, local
+    // failure), and `requestBlocks` returns `[]` for that without decoding. The
+    // two must not collapse into each other: one says "I have no blocks in that
+    // range", the other says "I did not process your request".
+    expect(empty).toEqual(new Uint8Array([0]));
+    expect(decodeLegacyBlocksResponse(empty, 10)).toEqual([]);
+
+    // ...and zero bytes is not a valid encoding of the empty list.
+    expect(decodeLegacyBlocksResponse(new Uint8Array(0), 10)).toBeNull();
+  });
+
+  it('round-trips a multi-header response and an empty one', () => {
+    const headers = [
       makeMockHeader(5, 'aa'.repeat(32)),
       makeMockHeader(4, 'bb'.repeat(32)),
       makeMockHeader(3, 'cc'.repeat(32)),
     ];
 
-    const encoded = Buffer.from(encode(headers));
-    const decoded = decode(new Uint8Array(encoded)) as BlockHeader[];
+    const decoded = decodeLegacyHeadersResponse(encodeLegacyHeadersResponse(headers), 3);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.map((h) => h.height)).toEqual([5, 4, 3]);
+    expect(decoded![0]!.prevBlockHash).toBe('aa'.repeat(32));
+    expect(decoded![0]!.validatorId).toBeInstanceOf(Uint8Array);
 
-    expect(decoded).toHaveLength(3);
-    expect(decoded[0]!.height).toBe(5);
-    expect(decoded[1]!.height).toBe(4);
-    expect(decoded[2]!.height).toBe(3);
-    // Verify prevBlockHash is preserved
-    expect(decoded[0]!.prevBlockHash).toBe('aa'.repeat(32));
+    expect(encodeLegacyHeadersResponse([])).toEqual(new Uint8Array([0]));
+    expect(decodeLegacyHeadersResponse(new Uint8Array([0]), 20)).toEqual([]);
   });
 
-  it('encodes and decodes a blocks response wrapper', () => {
-    const blocks: OrderingBlock[] = [
-      makeMockOrderingBlock(1, '00'.repeat(32)),
-      makeMockOrderingBlock(2, mockBlockHash(makeMockHeader(1, '00'.repeat(32)))),
-    ];
+  it('rejects trailing bytes after a well-formed response', () => {
+    const body = encodeLegacyBlocksResponse([makeMockOrderingBlock(1, '00'.repeat(32))]);
+    const padded = mergeUint8Arrays([body, new Uint8Array([0x00])]);
 
-    const response = { blocks };
-    const encoded = Buffer.from(encode(response));
-    const decoded = decode(new Uint8Array(encoded)) as {
-      blocks: OrderingBlock[];
-    };
+    expect(decodeLegacyBlocksResponse(body, 1)).not.toBeNull();
+    expect(decodeLegacyBlocksResponse(padded, 1)).toBeNull();
+  });
 
-    expect(decoded.blocks).toHaveLength(2);
-    expect(decoded.blocks[0]!.header.height).toBe(1);
-    expect(decoded.blocks[1]!.header.height).toBe(2);
+  it('rejects a non-minimal VLQ count', () => {
+    // `0x81 0x00` decodes to 1 exactly as `0x01` does — wire accepts non-minimal
+    // VLQ deliberately, and canonicity is enforced by the re-encode compare.
+    const canonical = encodeLegacyHeadersResponse([makeMockHeader(1, '00'.repeat(32))]);
+    expect(canonical[0]).toBe(0x01);
+
+    const padded = mergeUint8Arrays([
+      new Uint8Array([0x81, 0x00]),
+      canonical.subarray(1),
+    ]);
+    expect(decodeLegacyHeadersResponse(padded, 5)).toBeNull();
+  });
+
+  it('rejects a truncated response', () => {
+    const body = encodeLegacyBlocksResponse([makeMockOrderingBlock(1, '00'.repeat(32))]);
+    expect(decodeLegacyBlocksResponse(body.subarray(0, body.length - 1), 1)).toBeNull();
+  });
+
+  it('rejects the old cbor-x dialect outright', () => {
+    // The format this replaced. A peer still speaking it is not "mostly right":
+    // there is no shared prefix to misinterpret, so it is refused whole.
+    const blocks = [makeMockOrderingBlock(1, '00'.repeat(32))];
+    expect(decodeLegacyBlocksResponse(new Uint8Array(encode({ blocks })), 5)).toBeNull();
+    expect(
+      decodeLegacyHeadersResponse(new Uint8Array(encode([makeMockHeader(1, '00'.repeat(32))])), 5),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — the poisoned payloads, refused AT THE SYNC BOUNDARY
+//
+// Measured in `prompts/node-fail-stop-reachability-measure-REPORT.md`: these
+// two fields reached `applyOrderingBlock` undecoded through this path, the
+// funnel accepted the block, and the ordering store wrote a row our own reader
+// then refuses — `UnreadableStoredBlockError` → `failStopIfCorruptChain` →
+// `process.exit(1)`, fired by the next arriving gossip block and persistent
+// across restarts. Gossip already refused both at decode; this path was the
+// only delivery.
+//
+// The assertion that matters is WHERE they die: `decodeLegacy*Response` returns
+// `null`, so `requestBlocks` throws and no object reaches the node. Refusal
+// somewhere later — at the store, at read-back — is the failure being measured,
+// not a fix for it.
+// ---------------------------------------------------------------------------
+
+describe('poisoned block payloads are refused at the sync boundary', () => {
+  /** A block with one field outside its type, as a hostile peer would build it. */
+  function poison(mutate: (block: OrderingBlock) => void): OrderingBlock {
+    const block = makeMockOrderingBlock(1, '00'.repeat(32));
+    mutate(block);
+    return block;
+  }
+
+  it('refuses a non-boolean isTreasury', () => {
+    const block = poison((b) => {
+      (b.utxoTxTree.coinbaseOutputs[0] as unknown as Record<string, unknown>)['isTreasury'] =
+        'yes';
+    });
+
+    // `writeBool` is total by sentinel: an out-of-domain value writes `0xff`,
+    // which `readBool` refuses. That is the sentinel discipline working, not a
+    // bug in the writer — the defect was that these bytes never met a decoder.
+    //
+    // `isTreasury` is the last field of the last coinbase output, so it is the
+    // final byte of the `utxo_tx_tree` column — the exact artifact the fail-stop
+    // measurement pulled out of the store ("final byte 0xff, as predicted").
+    const column = encodeUtxoTxTree(block.utxoTxTree);
+    expect(column[column.length - 1]).toBe(0xff);
+
+    expect(decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([block]), 1)).toBeNull();
+  });
+
+  it('refuses a non-byte-view utxoTxs element', () => {
+    const block = poison((b) => {
+      b.utxoTxTree.utxoTxIds = ['ab'.repeat(32)];
+      (b.utxoTxTree.utxoTxs as unknown as unknown[])[0] = 'not-bytes';
+    });
+
+    // `writeLp` sentinels the *length prefix*, so the malformed element is
+    // undecodable rather than silently truncated. This is the cheaper of the
+    // two payloads: `utxoTxRoot` never commits `utxoTxs` and the validator
+    // signature covers only the header, so a relaying node can swap it into an
+    // otherwise honest block with no PoW and no re-signing.
+    expect(decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([block]), 1)).toBeNull();
+  });
+
+  it('refuses the whole response, not just the poisoned block', () => {
+    // A response is one message. Accepting the honest blocks around a malformed
+    // one would hand the node a chain with a hole in it and let the peer choose
+    // where the hole is.
+    const honest = makeMockOrderingBlock(1, '00'.repeat(32));
+    const bad = poison((b) => {
+      (b.utxoTxTree.coinbaseOutputs[0] as unknown as Record<string, unknown>)['isTreasury'] =
+        null;
+    });
+
+    expect(
+      decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([honest, bad, honest]), 3),
+    ).toBeNull();
+  });
+
+  it('refuses a header outside the encodable domain', () => {
+    // The headers arm carried the same raw-cbor-plus-a-cast shape. Its measured
+    // consequence differs — headers reach `findForkPoint`, not the store — but
+    // `createdAt: NaN` and friends collide onto one `blockHash` under a
+    // positional encoder, so serving or accepting them is advertising a
+    // colliding anchor. `blockHash` returning `null` (Phase 1f) is the guard
+    // one layer in; this is the same value refused at the wire.
+    const header = makeMockHeader(1, '00'.repeat(32));
+    (header as unknown as Record<string, unknown>)['createdAt'] = Number.NaN;
+
+    expect(blockHash(header)).toBeNull();
+    expect(decodeLegacyHeadersResponse(encodeLegacyHeadersResponse([header]), 5)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — response size is bounded on receipt
+// ---------------------------------------------------------------------------
+
+describe('response item caps', () => {
+  it('refuses more headers than the caller asked for', () => {
+    const store = makeChain(10);
+    const headers: BlockHeader[] = [];
+    for (let h = 10; h >= 1; h--) headers.push(store.get(h)!.header);
+
+    const body = encodeLegacyHeadersResponse(headers);
+
+    // A peer answering a 3-header request with 10 headers is not answering the
+    // question. The caller is the only party that knows what it asked.
+    expect(receiveHeaders(body, 3)).toBeNull();
+    expect(receiveHeaders(body, 10)).toHaveLength(10);
+  });
+
+  it('refuses more blocks than the requested range', () => {
+    const store = makeChain(5);
+    const blocks = [1, 2, 3, 4, 5].map((h) => store.get(h)!);
+    const body = encodeLegacyBlocksResponse(blocks);
+
+    expect(receiveBlocks(body, 1, 3)).toBeNull();
+    expect(receiveBlocks(body, 1, 5)).toHaveLength(5);
+  });
+
+  it('caps at MAX_LEGACY_RESPONSE_ITEMS however large the request', () => {
+    // The requested size is derived from peer-supplied heights, so it is not a
+    // bound by itself: `requestBlocks` spans `forkHeight + 1` to a tip height
+    // that came off the wire. A real over-cap body, one header past the line.
+    const headers = Array.from({ length: MAX_LEGACY_RESPONSE_ITEMS + 1 }, (_, i) =>
+      makeMockHeader(i + 1, '00'.repeat(32)),
+    );
+    const body = encodeLegacyHeadersResponse(headers);
+
+    expect(decodeLegacyHeadersResponse(body, Number.MAX_SAFE_INTEGER)).toBeNull();
+    // One fewer is fine — the cap is where it says it is.
+    expect(
+      decodeLegacyHeadersResponse(
+        encodeLegacyHeadersResponse(headers.slice(0, MAX_LEGACY_RESPONSE_ITEMS)),
+        Number.MAX_SAFE_INTEGER,
+      ),
+    ).toHaveLength(MAX_LEGACY_RESPONSE_ITEMS);
+  });
+
+  it('accepts nothing but an empty response for a nonsensical request size', () => {
+    const one = encodeLegacyBlocksResponse([makeMockOrderingBlock(1, '00'.repeat(32))]);
+
+    for (const bad of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(decodeLegacyBlocksResponse(one, bad)).toBeNull();
+      expect(decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([]), bad)).toEqual([]);
+    }
+  });
+
+  it('rejects a four-byte count claiming millions of items', () => {
+    // ⚠ What this pins is the rejection, not the *cost* of it. Measured against
+    // a mutant with the cap removed: still rejected, because the first `readLp`
+    // hits the end of the buffer. The property the cap actually buys —
+    // rejecting before anything is allocated per item — is structural (this
+    // codec reads the count with `readVlqU` and pushes, where `readArr` would
+    // accept anything under MAX_ARRAY_LENGTH (2^24) and pre-size the array from
+    // four peer-chosen bytes), and no assertion here distinguishes the two.
+    const w = new ByteWriter();
+    writeVlqU(w, (1 << 24) - 1);
+    const body = w.toBytes();
+
+    expect(body.length).toBe(4);
+    expect(decodeLegacyBlocksResponse(body, Number.MAX_SAFE_INTEGER)).toBeNull();
   });
 });
 
@@ -236,358 +475,164 @@ describe('mergeUint8Arrays', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — handler logic: requestHeaders
+// Tests — serve side: requestHeaders
 // ---------------------------------------------------------------------------
 
-describe('handler: requestHeaders (simulated)', () => {
+describe('serve: headers mode', () => {
   it('returns headers newest-first from startHeight', () => {
-    // Set up store with blocks at heights 1-5
-    const store = new Map<number, OrderingBlock>();
-    const prevHashes: string[] = ['00'.repeat(32)];
-    for (let h = 1; h <= 5; h++) {
-      const prev = prevHashes[h - 1]!;
-      store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
-    }
+    const body = serve({ startHeight: 5, maxCount: 3 }, makeChain(5));
+    const headers = receiveHeaders(body, 3);
 
-    // Request headers starting from height 5, max 3
-    const request = encode({ startHeight: 5, maxCount: 3 });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const headers = decode(response) as BlockHeader[];
-
-    // Should return 3 headers: 5, 4, 3 (newest first)
-    expect(headers).toHaveLength(3);
-    expect(headers[0]!.height).toBe(5);
-    expect(headers[1]!.height).toBe(4);
-    expect(headers[2]!.height).toBe(3);
+    expect(headers).not.toBeNull();
+    expect(headers!.map((h) => h.height)).toEqual([5, 4, 3]);
   });
 
   it('respects maxCount', () => {
-    const store = new Map<number, OrderingBlock>();
-    const prevHashes: string[] = ['00'.repeat(32)];
-    for (let h = 1; h <= 10; h++) {
-      const prev = prevHashes[h - 1]!;
-      store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
-    }
-
-    // Request at most 2 headers
-    const request = encode({ startHeight: 10, maxCount: 2 });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const headers = decode(response) as BlockHeader[];
-
-    expect(headers).toHaveLength(2);
-    expect(headers[0]!.height).toBe(10);
-    expect(headers[1]!.height).toBe(9);
+    const headers = receiveHeaders(serve({ startHeight: 10, maxCount: 2 }, makeChain(10)), 2);
+    expect(headers!.map((h) => h.height)).toEqual([10, 9]);
   });
 
   it('returns empty when no blocks at start height', () => {
-    const store = new Map<number, OrderingBlock>();
-    // Only blocks 1 and 2 exist
-    store.set(1, makeMockOrderingBlock(1, '00'.repeat(32)));
-    store.set(
-      2,
-      makeMockOrderingBlock(
-        2,
-        mockBlockHash(makeMockHeader(1, '00'.repeat(32))),
-      ),
-    );
+    // Clamped to our own tip (2), so the walk starts there and returns 2, 1.
+    const headers = receiveHeaders(serve({ startHeight: 99, maxCount: 20 }, makeChain(2)), 20);
+    expect(headers!.map((h) => h.height)).toEqual([2, 1]);
 
-    // Request headers starting from height 99 (no block there)
-    const request = encode({ startHeight: 99, maxCount: 20 });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const headers = decode(response) as BlockHeader[];
-
-    // getOrderingBlock(99) returns null → the loop breaks immediately
-    expect(headers).toHaveLength(0);
+    // An empty store has nothing to clamp to and answers with nothing.
+    expect(
+      receiveHeaders(serve({ startHeight: 99, maxCount: 20 }, new Map()), 20),
+    ).toEqual([]);
   });
 
   it('stops at first gap in the chain', () => {
-    const store = new Map<number, OrderingBlock>();
-    // Blocks at height 1, 2, 4, 5 — gap at height 3
-    store.set(1, makeMockOrderingBlock(1, '00'.repeat(32)));
-    const h2 = makeMockOrderingBlock(
-      2,
-      mockBlockHash(makeMockHeader(1, '00'.repeat(32))),
-    );
-    store.set(2, h2);
-    // Height 3 is missing
-    store.set(
-      4,
-      makeMockOrderingBlock(4, mockBlockHash(makeMockHeader(2, mockBlockHash(makeMockHeader(1, '00'.repeat(32)))))),
-    );
-    store.set(
-      5,
-      makeMockOrderingBlock(5, mockBlockHash(makeMockHeader(4, 'ff'.repeat(32)))),
-    );
+    const store = makeChain(2);
+    // Heights 4 and 5 exist above a gap at 3. `chainHeight()` walks up from 1
+    // and stops below the gap, so the serve loop never sees them.
+    store.set(4, makeMockOrderingBlock(4, 'ff'.repeat(32)));
+    store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
-    // Request from height 5
-    const request = encode({ startHeight: 5, maxCount: 5 });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const headers = decode(response) as BlockHeader[];
-
-    // Should return headers 5, 4 then stop at gap (height 3 is missing)
-    expect(headers).toHaveLength(2);
-    expect(headers[0]!.height).toBe(5);
-    expect(headers[1]!.height).toBe(4);
+    const headers = receiveHeaders(serve({ startHeight: 5, maxCount: 5 }, store), 5);
+    expect(headers!.map((h) => h.height)).toEqual([2, 1]);
   });
 
   it('defaults maxCount to 20 when not specified', () => {
-    const store = new Map<number, OrderingBlock>();
-    const prevHashes: string[] = ['00'.repeat(32)];
-    for (let h = 1; h <= 25; h++) {
-      const prev = prevHashes[h - 1]!;
-      store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
-    }
+    const headers = receiveHeaders(serve({ startHeight: 25 }, makeChain(25)), 20);
+    expect(headers).toHaveLength(20);
+    expect(headers![0]!.height).toBe(25);
+    expect(headers![19]!.height).toBe(6);
+  });
 
-    // Request without maxCount
-    const request = encode({ startHeight: 25 });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
+  it('serves no more than MAX_LEGACY_RESPONSE_ITEMS however many are asked for', () => {
+    const store = makeChain(MAX_LEGACY_RESPONSE_ITEMS + 5);
+    const body = serve(
+      { startHeight: MAX_LEGACY_RESPONSE_ITEMS + 5, maxCount: 100_000_000 },
       store,
     );
-    const headers = decode(response) as BlockHeader[];
 
-    // Should default to max 20
-    expect(headers).toHaveLength(20);
-    expect(headers[0]!.height).toBe(25);
-    expect(headers[19]!.height).toBe(6);
+    // Without the serve-side cap this is a peer-controlled knob over our whole
+    // chain: one request, one array holding every block we hold.
+    expect(receiveHeaders(body, MAX_LEGACY_RESPONSE_ITEMS)).toHaveLength(
+      MAX_LEGACY_RESPONSE_ITEMS,
+    );
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests — handler logic: requestBlocks
+// Tests — serve side: requestBlocks
 // ---------------------------------------------------------------------------
 
-describe('handler: requestBlocks (simulated)', () => {
+describe('serve: blocks mode', () => {
   it('returns full blocks for a height range', () => {
-    const store = new Map<number, OrderingBlock>();
-    const prevHashes: string[] = ['00'.repeat(32)];
-    for (let h = 1; h <= 5; h++) {
-      const prev = prevHashes[h - 1]!;
-      store.set(h, makeMockOrderingBlock(h, prev));
-      prevHashes.push(mockBlockHash(makeMockHeader(h, prev)));
-    }
+    const body = serve({ startHeight: 2, endHeight: 4, mode: 'blocks' }, makeChain(5));
+    const blocks = receiveBlocks(body, 2, 4);
 
-    // Request blocks from height 2 to 4
-    const request = encode({
-      startHeight: 2,
-      endHeight: 4,
-      mode: 'blocks',
-    });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const result = decode(response) as { blocks: OrderingBlock[] };
-
-    expect(result.blocks).toHaveLength(3);
-    expect(result.blocks[0]!.header.height).toBe(2);
-    expect(result.blocks[1]!.header.height).toBe(3);
-    expect(result.blocks[2]!.header.height).toBe(4);
+    expect(blocks).not.toBeNull();
+    expect(blocks!.map((b) => b.header.height)).toEqual([2, 3, 4]);
   });
 
   it('skips missing blocks in the range', () => {
-    const store = new Map<number, OrderingBlock>();
-    store.set(1, makeMockOrderingBlock(1, '00'.repeat(32)));
-    store.set(
-      3,
-      makeMockOrderingBlock(
-        3,
-        mockBlockHash(makeMockHeader(1, '00'.repeat(32))),
-      ),
-    );
-    store.set(
-      5,
-      makeMockOrderingBlock(5, 'ff'.repeat(32)),
-    );
+    const store = makeChain(1);
+    store.set(3, makeMockOrderingBlock(3, 'ff'.repeat(32)));
+    store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
-    // Request blocks 1-5
-    const request = encode({
-      startHeight: 1,
-      endHeight: 5,
-      mode: 'blocks',
-    });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const result = decode(response) as { blocks: OrderingBlock[] };
-
-    // Only blocks 1, 3, 5 exist
-    expect(result.blocks).toHaveLength(3);
-    expect(result.blocks[0]!.header.height).toBe(1);
-    expect(result.blocks[1]!.header.height).toBe(3);
-    expect(result.blocks[2]!.header.height).toBe(5);
+    // `chainHeight()` is 1 (the gap at 2 stops the walk), and the serve loop is
+    // clamped to it — we do not serve blocks above a hole in our own chain.
+    const blocks = receiveBlocks(serve({ startHeight: 1, endHeight: 5, mode: 'blocks' }, store), 1, 5);
+    expect(blocks!.map((b) => b.header.height)).toEqual([1]);
   });
 
-  it('returns empty array when no blocks in range', () => {
-    const store = new Map<number, OrderingBlock>();
-
-    const request = encode({
-      startHeight: 10,
-      endHeight: 20,
-      mode: 'blocks',
-    });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
-    );
-    const result = decode(response) as { blocks: OrderingBlock[] };
-
-    expect(result.blocks).toHaveLength(0);
+  it('returns an empty list when no blocks are in range', () => {
+    const body = serve({ startHeight: 10, endHeight: 20, mode: 'blocks' }, new Map());
+    expect(body).toEqual(new Uint8Array([0]));
+    expect(receiveBlocks(body, 10, 20)).toEqual([]);
   });
 
-  it('returns blocks with full data (coinbase, subBlockTree, utxoTxTree)', () => {
-    const store = new Map<number, OrderingBlock>();
-    const block = makeMockOrderingBlock(1, '00'.repeat(32));
-    store.set(1, block);
-
-    const request = encode({
-      startHeight: 1,
-      endHeight: 1,
-      mode: 'blocks',
-    });
-    const response = simulateHeadersHandler(
-      Buffer.from(request),
-      store,
+  it('returns blocks with their bodies intact', () => {
+    const store = makeChain(1);
+    const blocks = receiveBlocks(
+      serve({ startHeight: 1, endHeight: 1, mode: 'blocks' }, store),
+      1,
+      1,
     );
-    const result = decode(response) as { blocks: OrderingBlock[] };
 
-    expect(result.blocks).toHaveLength(1);
-    const returned = result.blocks[0]!;
+    expect(blocks).toHaveLength(1);
+    const returned = blocks![0]!;
     expect(returned.header.height).toBe(1);
     expect(returned.header.protocolVersion).toBe(PROTOCOL_VERSION);
-    // `subBlockRefs` was asserted here and went with the field (Phase 3b). What
-    // it was really checking is that the served block carries its body trees
-    // intact, so the assertion moves to the list that is actually committed.
     expect(returned.subBlockTree.subBlockEntries).toEqual([]);
     expect(returned.subBlockTree.pruneEntries).toEqual([]);
     expect(returned.utxoTxTree.coinbaseOutputs.length).toBe(1);
-    // `100n`, not `100`. `CoinbaseOutput.value` is bigint (P0 migration) and
-    // cbor-x round-trips a bigint back as a bigint. The fixture and this
-    // assertion were wrong TOGETHER — a number value the type forbids,
-    // pinned by an assertion expecting that same number — so they agreed
-    // with each other and the suite stayed green. What the test proves does
-    // change here: the round-trip it exercises is now the bigint encoding
-    // production actually emits, which it never covered before.
     expect(returned.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
     expect(returned.validatorSignature).toBeInstanceOf(Uint8Array);
     expect(returned.validatorSignature.length).toBe(64);
+    // Byte-identical to what the ordering store holds for the same block: one
+    // encoder, not a serve-side re-rendering of it.
+    expect(encodeOrderingBlock(returned)).toEqual(encodeOrderingBlock(store.get(1)!));
+  });
+
+  it('serves no more than MAX_LEGACY_RESPONSE_ITEMS blocks', () => {
+    const store = makeChain(MAX_LEGACY_RESPONSE_ITEMS + 5);
+    const body = serve(
+      { startHeight: 1, endHeight: MAX_LEGACY_RESPONSE_ITEMS + 5, mode: 'blocks' },
+      store,
+    );
+
+    expect(receiveBlocks(body, 1, MAX_LEGACY_RESPONSE_ITEMS)).toHaveLength(
+      MAX_LEGACY_RESPONSE_ITEMS,
+    );
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests — handler round-trip
+// Tests — serve + receive, end to end
 // ---------------------------------------------------------------------------
 
 describe('handler round-trip', () => {
-  it('encode headers request, serve response, decode headers', () => {
-    // Build a store with 3 blocks
-    const store = new Map<number, OrderingBlock>();
-    const h1 = makeMockOrderingBlock(1, '00'.repeat(32));
-    store.set(1, h1);
-    const h1Hash = mockBlockHash(h1.header);
-    const h2 = makeMockOrderingBlock(2, h1Hash);
-    store.set(2, h2);
-    const h2Hash = mockBlockHash(h2.header);
-    const h3 = makeMockOrderingBlock(3, h2Hash);
-    store.set(3, h3);
-
-    // Client encodes a headers request
-    const request = { startHeight: 3, maxCount: 3 };
-    const encodedRequest = Buffer.from(encode(request));
-
-    // Server processes it
-    const encodedResponse = simulateHeadersHandler(encodedRequest, store);
-
-    // Client decodes the response
-    const headers = decode(new Uint8Array(encodedResponse)) as BlockHeader[];
+  it('headers: request, serve, receive, chain links hold', () => {
+    const headers = receiveHeaders(serve({ startHeight: 3, maxCount: 3 }, makeChain(3)), 3);
 
     expect(headers).toHaveLength(3);
-    // Newest first
-    expect(headers[0]!.height).toBe(3);
-    expect(headers[1]!.height).toBe(2);
-    expect(headers[2]!.height).toBe(1);
-    // Chain links are correct
-    expect(headers[2]!.prevBlockHash).toBe('00'.repeat(32));
-    expect(headers[1]!.prevBlockHash).toBe(mockBlockHash(headers[2]!));
-    expect(headers[0]!.prevBlockHash).toBe(mockBlockHash(headers[1]!));
+    expect(headers!.map((h) => h.height)).toEqual([3, 2, 1]);
+    expect(headers![2]!.prevBlockHash).toBe('00'.repeat(32));
+    expect(headers![1]!.prevBlockHash).toBe(mockBlockHash(headers![2]!));
+    expect(headers![0]!.prevBlockHash).toBe(mockBlockHash(headers![1]!));
   });
 
-  it('encode blocks request, serve response, decode full blocks', () => {
-    // Build a store with 2 blocks
-    const store = new Map<number, OrderingBlock>();
-    const h1 = makeMockOrderingBlock(1, '00'.repeat(32));
-    store.set(1, h1);
-    const h2 = makeMockOrderingBlock(
+  it('blocks: request, serve, receive, full bodies', () => {
+    const blocks = receiveBlocks(
+      serve({ startHeight: 1, endHeight: 2, mode: 'blocks' }, makeChain(2)),
+      1,
       2,
-      mockBlockHash(h1.header),
     );
-    store.set(2, h2);
 
-    // Client encodes a blocks request
-    const request = { startHeight: 1, endHeight: 2, mode: 'blocks' };
-    const encodedRequest = Buffer.from(encode(request));
-
-    // Server processes it
-    const encodedResponse = simulateHeadersHandler(encodedRequest, store);
-
-    // Client decodes the response
-    const response = decode(new Uint8Array(encodedResponse)) as {
-      blocks: OrderingBlock[];
-    };
-
-    expect(response.blocks).toHaveLength(2);
-    expect(response.blocks[0]!.header.height).toBe(1);
-    expect(response.blocks[1]!.header.height).toBe(2);
-    // Verify full block data
-    expect(response.blocks[0]!.validatorSignature).toBeInstanceOf(Uint8Array);
-    expect(response.blocks[0]!.validatorSignature.length).toBe(64);
-    expect(response.blocks[1]!.utxoTxTree.coinbaseOutputs.length).toBe(1);
+    expect(blocks!.map((b) => b.header.height)).toEqual([1, 2]);
+    expect(blocks![0]!.validatorSignature.length).toBe(64);
+    expect(blocks![1]!.utxoTxTree.coinbaseOutputs.length).toBe(1);
+    expect(blocks![1]!.header.prevBlockHash).toBe(mockBlockHash(blocks![0]!.header));
   });
 
-  it('round-trip: request with no matching blocks returns empty array', () => {
-    const store = new Map<number, OrderingBlock>();
-
-    const request = { startHeight: 100, maxCount: 5 };
-    const encodedRequest = Buffer.from(encode(request));
-    const encodedResponse = simulateHeadersHandler(encodedRequest, store);
-    const headers = decode(new Uint8Array(encodedResponse)) as BlockHeader[];
-
-    expect(headers).toHaveLength(0);
-  });
-
-  it('round-trip: blocks mode with partial range', () => {
-    const store = new Map<number, OrderingBlock>();
-    const h1 = makeMockOrderingBlock(1, '00'.repeat(32));
-    store.set(1, h1);
-    // Height 2 is missing
-    const h3 = makeMockOrderingBlock(3, mockBlockHash(h1.header));
-    store.set(3, h3);
-
-    const request = { startHeight: 1, endHeight: 3, mode: 'blocks' };
-    const encodedRequest = Buffer.from(encode(request));
-    const encodedResponse = simulateHeadersHandler(encodedRequest, store);
-    const response = decode(new Uint8Array(encodedResponse)) as {
-      blocks: OrderingBlock[];
-    };
-
-    expect(response.blocks).toHaveLength(2);
-    expect(response.blocks[0]!.header.height).toBe(1);
-    expect(response.blocks[1]!.header.height).toBe(3);
+  it('headers: no matching blocks yields an empty list, not a rejection', () => {
+    const body = serve({ startHeight: 100, maxCount: 5 }, new Map());
+    expect(body).toEqual(new Uint8Array([0]));
+    expect(receiveHeaders(body, 5)).toEqual([]);
   });
 });

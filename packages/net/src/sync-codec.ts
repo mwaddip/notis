@@ -3,7 +3,20 @@ import { encodeFrame } from './frame.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from './sync-types.js';
 import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE, MSG_GET_PEERS, MSG_PEERS, MSG_GET_POSTS, MSG_POSTS } from './types.js';
 import type { GetPeersMsg, PeersMsg, PeerEntryMsg, GetPostsMsg, PostsMsg, PostsEntry } from './types.js';
-import type { Post } from '@dagsocial/types';
+import {
+  ReaderError,
+  decodeHeader,
+  decodeOrderingBlock,
+  decodeStruct,
+  encodeHeader,
+  encodeOrderingBlock,
+  encodeStruct,
+  readLp,
+  readVlqU,
+  writeArr,
+  writeLp,
+} from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, Post, StructCodec } from '@dagsocial/types';
 import {
   isRecord,
   isBoundedInt,
@@ -14,6 +27,7 @@ import {
   isWorkString,
   MAX_TYPE_ID,
   MAX_CAPABILITY_CODE,
+  MAX_LEGACY_RESPONSE_ITEMS,
   MAX_PEERS_ENTRIES,
 } from './msg-guards.js';
 
@@ -243,4 +257,159 @@ export function decodeLegacyHeadersRequest(body: Uint8Array): LegacyHeadersReque
   if (v.endHeight !== undefined) req.endHeight = v.endHeight;
   if (v.mode !== undefined) req.mode = v.mode;
   return req;
+}
+
+// ---------------------------------------------------------------------------
+// Legacy /dagsocial/headers/1 responses
+//
+// This protocol used to answer in a **second wire format**: `encode({ blocks })`
+// / `encode(headers)` out, `decode(raw) as { blocks: OrderingBlock[] }` and
+// `decode(response) as BlockHeader[]` back — bare `cbor-x` with a TypeScript
+// cast, while every other whole-block path in this package
+// (`gossip.ts`, `LazySyncStore.appendBlocks`) went through
+// `encodeOrderingBlock` / `decodeOrderingBlock`.
+//
+// A cast is not a check, and the gap was measured, not theorised
+// (`prompts/node-fail-stop-reachability-measure-REPORT.md`). The two sentinel
+// bytes a total writer emits for an out-of-domain field — `writeBool`'s `0xff`
+// for a non-boolean `isTreasury`, `writeLp`'s sentinel *length* for a
+// non-byte-view `utxoTxs` element — are refused by our own decoder, so gossip
+// dropped both at decode. This path handed them to the node undecoded, the
+// apply funnel accepted the block (`utxoTxRoot` honestly commits the malformed
+// leaf, and the validator signature covers only the header), and the store
+// wrote a row that our own reader then refuses:
+// `UnreadableStoredBlockError` → `failStopIfCorruptChain` → `process.exit(1)`,
+// triggered automatically by the next arriving gossip block and persistent
+// across restarts. The `utxoTxs` half costs no PoW at all — `utxoTxRoot` never
+// commits `utxoTxs`, so a *relaying* node swaps an honest block's payload.
+//
+// Adding shape validation to the cbor path would have been the band-aid. The
+// root cause is the second dialect, so it is gone: both responses are
+// `arr(item, lp)` over the same positional codec the rest of the package
+// speaks, and every element runs the four-part boundary check (spec §2.1) on
+// its own byte span. The sentinels are now unrepresentable at this boundary
+// rather than merely unlikely to be sent, which is what makes the door stay
+// shut for the *next* unpinned field.
+//
+// ⚠ Wire-format break. Both sides live in this package and move in one commit
+// (rule 13): a producer on the new framing with a consumer on the old one is a
+// sync path that silently returns nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * `arr(items, lp)` — `vlqU(count) ‖ (vlqU(len) ‖ itemBytes)…`.
+ *
+ * The `lp` per element is not decoration. It gives each item its own byte span,
+ * so `decodeItem` can run the whole boundary check over exactly that span —
+ * exhaustion and the re-encode compare included — and a malformed block is
+ * rejected at its own offset instead of as an outer mismatch somewhere in a
+ * multi-kilobyte blob. It is the same nesting `ORDERING_BLOCK` uses for its own
+ * three sections.
+ *
+ * `maxItems` is checked **before the first element is read**. `readArr` would
+ * be the obvious primitive here and is the wrong one: it bounds the count at
+ * `MAX_ARRAY_LENGTH` (2^24) and pre-sizes the array, so four peer-chosen bytes
+ * buy a sixteen-million-slot allocation. The byte layout is identical to
+ * `arr`'s, so the re-encode compare below still uses `writeArr`.
+ */
+function lpItemsCodec<T>(
+  name: string,
+  encodeItem: (item: T) => Uint8Array,
+  decodeItem: (bytes: Uint8Array) => T,
+  maxItems: number,
+): StructCodec<T[]> {
+  return {
+    name,
+    write(w, items) {
+      writeArr(w, items, (itemWriter, item) => writeLp(itemWriter, encodeItem(item)));
+    },
+    read(r) {
+      const count = readVlqU(r);
+      if (count > maxItems) {
+        throw new ReaderError(
+          `${name}: response declares ${count} items, at most ${maxItems} accepted`,
+          'array-too-large',
+        );
+      }
+      const items: T[] = [];
+      for (let i = 0; i < count; i++) items.push(decodeItem(readLp(r)));
+      return items;
+    },
+  };
+}
+
+/**
+ * Decode a legacy response body, converting every `ReaderError` into `null`.
+ *
+ * Spec §2.1 step 4 — "every caller converts `ReaderError` into a verdict" —
+ * discharged here in the shape the rest of this file uses: decoders at net's
+ * boundary never throw, they return `null`, and the caller decides what a
+ * `null` means for the peer that sent it.
+ */
+function decodeLegacyResponse<T>(codec: StructCodec<T[]>, bytes: Uint8Array): T[] | null {
+  try {
+    return decodeStruct(codec, bytes);
+  } catch {
+    return null;
+  }
+}
+
+function blocksResponseCodec(maxBlocks: number): StructCodec<OrderingBlock[]> {
+  return lpItemsCodec('legacyBlocksResponse', encodeOrderingBlock, decodeOrderingBlock, maxBlocks);
+}
+
+function headersResponseCodec(maxHeaders: number): StructCodec<BlockHeader[]> {
+  return lpItemsCodec('legacyHeadersResponse', encodeHeader, decodeHeader, maxHeaders);
+}
+
+/**
+ * Serialize a blocks-mode response.
+ *
+ * Throws only for a block *we* hold that has no encoding — a corrupt local
+ * store, not a peer's doing. The handler's own `catch` turns that into an empty
+ * response, which is the same answer it gives for every other local failure.
+ */
+export function encodeLegacyBlocksResponse(blocks: OrderingBlock[]): Uint8Array {
+  return encodeStruct(blocksResponseCodec(MAX_LEGACY_RESPONSE_ITEMS), blocks);
+}
+
+/**
+ * Parse a blocks-mode response. `null` for anything that is not a well-formed,
+ * canonical response of at most `maxBlocks` blocks.
+ *
+ * `maxBlocks` is the caller's own request size — the peer is answering a
+ * question only the caller knows.
+ */
+export function decodeLegacyBlocksResponse(
+  bytes: Uint8Array,
+  maxBlocks: number,
+): OrderingBlock[] | null {
+  return decodeLegacyResponse(blocksResponseCodec(responseCap(maxBlocks)), bytes);
+}
+
+/** Serialize a headers-mode response. See `encodeLegacyBlocksResponse`. */
+export function encodeLegacyHeadersResponse(headers: BlockHeader[]): Uint8Array {
+  return encodeStruct(headersResponseCodec(MAX_LEGACY_RESPONSE_ITEMS), headers);
+}
+
+/** Parse a headers-mode response. See `decodeLegacyBlocksResponse`. */
+export function decodeLegacyHeadersResponse(
+  bytes: Uint8Array,
+  maxHeaders: number,
+): BlockHeader[] | null {
+  return decodeLegacyResponse(headersResponseCodec(responseCap(maxHeaders)), bytes);
+}
+
+/**
+ * How many items a response to a request of this size may carry.
+ *
+ * Clamped to `MAX_LEGACY_RESPONSE_ITEMS` because the requested size is derived
+ * from peer-supplied heights (`requestBlocks` spans `forkHeight + 1` to a tip
+ * height that came off the wire), so it is not by itself a bound. A nonsensical
+ * request size accepts an empty response and nothing else, rather than
+ * falling back to a permissive default.
+ */
+function responseCap(requested: number): number {
+  if (!Number.isSafeInteger(requested) || requested < 0) return 0;
+  return Math.min(requested, MAX_LEGACY_RESPONSE_ITEMS);
 }
