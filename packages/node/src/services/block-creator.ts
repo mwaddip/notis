@@ -6,12 +6,9 @@ import {
 } from 'crypto';
 import {
   PROTOCOL_VERSION,
-  CREDIT_FIXED_RATE_BLOCKS,
   CREDIT_INITIAL_REWARD,
-  CREDIT_EPOCH_BLOCKS,
   CREDIT_REWARD_REDUCTION,
   CREDIT_TAIL_REWARD,
-  CREDIT_MINER_REWARD_DELAY,
   CREDIT_TREASURY_PCT,
   EMPTY_STATE_ROOT,
   decodeTx,
@@ -36,6 +33,11 @@ import type {
   CoinbaseOutput,
   Post,
 } from '@dagsocial/types';
+// The process config, distinct from the injected `config` below. The two
+// emission values read off it are re-checked by the applier against the same
+// singleton (`block-apply` §5, §5b), and `computeBlockReward` runs on the apply
+// path of server-role nodes, where the injected one was never assigned.
+import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
 import { expectedTarget } from './difficulty.js';
 import { getNet } from './net-instance.js';
@@ -239,11 +241,11 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
  */
 export function computeBlockReward(height: number): bigint {
   if (height <= 0) return 0n;
-  if (height <= CREDIT_FIXED_RATE_BLOCKS) {
+  if (height <= nodeConfig.creditFixedRateBlocks) {
     return CREDIT_INITIAL_REWARD;
   }
   const epochs = Math.floor(
-    (height - CREDIT_FIXED_RATE_BLOCKS - 1) / CREDIT_EPOCH_BLOCKS,
+    (height - nodeConfig.creditFixedRateBlocks - 1) / nodeConfig.creditEpochBlocks,
   ) + 1;
   const reward = CREDIT_INITIAL_REWARD - BigInt(epochs) * CREDIT_REWARD_REDUCTION;
   return reward > CREDIT_TAIL_REWARD ? reward : CREDIT_TAIL_REWARD;
@@ -616,7 +618,9 @@ function buildCoinbaseOutputs(height: number): CoinbaseOutput[] {
     minerAmount = reward - treasuryAmount;
   }
 
-  const lockedUntilBlock = height + CREDIT_MINER_REWARD_DELAY;
+  // The applier rejects any coinbase whose lock is not exactly this
+  // (MINING invariant 3), so it reads the singleton, not the injected config.
+  const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
 
   // Miner output — use external miner's pubkey if provided, else validator key
   outputs.push({

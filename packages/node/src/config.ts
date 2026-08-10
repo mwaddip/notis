@@ -41,6 +41,15 @@ export interface Config {
   orderingBlockPowTargetBits: number;
   creditTreasuryPct: number;
   treasuryPubKey: string;  // hex-encoded 32-byte key, empty = no treasury
+  /** Blocks before a coinbase output is spendable. Apply-time consensus check (MINING invariant 3). */
+  creditMinerRewardDelay: number;
+  // Emission schedule shape. `computeBlockReward` is a consensus function on
+  // both the creator and the applier, so both read these from here.
+  creditFixedRateBlocks: number;
+  creditEpochBlocks: number;
+  // Vouch and invite timing
+  vouchCooldownBlocks: number;
+  inviteProbationBlocks: number;
   // Karma decay
   karmaStaleThresholdBlocks: number;
   karmaDecayIntervalBlocks: number;
@@ -101,6 +110,13 @@ export function loadConfig(): Readonly<Config> {
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
     creditTreasuryPct: CREDIT_TREASURY_PCT,
     treasuryPubKey: profile.treasuryPubKey,
+    creditMinerRewardDelay: profile.creditMinerRewardDelay,
+    creditFixedRateBlocks: profile.creditFixedRateBlocks,
+    creditEpochBlocks: profile.creditEpochBlocks,
+    // Vouch and invite timing — per-network timescale, same rule as the karma
+    // decay pair below.
+    vouchCooldownBlocks: profile.vouchCooldownBlocks,
+    inviteProbationBlocks: profile.inviteProbationBlocks,
     // Karma decay — per-network timescale from the profile, universal economics
     // from the constants (ARCHITECTURE §Network Identity: "compress time, never
     // economics"). None of these is readable from the environment.

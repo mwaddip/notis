@@ -3,7 +3,6 @@ import {
   computeBoxId,
   computeTxId,
   INVITE_KARMA_THRESHOLD,
-  INVITE_PROBATION_BLOCKS,
   LIKE_KARMA_COST,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
@@ -28,6 +27,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, BoxGuard, KarmaBox, Bond
 // would leave builders signing a tagged id while this verified an untagged one.
 
 import { ed25519PublicKeyToKeyObject } from '@dagsocial/validation';
+import { config } from '../config.js';
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -457,7 +457,7 @@ function checkTransitions(
             bondOut.probationStartBlock > 0 &&
             bondOut.probationStartBlock <= currentBlockHeight &&
             bondOut.probationEndBlock - bondOut.probationStartBlock ===
-              INVITE_PROBATION_BLOCKS &&
+              config.inviteProbationBlocks &&
             bondOut.inviteOutputIndex === bondIn.inviteOutputIndex &&
             Buffer.from(bondOut.inviterId).toString('hex') ===
               Buffer.from(bondIn.inviterId).toString('hex')) {
@@ -467,7 +467,7 @@ function checkTransitions(
           valid: false,
           error:
             `Invalid bond commit: inviteePublicKey must go from empty to 32 bytes ` +
-            `with a probation window of exactly ${INVITE_PROBATION_BLOCKS} blocks ` +
+            `with a probation window of exactly ${config.inviteProbationBlocks} blocks ` +
             `starting at or before the settle height`,
         };
       }

@@ -353,16 +353,62 @@ Total on adversarial input, like every function here.
 verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?: string }
 ```
 
-Checks: `post` present, `subBlockId` present, `protocolVersion` is a number,
-`producerId` present, **and `verifyPostFieldDomains(sb.post)`**. Returns
-`{ valid, error }`. (The `likeBoxes` array check died with the sidecar field —
-P2-D.)
+Checks: `post` present, **`subBlockId` is 64 lowercase hex**, **`protocolVersion`
+is `isU64Safe`**, **`producerId` is exactly 32 bytes**, and
+**`verifyPostFieldDomains(sb.post)`**. Returns `{ valid, error }`. (The
+`likeBoxes` array check died with the sidecar field — P2-D.)
 
-The domain check is here rather than only in `isSignablePost` because this is
-the shared gate the relay path already passes through: `net`'s
-`runStage1SubBlock` calls it at `gossip.ts:201`, before `:222` builds the PoW
-preimage. Placing it here closes that path **without any edit to
-`@dagsocial/net`**.
+> ⚠ **AHEAD OF CODE — the three `SubBlock` domain pins.** Today this function
+> checks `subBlockId` and `producerId` for **truthiness** and `protocolVersion`
+> for `typeof === 'number'`. All three feed throwing fixed-width writers in the
+> `SUB_BLOCK` codec — `writeHexNOrThrow(subBlockId, 32)`,
+> `writeBytesNOrThrow(producerId, 32)`, `writeVlqU(protocolVersion)` — so the
+> declared wire domains are 64 lowercase hex, exactly 32 bytes, and `isU64Safe`.
+> **`subBlockId: 'x'` passes every check here today and throws in the writer**;
+> so does `protocolVersion: 1.5`.
+>
+> Same rule Phase 1c established for the header and 1e for the ordering block,
+> applied to the struct **both phases skipped**. The LEDGER's Gate B recorded it:
+> the unpinned rows cluster in `CoinbaseOutput` and `SubBlock`, "the two structs
+> 1e and 1f never covered". The `CoinbaseOutput` four were closed by **#32**;
+> these three are the remainder.
+>
+> ⚠ **`Post.powNonce` and `Post.signature` are a different question and are NOT
+> part of this obligation.** Neither appears in `verifyPostFieldDomains`, yet
+> `POST.write` ends `writeVlqU(p.powNonce)` and
+> `writeBytesNOrThrow(p.signature, 64)`. Both domains are established only
+> *downstream* — `verifyPoW` checks `isU64Safe(nonce)` internally, and
+> `verifyPostSignature` deliberately leaves a wrong-**length** signature to
+> `crypto.verify` (`:367-369`, and that is the right call for verification). So
+> the open question is **reachability, not absence**: is there any path that
+> encodes a post before the downstream check runs? That is the §2.5 shape, and it
+> must be answered by tracing rather than assumed either way.
+
+> ⚠ **The justification that stood here was one phase out of date — corrected
+> 2026-08-10.** It read: the domain check is here because this is the shared gate
+> the relay path passes through, `runStage1SubBlock` before the PoW preimage.
+> **That was written when `decodeSubBlock` was `decode(bytes) as SubBlock`.**
+> Since Phase 3b, `gossip.ts:78` decodes through `decodeStruct` *before*
+> `runStage1SubBlock` runs, and the positional reader establishes every domain on
+> the way in — `readHexN` yields lowercase hex, `readBytesN` yields exactly 32
+> bytes or throws, `readVlqU` yields a non-negative safe integer or throws. **No
+> out-of-domain sub-block can arrive over gossip at all**; it dies in the decoder.
+> These checks reject nothing on that path.
+>
+> **That relocates their teeth rather than removing them.** They are the stated
+> rejection for any path that builds a `SubBlock` *without* the decoder, and there
+> is one: `net/src/node.ts:951` and `:960` take `getSubBlock`'s return — typed
+> `unknown` (`node.ts:203`) — cast it `as SubBlock`, and hand it straight to
+> `encodeSubBlock` with no validation of any kind. Its fields are in domain today
+> only by **store-write discipline across a package boundary**, every writer of
+> those columns sitting behind `verifyPost` or `verifyPostForRelay`. These pins
+> turn that unchecked cross-package invariant into a check wherever this function
+> runs.
+>
+> **The general form: a reachability argument is a claim about the rest of the
+> tree, and this one expired when the tree moved under it** — the same lesson the
+> `readArray` "no callers" parenthetical taught, arriving from the opposite
+> direction. A check justified by a path can outlive the path.
 
 > ⚠ **It does NOT yet close the node's two verifier functions or the content
 > sweep.** `verifyPost`, `verifyPostForRelay` and `content-sweep.ts:92` reach
