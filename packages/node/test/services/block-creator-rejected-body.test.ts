@@ -365,4 +365,50 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
   });
+
+  // Carried #26 recorded the `!txCbor` arm as "kept for totality, deliberately
+  // left untested". It is testable, and cheaply: the arm is unreachable through
+  // `applyOrderingBlock` — `verifyOrderingBlockStructure` refuses a body whose
+  // `utxoTxs` does not align with `utxoTxIds` before the funnel reads either —
+  // but `computePostBlockStateRoot` runs no structure check at all, so the
+  // speculation entry point is where a misaligned body is expressible. That the
+  // arm needed this entry point to be reached is itself the unit's finding.
+  it('a body whose utxoTxs do not align with utxoTxIds is rejected, not thrown on', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const utxo = await importUtxo();
+    utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
+    const handle = await activateProver();
+    const preDigest = Buffer.from(handle.prover.digest()!).toString('hex');
+
+    const { computePostBlockStateRoot } = await import(
+      '../../src/services/block-apply.js'
+    );
+
+    const candidate: OrderingBlock = {
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height: 1,
+        prevBlockHash: '00'.repeat(32),
+        subBlockRoot: '00'.repeat(32),
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: 12,
+        createdAt: 0,
+      },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
+      // One declared id, no body beside it — the misalignment structure would
+      // have caught on every other path into the mutation phase.
+      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [], coinbaseOutputs: [] },
+      validatorSignature: new Uint8Array(64),
+    };
+
+    // A stated rejection, not the catch-all: the arm returns false, so the
+    // speculation exits through `BlockRejected` and the prover is restored.
+    expect(computePostBlockStateRoot(candidate, 1)).toEqual({ kind: 'body-rejected' });
+    expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
+  });
 });

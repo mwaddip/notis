@@ -504,7 +504,12 @@ export type StateRootSpeculation =
   | { kind: 'computed'; stateRoot: string }
   /** No usable prover — test-only; the caller writes `EMPTY_STATE_ROOT`. */
   | { kind: 'no-prover' }
-  /** The body is invalid. Producing this block is forbidden. */
+  /**
+   * Producing this block is forbidden — the body was rejected, or speculating
+   * on it threw. One arm because the caller's obligation is one: do not mine,
+   * and clear the body that produced it. The two are separated in the log,
+   * where the difference is actionable, not in the type, where it is not.
+   */
   | { kind: 'body-rejected' };
 
 /**
@@ -566,7 +571,18 @@ export function computePostBlockStateRoot(
       );
       return { kind: 'body-rejected' };
     }
-    console.error(`stateRoot speculation failed at height ${height}: ${String(err)}`);
+    // No arm above claimed this throw, so it is not a rejection this node
+    // decided. The verdict stays `body-rejected` — the apply funnel converts
+    // the same throw into a rejection, so no node would apply this body — but
+    // it must not be *logged* as one: forever-rejecting and never-producing are
+    // the same silence from two different faults, and the arm above already
+    // prints the one that is a verdict. `err` rather than `String(err)`,
+    // because for an unclaimed throw the stack is the whole diagnosis.
+    console.error(
+      `INTERNAL: unclaimed throw in stateRoot speculation at height ${height} ` +
+      `— not producing this block`,
+      err,
+    );
     return { kind: 'body-rejected' };
   } finally {
     // The transaction is rolled back by the time this runs (better-sqlite3
