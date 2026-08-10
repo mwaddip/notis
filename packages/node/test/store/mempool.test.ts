@@ -23,6 +23,9 @@ async function importMempoolFresh() {
     hasPendingLike: (targetPostId: string, likerId: string) => boolean;
     countPendingInvites: (inviterId: string) => number;
     hasPendingVouch: (voucherId: string) => boolean;
+    insertMempoolPrune: (entry: any, expiresAtHeight: number) => number;
+    drainMempoolPrunes: (limit: number) => any[];
+    removeMempoolPrunes: (entryIds: string[]) => void;
   };
 }
 
@@ -452,6 +455,83 @@ describe('mempool store', () => {
   // -------------------------------------------------------------------------
   // removeSubBlockEntries (audit M-8)
   // -------------------------------------------------------------------------
+
+  // The pool row is the only copy of a queued prune between `POST
+  // /posts/:id/prune` and the block that carries it, and `drainMempoolPrunes`
+  // is the miner's first read of it — inside `createOrderingBlock`, which no
+  // frame wraps in a try/catch. Nothing asserted the pair before: every prune
+  // test stopped at the insert, so the writer and the reader were free to speak
+  // different codecs.
+  describe('prune entry round-trip', () => {
+    it('drains back exactly what was inserted', async () => {
+      const mem = await importMempoolFresh();
+      const entry = pruneEntry(ROOT_1);
+
+      mem.insertMempoolPrune(entry, 100);
+      const drained = mem.drainMempoolPrunes(32);
+
+      expect(drained).toHaveLength(1);
+      expect(drained[0].rootPostHash).toBe(entry.rootPostHash);
+      expect(drained[0].subtreePostIds).toEqual(entry.subtreePostIds);
+      expect(drained[0].trigger).toBe(entry.trigger);
+      // `applyMutationPhase` tests `authorId instanceof Uint8Array` before it
+      // hexes the claimed author, and hands all three byte fields to
+      // `Buffer.from` / `createHash().update()`.
+      expect(drained[0].authorId).toBeInstanceOf(Uint8Array);
+      expect(Buffer.from(drained[0].authorId)).toEqual(Buffer.from(entry.authorId));
+      expect(Buffer.from(drained[0].subtreeMerkleRoot)).toEqual(
+        Buffer.from(entry.subtreeMerkleRoot),
+      );
+      expect(Buffer.from(drained[0].authorSignature)).toEqual(
+        Buffer.from(entry.authorSignature),
+      );
+    });
+
+    it('drains in insertion order and empties the pool', async () => {
+      const mem = await importMempoolFresh();
+      mem.insertMempoolPrune(pruneEntry(ROOT_1), 100);
+      mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
+
+      const drained = mem.drainMempoolPrunes(32);
+
+      expect(drained.map((e) => e.rootPostHash)).toEqual([ROOT_1, ROOT_2]);
+      expect(mem.getPendingEntries(10)).toHaveLength(0);
+    });
+
+    it('an unreadable row is dropped without taking its readable siblings with it', async () => {
+      const mem = await importMempoolFresh();
+      const { getDb } = await importDbFresh();
+      const poisoned = mem.insertMempoolPrune(pruneEntry(ROOT_1), 100);
+      mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
+      getDb()
+        .prepare(`UPDATE mempool SET prune_entry_cbor = ? WHERE rowid = ?`)
+        .run(Buffer.from([0xff, 0xff, 0xff]), poisoned);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const drained = mem.drainMempoolPrunes(32);
+
+      // The readable sibling survives — one bad blob used to lose the batch,
+      // and the miner stops producing for as long as any row it cannot read
+      // stays in front of the drain.
+      expect(drained.map((e) => e.rootPostHash)).toEqual([ROOT_2]);
+      expect(mem.getPendingEntries(10)).toHaveLength(0);
+      expect(errors).toHaveBeenCalledOnce();
+      errors.mockRestore();
+    });
+
+    it('removeMempoolPrunes matches the id computed from a stored row', async () => {
+      const mem = await importMempoolFresh();
+      const { computePruneEntryId } = await import('@dagsocial/types');
+      const entry = pruneEntry(ROOT_1);
+      mem.insertMempoolPrune(entry, 100);
+      mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
+
+      mem.removeMempoolPrunes([computePruneEntryId(entry)]);
+
+      const left = mem.drainMempoolPrunes(32);
+      expect(left.map((e) => e.rootPostHash)).toEqual([ROOT_2]);
+    });
+  });
 
   describe('removeSubBlockEntries', () => {
     it('removes confirmed sub-blocks past the first rows and spares the rest', async () => {

@@ -476,9 +476,12 @@ export function createOrderingBlock(): OrderingBlock | null {
   // rebuilds this exact body: purgeExpired cannot break that loop, because it
   // keys on a chain height that stops advancing.
   if (speculation.kind === 'body-rejected') {
+    // States the verdict, not the cause: `body-rejected` also carries the
+    // speculation's unclaimed throws, which that arm logs itself. Naming the
+    // mutation phase here would assert a diagnosis this frame does not have.
     console.warn(
-      `Not producing block at height ${newHeight}: its own mutation phase ` +
-      `rejected the body; evicting ${confirmedRowids.size} mempool entries`,
+      `Not producing block at height ${newHeight}: speculation returned ` +
+      `body-rejected; evicting ${confirmedRowids.size} mempool entries`,
     );
     for (const rowid of confirmedRowids) {
       removeEntry(rowid);

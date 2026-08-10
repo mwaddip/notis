@@ -6,8 +6,8 @@ import type {
   InviteBox,
   VouchBox,
 } from '@dagsocial/types';
-import { encodeTx, serializePruneEntry, computePruneEntryId } from '@dagsocial/types';
-import { decode as cborDecode } from 'cbor-x';
+import { encodeTx, computePruneEntryId } from '@dagsocial/types';
+import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
  * Thrown by every mempool insert when the pool is at `MAX_MEMPOOL_ENTRIES`.
@@ -235,13 +235,21 @@ export function removeEntry(rowid: number): void {
   db.prepare('DELETE FROM mempool WHERE rowid = ?').run(rowid);
 }
 
+/**
+ * The `prune_entry_cbor` blob is written and read by this module alone — it is
+ * a local pool row, on no wire and under no committed root — so its codec is
+ * the `cborEncode`/`cborDecode` pair above, stated once and symmetric by
+ * construction. A consensus encoder must not be borrowed for it: those state a
+ * committed layout that is `@dagsocial/types`' to change, and a dialect change
+ * there is invisible to a reader in this package.
+ */
 export function insertMempoolPrune(
   entry: PruneEntry,
   expiresAtHeight: number,
 ): number {
   const db = getDb();
   assertCapacity(db);
-  const cbor = Buffer.from(serializePruneEntry(entry));
+  const cbor = Buffer.from(cborEncode(entry));
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, prune_entry_cbor, expires_at_height)
      VALUES ('prune', ?, ?)`,
@@ -249,22 +257,51 @@ export function insertMempoolPrune(
   return Number(result.lastInsertRowid);
 }
 
+/**
+ * One row's entry, or `null` when this node cannot read a blob it wrote.
+ *
+ * Isolated per row, and it decides two things at once. A sibling's failure must
+ * not destroy a readable row — the old bulk `map` after a bulk DELETE lost the
+ * whole batch to one bad blob. And the unreadable row is dropped rather than
+ * re-raised, because it sits in front of `drainMempoolPrunes`, the miner's
+ * first read at every block interval: a row nobody can decode would otherwise
+ * stop the node producing for as long as it stays, and this blob is local,
+ * uncommitted, and re-issuable by its author. Loud, because a store that
+ * returns something its own writer cannot have produced is a defect, not an
+ * event.
+ */
+function decodePruneRow(row: { rowid: number; prune_entry_cbor: Buffer }): PruneEntry | null {
+  try {
+    return cborDecode(row.prune_entry_cbor) as PruneEntry;
+  } catch (err) {
+    console.error(`Dropping unreadable mempool prune row ${row.rowid}:`, err);
+    return null;
+  }
+}
+
 export function drainMempoolPrunes(limit: number): PruneEntry[] {
   const db = getDb();
-  const rows = db.prepare(
-    `SELECT rowid, prune_entry_cbor FROM mempool
-     WHERE entry_type = 'prune'
-     ORDER BY rowid ASC LIMIT ?`,
-  ).all(limit) as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
+  // Every row is decoded before the DELETE and inside one transaction: the
+  // blob is the entry's only copy, so nothing is removed until its own read has
+  // returned a verdict.
+  return db.transaction((): PruneEntry[] => {
+    const rows = db.prepare(
+      `SELECT rowid, prune_entry_cbor FROM mempool
+       WHERE entry_type = 'prune'
+       ORDER BY rowid ASC LIMIT ?`,
+    ).all(limit) as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
 
-  if (rows.length === 0) return [];
+    if (rows.length === 0) return [];
 
-  const ids = rows.map(r => r.rowid);
-  db.prepare(
-    `DELETE FROM mempool WHERE rowid IN (${ids.map(() => '?').join(',')})`,
-  ).run(...ids);
+    const entries = rows.map(decodePruneRow);
 
-  return rows.map(r => cborDecode(r.prune_entry_cbor) as PruneEntry);
+    const ids = rows.map(r => r.rowid);
+    db.prepare(
+      `DELETE FROM mempool WHERE rowid IN (${ids.map(() => '?').join(',')})`,
+    ).run(...ids);
+
+    return entries.filter((e): e is PruneEntry => e !== null);
+  })();
 }
 
 /**
@@ -283,7 +320,10 @@ export function removeMempoolPrunes(entryIds: string[]): void {
 
   const toDelete: number[] = [];
   for (const row of rows) {
-    const entry = cborDecode(row.prune_entry_cbor) as PruneEntry;
+    // Same isolation as the drain, and here it also keeps a reorg from failing
+    // on a row it was not looking for.
+    const entry = decodePruneRow(row);
+    if (entry === null) continue;
     const id = computePruneEntryId(entry);
     if (entryIds.includes(id)) {
       toDelete.push(row.rowid);

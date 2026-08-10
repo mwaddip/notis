@@ -339,4 +339,59 @@ describe('config', () => {
       expect(cfg.avlKeyLength).toBe(AVL_KEY_LENGTH);
     });
   });
+
+  // The treasury key reaches `CoinbaseOutput.owner`, whose writer demands
+  // exactly 32 bytes, through a `Buffer.from(s, 'hex')` that truncates at the
+  // first pair outside the alphabet instead of failing. The profile table is
+  // its only source, so the profile is what these mock — a value no env var
+  // can set is still a value a chain's genesis data can carry.
+  describe('9. treasury key fail-fast (carried #14)', () => {
+    // `config.ts` ends in `export const config = loadConfig()`, so the refusal
+    // lands on the import — the same shape section 5 asserts for MINING_SECRET,
+    // and the reason this is a startup failure rather than a mining-time one.
+    function importWithTreasuryKey(treasuryPubKey: string) {
+      vi.doMock('@dagsocial/types', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@dagsocial/types')>();
+        return {
+          ...actual,
+          profileFor: (networkType: string) => ({
+            ...actual.profileFor(networkType as never),
+            treasuryPubKey,
+          }),
+        };
+      });
+      return import('../src/config.js');
+    }
+
+    it('accepts a 64-character hex key', async () => {
+      const { loadConfig } = await importWithTreasuryKey('ab'.repeat(32));
+      expect(loadConfig().treasuryPubKey).toBe('ab'.repeat(32));
+    });
+
+    it('accepts an empty key — no treasury is configured', async () => {
+      const { loadConfig } = await importWithTreasuryKey('');
+      expect(loadConfig().treasuryPubKey).toBe('');
+    });
+
+    // 64 characters, 0 bytes out of `Buffer.from(…, 'hex')`. A width check
+    // passes it; the coinbase leaf writer does not.
+    it('refuses 64 non-hex characters', async () => {
+      await expect(importWithTreasuryKey('z'.repeat(64))).rejects.toThrow(
+        /treasuryPubKey/,
+      );
+    });
+
+    // 64 characters, 31 bytes — the near-miss a width check cannot see at all.
+    it('refuses 62 hex characters followed by a non-hex pair', async () => {
+      await expect(importWithTreasuryKey('ab'.repeat(31) + 'zz')).rejects.toThrow(
+        /treasuryPubKey/,
+      );
+    });
+
+    it('refuses a short hex key', async () => {
+      await expect(importWithTreasuryKey('ab'.repeat(16))).rejects.toThrow(
+        /treasuryPubKey/,
+      );
+    });
+  });
 });
