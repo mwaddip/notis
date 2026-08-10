@@ -1101,8 +1101,12 @@ Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum
 
 ## Network Identity
 
-> ⚠ **PARTIAL — P2-A built the profile mechanism; one of the three commitment layers
-> remains.** (PR #8, `4670ae5`.)
+> ⚠ **PARTIAL — and the reason changed on 2026-08-10.** It used to be "one of the three
+> commitment layers remains"; that layer is now **withdrawn by decision**, so the commitment
+> table is complete at two layers. What keeps this marker open is the *selection* half:
+> **nine consensus parameters are still independently environment-readable**, marked
+> `⚠ VIOLATED` in `NODE_INTERFACE §Configuration`, which breaks the guarantee stated under
+> §Selection below. (P2-A: PR #8, `4670ae5`.)
 >
 > **Built.** `NETWORK_TYPE` selects a `NetworkProfile` that carries the wire magic and every
 > consensus parameter together; an unrecognised value throws at startup. `NetConfig.magic` is
@@ -1118,11 +1122,12 @@ Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum
 > number` and node never passed it. A second, undocumented selector (`NETWORK_MAGIC`,
 > defaulting to *testnet*) existed in dead code. Both are gone.
 >
-> **Not built:** the **block** layer — `networkType` is not a field of the ordering block
-> header (verified 2026-08-07: no such field in `@dagsocial/types`). A cross-network block
-> is currently rejected by the transport and chain layers only, never at the structure gate
-> with a legible reason. That field is P2-C, which carries it alongside the other
-> committed-byte changes.
+> ✅ **The third layer was withdrawn, not deferred — 2026-08-10.** This marker used to read
+> "not built: the block layer", pending a `networkType` header field in P2-C. **That field is
+> rejected** (`TYPES_INTERFACE` → Block header). A cross-network block is rejected by the
+> transport and chain layers, and those two were shown to cover every case the third would
+> have — so there are **two commitment layers by decision**, and this section is complete
+> rather than partial on that axis.
 
 A network is the pairing of a **parameter profile** with a **genesis block**. Three exist:
 
@@ -1169,20 +1174,20 @@ on devnet** — the burden is on the addition, not on keeping the set small.
 
 ### How the network is committed
 
-Three mechanisms, which fail differently and are listed in the order a foreign object meets
-them.
+**Two** mechanisms, which fail differently and are listed in the order a foreign object meets
+them. A third — a `networkType` field in the block header — was specified here and **rejected
+2026-08-10**; the note after this table records why, because it has been proposed twice.
 
 | Layer | Mechanism | What a cross-network object does |
 |---|---|---|
 | **Transport** | Wire magic selected by the profile | Never assembles as a frame; peers do not connect |
-| **Block** | `networkType` field in the ordering block header | Rejected at the structure gate with a legible reason |
 | **Chain** | Distinct genesis per network | Cannot link; its input boxes do not exist here |
 
 **The chain layer is what makes the networks genuinely separate**, and it is doing more work
 than it appears to. A transaction's inputs are boxes whose id chains root at genesis, so a
 mainnet transaction replayed against testnet names inputs that **do not exist** — replay
-fails on the UTXO graph, without any network check. The header field and the magic are the
-early, legible rejections; genesis is the one that cannot be circumvented.
+fails on the UTXO graph, without any network check. The magic is the early rejection; genesis
+is the one that cannot be circumvented.
 
 > **Id derivation is deliberately NOT network-scoped.** An earlier draft of this section
 > scoped the five domain tags (`BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
@@ -1206,22 +1211,40 @@ early, legible rejections; genesis is the one that cannot be circumvented.
 > already impossible via the chain layer above; the accompanying karma-lock transaction fails
 > regardless. This is a spam and confusion vector, not a value defect, and it is accepted.
 
-> **Divergence from Ergo, stated deliberately.** Ergo's block header has **no** network
-> field: `version`, `parentId`, `ADProofsRoot`, `stateRoot`, `transactionsRoot`, `timestamp`,
-> `nBits`, `height`, `extensionRoot`, `powSolution`, `votes`. Notis adds one. With id
-> derivation left network-agnostic this is the **only** consensus-visible network
-> commitment short of genesis, so unlike the earlier draft it is not redundant — it is what
-> turns a wrong-network block into a stated rejection rather than a chain-link failure.
+> ⛔ **A `networkType` header field was proposed twice and is REJECTED — 2026-08-10,
+> reversing 2026-08-06.** It was never implemented, so nothing was removed from code. The
+> full record is at `TYPES_INTERFACE` → Block header; the short form:
+>
+> **An attacker fills the field in correctly, for free**, so it never catches an adversary.
+> Its entire population is honest misconfiguration, and both surviving layers already catch
+> every member of it — p2p is gated by the magic at frame assembly, no HTTP route accepts a
+> block, and an operator who flips `NETWORK_TYPE` against an existing store fails at the
+> chain link because the stored genesis is the old network's. That left the field's marginal
+> value as the wording of an error message, bought with a byte in every header forever.
+>
+> **Its stated enforcement point did not exist.** Both this section and `VALIDATION_INTERFACE`
+> put the profile match "at the structure gate" — but `verifyOrderingBlockStructure` lives in
+> `@dagsocial/validation`, which is contractually pure and stateless and cannot read the
+> node's profile. The rule was homeless in three contracts at once, which is why nobody
+> noticed it was never going to run.
+>
+> **This restores agreement with Ergo**, whose header also carries no network field:
+> `version`, `parentId`, `ADProofsRoot`, `stateRoot`, `transactionsRoot`, `timestamp`,
+> `nBits`, `height`, `extensionRoot`, `powSolution`, `votes`. The previous note recorded
+> Notis's extra field as a deliberate divergence so it would not be "corrected" by someone
+> checking Ergo — that concern is retired along with the field.
+>
+> **What would reopen it:** a consumer that must reject a foreign header *without* the chain.
+> Light clients and NiPoPoW proofs both anchor at genesis by construction, so neither
+> qualifies. A third proposal needs a consumer that genuinely does.
 
 ### Sequencing
 
-Adding `networkType` to the header changes `blockHash` and the PoW preimage, so it lands
-**inside the P2-C consensus-format break bundle** with `computeTxId` length-prefixing (C1),
-the Merkle leaf preimage replacement (C7) and post typing (H5) — one coordinated break, one
-update to every id-asserting test. It must **not** land separately.
-
-Everything else in P2-A — the profile table, the environment reads, the magic selection — is
-**not** format-breaking and does not need to wait for that bundle.
+**Nothing in this section is format-breaking any more.** This paragraph used to sequence the
+`networkType` header field into the P2-C consensus-format break bundle, because adding a header
+field changes `blockHash` and the PoW preimage. With that field rejected (see above), the profile
+table, the environment reads and the magic selection are all that remain here — none of them touch
+a committed byte, and none of them need to wait for a break bundle.
 
 ---
 
