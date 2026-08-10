@@ -403,11 +403,27 @@ has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char st
 `validatorSignature` is 64 bytes, `height` ≥ 1, `protocolVersion` is a number,
 `powNonce` is a non-negative number,
 `powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (4), `coinbaseOutputs` is
-an array with each output having a 32-byte `owner` and a non-negative `bigint`
-`value` (P0; box/coinbase values are `bigint` — this is the loose structural
-pre-filter, the authoritative `< 2⁶⁴` bound lives in node's apply-time
-`checkOutputValues`, matching the existing loose-structural / tight-apply split)
-and `lockedUntilBlock` ≥ `block.height`.
+an array with each output having a 32-byte `owner`, a `bigint` `value` in
+`[0, 2⁶⁴)`, a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
+and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view.
+
+> ⚠ **The `< 2⁶⁴` bound lives HERE, not in node — corrected 2026-08-10.** This
+> passage used to route it to node's apply-time `checkOutputValues` "matching the
+> loose-structural / tight-apply split". **That function is retired**
+> (`utxo-engine.ts:606`), and its successor — the field-type table's `u64` spec —
+> covers transaction **output boxes** only, never `CoinbaseOutput`. So no `u64`
+> bound on a coinbase `value` existed anywhere in the repo: the contract named an
+> owner that had stopped existing, and the split it appealed to had no tight half.
+> Third contract-vs-code divergence found in this file, all three by reading the
+> code beside the claim rather than by a sweep.
+>
+> The four pins above are not a policy tightening; they are the **declared wire
+> domains** of `TYPES_INTERFACE` → Layout — Block (`vlqU64` is u64, `u8(isTreasury)`
+> is `writeBool` over a boolean, `lp` is bytes). Spec §2.5 assigns exactly this to
+> this package: the encoder's domain is established upstream so a throw is
+> unreachable and a bad value produces a **stated rejection**. Two of the four
+> also close a measured remote fail-stop — see
+> `prompts/node-fail-stop-reachability-measure-REPORT.md`.
 
 Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
 `rootPostHash`, a `subtreePostIds` array of 64-char strings, a 32-byte

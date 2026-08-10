@@ -161,6 +161,20 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
 }
 
 /**
+ * One past the largest value the u64 wire domain carries — the exclusive
+ * ceiling of `writeVlqU64OrThrow`'s accepted set, which is `[0, 2^64 - 1]`
+ * (`wire/src/vlq.ts:65-75`).
+ *
+ * `isU64Safe` is the `number` counterpart and cannot serve here: a `bigint`
+ * field spans the whole u64, far past `MAX_SAFE_INTEGER`, so the two predicates
+ * pin different domains for different writers rather than one domain twice.
+ *
+ * Written `1n << 64n` to match node's `U64_BOUND` (`utxo-engine.ts`) and
+ * `json-to-tx.ts`'s edge twin, so the three sites are greppable as one bound.
+ */
+const U64_BOUND = 1n << 64n;
+
+/**
  * The domain of every field `postFieldBytes` encodes — the precondition of
  * `signingHash`, `postPowPreimage` and `computePostId` in `@dagsocial/types`.
  *
@@ -680,6 +694,25 @@ export function verifyOrderingBlockStructure(
       block.utxoTxTree.utxoTxs.length !== block.utxoTxTree.utxoTxIds.length) {
     return { valid: false, error: 'Ordering block utxoTxs must align with utxoTxIds' };
   }
+  // Element **type**, which array-ness and length alignment do not establish.
+  // These are `arr(utxoTxs, lp)` — opaque length-prefixed bytes — and `writeLp`
+  // is total *by sentinel*: handed a non-byte-view it writes a sentinel
+  // **length prefix**, which `readLp` refuses. The encode side is node's store
+  // write, so an unpinned element is a byte our own decoder rejects, written
+  // into `ordering_blocks` and read back as `UnreadableStoredBlockError` →
+  // `failStopIfCorruptChain` → `process.exit(1)`, triggered automatically by
+  // the next gossip block's `extendsOurTip` (measured on `672f5a5`).
+  //
+  // This one costs an attacker nothing: `utxoTxRoot` commits `utxoTxIds` and
+  // `coinbaseOutputs` and **never `utxoTxs`**, and the validator signature
+  // covers the header only — so a *relaying* node swaps the payload on an
+  // honest block with no re-mine and no re-sign. Gossip's decoder refuses it
+  // today; the undecoded `requestBlocks` path does not.
+  for (const tx of block.utxoTxTree.utxoTxs) {
+    if (!isBytes(tx)) {
+      return { valid: false, error: 'Ordering block utxoTx must be a byte view' };
+    }
+  }
   if (!Array.isArray(block.utxoTxTree?.coinbaseOutputs)) {
     return { valid: false, error: 'Ordering block missing utxoTxTree.coinbaseOutputs' };
   }
@@ -690,11 +723,48 @@ export function verifyOrderingBlockStructure(
     if (!isBytes(out.owner) || out.owner.length !== 32) {
       return { valid: false, error: 'Coinbase output missing or invalid owner' };
     }
-    if (typeof out.value !== 'bigint' || out.value < 0n) {
+    // `value` is `bigint`, so its writer is `writeVlqU64OrThrow` — the one
+    // **throwing** writer in the codec, because a `bigint` spans the whole u64
+    // and has no unreachable sentinel to fall back on (spec §2.5). The sign
+    // check alone left the ceiling open, and the throw is reached: node's apply
+    // funnel computes `computeUtxoTxRoot` at **step 4**, ahead of the coinbase
+    // sum at step 5, so a value at or above 2^64 dies inside root computation
+    // and the funnel's totality catch logs it as an "unexpected failure"
+    // instead of the stated rejection §2.1 step 4 requires. Establishing the
+    // domain upstream of the encoder is what makes that throw unreachable.
+    if (typeof out.value !== 'bigint' || out.value < 0n || out.value >= U64_BOUND) {
       return { valid: false, error: 'Coinbase output invalid value' };
     }
-    if (typeof out.lockedUntilBlock !== 'number' || out.lockedUntilBlock < h.height) {
+    // `isU64Safe`, not the bare `typeof === 'number'` this carried: the writer
+    // is `vlqU` over a `number`, which is total *by sentinel*, so an
+    // out-of-domain height does not throw — it **collides**. `2^60`, `Infinity`
+    // and `1e300` all clear the `>= h.height` floor and all three encode to
+    // `VLQ_SENTINEL`, giving distinct blocks one `utxoTxRoot`. This is exactly
+    // the `createdAt` defect Phase 1f closed on the header, one struct over.
+    //
+    // Nothing here relies on the funnel: `lockedUntilBlock` is saved today only
+    // by step 5b's exact-equality check, which is incidental protection — loosen
+    // that to a range for a maturity-schedule change and the row reopens with no
+    // compiler signal. The `>= 0` half of `isU64Safe` is implied by
+    // `>= h.height >= 1`; it is kept because the predicate names the writer's
+    // domain, not this call site's.
+    if (!isU64Safe(out.lockedUntilBlock) || out.lockedUntilBlock < h.height) {
       return { valid: false, error: 'Coinbase output invalid lockedUntilBlock' };
+    }
+    // The field checked nowhere in the repo before this line — not by this
+    // function, not at apply, not by any consumer: `block-apply.ts:611-615`
+    // passes `owner`, `value` and `lockedUntilBlock` to `mintCredits` and never
+    // reads `isTreasury`, so it enters no box, no journal entry and no AVL
+    // value. It is written to the store and read by nothing until the decoder
+    // meets it. `writeBool` emits `0xff` for any non-boolean and `readBool`
+    // refuses `0xff`, so the same fail-stop chain as `utxoTxs` above — here at
+    // the cost of one block's PoW, since `utxoTxRoot` *does* commit the
+    // coinbase leaf and the malformed block honestly commits to its own byte.
+    //
+    // Truthiness would not do: the honest producer emits `false` on every
+    // single-output block, so the test is the type, not the value.
+    if (typeof out.isTreasury !== 'boolean') {
+      return { valid: false, error: 'Coinbase output invalid isTreasury' };
     }
   }
   return { valid: true };
