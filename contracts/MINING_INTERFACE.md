@@ -287,6 +287,12 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 > runs mainnet emission and maturity timing. `block-apply.ts:338` is an apply-time check, which
 > makes re-pointing it a consensus change rather than a refactor. Recorded as a node unit.
 >
+> ⚠ **The bypass class is wider than this table.** This table holds mining values, so an
+> enumeration run from it finds three. Enumerating `NetworkProfile` itself finds **five** — the
+> two extra are `vouchCooldownBlocks` and `inviteProbationBlocks`, which are not mining values
+> and so cannot appear here. See `ARCHITECTURE §Network identity` for the full set. **Do not
+> re-derive the count from this section.**
+>
 > **Note which two did *not* become per-network.** `CREDIT_INITIAL_REWARD` and
 > `CREDIT_TREASURY_PCT` are *economics*, and the split in `ARCHITECTURE §Network Identity`
 > is normative: compress time, never economics. Devnet mines fast; it does not mine rich.

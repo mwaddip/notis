@@ -1498,12 +1498,26 @@ See `SUBBLOCK_INTERFACE.md` for the full contract.
   > ⚠ **VIOLATED — but not in the way this bullet anticipates, and not by the failure it
   > names.** Environment-readability is **closed**: P2-A removed all ten consensus values from
   > the environment (PR #8, verified 2026-08-07 — `NODE_INTERFACE §Configuration`). The live
-  > violation is the opposite shape — three profile fields are **bypassed entirely**.
-  > `creditFixedRateBlocks`, `creditEpochBlocks` and `creditMinerRewardDelay` are read as module
-  > constants (`MINING_INTERFACE §Configuration`), so `NETWORK_TYPE` does not change all of them
-  > together; it does not change those three at all. They are absent from that section's "where
-  > each consensus value went" table — profile fields that were never among the ten, which is
-  > why an enumeration built from that table cannot find them.
+  > violation is the opposite shape — **five profile fields are bypassed entirely**, read as
+  > module constants so that `NETWORK_TYPE` does not change them at all:
+  >
+  > | Field | mainnet | devnet | Read at |
+  > |---|---|---|---|
+  > | `vouchCooldownBlocks` | 60 | 3 | `vouch.ts:114`, `block-apply.ts:1039`, `index.ts:75` |
+  > | `inviteProbationBlocks` | 1000 | 10 | `utxo-engine.ts:460,470` |
+  > | `creditMinerRewardDelay` | 720 | 10 | `block-apply.ts:338`, `block-creator.ts:619` |
+  > | `creditFixedRateBlocks` | 1051200 | 1000 | `block-creator.ts:242,246` |
+  > | `creditEpochBlocks` | 129600 | 100 | `block-creator.ts:246` |
+  >
+  > All five are absent from `NODE_INTERFACE §Configuration`'s "where each consensus value went"
+  > table — profile fields that were never among the ten — **which is why an enumeration built
+  > from that table cannot find them.** The count here read "three" until 2026-08-10; it was
+  > derived from `MINING_INTERFACE`'s table, which covers mining values only, and the two
+  > non-mining fields were invisible to it. Enumerating `NetworkProfile` itself found all five.
+  >
+  > ⚠ **`index.ts:75` couples the fix to a startup invariant** — it asserts
+  > `MAX_REORG_DEPTH >= VOUCH_COOLDOWN_BLOCKS` against the constant. Re-point the field without
+  > moving that assertion and it compares a bound against a value nothing uses.
 - **Id derivation is network-agnostic.** No domain tag, box id, transaction id, post id or
   identity record key carries the network. `@dagsocial/types` stays pure — no module-level
   state, no network argument on a derivation function. Network separation is carried by
