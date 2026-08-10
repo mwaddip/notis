@@ -41,7 +41,7 @@ import {
   encodeTx,
   decodeTx,
 } from '../src/serialization.js';
-import { postPowPreimage, type Post } from '../src/post.js';
+import { postPowPreimage, powNonceBytes, type Post } from '../src/post.js';
 import type { Stump } from '../src/stump.js';
 import type {
   SubBlock,
@@ -586,6 +586,15 @@ describe('positional serialization', () => {
       // ...and the tail is exactly the two excluded fields: vlqU(12345) is two
       // bytes, the signature is 64.
       expect(wire.length).toBe(preimage.length + 2 + 64);
+      // The nonce row is asserted against `powNonceBytes`, not only against its
+      // width. The codec writes that row itself rather than calling the export
+      // (serialization.ts, the `vlqU(powNonce)` line), so this is the only
+      // thing holding the wire form's nonce to the tail the id and the PoW hash
+      // append — and a width check alone cannot tell two same-width dialects
+      // apart.
+      const tail = powNonceBytes(post.powNonce);
+      expect(tail.length).toBe(2);
+      expect(hex(wire.subarray(preimage.length, preimage.length + 2))).toBe(hex(tail));
     });
   });
 });

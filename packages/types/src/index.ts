@@ -64,7 +64,11 @@ export { base58Encode, base58Decode } from './base58.js';
 export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 
 // Posts
-export { signingHash, computePostId, verifyPostId, getPostDiscriminator, buildProfileContent, postPowPreimage } from './post.js';
+// `powNonceBytes` is exported for the reason `subBlockEntryBytes` is: another
+// package builds the same preimage and must not hold a second statement of its
+// layout. `@dagsocial/validation`'s `verifyPoW` appends this tail to
+// `postPowPreimage` — see TYPES_INTERFACE → Hashing functions.
+export { signingHash, computePostId, verifyPostId, getPostDiscriminator, buildProfileContent, postPowPreimage, powNonceBytes } from './post.js';
 export type { Post, PostId } from './post.js';
 
 // UTXO

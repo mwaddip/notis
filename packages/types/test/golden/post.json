@@ -74,9 +74,105 @@
       },
       "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f018001",
       "note": "lpUtf8 counts BYTES, not characters: 11 characters encode as 0x12 = 18 bytes. Two refs so the array's count byte is not stuck at 0 or 1 (the ENCODER has no cap — MAX_PARENT_REFS is a validation rule, and putting it inside the writer would be a guard added to compensate for a domain, which the format forbids). timestamp 128 is the two-byte VLQ boundary."
+    },
+
+    {
+      "name": "powNonceTail/zero",
+      "codec": "powNonceTail",
+      "value": 0,
+      "bytes": "00",
+      "note": "ONE byte. A fixed-width u64 tail spends eight here, so the two dialects differ at nonce 0 as much as anywhere — and 0 is where a test asserting only 'the id moved when the nonce moved' still passes under either. That is the shape of the split this vector exists to close."
+    },
+    {
+      "name": "powNonceTail/127-last-single-byte",
+      "codec": "powNonceTail",
+      "value": 127,
+      "bytes": "7f"
+    },
+    {
+      "name": "powNonceTail/128-first-two-byte",
+      "codec": "powNonceTail",
+      "value": 128,
+      "bytes": "8001",
+      "note": "The width boundary: the tail grows with the nonce instead of being eight bytes always, so a mined post's id depends on how long mining took."
+    },
+    {
+      "name": "powNonceTail/typical-mined",
+      "codec": "powNonceTail",
+      "value": 1000000,
+      "bytes": "c0843d",
+      "note": "Protocol-typical: POST_POW_TARGET_BITS is 20, so a post is mined at roughly 2^20 hashes and its tail is three bytes."
+    },
+    {
+      "name": "powNonceTail/max-safe-integer",
+      "codec": "powNonceTail",
+      "value": 9007199254740991,
+      "bytes": "ffffffffffffff0f",
+      "note": "2^53-1 — the largest in-domain nonce, and the same bound on both sides: it is the top of `vlqU`'s encodable domain AND of `isU64Safe`, the guard in `@dagsocial/validation` that keeps the sentinel below unreachable from `verifyPoW`."
+    },
+    {
+      "name": "powNonceTail/sentinel-out-of-domain",
+      "codec": "powNonceTail",
+      "value": -1,
+      "bytes": "ffffffffffffffffff01",
+      "decode": false,
+      "note": "The tail is TOTAL: a negative nonce sentinels rather than throwing, so -1, NaN, 1.5 and 2^60 share these bytes and therefore one postId. Pinned on the export because that collision must stay closed upstream — adding a domain check inside this writer would break the no-panic contract (TYPES_INTERFACE → Canonical field encoding). primitives.json's `vlqU/sentinel-*` group pins the same bytes for the primitive."
+    },
+
+    {
+      "name": "powPreimage/nonce-zero",
+      "codec": "powPreimage",
+      "value": {
+        "content": "dagsocial golden vector ✓",
+        "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "parentRefs": ["1111111111111111111111111111111111111111111111111111111111111111"],
+        "challenge": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "protocolVersion": 1,
+        "timestamp": 1767225600000,
+        "powNonce": 0
+      },
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f011111111111111111111111111111111111111111111111111111111111111111202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b73300",
+      "note": "133 bytes: post/golden's 132, then the tail. THE byte string the PoW hash covers — `computePostId` domain-tags it, `verifyPoW` hashes it bare, and the demo UI's solvePoW builds it per candidate nonce. The three producers agree here or they do not agree at all."
+    },
+    {
+      "name": "powPreimage/nonce-typical-mined",
+      "codec": "powPreimage",
+      "value": {
+        "content": "dagsocial golden vector ✓",
+        "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "parentRefs": ["1111111111111111111111111111111111111111111111111111111111111111"],
+        "challenge": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "protocolVersion": 1,
+        "timestamp": 1767225600000,
+        "powNonce": 1000000
+      },
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f011111111111111111111111111111111111111111111111111111111111111111202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b733c0843d",
+      "note": "135 bytes. Same fields as nonce-zero, so the diff against it is exactly the tail — which is what makes the boundary between preimage and tail reviewable rather than merely asserted."
+    },
+    {
+      "name": "powPreimage/nonce-max-safe-integer",
+      "codec": "powPreimage",
+      "value": {
+        "content": "dagsocial golden vector ✓",
+        "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "parentRefs": ["1111111111111111111111111111111111111111111111111111111111111111"],
+        "challenge": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "protocolVersion": 1,
+        "timestamp": 1767225600000,
+        "powNonce": 9007199254740991
+      },
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f011111111111111111111111111111111111111111111111111111111111111111202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b733ffffffffffffff0f",
+      "note": "140 bytes — the widest a well-formed preimage gets. Eight tail bytes, so the encoding coincides with the fixed-width one in LENGTH exactly once, at the top of the domain, and in VALUE not even there."
     }
   ],
   "rejects": [
+    {
+      "name": "powNonceTail/non-minimal-zero",
+      "codec": "powNonceTail",
+      "bytes": "8000",
+      "failure": "non-canonical",
+      "note": "Nonce 0 written with one byte of VLQ padding. It decodes to 0, so only the re-encode compare separates it from `00` — the step that makes the tail canonical rather than merely parseable, and the reason a second writer emitting padded bytes is a defect and not a variant."
+    },
     {
       "name": "post/non-minimal-content-length",
       "codec": "postFields",

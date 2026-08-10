@@ -20,7 +20,7 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `primitives.json` | One group per row of the Primitives table, at its boundaries |
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
-| `post.json` | `postFieldBytes` — the post id and PoW preimage (Phase 2) |
+| `post.json` | `postFieldBytes` — the post id and PoW preimage (Phase 2) — plus `powNonceBytes` and the two composed (Phase 8) |
 | `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type (Phase 2), and both states of `bond.inviteePublicKey` |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage (Phase 2) |
 | `block.json` | The six block structs and the ordering-block framing (Phase 3b), plus the two element preimages (Phase 4a) |
@@ -54,7 +54,7 @@ the block half of the conformance suite is new work rather than a re-freeze.
 regression test.
 
 `structs.ts` is the opposite, deliberately: **its write half IS the production function**
-(`postPowPreimage`, `canonicalBoxBytes`, `serializePruneEntry`), and only the reader is written
+(`postPowPreimage`, `powNonceBytes`, `canonicalBoxBytes`, `serializePruneEntry`), and only the reader is written
 test-side, from the layout tables in `contracts/TYPES_INTERFACE.md`. An encode assertion therefore
 pins the shipped encoder rather than a lookalike, and the decode direction — parse with the
 independent reader, assert exhaustion, re-encode through the *production* writer, byte-compare —
@@ -133,6 +133,8 @@ A bare string names a leaf codec; the object forms compose, so `{"arr": {"opt": 
 | `{"enum8": "table"}` | `string` | the variant name |
 | `probe` | `Probe` | object — see `probe.ts` |
 | `subBlockEntry`, `coinbaseOutput` | the struct | object — `coinbaseOutput.value` is a **decimal string** (u64) |
+| `powNonceTail` | `number` | JSON number — the nonce, not the bytes |
+| `powPreimage` | `PostFields` + `powNonce` | object — `postFields`' form with one more key |
 
 `{"$special": "NaN" \| "Infinity" \| "-Infinity" \| "undefined"}` expresses the values JSON has no
 literal for. For a wrong *type*, write the raw JSON value and set `"raw": true`.
