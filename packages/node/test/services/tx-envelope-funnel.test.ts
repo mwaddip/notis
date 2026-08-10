@@ -1,19 +1,19 @@
 // ---------------------------------------------------------------------------
-// The envelope gate at the block funnel (`block-apply.ts`, immediately after
-// `decodeTx` and BEFORE `computeTxId`).
+// The embedded-tx proof obligation at the block funnel (`block-apply.ts`, the
+// decode loop over `utxoTxTree.utxoTxIds`).
 //
-// The decision this file pins: a block-embedded transaction with a malformed
-// envelope is **skipped**, and the block applies without it. That matches the
-// three sibling arms of the same loop — missing CBOR, decode failure, and id
-// mismatch all `continue` — so every node reaches the same state
-// deterministically. Whole-block rejection was never a rule; it was what the
-// throw path happened to do, since `computeTxId` sits outside the local try
-// and a TypeError there fell through to the outer totality catch, logged as an
-// "unexpected failure during apply". Honest producers cannot embed one: their
-// own pool refuses it at `validateTx` step 0.
+// The rule this file pins (NODE_INTERFACE → "Embedded transactions: a mismatch
+// rejects the block"): every declared `utxoTxId` must be proven to be the id of
+// the bytes carried beside it, and an arm that cannot complete that proof
+// rejects the BLOCK. A body that does not match its committed ids would
+// otherwise apply different state under one block hash.
 //
-// Both cases below were run against the pre-gate tree first: case 1 rejected
-// the whole block through `validateTx`, case 2 through the throw path.
+// It is a property, not a list of arms, so the cases below are organised by
+// *where the proof breaks down* rather than by arm: unreadable bytes, an
+// envelope the hasher cannot read, an output field outside the encoder's
+// domain, and a declared id the bytes do not produce. The last case is the
+// separate constraint that keeps the verdict attached to the bytes rather than
+// to the header hash.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -22,6 +22,7 @@ import {
   encodeTx,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
+import { blockHash } from '@dagsocial/validation';
 import type { KarmaBox, OrderingBlock, UtxoTransaction, AnyBox } from '@dagsocial/types';
 import type { BlockJournal } from '../../src/store/journal.js';
 import type { TestIdentity } from '../helpers.js';
@@ -90,11 +91,11 @@ function karmaSelfSpend(id: TestIdentity, box: KarmaBox): UtxoTransaction {
 }
 
 // ---------------------------------------------------------------------------
-// The `as unknown as KarmaBox` cast below is DELIBERATE — same reason as
-// `tx-envelope.test.ts`: the funnel's job is rejecting a malformed embedded
+// The `as unknown as KarmaBox` casts below are DELIBERATE — same reason as
+// `tx-envelope.test.ts`: the funnel's job is refusing a malformed embedded
 // transaction, so the fixture has to be malformed. Not a typing defect.
 // ---------------------------------------------------------------------------
-describe('block funnel — a malformed envelope is skipped, not fatal', () => {
+describe('block funnel — the embedded-tx proof obligation', () => {
   beforeEach(() => {
     vi.resetModules();
   });
@@ -103,7 +104,7 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
     vi.resetModules();
   });
 
-  it('applies the block, applies the valid tx, skips the malformed one', async () => {
+  it('a malformed envelope rejects the block, and the valid tx beside it does not land', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -119,27 +120,15 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
 
     // Envelope-invalid but still hashable and encodable, so the block's Merkle
     // commitment over it is honest: an UPPERCASE key in `signatures` names no
-    // public key any signer emits. Pre-gate this reached guard verification,
-    // found no usable signature, and rejected the ENTIRE block.
-    //
-    // It used to be an uppercase *input* id, and that no longer works: `inputs`
-    // is `arr(ids, b32)` in the txId preimage now, so an uppercase id has no
-    // encoding and the fixture could not be hashed — which is the one thing this
-    // test needs it to be. `signatures` is the natural home for the defect
-    // instead: the envelope gate types it, and it sits outside the preimage
-    // entirely (signatures are Ed25519 *over* the id), so the transaction stays
-    // hashable while staying envelope-invalid.
+    // public key any signer emits. `signatures` is the natural home for the
+    // defect — the envelope gate types it, and it sits outside the txId
+    // preimage entirely (signatures are Ed25519 *over* the id), so the
+    // transaction stays hashable while staying envelope-invalid.
     const malformed = karmaSelfSpend(mallory, malloryBox);
     malformed.signatures = {
       [Buffer.from(mallory.userId).toString('hex').toUpperCase()]: new Uint8Array(64),
     };
 
-    // The state assertions below cannot tell the gate apart from the apply
-    // loop's input-liveness pre-pass: an id naming no live box also parks the
-    // tx in `remaining`, where it is silently dropped after MAX_PASSES, for
-    // the same observable outcome. The warn is what discriminates — only the
-    // funnel's `checkTxEnvelope` call emits this wording, and it emits it
-    // before the liveness pass ever sees the transaction.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const block = await makeApplicableBlock({ utxoTxs: [valid, malformed] });
@@ -148,48 +137,44 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
     const warnings = warn.mock.calls.map((c) => String(c[0]));
     warn.mockRestore();
 
+    expect(applied).toBe(false);
+
+    // A STATED rejection naming the height and the transaction, not a verdict
+    // inferred from the boolean.
     expect(
       warnings.filter(
         (w) =>
-          w.includes(`Rejected UTXO tx ${computeTxId(malformed)} from block`) &&
+          w.includes(
+            `Rejected block height=1: embedded UTXO tx ${computeTxId(malformed)} ` +
+            `has a malformed envelope`,
+          ) &&
           w.includes('Invalid tx envelope: signatures key must be 64 lowercase hex characters'),
       ),
-      // Exactly once — the real apply. `makeApplicableBlock`'s creator-side
-      // speculation short-circuits at `no-prover` in a prover-less suite and
-      // never reaches the tx loop, so it contributes no warn.
-      `envelope warn missing; got ${JSON.stringify(warnings)}`,
+      `envelope rejection missing; got ${JSON.stringify(warnings)}`,
     ).toHaveLength(1);
-    // Nothing was rejected for a liveness or validation reason.
-    expect(warnings.some((w) => w.includes('failed re-validation'))).toBe(false);
 
-    expect(applied).toBe(true);
-
+    // The block is not on the chain and NOTHING it carried survived — the
+    // well-formed transaction beside the malformed one included. That is the
+    // half a per-tx skip gave away: the state a node reaches must not depend on
+    // which bodies its peers happened to send.
     const ordering = await importOrdering();
-    expect(ordering.getOrderingBlock(1)).not.toBeNull();
-    expect(ordering.getCurrentHeight()).toBe(1);
-
-    // The valid transaction applied: its input is consumed.
-    expect(utxo.getBox(aliceBox.id!)).toBeNull();
-    // The malformed one did nothing at all — its input is untouched.
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    expect(ordering.getCurrentHeight()).toBe(0);
+    expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
     expect(utxo.getBox(malloryBox.id!)).not.toBeNull();
 
-    // Journal clean: exactly one applied tx, and the journal is closed.
+    // No half-built journal left behind.
     const journal = await importJournalStore();
-    const saved = journal.getBlockJournal(1);
-    expect(saved).not.toBeNull();
-    expect(saved!.appliedUtxoTxs.map((t) => t.txId)).toEqual([computeTxId(valid)]);
-    expect(saved!.appliedUtxoTxs.map((t) => t.txId)).not.toContain(computeTxId(malformed));
+    expect(journal.getBlockJournal(1)).toBeNull();
     expect(journal.isBlockJournalOpen()).toBe(false);
-
-    // The stored header is byte-identical to the one apply accepted. NOT a
-    // digest-agreement proof: this suite runs prover-less, so the speculation
-    // returned `no-prover`, the header carries EMPTY_STATE_ROOT, and apply
-    // skips the H-6 check entirely. Creator/apply agreement across the gate
-    // belongs to a prover-bearing suite and is not measured here.
-    expect(ordering.getOrderingBlock(1)!.header.stateRoot).toBe(block.header.stateRoot);
   });
 
-  it('an envelope that makes computeTxId throw is skipped, not a whole-block kill', async () => {
+  it('the envelope gate fires ahead of the hasher, so an unhashable tx is a stated rejection', async () => {
+    // The gate's placement is the property here, not the verdict. `computeTxId`
+    // sits outside the decode loop's local try, so an envelope it cannot hash
+    // would reach the funnel's totality catch and be logged as an "unexpected
+    // failure" — a rejection the node cannot explain. The gate running first is
+    // what keeps the same refusal stated.
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -199,59 +184,230 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
     utxo.insertBox(aliceBox);
     const valid = karmaSelfSpend(alice, aliceBox);
 
-    // A decoy that also gets skipped, so the creator-side speculation and the
-    // apply-side run agree on the resulting state either way. Envelope-invalid
-    // in `signatures` rather than in `inputs`, for the reason given above: it
-    // has to stay hashable for `makeApplicableBlock` to commit it.
-    const decoy = karmaSelfSpend(alice, aliceBox);
-    decoy.signatures = {
-      [Buffer.from(alice.userId).toString('hex').toUpperCase()]: new Uint8Array(64),
-    };
+    const block = await makeApplicableBlock({ utxoTxs: [valid] });
 
-    const block = await makeApplicableBlock({ utxoTxs: [valid, decoy] });
-
-    // Swap the decoy's CBOR for an envelope `computeTxId` cannot hash at all.
-    // The tree's Merkle root commits to the tx IDS only, and the header
-    // signature covers the header, so the block stays internally consistent;
-    // the id simply no longer matches its body, which is exactly the
-    // malicious-producer shape. Pre-gate: this threw at block-apply's
-    // `computeTxId(tx)` into the outer catch and killed the whole block.
+    // Swap the committed body for an envelope `computeTxId` cannot hash at all.
+    // `utxoTxRoot` commits the tx IDS only and the validator signature covers
+    // the header, so the block stays internally consistent — the id simply no
+    // longer matches its body, which is the malicious-producer shape.
     //
     // The defect must be one the envelope gate DOES catch and the hasher also
-    // chokes on — that pairing is the whole property: the gate has to fire
-    // first, so the throw never happens. It used to be `likeTarget: null`, which
-    // no longer chokes the hasher at all (`writeOpt` treats `null` as absent).
-    // An uppercase input id replaces it: `inputs` is `arr(ids, b32)` now, so it
-    // has no encoding, and the envelope pins the same 64-lowercase-hex domain.
-    //
-    // Note this poison is never handed to `makeApplicableBlock` — only its bytes
-    // are spliced in — which is why it may be unhashable where the decoy above
-    // may not.
+    // chokes on: that pairing is what makes the ordering observable. An
+    // uppercase input id is both — `inputs` is `arr(ids, b32)`, so it has no
+    // encoding, and the envelope pins the same 64-lowercase-hex domain.
     const poison = karmaSelfSpend(alice, aliceBox);
     poison.inputs = [aliceBox.id!.toUpperCase()];
     expect(checkTxEnvelope(poison).valid, 'the gate must reject poison').toBe(false);
     expect(() => computeTxId(poison)).toThrow();
-    block.utxoTxTree.utxoTxs[1] = encodeTx(poison);
+    block.utxoTxTree.utxoTxs[0] = encodeTx(poison);
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const applied = (await importBlockApply()).applyOrderingBlock(block);
-    expect(applied).toBe(true);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    const errors = errSpy.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    errSpy.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('has a malformed envelope')),
+      `envelope rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
+    // The discriminator: the hasher was never reached.
+    expect(errors.filter((e) => e.includes('unexpected failure during apply'))).toEqual([]);
 
     const ordering = await importOrdering();
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
+  });
+
+  it('an out-of-domain output field is a stated rejection, not the totality catch', async () => {
+    // D6. `checkTxEnvelope` deliberately does not type output entries, so an
+    // output field outside the encoder's domain reaches a THROWING writer
+    // inside `computeTxId` — `writeHexNOrThrow` for `post_lock.targetPostId`
+    // here. `checkOutputShape` between the two is what converts that throw into
+    // a refusal the node can name (NODE_INTERFACE → "The output domain check").
+    //
+    // The poison rides in as spliced bytes for a structural reason, not for
+    // convenience: a throwing writer means the transaction cannot be hashed, so
+    // no honest producer could have committed it in the first place.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+
+    const alice = makeTestIdentity();
+    const aliceBox = makeKarmaBox(100n, alice.userId, 0, 0);
+    utxo.insertBox(aliceBox);
+    const valid = karmaSelfSpend(alice, aliceBox);
+
+    const block = await makeApplicableBlock({ utxoTxs: [valid] });
+
+    const poison = karmaSelfSpend(alice, aliceBox);
+    poison.outputs = [
+      {
+        boxType: 'post_lock',
+        value: 100n,
+        originalValue: 100n,
+        owner: alice.userId,
+        targetPostId: 'not-64-lowercase-hex',
+        guard: 'block_apply',
+      },
+    ] as unknown as UtxoTransaction['outputs'];
+    // Clears the envelope — which types `inputs`, `signatures`,
+    // `protocolVersion` and `likeTarget`, and stops at `Array.isArray` for
+    // outputs — and then throws in the hasher. That pair is what makes this the
+    // arm under test rather than the one above.
+    expect(checkTxEnvelope(poison)).toEqual({ valid: true });
+    expect(() => computeTxId(poison)).toThrow();
+    block.utxoTxTree.utxoTxs[0] = encodeTx(poison);
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const applied = (await importBlockApply()).applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    const errors = errSpy.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    errSpy.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.filter(
+        (w) => w.includes('has an out-of-domain output') && w.includes('targetPostId'),
+      ),
+      `output-domain rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toHaveLength(1);
+    expect(errors.filter((e) => e.includes('unexpected failure during apply'))).toEqual([]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
+  });
+
+  it('a declared id the bytes do not produce rejects the block', async () => {
+    // The arm the obligation is named for: the body decodes, the envelope is
+    // clean, the outputs are in domain — and the id beside it still belongs to
+    // different bytes.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+
+    const alice = makeTestIdentity();
+    const bob = makeTestIdentity();
+    const aliceBox = makeKarmaBox(100n, alice.userId, 0, 0);
+    const bobBox = makeKarmaBox(70n, bob.userId, 0, 1);
+    utxo.insertBox(aliceBox);
+    utxo.insertBox(bobBox);
+
+    const declared = karmaSelfSpend(alice, aliceBox);
+    const block = await makeApplicableBlock({ utxoTxs: [declared] });
+
+    // A wholly different, individually valid transaction under the declared
+    // id. Every gate ahead of the id check passes, so this reaches the
+    // comparison and nothing else refuses it.
+    const substituted = karmaSelfSpend(bob, bobBox);
+    expect(checkTxEnvelope(substituted)).toEqual({ valid: true });
+    expect(computeTxId(substituted)).not.toBe(computeTxId(declared));
+    block.utxoTxTree.utxoTxs[0] = encodeTx(substituted);
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const applied = (await importBlockApply()).applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(applied).toBe(false);
+    expect(
+      warnings.filter(
+        (w) =>
+          w.includes(
+            `embedded UTXO tx ${computeTxId(declared)} declares an id its bytes ` +
+            `do not produce`,
+          ) && w.includes(computeTxId(substituted)),
+      ),
+      `id-mismatch rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toHaveLength(1);
+
+    const ordering = await importOrdering();
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    // Neither body's input moved.
+    expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
+    expect(utxo.getBox(bobBox.id!)).not.toBeNull();
+  });
+
+  it('rejection is of the BYTES: a good body under the same header hash still applies', async () => {
+    // NODE_INTERFACE → "Rejection is of BYTES, not of the block hash". Nothing
+    // implements a hash-keyed negative cache today, which is precisely why this
+    // test exists: the constraint binds code not yet written, and the day
+    // someone caches "block H is invalid" this is what fails.
+    //
+    // The attack and the test are the same shape. `utxoTxRoot` commits
+    // `utxoTxIds` but NOT `utxoTxs`, so a good block and a body-corrupted block
+    // genuinely share one header hash — an attacker who races the honest
+    // producer needs no re-mine and no re-sign.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+
+    const alice = makeTestIdentity();
+    const aliceBox = makeKarmaBox(100n, alice.userId, 0, 0);
+    utxo.insertBox(aliceBox);
+    const tx = karmaSelfSpend(alice, aliceBox);
+
+    const good = await makeApplicableBlock({ utxoTxs: [tx] });
+    const goodHash = blockHash(good.header);
+    expect(goodHash).not.toBeNull();
+
+    // Same header object, corrupted body. Bytes that are not a transaction at
+    // all, so the decode arm is the one that fires.
+    const corrupt = {
+      ...good,
+      utxoTxTree: {
+        ...good.utxoTxTree,
+        utxoTxs: [new Uint8Array([0xff, 0xff, 0xff])],
+      },
+    } as OrderingBlock;
+
+    // Without this the test proves nothing: the two blocks must be
+    // indistinguishable at the header the node would key a cache on.
+    expect(blockHash(corrupt.header)).toBe(goodHash);
+
+    const blockApply = await importBlockApply();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(blockApply.applyOrderingBlock(corrupt)).toBe(false);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(
+      warnings.some((w) => w.includes('did not decode')),
+      `decode rejection missing; got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
+
+    const ordering = await importOrdering();
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    expect(ordering.getCurrentHeight()).toBe(0);
+
+    // The half that matters: the rejection left no residue, so the honest body
+    // for that same hash is still acceptable. The funnel rolls SQLite back and
+    // restores the AVL prover, which is why the good block's committed
+    // `stateRoot` still matches the state it now produces.
+    expect(blockApply.applyOrderingBlock(good)).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(1);
     expect(ordering.getOrderingBlock(1)).not.toBeNull();
-    expect(utxo.getBox(aliceBox.id!)).toBeNull(); // the valid tx still applied
+    expect(utxo.getBox(aliceBox.id!)).toBeNull(); // the good body's tx applied
 
     const journal = await importJournalStore();
     expect(journal.getBlockJournal(1)!.appliedUtxoTxs.map((t) => t.txId)).toEqual([
-      computeTxId(valid),
+      computeTxId(tx),
     ]);
+    expect(journal.isBlockJournalOpen()).toBe(false);
   });
 
-  it('non-vacuity: an INVALID-but-well-enveloped tx still rejects the whole block', async () => {
-    // The rule the skip does NOT touch, and the reason the two cases above
-    // are not just "the funnel got more permissive". A transaction whose
-    // envelope is clean but whose contents `validateTx` refuses — an unsigned
-    // spend of a live box — remains a whole-block rejection. The funnel skips
-    // only what it cannot structurally read.
+  it('non-vacuity: the obligation is about PROOF, not about strictness', async () => {
+    // The funnel did not simply get harsher. A transaction whose envelope,
+    // outputs and id all check out has discharged the obligation — it is then
+    // `validateTx` that judges it, at a different point in the loop and for a
+    // different reason. An unsigned spend of a live box rejects the block here
+    // as it always has, so the cases above measure the obligation rather than a
+    // blanket refusal.
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -269,14 +425,20 @@ describe('block funnel — a malformed envelope is skipped, not fatal', () => {
 
     expect(checkTxEnvelope(forged)).toEqual({ valid: true });
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const block = await makeApplicableBlock({ utxoTxs: [valid, forged] });
     const applied = (await importBlockApply()).applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
 
     expect(applied).toBe(false);
+    // Rejected for what it says, not for how it is shaped.
+    expect(warnings.some((w) => w.includes('failed re-validation'))).toBe(true);
+    expect(warnings.some((w) => w.includes('has a malformed envelope'))).toBe(false);
+
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(ordering.getCurrentHeight()).toBe(0);
-    // Nothing the block would have done survives — not even the valid tx.
     expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
   });
 });

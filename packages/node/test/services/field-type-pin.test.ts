@@ -540,13 +540,10 @@ describe('field-type pin', () => {
      * for being a number where the schema says string. Same property, same clean
      * path, a poison the encoder can carry.
      *
-     * **What is no longer covered here:** class-3 itself. A string
-     * `originalValue` clears `checkTxEnvelope` — which deliberately does not
-     * type output entries — and then throws inside `computeTxId`, so the funnel
-     * kills the whole block through the totality catch rather than rejecting the
-     * transaction cleanly. That is spec §2.5's known gap at `block-apply.ts:867`,
-     * booked to Phase 6, and it is live: measured, not inferred. When Phase 6
-     * adds the domain check there, class-3 belongs back in this test.
+     * Class-3 — a poison whose writer THROWS — is the case below this one. It
+     * needs its own fixture rather than a variant of this one: an unhashable
+     * transaction cannot be committed by any producer, so it can only reach the
+     * funnel as spliced bytes.
      */
     it('a block embedding a poison tx is REJECTED cleanly — nothing lands, no totality catch', async () => {
       const attacker = makeTestIdentity();
@@ -601,6 +598,93 @@ describe('field-type pin', () => {
         .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
         .get() as { n: number | bigint };
       expect(Number(locks.n)).toBe(0);
+    });
+
+    /**
+     * Class-3: a poison whose writer THROWS. `originalValue` is `vlqU64`, so a
+     * string there refuses to encode — which is exactly why it cannot arrive
+     * the way the class-2 poison above does. No producer can commit an
+     * unhashable transaction, so the only route in is bytes spliced beside an
+     * honest id, and `utxoTxRoot` commits `utxoTxIds` rather than `utxoTxs`, so
+     * the splice needs no re-mine and no re-sign.
+     *
+     * What the funnel's output-domain check buys is the *class* of the answer,
+     * not the answer: without it `computeTxId` throws into the totality catch
+     * and the block dies as an "unexpected failure", a rejection the node
+     * cannot name (NODE_INTERFACE → "The output domain check").
+     */
+    it('class-3: a throwing-writer poison is rejected by name, not by the totality catch', async () => {
+      const attacker = makeTestIdentity();
+      const karma = makeKarmaBox(100n, attacker.userId, 0);
+      storeInsertBox(karma);
+
+      // The honest transaction whose id the block will commit to.
+      const honest: UtxoTransaction = {
+        inputs: [karma.id!],
+        outputs: [
+          {
+            boxType: 'karma',
+            value: 100n,
+            owner: attacker.userId,
+            guard: 'owner_signature',
+            proofSource: 'test',
+          },
+        ] as unknown as UtxoTransaction['outputs'],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      honest.signatures[Buffer.from(attacker.userId).toString('hex')] = new Uint8Array(
+        cryptoSign(null, Buffer.from(computeTxId(honest), 'hex'), attacker.privateKey),
+      );
+
+      const poison: UtxoTransaction = {
+        inputs: [karma.id!],
+        outputs: [
+          {
+            boxType: 'post_lock',
+            value: POST_LOCK_THREAD_COST,
+            originalValue: String(POST_LOCK_THREAD_COST), // vlqU64 THROWS on a string
+            owner: attacker.userId,
+            targetPostId: 'b'.repeat(64),
+            guard: 'block_apply',
+          },
+        ] as unknown as UtxoTransaction['outputs'],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      // Unhashable — the property that forces the splice, asserted rather than
+      // assumed, since the whole case rests on it.
+      expect(() => computeTxId(poison)).toThrow();
+
+      const block = await makeApplicableBlock({ utxoTxs: [honest] });
+      block.utxoTxTree.utxoTxs[0] = encodeTx(poison);
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        expect(applyOrderingBlock(block)).toBe(false);
+        expect(
+          errSpy.mock.calls.filter((c) =>
+            String(c[0]).includes('unexpected failure during apply'),
+          ),
+        ).toHaveLength(0);
+        expect(
+          warnSpy.mock.calls
+            .map((c) => String(c[0]))
+            .filter(
+              (w) => w.includes('has an out-of-domain output') && w.includes('originalValue'),
+            ),
+        ).toHaveLength(1);
+      } finally {
+        warnSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+
+      expect(storeGetBox(karma.id!)).not.toBeNull();
+      const class3Locks = db
+        .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
+        .get() as { n: number | bigint };
+      expect(Number(class3Locks.n)).toBe(0);
     });
 
     it('control: the same block shape with an honest typed lock APPLIES (and pins what decodeTx yields)', async () => {
