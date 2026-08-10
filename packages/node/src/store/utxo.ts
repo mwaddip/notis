@@ -93,14 +93,25 @@ function pubkeyToHex(pk: Uint8Array): string {
  *
  * `tx_id`/`output_index` became NOT NULL in phase G3b, so this is now
  * unconditional — the conditional-assignment discipline it replaced existed
- * because a nullable column could yield a box with no provenance, and setting a
- * key to explicit `undefined` is byte-visible in the AVL value (cbor-x encodes
- * it as `f7` *and* increments the fixed two-byte map header). With the columns
- * NOT NULL that shape is unrepresentable.
+ * because a nullable column could yield a box with no provenance. With the
+ * columns NOT NULL that shape is unrepresentable at the row level.
  *
- * Key **order** no longer matters either: both encoders sort keys as of G3b, so
- * the old "append provenance after every candidate field, and make every
- * producer do the same" rule is retired. That rule is what `post_lock` violated.
+ * ⚠ **The byte-level half of this rationale is retired (Phase 5).** It used to
+ * read that an explicitly-`undefined` key is *byte-visible in the AVL value*,
+ * because cbor-x encoded it as `f7` and incremented the fixed two-byte map
+ * header — so a box rebuilt here could hash differently from the same box built
+ * by a producer. The AVL value is now positional (`boxRecordBytes`): it has no
+ * keys and no map header, the layout writes its declared fields and reads its
+ * declared fields, and a stray or `undefined` key is **unrepresentable rather
+ * than merely dangerous**. The NOT NULL columns remain the reason this function
+ * is unconditional; they are no longer the *only* thing standing between the
+ * store and a restart-triggered `stateRoot` divergence.
+ *
+ * Key **order** likewise no longer matters, and for a stronger reason than the
+ * G3b one this comment used to give ("both encoders sort keys"): there is no
+ * sort because there are no keys. The old "append provenance after every
+ * candidate field, and make every producer do the same" rule — the rule
+ * `post_lock` violated — is retired structurally.
  */
 function provenanceOf(row: UtxoRow): { txId: string; index: number } {
   return { txId: row.tx_id, index: Number(row.output_index) };
