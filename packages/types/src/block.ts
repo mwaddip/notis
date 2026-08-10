@@ -1,3 +1,12 @@
+import { ByteWriter } from '@dagsocial/wire';
+import {
+  writeArr,
+  writeBool,
+  writeBytesNOrThrow,
+  writeHexNOrThrow,
+  writeVlqU,
+  writeVlqU64OrThrow,
+} from './codec.js';
 import type { UserId } from './identity.js';
 import type { Post, PostId } from './post.js';
 import type { TxId } from './utxo.js';
@@ -33,6 +42,79 @@ export interface CoinbaseOutput {
   value: bigint;              // Credits minted (integer base units of 10^-8 credit)
   lockedUntilBlock: number;   // Height at which credits become spendable
   isTreasury: boolean;        // Treasury or miner output
+}
+
+/**
+ * One coinbase output's positional bytes — `b32(owner)` ‖ `vlqU64(value)` ‖
+ * `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`.
+ *
+ * **These bytes are the `'coinbase'` Merkle leaf preimage and the output's wire
+ * encoding, and they are the same bytes** (TYPES_INTERFACE → Layout — Merkle
+ * leaf preimages). `UtxoTxTree`'s element writer delegates here rather than
+ * restating the layout, for the reason `writePruneEntry` has delegated to
+ * `serializePruneEntry` since Phase 2: an output's wire form and its committed
+ * form must be one statement, because two statements of one layout drift with no
+ * compiler signal and a consistent transposition round-trips perfectly — no
+ * round-trip test can see it.
+ *
+ * ⚠ **The `leafHash('coinbase', …)` domain tag stays outside.** This returns the
+ * output bytes alone; the caller supplies the tag. That is what makes the wire
+ * form and the preimage byte-identical rather than merely parallel.
+ *
+ * The contract's table writes row 2 as `vlqU`; it is `vlqU64` because the field
+ * is `bigint`, and the distinction is the throwing/total one, not a byte one.
+ *
+ * ⚠ **Three of these four rows are where the contract's notation and the field's
+ * schema type disagree, and each disagreement points at a different writer.**
+ *
+ * - `owner` is `UserId` = `Uint8Array`, so `b32` means `writeBytesNOrThrow`, not
+ *   the hex writer three of the header's `b32` rows use.
+ * - **`value` is `bigint`**, so `vlqU` means `writeVlqU64OrThrow` — the
+ *   **throwing** bigint writer, not the total `number` one. The compiler catches
+ *   this substitution, which is the only reason it is not the sharpest row here:
+ *   `writeVlqU` would have sentinelled every coinbase output in existence.
+ * - **`isTreasury` is `boolean`**, so `u8` means `writeBool`, which is total
+ *   (`{0,1}` is narrower than a byte, so `0xff` is unreachable from a valid
+ *   value and `readBool` refuses it). `writeU8OrThrow` would throw on every
+ *   block.
+ *
+ * ## Domain — the least-covered struct in the block layout
+ *
+ * `verifyOrderingBlockStructure` pins `owner` (`isBytes` + length 32) and the
+ * *sign* of `value` (`>= 0n`). The other three pins are missing, reported to
+ * main as Phase 3b's gate findings and none of them this package's to add — the
+ * domain belongs upstream of the encoder (spec §2.5), in `@dagsocial/validation`:
+ *
+ * - `value` has **no `< 2^64` ceiling**, and this writer throws above it.
+ * - `lockedUntilBlock` is checked `typeof === 'number' && >= header.height` —
+ *   a lower bound only, so `1.5`, `Infinity` and `2^60` all pass and all
+ *   **collide** on the sentinel. This is the `createdAt` failure Phase 1f
+ *   closed, one struct over and still open.
+ * - `isTreasury` is **checked nowhere at all**.
+ *
+ * Decode closes the reachable half of each: `readVlqU` throws past
+ * `MAX_SAFE_INTEGER`, `readVlqU64` wraps into the u64 domain, `readBool` rejects
+ * any byte but `0x00`/`0x01`, and the re-encode compare rejects non-minimal
+ * padding. So a peer cannot inject one of these through gossip. What remains is
+ * the encode side, which `encodeOrderingBlock` and node's store write reach
+ * without passing a decoder — and, once Phase 4 lands, node's `computeUtxoTxRoot`
+ * as well, at block *creation* and again at block *apply*.
+ *
+ * That third reach adds no surface the other two did not already have, in either
+ * direction: a gossiped block reaches apply through `decodeOrderingBlock`, which
+ * has closed the domain above; a self-produced one carries node's own coinbase
+ * construction, which is exactly what `encodeOrderingBlock` already encodes. It
+ * does mean an out-of-domain value now throws inside root computation rather
+ * than inside framing — a stated rejection either way only because the apply
+ * funnel's totality catch is there to convert it.
+ */
+export function coinbaseOutputBytes(o: CoinbaseOutput): Uint8Array {
+  const w = new ByteWriter();
+  writeBytesNOrThrow(w, o.owner, 32);
+  writeVlqU64OrThrow(w, o.value);
+  writeVlqU(w, o.lockedUntilBlock);
+  writeBool(w, o.isTreasury);
+  return w.toBytes();
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +229,40 @@ export interface SubBlockEntry {
   postId: string;        // hex-encoded 32-byte post ID
   parentRefs: string[];  // hex-encoded parent post IDs (0–MAX_PARENT_REFS entries)
   author: string;        // hex-encoded 32-byte author public key of the post
+}
+
+/**
+ * One entry's positional bytes — `b32(postId)` ‖ `arr(parentRefs, b32)` ‖
+ * `b32(author)`, all three hex.
+ *
+ * **These bytes are the `'subblock'` Merkle leaf preimage and the entry's wire
+ * encoding, and they are the same bytes** (TYPES_INTERFACE → Layout — Merkle
+ * leaf preimages). `SubBlockTree`'s element writer delegates here rather than
+ * restating the layout, for the reason `writePruneEntry` has delegated to
+ * `serializePruneEntry` since Phase 2: an entry's wire form and its committed
+ * form must be one statement, because two statements of one layout drift with no
+ * compiler signal and a consistent transposition round-trips perfectly — no
+ * round-trip test can see it.
+ *
+ * ⚠ **The `leafHash('subblock', …)` domain tag stays outside.** This returns the
+ * entry bytes alone; the caller supplies the tag. That is what makes the wire
+ * form and the preimage byte-identical rather than merely parallel.
+ *
+ * ⚠ **`author` is hex here and `validatorId` is bytes in the header**, and both
+ * are "a 32-byte Ed25519 public key" carried as `b32`. The in-memory spelling is
+ * what decides the writer, not what the field means: `SubBlockEntry.author` is
+ * declared `string` above and `verifyOrderingBlockStructure` checks it with
+ * `isHex32`.
+ *
+ * Every row throws, and every row is pinned by `verifyOrderingBlockStructure`
+ * (Phase 1e), including `parentRefs.length <= MAX_PARENT_REFS`.
+ */
+export function subBlockEntryBytes(e: SubBlockEntry): Uint8Array {
+  const w = new ByteWriter();
+  writeHexNOrThrow(w, e.postId, 32);
+  writeArr(w, e.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
+  writeHexNOrThrow(w, e.author, 32);
+  return w.toBytes();
 }
 
 /**

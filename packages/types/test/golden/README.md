@@ -23,16 +23,26 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `post.json` | `postFieldBytes` — the post id and PoW preimage (Phase 2) |
 | `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type (Phase 2), and both states of `bond.inviteePublicKey` |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage (Phase 2) |
-| `block.json` | The six block structs and the ordering-block framing (Phase 3b) |
+| `block.json` | The six block structs and the ordering-block framing (Phase 3b), plus the two element preimages (Phase 4a) |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |
 | `probe.ts` | The probe struct — a synthetic struct with a field of every kind |
-| `structs.ts` | The Phase 2 id-preimage codecs and the Phase 3b block codecs |
+| `structs.ts` | The Phase 2 id-preimage codecs, the Phase 3b block codecs, the Phase 4a element codecs |
 
 `block.json` covers `blockHeader`, `subBlockTree` (with and without prune
 entries), `utxoTxTree` (with and without transactions and coinbase outputs),
 `subBlock` and `orderingBlock` — each at a typical value and at its smallest
 legal one, because the all-zeros case is where a transposition of two
 same-width fields becomes invisible.
+
+It also covers `subBlockEntry` and `coinbaseOutput` **on their own**, not only
+inside the trees that embed them. Those two are the block's other Merkle leaf
+preimages — `leafHash('subblock', …)` under `subBlockRoot` and
+`leafHash('coinbase', …)` under `utxoTxRoot`, as `prune.json` already is for
+`leafHash('prune', …)` — so from Phase 4 node hashes them directly and a
+conformance implementation must be able to check one leaf without building a
+tree around it. The domain tag is **not** in the vector bytes; it is the
+caller's, which is what makes the leaf preimage and the wire encoding the same
+bytes rather than merely parallel ones.
 
 ⚠ **These were written at Phase 3b, not reset.** The dispatch brief described
 block-struct vectors as being reset to the new format; the corpus had none, so
@@ -102,6 +112,7 @@ A bare string names a leaf codec; the object forms compose, so `{"arr": {"opt": 
 | `{"opt": D}` | `T \| null` | `null` for absent, else `D`'s form |
 | `{"enum8": "table"}` | `string` | the variant name |
 | `probe` | `Probe` | object — see `probe.ts` |
+| `subBlockEntry`, `coinbaseOutput` | the struct | object — `coinbaseOutput.value` is a **decimal string** (u64) |
 
 `{"$special": "NaN" \| "Infinity" \| "-Infinity" \| "undefined"}` expresses the values JSON has no
 literal for. For a wrong *type*, write the raw JSON value and set `"raw": true`.

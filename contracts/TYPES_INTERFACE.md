@@ -1199,13 +1199,63 @@ Layout — Boxes.
 **SubBlockEntry:** `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)`
 **SubBlockTree:** `arr(subBlockEntries)` ‖ `arr(pruneEntries)` — **`subBlockRefs` is deleted**; it was
 uncommitted, redundant with `subBlockEntries`, and drove state mutation (see NODE_INTERFACE)
-**CoinbaseOutput:** `b32(owner)` ‖ `vlqU(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`
+**CoinbaseOutput:** `b32(owner)` ‖ **`vlqU64(value)`** ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`
 **UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(coinbaseOutputs)`
 **SubBlock:** `b32(subBlockId)` ‖ `postBytes` ‖ `b32(producerId)` ‖ `vlqU(protocolVersion)`
 **OrderingBlock:** `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`
 
 The ordering-block framing replaces `u32BE` length prefixes with `vlqU`. The boundary check runs at
 the outer level and at each nested `lp` section.
+
+⚠ **`CoinbaseOutput.value` is `vlqU64`, not `vlqU` — corrected 2026-08-10, the same correction the
+box `value` row took the same day (see Layout — Boxes).** The field is `bigint`, so the writer is
+`writeVlqU64OrThrow`, which **throws**; `vlqU` is total by sentinel. The bytes agree for every
+in-domain value, so the row is a **domain** statement, not a byte one. Flagged by the 3b executor in
+`serialization.ts`'s own docstring and left uncorrected here until now — a contract-vs-code
+divergence of exactly the class the queued audit exists to find.
+
+### Layout — Merkle leaf preimages are the struct's own wire bytes
+
+**Decided 2026-08-10, ahead of Phase 4.** `subBlockRoot` and `utxoTxRoot` commit leaves whose
+preimages are exactly the two structs above: node's `computeSubBlockRoot` hashes
+`{postId, parentRefs, author}` and its `computeUtxoTxRoot` hashes
+`{owner, value, lockedUntilBlock, isTreasury}` — the **full** field set of `SubBlockEntry` and
+`CoinbaseOutput`, in the **same** order. They are therefore the same bytes, and this package is the
+one place that says what those bytes are.
+
+| Export | Signature | Bytes |
+|---|---|---|
+| `subBlockEntryBytes` | `(SubBlockEntry) => Uint8Array` | `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)` |
+| `coinbaseOutputBytes` | `(CoinbaseOutput) => Uint8Array` | `b32(owner)` ‖ `vlqU64(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)` |
+
+`writeSubBlockEntry` and `writeCoinbaseOutput` **delegate** to these rather than restating the
+layout, so the tree codec and the Merkle leaf cannot drift apart.
+
+**This is `serializePruneEntry` generalised, not a new pattern.** `writePruneEntry` has delegated
+since Phase 2, and the source states the rule: *an entry's wire form and its committed form must be
+the same bytes; two statements of one layout is the drift class this format exists to close.* The
+`prune` leaf already had it; the other two leaf types get it here. The alternative — `node` writing
+its own `ByteWriter` calls in `block-creator.ts` — puts a second statement of each layout in a
+second package, with **no compiler signal on divergence and no round-trip able to see it**: a
+consistent transposition round-trips perfectly (Phase 5 measured this), so only a golden comparing
+the two byte strings across the package boundary would ever catch it.
+
+⚠ **The `leafHash` domain tag stays outside.** These functions return the entry bytes alone;
+`leafHash('subblock' | 'coinbase', bytes)` supplies the tag. That is what makes the wire form and
+the preimage byte-identical rather than merely parallel.
+
+⚠ **No `...FromBytes` pair is added, and that does not breach the pairing rule under Layout —
+Boxes.** What that rule forbids is one layout whose writer and reader live in **different packages**
+and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `readSubBlockEntry` and
+`readCoinbaseOutput` already live here beside these writers, and the tree round-trip exercises them.
+Nothing crosses a package boundary unpaired.
+
+Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxContentBytes`,
+`boxRecordBytes`). `serializePruneEntry` keeps its pre-migration name; renaming it is not in scope.
+
+**The delegation is byte-identical by construction** — same writers, same order — so it is not
+itself a consensus change. The consensus change is node's: the two leaf preimages stop being JSON.
+See `NODE_INTERFACE` → C7.
 
 ### Export table
 
@@ -1237,6 +1287,8 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeSubBlockTree(bytes)` | `(Uint8Array) => SubBlockTree` | CBOR decode |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
+| `subBlockEntryBytes(e)` | `(SubBlockEntry) => Uint8Array` | ⚠ **Phase 4.** One entry's positional bytes. Both the tree codec's element writer and the `'subblock'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
+| `coinbaseOutputBytes(o)` | `(CoinbaseOutput) => Uint8Array` | ⚠ **Phase 4.** One output's positional bytes. Both the tree codec's element writer and the `'coinbase'` Merkle leaf preimage |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Length-prefixed wire framing: `u32BE(len)‖headerCbor ‖ … ‖ validatorSignature(64)` |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | CBOR encode |

@@ -18,6 +18,17 @@
  * ordering block carrying arbitrary extra keys used to produce a byte-identical
  * `blockHash` while the encoding differed by 395 bytes.
  *
+ * ## The three element writers hold no layout of their own
+ *
+ * `writeSubBlockEntry`, `writePruneEntry` and `writeCoinbaseOutput` are one
+ * `w.writeBytes(...)` each, delegating to `subBlockEntryBytes`,
+ * `serializePruneEntry` and `coinbaseOutputBytes` beside their structs. Those
+ * three are exactly the elements whose bytes are also Merkle leaf preimages, and
+ * the delegation is what keeps the wire form and the committed form one
+ * statement instead of two. **None of the three may grow a field writer of its
+ * own** — a reviewer can check that at a glance, which is the point of the
+ * shape.
+ *
  * ## What is still `cbor-x`, and why that is not an oversight
  *
  * `encodeStump` and `encodeTx`. Neither is reachable from a block struct —
@@ -54,25 +65,25 @@ import {
   readVlqU,
   readVlqU64,
   writeArr,
-  writeBool,
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
   writeLpUtf8,
   writeVlqU,
-  writeVlqU64OrThrow,
 } from './codec.js';
 import type { Post } from './post.js';
 import type { UtxoTransaction } from './utxo.js';
 import { TRIGGER, serializePruneEntry, type PruneEntry, type Stump } from './stump.js';
-import type {
-  SubBlock,
-  SubBlockEntry,
-  BlockHeader,
-  CoinbaseOutput,
-  SubBlockTree,
-  UtxoTxTree,
-  OrderingBlock,
+import {
+  coinbaseOutputBytes,
+  subBlockEntryBytes,
+  type SubBlock,
+  type SubBlockEntry,
+  type BlockHeader,
+  type CoinbaseOutput,
+  type SubBlockTree,
+  type UtxoTxTree,
+  type OrderingBlock,
 } from './block.js';
 
 // ---------------------------------------------------------------------------
@@ -233,19 +244,16 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
 /**
  * `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)` — all three hex.
  *
- * ⚠ **`author` is hex here and `validatorId` is bytes in the header**, and both
- * are "a 32-byte Ed25519 public key" carried as `b32`. The in-memory spelling is
- * what decides the writer, not what the field means: `SubBlockEntry.author` is
- * declared `string` (`block.ts`) and `verifyOrderingBlockStructure` checks it
- * with `isHex32`.
- *
- * Every row throws, and every row is pinned by `verifyOrderingBlockStructure`
- * (Phase 1e), including `parentRefs.length <= MAX_PARENT_REFS`.
+ * **The write half delegates to `subBlockEntryBytes` rather than restating the
+ * layout**, for the reason `writePruneEntry` below has since Phase 2: those
+ * bytes are the Merkle leaf preimage committed under `subBlockRoot`, so an
+ * entry's wire form and its committed form must be the same bytes. The layout,
+ * the writer choice per row (`author` is hex where the header's `validatorId` is
+ * bytes) and the domain that makes each throwing writer unreachable all live
+ * with the struct, in `block.ts`.
  */
 function writeSubBlockEntry(w: ByteWriter, e: SubBlockEntry): void {
-  writeHexNOrThrow(w, e.postId, 32);
-  writeArr(w, e.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
-  writeHexNOrThrow(w, e.author, 32);
+  w.writeBytes(subBlockEntryBytes(e));
 }
 
 function readSubBlockEntry(r: ByteReader): SubBlockEntry {
@@ -333,49 +341,16 @@ export function decodeSubBlockTree(bytes: Uint8Array): SubBlockTree {
 /**
  * `b32(owner)` ‖ `vlqU64(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`.
  *
- * The contract's table writes row 2 as `vlqU`; it is `vlqU64` because the field
- * is `bigint`, and the distinction is the throwing/total one, not a byte one.
- *
- * ⚠ **Three of these four rows are where the contract's notation and the field's
- * schema type disagree, and each disagreement points at a different writer.**
- *
- * - `owner` is `UserId` = `Uint8Array`, so `b32` means `writeBytesNOrThrow`, not
- *   the hex writer three of the header's `b32` rows use.
- * - **`value` is `bigint`**, so `vlqU` means `writeVlqU64OrThrow` — the
- *   **throwing** bigint writer, not the total `number` one. The compiler catches
- *   this substitution, which is the only reason it is not the sharpest row here:
- *   `writeVlqU` would have sentinelled every coinbase output in existence.
- * - **`isTreasury` is `boolean`**, so `u8` means `writeBool`, which is total
- *   (`{0,1}` is narrower than a byte, so `0xff` is unreachable from a valid
- *   value and `readBool` refuses it). `writeU8OrThrow` would throw on every
- *   block.
- *
- * ## Domain — the least-covered struct in the phase
- *
- * `verifyOrderingBlockStructure` pins `owner` (`isBytes` + length 32) and the
- * *sign* of `value` (`>= 0n`). The other three pins are missing, all reported to
- * main as this phase's gate findings and none of them mine to add — the domain
- * belongs upstream of the encoder (spec §2.5), in `@dagsocial/validation`:
- *
- * - `value` has **no `< 2^64` ceiling**, and this writer throws above it.
- * - `lockedUntilBlock` is checked `typeof === 'number' && >= header.height` —
- *   a lower bound only, so `1.5`, `Infinity` and `2^60` all pass and all
- *   **collide** on the sentinel. This is the `createdAt` failure Phase 1f
- *   closed, one struct over and still open.
- * - `isTreasury` is **checked nowhere at all**.
- *
- * Decode closes the reachable half of each: `readVlqU` throws past
- * `MAX_SAFE_INTEGER`, `readVlqU64` wraps into the u64 domain, `readBool` rejects
- * any byte but `0x00`/`0x01`, and the re-encode compare rejects non-minimal
- * padding. So a peer cannot inject one of these through gossip. What remains is
- * the encode side, which `encodeOrderingBlock` and node's store write reach
- * without passing a decoder.
+ * **The write half delegates to `coinbaseOutputBytes`** — same rule as
+ * `writeSubBlockEntry` above: those bytes are the `'coinbase'` Merkle leaf
+ * preimage committed under `utxoTxRoot`, so the output's wire form and its
+ * committed form are one statement, not two. The three rows where the
+ * contract's notation and the field's schema type disagree, and the three
+ * missing domain pins that leave two of its writers reachable from the encode
+ * side, are documented with the struct in `block.ts`.
  */
 function writeCoinbaseOutput(w: ByteWriter, o: CoinbaseOutput): void {
-  writeBytesNOrThrow(w, o.owner, 32);
-  writeVlqU64OrThrow(w, o.value);
-  writeVlqU(w, o.lockedUntilBlock);
-  writeBool(w, o.isTreasury);
+  w.writeBytes(coinbaseOutputBytes(o));
 }
 
 function readCoinbaseOutput(r: ByteReader): CoinbaseOutput {
