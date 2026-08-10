@@ -45,7 +45,7 @@
           <ul>
             <li><b>Author-sovereign</b> — you own your subtree</li>
             <li><b>Prunable</b> — withdrawable for privacy</li>
-            <li><b>Threaded</b> — posts reference parents</li>
+            <li><b>Threaded</b> — each post references one parent</li>
           </ul>
         </div>
         <div class="card c">
@@ -65,7 +65,7 @@
       <h2>The content layer — Posts DAG</h2>
       <p>Every post is the <strong>root of a sovereign subtree</strong>. The author controls everything beneath it — replies, replies to replies, the whole transitive tree. Replying to someone's post is <em>consent</em> to that: it places your reply inside their tree.</p>
       <h3>What a post is</h3>
-      <p>A post carries its content (1–300 bytes), its author (an Ed25519 public key), zero to eight <em>parent references</em>, a proof-of-work solution, and a signature. Its hash <em>is</em> its identity — and that identity survives even if the content is later withdrawn, so links between posts never break.</p>
+      <p>A post carries its content (1–300 bytes), its author (an Ed25519 public key), <strong>at most one</strong> <em>parent reference</em>, a proof-of-work solution, and a signature. One parent rather than several is what keeps a subtree a clean cut: a reply with two parents would sit inside two authors' trees at once, and either of them could destroy it. Its hash <em>is</em> its identity — and that identity survives even if the content is later withdrawn, so links between posts never break.</p>
       <h3>Pruning — withdrawal as a first-class right</h3>
       <p>An author can <strong>prune</strong> their subtree at any time. Pruning cascades to every reply underneath — because even the replies to a withdrawn post can leak what it said, cascade pruning is the only privacy-preserving default. Pruning is <strong>irreversible</strong>, authorized solely by the author's signature, and what it leaves behind is a stump.</p>
     </section>
