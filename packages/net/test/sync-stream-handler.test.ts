@@ -10,10 +10,18 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
+import { PROTOCOL_VERSION, decodeSubBlock } from '@dagsocial/types';
+import type { Post, SubBlock } from '@dagsocial/types';
 import { NetNode } from '../src/node.js';
-import { encodeFrame } from '../src/frame.js';
+import { decodeFrame, encodeFrame } from '../src/frame.js';
 import { encodeGetPosts } from '../src/sync-codec.js';
-import { MSG_GET_POSTS, MSG_SYNC_INFO, PeerState } from '../src/types.js';
+import {
+  MSG_GET_POSTS,
+  MSG_GET_SUB_BLOCK,
+  MSG_SUB_BLOCK_RESPONSE,
+  MSG_SYNC_INFO,
+  PeerState,
+} from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
@@ -80,6 +88,7 @@ type StreamHandler = (arg: {
  */
 function makeHandlerHarness(opts: {
   postsHandler?: (postIds: string[]) => never;
+  syncHandler?: (id: string) => SubBlock | null;
   syncMachine?: { handleMessage: (p: string, c: number, b: Uint8Array) => void };
   active?: boolean;
 } = {}) {
@@ -110,6 +119,7 @@ function makeHandlerHarness(opts: {
   }
 
   if (opts.postsHandler) net.setPostsHandler(opts.postsHandler);
+  if (opts.syncHandler) net.setSyncHandler(opts.syncHandler);
   if (opts.syncMachine) internals.syncMachine = opts.syncMachine;
 
   internals.registerSyncStreamHandler();
@@ -155,6 +165,109 @@ function makeHandlerHarness(opts: {
 function isEmptyReply(written: Uint8Array[]): boolean {
   return written.length === 1 && written[0]!.length === 0;
 }
+
+/** The single-byte not-found marker both sub-block arms answer with. */
+function isNotFound(body: Uint8Array): boolean {
+  return body.length === 1 && body[0] === 0x00;
+}
+
+function makeStoredPost(overrides: Partial<Post> = {}): Post {
+  return {
+    content: 'a stored post',
+    author: new Uint8Array(32).fill(7),
+    parentRefs: [],
+    challenge: new Uint8Array(32),
+    protocolVersion: PROTOCOL_VERSION,
+    timestamp: 1_000_000,
+    powNonce: 42,
+    signature: new Uint8Array(64),
+    ...overrides,
+  };
+}
+
+const STORED_ID = 'ab'.repeat(32);
+
+function makeStoredSubBlock(overrides: Partial<SubBlock> = {}): SubBlock {
+  return {
+    subBlockId: STORED_ID,
+    post: makeStoredPost(),
+    producerId: new Uint8Array(32).fill(7),
+    protocolVersion: PROTOCOL_VERSION,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The sub-block serve arms — a stored row we cannot encode
+//
+// Both arms answer a peer from a value `@dagsocial/node` put in the store, so
+// the row is *ours*: it is refused at net's serve-side encode boundary, it is
+// answered exactly like a row we do not hold, and the peer is not penalized for
+// it (NET_INTERFACE → Penalty Attribution).
+// ---------------------------------------------------------------------------
+
+describe('sync stream handler — unservable stored sub-blocks', () => {
+  const unservable = makeStoredSubBlock({ protocolVersion: -1 });
+
+  it('answers the framed request with not-found instead of throwing', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send } = makeHandlerHarness({ syncHandler: () => unservable });
+
+    const written = await send(
+      encodeFrame(MAGIC, MSG_GET_SUB_BLOCK, new TextEncoder().encode(STORED_ID)),
+    );
+
+    expect(written).toHaveLength(1);
+    const reply = decodeFrame(MAGIC, written[0]!);
+    expect(reply.code).toBe(MSG_SUB_BLOCK_RESPONSE);
+    expect(isNotFound(reply.body)).toBe(true);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('cannot serve sub-block'));
+    errSpy.mockRestore();
+  });
+
+  it('does not penalise the peer for our own store', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ syncHandler: () => unservable });
+    const before = peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0;
+
+    await send(encodeFrame(MAGIC, MSG_GET_SUB_BLOCK, new TextEncoder().encode(STORED_ID)));
+
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(before);
+    errSpy.mockRestore();
+  });
+
+  it('answers the unframed legacy request with the not-found marker', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ syncHandler: () => unservable });
+    const before = peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0;
+
+    const written = await send(new TextEncoder().encode(STORED_ID));
+
+    expect(written).toHaveLength(1);
+    expect(isNotFound(written[0]!)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(before);
+    errSpy.mockRestore();
+  });
+
+  it('still serves an in-domain row on both arms', async () => {
+    // The control against a guard that refuses everything.
+    const good = makeStoredSubBlock();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const framed = await makeHandlerHarness({ syncHandler: () => good }).send(
+      encodeFrame(MAGIC, MSG_GET_SUB_BLOCK, new TextEncoder().encode(STORED_ID)),
+    );
+    expect(decodeSubBlock(decodeFrame(MAGIC, framed[0]!).body).subBlockId).toBe(STORED_ID);
+
+    const legacy = await makeHandlerHarness({ syncHandler: () => good }).send(
+      new TextEncoder().encode(STORED_ID),
+    );
+    expect(decodeSubBlock(legacy[0]!).subBlockId).toBe(STORED_ID);
+
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+});
 
 describe('sync stream handler — app-layer callback failures', () => {
   it('logs a throwing postsHandler instead of absorbing it', async () => {

@@ -583,6 +583,30 @@ and every PeerDb entry has already passed this same validation on the way
 in (from a handshake or from intake), so a well-behaved node cannot
 produce an invalid entry.
 
+> ⚠ **VIOLATED — that justification enumerates two intakes and there are three.
+> Recorded 2026-08-10.** `PeerDb`'s constructor loads persisted rows straight
+> from `PeerStorage.loadAll()` into `entries`, filtered only for our own address
+> (`peerdb.ts:22-27`). It is the third intake and the one that validates nothing.
+> Node's `loadAllPeers` skips a row whose capabilities JSON is *corrupt*, but does
+> not bound the values and never inspects `protocol_version`.
+>
+> **The consequence runs the wrong way: it bans us, not them.** CBOR is total, so
+> nothing throws locally. A persisted row carrying a capability above
+> `MAX_CAPABILITY_CODE` is served through `recent()` → `servePeersBody` →
+> `encodePeers`, and **every peer we answer permanently bans us** by the rule
+> stated directly above. The row is on disk, so it survives restarts.
+>
+> In domain today only by write discipline — both writers (`validateHandshake`,
+> `decodePeers`) bound capabilities. **That is precisely the unchecked
+> cross-boundary invariant this bundle exists to convert into a check.**
+>
+> **Ruling (2026-08-10): the check belongs in `PeerDb`'s constructor, not in
+> node's `loadAllPeers`.** The guarantee this contract states is about *PeerDb
+> entries*; `loadAllPeers` is one implementation of the `PeerStorage` interface,
+> and a check placed there is bypassed by every other implementation — a test
+> double today, a different backend later. Putting it at the interface boundary
+> the guarantee is written about covers all of them by construction.
+
 `Peers` is accepted **only as the response to a `GetPeers` this node
 sent** on that stream. An unsolicited `Peers` frame is ignored — the same
 posture as Sync Integrity's response binding, and for the same reason:
@@ -794,8 +818,17 @@ the band-aid; the root cause was the second dialect, so the dialect is gone.
 - **`MAX_LEGACY_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap is
   `min(requested, 400)` **checked before the first element is read**. A peer answering a 40-header
   request with 18,900 headers is not answering the question, and the count is a `vlqU` the peer
-  chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds at `MAX_ARRAY_LENGTH` (2²⁴) and
-  pre-sizes the array, so four peer-chosen bytes buy a sixteen-million-slot allocation.
+  chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds only at `MAX_ARRAY_LENGTH` (2²⁴),
+  three orders of magnitude above the 400 this path allows, and it cannot enforce a caller's cap
+  *before* the first element is read.
+
+  > ✅ **The allocation half of this argument is dead — corrected 2026-08-10.** It used to read "and
+  > pre-sizes the array, so four peer-chosen bytes buy a sixteen-million-slot allocation." PR #34
+  > closed that: `readArray` now rejects a length exceeding the bytes actually remaining
+  > (`wire/src/reader.ts:155`) *before* it allocates at `:161`. **The conclusion stands on the two
+  > grounds left to it** — the 400-item cap and the per-item boundary check the length-prefixed
+  > nesting allows. Kept because a reader hardening this path from the old text would defend against
+  > a hazard that is gone and might weaken the bound that is not.
 - **A response that does not decode THROWS; it must never resolve to `[]`.** `requestBlocks`' result
   goes straight to `reorg(forkHeight, newBlocks)`, which reverts above the fork point and applies what
   it is given — so an empty array *truncates our own chain* instead of failing to extend it.

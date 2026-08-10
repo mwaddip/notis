@@ -431,11 +431,9 @@ describe('response item caps', () => {
   it('rejects a four-byte count claiming millions of items', () => {
     // ⚠ What this pins is the rejection, not the *cost* of it. Measured against
     // a mutant with the cap removed: still rejected, because the first `readLp`
-    // hits the end of the buffer. The property the cap actually buys —
-    // rejecting before anything is allocated per item — is structural (this
-    // codec reads the count with `readVlqU` and pushes, where `readArr` would
-    // accept anything under MAX_ARRAY_LENGTH (2^24) and pre-size the array from
-    // four peer-chosen bytes), and no assertion here distinguishes the two.
+    // hits the end of the buffer. What `maxItems` buys over any byte-derived
+    // bound is a cap set by the caller's request size, and that is pinned by
+    // the over-cap tests above, not here.
     const w = new ByteWriter();
     writeVlqU(w, (1 << 24) - 1);
     const body = w.toBytes();

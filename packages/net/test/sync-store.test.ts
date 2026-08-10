@@ -74,9 +74,21 @@ function makeBlock(header: BlockHeader): OrderingBlock {
   };
 }
 
+const validators: NetValidators = {
+  verifyPoW,
+  verifyOrderingBlockPoW,
+  verifyPostSignature,
+  verifyProtocolVersion,
+  verifyContentLimits,
+  verifyParentRefsCount,
+  verifySubBlockStructure,
+  verifyTxStructure,
+  verifyOrderingBlockStructure,
+};
+
 /** A store wired to serve exactly these blocks by height. */
 function storeServing(blocks: Map<number, unknown>): LazySyncStore {
-  const store = new LazySyncStore();
+  const store = new LazySyncStore(validators);
   store.setOrderingBlockFn((h) => blocks.get(h) ?? null);
   return store;
 }
@@ -172,7 +184,7 @@ describe('LazySyncStore.getOrderingBlockId — out-of-domain headers (class B)',
 
 describe('LazySyncStore.getOrderingBlockId — absence', () => {
   it('returns null when no headers handler has been registered', () => {
-    expect(new LazySyncStore().getOrderingBlockId(1)).toBeNull();
+    expect(new LazySyncStore(validators).getOrderingBlockId(1)).toBeNull();
   });
 
   it('returns null when the handler has no block at that height', () => {
@@ -220,18 +232,6 @@ describe('LazySyncStore.getAnchors', () => {
 // ---------------------------------------------------------------------------
 // The wiring — that this is the store NetNode actually uses
 // ---------------------------------------------------------------------------
-
-const validators: NetValidators = {
-  verifyPoW,
-  verifyOrderingBlockPoW,
-  verifyPostSignature,
-  verifyProtocolVersion,
-  verifyContentLimits,
-  verifyParentRefsCount,
-  verifySubBlockStructure,
-  verifyTxStructure,
-  verifyOrderingBlockStructure,
-};
 
 const config: NetConfig = {
   magic: 0x54444147,
@@ -281,7 +281,7 @@ describe('NetNode.setHeadersHandler wiring', () => {
 
 /** A store whose block handler records what it is given, and can be made to throw. */
 function storeApplying(onBlock: (b: OrderingBlock) => void): LazySyncStore {
-  const store = new LazySyncStore();
+  const store = new LazySyncStore(validators);
   store.setBlocksHandler(onBlock);
   return store;
 }
@@ -355,7 +355,7 @@ describe('LazySyncStore.appendBlocks', () => {
   });
 
   it('does nothing when no blocks handler is registered', () => {
-    expect(() => new LazySyncStore().appendBlocks([GOOD_1])).not.toThrow();
+    expect(() => new LazySyncStore(validators).appendBlocks([GOOD_1])).not.toThrow();
   });
 });
 
