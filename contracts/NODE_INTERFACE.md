@@ -527,7 +527,25 @@ endpoint semantics in `MINING_INTERFACE.md`.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, totalCredits }` |
+| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, totalCredits, inviteProbationBlocks }` |
+
+> ⚠ **AHEAD OF CODE — `inviteProbationBlocks` (2026-08-10).** A plain `number`, not a decimal
+> string: unlike `totalKarma` / `totalCredits` it is not a `bigint` server-side.
+>
+> **Why a per-network value has to be served rather than known.** The demo UI builds bond commits,
+> and `utxo-engine` requires the probation window to equal `config.inviteProbationBlocks`
+> **exactly**. The UI hardcoded `1000`. That agreed with the node on every network only while the
+> node *also* read the constant — once the node started resolving the field from the network
+> profile, a devnet node wanted `10` and every devnet bond commit was rejected.
+>
+> The general rule this instance is an example of: **a per-network consensus value the client must
+> reproduce is served by the node, never held as a client constant.** `/challenge` already does
+> this for `targetBits`. A client constant is a second source for a value `NETWORK_TYPE` is
+> supposed to select alone, and it fails silently — the UI has no way to learn it guessed wrong,
+> because the rejection arrives as a generic invalid-transition error.
+>
+> The UI reads it with a `1000` default, matching the safe-failure direction of its existing
+> `networkType || 'mainnet'`.
 
 > ✅ **`networkMode` → `networkType` landed in P2-A phase 4**, in the same commit as the demo
 > UI change because renaming a response field is a breaking API change. `totalKarma` and

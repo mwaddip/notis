@@ -312,7 +312,12 @@ const POST_LOCK_THREAD_COST = 5n;
 const POST_LOCK_REPLY_COST = 3n;
 const INVITE_KARMA_AMOUNT = 25n;
 const INVITE_BOND_KARMA = 25n;
-const INVITE_PROBATION_BLOCKS = 1000;
+/**
+ * Per-network, so it is served rather than known: `loadStatus()` overwrites it
+ * from `/status` (NODE_INTERFACE §Status). The mainnet value is the default, so
+ * a node that does not answer leaves the UI on the widest window.
+ */
+let INVITE_PROBATION_BLOCKS = 1000;
 /** Credits are 8-decimal: 10⁸ base units (10⁻⁸ credit) per displayed credit. */
 const CREDIT_SCALE = 100000000n;
 
@@ -2190,6 +2195,7 @@ async function loadStatus() {
     // it hides the debug surfaces, which is the safe failure direction.
     networkType = s.networkType || 'mainnet';
     currentBlockHeight = s.blockHeight || 0;
+    INVITE_PROBATION_BLOCKS = s.inviteProbationBlocks || 1000;
 
     bar.innerHTML = `
       <div><span>Network:</span> <strong style="color:${networkType === 'testnet' ? 'var(--amber)' : networkType === 'devnet' ? 'var(--red)' : 'var(--p)'}">${esc(networkType)}</strong></div>
