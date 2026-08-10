@@ -142,8 +142,33 @@ export function loadConfig(): Readonly<Config> {
   };
 
   assertMiningAuthConfigured(cfg);
+  assertTreasuryKeyEncodable(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * The treasury key's domain, established where it enters this node's config
+ * surface rather than where it is encoded (spec §2.5: the domain belongs
+ * upstream of the encoder).
+ *
+ * `buildCoinbaseOutputs` turns this string into a `CoinbaseOutput.owner`, whose
+ * writer is `writeBytesNOrThrow(…, 32)` — and `Buffer.from(s, 'hex')` stops at
+ * the first character pair outside the alphabet instead of failing, so a
+ * character count says nothing about the byte count it produces: 64 non-hex
+ * characters yield 0 bytes, `62 hex + 'zz'` yields 31. Both encode to a
+ * coinbase leaf the writer refuses, inside the miner's own interval callback,
+ * where nothing converts a throw into a rejection.
+ */
+function assertTreasuryKeyEncodable(cfg: Config): void {
+  const key = cfg.treasuryPubKey;
+  if (key.length === 0) return;
+  if (!/^[0-9a-fA-F]{64}$/.test(key)) {
+    throw new Error(
+      `Invalid treasuryPubKey for network "${cfg.networkType}" — must be 64 ` +
+        'hex characters (32 bytes) or empty for no treasury',
+    );
+  }
 }
 
 /**
