@@ -24,28 +24,13 @@ import type { VerifierDeps } from '../../src/services/verifier.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Brute-force a valid PoW nonce for the given input and target bits.
- * Returns the first nonce >= startNonce that satisfies the target.
+ * Brute-force a valid PoW nonce for the given input and target bits. Returns
+ * the first nonce >= startNonce the verifier accepts — the acceptance rule is
+ * `verifyPoW`'s, never a second copy of it here.
  */
 function solvePoW(input: Uint8Array, targetBits: number, startNonce = 0): number {
   for (let nonce = startNonce; nonce < 100_000_000; nonce++) {
-    const nonceBuf = Buffer.alloc(8);
-    nonceBuf.writeBigUInt64LE(BigInt(nonce));
-    const hash = createHash('blake2b512')
-      .update(Buffer.concat([Buffer.from(input), nonceBuf]))
-      .digest()
-      .subarray(0, 32);
-
-    let valid = true;
-    for (let i = 0; i < targetBits; i++) {
-      const byteIdx = Math.floor(i / 8);
-      const bitIdx = 7 - (i % 8);
-      if ((hash[byteIdx]! & (1 << bitIdx)) !== 0) {
-        valid = false;
-        break;
-      }
-    }
-    if (valid) return nonce;
+    if (verifyPoW(input, nonce, targetBits)) return nonce;
   }
   throw new Error('Failed to solve PoW within iteration limit');
 }

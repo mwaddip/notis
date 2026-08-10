@@ -8,26 +8,13 @@ import {
   LIKE_KARMA_COST,
 } from '@dagsocial/types';
 import type { Post, UtxoTransaction } from '@dagsocial/types';
+import { verifyPoW } from '../../src/services/pow.js';
 
 export const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 export const unhex = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'hex'));
 
 export function blake32(d: Uint8Array): Uint8Array {
   return new Uint8Array(createHash('blake2b512').update(d).digest().subarray(0, 32));
-}
-
-export function concat(...arrs: Uint8Array[]): Uint8Array {
-  const total = arrs.reduce((s, a) => s + a.length, 0);
-  const out = new Uint8Array(total);
-  let pos = 0;
-  for (const a of arrs) { out.set(a, pos); pos += a.length; }
-  return out;
-}
-
-export function le64(n: number): Uint8Array {
-  const b = new Uint8Array(8);
-  new DataView(b.buffer).setBigUint64(0, BigInt(n), true);
-  return b;
 }
 
 /**
@@ -63,20 +50,13 @@ export function powInput(
   return postPowPreimage(preimagePost(content, author, parents, chal, ts));
 }
 
-export function leadingZeroBits(hash: Uint8Array): number {
-  let bits = 0;
-  for (const b of hash) {
-    if (b === 0) { bits += 8; continue; }
-    let x = b;
-    while ((x & 0x80) === 0) { bits++; x <<= 1; }
-    break;
-  }
-  return bits;
-}
-
+/**
+ * Mines through the node's own predicate rather than re-deriving the PoW rule —
+ * same discipline as `powInput` above, applied to the nonce tail it appends.
+ */
 export function solve(pi: Uint8Array, target: number): number {
   for (let n = 0; n < 100_000_000; n++) {
-    if (leadingZeroBits(blake32(concat(pi, le64(n)))) >= target) return n;
+    if (verifyPoW(pi, n, target)) return n;
   }
   throw new Error('PoW timeout');
 }
