@@ -26,6 +26,7 @@ import {
   POST_LOCK_THREAD_COST,
 } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { verifyPoW } from '../../src/services/pow.js';
 
 const P1 = 10301, P2 = 10302, LP1 = P1 + 100, LP2 = P2 + 100;
 const A1 = `http://localhost:${P1}`;
@@ -54,8 +55,6 @@ const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const unhex = (s: string) => new Uint8Array(Buffer.from(s, 'hex'));
 const blake32 = (d: Uint8Array) => new Uint8Array(createHash('blake2b512').update(d).digest().subarray(0, 32));
-const concat = (...arrs: Uint8Array[]) => { const t = arrs.reduce((s,a)=>s+a.length,0); const o=new Uint8Array(t); let p=0; for(const a of arrs){o.set(a,p);p+=a.length;} return o; };
-const le64 = (n: number) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(n), true); return b; };
 
 /**
  * One request on a fresh, non-pooled socket (`agent: false`).
@@ -138,13 +137,10 @@ function preimagePost(content: string, author: Uint8Array, parents: string[], ch
 function powInput(content: string, author: Uint8Array, parents: string[], chal: Uint8Array, ts: number): Uint8Array {
   return postPowPreimage(preimagePost(content, author, parents, chal, ts));
 }
-function leadingZeroBits(hash: Uint8Array): number {
-  let bits = 0;
-  for (const b of hash) { if (b===0) {bits+=8; continue;} let x=b; while((x&0x80)===0){bits++;x<<=1;} break; }
-  return bits;
-}
+// Mines through the node's own predicate — the acceptance rule and the nonce
+// tail are the verifier's, never a second copy here.
 function solve(pi: Uint8Array, target: number): number {
-  for (let n=0; n<100_000_000; n++) { if (leadingZeroBits(blake32(concat(pi, le64(n)))) >= target) return n; }
+  for (let n=0; n<100_000_000; n++) { if (verifyPoW(pi, n, target)) return n; }
   throw new Error('PoW timeout');
 }
 function signPost(content: string, author: Uint8Array, parents: string[], chal: Uint8Array, ts: number): string {
