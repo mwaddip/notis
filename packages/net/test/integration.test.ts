@@ -12,7 +12,7 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
-import { createHash, createPrivateKey, sign } from 'crypto';
+import { createPrivateKey, sign } from 'crypto';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 
@@ -49,28 +49,18 @@ const validators: NetValidators = {
 const TIMEOUT = 25000;
 
 /**
- * Brute-force a PoW nonce. 20 bits target (~1M iterations worst case,
- * typically a few hundred ms in Node.js).
+ * Brute-force a PoW nonce with the predicate the relay gate itself calls
+ * (`gossip.ts:255`). 20 bits target (~1M iterations worst case, typically a
+ * few hundred ms in Node.js).
+ *
+ * The nonce tail's encoding belongs to `@dagsocial/types` and is pinned there
+ * by golden vectors; a harness that re-derives a consensus rule is a second
+ * implementation of it. Same pattern as this suite's Stage-1 fixtures in
+ * `gossip.test.ts`.
  */
 function solvePoW(input: Uint8Array, targetBits: number): number {
   for (let nonce = 0; nonce < 100_000_000; nonce++) {
-    const nonceBuf = Buffer.alloc(8);
-    nonceBuf.writeBigUInt64LE(BigInt(nonce));
-    const hash = createHash('blake2b512')
-      .update(Buffer.concat([Buffer.from(input), nonceBuf]))
-      .digest()
-      .subarray(0, 32);
-
-    let valid = true;
-    for (let i = 0; i < targetBits; i++) {
-      const byteIdx = Math.floor(i / 8);
-      const bitIdx = 7 - (i % 8);
-      if ((hash[byteIdx]! & (1 << bitIdx)) !== 0) {
-        valid = false;
-        break;
-      }
-    }
-    if (valid) return nonce;
+    if (verifyPoW(input, nonce, targetBits)) return nonce;
   }
   throw new Error('PoW solution not found within nonce limit');
 }
