@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'crypto';
 import { serializeBox, deserializeBox, deserializeBoxWithId } from '../../src/state/serialize-box.js';
 import { seedProvenance } from '../helpers.js';
-import type { AnyBox, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox } from '@dagsocial/types';
+import { BOX_ID_DOMAIN, computeBoxId } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
 
 /**
  * Every fixture below is a GENUINE box: `seedProvenance` gives it real
@@ -47,11 +49,18 @@ describe('serializeBox', () => {
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
 
-  it('the retired like tag byte 0x03 stays reserved — decode rejects it', () => {
-    // T2b: the 'like' box type is deleted and its AVL tag byte reserved, so
-    // bytes carrying it must fail loudly rather than decode as some other type.
-    const bytes = new Uint8Array([0x03, 0xa0]); // reserved tag + empty CBOR map
-    expect(() => deserializeBox(bytes)).toThrow(/Unknown box type tag/);
+  it('the retired like tag 3 stays reserved — decode rejects it', () => {
+    // T2b: the 'like' box type is deleted and its tag reserved, so bytes
+    // carrying it must fail loudly rather than decode as some other type.
+    //
+    // The tag is `3` under `enum8` where it used to be `0x03` under this
+    // package's own numbering — the same number by coincidence, not by
+    // construction. Phase 5 retired the second numbering (NODE_INTERFACE →
+    // "Two entity kinds"); `enum8` reserves 3 as well, which is why the
+    // discipline survived the renumbering intact even though `invite` moved
+    // from 0x04 to 2.
+    const bytes = new Uint8Array([0x03, 0x00]); // reserved tag + a value byte
+    expect(() => deserializeBox(bytes)).toThrow(/unknown tag 3/);
   });
 
   it('roundtrips an InviteBox', () => {
@@ -65,29 +74,66 @@ describe('serializeBox', () => {
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
 
-  it('roundtrips a BondBox', () => {
+  // Two arms, because `inviteePublicKey` is `opt(b32)` and they encode
+  // differently: empty → `00`, committed → `01 ‖ 32 bytes`. The old single
+  // fixture passed `new Uint8Array(32)` — thirty-two ZERO bytes, which is the
+  // *committed* arm carrying an implausible key, so the unclaimed arm went
+  // uncovered. Unclaimed is the shape production actually creates:
+  // `utxo-engine.ts:403` rejects an invite-create whose bond output has a
+  // non-empty key, because a pre-committed bond would let the inviter reclaim
+  // immediately and make the network's only sybil cost free.
+  //
+  // `probationStartBlock`/`probationEndBlock` differ (100/140) for the same
+  // reason `post_lock` below uses unequal values: they are adjacent `vlqU`
+  // fields, and equal values make a transposition of the pair invisible.
+  it('roundtrips a BondBox — unclaimed, the production create shape', () => {
     const box = seedProvenance<BondBox>({
       boxType: 'bond' as const,
       value: 5n,
       inviterId: new Uint8Array(32).fill(0x33),
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(32),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
+      inviteOutputIndex: 2,
+      inviteePublicKey: new Uint8Array(0),
+      probationStartBlock: 100,
+      probationEndBlock: 140,
       guard: 'bond_dual' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
 
+  it('roundtrips a BondBox — committed, the opt(b32) present arm', () => {
+    const box = seedProvenance<BondBox>({
+      boxType: 'bond' as const,
+      value: 5n,
+      inviterId: new Uint8Array(32).fill(0x33),
+      inviteOutputIndex: 2,
+      inviteePublicKey: new Uint8Array(32).fill(0x99),
+      probationStartBlock: 100,
+      probationEndBlock: 140,
+      guard: 'bond_dual' as const,
+    });
+    const back = deserializeBoxWithId(box.id, serializeBox(box));
+    expect(back).toEqual(box);
+    // The distinguishing assertion: the two arms are not the same bytes.
+    expect((back as BondBox).inviteePublicKey.length).toBe(32);
+  });
+
   it('roundtrips a PostLockBox', () => {
     const box = seedProvenance<PostLockBox>({
       boxType: 'post_lock' as const,
+      // ⚠ `value` and `originalValue` MUST differ, and so must `owner` and
+      // `targetPostId`. Both are adjacent same-width pairs in the layout, and
+      // this fixture used to carry 5n/5n and 0x44/'44' — identical on both
+      // counts, so a transposition of either pair was invisible to it. That is
+      // the exact defect class G3b's `sortKeys` pass existed to prevent
+      // (`originalValue`/`createdAtBlock` transposed between producer and
+      // `rowToBox`), on the exact adjacent pair. The fixture was written before
+      // field order was load-bearing and never revisited when it became so.
       value: 5n,
-      originalValue: 5n,
+      originalValue: 9n,
       owner: new Uint8Array(32).fill(0x44),
       // `b32` in the id preimage, so `'post-2'` has no encoding — the id this
       // fixture derives from itself could not be computed.
-      targetPostId: '44'.repeat(32),
+      targetPostId: '77'.repeat(32),
       guard: 'block_apply' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
@@ -134,4 +180,216 @@ describe('serializeBox', () => {
   it('deserializeBox throws on unknown box type byte', () => {
     expect(() => deserializeBox(new Uint8Array([0xff, ...new Array(100).fill(0)]))).toThrow();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Golden bytes — the AVL box value IS `boxRecordBytes`
+// ---------------------------------------------------------------------------
+//
+// ⚠ **Added by Phase 5, and the reason is an audit finding rather than a
+// migration chore.** Before this block the AVL *box* format was pinned by
+// ZERO assertions in the whole package: every test above is a round-trip or a
+// determinism check, which passes for any self-consistent codec, and every
+// hex assertion elsewhere in the suite compares `serializeBox(a)` against
+// `serializeBox(b)` — both sides move together. No golden `stateRoot` literal
+// exists either. Measured: swapping the entire value format from cbor to
+// positional broke four tests in this package, all of them identity-record
+// goldens, and not one box test. Records were pinned; boxes were not.
+//
+// Every expected string below was **hand-derived from `TYPES_INTERFACE` →
+// Layout — Boxes before the encoder was run**, then checked against it. A
+// golden captured from the implementation only proves the implementation
+// equals itself; two independent derivations agreeing is evidence about the
+// format. They are written as commented segments for the same reason — an
+// opaque 200-char blob is re-captured when it breaks, whereas a segment list
+// is read.
+//
+// Fixtures use fixed provenance rather than `seedProvenance` so every byte is
+// hand-checkable, and **no two adjacent same-width fields share a value**, or
+// a transposition of the pair would not show.
+
+const TXID = 'ab'.repeat(32);
+const INDEX = 1;
+/** `b32(txId)` ‖ `vlqU(index)` — the provenance tail every box record ends with. */
+const PROV = 'ab'.repeat(32) + '01';
+
+function hexOf(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
+}
+
+describe('serializeBox golden bytes (Layout — Boxes)', () => {
+  it('karma', () => {
+    const box: KarmaBox = {
+      boxType: 'karma', value: 100n, owner: new Uint8Array(32).fill(0xaa),
+      guard: 'owner_signature', proofSource: 'mint-1', txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '00' +            // enum8(karma) = 0
+      '64' +            // vlqU64(100)
+      'aa'.repeat(32) + // b32(owner)
+      '06' + '6d696e742d31' + // lpUtf8('mint-1') — vlqU(6) then utf8
+      '00' +            // opt(decayBurn) absent
+      PROV,
+    );
+  });
+
+  it('credit — proofSource -1 is the transfer sentinel, and vlqS is why', () => {
+    const box: CreditBox = {
+      boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
+      guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 20,
+      txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '01' +            // enum8(credit) = 1
+      '32' +            // vlqU64(50)
+      'bb'.repeat(32) + // b32(owner)
+      '01' +            // vlqS(-1) → zigzag 1
+      '01' + '14' +     // opt(lockedUntilBlock) present ‖ vlqU(20)
+      PROV,
+    );
+    // The sentinel and block height 1 must not collide: zigzag maps -1→1 and
+    // 1→2. A `vlqU` here would have thrown on every user-path credit box.
+    const atHeightOne: CreditBox = { ...box, proofSource: 1 };
+    expect(hexOf(serializeBox(atHeightOne))).toContain('bb'.repeat(32) + '02');
+  });
+
+  it('invite', () => {
+    const box: InviteBox = {
+      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0x22),
+      inviterId: new Uint8Array(32).fill(0x33), guard: 'hash_preimage_with_bond',
+      txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '02' +            // enum8(invite) = 2 — NOT 0x04; the old numbering is retired
+      '0a' +            // vlqU64(10)
+      '22'.repeat(32) + // b32(secretHash)
+      '33'.repeat(32) + // b32(inviterId)   ← differs from secretHash on purpose
+      PROV,
+    );
+  });
+
+  it('bond — unclaimed, opt(b32) absent', () => {
+    const box: BondBox = {
+      boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
+      inviteOutputIndex: 2, inviteePublicKey: new Uint8Array(0),
+      probationStartBlock: 100, probationEndBlock: 140, guard: 'bond_dual',
+      txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '04' +            // enum8(bond) = 4 — the gap at 3 is the retired `like`
+      '05' +            // vlqU64(5)
+      '33'.repeat(32) + // b32(inviterId)
+      '02' +            // vlqU(inviteOutputIndex)
+      '00' +            // optBytesN(inviteePublicKey) ABSENT — empty means unclaimed
+      '64' +            // vlqU(probationStartBlock = 100)
+      '8c01' +          // vlqU(probationEndBlock = 140) — two bytes, 140 ≥ 128
+      PROV,
+    );
+  });
+
+  it('bond — committed, opt(b32) present', () => {
+    const box: BondBox = {
+      boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
+      inviteOutputIndex: 2, inviteePublicKey: new Uint8Array(32).fill(0x99),
+      probationStartBlock: 100, probationEndBlock: 140, guard: 'bond_dual',
+      txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '04' + '05' + '33'.repeat(32) + '02' +
+      '01' + '99'.repeat(32) + // present ‖ b32(inviteePublicKey)
+      '64' + '8c01' + PROV,
+    );
+  });
+
+  it('post_lock — value then originalValue, and they must differ', () => {
+    const box: PostLockBox = {
+      boxType: 'post_lock', value: 5n, originalValue: 9n,
+      owner: new Uint8Array(32).fill(0x44), targetPostId: '77'.repeat(32),
+      guard: 'block_apply', txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '05' +            // enum8(post_lock) = 5
+      '05' +            // vlqU64(value = 5)        ← shared prefix, written first
+      '09' +            // vlqU64(originalValue = 9) ← per-type tail starts here
+      '44'.repeat(32) + // b32(owner)
+      '77'.repeat(32) + // b32(targetPostId)  ← differs from owner on purpose
+      PROV,
+    );
+  });
+
+  it('vouch', () => {
+    const box: AnyBox = {
+      boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32).fill(0x55),
+      targetId: new Uint8Array(32).fill(0x66), guard: 'owner_signature',
+      txId: TXID, index: INDEX,
+    };
+    expect(hexOf(serializeBox(box))).toBe(
+      '06' +            // enum8(vouch) = 6
+      '01' +            // vlqU64(1)
+      '55'.repeat(32) + // b32(voucherId)
+      '66'.repeat(32) + // b32(targetId)  ← differs from voucherId on purpose
+      PROV,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The AVL key is recomputable from the AVL value
+// ---------------------------------------------------------------------------
+
+describe('boxId is a total function of the AVL value', () => {
+  // `NODE_INTERFACE` §1a argues the value must carry everything the id
+  // derivation consumes, so that "a box id is a total function of the stored
+  // box" is checkable **from a proof** rather than trusted. With the value
+  // equal to `boxRecordBytes` that stops being an argument and becomes an
+  // identity a test can hold:
+  //
+  //     boxId = blake2b512(BOX_ID_DOMAIN ‖ avlValue)[0:32]
+  //
+  // Under the cbor form it was only nearly true — the value carried `guard`,
+  // which the derivation does not consume, and omitted `boxType`, which it
+  // does. Nothing could have pinned it, because the two byte strings differed.
+  // A light client can now recompute the key of any box it is served.
+  const boxIdFromAvlValue = (value: Uint8Array): string =>
+    Buffer.from(
+      createHash('blake2b512').update(Buffer.from(BOX_ID_DOMAIN)).update(Buffer.from(value)).digest(),
+    ).subarray(0, 32).toString('hex');
+
+  const cases: Array<[string, AnyBox]> = [
+    ['karma', seedProvenance<KarmaBox>({
+      boxType: 'karma', value: 100n, owner: new Uint8Array(32).fill(0xaa),
+      guard: 'owner_signature', proofSource: 'mint-1',
+    })],
+    ['credit', seedProvenance<CreditBox>({
+      boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
+      guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 20,
+    })],
+    ['invite', seedProvenance<InviteBox>({
+      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0x22),
+      inviterId: new Uint8Array(32).fill(0x33), guard: 'hash_preimage_with_bond',
+    })],
+    ['bond', seedProvenance<BondBox>({
+      boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
+      inviteOutputIndex: 2, inviteePublicKey: new Uint8Array(0),
+      probationStartBlock: 100, probationEndBlock: 140, guard: 'bond_dual',
+    })],
+    ['post_lock', seedProvenance<PostLockBox>({
+      boxType: 'post_lock', value: 5n, originalValue: 9n,
+      owner: new Uint8Array(32).fill(0x44), targetPostId: '77'.repeat(32),
+      guard: 'block_apply',
+    })],
+    ['vouch', seedProvenance<VouchBox>({
+      boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32).fill(0x55),
+      targetId: new Uint8Array(32).fill(0x66), guard: 'owner_signature',
+    })],
+  ];
+
+  for (const [name, box] of cases) {
+    it(`${name}: the stored id equals the hash of the stored value`, () => {
+      expect(boxIdFromAvlValue(serializeBox(box))).toBe(box.id);
+      // and `computeBoxId` agrees, so the identity is not an artifact of the
+      // fixture helper deriving the id the same way this test does
+      expect(computeBoxId(box)).toBe(box.id);
+    });
+  }
 });

@@ -318,49 +318,73 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
     expect(typeof back.likeCarry).toBe('bigint');
   });
 
-  // Key-set exactness (contract 1a). The type makes "absent likeCarry"
-  // inexpressible at compile time; these bytes make any runtime regression —
-  // an omit-when-zero "optimisation", a number sneaking in for the bigint —
-  // a loud diff. Golden: 0x80 tag ‖ cbor map(3) in the fixed field order,
-  // likeCarry as a fixed-width 8-byte integer (0x1b…).
-  const GOLDEN_ZERO =
-    '80b90003716c6173744163746976697479426c6f636b182a' +
-    '6e6c6173744465636179426c6f636b07' +
-    '696c696b6543617272791b0000000000000000';
-  const GOLDEN_THREE =
-    '80b90003716c6173744163746976697479426c6f636b182a' +
-    '6e6c6173744465636179426c6f636b07' +
-    '696c696b6543617272791b0000000000000003';
+  // Golden bytes for NODE_INTERFACE → Layout — IdentityRecord, byte by byte:
+  //
+  //   80   u8 tag — field 1 of the layout, not a wrapper around it
+  //   2a   vlqU(lastActivityBlock = 42)
+  //   07   vlqU(lastDecayBlock = 7)
+  //   00   vlqU64(likeCarry = 0n)      ← present at zero, never omitted
+  //
+  // Derived from the layout table by hand BEFORE running the encoder, then
+  // found to match it. That ordering is the point: a golden captured from the
+  // implementation only proves the implementation equals itself, whereas these
+  // two derivations agreeing is evidence about the format. The heights differ
+  // (42 vs 7) so a transposition of the two adjacent `vlqU` fields is visible;
+  // equal values would have hidden it.
+  const GOLDEN_ZERO = '802a0700';
+  const GOLDEN_THREE = '802a0703';
+  /** The pre-P2-D shape — same layout, `likeCarry` absent. */
+  const GOLDEN_PRE_P2D = '802a07';
 
   it('golden bytes: {42, 7, likeCarry: 0n} — the field is present at zero', () => {
     expect(Buffer.from(serializeIdentityRecord(REC)).toString('hex')).toBe(GOLDEN_ZERO);
   });
 
-  it('golden bytes: {42, 7, likeCarry: 3n} — same length, same key set, one value byte apart', () => {
+  it('golden bytes: {42, 7, likeCarry: 3n} — one value byte apart from the zero case', () => {
     const bytes = serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n });
     expect(Buffer.from(bytes).toString('hex')).toBe(GOLDEN_THREE);
-    // Zero and non-zero carry encode to the SAME byte length — the map header
-    // counts 3 keys either way. A conditionally-present likeCarry could not
-    // pass this pair.
-    expect(bytes.length).toBe(GOLDEN_ZERO.length / 2);
+  });
+
+  // ⚠ The cbor-era version of this test asserted that zero and non-zero carry
+  // encode to the SAME LENGTH, on the reasoning that "the map header counts 3
+  // keys either way". Under `vlqU64` that reasoning is dead and the equal
+  // length is a COINCIDENCE of two small values — cbor-x wrote a fixed-width
+  // 8-byte integer, VLQ writes as many bytes as the magnitude needs. Re-pinning
+  // it verbatim would have preserved an assertion whose stated justification is
+  // false, so it is replaced by the property that is actually true, and the
+  // variable width is made explicit rather than left to be discovered.
+  it('likeCarry is variable-width under vlqU64 — equal length below 128 is not a rule', () => {
+    const len = (carry: bigint): number =>
+      serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: carry }).length;
+
+    expect(len(0n)).toBe(len(3n));      // both single-byte VLQ — a coincidence, not structure
+    expect(len(127n)).toBe(len(0n));    // last single-byte value
+    expect(len(128n)).toBe(len(0n) + 1); // first two-byte value: the width moves
   });
 
   it('the encoding grew by exactly the always-present field vs the pre-P2-D shape', () => {
-    // Pre-P2-D golden for {lastActivityBlock: 42, lastDecayBlock: 7} was
-    // 40 bytes (map(2)). The field adds its 10-byte key ("likeCarry" + text
-    // header) and 9-byte fixed-width value on every record, zero included.
-    expect(serializeIdentityRecord(REC).length).toBe(40 + 19);
+    // The layout is otherwise identical, so the difference is `vlqU64(0n)`:
+    // one byte, on every record, zero included.
+    expect(serializeIdentityRecord(REC).length).toBe(GOLDEN_PRE_P2D.length / 2 + 1);
   });
 
   it('bytes missing likeCarry are REJECTED, not defaulted to 0n', () => {
-    // A pre-P2-D record value (map(2), no likeCarry) must fail loudly: a
-    // silent 0n default would mask exactly the key-set fork the always-present
-    // rule exists to prevent.
-    const preP2D = Buffer.from(
-      '80b90002716c6173744163746976697479426c6f636b182a6e6c6173744465636179426c6f636b07',
-      'hex',
-    );
+    // A pre-P2-D record value must fail loudly: a silent 0n default would mask
+    // exactly the fork the always-present rule exists to prevent. Under the
+    // positional layout the reader simply runs out of input — the field is not
+    // optional, so there is nothing to be absent.
+    const preP2D = Buffer.from(GOLDEN_PRE_P2D, 'hex');
     expect(() => deserializeIdentityRecord(preP2D)).toThrow();
+  });
+
+  it('trailing bytes and non-minimal VLQ are both rejected (boundary check 2 and 3)', () => {
+    // `decodeStruct` gives the record the same four-part check the box arm
+    // gets, and these two arms had NO cbor-era equivalent. Without step 3 two
+    // distinct byte strings decode to one record — two AVL values for one
+    // state, which is a fork with no producer disagreement behind it.
+    expect(() => deserializeIdentityRecord(Buffer.from(GOLDEN_ZERO + 'ff', 'hex'))).toThrow();
+    // `80 2a 07 8000` — likeCarry 0 written in two bytes instead of one.
+    expect(() => deserializeIdentityRecord(Buffer.from('802a078000', 'hex'))).toThrow();
   });
 
   it('two provers fed the same record put agree on the digest', () => {
