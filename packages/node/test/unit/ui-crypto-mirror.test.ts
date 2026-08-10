@@ -323,10 +323,6 @@ interface UiCrypto {
   enum8Tag: (table: Record<string, number>, v: string) => Uint8Array;
   b32Bytes: (v: Uint8Array, n: number) => Uint8Array;
   b32Hex: (v: string, n: number) => Uint8Array;
-  cborEncodeInt: (n: number) => Uint8Array;
-  cborEncodeBigInt: (v: bigint) => Uint8Array;
-  cborEncodeString: (str: string) => Uint8Array;
-  cborEncodeBytes: (buf: Uint8Array) => Uint8Array;
   canonicalBoxBytes: (box: Record<string, unknown>) => Uint8Array;
   computeBoxId: (box: Record<string, unknown>) => string;
   computeTxId: (tx: Record<string, unknown>) => string;
@@ -383,17 +379,9 @@ function loadUiCrypto(): UiCrypto {
     extractDeclaration(html, 'function computeBoxId('),
     extractDeclaration(html, 'function computeCandidateBoxId('),
     extractDeclaration(html, 'function computeTxId('),
-    // The retired CBOR encoder. Extracted so the primitives it still exposes
-    // stay pinned while it lives; see the block comment on its own describe().
-    extractDeclaration(html, 'function cborHead('),
-    extractDeclaration(html, 'function cborEncodeString('),
-    extractDeclaration(html, 'function cborEncodeBytes('),
-    extractDeclaration(html, 'function cborEncodeInt('),
-    extractDeclaration(html, 'function cborEncodeBigInt('),
     'return { postFieldBytes, buildPowInput, computePostId,\n' +
     '         vlqU, vlqS, vlqU64, lp, lpUtf8, arr, opt, boolByte, enum8Tag,\n' +
     '         b32Bytes, b32Hex,\n' +
-    '         cborEncodeInt, cborEncodeBigInt, cborEncodeString, cborEncodeBytes,\n' +
     '         canonicalBoxBytes, computeBoxId, computeTxId, computeCandidateBoxId };',
   ].join('\n\n');
 
@@ -738,79 +726,6 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // `opt()` tags presence, so `{}` is `01 00` and absence is `00`. Under the
     // pre-migration form both appended nothing and the two hashed alike.
     expect(computeTxId(empty)).not.toBe(GOLDEN_UTXO_TX_ID);
-  });
-});
-
-// ---------------------------------------------------------------------------
-
-/**
- * ⚠ **The UI's hand-written CBOR encoder is DEAD** as of this phase — zero
- * callers in `index.html`, because `canonicalBoxBytes` is positional now. Its
- * deletion is booked to the migration's Phase 7, whose entire remaining content
- * this is.
- *
- * These four cases stay only so the encoder is not silently untested while it
- * lives, and they are deliberately narrowed to the encoder's own primitives: the
- * box-shaped assertions that used to sit here ("bigint value serializes as 0x1b
- * uint64", "an over-cap field still encodes byte-identically to cbor-x") made a
- * claim about *box identity* that is no longer true of this code, and moved to
- * the positional block above. They go together with the encoder in Phase 7.
- */
-describe('demo UI CBOR encoder — retired, pinned until Phase 7 deletes it', () => {
-  it('cborEncodeInt matches cbor-x across the full number range (L-5)', () => {
-    // Byte forms measured against cbor-x 1.6.4. Note the float64 (0xfb) forms
-    // past ±2^32: cbor-x never emits 0x1b uint64 for a JS number — that form is
-    // exclusively the bigint path.
-    const cases: Array<[number, string]> = [
-      [0, '00'], [23, '17'], [24, '1818'], [255, '18ff'],
-      [256, '190100'], [65535, '19ffff'],
-      [65536, '1a00010000'], [70000, '1a00011170'], [4294967295, '1affffffff'],
-      [4294967296, 'fb41f0000000000000'],
-      [Number.MAX_SAFE_INTEGER, 'fb433fffffffffffff'],
-      [-1, '20'], [-24, '37'], [-25, '3818'], [-70000, '3a0001116f'],
-      [-4294967296, '3affffffff'],
-      [-4294967297, 'fbc1f0000000100000'],
-      [-Number.MAX_SAFE_INTEGER, 'fbc33fffffffffffff'],
-    ];
-    for (const [n, hex] of cases) expect(hexOf(ui.cborEncodeInt(n)), `n=${n}`).toBe(hex);
-    expect(() => ui.cborEncodeInt(1.5)).toThrow();
-    expect(() => ui.cborEncodeInt(NaN)).toThrow();
-  });
-
-  const headOf = (b: Uint8Array, n: number): string => Buffer.from(b.subarray(0, n)).toString('hex');
-
-  it('cborEncodeBytes follows the cbor-x length ladder past the old 255 cap (L-5)', () => {
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(0)), 1)).toBe('40');
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(23)), 1)).toBe('57');
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(24)), 2)).toBe('5818');
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(255)), 2)).toBe('58ff');    // the old cap
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(256)), 3)).toBe('590100');  // used to throw
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(65535)), 3)).toBe('59ffff');
-    expect(headOf(ui.cborEncodeBytes(new Uint8Array(65536)), 5)).toBe('5a00010000');
-    // Definite length, never chunked: header + payload and nothing else.
-    expect(ui.cborEncodeBytes(new Uint8Array(65536)).length).toBe(5 + 65536);
-  });
-
-  it('cborEncodeString follows the same ladder, counting UTF-8 bytes', () => {
-    expect(headOf(ui.cborEncodeString(''), 1)).toBe('60');
-    expect(headOf(ui.cborEncodeString('a'.repeat(23)), 1)).toBe('77');
-    expect(headOf(ui.cborEncodeString('a'.repeat(24)), 2)).toBe('7818');
-    expect(headOf(ui.cborEncodeString('a'.repeat(255)), 2)).toBe('78ff');    // the old cap
-    expect(headOf(ui.cborEncodeString('a'.repeat(256)), 3)).toBe('790100');  // used to throw
-    expect(headOf(ui.cborEncodeString('a'.repeat(65535)), 3)).toBe('79ffff');
-    expect(headOf(ui.cborEncodeString('a'.repeat(65536)), 5)).toBe('7a00010000');
-    // 200 × U+2713 is 200 characters but 600 bytes — the prefix counts bytes.
-    expect(headOf(ui.cborEncodeString('✓'.repeat(200)), 3)).toBe('790258');
-    expect(ui.cborEncodeString('✓'.repeat(200)).length).toBe(3 + 600);
-  });
-
-  it('cborEncodeBigInt always emits the 8-byte uint64 form, and only that', () => {
-    expect(hexOf(ui.cborEncodeBigInt(0n))).toBe('1b0000000000000000');
-    expect(hexOf(ui.cborEncodeBigInt(2n))).toBe('1b0000000000000002');
-    expect(hexOf(ui.cborEncodeBigInt(100n))).toBe('1b0000000000000064');
-    expect(hexOf(ui.cborEncodeBigInt(2n ** 64n - 1n))).toBe('1bffffffffffffffff');
-    expect(() => ui.cborEncodeBigInt(2n ** 64n)).toThrow();
-    expect(() => ui.cborEncodeBigInt(-1n)).toThrow();
   });
 });
 

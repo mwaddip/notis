@@ -14,10 +14,20 @@
 > contract for it, and do not treat it as a product surface.
 >
 > **One thing about the demo UI IS binding, despite it being throwaway:** it hand-rolls
-> CBOR, `computeBoxId`, `computeTxId` and `postFieldBytes`, so it is a third implementation
-> of consensus-critical encodings and **must stay byte-identical to `@dagsocial/types`**.
-> That is pinned by `ui-crypto-mirror.test.ts`, and the mirror was verified sound in the
-> audit. Throwaway applies to its *flows and UX*, not to its encoders.
+> `computeBoxId`, `computeTxId`, `postFieldBytes` and the positional writers under them, so it
+> is a third implementation of consensus-critical encodings and **must stay byte-identical to
+> `@dagsocial/types`**. That is pinned by `ui-crypto-mirror.test.ts`. Throwaway applies to its
+> *flows and UX*, not to its encoders.
+>
+> *(It hand-rolled CBOR too until 2026-08-10, when the encoder was deleted as dead — the
+> positional format retired its last caller.)*
+>
+> ⚠ **The mirror is sound for what it extracts, and that is not everything.** It names its
+> declarations by exact source string, so a consensus-critical function it does not name is
+> unpinned and nothing signals the omission. Measured 2026-08-10: `solvePoW` is not extracted,
+> and the browser's PoW nonce encoding had diverged from the verifier's with the full suite
+> green. **Adding a hashing or encoding function to the demo UI means adding it to the loader
+> list**, and a mirror's coverage is a claim about a list, never about a file.
 
 > **Worth noting for the whole `contracts/` directory:** this file is 100% original text
 > from the 2026-07-20 bulk-write, and it is one of the few that was never wrong — because

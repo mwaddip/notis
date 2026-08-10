@@ -1,18 +1,35 @@
 # House Style Contract
 
 **Component:** cross-cutting — every human-facing surface
-**Status:** specified, nothing conforms yet
-**Applies to:** `docs.notis.fun` (`docs/site/*`), `@dagsocial/web` (Phase 2), any future product surface
+**Status:** implemented in full on `docs/site/*`; partially on the demo UI — see below
+**Applies to:** `docs.notis.fun` (`docs/site/*`), `packages/node/public/index.html` (partial),
+`@dagsocial/web` (Phase 2), any future product surface
 
-> **No surface implements this today.** `docs/site/*` is dark phosphor-green with a CRT
-> treatment and predates every decision below. It is not wrong so much as superseded, and
-> nothing here is a bug report against it. Per the convention in `ARCHITECTURE.md`,
-> aspirational text is fine and *unmarked* aspirational text is not — so: this is a forward
-> contract, and the re-theming of the docs site is a separate, unscheduled piece of work.
+> **`docs/site/*` implements this contract in full**, measured 2026-08-10: both token sets under
+> the names used here, the inverse-styled theme control, the paint-don't-transition restore, all
+> four mark tiers as inline SVG driven by `--notis-green` / `--notis-keyline`, and both faces
+> self-hosted. Commits `944d16c`, `524e63d`, `0dc8ded`.
 >
-> **The demo UI (`packages/node/public/index.html`) is out of scope**, and stays out.
-> `WEB_INTERFACE.md` already declares it a throwaway debug interface rather than a product
-> surface. Do not re-theme it to satisfy this document.
+> ⚠ **This banner read "No surface implements this today" and described the docs site as dark
+> phosphor-green with a CRT treatment.** The contract landed in `8c5c7ff` and the docs site was
+> re-themed in `944d16c` — **the same day**. The disclaimer was false within hours of being
+> written and stayed that way. Recorded rather than quietly corrected, because it is the second
+> instance of a known failure: a marker asserting a fact about the tree decays when the tree
+> moves, and a disclaimer creates a region nobody re-reads.
+
+> **The demo UI (`packages/node/public/index.html`) is IN scope for colour, typography and
+> motion** — changed 2026-08-10, having previously been excluded outright.
+>
+> The exclusion's ground was that the demo UI is scaffolding about to die when `@dagsocial/web`
+> lands. `@dagsocial/web` is now gated on this protocol's interfaces being defined and frozen
+> first, so the demo UI is the only surface a human looks at for an open-ended period. **A
+> surface nobody will replace soon is not scaffolding.**
+>
+> **The inclusion is deliberately partial.** Layout, information architecture, interaction and
+> illustration stay out — the demo UI keeps its own shell. `WEB_INTERFACE.md` also still holds:
+> it gets no interface contract, no documented flows, no UX commitments, and it dies when
+> `@dagsocial/web` ships. The claim here is narrow — that a surface humans look at should not be
+> built out of the exact register "Why there is a house style at all" was written to avoid.
 
 ## Scope
 
