@@ -34,7 +34,7 @@ import {
   readVlqU,
   readVlqU64,
 } from '../../src/codec.js';
-import { postPowPreimage, type Post } from '../../src/post.js';
+import { postPowPreimage, powNonceBytes, type Post } from '../../src/post.js';
 import { serializePruneEntry, TRIGGER, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
 import {
@@ -109,6 +109,60 @@ const postFieldsCodec: ValueCodec<PostFields> = {
       protocolVersion: readVlqU(r),
       timestamp: readVlqU(r),
     };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// powNonceTail / powPreimage — the tail the id and the PoW hash both append
+// ---------------------------------------------------------------------------
+//
+// `powNonceBytes` is that tail's only writer (TYPES_INTERFACE → Hashing
+// functions), so it is the one preimage element a second package builds by
+// calling this package rather than by re-reading a layout table. These two
+// codecs are what a conformance implementation — or `@dagsocial/validation` —
+// checks itself against.
+//
+// The split is deliberate. `powNonceTail` pins the export alone, which is the
+// unit `verifyPoW` calls and the only place the encoding is stated; the tail is
+// one byte at the nonces a post is actually mined at, so inside a 132-byte
+// vector its whole width is invisible. `powPreimage` pins the concatenation —
+// the exact bytes the PoW hash covers, `computePostId` domain-tags and
+// `verifyPoW` hashes bare — so a vector also fixes where the boundary between
+// the two falls.
+
+/** `postFieldBytes` plus the nonce the miner varies. `signature` stays out. */
+export interface PowPreimage extends PostFields {
+  powNonce: number;
+}
+
+const powNonceTailCodec: ValueCodec<number> = {
+  parse: (json: unknown): number => json as number,
+
+  // Production writer — the export itself, not a lookalike.
+  write(w: ByteWriter, nonce: number): void {
+    w.writeBytes(powNonceBytes(nonce));
+  },
+
+  // Independent reader — TYPES_INTERFACE → Layout — Post, the `vlqU(powNonce)`
+  // row.
+  read: readVlqU,
+};
+
+const powPreimageCodec: ValueCodec<PowPreimage> = {
+  parse(json: unknown): PowPreimage {
+    const j = json as Record<string, unknown>;
+    return { ...postFieldsCodec.parse(j), powNonce: j.powNonce as number };
+  },
+
+  // Both production writers, composed in `computePostId`'s order — the field
+  // bytes, then the tail.
+  write(w: ByteWriter, p: PowPreimage): void {
+    postFieldsCodec.write(w, p);
+    w.writeBytes(powNonceBytes(p.powNonce));
+  },
+
+  read(r: ByteReader): PowPreimage {
+    return { ...postFieldsCodec.read(r), powNonce: readVlqU(r) };
   },
 };
 
@@ -579,6 +633,8 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
 };
 
 registerStruct('postFields', postFieldsCodec);
+registerStruct('powNonceTail', powNonceTailCodec);
+registerStruct('powPreimage', powPreimageCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);

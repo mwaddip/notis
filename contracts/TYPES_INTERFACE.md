@@ -49,9 +49,10 @@ Post {
   signature: Uint8Array(64)    // Ed25519 over signingHash(post)
 }
 
-PostId = blake2b512(POST_ID_DOMAIN || postFieldBytes(post) || u64LE(powNonce))
+PostId = blake2b512(POST_ID_DOMAIN || postFieldBytes(post) || vlqU(powNonce))
          .subarray(0, 32).toString('hex')
-         // postFieldBytes is the canonical length-prefixed encoding below
+         // postFieldBytes is the canonical positional encoding —
+         // normative layout in Serialization → "Layout — Post"
 ```
 
 `PostId` is a hex string. `author` is binary (Uint8Array) — hex on the HTTP
@@ -59,48 +60,39 @@ wire, raw bytes in CBOR.
 
 ### Canonical field encoding (M-1 — injective, protocol-breaking)
 
-The old preimages concatenated fields with **no delimiters**
-(`content || author || ... || String(protocolVersion) || String(powNonce) ||
-String(timestamp)`), so distinct field tuples collided: `(powNonce=5,
-timestamp=23)` and `(52, 3)` produce the byte string `…"5""23"…` ==
-`…"52""3"…` → the **same id**. Both the signing preimage and the id preimage
-are now built from one injective, length-prefixed encoder.
+**The normative byte layout is Serialization → "Layout — Post".** This section states the
+properties that layout must have and does not restate it. `POST_ID_DOMAIN` is
+`utf8("dagsocial/post-id/1")`.
 
-```
-u32LE(n)  = 4-byte little-endian unsigned
-u64LE(n)  = 8-byte little-endian unsigned
-LP(bytes) = u32LE(byteLength(bytes)) || bytes          // length-prefixed
+`postFieldBytes` is **injective**: every variable-length field is length-prefixed and the
+ref array carries an explicit count, so no two distinct posts share a `postFieldBytes`.
+Numeric fields are encoded, never stringified — an undelimited `String(n)` concatenation
+collides, since `(powNonce=5, timestamp=23)` and `(52, 3)` both yield `…"5""23"…`. That is
+the defect M-1 closed, and injectivity is the property every later dialect change has had to
+preserve.
 
-postFieldBytes(post) =
-      LP(utf8(content))
-   || LP(author)                                        // 32 raw bytes
-   || u32LE(parentRefs.length)                          // ref count
-   || LP(utf8(ref))   for each ref, in array order
-   || LP(challenge)                                     // 32 raw bytes
-   || u32LE(protocolVersion)
-   || u64LE(timestamp)
+`powNonce` is **not** in `postFieldBytes` — the author signs before mining, and PoW appends
+the nonce itself. It enters the PoW hash and the id as a trailing `vlqU`, written by
+`powNonceBytes` in `@dagsocial/types` and reproduced by the demo-UI mirror. **Nothing else
+may construct that tail**; a second local copy is what let the PoW hash and the id disagree
+across packages (Phase 8).
 
-POST_ID_DOMAIN = utf8("dagsocial/post-id/1")            // domain separ/version tag
-```
+The numeric writers are **total**: a field outside the encodable domain (non-negative safe
+integers ≤ 2⁵³−1) encodes to a sentinel rather than throwing. This keeps `signingHash`
+panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-5/M-6). A
+mirror implementation must reproduce this, not reintroduce a throw.
 
-Every variable-length field is length-prefixed and the ref array carries an
-explicit count, so no two distinct posts share a `postFieldBytes`. Numeric
-fields are fixed-width little-endian, never `String(n)`. `powNonce` is **not**
-in `postFieldBytes` (the author signs before mining, and PoW appends the nonce
-itself); it enters only the id, as a trailing `u64LE`.
+> ⚠ **Totality is not a domain check, and a caller in another package depends on the
+> difference.** Under `vlqU` every out-of-domain nonce takes `VLQ_SENTINEL`, so `NaN`, `-1`,
+> `1.5` and `2⁶⁰` share one tail — and therefore one `postId` and one PoW hash. What keeps
+> that harmless is `verifyPoW`'s `isU64Safe(nonce)` guard, upstream, in
+> `@dagsocial/validation`. It is **not** redundant with the writer's totality and must not be
+> removed as such. See `VALIDATION_INTERFACE.md → verifyPoW`.
 
-The fixed-width numeric writers are **total**: a numeric field outside the
-encodable domain (non-negative safe integers ≤ 2⁵³−1) encodes to an all-ones
-sentinel rather than throwing. This keeps `signingHash` panic-free on malformed
-input (the `@dagsocial/validation` no-panic contract, M-5/M-6), and — because a
-valid field's top bits are always zero — no malformed post can encode to the
-same bytes as a well-formed one. A mirror implementation must reproduce this,
-not reintroduce a throw.
-
-`computePostId` prefixes `POST_ID_DOMAIN` so the id is a distinct, full-entropy
-hash — not equal to the PoW hash `blake2b512(postFieldBytes || u64LE(powNonce))`,
-which shares the same tail. `signingHash` carries no tag (it stays
-`blake2b512(postFieldBytes)`, the exact bytes PoW is solved over).
+`computePostId` prefixes `POST_ID_DOMAIN` so the id is a distinct, full-entropy hash — not
+equal to the PoW hash `blake2b512(postFieldBytes ‖ vlqU(powNonce))`, which shares the same
+tail. `signingHash` carries no tag (it stays `blake2b512(postFieldBytes)`, the exact bytes
+PoW is solved over).
 
 **This encoding is protocol-breaking and unversioned.** It changes every post
 hash and must be byte-identical in `@dagsocial/types` **and** the demo-UI JS
@@ -128,7 +120,8 @@ UsernameClaim = Post with content { type: "username_claim", claim: "@alice" }
 |--------|-----------|-------------|
 | `postPowPreimage(post)` | `(Post) => Uint8Array` | `postFieldBytes(post)` — the canonical length-prefixed encoding (see above). What PoW is solved over and what `signingHash` hashes. Excludes `powNonce` and `signature`. |
 | `signingHash(post)` | `(Post) => Buffer(32)` | `blake2b512(postFieldBytes(post)).subarray(0,32)` — what the author signs. Excludes `powNonce` and `signature`. |
-| `computePostId(post)` | `(Post) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| postFieldBytes(post) \|\| u64LE(powNonce)).subarray(0,32).toString('hex')` — includes PoW nonce; domain-tagged so it ≠ the PoW hash |
+| `powNonceBytes(powNonce)` | `(number) => Uint8Array` | `vlqU(powNonce)` — the tail the PoW hash and the id both append. **The only writer of that tail**; `@dagsocial/validation`'s `verifyPoW` calls it rather than encoding the nonce itself. Total by sentinel, so an out-of-domain nonce collides rather than throwing — see the warning above. |
+| `computePostId(post)` | `(Post) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| postFieldBytes(post) \|\| powNonceBytes(powNonce)).subarray(0,32).toString('hex')` — includes PoW nonce; domain-tagged so it ≠ the PoW hash |
 | `getPostDiscriminator(content)` | `(string) => string \| null` | Parse JSON content and extract `type` field, or null |
 | `buildProfileContent(type, extra)` | `(string, Record?) => string` | Build JSON content string with type discriminator |
 

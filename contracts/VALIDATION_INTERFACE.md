@@ -23,11 +23,26 @@ Exports from `packages/validation/src/index.ts`.
 verifyPoW(input: Uint8Array, nonce: number, targetBits: number): boolean
 ```
 
-Encodes `nonce` as an 8-byte little-endian unsigned integer, concatenates
-`input || nonceBytes`, hashes with blake2b512, takes first 32 bytes, checks
-that the result has at least `targetBits` leading zero bits.
+Appends the nonce using **`powNonceBytes` from `@dagsocial/types`** — `vlqU(nonce)`, the same
+tail `computePostId` appends — concatenates `input ‖ powNonceBytes(nonce)`, hashes with
+blake2b512, takes the first 32 bytes, and checks that the result has at least `targetBits`
+leading zero bits.
 
-Used for post PoW verification in both Stage 1 (gossip) and Stage 2 (node).
+**It does not encode the nonce itself.** That layout belongs to `TYPES_INTERFACE.md` →
+Serialization → "Layout — Post". A local copy here is exactly what let this function and
+`computePostId` disagree for the whole of the positional migration while every test stayed
+green (Phase 8). One writer, one layout owner.
+
+> ⚠ **`isU64Safe(nonce)` is load-bearing and is NOT redundant with the writer.** `vlqU` is
+> total by sentinel, so it cannot throw — but every out-of-domain nonce (`NaN`, `-1`, `1.5`,
+> `2⁶⁰`) takes `VLQ_SENTINEL` and therefore **one shared hash**. Under the previous
+> fixed-width tail this guard existed to stop `BigInt` / `writeBigUInt64LE` throwing; under
+> `vlqU` its purpose is collision-prevention instead. Same check, different reason — do not
+> delete it on the grounds that the writer no longer throws.
+
+Post PoW only, in both Stage 1 (gossip) and Stage 2 (node). Ordering-block PoW is
+`verifyOrderingBlockPoW` below, which appends `encodeLE64` and shares no code with this
+function — two encodings, each specified.
 
 ### verifyOrderingBlockPoW
 
@@ -703,11 +718,16 @@ verified at receipt time only.
 - Signatures verified with `crypto.verify(null, signingHash, keyObj, sig)`
   using a `KeyObject` created via `crypto.createPublicKey`
 - SPKI DER prefix for Ed25519: `302a300506032b6570032100`
-- PoW nonce encoded as 8-byte little-endian unsigned integer, after an
-  integer-range guard (M-6): a nonce or `targetBits` that is not a non-negative
-  safe integer within `u64` yields `false`, never a thrown `RangeError` from
-  `BigInt` / `writeBigUInt64LE`. Validate with `Number.isInteger` (not a loose
-  `typeof === 'number'`, which admits `NaN` and floats)
+- **Two PoW nonce encodings, each specified, sharing no code path.** A *post* nonce is
+  `vlqU`, written by `powNonceBytes` in `@dagsocial/types` and by nothing in this package.
+  An *ordering-block* nonce is `encodeLE64` (`MINING_INTERFACE.md` → PoW Verification).
+  Unifying them is a protocol decision, not a tidy
+- The integer-range guard (M-6) applies to both, and **its purpose differs by encoding**: a
+  nonce or `targetBits` that is not a non-negative safe integer within `u64` yields `false`,
+  never a thrown `RangeError`. For the block nonce the guard prevents a throw from `BigInt` /
+  `writeBigUInt64LE`; for the post nonce `vlqU` cannot throw, and the guard instead prevents
+  every out-of-domain value collapsing onto `VLQ_SENTINEL` and sharing one hash. Validate
+  with `Number.isInteger` (not a loose `typeof === 'number'`, which admits `NaN` and floats)
 - Content limits measured in UTF-8 bytes, not characters
 - All functions are synchronous — no Promises, no callbacks
 - Protocol version `PROTOCOL_VERSION` from `@dagsocial/types`

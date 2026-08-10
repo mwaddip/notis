@@ -109,12 +109,18 @@ function postFieldBytes(post: Post): Uint8Array {
 }
 
 /**
- * Encode `powNonce` as the preimage tail the post id and the PoW hash append.
+ * `vlqU(powNonce)` — the preimage tail the post id and the PoW hash append.
  *
- * `vlqU`, so total: an out-of-domain nonce sentinels rather than throwing. The
- * miner varies this field freely and a malformed one must not become a panic.
+ * **The only writer of that tail** (TYPES_INTERFACE → Hashing functions).
+ * `@dagsocial/validation`'s `verifyPoW` calls this rather than encoding the
+ * nonce itself, so the two sides of one layout cannot drift.
+ *
+ * Total by sentinel, so every out-of-domain nonce shares one tail and therefore
+ * one id. What keeps that harmless is `verifyPoW`'s `isU64Safe(nonce)` — a
+ * guard upstream and in another package, **not** this writer's totality, and so
+ * not redundant with it. See TYPES_INTERFACE → Canonical field encoding.
  */
-function powNonceBytes(powNonce: number): Uint8Array {
+export function powNonceBytes(powNonce: number): Uint8Array {
   const w = new ByteWriter();
   writeVlqU(w, powNonce);
   return w.toBytes();

@@ -121,16 +121,21 @@ Post {
   signature: bytes             // Ed25519 over signingHash(post)
 }
 
-PostId = blake2b512(POST_ID_DOMAIN ‖ postFieldBytes(post) ‖ u64LE(powNonce))[0:32], hex
+PostId = blake2b512(POST_ID_DOMAIN ‖ postFieldBytes(post) ‖ vlqU(powNonce))[0:32], hex
 ```
 
-> **The byte-exact preimage is specified in `TYPES_INTERFACE.md` (§Core Types) and nowhere
-> else.** Every field is length-prefixed and the ref array carries an explicit `u32LE`
-> count (audit M-1); the domain tag keeps a post id from ever colliding with the PoW hash
-> over the same post. **Do not restate the formula here.** This document previously carried
-> it twice, in two different field orders, both in the pre-M-1 unprefixed form — a
+> **The byte-exact preimage is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
+> Post") and nowhere else.** Every field is length-prefixed and the ref array carries an
+> explicit count (audit M-1); the domain tag keeps a post id from ever colliding with the PoW
+> hash over the same post. **Do not restate the formula here.** This document previously
+> carried it twice, in two different field orders, both in the pre-M-1 unprefixed form — a
 > restatement of a byte format is a mirror implementation in prose, and it diverged exactly
 > the way mirrors do.
+>
+> ⚠ **It diverged again, in this very paragraph, and that is the point.** The clause above
+> read "an explicit `u32LE` count" until 2026-08-10 — a fragment of the format, restated
+> inside the warning against restating the format, left behind when Phase 3b made the count
+> `vlqU`. A prohibition does not exempt the text that carries it.
 
 A post's `parentRefs` may reference either live posts or stumps. The hash is
 the same either way — the DAG's cryptographic integrity doesn't depend on
