@@ -756,12 +756,47 @@ tree collapse into clean rejections:
 > primary key, a stored lie that throws at read time. The property is *totality with respect to
 > untrusted input*.
 >
-> **It is not a promise that no condition may halt the node**, and one condition deliberately
-> does. `UnhashableStoredHeaderError` — raised when a header **already in our own store** cannot be
-> hashed — escapes the catch and fail-stops. It is outside the property's scope by construction: every
-> stored header passed `verifyOrderingBlockStructure` at apply, whose header checks *are*
-> `verifyHeaderFieldDomains`, so no peer can cause it. It means corruption or a bug in us. The type
-> and its boundary live in `services/corrupt-state.ts`; all four apply callers delegate to it.
+> **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
+> deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
+> one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
+> a boundary edit to be fatal"*. There are now **three** subclasses, and that test's design intent has
+> since been vindicated by a real third case that needed **zero** boundary edits:
+>
+> | Subclass | Raised when | Raising site |
+> |---|---|---|
+> | `UnhashableStoredHeaderError` | a header already in our store cannot be hashed | ⚠ **now dead `src`** — see below |
+> | `MissingStoredBlockError` | a block the chain refers to is absent from the store | store |
+> | **`UnreadableStoredBlockError`** | **a stored block's bytes will not decode** | **`store/ordering.ts` → `rowToOrderingBlock`** |
+>
+> The class is outside the totality property's scope by construction, and the argument is about
+> **provenance, not validation**: peer bytes are never stored. Grepping the *table* rather than the
+> function finds exactly one `INSERT` into `ordering_blocks`, from one caller, downstream of the
+> structure gate, writing this node's **own re-encoding** of an already-decoded block. An attacker
+> inverting that would have to make our writer emit bytes our reader rejects — a bug in us, which is
+> what fail-stop is for.
+>
+> ⚠ **The store is now a raising site, and that is the point.** An earlier draft of this section
+> implied the boundary lives only at apply's callers. **It cannot.** By the time a `ReaderError`
+> reaches `applyOrderingBlock`'s catch it is indistinguishable from the one `decodeTx` raises over
+> the block's own `utxoTxs`, which are **peer-chosen and an ordinary rejection**. Only the store
+> frame knows the bytes are ours. `rowToOrderingBlock` therefore catches **every** throw, not just
+> `ReaderError`: the claim is about the bytes' provenance, which holds however the decoder fails, and
+> narrowing to a class would leave a `TypeError` from a decoder bug misfiled as an arriving block's
+> rejection.
+>
+> **Reach is the live argument, not the halt.** `getOrderingBlock` has **six** callers and only
+> apply's read passes through a catch that could promote anything. `extendsOurTip` runs on the gossip
+> path *before* apply and outside `handleOrderingBlock`'s inner try — a bare `ReaderError` there fails
+> `failStopIfCorruptChain`'s `instanceof`, is re-thrown from an async handler, and ends the process as
+> an **unhandled rejection**: no FATAL line, no site, no height. That is the "right end by the wrong
+> mechanism" this file condemns elsewhere. A fix at the funnel would never have touched it.
+>
+> ✅ **`UnhashableStoredHeaderError` is unreachable from the store as of Phase 3b.** Every value
+> `readVlqU` / `readHexN` / `readBytesN` can produce is already inside `verifyHeaderFieldDomains`, so
+> **a stored header that decodes is always hashable** and `blockHash` cannot answer `null` on that
+> path. The decode boundary subsumes the domain check — *the serializer is the validator*, arriving
+> for the header. The type and its allowlist entry are deliberately left in place; removing them needs
+> its own enumeration.
 >
 > **Why halting beats rejecting here.** A corrupt stored `prevBlock` would otherwise reject every
 > subsequent block, forever, logged as "unexpected failure during apply". A
