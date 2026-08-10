@@ -18,7 +18,6 @@ import {
   insertVouchCooldown,
   hasActiveVouchCooldown,
 } from '../store/vouch-cooldowns.js';
-import { VOUCH_COOLDOWN_BLOCKS } from '@dagsocial/types';
 import { settlePruneUtxo } from './settle-prune-utxo.js';
 import {
   CorruptChainStateError,
@@ -28,6 +27,7 @@ import {
 import type { DecayDeps } from './decay.js';
 import { config } from '../config.js';
 import { computeBlockReward, computeSubBlockRoot, computeUtxoTxRoot, clearTemplate } from './block-creator.js';
+import { MAX_REORG_DEPTH } from './fork-resolution.js';
 import { subBlockIdsOf } from './sub-block-ids.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
@@ -79,7 +79,6 @@ import {
   encodeTx,
   decodeTx,
   PROTOCOL_VERSION,
-  CREDIT_MINER_REWARD_DELAY,
   LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
@@ -335,7 +334,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // maturity delay entirely. The lock is a pure function of height (MINING
   // contract, invariant 3); the gossip validator's `>= height` bound is both
   // weaker than that and absent from the sync/reorg path.
-  const expectedLock = block.header.height + CREDIT_MINER_REWARD_DELAY;
+  const expectedLock = block.header.height + config.creditMinerRewardDelay;
   for (const out of block.utxoTxTree.coinbaseOutputs) {
     if (out.lockedUntilBlock !== expectedLock) {
       console.warn(
@@ -393,7 +392,10 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
 
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
-  purgeOldJournals(block.header.height - 20);
+  // Retention is the real floor under revert depth — `revertBlock` throws
+  // without a journal — so it tracks the depth `findForkPoint` can walk back
+  // to rather than restating the number.
+  purgeOldJournals(block.header.height - MAX_REORG_DEPTH);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is
@@ -1036,7 +1038,7 @@ function applyMutationPhase(
             insertVouchCooldown(
               vb.voucherId,
               vb.targetId,
-              height + VOUCH_COOLDOWN_BLOCKS,
+              height + config.vouchCooldownBlocks,
               vb.value,
             );
           }

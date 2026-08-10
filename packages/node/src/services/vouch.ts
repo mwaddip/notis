@@ -1,9 +1,9 @@
 import {
   computeTxId,
   VOUCH_MIN_BALANCE,
-  VOUCH_COOLDOWN_BLOCKS,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
+import { config } from '../config.js';
 import type { VouchBox, UtxoTransaction } from '@dagsocial/types';
 import {
   hasAnyActiveVouch,
@@ -111,6 +111,9 @@ export function initiateUnvouch(
   insertUtxoTx(tx, null, expiresAtHeight);
 
   const txId = computeTxId(tx);
-  const karmaReturnsAtBlock = currentBlockHeight + VOUCH_COOLDOWN_BLOCKS;
+  // Advisory only — the cooldown row is written at apply time from the same
+  // field, so this must read it rather than the constant or the API reports a
+  // maturity height the chain will not honour.
+  const karmaReturnsAtBlock = currentBlockHeight + config.vouchCooldownBlocks;
   return { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock, tx };
 }

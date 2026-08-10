@@ -39,7 +39,7 @@ import {
   getOrderingBlock,
   peerStorage,
 } from './store/index.js';
-import { encodePost, MEMPOOL_EXPIRY_BLOCKS, subBlockFromPost, verifyPostId, VOUCH_COOLDOWN_BLOCKS } from '@dagsocial/types';
+import { encodePost, MEMPOOL_EXPIRY_BLOCKS, subBlockFromPost, verifyPostId } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 
 const config = loadConfig();
@@ -72,10 +72,14 @@ try {
 function validateProtocolConstants(): void {
   const checks: Array<{ condition: boolean; message: string }> = [
     {
-      condition: MAX_REORG_DEPTH >= VOUCH_COOLDOWN_BLOCKS,
+      // Checked against the profile field, which is the value the cooldown is
+      // actually written with (`block-apply` §12b) — the constant it used to
+      // read is not consulted by any network.
+      condition: MAX_REORG_DEPTH >= config.vouchCooldownBlocks,
       message:
         `MAX_REORG_DEPTH (${MAX_REORG_DEPTH}) must be less than ` +
-        `VOUCH_COOLDOWN_BLOCKS (${VOUCH_COOLDOWN_BLOCKS}). ` +
+        `the ${config.networkType} profile's vouchCooldownBlocks ` +
+        `(${config.vouchCooldownBlocks}). ` +
         `Otherwise, cooldown maturation can be reorged without journaling, ` +
         `causing double karma mints and permanent cooldown loss.`,
     },

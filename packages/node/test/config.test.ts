@@ -5,6 +5,8 @@ import {
   MAGIC_TESTNET,
   MAGIC_DEVNET,
   AVL_KEY_LENGTH,
+  CREDIT_INITIAL_REWARD,
+  CREDIT_REWARD_REDUCTION,
 } from '@dagsocial/types';
 
 const TEST_KEYS = [
@@ -197,6 +199,15 @@ describe('config', () => {
       expect(cfg.networkType).toBe('testnet');
       expect(cfg.profile).toEqual(NETWORK_PROFILES.testnet);
       expect(cfg.profile.magic).toBe(MAGIC_TESTNET);
+      // Baked literals, so this fails if testnet ever stops inheriting these
+      // from mainnet. Both networks build them from the same constants the
+      // consumers used to read directly, which is what makes profile-sourcing
+      // them a devnet-only consensus change.
+      expect(cfg.vouchCooldownBlocks).toBe(60);
+      expect(cfg.inviteProbationBlocks).toBe(1000);
+      expect(cfg.creditMinerRewardDelay).toBe(720);
+      expect(cfg.creditFixedRateBlocks).toBe(1_051_200);
+      expect(cfg.creditEpochBlocks).toBe(129_600);
     });
 
     it('NETWORK_TYPE=devnet resolves the devnet profile and copies its values', async () => {
@@ -214,6 +225,34 @@ describe('config', () => {
       expect(cfg.orderingBlockPowTargetBits).toBe(4);
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
       expect(cfg.karmaStaleThresholdBlocks).toBe(500);
+      expect(cfg.vouchCooldownBlocks).toBe(3);
+      expect(cfg.inviteProbationBlocks).toBe(10);
+      expect(cfg.creditMinerRewardDelay).toBe(10);
+      expect(cfg.creditFixedRateBlocks).toBe(1000);
+      expect(cfg.creditEpochBlocks).toBe(100);
+    });
+
+    // The flat fields above are only half the claim: a consumer that still
+    // reads the module constant leaves them defined and unused. `computeBlockReward`
+    // is the one consumer reachable without a database, and it runs on the apply
+    // path of nodes that never start a block creator — so it reads the process
+    // config, not the injected one.
+    it('the emission schedule a consumer computes follows NETWORK_TYPE', async () => {
+      process.env['NETWORK_TYPE'] = 'devnet';
+      const { computeBlockReward } = await import('../src/services/block-creator.js');
+
+      // devnet's fixed-rate period ends at 1000, so 1001 is one epoch in.
+      expect(computeBlockReward(1000)).toBe(CREDIT_INITIAL_REWARD);
+      expect(computeBlockReward(1001)).toBe(
+        CREDIT_INITIAL_REWARD - CREDIT_REWARD_REDUCTION,
+      );
+    });
+
+    it('the same heights are still fixed-rate on testnet', async () => {
+      process.env['NETWORK_TYPE'] = 'testnet';
+      const { computeBlockReward } = await import('../src/services/block-creator.js');
+
+      expect(computeBlockReward(1001)).toBe(CREDIT_INITIAL_REWARD);
     });
 
     it('NETWORK_TYPE=mainnet resolves the mainnet profile', async () => {
