@@ -64,6 +64,26 @@ readers exist for that check and for the conformance role the corpus takes on af
 
 Register a Phase 3 struct the same way: production writer, independent reader, `registerStruct`.
 
+## A vector may exceed a validation bound — silently, it may not
+
+This corpus pins the **encodable** domain, which is deliberately wider than the valid one: the
+sentinel discipline lives in that gap, and a field's domain is established upstream of the encoder,
+never inside it (`TYPES_INTERFACE.md` → Totality; spec §2.5). So `post/wide-numerics` carries a
+`protocolVersion` of 2⁵³−1 and `post/multibyte-content` carries two `parentRefs` where
+`MAX_PARENT_REFS` is 1 — both deliberately, because the writer has no cap and something must pin
+what it does past one.
+
+Two rules keep that from teaching the layout wrong:
+
+- **A vector that exceeds a bound says so in its note, and names the bound.** A reader derives
+  limits from the corpus, and an unannotated `02` count byte is where they derive the wrong one.
+- **A vector named `typical` is protocol-typical.** Out-of-domain and boundary cases get names that
+  say so — `minimal`, `wide-numerics`, `u64-max`.
+
+`subBlockEntry/typical` broke both when the block vectors were written (two `parentRefs`, note
+silent about the cap); corrected 2026-08-10, and `subBlock/with-parents` — same defect, plural name
+— with it.
+
 ## Adding a vector
 
 Append to the `vectors` array of the relevant file:

@@ -42,13 +42,12 @@
       "value": {
         "postId": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
         "parentRefs": [
-          "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
-          "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+          "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
         ],
         "author": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3"
       },
-      "bytes": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a302a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
-      "note": "The 'subblock' Merkle leaf preimage, tag excluded: leafHash('subblock', these bytes) is the leaf. postId, both parentRefs and author are four distinct b32 values, so a transposition of the two same-width id rows moves the bytes."
+      "bytes": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a301a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+      "note": "The 'subblock' Merkle leaf preimage, tag excluded: leafHash('subblock', these bytes) is the leaf. ONE ref, because MAX_PARENT_REFS is 1 and a vector named `typical` is where a reader derives the bound. postId, the ref and author are three distinct b32 values, so any transposition among the three b32 rows moves the bytes; order WITHIN a multi-element array is pinned by the two-entry trees below, which are arrays that can legally hold more than one."
     },
     {
       "name": "subBlockEntry/thread-root",
@@ -170,7 +169,7 @@
       "note": "value is vlqU64 (bigint, throwing); isTreasury is writeBool (total, strict 0/1); an empty utxoTx is a bare zero length."
     },
     {
-      "name": "subBlock/with-parents",
+      "name": "subBlock/with-parent",
       "codec": "subBlock",
       "value": {
         "subBlockId": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
@@ -178,8 +177,7 @@
           "content": "golden vector post",
           "author": "6666666666666666666666666666666666666666666666666666666666666666",
           "parentRefs": [
-            "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
-            "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+            "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
           ],
           "challenge": "9999999999999999999999999999999999999999999999999999999999999999",
           "protocolVersion": 1,
@@ -190,8 +188,8 @@
         "producerId": "6666666666666666666666666666666666666666666666666666666666666666",
         "protocolVersion": 1
       },
-      "bytes": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a112676f6c64656e20766563746f7220706f7374666666666666666666666666666666666666666666666666666666666666666602a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a29999999999999999999999999999999999999999999999999999999999999999018094bdb28833b2f21903030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303666666666666666666666666666666666666666666666666666666666666666601",
-      "note": "postBytes is inline with no length prefix — the post is self-delimiting."
+      "bytes": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a112676f6c64656e20766563746f7220706f7374666666666666666666666666666666666666666666666666666666666666666601a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a19999999999999999999999999999999999999999999999999999999999999999018094bdb28833b2f21903030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303666666666666666666666666666666666666666666666666666666666666666601",
+      "note": "postBytes is inline with no length prefix — the post is self-delimiting. One ref: MAX_PARENT_REFS is 1."
     },
     {
       "name": "orderingBlock/full",

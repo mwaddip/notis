@@ -8,9 +8,6 @@
 // — format limits and every karma/credit cost — is universal: compress time, never
 // economics. Adding a field here weakens every test that runs on devnet; the burden is on
 // the addition.
-//
-// P2-A phase 1: this table is purely additive — nothing consumes it yet. The node still
-// reads per-process environment values until later phases re-point it.
 
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,

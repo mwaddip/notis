@@ -96,9 +96,9 @@ export interface CoinbaseOutput {
  * `MAX_SAFE_INTEGER`, `readVlqU64` wraps into the u64 domain, `readBool` rejects
  * any byte but `0x00`/`0x01`, and the re-encode compare rejects non-minimal
  * padding. So a peer cannot inject one of these through gossip. What remains is
- * the encode side, which `encodeOrderingBlock` and node's store write reach
- * without passing a decoder — and, once Phase 4 lands, node's `computeUtxoTxRoot`
- * as well, at block *creation* and again at block *apply*.
+ * the encode side, which `encodeOrderingBlock`, node's store write and node's
+ * `computeUtxoTxRoot` reach without passing a decoder — the last at block
+ * *creation* and again at block *apply*.
  *
  * That third reach adds no surface the other two did not already have, in either
  * direction: a gossiped block reaches apply through `decodeOrderingBlock`, which

@@ -14,7 +14,7 @@
         "timestamp": 0
       },
       "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-      "note": "68 bytes: 1 + 0 content, 32 author, 1 count, 32 challenge, 1 version, 1 timestamp. The struct's own shape, with every field at its zero value — so the byte COUNT is what this pins, and nothing else can."
+      "note": "68 bytes: 1 + 0 content, 32 author, 1 count, 32 challenge, 1 version, 1 timestamp. The struct's own shape, with every field at its zero value — so the byte COUNT is what this pins, and nothing else can. Content and protocolVersion sit below their protocol minimums (1 byte; PROTOCOL_VERSION is 1): the encoder has no floor, and the domain is upstream of it."
     },
     {
       "name": "post/golden",
