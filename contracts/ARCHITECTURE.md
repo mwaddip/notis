@@ -1555,8 +1555,14 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **Sort-order determinism** — any operation feeding a Merkle tree or
   content hash MUST have a documented, identical sort order across all
   implementations.
-  > ⚠ **FALSE on "documented" — and the fix is to change the format, not to document it.**
-  > Two consensus Merkle leaf preimages (`subblock`, `coinbase`) are `JSON.stringify` output
+  > ✅ **CLOSED by Phase 4, 2026-08-10 — the record below is kept because the reasoning
+  > generalises, and because "replace, do not specify" is the decision that produced the whole
+  > positional-format bundle.** Both leaves now hash the committed struct's own wire bytes
+  > (`subBlockEntryBytes`, `coinbaseOutputBytes`), stated once in `@dagsocial/types`. All five
+  > leaf types — `subblock`, `prune`, `coinbase`, `utxotx`, `stump` — speak one dialect.
+  >
+  > ⚠ **WAS FALSE on "documented" — and the fix was to change the format, not to document it.**
+  > Two consensus Merkle leaf preimages (`subblock`, `coinbase`) were `JSON.stringify` output
   > feeding `subBlockRoot` and `utxoTxRoot` under PoW. Documenting them would commit every
   > future implementation to replicating **ECMAScript JSON semantics** — key order equal to
   > object-literal insertion order, ES2019 escaping, `Array.from` on byte arrays (else

@@ -19,6 +19,8 @@ import {
   leafHash,
   buildMerkleRoot,
   serializePruneEntry,
+  subBlockEntryBytes,
+  coinbaseOutputBytes,
   hexToBuf,
 } from '@dagsocial/types';
 import {
@@ -58,6 +60,16 @@ import {
 
 // ---------------------------------------------------------------------------
 // Merkle root computation
+//
+// Every leaf preimage is the committed struct's own wire bytes, supplied by
+// `@dagsocial/types` — `subBlockEntryBytes`, `serializePruneEntry`,
+// `coinbaseOutputBytes`, and a bare 32-byte id for `utxotx`. Node states no
+// layout of its own here (TYPES_INTERFACE → "Merkle leaf preimages are the
+// struct's own wire bytes"): a second statement of a layout in a second package
+// drifts with no compiler signal, and a consistent transposition round-trips
+// perfectly, so no round-trip test could see it. Only the `leafHash` domain tag
+// belongs to this side of the boundary — that is what makes an entry's wire form
+// and its committed form byte-identical rather than merely parallel.
 // ---------------------------------------------------------------------------
 
 export function computeSubBlockRoot(tree: SubBlockTree): string {
@@ -65,12 +77,9 @@ export function computeSubBlockRoot(tree: SubBlockTree): string {
     ...tree.subBlockEntries.map((entry) =>
       // `author` is part of the leaf preimage (audit H-3) — the block commits to
       // who authored each confirmed post, so prune authorship is checkable on a
-      // node that never received the content. Key order is normative.
-      leafHash('subblock', Buffer.from(JSON.stringify({
-        postId: entry.postId,
-        parentRefs: entry.parentRefs,
-        author: entry.author,
-      })))),
+      // node that never received the content. Field order is normative and it
+      // lives in `subBlockEntryBytes`, not here.
+      leafHash('subblock', subBlockEntryBytes(entry))),
     ...tree.pruneEntries.map((entry) =>
       // Tag changed from 'stump' to 'prune' (intentional breaking change, per verifiable-prune spec)
       leafHash('prune', Buffer.from(serializePruneEntry(entry)))),
@@ -83,14 +92,7 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
     ...tree.utxoTxIds.map((id) =>
       leafHash('utxotx', hexToBuf(id))),
     ...tree.coinbaseOutputs.map((o) =>
-      // `value` is bigint — JSON.stringify throws on it, and this preimage is
-      // consensus (utxoTxRoot leaf). Canonical decimal string, deterministic.
-      leafHash('coinbase', Buffer.from(JSON.stringify({
-        owner: Array.from(o.owner),
-        value: o.value.toString(),
-        lockedUntilBlock: o.lockedUntilBlock,
-        isTreasury: o.isTreasury,
-      })))),
+      leafHash('coinbase', coinbaseOutputBytes(o))),
   ];
   return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
 }

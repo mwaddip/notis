@@ -1287,8 +1287,8 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeSubBlockTree(bytes)` | `(Uint8Array) => SubBlockTree` | CBOR decode |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
-| `subBlockEntryBytes(e)` | `(SubBlockEntry) => Uint8Array` | ⚠ **Phase 4.** One entry's positional bytes. Both the tree codec's element writer and the `'subblock'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
-| `coinbaseOutputBytes(o)` | `(CoinbaseOutput) => Uint8Array` | ⚠ **Phase 4.** One output's positional bytes. Both the tree codec's element writer and the `'coinbase'` Merkle leaf preimage |
+| `subBlockEntryBytes(e)` | `(SubBlockEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'subblock'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
+| `coinbaseOutputBytes(o)` | `(CoinbaseOutput) => Uint8Array` | One output's positional bytes. Both the tree codec's element writer and the `'coinbase'` Merkle leaf preimage |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Length-prefixed wire framing: `u32BE(len)‖headerCbor ‖ … ‖ validatorSignature(64)` |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | CBOR encode |
