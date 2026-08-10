@@ -1,188 +1,225 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="no-anim">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Notis DEMO UI</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script>
+/* Not deferred, on purpose: `data-theme` has to be on <html> before the first paint, or a
+   stored preference is transitioned into instead of painted — HOUSE_STYLE.md → Motion. */
+(function(){
+  var root=document.documentElement, STORE="notis-theme";
+  function stored(){ try{ var t=localStorage.getItem(STORE); return t==="dark"||t==="light"?t:null; }
+    catch(e){ return null; } }   // private mode, disabled storage — not an error worth raising
+  function resolve(){
+    var saved=stored(); if(saved) return saved;
+    return (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light"; }
+  /* The control names and shows the theme it would switch TO, lowercase, because the
+     surrounding labels are lowercase. */
+  function apply(theme, remember){
+    root.setAttribute("data-theme", theme);
+    if(remember){ try{ localStorage.setItem(STORE, theme); }catch(e){} }
+    var btn=document.getElementById("themeToggle");
+    if(btn){ var other = theme==="dark" ? "light" : "dark";
+      btn.textContent=other; btn.setAttribute("aria-label","Switch to "+other+" theme"); } }
+
+  apply(resolve(), false);   // not remembered: nobody has chosen yet
+
+  document.addEventListener("DOMContentLoaded", function(){
+    apply(root.getAttribute("data-theme"), false);   // label the control now that it exists
+    requestAnimationFrame(function(){
+      requestAnimationFrame(function(){ root.classList.remove("no-anim"); }); });
+    var btn=document.getElementById("themeToggle");
+    if(btn) btn.addEventListener("click", function(){
+      apply(root.getAttribute("data-theme")==="dark" ? "light" : "dark", true); });
+  });
+})();
+</script>
 <style>
+/* ---------- faces ----------
+   Self-hosted, always: HOUSE_STYLE.md → Typography. Copied into this package rather than
+   served from docs/site — the demo UI takes no runtime dependency outside the workspace. */
+@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:400 700;font-display:swap;
+           src:url('fonts/Plus-Jakarta-Sans.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;
+           src:url('fonts/JetBrains-Mono.woff2') format('woff2')}
+
+/* ---------- tokens ----------
+   Sand is the primary ground; Bistre is the dark theme. Every value was solved numerically
+   for its contrast target at a held hue — copy them from HOUSE_STYLE.md → Colour, never
+   nudge one by eye. */
 :root{
-  --bg:#020D07; --bg-2:#06190F; --bg-3:#082514;
-  --p:#2CFF87; --on-p:#01160B;
-  --p-hi:#D6FFEA; --p-md:#A6E7C6; --p-lo:#57B084; --p-dk:#1A6B40;
-  --p-04:rgba(44,255,135,.055); --p-08:rgba(44,255,135,.10); --p-30:rgba(44,255,135,.34);
-  --amber:#FFB000; --amber-bd:rgba(255,176,0,.35); --amber-bg:rgba(255,176,0,.08);
-  --red:#FF4E3A; --red-bd:rgba(255,78,58,.42); --red-bg:rgba(255,78,58,.05); --on-red:#160302;
-  --glow-accent:0 0 8px rgba(44,255,135,.42);
-  --glow-strong:0 0 18px rgba(44,255,135,.4);
-  --glow-input:0 0 0 1px var(--p-30),0 0 14px rgba(44,255,135,.12);
-  --panel-grad:linear-gradient(160deg,rgba(44,255,135,.03),rgba(1,10,5,.35));
-  --post-grad:linear-gradient(155deg,rgba(44,255,135,.05),rgba(3,18,10,.4) 60%,rgba(1,10,5,.5));
-  --scan:rgba(0,0,0,.10);
-  --vig-shadow:inset 0 0 150px rgba(0,0,0,.5),inset 0 0 70px rgba(44,255,135,.06);
-  --vig-grad:radial-gradient(130% 100% at 50% 40%,transparent 60%,rgba(0,0,0,.3));
-  --m:"JetBrains Mono",ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  --ground:#E7DCC6; --surface:#EFE7D5; --border:#CFC1A6; --borderStrong:#8B7A61;
+  --ink:#2A2419; --inkMute:#696051;
+  --green:#5E8C3A; --greenText:#476A2C; --onGreen:#FAF6EC;
+  --gold:#7F5A1C; --goldFill:#9B762D; --clay:#9A4A2F; --keyline:#1B2A12;
+  --notis-green:var(--green); --notis-keyline:var(--keyline);
+  --sans:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  /* Fixed handles for both grounds: the theme control renders the ground it would switch to,
+     so it needs the other palette whichever one is active. */
+  --sand:#E7DCC6; --sand-ink:#2A2419; --bistre:#211E18; --bistre-ink:#E9E1CF;
 }
-:root[data-theme="light"]{
-  --bg:#EDF3EE; --bg-2:#E4EDE6; --bg-3:#DBE7DE;
-  --p:#0B8A46; --on-p:#F4FBF6;
-  --p-hi:#0B2C1B; --p-md:#26493A; --p-lo:#557460; --p-dk:#CBDDD0;
-  --p-04:rgba(11,138,70,.05); --p-08:rgba(11,138,70,.09); --p-30:rgba(11,138,70,.30);
-  --amber:#9A6000; --amber-bd:rgba(154,96,0,.4); --amber-bg:rgba(154,96,0,.08);
-  --red:#C22E1C; --red-bd:rgba(194,46,28,.4); --red-bg:rgba(194,46,28,.06); --on-red:#FCEDEB;
-  --glow-accent:none;
-  --glow-strong:0 6px 16px rgba(11,138,70,.20);
-  --glow-input:0 0 0 1px var(--p-30);
-  --panel-grad:linear-gradient(160deg,rgba(11,138,70,.05),rgba(237,243,238,.55));
-  --post-grad:linear-gradient(155deg,rgba(11,138,70,.05),rgba(228,237,230,.55) 60%,rgba(219,231,222,.7));
-  --scan:rgba(11,42,27,.035);
-  --vig-shadow:inset 0 0 120px rgba(11,42,27,.045);
-  --vig-grad:none;
+:root[data-theme="dark"]{
+  --ground:#211E18; --surface:#2A261D; --border:#3D3830; --borderStrong:#746857;
+  --ink:#E9E1CF; --inkMute:#918570;
+  --greenText:#63933D; --onGreen:#141A0C; --gold:#AF7D26; --goldFill:#E8B84B; --clay:#C96D4E;
 }
-@media(prefers-color-scheme:light){
-  :root:not([data-theme="dark"]){
-    --bg:#EDF3EE; --bg-2:#E4EDE6; --bg-3:#DBE7DE;
-    --p:#0B8A46; --on-p:#F4FBF6;
-    --p-hi:#0B2C1B; --p-md:#26493A; --p-lo:#557460; --p-dk:#CBDDD0;
-    --p-04:rgba(11,138,70,.05); --p-08:rgba(11,138,70,.09); --p-30:rgba(11,138,70,.30);
-    --amber:#9A6000; --amber-bd:rgba(154,96,0,.4); --amber-bg:rgba(154,96,0,.08);
-    --red:#C22E1C; --red-bd:rgba(194,46,28,.4); --red-bg:rgba(194,46,28,.06); --on-red:#FCEDEB;
-    --glow-accent:none; --glow-strong:0 6px 16px rgba(11,138,70,.20); --glow-input:0 0 0 1px var(--p-30);
-    --panel-grad:linear-gradient(160deg,rgba(11,138,70,.05),rgba(237,243,238,.55));
-    --post-grad:linear-gradient(155deg,rgba(11,138,70,.05),rgba(228,237,230,.55) 60%,rgba(219,231,222,.7));
-    --scan:rgba(11,42,27,.035); --vig-shadow:inset 0 0 120px rgba(11,42,27,.045); --vig-grad:none;
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#211E18; --surface:#2A261D; --border:#3D3830; --borderStrong:#746857;
+    --ink:#E9E1CF; --inkMute:#918570;
+    --greenText:#63933D; --onGreen:#141A0C; --gold:#AF7D26; --goldFill:#E8B84B; --clay:#C96D4E;
   }
 }
 
+/* The head script sets data-theme before the first paint; this holds transitions off for the
+   frames until it has, so a restored preference is painted and not animated into. */
+.no-anim *{transition:none!important;animation:none!important}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------- base ---------- */
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--p-md);font-family:var(--m);font-size:13.5px;line-height:1.6;
-  display:flex;height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
-body::before{content:"";position:fixed;inset:0;z-index:900;pointer-events:none;
-  background:repeating-linear-gradient(0deg,var(--scan) 0,var(--scan) 1px,transparent 1px,transparent 3px);mix-blend-mode:multiply}
-body::after{content:"";position:fixed;inset:0;z-index:901;pointer-events:none;box-shadow:var(--vig-shadow);background:var(--vig-grad)}
-::selection{background:var(--p);color:var(--on-p)}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.6;
+  display:flex;height:100vh;overflow:hidden;-webkit-font-smoothing:antialiased;
+  transition:background-color .15s ease,color .15s ease}
+::selection{background:var(--greenText);color:var(--onGreen)}
 a{color:inherit;text-decoration:none}
-:focus-visible{outline:1px solid var(--p);outline-offset:2px}
+:focus-visible{outline:2px solid var(--greenText);outline-offset:2px}
 .panel::-webkit-scrollbar{width:9px}
-.panel::-webkit-scrollbar-thumb{background:var(--p-dk)}
+.panel::-webkit-scrollbar-thumb{background:var(--border)}
 .panel::-webkit-scrollbar-track{background:transparent}
 
 .panel{padding:22px;overflow-y:auto;position:relative;z-index:2}
-.left{width:430px;min-width:430px;border-right:1px solid var(--p-dk);display:flex;flex-direction:column;gap:15px;background:var(--panel-grad)}
+.left{width:430px;min-width:430px;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:15px;background:var(--surface)}
 .left>*{flex-shrink:0}
 .right{flex:1}
 
-.brand{display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--p-dk)}
-.brand svg{width:22px;height:22px;filter:drop-shadow(0 0 6px rgba(44,255,135,.5))}
-:root[data-theme="light"] .brand svg{filter:none}
-.brand b{font-size:15px;font-weight:800;letter-spacing:.08em;color:var(--p-hi)}
-.brand b i{font-style:normal;color:var(--p)}
-.brand .tag{margin-left:auto;font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--p-lo)}
-.brand .tag u{width:6px;height:6px;border-radius:50%;background:var(--p);display:inline-block;box-shadow:0 0 8px var(--p);margin-right:6px;vertical-align:1px;animation:blip 2.2s infinite}
-@keyframes blip{0%,100%{opacity:1}50%{opacity:.35}}
+/* Rows mixing the two faces align on the baseline, never centred: flex centring positions each
+   item by its box, so the result depends on each family's ascent and descent metrics. */
+.brand{display:flex;align-items:baseline;gap:10px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+.brand svg{width:22px;height:22px;flex:none;align-self:center}
+.brand b{font-size:16px;font-weight:700;letter-spacing:.01em;color:var(--ink)}
+.brand b i{font-style:normal;font-weight:400;color:var(--inkMute)}
+.brand .tag{margin-left:auto;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--inkMute)}
+.brand .tag u{width:6px;height:6px;border-radius:50%;background:var(--greenText);display:inline-block;margin-right:6px;vertical-align:1px}
 
-.theme-toggle{position:fixed;top:14px;right:16px;z-index:950;width:38px;height:38px;padding:0;
-  display:inline-flex;align-items:center;justify-content:center;font-size:16px;line-height:1;letter-spacing:0;
-  border:1px solid #B4D3C1;background:#EDF3EE;color:#0B8A46;cursor:pointer;
-  box-shadow:0 2px 12px rgba(0,0,0,.35);transition:transform .2s,box-shadow .2s,filter .2s}
-.theme-toggle::before{content:none}
-.theme-toggle:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(0,0,0,.45);filter:brightness(1.06)}
-:root[data-theme="light"] .theme-toggle{background:#020D07;color:#2CFF87;border-color:#1F6B41}
-@media(prefers-color-scheme:light){:root:not([data-theme="dark"]) .theme-toggle{background:#020D07;color:#2CFF87;border-color:#1F6B41}}
+/* Styled as the inverse of the active ground and labelled with the theme it would switch to,
+   so appearance and label agree and it explains itself without an icon anyone has to learn. */
+.theme-toggle{position:fixed;top:14px;right:16px;z-index:950;padding:7px 13px;
+  font-family:inherit;font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;line-height:1;
+  border:1px solid var(--bistre);background:var(--bistre);color:var(--bistre-ink);cursor:pointer;
+  transition:opacity .15s ease}
+.theme-toggle:hover{opacity:.86}
+:root[data-theme="dark"] .theme-toggle{background:var(--sand);color:var(--sand-ink);border-color:var(--sand)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .theme-toggle{background:var(--sand);color:var(--sand-ink);border-color:var(--sand)}}
 
-h2{font-size:10px;font-weight:700;letter-spacing:.26em;text-transform:uppercase;color:var(--p);margin-bottom:8px;display:flex;align-items:center;gap:9px}
-h2::before{content:"//";color:var(--p-lo)}
-h3{font-size:9.5px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--p-lo);margin:11px 0 4px}
-h4{font-size:10px;letter-spacing:.05em;color:var(--p-lo);margin:8px 0 3px;font-weight:600}
+/* The `//` is this surface's one deliberate departure — it marks the debug UI. It is the only
+   one: HOUSE_STYLE.md → Principles 5, the charm reads because the baseline is sober. */
+h2{font-size:11px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--ink);margin-bottom:8px;display:flex;align-items:baseline;gap:9px}
+h2::before{content:"//";color:var(--greenText)}
+h3{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--inkMute);margin:11px 0 4px}
+h4{font-size:11.5px;letter-spacing:.02em;color:var(--inkMute);margin:8px 0 3px;font-weight:600}
 
-textarea,input,select{width:100%;background:var(--bg-2);border:1px solid var(--p-dk);color:var(--p-md);font-size:12.5px;font-family:var(--m);padding:10px 11px;transition:border-color .2s,box-shadow .2s}
-textarea{height:120px;min-height:120px;resize:vertical;line-height:1.55}
+/* Fields carry ids, hex and amounts, so they are mono; the compose box carries prose and is
+   not. A placeholder is human copy either way. */
+textarea,input,select{width:100%;background:var(--ground);border:1px solid var(--borderStrong);color:var(--ink);
+  font-size:12.5px;font-family:var(--mono);padding:10px 11px;transition:border-color .15s ease}
+textarea{height:120px;min-height:120px;resize:vertical;line-height:1.55;font-family:var(--sans);font-size:14px}
 input,select{height:36px}
-select{cursor:pointer}
-textarea:focus,input:focus,select:focus{outline:none;border-color:var(--p-30);box-shadow:var(--glow-input)}
-::placeholder{color:var(--p-lo);opacity:.75}
+select{cursor:pointer;font-family:var(--sans);font-size:13px}
+textarea:focus,input:focus,select:focus{outline:none;border-color:var(--ink)}
+::placeholder{color:var(--inkMute);font-family:var(--sans);opacity:1}
 
-button{display:inline-flex;align-items:center;gap:6px;font-family:var(--m);font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;padding:9px 15px;border:1px solid var(--p-30);color:var(--p);background:var(--p-04);cursor:pointer;transition:background .22s,color .22s,border-color .22s,box-shadow .22s,transform .22s cubic-bezier(.16,.84,.32,1)}
-button::before{content:">";opacity:.65}
-button:hover{background:var(--p);color:var(--on-p);border-color:var(--p);box-shadow:var(--glow-strong);transform:translateY(-1px)}
-button:disabled{opacity:.32;cursor:not-allowed;transform:none;box-shadow:none;background:var(--p-04);color:var(--p)}
-button.small{padding:6px 10px;font-size:9px;letter-spacing:.14em}
-button.danger{border-color:var(--red-bd);color:var(--red);background:var(--red-bg)}
-button.danger::before{content:"!"}
-button.danger:hover{background:var(--red);color:var(--on-red);border-color:var(--red);box-shadow:none}
+/* A ghost control: the border is its sole boundary, which is what earns borderStrong
+   (HOUSE_STYLE.md → Accessibility contract). */
+button{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:12.5px;font-weight:600;
+  letter-spacing:0;text-transform:none;padding:8px 14px;border:1px solid var(--borderStrong);color:var(--ink);
+  background:none;cursor:pointer;transition:background-color .15s ease,color .15s ease,border-color .15s ease}
+button:hover{border-color:var(--ink)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.small{padding:6px 10px;font-size:11.5px}
+/* An engaged filter is a green fill, so its label takes onGreen — the fill and the text on it
+   move together, which an inline background alone cannot do. */
+button.on{background:var(--greenText);color:var(--onGreen);border-color:var(--greenText)}
+button.on:hover{border-color:var(--greenText);opacity:.88}
+/* Clay separates warning from destructive by weight, not by a second hue: full rule here,
+   soft tint on the hover. */
+button.danger{border-color:var(--clay);color:var(--clay)}
+button.danger:hover{border-color:var(--clay);background:color-mix(in srgb,var(--clay) 12%,transparent)}
 
-.id-badge{font-size:10.5px;color:var(--p-lo);background:var(--bg-2);border:1px solid var(--p-dk);padding:9px 10px;word-break:break-all;letter-spacing:.02em}
-.post-author,.id-badge{font-family:var(--m)}
-.status-bar{background:var(--bg-2);border:1px solid var(--p-dk);padding:11px 12px;font-size:11.5px;line-height:1.75}
-.status-bar span{color:var(--p-lo)}
-.status-bar strong{color:var(--p-hi);font-weight:600}
+.id-badge{font-family:var(--mono);font-size:11.5px;color:var(--inkMute);background:var(--ground);border:1px solid var(--border);padding:9px 10px;word-break:break-all}
+.status-bar{background:var(--ground);border:1px solid var(--border);padding:11px 12px;font-size:13px;line-height:1.75}
+.status-bar span{color:var(--inkMute)}
+.status-bar strong{color:var(--ink);font-weight:600;font-family:var(--mono);font-size:12px}
 
-.status{font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:3px 9px;border:1px solid}
-.status-ok{color:var(--p);border-color:var(--p-30);background:var(--p-08)}
-.status-busy{color:var(--amber);border-color:var(--amber-bd);background:var(--amber-bg)}
-.status-error{color:var(--red);border-color:var(--red-bd);background:var(--red-bg)}
+/* Not controls, so their outline is the semantic hue at reduced weight rather than a border
+   token. Busy is neither warning nor error: clay would misreport it and gold means credits. */
+.status{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;padding:3px 9px;border:1px solid}
+.status-ok{color:var(--greenText);border-color:color-mix(in srgb,var(--greenText) 45%,transparent);background:color-mix(in srgb,var(--greenText) 10%,transparent)}
+.status-busy{color:var(--inkMute);border-color:var(--border);background:none}
+.status-error{color:var(--clay);border-color:color-mix(in srgb,var(--clay) 45%,transparent);background:color-mix(in srgb,var(--clay) 10%,transparent)}
 
-.empty{color:var(--p-lo);font-style:italic;padding:22px;text-align:center;letter-spacing:.04em}
-.row{display:flex;gap:8px;align-items:center}
-.row label{font-size:12px;color:var(--p-lo);white-space:nowrap}
+.empty{color:var(--inkMute);font-style:italic;padding:22px;text-align:center}
+.row{display:flex;gap:8px;align-items:baseline}
+.row label{font-size:12.5px;color:var(--inkMute);white-space:nowrap}
 
-.like-btn{display:inline-flex;align-items:center;gap:5px;background:none;border:1px solid var(--p-dk);color:var(--p-lo);cursor:pointer;font-size:11px;font-family:var(--m);letter-spacing:.04em;padding:2px 9px;text-transform:none;transition:border-color .2s,color .2s,background .2s}
-.like-btn::before{content:none}
-.like-btn:hover{border-color:var(--p-30);color:var(--p);background:var(--p-04);box-shadow:none;transform:none}
-.like-btn:disabled{opacity:.4;cursor:not-allowed}
-.like-btn.liked{border-color:var(--p);color:var(--p);background:var(--p-08);text-shadow:var(--glow-accent)}
-.like-btn .spinner{display:inline-block;width:10px;height:10px;border:2px solid var(--p-dk);border-top-color:var(--p);border-radius:50%;animation:spin .6s linear infinite;margin-right:4px;vertical-align:middle}
-@keyframes spin{to{transform:rotate(360deg)}}
+.like-btn{display:inline-flex;align-items:center;gap:5px;background:none;border:1px solid var(--border);color:var(--inkMute);cursor:pointer;font-size:11.5px;font-family:var(--sans);font-weight:500;letter-spacing:0;padding:2px 9px;text-transform:none;transition:border-color .15s ease,color .15s ease,background-color .15s ease}
+.like-btn:hover{border-color:var(--borderStrong);color:var(--ink)}
+.like-btn:disabled{opacity:.45;cursor:not-allowed}
+.like-btn.liked{border-color:var(--greenText);color:var(--greenText);background:color-mix(in srgb,var(--greenText) 10%,transparent)}
+/* A pending like is reported, not animated: an indefinite spin is ambient motion, and under
+   prefers-reduced-motion it would freeze mid-rotation and read as damage. */
+.like-btn .spinner{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--inkMute);margin-right:5px;vertical-align:middle}
 
-pre{background:var(--bg-2);border:1px solid var(--p-dk);padding:9px 10px;font-size:10.5px;font-family:var(--m);color:var(--p);overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin:5px 0;line-height:1.7}
-.result-msg{font-size:10.5px;padding:4px 0;color:var(--p-lo);letter-spacing:.02em}
-.result-msg.ok{color:var(--p)}
-.result-msg.err{color:var(--red)}
-hr{border:none;border-top:1px solid var(--p-dk);margin:6px 0}
+pre{background:var(--ground);border:1px solid var(--border);padding:9px 10px;font-size:11.5px;font-family:var(--mono);color:var(--ink);overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin:5px 0;line-height:1.7}
+.result-msg{font-size:12px;padding:4px 0;color:var(--inkMute)}
+.result-msg.ok{color:var(--greenText)}
+.result-msg.err{color:var(--clay)}
+hr{border:none;border-top:1px solid var(--border);margin:6px 0}
 
-.post{position:relative;border:1px solid var(--p-dk);padding:14px 16px;margin-bottom:11px;background:var(--post-grad);transition:border-color .3s,box-shadow .3s}
-.post::before,.post::after{content:"";position:absolute;width:9px;height:9px;pointer-events:none}
-.post::before{top:-1px;left:-1px;border-top:1px solid var(--p);border-left:1px solid var(--p)}
-.post::after{bottom:-1px;right:-1px;border-bottom:1px solid var(--p);border-right:1px solid var(--p)}
-.post:hover{border-color:var(--p-30);box-shadow:var(--glow-strong)}
-.post-author{font-size:10.5px;color:var(--p);letter-spacing:.04em;margin-bottom:7px;text-shadow:var(--glow-accent)}
-.post-content{font-size:13.5px;line-height:1.56;color:var(--p-hi);font-weight:300}
-:root[data-theme="light"] .post-content{font-weight:400}
-.post-meta{font-size:10px;color:var(--p-lo);margin-top:11px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;letter-spacing:.03em}
+.post{position:relative;border:1px solid var(--border);padding:14px 16px;margin-bottom:11px;background:var(--surface);transition:border-color .15s ease}
+.post:hover{border-color:var(--borderStrong)}
+.post-author{font-family:var(--mono);font-size:11.5px;color:var(--greenText);margin-bottom:7px}
+.post-content{font-size:14px;line-height:1.56;color:var(--ink);font-weight:400}
+.post-meta{font-size:11.5px;color:var(--inkMute);margin-top:11px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
 
-.permalink{color:var(--p-lo);text-decoration:none;cursor:pointer}
-.permalink:hover{color:var(--p);text-decoration:underline}
-.post-highlighted{border-color:var(--amber)!important}
-.thread-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.permalink{color:var(--greenText);text-decoration:none;cursor:pointer}
+.permalink:hover{text-decoration:underline}
+/* The permalink target is marked by the one border weight that is not decoration. */
+.post-highlighted{border-color:var(--borderStrong)!important}
+.thread-header{display:flex;align-items:baseline;gap:12px;margin-bottom:16px}
 .thread-header h2{margin-bottom:0}
 .ancestor-post{opacity:.72}
-.ancestor-connector{color:var(--p-lo);font-size:10px;padding:2px 0 2px 12px;border-left:2px solid var(--p-dk);margin-left:0}
+.ancestor-connector{color:var(--inkMute);font-size:11px;padding:2px 0 2px 12px;border-left:2px solid var(--border);margin-left:0}
 
 @media(max-width:768px){
   body{flex-direction:column;height:auto;min-height:100vh;overflow:auto}
-  .left{width:100%;min-width:0;border-right:none;border-bottom:1px solid var(--p-dk);flex-shrink:0}
+  .left{width:100%;min-width:0;border-right:none;border-bottom:1px solid var(--border);flex-shrink:0}
   .right{flex:none}
   .panel{overflow-y:visible}
 }
-@media(prefers-reduced-motion:reduce){*{animation:none!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
-<button class="theme-toggle" id="themeToggle" title="Toggle light / dark" aria-label="Toggle theme">☀</button>
+<!-- Label and aria-label are set by the head script, which is the only thing that knows
+     which theme is active. -->
+<button class="theme-toggle" id="themeToggle"></button>
 
 <div class="panel left">
   <div class="brand">
-    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <circle cx="16" cy="5"  r="2.6" fill="#2CFF87"/>
-      <circle cx="6"  cy="16" r="2"   fill="#2CFF87" opacity=".8"/>
-      <circle cx="26" cy="16" r="2"   fill="#2CFF87" opacity=".8"/>
-      <circle cx="11" cy="27" r="1.7" fill="#2CFF87" opacity=".5"/>
-      <circle cx="22" cy="27" r="1.7" fill="#2CFF87" opacity=".5"/>
-      <path d="M16 7.6 6 13.9M16 7.6 26 13.9M6 18 11 25M26 18 22 25" stroke="#2CFF87" stroke-width="1.1" opacity=".55"/>
-    </svg>
-    <b>NOTIS<i>//</i></b>
+    <!-- Notis mark, micro tier (22px ≤ 32 — HOUSE_STYLE.md → The mark § Tiers: continuous
+         ring with heads, N only). GENERATED ARTWORK - do not hand-edit. The build script
+         that produced it is deliberately not in the repository; only its output is, so a
+         change to the mark means regenerating it elsewhere, not patching the paths below.
+         The parameters it was built from, so the drawing stays reproducible on paper:
+         ring=continuous, keyline=off, banner=none, recursion=off.
+         r_ring=372, stroke=64, head r=42 at radius 410, slit 3.2 deg.
+         Inlined rather than referenced as an <img>, because custom properties do not cross
+         into an image element. -->
+    <svg viewBox="0 0 1000 1000" aria-hidden="true"><g fill="none" stroke="var(--notis-green, #009B00)"><path d="M 128 500 A 372 372 0 1 0 872 500 A 372 372 0 1 0 128 500" stroke-width="64"/></g><g fill="var(--notis-green, #009B00)"><circle cx="500" cy="90" r="42"/><circle cx="855.07" cy="295" r="42"/><circle cx="855.07" cy="705" r="42"/><circle cx="500" cy="910" r="42"/><circle cx="144.93" cy="705" r="42"/><circle cx="144.93" cy="295" r="42"/></g><g transform="translate(302.34 247.97) scale(0.38218)" fill="var(--notis-green, #009B00)"><path d="M 291.49 52.04 L 279.19 60.04 L 0 1221.91 L 2.12 1236.43 L 156.3 1238.6 L 170.32 1234.11 L 355.22 617.08 L 364.03 604.41 L 374.69 616.29 L 651.51 1233.14 L 680.53 1238.49 L 768.58 1239.14 L 828.86 1238.01 L 840.28 1233.77 L 847.89 1214.23 L 1000 244.6 L 994.28 227.58 L 896.08 67.45 L 889.97 67.11 L 886.1 75.31 L 856.43 311.66 L 710.57 887.7 L 700.72 901.82 L 446.83 329.97 L 403.79 62.86 L 387.86 51.77 Z"/></g></svg>
+    <b>Notis<i>//</i></b>
     <span class="tag"><u></u>testnet</span>
   </div>
   <h2>Identity</h2>
@@ -247,19 +284,19 @@ hr{border:none;border-top:1px solid var(--p-dk);margin:6px 0}
     <div id="inviteResult"></div>
 
     <h4>Redeem</h4>
-    <div style="font-size:11px;color:var(--p-lo);margin:4px 0 2px">Invite Box ID:</div>
+    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Invite Box ID:</div>
     <div class="row">
       <input id="inviteBoxIdInput" placeholder="Invite Box ID" style="flex:1;font-size:11px">
     </div>
-    <div style="font-size:11px;color:var(--p-lo);margin:4px 0 2px">Bond Box ID:</div>
+    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Bond Box ID:</div>
     <div class="row" style="margin-top:2px">
       <input id="bondBoxIdForClaimInput" placeholder="Bond Box ID" style="flex:1;font-size:11px">
     </div>
-    <div style="font-size:11px;color:var(--p-lo);margin:4px 0 2px">Inviter ID (hex):</div>
+    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Inviter ID (hex):</div>
     <div class="row" style="margin-top:2px">
       <input id="inviterIdForClaimInput" placeholder="Inviter ID (hex)" style="flex:1;font-size:11px">
     </div>
-    <div style="font-size:11px;color:var(--p-lo);margin:4px 0 2px">Secret (hex):</div>
+    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Secret (hex):</div>
     <div class="row" style="margin-top:2px">
       <input id="inviteSecretInput" placeholder="Secret (hex)" style="flex:1;font-size:11px">
       <button id="redeemInviteBtn" class="small">Redeem</button>
@@ -619,136 +656,6 @@ function postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protoc
     vlqU(protocolVersion),
     vlqU(timestamp),
   ]);
-}
-
-// ===========================================================================
-// CBOR Encoder (minimal, matches cbor-x 1.6.4 output for box types)
-// ===========================================================================
-
-/**
- * ⚠ **DEAD as of the positional-format phase — zero callers in this file.**
- *
- * `canonicalBoxBytes` was its only consumer and is positional now, so nothing
- * here reaches an id, a signature or the wire. It is left standing only because
- * its deletion is booked to the migration's Phase 7, whose entire remaining
- * content this now is. **Do not route anything back through it**: a box encoded
- * here would disagree with the node on every byte.
- *
- * Key insight (historical): cbor-x preserves JavaScript object insertion order
- * for map keys — it does NOT sort canonically.  We match by encoding keys in
- * the order Object.keys() returns them, which is insertion order.
- */
-
-/**
- * CBOR head for a length-prefixed major type: `majorBase | additionalInfo`,
- * then the length in the shortest form cbor-x 1.6.4 emits (measured, definite
- * length — it never chunks): inline to 23, then 0x18+u8 / 0x19+u16 / 0x1a+u32.
- * `majorBase` is 0x40 for byte strings and 0x60 for text.
- *
- * One ladder for both, so a longer field cannot be handled by one encoder and
- * rejected by the other. The old pair capped at 255 and threw beyond — audit
- * L-5's string/byte half. Nothing reaches it today (every box string field is a
- * 64-char hex at most, every byte field is 32, and post content never goes
- * through this encoder), so this is a foot-gun removed, not a live fix.
- *
- * There is deliberately no 0x1b+u64 rung: no browser-constructible string or
- * Uint8Array reaches 2³² bytes, so it would be unreachable code in an encoder
- * whose whole job is to be checkable against cbor-x. Fail-closed instead.
- */
-function cborHead(majorBase, len) {
-  if (len <= 23) return new Uint8Array([majorBase | len]);
-  if (len <= 0xFF) return new Uint8Array([majorBase | 0x18, len]);
-  if (len <= 0xFFFF) return new Uint8Array([majorBase | 0x19, (len >>> 8) & 0xFF, len & 0xFF]);
-  if (len <= 0xFFFFFFFF) return new Uint8Array([
-    majorBase | 0x1A, (len >>> 24) & 0xFF, (len >>> 16) & 0xFF, (len >>> 8) & 0xFF, len & 0xFF,
-  ]);
-  throw new Error('CBOR length exceeds the u32 form: ' + len);
-}
-
-/** Text string. The length prefix counts UTF-8 **bytes**, not characters. */
-function cborEncodeString(str) {
-  const bytes = encoder.encode(str);
-  return concatUint8Arrays([cborHead(0x60, bytes.length), bytes]);
-}
-
-function cborEncodeBytes(buf) {
-  return concatUint8Arrays([cborHead(0x40, buf.length), buf]);
-}
-
-/**
- * Minimal-int form for `number` fields, matching cbor-x 1.6.4 exactly
- * (measured): integers whose argument (n, or -1-n when negative) fits u32
- * use the shortest form — 0–23 inline, then 0x18+u8 / 0x19+u16 / 0x1a+u32,
- * mirrored at 0x20/0x38/0x39/0x3a for negatives; integer arguments beyond
- * u32 encode as float64 (0xfb + IEEE 754 BE, exact for safe integers) —
- * cbor-x never emits 0x1b uint64 for a JS number, only for a bigint.
- * `createdAtBlock` crosses 65536, so the old u16 cap threw exactly where
- * consensus needs the u32 form (audit L-5). Non-integers throw: no valid
- * box carries one, and float64-encoding a fractional height would hide a bug.
- */
-function cborEncodeInt(n) {
-  if (!Number.isSafeInteger(n)) throw new Error('Non-integer CBOR number: ' + n);
-  const major = n >= 0 ? 0x00 : 0x20;
-  const val = n >= 0 ? n : -1 - n;
-  if (val <= 23) return new Uint8Array([major | val]);
-  if (val <= 0xFF) return new Uint8Array([major | 0x18, val]);
-  if (val <= 0xFFFF) return new Uint8Array([major | 0x19, (val >>> 8) & 0xFF, val & 0xFF]);
-  if (val <= 0xFFFFFFFF) return new Uint8Array([
-    major | 0x1A, (val >>> 24) & 0xFF, (val >>> 16) & 0xFF, (val >>> 8) & 0xFF, val & 0xFF,
-  ]);
-  const out = new Uint8Array(9);
-  out[0] = 0xFB;
-  new DataView(out.buffer).setFloat64(1, n, false);
-  return out;
-}
-
-/**
- * Box `value` is a bigint and always encodes as CBOR uint64 — 0x1b + 8 bytes
- * big-endian — even for small values (2n → 1b0000000000000002): cbor-x does
- * not minimize bigints, and the golden vectors freeze that form (Spec B P0).
- * Values are non-negative < 2⁶⁴ by protocol invariant; anything else throws.
- */
-function cborEncodeBigInt(v) {
-  if (v < 0n || v >= 1n << 64n) throw new Error('bigint out of uint64 range: ' + v);
-  const out = new Uint8Array(9);
-  out[0] = 0x1B;
-  for (let i = 8; i >= 1; i--) { out[i] = Number(v & 0xffn); v >>= 8n; }
-  return out;
-}
-
-function cborEncodeUndefined() { return new Uint8Array([0xf7]); }
-
-/** Encode a plain object as a CBOR map.  Preserves insertion order. */
-function cborEncodeMap(obj) {
-  const keys = Object.keys(obj);
-  const parts = [];
-  for (const k of keys) {
-    parts.push(cborEncodeString(k));
-    const v = obj[k];
-    if (typeof v === 'string')            parts.push(cborEncodeString(v));
-    else if (typeof v === 'number')       parts.push(cborEncodeInt(v));
-    else if (typeof v === 'bigint')       parts.push(cborEncodeBigInt(v));
-    else if (typeof v === 'boolean')      parts.push(new Uint8Array([v ? 0xf5 : 0xf4]));
-    else if (v === undefined || v === null) parts.push(cborEncodeUndefined());
-    else if (v instanceof Uint8Array)     parts.push(cborEncodeBytes(v));
-    else throw new Error('Unsupported CBOR value type for key ' + k);
-  }
-  const body = concatUint8Arrays(parts);
-  const numPairs = keys.length;
-  // cbor-x always emits 0xB9 + 2-byte big-endian length for maps
-  const header = new Uint8Array([0xB9, (numPairs >> 8) & 0xFF, numPairs & 0xFF]);
-  return concatUint8Arrays([header, body]);
-}
-
-function cborEncode(value) {
-  if (typeof value === 'string')              return cborEncodeString(value);
-  if (typeof value === 'number')              return cborEncodeInt(value);
-  if (typeof value === 'bigint')              return cborEncodeBigInt(value);
-  if (typeof value === 'boolean')             return new Uint8Array([value ? 0xf5 : 0xf4]);
-  if (value === undefined || value === null)  return cborEncodeUndefined();
-  if (value instanceof Uint8Array)            return cborEncodeBytes(value);
-  if (typeof value === 'object')              return cborEncodeMap(value);
-  throw new Error('Unsupported CBOR type');
 }
 
 // ===========================================================================
@@ -1670,15 +1577,17 @@ window.viewProfile = async (authorHex) => {
 
 function updateFilterBtn() {
   const btn = document.getElementById('feedFilterBtn');
+  // `.on` carries the fill and the text on it together; an inline background alone left the
+  // label the same colour as its own fill.
   if (feedFilter === userId) {
     btn.textContent = 'My posts';
-    btn.style.background = 'var(--p)';
+    btn.classList.add('on');
   } else if (feedFilter !== 'all') {
     btn.textContent = "Author's posts";
-    btn.style.background = 'var(--p)';
+    btn.classList.add('on');
   } else {
     btn.textContent = 'All posts';
-    btn.style.background = '';
+    btn.classList.remove('on');
   }
 }
 
@@ -1837,12 +1746,12 @@ function renderPost(p, id, depth, highlighted = false) {
   const indent = depth * 20;
   const isOwn = userId && p.author === userId;
   const deleteBtn = isOwn
-    ? `<button class="like-btn delete-btn" data-post-id="${id}" style="color:var(--red)">&#10005; Delete</button>`
+    ? `<button class="like-btn delete-btn" data-post-id="${id}" style="color:var(--clay)">&#10005; Delete</button>`
     : '';
   const { relative, absolute } = formatRelativeTime(p.timestamp);
   const hlClass = highlighted ? ' post-highlighted' : '';
   return `
-    <div class="post${hlClass}" data-post-id="${id}" style="margin-left:${indent}px;border-left:${depth > 0 ? '2px solid var(--p-dk)' : 'none'};padding-left:${depth > 0 ? '10px' : '12px'}">
+    <div class="post${hlClass}" data-post-id="${id}" style="margin-left:${indent}px;border-left:${depth > 0 ? '2px solid var(--border)' : 'none'};padding-left:${depth > 0 ? '10px' : '12px'}">
       <div class="post-author" style="cursor:pointer" onclick="event.stopPropagation();viewProfile('${esc(p.author)}')" title="View posts by this author">${esc(p.author.slice(0, 12))}...</div>
       <div class="post-content">${escWithBreaks(p.content)}</div>
       <div class="post-meta">
@@ -1996,8 +1905,8 @@ async function loadThread(postId, pushState = true) {
     feed.innerHTML = `
       <div class="thread-header">
         <button id="threadBackBtn" class="small">← Back to feed</button>
-        <button id="copyLinkBtn" class="small" style="background:var(--p-dk)">Copy link</button>
-        <span id="copyLinkMsg" style="font-size:11px;color:var(--p);display:none">Copied!</span>
+        <button id="copyLinkBtn" class="small" style="background:var(--border)">Copy link</button>
+        <span id="copyLinkMsg" style="font-size:11px;color:var(--greenText);display:none">Copied!</span>
       </div>
       ${ancestorsHtml}
       ${targetHtml}
@@ -2158,14 +2067,15 @@ async function loadIdentityStatus() {
       const data = await res.json();
       const total = BigInt(data.total);
       karmaEl.textContent = total.toString();
-      karmaEl.style.color = total > 0n ? 'var(--p)' : 'var(--p-lo)';
+      // Green is karma, gold is credits — the two-ledger mapping, and gold means nothing else.
+      karmaEl.style.color = total > 0n ? 'var(--greenText)' : 'var(--inkMute)';
     } else {
       karmaEl.textContent = '0';
-      karmaEl.style.color = 'var(--p-lo)';
+      karmaEl.style.color = 'var(--inkMute)';
     }
   } catch {
     karmaEl.textContent = '—';
-    karmaEl.style.color = 'var(--p-lo)';
+    karmaEl.style.color = 'var(--inkMute)';
   }
 
   try {
@@ -2174,14 +2084,14 @@ async function loadIdentityStatus() {
       const data = await res.json();
       const total = BigInt(data.total);
       creditsEl.textContent = formatCredits(total);
-      creditsEl.style.color = total > 0n ? 'var(--p)' : 'var(--p-lo)';
+      creditsEl.style.color = total > 0n ? 'var(--gold)' : 'var(--inkMute)';
     } else {
       creditsEl.textContent = '0';
-      creditsEl.style.color = 'var(--p-lo)';
+      creditsEl.style.color = 'var(--inkMute)';
     }
   } catch {
     creditsEl.textContent = '—';
-    creditsEl.style.color = 'var(--p-lo)';
+    creditsEl.style.color = 'var(--inkMute)';
   }
 }
 
@@ -2198,7 +2108,7 @@ async function loadStatus() {
     INVITE_PROBATION_BLOCKS = s.inviteProbationBlocks || 1000;
 
     bar.innerHTML = `
-      <div><span>Network:</span> <strong style="color:${networkType === 'testnet' ? 'var(--amber)' : networkType === 'devnet' ? 'var(--red)' : 'var(--p)'}">${esc(networkType)}</strong></div>
+      <div><span>Network:</span> <strong style="color:${networkType === 'testnet' ? 'var(--inkMute)' : networkType === 'devnet' ? 'var(--clay)' : 'var(--greenText)'}">${esc(networkType)}</strong></div>
       <div><span>Block height:</span> <strong>${s.blockHeight}</strong></div>
       <div><span>Posts (confirmed / pending):</span> <strong>${s.postCount} / ${s.pendingPosts}</strong></div>
       <div><span>Total karma:</span> <strong>${s.totalKarma}</strong> &nbsp; <span>Total credits:</span> <strong>${formatCredits(BigInt(s.totalCredits))}</strong></div>
@@ -2420,15 +2330,15 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     if (res.ok) {
       result.innerHTML = `
         <span class="result-msg ok">Invite created!</span>
-        <div style="font-size:11px;color:var(--p-lo);margin:4px 0">Invite Box ID:</div>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Invite Box ID:</div>
         <pre>${esc(data.inviteBoxId)}</pre>
-        <div style="font-size:11px;color:var(--p-lo);margin:4px 0">Bond Box ID:</div>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Bond Box ID:</div>
         <pre>${esc(data.bondBoxId)}</pre>
-        <div style="font-size:11px;color:var(--p-lo);margin:4px 0">Inviter ID:</div>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Inviter ID:</div>
         <pre>${esc(pubKeyHex)}</pre>
-        <div style="font-size:11px;color:var(--p-lo);margin:4px 0">Secret (share with invitee):</div>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Secret (share with invitee):</div>
         <pre>${esc(secretHex)}</pre>
-        <div style="font-size:11px;color:var(--p-lo);margin:4px 0">Secret Hash (for verification):</div>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Secret Hash (for verification):</div>
         <pre>${esc(secretHashHex)}</pre>
       `;
       loadStatus();
@@ -2528,9 +2438,9 @@ document.getElementById('redeemInviteBtn').addEventListener('click', async () =>
           sessionStorage.removeItem('reveal_' + inviteBoxId);
           result.innerHTML = `
             <span class="result-msg ok">Invite claimed!</span>
-            <div style="font-size:11px;color:var(--p-lo);margin:4px 0">User ID:</div>
+            <div style="font-size:11px;color:var(--inkMute);margin:4px 0">User ID:</div>
             <pre>${esc(revealData.userId)}</pre>
-            <div style="font-size:11px;color:var(--p-lo);margin:4px 0">Karma Box ID:</div>
+            <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Karma Box ID:</div>
             <pre>${esc(revealData.karmaBoxId)}</pre>
           `;
           loadStatus();
@@ -2671,18 +2581,6 @@ setInterval(() => {
   loadStatus();
 }, 5000);
 setInterval(loadStatus, 15000);
-</script>
-<script>
-(function(){
-  var root=document.documentElement, btn=document.getElementById("themeToggle");
-  function eff(){ var t=root.getAttribute("data-theme"); if(t==="dark"||t==="light") return t;
-    return (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark"; }
-  function apply(t){ root.setAttribute("data-theme",t); if(btn) btn.textContent=(t==="dark"?"\u2600":"\u263E");
-    try{ localStorage.setItem("notis-theme",t); }catch(e){} }
-  var saved=null; try{ saved=localStorage.getItem("notis-theme"); }catch(e){}
-  apply(saved||eff());
-  if(btn) btn.addEventListener("click",function(){ apply(eff()==="dark"?"light":"dark"); });
-})();
 </script>
 </body>
 </html>
