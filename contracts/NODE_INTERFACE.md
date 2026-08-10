@@ -1899,6 +1899,46 @@ encodes present-but-`undefined` differently from absent, and the map header coun
 keys). The record shape change moves every record's AVL value bytes ⇒ `stateRoot`
 changes ⇒ covered by the standing fresh-chain deploy gate.
 
+#### Layout — IdentityRecord
+
+> **Added 2026-08-10 to close a contract gap.** Phase 5 moves AVL values to the positional format
+> and found there was **no byte layout for this record anywhere** — five layout tables existed
+> (`Post`, `Stump`/`PruneEntry`, `Boxes`, `UtxoTransaction`, `Block`), all in `TYPES_INTERFACE`, and
+> none for the second committed entity. The struct above defined the *fields*, which is not the same
+> thing. The executor stopped rather than inventing one; that was correct — an encoding invented in
+> `node` is a consensus format with no contract, which is the defect class this bundle exists to
+> close. **It lives here rather than in `TYPES_INTERFACE` because `IdentityRecord` is a `node` type
+> and `state/serialize-box.ts` is its only encoder**, but it uses the same writer vocabulary, and
+> `TYPES_INTERFACE` → Layout — Boxes governs the box arm of the same tree.
+
+| # | Field | Encoding |
+|---|---|---|
+| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Two entity kinds") |
+| 2 | `lastActivityBlock` | `vlqU` |
+| 3 | `lastDecayBlock` | `vlqU` |
+| 4 | `likeCarry` | `vlqU64` |
+
+**The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where
+`enum8(boxType)` is field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One
+encoder, one byte string, no composition step where a caller could disagree about ordering.
+
+**Domains, and where they are established.** `lastActivityBlock` and `lastDecayBlock` are `u32` block
+heights; `vlqU` is total *by sentinel*, so an out-of-domain height cannot panic the encoder — it
+**collides**, exactly as `createdAt` did in the header before 1f. `likeCarry` is `vlqU64` and
+`writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`. Per spec §2.5 the domain belongs upstream of the
+encoder: `likeCarry` is written **only** by per-block like settlement and is bounded by
+`LIKES_PER_KARMA_PAYOUT`, so the producer establishes it. **A domain check at the encoder would be
+the band-aid; if this field ever gains a second writer, that writer owns the domain.**
+
+⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
+NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
+positional layout has no keys and no map header, so neither is expressible. **`likeCarry` must still
+always be written, zero included** — not because absence would fork the bytes any more, but because
+the field is part of the record and a layout writes every field. Likewise `bigint` stays the type:
+under `vlqU64` a `number` and a `bigint` of equal value encode identically, so the type no longer
+guards the *bytes* — it guards the `safeIntegers` row boundary against a silent `Number()` coercion,
+which is a different and still-live reason.
+
 | Function | Signature |
 |----------|-----------|
 | `getIdentityRecord(identityId)` | `(UserId) => IdentityRecord \| null` |
@@ -2281,12 +2321,42 @@ The tree holds **boxes** (key = `boxId`) and **identity records**
 (key = `H(IDENTITY_KEY_DOMAIN ‖ identityId)`; see Store Interface → Identity
 Records). Three things follow, and all three are consensus-critical.
 
-**1. The value bytes must be self-describing.** `state/serialize-box.ts`
-already prefixes a one-byte discriminator (box-type tags `0x01`–`0x07`); the
-identity record takes a tag **outside that range** — `0x80`, high bit set, so
-"box" and "not a box" is a single bit test and the box-type space stays open.
-`deserializeBox` MUST reject a non-box tag rather than mis-decode it, and a
-kind-dispatching decoder is what any value-reading caller uses.
+**1. The value bytes must be self-describing.** The first byte is the
+discriminator; `deserializeBox` MUST reject a non-box tag rather than mis-decode
+it, and a kind-dispatching decoder is what any value-reading caller uses.
+
+⚠ **The box discriminator is `enum8(boxType)` from `TYPES_INTERFACE` →
+Layout — Boxes — NOT a second numbering owned by this package. Decided
+2026-08-10 (Phase 5).** The record tag stays `0x80`, high bit set, so "box"
+versus "not a box" is still a single bit test and the box-type space stays open.
+
+| | Discriminator space |
+|---|---|
+| Box | `enum8(boxType)`: `0` karma, `1` credit, `2` invite, **`3` reserved — retired `like`**, `4` bond, `5` post_lock, `6` vouch |
+| Identity record | `0x80` |
+
+**This replaces a second, disagreeing numbering that this package used to
+carry** (`0x01` karma … `0x07` vouch, with `0x03` reserved). The two were
+written at different times and nobody had put them side by side. They do not
+differ by a constant: the **reserved slot sits in a different position** — AVL
+reserved `0x03` between `credit` and `invite`, `enum8` reserves `3` between
+`invite` and `bond` — so `invite` was `+2` while every other type was `+1`.
+
+The collision surfaced when the AVL value moved onto `boxRecordBytes`, which
+**begins with `enum8(boxType)`**: prefixing the old tag would have written the
+box type **twice, in two disagreeing numberings, in adjacent bytes**. Found by
+the Phase 5 executor, who was told the tag scheme must not move and correctly
+refused to hand-compose around it. **The instruction was wrong** — it protected
+a *discipline* ("a retired type's tag is never reused") by pinning specific
+*numbers*, and the discipline survives intact on one numbering that already
+reserves `3`. Two numberings for one concept was never load-bearing; it was an
+artifact of two encoders written months apart.
+
+Safe to renumber because this phase moves the `stateRoot` regardless and the
+standing deploy gate mandates a wiped AVL store with a fresh chain — there is no
+history whose bytes must still parse. **That is a one-time window, not a
+standing licence.** After this lands, `enum8`'s numbering is the committed one
+and `3` stays reserved forever.
 
 **1a. The AVL value carries provenance, and an absent key is not an
 `undefined` key.** `serializeBox` strips only `id` and `boxType` — `txId` and

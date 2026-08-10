@@ -954,6 +954,30 @@ runtime strip somebody must remember:
 - **`boxRecordBytes`** — `boxContentBytes ‖ b32(txId) ‖ vlqU(index)`. What the AVL value and the
   store hold. The `id` is never encoded: it *is* the hash.
 
+> ⚠ **"What the AVL value holds" means the AVL value IS `boxRecordBytes` — no wrapper, no extra
+> discriminator byte. Stated explicitly 2026-08-10 because the implicit reading cost a phase.**
+>
+> `boxRecordBytes` **begins with `enum8(boxType)`**, so it is already self-describing. Node's
+> `state/serialize-box.ts` separately carried its own one-byte box-type tag from an earlier design,
+> and composing the two — `avlTag ‖ boxRecordBytes` — writes the box type **twice, in two
+> disagreeing numberings, in adjacent bytes**. The two numberings put the retired-`like` reservation
+> in *different positions* (`enum8` reserves `3` between `invite` and `bond`; the AVL tag reserved
+> `0x03` between `credit` and `invite`), so they do not even differ by a constant. **`enum8`'s
+> numbering wins**; see `NODE_INTERFACE` → "Two entity kinds" for the full record and why renumbering
+> is safe exactly once.
+>
+> **This makes an existing contractual claim exact rather than approximate.** `NODE_INTERFACE` §1a
+> argues the AVL value must carry everything the id derivation consumes, so that *"a box id is a
+> total function of the stored box"* is checkable **from a proof** rather than trusted. With the
+> value equal to `boxRecordBytes`, that becomes literal: **`boxId = blake2b512(BOX_ID_DOMAIN ‖
+> avlValue)[0:32]`**, so a light client recomputes the key from the value it was served. Under the
+> cbor form it was only nearly true — the value carried `guard` (which the derivation does not
+> consume) and omitted `boxType` (which it does).
+>
+> **`guard` is therefore dropped from the AVL value, and that is lossless** — it is a pure function
+> of `boxType` (C10), each of the six box types declares exactly one literal, and a decoder
+> synthesises it from the discriminator. Verified field-by-field by the Phase 5 executor, 2026-08-10.
+
 Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it is a pure function of
 `boxType` and carries zero information in a preimage (C10).
 
