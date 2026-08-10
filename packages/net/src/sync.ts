@@ -1,4 +1,4 @@
-import { decodeSubBlock, encodeSubBlock } from '@dagsocial/types';
+import { decodeSubBlock } from '@dagsocial/types';
 import type { SubBlock, BlockHeader, OrderingBlock } from '@dagsocial/types';
 import { encode } from 'cbor-x';
 import type { Libp2p } from 'libp2p';

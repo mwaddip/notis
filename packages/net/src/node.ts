@@ -9,10 +9,10 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { SubBlock, OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, encodeSubBlock, decodeSubBlock, encodeOrderingBlock, decodeOrderingBlock } from '@dagsocial/types';
+import { PROTOCOL_VERSION, decodeOrderingBlock } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
-import type { NetConfig, NetValidators, Peer, PeerRecord, PeerEntryMsg, PostsMsg, PostsEntry } from './types.js';
+import type { NetConfig, NetValidators, Peer, PeerEntryMsg, PostsMsg, PostsEntry } from './types.js';
 import { PeerState, PenaltyKind } from './types.js';
 import type { Libp2pGossip, GossipHandlers } from './gossip.js';
 import { PeerManager } from './peer-mgr.js';
@@ -38,6 +38,7 @@ import {
   encodeLegacyHeadersResponse,
 } from './sync-codec.js';
 import type { LegacyHeadersRequest } from './sync-codec.js';
+import { encodeServableOrderingBlock, encodeServableSubBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
 import { MAX_LEGACY_RESPONSE_ITEMS, MAX_STREAM_BYTES } from './msg-guards.js';
@@ -145,6 +146,9 @@ export class LazySyncStore implements SyncStore {
   private _getSubBlock: ((id: string) => unknown | null) | null = null;
   private _blocksHandler: ((block: OrderingBlock) => void) | null = null;
 
+  /** Validators reach this class for one reason: `serializeOrderingBlock` serves a stored row. */
+  constructor(private readonly validators: NetValidators) {}
+
   setOrderingBlockFn(fn: (height: number) => unknown | null): void {
     this._getOrderingBlock = fn;
   }
@@ -164,7 +168,10 @@ export class LazySyncStore implements SyncStore {
   serializeOrderingBlock(height: number): Uint8Array | null {
     const block = this._getOrderingBlock?.(height);
     if (!block) return null;
-    return encodeOrderingBlock(block as import('@dagsocial/types').OrderingBlock);
+    // A row we cannot encode is skipped from the ModifierResponse exactly as an
+    // absent one is (`sync-machine.handleModifierRequestMsg`) — the rest of the
+    // batch still serves.
+    return encodeServableOrderingBlock(block, this.validators, `height ${height}`);
   }
 
   getOrderingBlockHeader(height: number): unknown | null {
@@ -496,7 +503,7 @@ export class NetNode {
   private peerStorage: PeerStorage | null;
   private syncMachine: SyncMachine | null = null;
   private outboundMgr: OutboundManager | null = null;
-  private syncStore: LazySyncStore = new LazySyncStore();
+  private syncStore: LazySyncStore;
   private syncTimer: ReturnType<typeof setInterval> | null = null;
   private handshakeHandlerRegistered = false;
   private syncHandlerRegistered = false;
@@ -510,6 +517,7 @@ export class NetNode {
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
     this.config = config;
     this.validators = validators;
+    this.syncStore = new LazySyncStore(validators);
     // Omitted in tests/embedded use — PeerDb then runs ephemeral (contract:
     // "Persistence seam"), which is the valid non-production configuration.
     this.peerStorage = peerStorage ?? null;
@@ -570,7 +578,6 @@ export class NetNode {
     this.peerDb = new PeerDb(this.peerStorage, this.config.peerDbCap ?? 1000, selfAddrs);
 
     // Create SyncMachine with lazy store bridge
-    const magic = this.config.magic;
     this.syncMachine = new SyncMachine(
       this.config,
       this.syncStore,
@@ -868,13 +875,25 @@ export class NetNode {
           }
         }
 
-        // Send our handshake in response
-        const ourMsg = this.buildOurHandshake();
-        const response = buildHandshakeFrame(magic, ourMsg);
+        // Building our reply reads the chain height through node's store
+        // callback, so a failure here is local and is not the stream I/O the
+        // outer catch answers for. Own span, own message.
+        let response: Uint8Array;
+        try {
+          response = buildHandshakeFrame(magic, this.buildOurHandshake());
+        } catch (err) {
+          console.error(`[net] cannot build our handshake for ${peerId}: ${String(err)}`);
+          await stream.sink([new Uint8Array(0)]);
+          return;
+        }
         await stream.sink([response]);
-      } catch (err: any) {
-        // Handshake failed — close silently
-        try { await stream.sink([new Uint8Array(0)]); } catch { /* ignore */ }
+      } catch (err) {
+        // The empty frame is all we can say to a peer whose handshake did not
+        // complete; the log is what separates that from a peer that never
+        // dialled. `warn`, not `error` — an ordinary dropped connection lands
+        // here too.
+        console.warn(`[net] inbound handshake handler failed for ${peerId}: ${String(err)}`);
+        try { await stream.sink([new Uint8Array(0)]); } catch { /* the peer is already gone */ }
       }
     });
 
@@ -944,11 +963,13 @@ export class NetNode {
           // Legacy text protocol: subBlockId as hex
           const request = new TextDecoder().decode(data);
           const subBlock = this.syncStore.getSubBlock(request);
-          if (!subBlock) {
-            await stream.sink([new Uint8Array([0x00])]);
-            return;
-          }
-          await stream.sink([encodeSubBlock(subBlock as SubBlock)]);
+          const payload = subBlock
+            ? encodeServableSubBlock(subBlock, this.validators, request)
+            : null;
+          // A row we hold but cannot encode is answered like a row we do not
+          // hold: the peer goes and asks someone else, and it is not at fault
+          // either way (NET_INTERFACE → Penalty Attribution).
+          await stream.sink([payload ?? new Uint8Array([0x00])]);
           return;
         }
 
@@ -956,13 +977,12 @@ export class NetNode {
         if (code === MSG_GET_SUB_BLOCK) {
           const id = new TextDecoder().decode(body);
           const subBlock = this.syncStore.getSubBlock(id);
-          if (subBlock) {
-            const respBody = encodeSubBlock(subBlock as SubBlock);
-            const frame = encodeFrame(magic, MSG_SUB_BLOCK_RESPONSE, respBody);
-            await stream.sink([frame]);
-          } else {
-            await stream.sink([encodeFrame(magic, MSG_SUB_BLOCK_RESPONSE, new Uint8Array([0x00]))]);
-          }
+          const payload = subBlock
+            ? encodeServableSubBlock(subBlock, this.validators, id)
+            : null;
+          await stream.sink([
+            encodeFrame(magic, MSG_SUB_BLOCK_RESPONSE, payload ?? new Uint8Array([0x00])),
+          ]);
           return;
         }
 
@@ -1131,7 +1151,9 @@ export class NetNode {
       console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
       return result;
     } finally {
-      if (stream) await stream.close();
+      // A rejecting close must not replace what this function already
+      // determined — the caller logs the handshake's own outcome, not ours.
+      if (stream) await stream.close().catch(() => {});
     }
   }
 

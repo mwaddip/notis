@@ -306,10 +306,13 @@ export function decodeLegacyHeadersRequest(body: Uint8Array): LegacyHeadersReque
  * multi-kilobyte blob. It is the same nesting `ORDERING_BLOCK` uses for its own
  * three sections.
  *
- * `maxItems` is checked **before the first element is read**. `readArr` would
- * be the obvious primitive here and is the wrong one: it bounds the count at
- * `MAX_ARRAY_LENGTH` (2^24) and pre-sizes the array, so four peer-chosen bytes
- * buy a sixteen-million-slot allocation. The byte layout is identical to
+ * `maxItems` is checked **before the first element is read**, and that is what
+ * `readArr` cannot express here: its bounds are `MAX_ARRAY_LENGTH` and the bytes
+ * remaining, neither of which is the number of items *this* response may carry.
+ * That number is the caller's own request size clamped to
+ * `MAX_LEGACY_RESPONSE_ITEMS` (`responseCap`) — a peer answering a 40-header
+ * request with 18,900 headers is not answering the question, and the caller is
+ * the only party that knows the question. The byte layout is identical to
  * `arr`'s, so the re-encode compare below still uses `writeArr`.
  */
 function lpItemsCodec<T>(

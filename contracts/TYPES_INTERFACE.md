@@ -897,14 +897,23 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > `author`/`challenge` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex. Lowercase is
 > load-bearing — `'AB…'` and `'ab…'` hex-decode to identical bytes, so accepting both would make the
 > codec boundary non-injective. It is reached from `isSignablePost` and from
-> `verifySubBlockStructure`, the latter closing the gossip relay path with no `net` edit
-> (`gossip.ts:201` runs it before `:222` builds the preimage).
+> `verifySubBlockStructure`.
 >
-> **Still open — the three gates, all in `@dagsocial/node`, booked to Phase 1d:**
-> `verifier.ts` `verifyPost` (:148) and `verifyPostForRelay` (:230), and `content-sweep.ts` (:92).
-> The last is the sharpest site in the tree: `verifyPostId` cold, zero prior checks, on a post whose
-> decoder explicitly declines to inspect the interior — and the sync path stays on `cbor-x`
-> permanently, so **no codec phase ever closes it**.
+> ⚠ **The gossip-relay justification that stood here was one phase stale — corrected 2026-08-10,
+> the same correction `VALIDATION_INTERFACE §verifySubBlockStructure` already carried.** It said
+> `verifySubBlockStructure` closes the relay path with no `net` edit, `gossip.ts:201` running before
+> the preimage is built. Since Phase 3b the positional decoder runs **first** and establishes those
+> domains itself, so nothing out of domain reaches the check on that path. **Two contracts stated
+> one claim, and only the one that was refuted got corrected** — a stale pointer is inherited by
+> every document that repeats it, not only by the one that owns it.
+>
+> ✅ **Phase 1d's three gates are closed — verified 2026-08-10.** All three call
+> `verifyPostFieldDomains`: `verifier.ts`'s `verifyPost` and `verifyPostForRelay`, and
+> `content-sweep.ts`. The line numbers that stood here (`:148`, `:230`, `:92`) had every one moved,
+> which is why this paragraph names symbols instead. `content-sweep` was the sharpest site in the
+> tree — `verifyPostId` cold, zero prior checks, on a post whose decoder explicitly declines to
+> inspect the interior, and the sync path stays on `cbor-x` permanently, so **no codec phase would
+> ever have closed it.**
 >
 > **This is not merely tightening the already-unusable.** A post with a 64-character *non-hex*
 > `parentRef` passes the complete Stage-1 pipeline today, signature and PoW included, because the ref
@@ -1230,6 +1239,18 @@ one place that says what those bytes are.
 
 `writeSubBlockEntry` and `writeCoinbaseOutput` **delegate** to these rather than restating the
 layout, so the tree codec and the Merkle leaf cannot drift apart.
+
+> ⚠ **`parentRefs` carries 0–`MAX_PARENT_REFS` (currently 1) entries at validation; the writer is
+> uncapped by design.** The domain sits upstream of the encoder (spec §2.5), never inside it —
+> `arr(parentRefs, b32)` writes whatever length it is handed. **So a golden vector may legitimately
+> encode a count above the cap, and must say so in its note.** The corpus pins the *encodable*
+> domain, not the consensus-valid one, and already carries deliberately out-of-domain vectors for
+> exactly this reason.
+>
+> Added 2026-08-10 because the rule existed only inside one `post.json` note, where nothing reading
+> the layout would ever find it — and a vector named `subBlockEntry/typical` had drifted to a count
+> of `02` with a note that never mentioned the cap. `test/golden/README.md` now carries the same
+> sentence, so the two cannot drift.
 
 **This is `serializePruneEntry` generalised, not a new pattern.** `writePruneEntry` has delegated
 since Phase 2, and the source states the rule: *an entry's wire form and its committed form must be
