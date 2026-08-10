@@ -978,6 +978,28 @@ runtime strip somebody must remember:
 > of `boxType` (C10), each of the six box types declares exactly one literal, and a decoder
 > synthesises it from the discriminator. Verified field-by-field by the Phase 5 executor, 2026-08-10.
 
+> ⚠ **`boxRecordBytes` is paired with `boxRecordFromBytes(bytes) → { candidate, txId, index }`, and
+> BOTH live in this package. Decided 2026-08-10.**
+>
+> The writer was specified without a reader, and node's `deserializeBox` has to parse those bytes
+> back — so without this, the per-type box field order would have **two definitions in two packages**,
+> writer here and reader in `node`, free to drift. That is the same defect the discriminator note
+> above retires, in the same tree, found the same day: *two encoders written months apart that nobody
+> had put side by side.*
+>
+> **Every other wire struct in this repo is already paired here** — `serialization.ts` holds eight
+> encoder/decoder pairs and there is no unpaired wire struct anywhere. A writer-only `boxRecordBytes`
+> would have been the first, and the asymmetry is what made the gap invisible: nothing was *missing*
+> from any list, because no list of readers existed to be short.
+>
+> `boxRecordFromBytes` carries the four-part boundary check like every other decoder. It does **not**
+> return `guard` — that is not in the bytes; `node` synthesises it. **The proof obligation is a
+> round-trip over all six box types**, which is strictly stronger than a frozen vector: a frozen
+> vector can pass while writer and reader disagree, a round-trip cannot.
+>
+> Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
+> in `node` even as a stopgap.
+
 Shared prefix: `enum8(boxType)` ‖ `vlqU(value)`. **`guard` is absent** — it is a pure function of
 `boxType` and carries zero information in a preimage (C10).
 
