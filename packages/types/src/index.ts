@@ -73,6 +73,8 @@ export {
   computeCandidateBoxId,
   computeMintTxId,
   computeTxId,
+  boxRecordBytes,
+  boxRecordFromBytes,
   canonicalBoxBytes,
   u32BE,
   selectBoxes,
@@ -84,6 +86,8 @@ export {
 export type {
   BoxId,
   BoxCandidate,
+  BoxRecord,
+  DecodedBoxCandidate,
   CandidateOf,
   AnyBoxCandidate,
   BoxBase,
@@ -120,6 +124,53 @@ export type {
   UtxoTxTree,
   CoinbaseOutput,
 } from './block.js';
+
+// The positional codec layer (`codec.ts`)
+//
+// The field primitives, `enum8` and the four-part boundary check. Exported
+// because every consensus preimage in the repo is written in this notation and
+// `types` is not the only package that writes one: node's `serialize-box.ts`
+// holds the AVL values, which are `boxRecordBytes` above plus a tag.
+//
+// `ByteReader` / `ByteWriter` / `ReaderError` come with it, re-exported from
+// `@dagsocial/wire`. They are not decoration — they appear in the signature of
+// every writer and reader here, and `@dagsocial/node` does not depend on `wire`
+// directly. Without them a consumer can call `encodeStruct`/`decodeStruct` (the
+// `ByteWriter` is internal to those) but cannot name the type of a
+// `StructCodec`'s own `write` parameter, so a codec it exports has an inferred
+// type it cannot write down. One import path for the whole codec surface.
+export {
+  VLQ_SENTINEL,
+  CodecError,
+  writeU8OrThrow,
+  readU8,
+  writeBool,
+  readBool,
+  writeVlqU,
+  readVlqU,
+  writeVlqS,
+  readVlqS,
+  writeVlqU64OrThrow,
+  readVlqU64,
+  writeHexNOrThrow,
+  readHexN,
+  writeBytesNOrThrow,
+  readBytesN,
+  writeLp,
+  readLp,
+  writeLpUtf8,
+  readLpUtf8,
+  writeArr,
+  readArr,
+  writeOpt,
+  readOpt,
+  enum8,
+  encodeStruct,
+  decodeStruct,
+  firstDifference,
+} from './codec.js';
+export type { CodecFailure, Enum8, StructCodec } from './codec.js';
+export { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
 
 // Serialization
 export {

@@ -1,7 +1,18 @@
 import { createHash } from 'crypto';
-import { ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
+  type StructCodec,
+  decodeStruct,
+  encodeStruct,
   enum8,
+  readBool,
+  readBytesN,
+  readHexN,
+  readLpUtf8,
+  readOpt,
+  readVlqS,
+  readVlqU,
+  readVlqU64,
   writeArr,
   writeBool,
   writeBytesNOrThrow,
@@ -182,6 +193,88 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
 }
 
 /**
+ * The inverse of `canonicalBoxBytes` — read a box back out of its content bytes.
+ *
+ * **Deliberately adjacent to `writeBoxTypeFields`**, and that placement is the
+ * point: field order is normative and a reader that walks it differently is a
+ * consensus divergence with no compiler signal, so the two arms sit where a
+ * reviewer reads them as one table. `BOX_TYPE.read` rejects the reserved `0xff`
+ * and every unassigned tag, so the writer's total-by-sentinel arm has no
+ * decoding at all — a malformed box cannot round-trip as if it were fine.
+ *
+ * **`guard` is not returned**, because it is not in the bytes (C10). It is a
+ * pure function of `boxType` — each box interface types it as a single literal —
+ * so a consumer that needs it synthesises it from the discriminator. Returning
+ * it here would have this package assert an authorization fact it does not own,
+ * and would put the guard table in two places.
+ *
+ * Two absences are mapped rather than passed through, and both are what make the
+ * re-encode compare close:
+ *
+ * - `opt` fields decode to `undefined`, not `null`. `decayBurn?: boolean` and
+ *   `lockedUntilBlock?: number` are optional, so `undefined` is the type-correct
+ *   spelling of absent and it is what re-encodes to the same `u8(0)`.
+ * - `bond.inviteePublicKey` decodes absent as **empty bytes**, inverting the
+ *   encoder's empty-↔-absent mapping for a 0-or-32-byte field. A reader
+ *   returning `undefined` there would fail the boundary check on every
+ *   unclaimed bond.
+ */
+function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
+  const boxType = BOX_TYPE.read(r);
+  const value = readVlqU64(r);
+  switch (boxType) {
+    case 'karma':
+      return {
+        boxType,
+        value,
+        owner: readBytesN(r, 32),
+        proofSource: readLpUtf8(r),
+        decayBurn: readOpt(r, readBool) ?? undefined,
+      };
+    case 'credit':
+      return {
+        boxType,
+        value,
+        owner: readBytesN(r, 32),
+        proofSource: readVlqS(r),
+        lockedUntilBlock: readOpt(r, readVlqU) ?? undefined,
+      };
+    case 'invite':
+      return {
+        boxType,
+        value,
+        secretHash: readBytesN(r, 32),
+        inviterId: readBytesN(r, 32),
+      };
+    case 'bond':
+      return {
+        boxType,
+        value,
+        inviterId: readBytesN(r, 32),
+        inviteOutputIndex: readVlqU(r),
+        inviteePublicKey: readOpt(r, (rr) => readBytesN(rr, 32)) ?? new Uint8Array(0),
+        probationStartBlock: readVlqU(r),
+        probationEndBlock: readVlqU(r),
+      };
+    case 'post_lock':
+      return {
+        boxType,
+        value,
+        originalValue: readVlqU64(r),
+        owner: readBytesN(r, 32),
+        targetPostId: readHexN(r, 32),
+      };
+    case 'vouch':
+      return {
+        boxType,
+        value: value as 1n,
+        voucherId: readBytesN(r, 32),
+        targetId: readBytesN(r, 32),
+      };
+  }
+}
+
+/**
  * `opt(b32(x))` over a field whose *absence* is spelled **empty bytes** in
  * memory — `bond.inviteePublicKey`, and it is the only one in the box arms.
  *
@@ -265,15 +358,21 @@ export function u32BE(n: number): Uint8Array {
 }
 
 /**
- * Box id from creating-transaction provenance (Spec G):
+ * A box **with its provenance** — TYPES_INTERFACE → Layout — Boxes (D4):
  *
- *   blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes )[0:32]
  *   boxRecordBytes = canonicalBoxBytes(candidate) ‖ b32(txId) ‖ vlqU(index)
  *
- * That tail is `boxRecordBytes` exactly as TYPES_INTERFACE → Layout — Boxes
- * (D4) specifies it; Phase 5 extracts it as its own function when it needs the
- * same bytes for the AVL value, and until then it is written inline here so the
- * two cannot drift.
+ * The contract names two box encodings and separates them so that "provenance
+ * is not in the id" is structural rather than a runtime strip somebody has to
+ * remember: `canonicalBoxBytes` is what `computeBoxId` and `computeTxId` hash,
+ * and **this** is what the AVL value and the store hold. The `id` is never
+ * encoded — it *is* the hash of these bytes under `BOX_ID_DOMAIN`.
+ *
+ * It was written inline inside `computeCandidateBoxId` until Phase 3b, on the
+ * ground that a second copy could drift from the id's preimage. Extracting it
+ * removes that risk rather than taking it on: the id derivation below now calls
+ * this function, so the AVL value and the box id are the same bytes by
+ * construction and not by two implementations agreeing.
  *
  * **`txId` crosses as 32 raw bytes, not as the UTF-8 of its hex text** (Phase
  * 2a-ii). The prior form was argued for on two grounds, and the positional
@@ -292,18 +391,100 @@ export function u32BE(n: number): Uint8Array {
  * `index` is `vlqU`, which is total by sentinel — so an out-of-domain index
  * still cannot panic this function, and still cannot impersonate a valid one.
  *
+ * @throws {Error} if `candidate` is unencodable (see `canonicalBoxBytes`) or
+ *   `txId` is not 64 lowercase hex characters
+ */
+export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: number): Uint8Array {
+  return encodeStruct(BOX_RECORD, { candidate: candidate as DecodedBoxCandidate, txId, index });
+}
+
+/**
+ * Read a box record back — the inverse of `boxRecordBytes`, and the reason this
+ * layout has exactly one definition instead of two.
+ *
+ * **A writer without a reader is what lets a format drift.** Node's AVL store
+ * holds these bytes and has to parse them back; a reader written over there
+ * would put the box layout in two packages, and the two would be free to
+ * disagree about field order with nothing to catch it — the defect
+ * `NODE_INTERFACE`'s discriminator note records, arrived at from the other
+ * direction. Every other wire struct in this repo is a pair; this one is too.
+ *
+ * Goes through `decodeStruct`, so it carries the whole four-part boundary check
+ * (spec §2.1): schema projection, exhaustion, and the re-encode compare that
+ * rejects a non-minimal VLQ. Truncation and an unknown `boxType` tag come from
+ * the readers themselves. So a value the store hands back is not merely
+ * parseable — it is the *only* byte string that decodes to it.
+ *
+ * **`candidate.guard` is absent**, per C10: it is not in the bytes and it is a
+ * pure function of `boxType`. See `readBoxContentFields`.
+ *
+ * @throws {ReaderError} — `CodecError` for a boundary-check failure, wire's own
+ *   for a short read or an unknown tag. Callers convert it to a verdict.
+ */
+export function boxRecordFromBytes(bytes: Uint8Array): BoxRecord {
+  return decodeStruct(BOX_RECORD, bytes);
+}
+
+/** What `boxRecordFromBytes` returns: the box, and the provenance that names it. */
+export interface BoxRecord {
+  candidate: DecodedBoxCandidate;
+  txId: TxId;
+  index: number;
+}
+
+/**
+ * A box candidate as the **bytes** carry it — every per-type field except
+ * `guard`, which C10 removed from the encoding.
+ *
+ * The omission is applied per union member, not to the union: `Omit` on a union
+ * collapses it to the common keys, which here would leave `boxType` and `value`
+ * and discard every field that distinguishes one box type from another. Same
+ * reason `CandidateOf` is written the way it is.
+ */
+export type DecodedBoxCandidate =
+  | Omit<CandidateOf<KarmaBox>, 'guard'>
+  | Omit<CandidateOf<CreditBox>, 'guard'>
+  | Omit<CandidateOf<InviteBox>, 'guard'>
+  | Omit<CandidateOf<BondBox>, 'guard'>
+  | Omit<CandidateOf<PostLockBox>, 'guard'>
+  | Omit<CandidateOf<VouchBox>, 'guard'>;
+
+/**
+ * The box-record layout, written once and walked from both ends.
+ *
+ * `write` delegates the content half to `canonicalBoxBytes` rather than
+ * repeating it, so the id preimage and the record share one encoder and cannot
+ * drift; only the two-field provenance tail lives here.
+ */
+const BOX_RECORD: StructCodec<BoxRecord> = {
+  name: 'boxRecord',
+  write(w, record) {
+    w.writeBytes(canonicalBoxBytes(record.candidate as BoxCandidate));
+    writeHexNOrThrow(w, record.txId, 32);
+    writeVlqU(w, record.index);
+  },
+  read(r) {
+    return {
+      candidate: readBoxContentFields(r),
+      txId: readHexN(r, 32),
+      index: readVlqU(r),
+    };
+  },
+};
+
+/**
+ * Box id from creating-transaction provenance (Spec G):
+ *
+ *   blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes(candidate, txId, index) )[0:32]
+ *
  * Honest, predictable and collision-free at once: the derivation binds content
  * *and* the position that content was created at, so it is knowable at signing
  * time and cannot be invalidated by anything block application does.
  */
 export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index: number): BoxId {
-  const w = new ByteWriter();
-  w.writeBytes(canonicalBoxBytes(candidate));
-  writeHexNOrThrow(w, txId, 32);
-  writeVlqU(w, index);
   return createHash('blake2b512')
     .update(BOX_ID_DOMAIN)
-    .update(w.toBytes())
+    .update(boxRecordBytes(candidate, txId, index))
     .digest()
     .subarray(0, 32)
     .toString('hex');

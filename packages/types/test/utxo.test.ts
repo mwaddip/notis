@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'crypto';
+import { ReaderError } from '@dagsocial/wire';
 import {
+  CodecError,
   computeBoxId,
   computeCandidateBoxId,
   computeMintTxId,
   computeTxId,
+  boxRecordBytes,
+  boxRecordFromBytes,
   canonicalBoxBytes,
   u32BE,
   BOX_ID_DOMAIN,
@@ -18,7 +22,7 @@ import {
   encodeTx,
   decodeTx,
 } from '../src/index.js';
-import type { CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one. The fixtures below carried
@@ -767,6 +771,184 @@ describe('computeCandidateBoxId', () => {
     for (const bad of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER]) {
       expect(() => computeCandidateBoxId(c, GOLDEN_TX_ID, bad)).not.toThrow();
       expect(computeCandidateBoxId(c, GOLDEN_TX_ID, bad)).toHaveLength(64);
+    }
+  });
+});
+
+/**
+ * `boxRecordBytes` — the box-with-provenance encoding (Layout — Boxes, D4).
+ *
+ * Extracted out of `computeCandidateBoxId` in Phase 3b, because Phase 5 needs
+ * exactly these bytes for the AVL value and a second copy over there would be a
+ * second implementation of a consensus preimage. The inline comment it replaces
+ * named the risk it was avoiding — "written inline here so the two cannot
+ * drift" — so these tests are that guarantee, moved from a comment into the
+ * suite.
+ *
+ * The first two are the ones with teeth: they fail if the extraction changed a
+ * byte, and they keep failing if anyone later edits one of the two functions
+ * without the other.
+ */
+describe('boxRecordBytes', () => {
+  it('IS the preimage computeCandidateBoxId hashes — one encoding, not two', () => {
+    // The anti-drift pin. Not a restatement of the implementation: it hashes
+    // through `createHash` here, so a change to either function alone breaks it.
+    for (const [candidate, index] of [
+      [GOLDEN_KARMA_CANDIDATE, 0],
+      [GOLDEN_CREDIT_CANDIDATE, 1],
+      [makeInviteBox(), 7],
+      [makeBondBox(), 2],
+    ] as const) {
+      const expected = createHash('blake2b512')
+        .update(BOX_ID_DOMAIN)
+        .update(boxRecordBytes(candidate, GOLDEN_TX_ID, index))
+        .digest()
+        .subarray(0, 32)
+        .toString('hex');
+      expect(computeCandidateBoxId(candidate, GOLDEN_TX_ID, index)).toBe(expected);
+    }
+  });
+
+  it('is canonicalBoxBytes ‖ b32(txId) ‖ vlqU(index), assembled independently', () => {
+    // The layout, built from its three named parts rather than read off the
+    // function. `index` is `vlqU`, so 0 is one byte and 128 is two — the second
+    // case is what would survive a mutation to a fixed-width writer.
+    for (const index of [0, 1, 127, 128]) {
+      const parts = Buffer.concat([
+        Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE)),
+        Buffer.from(GOLDEN_TX_ID, 'hex'),
+        index < 128 ? Buffer.from([index]) : Buffer.from([(index & 0x7f) | 0x80, index >> 7]),
+      ]);
+      expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, index)).toString('hex'))
+        .toBe(parts.toString('hex'));
+    }
+  });
+
+  it('golden vector: the karma record at (GOLDEN_TX_ID, 0) is frozen', () => {
+    // Phase 5 commits these bytes into `stateRoot`, so freeze them here — where
+    // the encoder lives — rather than only at the consumer.
+    const frozen =
+      GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
+      '09b0c0e3fb832cd886114f0d099ec751537cef8377d7bc5a935f1ddf9c8eef62' + // b32 txId
+      '00';                                                                // vlqU(0)
+    expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
+      .toBe(frozen);
+  });
+
+  it('provenance is appended, never folded into the content bytes', () => {
+    // The split the two-encoding naming exists to make structural: the record
+    // starts with the content bytes verbatim, so `computeBoxId` and the AVL
+    // value cannot disagree about where content ends and provenance begins.
+    const content = canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE);
+    const record = boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0);
+    expect(Buffer.from(record.subarray(0, content.length))).toEqual(Buffer.from(content));
+    expect(record.length).toBe(content.length + 32 + 1);
+  });
+
+  it('carries the id derivation’s totality split unchanged', () => {
+    // `b32(txId)` throws, `vlqU(index)` sentinels. Pinned on the extracted
+    // function directly: the id derivation's own version of this test would
+    // stay green if the throw moved to the hashing wrapper.
+    expect(() => boxRecordBytes(GOLDEN_KARMA_CANDIDATE, 'AB'.repeat(32), 0))
+      .toThrow(/64 lowercase hex chars/);
+    for (const bad of [-1, 1.5, NaN, Infinity]) {
+      expect(() => boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, bad)).not.toThrow();
+    }
+  });
+});
+
+/**
+ * `boxRecordFromBytes` — the reader half, and why the pair matters.
+ *
+ * A writer with no reader is what lets a format acquire a second definition:
+ * node's AVL store has to parse these bytes back, and a reader written there
+ * would be a second statement of the box layout in a second package. The
+ * round-trip below is strictly stronger than the frozen vector above — a frozen
+ * vector can stay green while the two sides disagree about a field they both
+ * skip, and this cannot.
+ */
+describe('boxRecordFromBytes', () => {
+  /** One candidate per box type, each exercising a field the others do not. */
+  const ALL_SIX: [string, AnyBoxCandidate][] = [
+    ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
+    ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, decayBurn: true }],
+    ['credit (transfer sentinel)', { ...GOLDEN_CREDIT_CANDIDATE, proofSource: -1 }],
+    ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
+    ['invite', {
+      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
+      inviterId: inviter, guard: 'hash_preimage_with_bond',
+    }],
+    ['bond (unclaimed — empty ↔ absent)', {
+      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 2,
+      inviteePublicKey: new Uint8Array(0), probationStartBlock: 17,
+      probationEndBlock: 1017, guard: 'bond_dual',
+    }],
+    ['bond (committed — 32 bytes)', {
+      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 2,
+      inviteePublicKey: new Uint8Array(32).fill(0xcc), probationStartBlock: 17,
+      probationEndBlock: 1017, guard: 'bond_dual',
+    }],
+    ['post_lock', {
+      boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
+      targetPostId: 'ab'.repeat(32), guard: 'block_apply',
+    }],
+    ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
+  ];
+
+  for (const [label, candidate] of ALL_SIX) {
+    it(`round-trips ${label}`, () => {
+      // `guard` is not in the bytes (C10) and the reader does not invent it, so
+      // it is dropped from the expectation rather than from the assertion — the
+      // difference between "this field is absent by design" and "this field is
+      // not compared".
+      const { guard: _guard, ...expected } = candidate as AnyBoxCandidate & { guard: string };
+      const decoded = boxRecordFromBytes(boxRecordBytes(candidate, GOLDEN_TX_ID, 3));
+      expect(decoded).toEqual({ candidate: expected, txId: GOLDEN_TX_ID, index: 3 });
+    });
+  }
+
+  it('re-encoding a decoded record reproduces the bytes exactly', () => {
+    // The other direction of the same claim, at byte level. `toEqual` on the
+    // value could pass while a field the reader ignores rides along in the
+    // bytes; this cannot.
+    for (const [, candidate] of ALL_SIX) {
+      const bytes = boxRecordBytes(candidate, GOLDEN_TX_ID, 3);
+      const back = boxRecordFromBytes(bytes);
+      expect(Buffer.from(boxRecordBytes(back.candidate as BoxCandidate, back.txId, back.index)))
+        .toEqual(Buffer.from(bytes));
+    }
+  });
+
+  it('carries the four-part boundary check, not just a parse', () => {
+    const bytes = boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0);
+
+    // 2 — trailing bytes are a rejection, not slack.
+    const trailing = new Uint8Array(bytes.length + 1);
+    trailing.set(bytes);
+    expect(() => boxRecordFromBytes(trailing)).toThrow(CodecError);
+    try { boxRecordFromBytes(trailing); } catch (e) {
+      expect((e as CodecError).failure).toBe('trailing-bytes');
+    }
+
+    // 3 — a non-minimal VLQ decodes to the same value and re-encodes shorter.
+    // `index` is the last field, so padding it is the cleanest instance: `81 00`
+    // and `00` are both zero, and only the compare tells them apart.
+    const nonMinimal = new Uint8Array(bytes.length + 1);
+    nonMinimal.set(bytes.subarray(0, bytes.length - 1));
+    nonMinimal.set([0x80, 0x00], bytes.length - 1);
+    try { boxRecordFromBytes(nonMinimal); } catch (e) {
+      expect((e as CodecError).failure).toBe('non-canonical');
+    }
+
+    // 1 — truncation is wire's own rejection, not a boundary-check one.
+    expect(() => boxRecordFromBytes(bytes.subarray(0, bytes.length - 5))).toThrow(ReaderError);
+
+    // 1 — the reserved sentinel tag and every unassigned boxType have no
+    // decoding at all. Tag 3 is the retired `like`: burnt, never reused.
+    for (const tag of [0x03, 0x07, 0xff]) {
+      const badTag = bytes.slice();
+      badTag[0] = tag;
+      expect(() => boxRecordFromBytes(badTag)).toThrow(ReaderError);
     }
   });
 });
