@@ -1598,13 +1598,23 @@ export function validateTx(
  * wrong rather than an error.
  *
  * Any client-supplied `id`/`txId`/`index` is **stripped before** the canonical
- * pair is appended, not overwritten in place. cbor-x emits map keys in
+ * pair is appended, not overwritten in place.
+ *
+ * ⚠ **The consensus half of this rationale is retired (Phase 5), and the rule
+ * stays for the other half.** It used to read: cbor-x emits map keys in
  * insertion order under `variableMapSize: false`, so overwriting would leave
- * the keys wherever the client's CBOR happened to put them — and `rowToBox`
- * always appends them last. The two shapes would then serialize to different
- * bytes, so a node that restarted and re-bootstrapped its prover from SQLite
- * would compute a different `stateRoot` than one that stayed up. Outputs are
- * attacker-controlled CBOR, so this is reachable rather than theoretical.
+ * the keys wherever the client's CBOR happened to put them while `rowToBox`
+ * appends them last, the two shapes would serialize to different AVL bytes, and
+ * a node that restarted and re-bootstrapped its prover from SQLite would
+ * compute a different `stateRoot` than one that stayed up. That encoder is
+ * gone — the AVL value is positional, so key order is not observable and the
+ * two shapes now produce identical bytes.
+ *
+ * What survives is not about bytes: stripping makes "this box's provenance came
+ * from the client" unrepresentable, where overwriting merely corrects it after
+ * the fact. Outputs are attacker-controlled, so the difference is between a
+ * shape that cannot exist and one that depends on every later reader
+ * overwriting in the same order.
  *
  * Exported because `block-apply.ts` materializes the outputs of block-embedded
  * transactions on its own path. One rule for both, so the pool path and the
