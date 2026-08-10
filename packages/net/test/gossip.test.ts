@@ -18,6 +18,8 @@ import {
   signingHash,
   subBlockFromPost,
   encodeSubBlock,
+  decodeSubBlock,
+  ReaderError,
   encodeOrderingBlock,
   decodeOrderingBlock,
   EMPTY_STATE_ROOT,
@@ -29,6 +31,7 @@ import { TopicValidatorResult } from '@libp2p/interface';
 import { subscribeTopics, TOPICS } from '../src/gossip.js';
 import type { Libp2pGossip } from '../src/gossip.js';
 import { PeerManager } from '../src/peer-mgr.js';
+import { PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 
 // These tests drive the REAL topic validators registered by subscribeTopics —
@@ -119,7 +122,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
   function makeBlock(header: BlockHeader): OrderingBlock {
     return {
       header,
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       // 64-byte dummy — Stage 1 does not verify the validator signature.
       validatorSignature: new Uint8Array(64),
@@ -190,18 +193,34 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     const validate = topicValidators.get(TOPICS.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
+    // ⚠ **Phase 3b moved the rejection a second time, and changed its severity.**
+    // The comment above describes gate 1f-1; what follows supersedes its last
+    // paragraph.
+    //
+    // The old claim was "NaN survives the CBOR wire round-trip — this is a
+    // reachable network input". Under the positional format it does not. `NaN`
+    // is outside `vlqU`'s encodable domain, so it writes `VLQ_SENTINEL` — ten
+    // bytes past `MAX_SAFE_INTEGER` — and `readVlqU` refuses to decode it. The
+    // message no longer reaches `verifyOrderingBlockStructure` at all.
+    //
+    // The penalty class changes with it, from a 100-point misbehavior to a
+    // permanent ban, and **that is the decided semantics, not a regression**
+    // (spec §2.2): if the serializer is the validator, bytes that do not decode
+    // are malformed rather than merely bogus. The one-way sentinel is what makes
+    // it safe — a malformed value encodes, but its encoding decodes to nothing,
+    // so it can never impersonate a well-formed header.
     const block = makeBlock({ ...baseHeader, powNonce: Number.NaN });
     const encoded = encodeOrderingBlock(block);
 
-    // NaN survives the CBOR wire round-trip — this is a reachable network
-    // input, not an in-process artifact.
-    expect(Number.isNaN(decodeOrderingBlock(encoded).header.powNonce)).toBe(true);
+    expect(() => decodeOrderingBlock(encoded)).toThrow(ReaderError);
 
+    const banSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
     const result = validate(peer, { data: encoded });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'Ordering block missing or invalid powNonce',
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(banSpy).toHaveBeenCalledWith(
+      PenaltyKind.ProtocolViolation, peer.id, expect.stringContaining('malformed ordering block'),
     );
   });
 
@@ -234,12 +253,29 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     // it must keep passing after, which is what proves nothing was lost. The
     // general case is a subset argument rather than these two values:
     // `isU64Safe` rejects everything `Number.isSafeInteger` rejects, and more.
+    // ⚠ **Phase 3b moves it once more, for the reason above the powNonce case.**
+    // `height` is a `vlqU` row, so NaN and 1.5 sentinel on encode and have no
+    // decoding — the structure gate never sees them, and the verdict is a
+    // permanent ban rather than a misbehavior penalty (spec §2.2).
+    //
+    // The *deletion evidence* this test carries for 1f-3 survives the move and
+    // is restated below over the struct directly: `verifyOrderingBlockStructure`
+    // still rejects these two by name, so nothing was lost when net's
+    // `Number.isSafeInteger` add-on went. What changed is that no peer can put
+    // them on the wire in the first place.
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce, height: badHeight });
+
+    expect(verifyOrderingBlockStructure(block)).toEqual({
+      valid: false, error: 'Ordering block invalid height',
+    });
+
+    const banSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
     const result = validate(peer, { data: encodeOrderingBlock(block) });
 
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'Ordering block invalid height',
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(banSpy).toHaveBeenCalledWith(
+      PenaltyKind.ProtocolViolation, peer.id, expect.stringContaining('malformed ordering block'),
     );
   });
 });
@@ -374,11 +410,33 @@ describe('sub-block topic validator (Stage 1)', () => {
     );
   });
 
-  it('rejects a sub-block with a missing post', () => {
+  it('a sub-block with a missing post cannot reach the validator at all', () => {
+    // ⚠ **Rewritten by Phase 3b, because its premise stopped existing.** It used
+    // to build a post-less sub-block, hand it to `encodeSubBlock`, and assert
+    // that the topic validator rejected the resulting message with
+    // 'Sub-block missing post'.
+    //
+    // Under a positional format there is no such message. `encodeSubBlock`
+    // writes the post's fields inline, so a sub-block without one has no
+    // encoding, and no byte string decodes to one either — a decoder reading
+    // the post's fields runs off the end of the buffer. The malformed input the
+    // test wanted to transmit is unrepresentable on the wire, which is the
+    // property the migration exists to produce.
+    //
+    // Both halves are pinned, because "unrepresentable" is a claim about the
+    // encoder *and* the decoder, and the check that used to catch it still
+    // exists for the paths that do not cross a codec.
     const { post: _post, ...rest } = validSubBlock;
-    const { result, peer, penaltySpy } = validateSubBlock(rest as SubBlock);
-    expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, 'Sub-block missing post');
+    expect(() => encodeSubBlock(rest as SubBlock)).toThrow();
+
+    const truncated = encodeSubBlock(validSubBlock).subarray(0, 40);
+    expect(() => decodeSubBlock(truncated)).toThrow(ReaderError);
+
+    // The structure gate keeps its verdict for callers that hold a struct
+    // rather than bytes — it is not reached through gossip any more, but it is
+    // still the rule, and deleting a check needs the same care as adding one.
+    expect(verifySubBlockStructure(rest as SubBlock))
+      .toEqual({ valid: false, error: 'Sub-block missing post' });
   });
 });
 
@@ -534,7 +592,7 @@ describe('gossip dispatch listener', () => {
   };
   const dispatchBlock: OrderingBlock = {
     header: dispatchHeader,
-    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
     validatorSignature: new Uint8Array(64),
   };

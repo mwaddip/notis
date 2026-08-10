@@ -130,15 +130,31 @@ export type {
 // The field primitives, `enum8` and the four-part boundary check. Exported
 // because every consensus preimage in the repo is written in this notation and
 // `types` is not the only package that writes one: node's `serialize-box.ts`
-// holds the AVL values, which are `boxRecordBytes` above plus a tag.
+// holds the AVL values, and an AVL box value **IS `boxRecordBytes` exactly** —
+// no wrapper, no second tag. Its first byte is already the `boxType` `enum8`
+// from the layout above, so a node-side box-type numbering would have been a
+// second numbering of one thing, which is the collision Phase 5 found and
+// removed. See `NODE_INTERFACE` → Two entity kinds.
 //
 // `ByteReader` / `ByteWriter` / `ReaderError` come with it, re-exported from
-// `@dagsocial/wire`. They are not decoration — they appear in the signature of
-// every writer and reader here, and `@dagsocial/node` does not depend on `wire`
-// directly. Without them a consumer can call `encodeStruct`/`decodeStruct` (the
-// `ByteWriter` is internal to those) but cannot name the type of a
-// `StructCodec`'s own `write` parameter, so a codec it exports has an inferred
-// type it cannot write down. One import path for the whole codec surface.
+// `@dagsocial/wire`, which `@dagsocial/node` does not depend on. Two reasons,
+// and the second is the load-bearing one:
+//
+//  1. They appear in the signature of every writer and reader here. Without
+//     them a consumer can still call `encodeStruct`/`decodeStruct` — the
+//     `ByteWriter` is internal to those — but cannot name the type of a
+//     `StructCodec`'s own `write` parameter, so a codec it exports has an
+//     inferred type it cannot write down. A convenience.
+//  2. **`ReaderError` is required to USE the format correctly, not merely to
+//     describe it.** Step 4 of the four-part boundary check is "every caller
+//     converts `ReaderError` into a verdict" (spec §2.1) — the step that
+//     discharges the no-panic invariant at each boundary rather than inside the
+//     codec. A caller cannot write that `instanceof` without the class in
+//     scope, so withholding it would leave every consumer outside this package
+//     structurally unable to perform the one step the spec assigns to callers.
+//     Found by Phase 5, from the other direction.
+//
+// One import path for the whole codec surface.
 export {
   VLQ_SENTINEL,
   CodecError,

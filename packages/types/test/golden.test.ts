@@ -27,7 +27,7 @@ import './golden/structs.js'; // registers `postFields` / `boxContent` / `pruneE
 // The corpus
 // ---------------------------------------------------------------------------
 
-const FILES = ['primitives.json', 'probe.json', 'post.json', 'boxes.json', 'prune.json'] as const;
+const FILES = ['primitives.json', 'probe.json', 'post.json', 'boxes.json', 'prune.json', 'block.json'] as const;
 
 function runVectors(file: string, vectors: GoldenVector[]): void {
   describe(file, () => {
@@ -113,3 +113,4 @@ runRejects('probe.json', loadRejects('probe.json'));
 runRejects('post.json', loadRejects('post.json'));
 runRejects('boxes.json', loadRejects('boxes.json'));
 runRejects('prune.json', loadRejects('prune.json'));
+runRejects('block.json', loadRejects('block.json'));

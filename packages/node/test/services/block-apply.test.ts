@@ -389,7 +389,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: expectedTarget(1),
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
@@ -436,7 +436,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
@@ -479,7 +479,7 @@ describe('block-apply journal recording', () => {
         powTargetBits: 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
@@ -520,7 +520,6 @@ describe('block-apply journal recording', () => {
     );
     const { expectedTarget } = await import('../../src/services/difficulty.js');
     const subBlockTree = {
-      subBlockRefs: [],
       subBlockEntries: [],
       pruneEntries: [],
     };
@@ -2060,7 +2059,7 @@ describe('block-apply funnel totality', () => {
   // Path independence — the sync path has no gossip validator in front of it
   // -----------------------------------------------------------------------
 
-  it('rejects the malformed block arriving over the sync path (CBOR round-trip, no gossip validator)', async () => {
+  it('the malformed block cannot cross the wire, and the funnel rejects it anyway', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -2073,9 +2072,26 @@ describe('block-apply funnel totality', () => {
     // the bytes and hand the result straight to the apply handler. No topic
     // validator runs on this path, which is why the structure check cannot
     // live in gossip.
-    const decoded = decodeOrderingBlock(encodeOrderingBlock(killBlock));
-    // The wire round-trip preserves the hostile field verbatim — a CBOR
-    // integer decodes back to a number, not to bytes.
+    //
+    // ⚠ **Phase 3b closed the wire half of this, and the old assertion said so
+    // in advance without meaning to.** It read "the wire round-trip preserves
+    // the hostile field verbatim — a CBOR integer decodes back to a number, not
+    // to bytes", which was the defect: a self-describing encoder let a number
+    // occupy a 32-byte field all the way to the apply funnel.
+    //
+    // `subtreeMerkleRoot` is `b32` from bytes now, so `writeBytesNOrThrow`
+    // refuses a number and this block **has no encoding at all** — it cannot be
+    // put on the sync path by anyone. Pinned as the first assertion, because
+    // "the funnel rejects it" and "it cannot arrive" are different guarantees
+    // and this test now carries both.
+    expect(() => encodeOrderingBlock(killBlock)).toThrow(/expected 32 bytes, got number/);
+
+    // The funnel's guarantee is path-independent and survives regardless: it is
+    // about a struct reaching `applyOrderingBlock`, which is still reachable
+    // in-process (the sync handler hands over a decoded object, and a future
+    // codec change must not be what keeps this honest). So the rest of the test
+    // runs against the struct directly, which is what it was really asserting.
+    const decoded = killBlock;
     expect(typeof decoded.subBlockTree.pruneEntries[0]!.subtreeMerkleRoot).toBe('number');
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

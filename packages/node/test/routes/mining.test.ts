@@ -29,7 +29,7 @@ function makeTemplate(): OrderingBlock {
       powTargetBits: 12,
       createdAt: 1_700_000_000_000,
     },
-    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
@@ -197,15 +197,18 @@ describe('mining routes — template subBlockRefs', () => {
     const committedId = 'aa'.repeat(32);
     const poisonId = 'bb'.repeat(32);
 
-    // A template whose refs disagree with its entries. `subBlockRoot` covers
-    // the entries and not the refs, so an external miner has no way to tell
-    // from the block itself which list the node believes — the response has to
-    // be the committed one.
+    // ⚠ **The poison half went with the field (Phase 3b).** This built a
+    // template whose refs disagreed with its entries and asserted the route
+    // served the committed list — a disagreement that was expressible because
+    // `subBlockRoot` covered the entries and not the refs. There is no second
+    // list to disagree now; the unrepresentability is pinned structurally in
+    // `@dagsocial/types`. What this file owns is the miner-facing JSON shape,
+    // which does not move: an external miner still reads `subBlockRefs`, and
+    // still gets the ids the template committed to.
     const tpl = makeTemplate();
     tpl.subBlockTree.subBlockEntries = [
       { postId: committedId, parentRefs: [], author: 'cc'.repeat(32) },
     ];
-    tpl.subBlockTree.subBlockRefs = [poisonId];
 
     const res = await request(makeApp(makeDeps({ getCurrentTemplate: () => tpl })))
       .get('/template')

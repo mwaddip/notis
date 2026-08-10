@@ -57,7 +57,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeBlock(header: BlockHeader): OrderingBlock {
   return {
     header,
-    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],

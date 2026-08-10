@@ -217,7 +217,6 @@ describe('Two-node integration', () => {
     const block: OrderingBlock = {
       header: { ...headerBase, powNonce: blockNonce },
       subBlockTree: {
-        subBlockRefs: [],
         subBlockEntries: [],
         pruneEntries: [],
       },
@@ -255,10 +254,32 @@ describe('Two-node integration', () => {
     // T2b re-derived: with the structure gate's likeBoxes check gone, this
     // fixture still passes structure and still dies at ContentLimits — the
     // rejection fires for its intended reason.
+    //
+    // ⚠ **Phase 3b made the old fixture unsendable, and the shape of that is
+    // worth keeping.** It read `subBlockId: 'bad'`, `author: 'user1'`,
+    // `producerId: 'user1'` — three fields that were never valid values, tolerated
+    // because cbor encodes any string. Under fixed-width writers they have no
+    // encoding, so `broadcastSubBlock` throws in the *test* before anything is
+    // published, and the test would have been asserting that nothing arrived
+    // because nothing was ever sent.
+    //
+    // The fields are therefore given their real shapes and the *intended*
+    // defect is kept as the only one: empty content, which fails ContentLimits.
+    // Encoding is not validation, so this still crosses the wire and is still
+    // rejected at Stage 1 — which is what the test is for.
     const invalidSb = {
-      subBlockId: 'bad',
-      post: { content: '', author: 'user1', parentRefs: [], protocolVersion: 1 },
-      producerId: 'user1',
+      subBlockId: 'ba'.repeat(32),
+      post: {
+        content: '',
+        author: new Uint8Array(32).fill(0xa1),
+        parentRefs: [],
+        challenge: new Uint8Array(32).fill(0xa2),
+        powNonce: 0,
+        protocolVersion: 1,
+        timestamp: 1_722_470_400_000,
+        signature: new Uint8Array(64),
+      },
+      producerId: new Uint8Array(32).fill(0xa1),
       protocolVersion: 1,
     } as unknown as SubBlock;
 

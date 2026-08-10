@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, encodeHeader } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, encodeHeader, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 /**
@@ -594,7 +594,6 @@ describe('verifyOrderingBlockStructure', () => {
       createdAt: Date.now(),
     },
     subBlockTree: {
-      subBlockRefs: [],
       subBlockEntries: [],
       pruneEntries: [],
     },
@@ -649,16 +648,38 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
   });
 
-  it('rejects block with subBlockEntries misaligned with subBlockRefs', () => {
+  // `rejects block with subBlockEntries misaligned with subBlockRefs` stood
+  // here and died with the field it aligned against (Phase 3b). There is no
+  // second list to be misaligned with: `subBlockEntries` is the committed
+  // topology and `subBlockRefs` was an uncommitted copy of its `postId`s.
+  //
+  // What replaces it is the half of that check which was load-bearing and which
+  // it carried as its first clause — `subBlockEntries` is present and is an
+  // array. Deleting a check needs the same care as adding one, so both of the
+  // cases the pair used to cover are pinned, including the one that used to be
+  // caught by the *other* deleted check.
+
+  it('rejects a block whose subBlockTree has no subBlockEntries array', () => {
     const block = makeValidBlock();
-    block.subBlockTree.subBlockRefs = ['aa'.repeat(32)];
-    block.subBlockTree.subBlockEntries = []; // misaligned — 1 ref, 0 entries
-    expect(verifyOrderingBlockStructure(block).valid).toBe(false);
+    (block.subBlockTree as { subBlockEntries?: unknown }).subBlockEntries = undefined;
+    const result = verifyOrderingBlockStructure(block);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Ordering block missing subBlockTree.subBlockEntries');
+  });
+
+  it('rejects a block with no subBlockTree at all — a rejection, not a TypeError', () => {
+    // Previously caught by the `subBlockRefs` presence check's `?.`. With that
+    // check gone the optional chain moved to this one; without it the entry
+    // loop below would throw instead of returning a verdict, which is the
+    // failure direction `VALIDATION_INTERFACE`'s no-panic rule forbids.
+    const block = { ...makeValidBlock(), subBlockTree: undefined } as unknown as OrderingBlock;
+    const result = verifyOrderingBlockStructure(block);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Ordering block missing subBlockTree.subBlockEntries');
   });
 
   it('rejects subBlockEntries with invalid postId', () => {
     const block = makeValidBlock();
-    block.subBlockTree.subBlockRefs = ['aa'.repeat(32)];
     block.subBlockTree.subBlockEntries = [
       { postId: 'too-short', parentRefs: [], author: 'cc'.repeat(32) },
     ];
@@ -669,7 +690,6 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('accepts a subBlockEntry with a 64-char author (control for the author check)', () => {
     const block = makeValidBlock();
-    block.subBlockTree.subBlockRefs = ['aa'.repeat(32)];
     block.subBlockTree.subBlockEntries = [
       { postId: 'aa'.repeat(32), parentRefs: [], author: 'cc'.repeat(32) },
     ];
@@ -678,7 +698,6 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('rejects subBlockEntries with a missing author', () => {
     const block = makeValidBlock();
-    block.subBlockTree.subBlockRefs = ['aa'.repeat(32)];
     block.subBlockTree.subBlockEntries = [
       { postId: 'aa'.repeat(32), parentRefs: [] } as unknown as SubBlockEntry,
     ];
@@ -689,7 +708,6 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('rejects subBlockEntries with a wrong-length author', () => {
     const block = makeValidBlock();
-    block.subBlockTree.subBlockRefs = ['aa'.repeat(32)];
     block.subBlockTree.subBlockEntries = [
       { postId: 'aa'.repeat(32), parentRefs: [], author: 'too-short' },
     ];
@@ -979,7 +997,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     return {
       header: { ...solved, ...postSolve },
       subBlockTree: {
-        subBlockRefs: subBlockEntries.map((e) => e.postId),
         subBlockEntries,
         pruneEntries: tree.pruneEntries ?? [],
       },
@@ -1335,7 +1352,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     const put = (over: Partial<OrderingBlock>, headerOver: Partial<BlockHeader> = {}): OrderingBlock => ({
       ...template,
       header: { ...template.header, ...headerOver },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       ...over,
     });
@@ -1367,7 +1384,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
           {
             block: put({
               subBlockTree: {
-                subBlockRefs: [GOOD],
                 subBlockEntries: [{ postId: bad, parentRefs: [bad], author: bad } as unknown as SubBlockEntry],
                 pruneEntries: [],
               },
@@ -1377,7 +1393,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
           {
             block: put({
               subBlockTree: {
-                subBlockRefs: [],
                 subBlockEntries: [],
                 pruneEntries: [
                   { ...prune(), rootPostHash: bad, subtreePostIds: [bad] } as unknown as PruneEntry,
@@ -1435,7 +1450,6 @@ describe('verifyBlockChainLink', () => {
       createdAt: Date.now(),
     },
     subBlockTree: {
-      subBlockRefs: [],
       subBlockEntries: [],
       pruneEntries: [],
     },
@@ -1773,7 +1787,7 @@ describe('no-panic on malformed input (M-5)', () => {
   const goodInput = Buffer.from('pow input');
   const goodBlock: OrderingBlock = {
     header: makeHeader(),
-    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
     validatorSignature: new Uint8Array(64),
   };
@@ -1857,20 +1871,19 @@ describe('no-panic on malformed input (M-5)', () => {
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          subBlockTree: { subBlockRefs: [bad], subBlockEntries: [bad], pruneEntries: [bad] },
+          subBlockTree: { subBlockEntries: [bad], pruneEntries: [bad] },
         } as any),
       ).not.toThrow();
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: bad },
+          subBlockTree: { subBlockEntries: [], pruneEntries: bad },
         } as any),
       ).not.toThrow();
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
           subBlockTree: {
-            subBlockRefs: [],
             subBlockEntries: [],
             pruneEntries: [
               {
@@ -2543,10 +2556,64 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   /** `isEncodableHeader`'s rule for `createdAt`: `typeof h.createdAt !== 'number'`. */
   const preChangeCreatedAtRule = (v: unknown): boolean => typeof v === 'number';
 
+  /**
+   * `encodeHeader` minus the domain guard.
+   *
+   * ⚠ **Added by Phase 3b, and its absence was a hole in 1f's own argument.**
+   * The two functions below transcribed `blockHash` / `computePowHash` verbatim
+   * — and 1f's note above says exactly why transcribing matters, that "a
+   * reference implementation that calls the code under test is not independent
+   * of it". But both transcriptions still called the live `encodeHeader`, so
+   * the borrowing was removed one layer and left in place at the next.
+   *
+   * That was invisible while `encodeHeader` was `cbor-x`, which is total: every
+   * poison fixture encoded, so a "pre-change" hash really was pre-change.
+   * Phase 3b makes the encoder fixed-width, `b33(stateRoot)` throws on a
+   * 64-character poison, and the whole demonstration stops at module load — the
+   * reference implementation inheriting the change it exists to predate.
+   *
+   * So the encoder is transcribed too. Same field order, same writers, and
+   * **byte-identical to `encodeHeader` for any header inside the domain** —
+   * which is what keeps `blockHash(clean) === preChangeBlockHash(clean)` a real
+   * no-movement pin rather than a tautology. Outside the domain it substitutes a
+   * value-derived filler instead of throwing, reproducing the property the old
+   * encoder had: a poisoned header got *some* encoding, so it could be mined and
+   * signed, and nothing objected. The filler is derived from the value so two
+   * distinct poisons keep distinct hashes.
+   */
+  const domainFiller = (v: unknown, n: number): Uint8Array =>
+    new Uint8Array(createHash('blake2b512').update(`filler:${String(v)}`).digest().subarray(0, n));
+
+  const preChangeEncodeHeader = (h: BlockHeader): Uint8Array => {
+    const w = new ByteWriter();
+    const hexOrFiller = (v: unknown, n: number): void => {
+      if (typeof v === 'string' && v.length === n * 2 && /^[0-9a-f]*$/.test(v)) {
+        writeHexNOrThrow(w, v, n);
+      } else {
+        w.writeBytes(domainFiller(v, n));
+      }
+    };
+    writeVlqU(w, h.protocolVersion);
+    writeVlqU(w, h.height);
+    hexOrFiller(h.prevBlockHash, 32);
+    hexOrFiller(h.subBlockRoot, 32);
+    hexOrFiller(h.utxoTxRoot, 32);
+    hexOrFiller(h.stateRoot, 33);
+    if (h.validatorId instanceof Uint8Array && h.validatorId.length === 32) {
+      writeBytesNOrThrow(w, h.validatorId, 32);
+    } else {
+      w.writeBytes(domainFiller(h.validatorId, 32));
+    }
+    writeVlqU(w, h.powNonce);
+    writeVlqU(w, h.powTargetBits);
+    writeVlqU(w, h.createdAt);
+    return w.toBytes();
+  };
+
   /** `blockHash` exactly as it stood before Phase 1f — no domain guard, total. */
   const preChangeBlockHash = (h: BlockHeader): string =>
     createHash('blake2b512')
-      .update(Buffer.from(encodeHeader(h)))
+      .update(Buffer.from(preChangeEncodeHeader(h)))
       .digest()
       .subarray(0, 32)
       .toString('hex');
@@ -2554,7 +2621,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   /** `computePowHash` exactly as it stood before Phase 1f — no domain guard, total. */
   const preChangePowHash = (h: BlockHeader): Buffer =>
     createHash('blake2b512')
-      .update(Buffer.from(encodeHeader({ ...h, powNonce: 0 })))
+      .update(Buffer.from(preChangeEncodeHeader({ ...h, powNonce: 0 })))
       .digest()
       .subarray(0, 32);
 
@@ -2606,7 +2673,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
   const blockOf = (h: BlockHeader, sig: Uint8Array): OrderingBlock => ({
     header: h,
-    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
     validatorSignature: sig,
   });
@@ -2770,19 +2837,35 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       ['2^60', 2 ** 60],
     ];
 
-    it('TODAY they hash differently — the collision is one the migration would INTRODUCE', () => {
-      // cbor-x is a self-describing encoder: a float NaN, a negative integer, a
-      // non-integral float and a large integer are four distinct encodings, so
-      // four distinct headers today have four distinct block hashes. Under
-      // `vlqU` all four are outside the encodable range and map onto
-      // `VLQ_SENTINEL` — one preimage, one PoW verdict, one signature verdict.
-      // Pinning the *current* distinctness is what makes that a regression the
-      // migration would cause rather than a defect it inherits.
+    // ⚠ **Rewritten by Phase 3b, and the reason is that its tense expired.**
+    //
+    // As written at 1f this said "TODAY they hash differently — the collision is
+    // one the migration would INTRODUCE", and asserted four distinct hashes
+    // through the pre-change encoder. That was a claim about `cbor-x`, which is
+    // self-describing: a float NaN, a negative integer, a non-integral float and
+    // a large integer were four distinct encodings. Pinning that distinctness
+    // was what made the collapse a regression the migration would *cause* rather
+    // than a defect it inherited — sound, and only expressible while cbor was
+    // still the encoder.
+    //
+    // Phase 3b is that migration. "Today" is now the positional format, the
+    // four encodings are one, and the old assertion asserts the opposite of the
+    // truth. The historical leg survives as the record in spec §6.2 and in this
+    // comment; what replaces it is stronger than a contrast, because the
+    // collapse can now be *demonstrated* rather than predicted:
+
+    it('the migration DOES collapse all four onto one preimage — shown, not predicted', () => {
+      // All four are outside `vlqU`'s encodable domain, so all four take
+      // `VLQ_SENTINEL` and the four headers share one encoding. This is the
+      // regression 1f existed to get in front of, running here as a fact about
+      // the shipped encoder.
       const hashes = OUT_OF_DOMAIN.map(([, v]) => preChangeBlockHash(header({ createdAt: v })));
-      expect(new Set(hashes).size).toBe(OUT_OF_DOMAIN.length);
-      // And each differs from the in-domain control, so `createdAt` is genuinely
-      // inside the preimage rather than being ignored by the encoder.
-      expect(hashes).not.toContain(preChangeBlockHash(header()));
+      expect(new Set(hashes).size).toBe(1);
+      // And it is a genuine collision, not the encoder ignoring the field: an
+      // in-domain `createdAt` still moves the hash.
+      expect(hashes[0]).not.toBe(preChangeBlockHash(header()));
+      expect(preChangeBlockHash(header({ createdAt: 1 })))
+        .not.toBe(preChangeBlockHash(header({ createdAt: 2 })));
     });
 
     it('AFTER, every one of them returns null — closed at its source, not deferred', () => {
@@ -2795,15 +2878,18 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     });
 
     it('the PoW preimage and the signature verdict collapse the same way', () => {
-      // The same argument one layer up: distinct preimages today, no preimage at
-      // all after. `computePowHash` zeroes `powNonce`, so `createdAt` is the only
-      // varying field in these four.
+      // The same argument one layer up. `computePowHash` zeroes `powNonce`, so
+      // `createdAt` is the only varying field across these four — and they share
+      // one preimage, which is one PoW verdict and one signature verdict for
+      // four distinct headers. The guard is what keeps that unreachable: no
+      // caller can obtain the preimage in the first place.
       const preimages = OUT_OF_DOMAIN.map(([, v]) =>
         preChangePowHash(header({ createdAt: v })).toString('hex'),
       );
-      expect(new Set(preimages).size).toBe(OUT_OF_DOMAIN.length);
+      expect(new Set(preimages).size).toBe(1);
       for (const [, v] of OUT_OF_DOMAIN) {
         expect(verifyOrderingBlockPoW(header({ createdAt: v }))).toBe(false);
+        expect(computePowHash(header({ createdAt: v }))).toBeNull();
       }
     });
   });

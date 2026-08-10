@@ -37,8 +37,22 @@ import { hex, makeApplicableBlock, makePost, makeTestIdentity } from '../helpers
 // `toEqual` — so closing it is the same closure, but it is a distinct effect
 // and naming it here is what keeps it from going missing again.
 //
-// These fixtures are only writable while the field exists. Phase 3b deletes it;
-// until then this is the demonstration that the defect is closed.
+// ⚠ **Phase 3b has now deleted the field, and this file said in advance that it
+// would stop being writable.** The paragraph above is history: the poisoned
+// fixture — a block whose refs named posts its entries did not — was the proof
+// that 3a's derivation closed the defect, and it was expressible only while
+// there were two lists to disagree. There is one list now, so the disagreement
+// is not merely rejected, it is **unrepresentable**; that half is pinned where
+// it belongs, in `@dagsocial/types` (`serialization.test.ts` → "the field is
+// unrepresentable, not merely unwritten").
+//
+// The file is kept rather than deleted, because the behavioural half is
+// independent of the field and is still the thing that would break: **apply
+// must evict and journal the ids the block COMMITS to.** The fixtures keep
+// their second, uncommitted post — the eviction victim and the un-confirm
+// victim — so a regression that widened either sink beyond `subBlockEntries`
+// still fails here. What is gone is the attacker's ability to *choose* that
+// second id, which is exactly what the deletion bought.
 
 const EXPIRY = 1000;
 
@@ -103,25 +117,30 @@ function postStatus(db: Database.Database, postId: string): string | null {
 }
 
 /**
- * A block that confirms `entryPost` while its `subBlockRefs` name `refPost`.
+ * A block that commits to exactly one post.
  *
- * The poison is applied *after* `makeApplicableBlock` has sealed the header,
- * and that is the point: `subBlockRoot`, `powNonce` and `validatorSignature`
- * all cover the entries and none of them cover the refs, so overwriting the
- * field afterwards leaves a block that is still, by every committed measure,
- * the same block. Lengths match, so the verifier's alignment check passes too.
+ * ⚠ **This was `makePoisonedBlock` until Phase 3b**, and it took a second post
+ * id to write into `subBlockTree.subBlockRefs` after `makeApplicableBlock` had
+ * sealed the header — the point being that `subBlockRoot`, `powNonce` and
+ * `validatorSignature` all covered the entries and none of them covered the
+ * refs, so the poison left a block that was, by every committed measure, the
+ * same block.
+ *
+ * There is nowhere to put a poison now. The second post survives in the callers
+ * as an uncommitted bystander instead of an attacker-named target: it is in the
+ * mempool and the DAG, it is not in this block's entries, and every assertion
+ * below says it must be left alone. That still fails if a consumer widens
+ * beyond `subBlockEntries` — what it no longer does is let the attacker pick
+ * which bystander.
  */
-async function makePoisonedBlock(
+async function makeCommittingBlock(
   entryPost: { postId: string; authorHex: string },
-  refPostId: string,
 ): Promise<OrderingBlock> {
-  const block = await makeApplicableBlock({
+  return makeApplicableBlock({
     subBlockEntries: [
       { postId: entryPost.postId, parentRefs: [], author: entryPost.authorHex },
     ],
   });
-  block.subBlockTree.subBlockRefs = [refPostId];
-  return block;
 }
 
 describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries', () => {
@@ -133,7 +152,7 @@ describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries'
     vi.resetModules();
   });
 
-  it('leaves the mempool entry the poisoned refs name, and evicts the one the entries commit to', async () => {
+  it('evicts only the mempool entry the entries commit to, leaving the bystander', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const handle = db.getDb();
@@ -141,9 +160,10 @@ describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries'
     const author = makeTestIdentity();
     const victim = makeTestIdentity();
 
-    // `confirmed` is the post the block actually commits to. `evictee` is the
-    // unrelated post the attacker names in the refs — someone else's
-    // unconfirmed sub-block, sitting in every node's mempool.
+    // `confirmed` is the post the block commits to. `evictee` is the unrelated
+    // post that must survive — someone else's unconfirmed sub-block, sitting in
+    // every node's mempool. Until Phase 3b an attacker named it in the refs;
+    // now it is simply a bystander, and the eviction must still miss it.
     const confirmed = makePost(author.userId, 'the block commits to this');
     const confirmedId = computePostId(confirmed);
     const evictee = makePost(victim.userId, 'an unrelated pending sub-block');
@@ -159,22 +179,17 @@ describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries'
     mempool.insertSubBlock(eviceeId, EXPIRY);
     expect(pooledSubBlockIds(handle)).toEqual([confirmedId, eviceeId]);
 
-    const block = await makePoisonedBlock(
+    const block = await makeCommittingBlock(
       { postId: confirmedId, authorHex: hex(author.userId) },
-      eviceeId,
     );
-
-    // Accepted. Nothing about the poison is visible to any committed check —
-    // which is the defect being demonstrated, not an accident of the fixture.
-    // Should a later phase pull the refs under `subBlockRoot`, this flips to
-    // `false` and the flip is the signal, not a fixture to repair.
     const blockApply = await importBlockApply();
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
 
-    // The eviction primitive is closed: the DELETE ran on the committed id, so
-    // the victim's entry is untouched and still pending. Reading the refs would
-    // have deleted `eviceeId` and left `confirmedId` in the pool forever —
-    // exactly inverted from this.
+    // The eviction ran on the committed id, so the bystander's entry is
+    // untouched and still pending. Any consumer reading a list wider than
+    // `subBlockEntries` would have taken `eviceeId` with it — which is what the
+    // uncommitted field used to let an attacker arrange, and what this still
+    // catches for a plain widening.
     expect(pooledSubBlockIds(handle)).toEqual([eviceeId]);
   });
 
@@ -195,9 +210,8 @@ describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries'
     posts.insertPost(confirmed, encodePost(confirmed));
     posts.insertPost(unrelated, encodePost(unrelated));
 
-    const block = await makePoisonedBlock(
+    const block = await makeCommittingBlock(
       { postId: confirmedId, authorHex: hex(author.userId) },
-      unrelatedId,
     );
 
     const blockApply = await importBlockApply();
@@ -207,9 +221,10 @@ describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries'
     expect(postStatus(handle, confirmedId)).toBe('confirmed');
     expect(postStatus(handle, unrelatedId)).toBe('pending');
 
-    // The journal records that same list — not the refs. `toEqual` on the whole
-    // array rather than `toContain`: the failure this guards against is an
-    // *extra* attacker-chosen id as much as a missing one.
+    // The journal records that same list. `toEqual` on the whole array rather
+    // than `toContain`: the failure this guards against is an *extra* id as
+    // much as a missing one, and an extra one is what the deleted field used to
+    // supply.
     const journalStore = await importJournalStore();
     const journal = journalStore.getBlockJournal(1);
     expect(journal).not.toBeNull();
@@ -218,9 +233,10 @@ describe('subBlockRefs is uncommitted — consumers derive from subBlockEntries'
 
     // And the round trip closes. `revertBlock` is what a reorg replays, so this
     // is the inverse under test, not a stand-in for it: after it runs, nothing
-    // the block confirmed is still confirmed. Journalling the refs instead left
-    // `confirmedId` permanently 'confirmed' at a height whose block no longer
-    // exists, while un-confirming a post the block never touched.
+    // the block confirmed is still confirmed, and the bystander is untouched.
+    // Journalling anything wider left `confirmedId` permanently 'confirmed' at
+    // a height whose block no longer exists, while un-confirming a post the
+    // block never touched.
     const fork = await importForkResolution();
     fork.revertBlock(1);
     expect(postStatus(handle, confirmedId)).toBe('pending');
