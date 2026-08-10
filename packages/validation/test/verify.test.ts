@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, encodeHeader, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, encodeHeader, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 /**
@@ -762,6 +762,194 @@ describe('verifyOrderingBlockStructure', () => {
     const result = verifyOrderingBlockStructure(block);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('invalid value');
+  });
+
+  // -------------------------------------------------------------------------
+  // The four store-write domain pins
+  //
+  // Two of these close a chain measured end to end on `672f5a5`: a peer-chosen
+  // value that our own encoder writes as a sentinel the paired reader refuses,
+  // stored in `ordering_blocks` and read back as `UnreadableStoredBlockError`
+  // → `failStopIfCorruptChain` → `process.exit(1)`. The trigger is automatic —
+  // `extendsOurTip` reads the stored tip on every arriving gossip block — and
+  // the row is on disk, so it survives restart. The other two close the §2.5
+  // defects reported at the same rows in Phase 4b: a reachable writer throw,
+  // and a second sentinel collision.
+  //
+  // Each pin is exercised on the value that was MEASURED rather than a
+  // convenient one, and each is separately shown NOT to reject what an honest
+  // producer emits — the failure a truthiness or too-tight test would cause.
+  // -------------------------------------------------------------------------
+
+  /** A coinbase output well-formed in every field, against `makeValidBlock`'s height 1. */
+  const goodCoinbase = (): CoinbaseOutput => ({
+    owner: new Uint8Array(32).fill(2),
+    value: 5n,
+    lockedUntilBlock: 1,
+    isTreasury: false,
+  });
+
+  const hexOf = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
+
+  it('rejects a coinbase output whose isTreasury is not a boolean', () => {
+    const block = makeValidBlock();
+    block.utxoTxTree.coinbaseOutputs = [
+      { ...goodCoinbase(), isTreasury: 'yes' } as unknown as CoinbaseOutput,
+    ];
+    expect(verifyOrderingBlockStructure(block)).toEqual({
+      valid: false,
+      error: 'Coinbase output invalid isTreasury',
+    });
+  });
+
+  it('isTreasury: every non-boolean collided on the 0xff byte readBool refuses', () => {
+    // `writeBool` is `value === true ? 1 : value === false ? 0 : 0xff`, so the
+    // entire non-boolean domain mapped onto one encoding — a root collision —
+    // and onto a byte `readBool` rejects, which is what made it a stored-row
+    // poison rather than a cosmetic defect. The field is read by nothing else:
+    // `block-apply.ts:611-615` never passes it to `mintCredits`.
+    const nonBooleans = ['yes', 0, 1, {}, null];
+    const encodings = nonBooleans.map((v) =>
+      hexOf(coinbaseOutputBytes({ ...goodCoinbase(), isTreasury: v } as unknown as CoinbaseOutput)),
+    );
+    expect(new Set(encodings).size).toBe(1);
+    expect(encodings[0]!.endsWith('ff')).toBe(true);
+    expect(encodings[0]).not.toBe(hexOf(coinbaseOutputBytes(goodCoinbase())));
+    // And every one of them is now refused before it can reach that writer.
+    for (const v of nonBooleans) {
+      const block = makeValidBlock();
+      block.utxoTxTree.coinbaseOutputs = [
+        { ...goodCoinbase(), isTreasury: v } as unknown as CoinbaseOutput,
+      ];
+      expect(verifyOrderingBlockStructure(block)).toEqual({
+        valid: false,
+        error: 'Coinbase output invalid isTreasury',
+      });
+    }
+  });
+
+  it('accepts isTreasury: false — the value a truthiness test would eat', () => {
+    // The honest producer emits `false` on every single-output block
+    // (`block-creator.ts:626`), so a `!out.isTreasury` style check would reject
+    // the overwhelmingly common case. The pin is on the type, not the value.
+    const block = makeValidBlock();
+    block.utxoTxTree.coinbaseOutputs = [
+      { ...goodCoinbase(), isTreasury: false },
+      { ...goodCoinbase(), isTreasury: true },
+    ];
+    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+  });
+
+  it('rejects a utxoTxs element that is not a byte view', () => {
+    const block = makeValidBlock();
+    block.utxoTxTree.utxoTxIds = ['bb'.repeat(32)];
+    // The measured payload: a string where `Uint8Array` is declared. Array-ness
+    // and length alignment both hold, which is why it passed.
+    block.utxoTxTree.utxoTxs = ['not-bytes' as unknown as Uint8Array];
+    expect(verifyOrderingBlockStructure(block)).toEqual({
+      valid: false,
+      error: 'Ordering block utxoTx must be a byte view',
+    });
+  });
+
+  it('rejects every non-byte-view utxoTxs element, including the length-bearing ones', () => {
+    // The prune-entry rule, one struct over: a `.length` read is not a type
+    // check. An `Array` of byte values, a `{length}` object and a non-`Uint8Array`
+    // typed view all satisfy one and none of them encode.
+    for (const bad of ['not-bytes', [1, 2, 3], { length: 3 }, new Uint32Array(3), null, 42]) {
+      const block = makeValidBlock();
+      block.utxoTxTree.utxoTxIds = ['bb'.repeat(32)];
+      block.utxoTxTree.utxoTxs = [bad as unknown as Uint8Array];
+      expect(verifyOrderingBlockStructure(block)).toEqual({
+        valid: false,
+        error: 'Ordering block utxoTx must be a byte view',
+      });
+    }
+  });
+
+  it('utxoTxs: a non-byte-view element sentinels the length prefix readLp refuses', () => {
+    const encodeLp = (v: unknown): string => {
+      const w = new ByteWriter();
+      writeLp(w, v as Uint8Array);
+      return hexOf(w.toBytes());
+    };
+    // Every non-byte-view collides on the sentinel length prefix, payload absent.
+    expect(new Set(['not-bytes', [1, 2, 3], { length: 3 }, null].map(encodeLp)).size).toBe(1);
+    // An honest three-byte payload does not: `vlqU(3)` then the bytes.
+    expect(encodeLp(new Uint8Array([1, 2, 3]))).toBe('03010203');
+  });
+
+  it('accepts an empty utxoTxs, and byte-view elements', () => {
+    // Empty is the overwhelmingly common case and must not be caught by a pin
+    // written for the elements.
+    expect(verifyOrderingBlockStructure(makeValidBlock())).toEqual({ valid: true });
+
+    const block = makeValidBlock();
+    block.utxoTxTree.utxoTxIds = ['bb'.repeat(32), 'cc'.repeat(32)];
+    // `Buffer` extends `Uint8Array`, and node's `encodeTx` output must pass.
+    block.utxoTxTree.utxoTxs = [new Uint8Array(0), Buffer.from([1, 2, 3])];
+    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+  });
+
+  it('rejects a coinbase output value at 2^64', () => {
+    const block = makeValidBlock();
+    block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), value: 2n ** 64n }];
+    expect(verifyOrderingBlockStructure(block)).toEqual({
+      valid: false,
+      error: 'Coinbase output invalid value',
+    });
+  });
+
+  it('value at 2^64 is the writer throw this pin makes unreachable', () => {
+    // `writeVlqU64OrThrow` is the codec's one throwing writer, and node reaches
+    // it at `computeUtxoTxRoot` — apply-funnel step 4, ahead of the coinbase sum
+    // at step 5 — so without this pin a malformed block became an "unexpected
+    // failure" logged by the funnel's totality catch rather than the stated
+    // rejection §2.1 step 4 requires. The domain belongs upstream of the encoder.
+    expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n })).toThrow();
+    expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n - 1n })).not.toThrow();
+  });
+
+  it('accepts the coinbase value boundaries the writer encodes faithfully', () => {
+    const block = makeValidBlock();
+    block.utxoTxTree.coinbaseOutputs = [
+      { ...goodCoinbase(), value: 0n },
+      { ...goodCoinbase(), value: 2n ** 64n - 1n },
+    ];
+    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+  });
+
+  it('rejects a coinbase lockedUntilBlock outside the vlqU domain', () => {
+    for (const bad of [2 ** 60, Infinity, 1e300]) {
+      const block = makeValidBlock();
+      block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), lockedUntilBlock: bad }];
+      expect(verifyOrderingBlockStructure(block)).toEqual({
+        valid: false,
+        error: 'Coinbase output invalid lockedUntilBlock',
+      });
+    }
+  });
+
+  it('lockedUntilBlock: 2^60, Infinity and 1e300 all collided on one encoding', () => {
+    // All three clear the `>= header.height` floor, which is why a lower bound
+    // alone never saw them, and `writeVlqU` is total by sentinel — so they did
+    // not throw, they collided: three distinct blocks, one `utxoTxRoot`. The
+    // `createdAt` defect Phase 1f closed on the header, one struct over.
+    const encodings = [2 ** 60, Infinity, 1e300].map((v) =>
+      hexOf(coinbaseOutputBytes({ ...goodCoinbase(), lockedUntilBlock: v })),
+    );
+    expect(new Set(encodings).size).toBe(1);
+    expect(encodings[0]).not.toBe(hexOf(coinbaseOutputBytes(goodCoinbase())));
+  });
+
+  it('accepts the lockedUntilBlock values an honest producer emits', () => {
+    const block = makeValidBlock();
+    block.utxoTxTree.coinbaseOutputs = [
+      { ...goodCoinbase(), lockedUntilBlock: block.header.height },
+      { ...goodCoinbase(), lockedUntilBlock: block.header.height + 720 },
+      { ...goodCoinbase(), lockedUntilBlock: Number.MAX_SAFE_INTEGER },
+    ];
+    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
   });
 
   // -------------------------------------------------------------------------
@@ -1902,6 +2090,15 @@ describe('no-panic on malformed input (M-5)', () => {
         verifyOrderingBlockStructure({
           ...goodBlock,
           utxoTxTree: { utxoTxIds: [], utxoTxs: [], likeBoxIds: [], coinbaseOutputs: [bad] },
+        } as any),
+      ).not.toThrow();
+      // The id is aligned deliberately: with an empty `utxoTxIds` the length
+      // check rejects first and the element pin is never reached, so the sweep
+      // would pass over the check it is meant to cover.
+      expect(() =>
+        verifyOrderingBlockStructure({
+          ...goodBlock,
+          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad], coinbaseOutputs: [] },
         } as any),
       ).not.toThrow();
     }
