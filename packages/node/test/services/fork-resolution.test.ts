@@ -988,8 +988,11 @@ describe('a stored header that cannot be hashed', () => {
   it('undecodable bytes a PEER chose stay a rejection, and never a halt', async () => {
     // The other half of the separation. `decodeTx` over
     // `utxoTxTree.utxoTxs[i]` reads bytes the *producer* chose, so a
-    // `ReaderError` from there is ordinary malformed input: the loop skips the
-    // entry and the block applies without it.
+    // `ReaderError` from there is ordinary malformed input: the block is
+    // rejected (NODE_INTERFACE → "Embedded transactions: a mismatch rejects the
+    // block") and the node stays up. Which verdict the arm reaches is that
+    // rule's business; what this test owns is that it is a verdict at all
+    // rather than a process death.
     //
     // ⚠ **What this test does NOT prove — measured, not assumed.** The
     // alternative fix (an `err instanceof ReaderError` arm in the funnel's
@@ -1004,8 +1007,9 @@ describe('a stored header that cannot be hashed', () => {
     // describe — that path never enters the funnel, so only a fix at the store
     // read reaches it.
     //
-    // Kept anyway, because the arm it pins had no test at all: nothing else in
-    // the suite exercises the funnel's decode-failure `continue`.
+    // Kept anyway, because the arm it pins is otherwise covered only for its
+    // verdict: `tx-envelope-funnel.test.ts` measures what the decode arm
+    // answers, and this measures that answering is what it does.
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -1027,17 +1031,19 @@ describe('a stored header that cannot be hashed', () => {
       '../../src/services/block-apply.js'
     )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
 
+    let applied: boolean | undefined;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const caught = thrownBy(() => applyOrderingBlock(block));
+    const caught = thrownBy(() => { applied = applyOrderingBlock(block); });
     const warnings = warn.mock.calls.map((c) => String(c[0]));
     warn.mockRestore();
 
     expect(caught).toBeNull();
+    expect(applied).toBe(false);
     // Not merely "it did not throw": the decode really was attempted and really
     // did fail, so the absence of a throw is this arm's doing rather than the
     // bytes never having been read.
     expect(
-      warnings.some((w) => w.includes('Failed to decode UTXO tx')),
+      warnings.some((w) => w.includes('did not decode')),
       `no decode warning; got ${JSON.stringify(warnings)}`,
     ).toBe(true);
   });

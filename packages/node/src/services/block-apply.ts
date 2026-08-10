@@ -31,7 +31,13 @@ import { MAX_REORG_DEPTH } from './fork-resolution.js';
 import { subBlockIdsOf } from './sub-block-ids.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
-import { applyTx, checkTxEnvelope, materializeOutput, validateTx } from './utxo-engine.js';
+import {
+  applyTx,
+  checkOutputShape,
+  checkTxEnvelope,
+  materializeOutput,
+  validateTx,
+} from './utxo-engine.js';
 import { getSystemKeypair } from '../store/system.js';
 import {
   getKarmaBox,
@@ -875,7 +881,12 @@ function applyMutationPhase(
   };
   const pendingEntries = getPendingEntries(1000);
 
-  // Decode and validate all txs first (CBOR / txId checks are fatal).
+  // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
+  // rejects the block"): every declared `utxoTxId` must be proven to be the id
+  // of the bytes carried beside it, and an arm that cannot complete that proof
+  // rejects the block. A body that does not match its committed ids would
+  // otherwise apply different state under one block hash. Stated as a property
+  // rather than as a list, so a guard added here later inherits the verdict.
   interface QueuedTx {
     txId: string;
     tx: UtxoTransaction;
@@ -887,37 +898,55 @@ function applyMutationPhase(
     const txCbor = block.utxoTxTree.utxoTxs[i];
 
     if (!txCbor) {
-      console.warn(`UTXO tx ${txId} missing CBOR in block`);
-      continue;
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
+      );
+      return false;
     }
 
     let tx: UtxoTransaction;
     try {
       tx = decodeTx(txCbor);
     } catch (err) {
-      console.warn(`Failed to decode UTXO tx ${txId} from block: ${String(err)}`);
-      continue;
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +
+        `decode: ${String(err)}`,
+      );
+      return false;
     }
 
-    // Envelope gate, before `computeTxId` below hashes the decoded value and
-    // before `tx.outputs` is mapped. The tx is SKIPPED, not the block
-    // rejected: that is the decided idiom of this loop — the missing-CBOR,
-    // decode-failure and id-mismatch arms all `continue`, deterministically on
-    // every node. Before the gate a malformed envelope threw at `computeTxId`
-    // into the outer totality catch and killed the whole block, an accident of
-    // the throw path rather than a rule (NODE_INTERFACE → "Transaction
-    // envelope shape", call sites). Honest producers cannot embed one: their
-    // pool never admits it.
+    // Both gates run before `computeTxId` hashes the decoded value, and
+    // together they are what makes that hash total: the envelope types every
+    // field `txIdBytes` reads directly, `checkOutputShape` the output fields it
+    // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
+    // "The output domain check"). Unchecked, an out-of-domain output field
+    // becomes an exception absorbed by the funnel's totality handler instead of
+    // the stated rejection below.
     const envelopeCheck = checkTxEnvelope(tx);
     if (!envelopeCheck.valid) {
-      console.warn(`Rejected UTXO tx ${txId} from block: ${envelopeCheck.error}`);
-      continue;
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
+        `malformed envelope: ${envelopeCheck.error}`,
+      );
+      return false;
+    }
+
+    const outputCheck = checkOutputShape(tx.outputs);
+    if (!outputCheck.valid) {
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
+        `out-of-domain output: ${outputCheck.error}`,
+      );
+      return false;
     }
 
     const decodedTxId = computeTxId(tx);
     if (decodedTxId !== txId) {
-      console.warn(`Rejected UTXO tx ${txId}: CBOR decodes to ${decodedTxId}`);
-      continue;
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ${txId} declares an ` +
+        `id its bytes do not produce (${decodedTxId})`,
+      );
+      return false;
     }
 
     // `txId` here is the block's declared id, already checked byte-for-byte

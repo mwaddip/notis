@@ -937,14 +937,9 @@ The checks:
 - `validateTx` **step 0** — ahead of every other read of `tx`.
 - The block funnel, immediately after `decodeTx` (`block-apply.ts`) — the
   funnel computes `computeTxId(tx)` for its id-equality check BEFORE
-  `validateTx` runs, and only `decodeTx` sits inside its local try today: a
-  malformed envelope currently rejects the WHOLE block via the outer totality
-  catch (misleading "unexpected failure" log). With the gate the tx is
-  **skipped** (`continue`), matching its siblings in the same loop — decode
-  failure and id mismatch both skip the tx and apply the block without it,
-  deterministically on every node. (Whole-block rejection was the
-  throw-path's accident, not a decided rule; skip is the loop's decided
-  idiom. Honest producers cannot embed one — their pool never admits it.)
+  `validateTx` runs, so the gate is what keeps that hash total. Its verdict
+  there is **block rejection**, under the proof obligation stated at
+  "Embedded transactions" below; it is not a per-tx skip.
 - HTTP keeps `jsonToTx`'s friendlier per-field `ClientError` 400s; the gate
   backstops the two fields that today pass through on bare type assertions
   (`inputs`, `protocolVersion`) — the field-type pin's "HTTP ingress is
@@ -1597,7 +1592,10 @@ encoding added to the table above, and an argument at the call site that
 2. Apply coinbase — mint credits for each output
 3. Broadcast ordering block to peers
 4. Confirm sub-blocks and their posts (`confirmPost`)
-5. Apply UTXO transactions — for each embedded UTXO tx, once its inputs are all
+5. Apply UTXO transactions. The decode pass runs first and carries its own rule —
+   see "Embedded transactions: a mismatch rejects the block": a tx whose bytes
+   cannot be proven to be the id declared beside them rejects the block before
+   this step sees a queue. Then, for each embedded UTXO tx, once its inputs are all
    present, **fully re-validate with `validateTx`** (signatures, guards,
    transitions, conservation — not just liveness), then apply (`applyTx`). A block
    producer is untrusted (permissionless PoW), so nothing is assumed verified. **If
@@ -3097,28 +3095,77 @@ un-confirmed from `subBlockRefs` (uncommitted) — the inverse keyed on a differ
 forward operation. Both consumers now derive `subBlockEntries.map(e => e.postId)`. The two JSON
 routes that expose it derive it too, so HTTP response shape is unchanged.
 
-**Embedded transactions: a mismatch rejects the block** (AHEAD OF CODE, register row C4). The three
-arms in the block's tx loop — missing CBOR, decode failure, and `computeTxId(tx) !== txId` — no
-longer `continue`. Skipping was defensible when the alternative was an accidental throw, but the
-property it gives up is decisive: a body that does not match its committed ids **applies different
-state under the same block hash**.
+**Embedded transactions: a mismatch rejects the block** (AHEAD OF CODE, register row C4).
+
+> **The proof obligation.** The block's tx loop must **prove** that every declared `utxoTxId` is the
+> id of the bytes carried beside it. An arm that cannot complete that proof rejects the block. This
+> is stated as a property, not as a list of arms, because the list has already gone short once: the
+> spec enumerated three arms the day after a fourth landed. A guard added to this loop later inherits
+> the verdict without needing a ruling of its own.
+
+The arms as of 2026-08-10 — missing CBOR, decode failure, envelope failure, **out-of-domain output**
+(the D6 check below, which is an arm of this loop and not a separate rule), and
+`computeTxId(tx) !== txId` — therefore no longer `continue`. Skipping was defensible when the
+alternative was an accidental throw, but the property it gives up is decisive: a body that does not
+match its committed ids **applies different state under the same block hash**.
+
+The envelope arm reaches the same verdict by the obligation rather than by a separate argument: it
+runs before `computeTxId`, so a failure there means the proof was never attempted. Folding it in
+costs no liveness, and that is measured rather than reasoned — 2026-08-10, 13 envelope-valid
+transactions covering all six box types, **all nine `FieldType` values** (`u64` at `0n` and above
+2⁵³, `bytes32`, `bytes0or32` at length 0, `hex32`, `heightOrTransfer` at `-1`, `uint`, `u32`,
+multibyte `string`, explicit `false`) and empty `signatures`/`inputs`/`outputs`, round-tripped
+`encodeTx` → `decodeTx` under cbor-x 1.6.4 with
+`computeTxId`, own-key set, prototypes and `instanceof Uint8Array` all unchanged. **The blind spot:
+that measurement covers the honest path only**, and it assumes a producer's bytes come from
+`encodeTx` — established by grepping the `utxo_tx_cbor` column rather than the function name, which
+has exactly one INSERT writer. Bytes an attacker crafts are what the arm is for.
 
 This also closes register row **C2** without touching any root preimage. `utxoTxRoot` commits the
 ids; once a mismatch kills the block rather than skipping the tx, the bytes are transitively
 committed through `computeTxId`, and "the body is swappable under an unchanged header" stops being
 true.
 
+**What the obligation does NOT cover, stated so the asymmetry is not read as an oversight.** A tx
+whose inputs never appear is still dropped after the multi-pass loop exhausts `MAX_PASSES`, and the
+block still applies. That survives because it is not the same property: the bytes there *do* match
+their declared id, every node runs the same bounded loop over the same tx set from the same prior
+state, and so every node drops the same txs. A block declaring a tx it never applies is a
+producer-quality problem, not a divergence. If input liveness ever stops being decidable from local
+state alone, this paragraph is what has to be re-derived.
+
 > ⚠ **Rejection is of BYTES, not of the block hash.** A node that rejects a malformed body MUST
 > remain willing to accept a well-formed body for the same block hash from another peer. Caching
 > "block `abc…` is invalid" would hand an attacker who races the honest producer a permanent
 > per-height censorship primitive against that node.
+>
+> **Nothing implements this, and that is the point** — measured 2026-08-10, no negative cache keyed
+> on a block hash exists anywhere. `applyOrderingBlock` has **four** callers: `index.ts`'s gossip and
+> sync handlers discard the boolean, `fork-resolution` throws on it and rolls the savepoint back, and
+> `block-creator` assigns it. **None memoizes by hash**, which is the property that matters — an
+> earlier draft of this paragraph said "both call sites discard its boolean", reaching the right
+> conclusion from a count that was short by two. Net's bans are keyed on peer id or address, and
+> `sync-machine`'s `outstanding` is an in-flight request set: a rejected block is never stored, so it
+> stays absent from `blockIdIndex()` and is re-requestable. So this is a constraint on code not yet
+> written, and a constraint
+> with no test is a claim that decays silently. It carries a **regression test** instead: a corrupted
+> body under hash `H` rejects, and a well-formed body under that same `H` then applies. The day
+> someone adds a cache, that test is what fails.
 
-**The bigint domain check.** `computeTxId` runs in that same loop behind `checkTxEnvelope` only, and
-`checkTxEnvelope` deliberately does not type output entries — the `u64` pin is `checkOutputShape` at
-`validateTx` step 4, which runs later. Since `boxContentBytes` throws on an out-of-domain bigint
-(TYPES_INTERFACE → Totality, the one stated exception), this call site MUST check the domain
-explicitly, so a bad value produces a stated rejection instead of an exception caught by the funnel's
-totality handler.
+**The output domain check.** `computeTxId` runs in that same loop behind `checkTxEnvelope` only, and
+`checkTxEnvelope` deliberately does not type output entries, so an out-of-domain output field reaches
+a throwing writer (TYPES_INTERFACE → Totality, the one stated exception). This call site MUST
+therefore establish the output domain before hashing, so a bad value produces a stated rejection
+rather than an exception absorbed by the funnel's totality handler.
+
+**It does that by calling `checkOutputShape`, not by growing a second check.** That schema already
+pins exactly the domains the writers require — `u64` as a bigint in `[0, 2⁶⁴)`, `hex32` as 64
+lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
+any JS value. A narrower check written for this call site would be a second spelling of one schema,
+which is the fork surface this contract rejects everywhere else. **The obligation is the whole
+schema, not the `bigint` alone**: the spec names the `value` field because that is where it was
+found, and `post_lock.targetPostId` (a `hex32` written by `writeHexNOrThrow`) reaches a throwing
+writer by the identical route.
 
 **Apply funnel: validation and mutation phases.** `applyBlockBody` is split so
 the state transition can be run without the header being final — that is what
