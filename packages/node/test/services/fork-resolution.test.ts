@@ -21,6 +21,7 @@ import type {
   BlockHeader,
 } from '@dagsocial/types';
 import type { BlockJournal } from '../../src/store/journal.js';
+import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
@@ -176,6 +177,11 @@ async function importForkResolution() {
     ) => number | null;
     revertBlock: (height: number) => void;
     reorg: (forkHeight: number, newBlocks: OrderingBlock[]) => void;
+    resolveFork: (
+      block: OrderingBlock,
+      net: ForkResolutionNet,
+      dagService?: unknown,
+    ) => Promise<void>;
     MAX_REORG_DEPTH: number;
   };
 }
@@ -1630,5 +1636,177 @@ describe('reorg abort', () => {
     const postDigest = avl!.prover.digest();
     expect(postDigest).not.toBeNull();
     expect(Buffer.from(postDigest!).equals(Buffer.from(preDigest))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — resolveFork: never reorg to a shorter chain
+//
+// NODE_INTERFACE → AVL+ State Root → "Never reorg to a shorter chain".
+// `reorg()` applies exactly what it is handed, so the resulting tip is checked
+// at the decision, not at the mechanism — a peer's answer is the one input the
+// work comparison never saw.
+// ---------------------------------------------------------------------------
+
+type ForkScenario = {
+  /** Hashes of our chain at heights 1, 2, 3. */
+  ourHashes: string[];
+  /** Newest-first, the shape `requestHeaders` returns. */
+  theirHeaders: BlockHeader[];
+  /** Their blocks for heights 2, 3, 4. */
+  theirBlocks: OrderingBlock[];
+  /** The gossiped block that opened the fork. */
+  competingBlock: OrderingBlock;
+};
+
+/**
+ * Our chain at height 3 against a peer chain of three blocks over a shared
+ * height-1 fork point — heavier by one block at the network's constant target.
+ *
+ * The peer's blocks are built, applied in sequence, then reverted. That order is
+ * what keeps them applicable: each commits to the state standing when it was
+ * built (H-6), which post-revert is the state the reorg replays them against.
+ */
+async function buildForkScenario(): Promise<ForkScenario> {
+  const bc = await importBlockCreator();
+  bc.startBlockCreator(testConfig);
+  const ordering = await importOrdering();
+  const { applyOrderingBlock } = (await import(
+    '../../src/services/block-apply.js'
+  )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+
+  // Height 1 — the fork point, shared by both chains.
+  bc.createOrderingBlock();
+
+  const theirBlocks: OrderingBlock[] = [];
+  for (const height of [2, 3, 4]) {
+    const b = await makeApplicableBlock({ height });
+    expect(applyOrderingBlock(b)).toBe(true);
+    theirBlocks.push(b);
+  }
+  expect(ordering.getCurrentHeight()).toBe(4);
+
+  const forkResolution = await importForkResolution();
+  for (const height of [4, 3, 2]) forkResolution.revertBlock(height);
+  expect(ordering.getCurrentHeight()).toBe(1);
+
+  // Our chain: two blocks the creator mines to its own validator id, so they
+  // cannot collide with the hand-built ones above.
+  bc.createOrderingBlock();
+  bc.createOrderingBlock();
+  expect(ordering.getCurrentHeight()).toBe(3);
+
+  const ourHashes = [1, 2, 3].map(
+    (h) => blockHash(ordering.getOrderingBlock(h)!.header)!,
+  );
+  const theirHashes = theirBlocks.map((b) => blockHash(b.header)!);
+  expect(ourHashes.some((h) => theirHashes.includes(h))).toBe(false);
+
+  return {
+    ourHashes,
+    theirHeaders: [...theirBlocks].reverse().map((b) => b.header).concat(
+      ordering.getOrderingBlock(1)!.header,
+    ),
+    theirBlocks,
+    competingBlock: theirBlocks[2]!,
+  };
+}
+
+/** A peer that answers the header request honestly and the block request with `answer`. */
+function stubNet(theirHeaders: BlockHeader[], answer: OrderingBlock[]): ForkResolutionNet & {
+  blockRequests: Array<{ startHeight: number; endHeight: number }>;
+} {
+  const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+  return {
+    blockRequests,
+    peers: () => [{ id: 'peer-withholding' }],
+    requestHeaders: async () => theirHeaders,
+    requestBlocks: async (startHeight: number, endHeight: number) => {
+      blockRequests.push({ startHeight, endHeight });
+      return answer;
+    },
+  };
+}
+
+describe('resolveFork — never reorg to a shorter chain', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('an empty block response does not truncate our chain to the fork point', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const net = stubNet(scenario.theirHeaders, []);
+    await forkResolution.resolveFork(scenario.competingBlock, net);
+
+    // The peer was asked for the whole range above the fork — the reorg was
+    // refused on its answer, not skipped earlier in fork choice.
+    expect(net.blockRequests).toEqual([{ startHeight: 2, endHeight: 4 }]);
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+
+    // A stated refusal, naming the peer.
+    expect(
+      warn.mock.calls.some(
+        ([msg]) => typeof msg === 'string'
+          && msg.includes('peer-withholding')
+          && msg.includes('aborting reorg'),
+      ),
+    ).toBe(true);
+  });
+
+  it('a short-but-nonempty response does not lower our tip', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // One block for a three-block range: nothing is empty, and the tip would
+    // still land at 2 against the 3 it started at.
+    await forkResolution.resolveFork(
+      scenario.competingBlock,
+      stubNet(scenario.theirHeaders, [scenario.theirBlocks[0]!]),
+    );
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+  });
+
+  it('a genuinely longer chain still replaces ours', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+
+    await forkResolution.resolveFork(
+      scenario.competingBlock,
+      stubNet(scenario.theirHeaders, scenario.theirBlocks),
+    );
+
+    expect(ordering.getCurrentHeight()).toBe(4);
+    // Height 1 is the shared fork point; 2..4 are now the peer's blocks.
+    expect(blockHash(ordering.getOrderingBlock(1)!.header)).toBe(scenario.ourHashes[0]);
+    for (const [i, block] of scenario.theirBlocks.entries()) {
+      expect(blockHash(ordering.getOrderingBlock(i + 2)!.header)).toBe(blockHash(block.header));
+    }
   });
 });

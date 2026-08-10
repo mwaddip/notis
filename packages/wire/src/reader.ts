@@ -149,6 +149,15 @@ export class ByteReader {
     if (length > MAX_ARRAY_LENGTH) {
       throw new ReaderError(`readArray: length ${length} exceeds max ${MAX_ARRAY_LENGTH}`, 'array-too-large');
     }
+    // An element reader consumes at least one byte, so a count above the bytes
+    // remaining cannot decode — WIRE_INTERFACE → "MAX_ARRAY_LENGTH bounds the
+    // count, not the memory".
+    if (length > this.remaining) {
+      throw new ReaderError(
+        `readArray: length ${length} exceeds ${this.remaining} byte(s) remaining`,
+        'truncated',
+      );
+    }
     const out: T[] = new Array(length);
     for (let i = 0; i < length; i++) out[i] = reader(this);
     return out;

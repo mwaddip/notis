@@ -212,6 +212,18 @@ then applies ZigZag decode arithmetically: `u even → u/2, odd → -(u+1)/2`
 Reads VLQ length, then calls `reader(this)` that many times.
 
 - **Throws:** `ReaderError('array-too-large')` if length > `MAX_ARRAY_LENGTH`
+- **Throws:** `ReaderError('truncated')` if length > `remaining` — checked **after** the count cap
+  and **before** any allocation proportional to it
+
+⚠ **The `remaining` bound has a precondition, and it is a constraint on every element reader,
+present and future: `reader` must consume at least one byte.** That is what makes "an `N`-element
+array cannot decode from fewer than `N` bytes" true, and a zero-byte reader would make the bound
+reject arrays that can legitimately decode. Verified 2026-08-10 across every reader in use;
+`readBytes(0)` is the only zero-byte primitive and no call site passes `n = 0`. **A new reader that
+can consume nothing invalidates this bound — pick a different one rather than relaxing it.**
+
+At a nested `lp` section the codec hands the section a fresh `ByteReader`, so `remaining` is the
+section's own span: tighter than the outer reader's and never wrong in the other direction.
 
 #### `readOption<T>(reader: (r: ByteReader) => T): T | null`
 
@@ -348,7 +360,17 @@ Thin wrapper: returns `reader.readVlqU()`.
 > `N`-element array cannot decode from fewer than `N` bytes, so `length > remaining()` is a
 > tighter bound than `MAX_ARRAY_LENGTH`, costs nothing, and makes the declared-vs-available
 > mismatch unrepresentable. The current cap is a value-space limit doing a resource-limit's
-> job. (Currently unreachable — `readArray` has no callers — which is why this is latent.)
+> job.
+>
+> ⛔ **NO LONGER LATENT — corrected 2026-08-10. `readArray` has callers, and the parenthetical
+> that said otherwise went stale when the positional codec layer landed.** `types/src/codec.ts`'s
+> `readArr` is a direct wrapper (`return r.readArray(f)`), so this sits on **every** positional
+> decode path in the repo — gossip's `decodeOrderingBlock` included. `length > remaining()` is
+> **required**, not suggested.
+>
+> The note was accurate when written and nobody re-checked it against the phase that added the
+> callers. Same shape as the other four contract-vs-code divergences found this session, all by
+> reading the code beside the claim.
 
 ### `encodeVlqZigZag(value: number): Uint8Array`
 

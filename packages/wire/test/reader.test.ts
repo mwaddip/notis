@@ -152,6 +152,72 @@ describe('ByteReader', () => {
     expect(r.readU8()).toBe(99); // consumed nothing past the length
   });
 
+  describe('readArray count bound', () => {
+    it('rejects a count above the bytes remaining before reading any element', () => {
+      // Four VLQ bytes inside MAX_ARRAY_LENGTH: the count a pre-sizing reader
+      // would turn into ~16.7M slots off a 7-byte message.
+      const count = MAX_ARRAY_LENGTH - 1;
+      const bytes = new Uint8Array([...encodeVlqU(count), 1, 2, 3]);
+      const r = new ByteReader(bytes);
+
+      let elementReads = 0;
+      const code = readerErrorCode(() =>
+        r.readArray((rr) => {
+          elementReads++;
+          return rr.readU8();
+        }),
+      );
+
+      expect(code).toBe('truncated');
+      // Both fail on a reader that sizes the array first and discovers the
+      // shortfall element by element.
+      expect(elementReads).toBe(0);
+      expect(r.position).toBe(encodeVlqU(count).length);
+    });
+
+    it('keeps array-too-large for a count above the value-space cap', () => {
+      const bytes = new Uint8Array([...encodeVlqU(MAX_ARRAY_LENGTH + 1), 1, 2, 3]);
+      const r = new ByteReader(bytes);
+      expect(readerErrorCode(() => r.readArray((rr) => rr.readU8()))).toBe('array-too-large');
+    });
+
+    it('accepts a count exactly equal to the bytes remaining', () => {
+      const r = new ByteReader(new Uint8Array([0x03, 10, 20, 30]));
+      expect(r.readArray((rr) => rr.readU8())).toEqual([10, 20, 30]);
+      expect(r.isExhausted).toBe(true);
+    });
+
+    it('accepts an empty array with nothing remaining', () => {
+      const r = new ByteReader(new Uint8Array([0x00]));
+      expect(r.readArray((rr) => rr.readU8())).toEqual([]);
+      expect(r.isExhausted).toBe(true);
+    });
+
+    it('accepts a nested array', () => {
+      // arr(arr(u8)) — [[10], []]
+      const r = new ByteReader(new Uint8Array([0x02, 0x01, 10, 0x00]));
+      expect(r.readArray((rr) => rr.readArray((x) => x.readU8()))).toEqual([[10], []]);
+      expect(r.isExhausted).toBe(true);
+    });
+
+    it('accepts a count far below the bytes remaining when elements are wide', () => {
+      // The bound is one byte per element, so wide elements leave it slack —
+      // loose, never wrong.
+      const bytes = new Uint8Array([0x02, ...new Uint8Array(64).fill(7)]);
+      const r = new ByteReader(bytes);
+      const out = r.readArray((rr) => rr.readBytes(32));
+      expect(out).toHaveLength(2);
+      expect(out[0]).toEqual(new Uint8Array(32).fill(7));
+      expect(r.isExhausted).toBe(true);
+    });
+
+    it('still reports truncated from the element read when the count fits but the bytes do not', () => {
+      // count 2 ≤ 40 remaining, yet two 32-byte elements need 64.
+      const r = new ByteReader(new Uint8Array([0x02, ...new Uint8Array(40)]));
+      expect(readerErrorCode(() => r.readArray((rr) => rr.readBytes(32)))).toBe('truncated');
+    });
+  });
+
   it('readOption handles null', () => {
     const r = new ByteReader(new Uint8Array([0]));
     expect(r.readOption((rr) => rr.readU8())).toBeNull();
