@@ -111,17 +111,19 @@ Phase 1 uses a **fixed target**, sourced from the network profile:
 expectedTarget(height) = profile.orderingBlockPowTargetBits   // constant in height, Phase 1
 ```
 
-> ⚠ **NOT IMPLEMENTED — the profile does not exist yet** (`TYPES_INTERFACE §Network
-> profiles`). Today this reads `config.orderingBlockPowTargetBits`, a per-process
-> environment value; see the VIOLATED note under invariants 4/5/7.
+> ✅ **IMPLEMENTED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10.** It
+> read "the profile does not exist yet"; it does (`TYPES_INTERFACE §Network profiles`), and
+> `config.ts:101` sources `orderingBlockPowTargetBits` from it, so the value is no longer a
+> per-process environment read. ⚠ **The `VIOLATED` note under invariants 4/5/7 still describes
+> the environment-read world and has not been re-ruled** — do not read the two as agreeing.
 >
-> **Precision about what the defect actually is, because the obvious reading sends you
-> the wrong way.** A constant *is* a function of height — a valid one. The defect was
-> never that `expectedTarget` ignores its argument; it is that the value it returns comes
-> from the environment, which makes it a function of *the operator* as well. Sourcing it
-> from the profile closes invariants 4, 5 and 7 **without introducing any height
-> schedule.** Do not build a retarget here. The unused `height` parameter stays as the
-> seam a real schedule will need, and it stays unused until that schedule is designed.
+> **Precision about what the defect was, because the obvious reading sends you the wrong
+> way.** A constant *is* a function of height — a valid one. The defect was never that
+> `expectedTarget` ignores its argument; it was that the value it returned came from the
+> environment, which made it a function of *the operator* as well. Profile-sourcing closes
+> invariants 4, 5 and 7 **without introducing any height schedule.** Do not build a retarget
+> here. The unused `height` parameter stays as the seam a real schedule will need, and it
+> stays unused until that schedule is designed.
 
 There is no wall-clock retargeting. Rationale: the previous scheme
 (`prevTarget × actualDuration / expectedDuration`, clamped ±50%) fired only every
@@ -274,8 +276,16 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 | `CREDIT_INITIAL_REWARD` | constant | no | Credits per block in the fixed-rate period, base units of 10⁻⁸ |
 | `CREDIT_TREASURY_PCT` | constant | no | Percent to treasury |
 
-> ⚠ **NOT IMPLEMENTED.** All four profile values and both constants are environment-readable
-> today (`⚠ VIOLATED`, `NODE_INTERFACE §Configuration`).
+> ⚠ **PARTLY IMPLEMENTED — corrected 2026-08-10. The old text said all of these were
+> environment-readable; none of the three states below is that.** `orderingBlockPowTargetBits`
+> and `treasuryPubKey` are profile-sourced (`config.ts:101,103`). The other three are
+> **neither profile-sourced nor environment-readable**: `block-creator.ts:242,246,619` and
+> `block-apply.ts:338` read `CREDIT_FIXED_RATE_BLOCKS`, `CREDIT_EPOCH_BLOCKS` and
+> `CREDIT_MINER_REWARD_DELAY` as module constants, bypassing the profile.
+>
+> **So devnet's compressed values for those three are defined and never read** — a devnet node
+> runs mainnet emission and maturity timing. `block-apply.ts:338` is an apply-time check, which
+> makes re-pointing it a consensus change rather than a refactor. Recorded as a node unit.
 >
 > **Note which two did *not* become per-network.** `CREDIT_INITIAL_REWARD` and
 > `CREDIT_TREASURY_PCT` are *economics*, and the split in `ARCHITECTURE §Network Identity`
@@ -306,6 +316,15 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    schedule is a pure function of height, that is the same value on every node and
    for all time.
 
+> ✅ **RESOLVED — verified 2026-08-10, closed by P2-A.** `config.ts:101` sources
+> `orderingBlockPowTargetBits` from the network profile, so it is no longer a per-process
+> environment value and both consequences below are closed: there is no per-process
+> `ORDERING_BLOCK_POW_TARGET_BITS` for two nodes to diverge on, and changing the value now
+> means changing `NETWORK_TYPE`, which is a different network by definition. `expectedTarget`
+> still discards its height argument — that is intended and is not the defect; see §Difficulty.
+>
+> *Historical, kept because the reasoning is the record:*
+>
 > ⚠ **VIOLATED — invariants 4, 5 and 7. The rules are correct; the implementation is not.**
 > `expectedTarget(_height)` **discards its height argument** and returns
 > `config.orderingBlockPowTargetBits`, a per-process environment value. Two consequences,

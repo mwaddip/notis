@@ -116,7 +116,7 @@ The main session owns contracts and prompts. It never edits component source cod
 ## Key invariants
 
 - Post content: 1–300 UTF-8 bytes (`MAX_CONTENT_BYTES`)
-- Parent refs: 0–8 per post
+- Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
 - Slot validity: measured in block height, not wall clock
 - Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, ...)` using a KeyObject.
 - Hashing: `blake2b512` with `.subarray(0, 32)` for all 32-byte outputs (Node.js v22 lacks blake2b256)

@@ -42,13 +42,18 @@ framed — they carry raw CBOR directly on the wire as before.
 |---------|-------|-------|
 | mainnet | "MDAG" | `0x4D 0x44 0x41 0x47` |
 | testnet | "TDAG" | `0x54 0x44 0x41 0x47` |
-| devnet | "DDAG" | `0x44 0x44 0x41 0x47` — ⚠ NOT IMPLEMENTED |
+| devnet | "DDAG" | `0x44 0x44 0x41 0x47` |
 
 **The magic is a field of the network profile** (`TYPES_INTERFACE §Network profiles`),
 resolved once at startup from `NETWORK_TYPE`. It is never a per-call-site default.
 
-> ⚠ **VIOLATED — the magic is not a fallback, it is the only path. Every node frames as
-> mainnet, on every network, unconditionally.** Measured 2026-08-06, four links:
+> ✅ **RESOLVED — verified 2026-08-10. All four links below were annotated ✅ as they closed;
+> only this verdict line was never updated,** so a skim read an open defect while a careful read
+> showed it fully resolved. The caveat under link 4 is a *separate*, still-open gap and is not
+> part of this resolution.
+>
+> ⚠ **VIOLATED (historical) — the magic is not a fallback, it is the only path. Every node frames
+> as mainnet, on every network, unconditionally.** Measured 2026-08-06, four links:
 >
 > 1. **This contract declares `magic: number`** (required). **The code declared
 >    `magic?: number`** (`net/src/types.ts:131`) — a pre-existing contract/code drift.
@@ -163,18 +168,19 @@ Codes 6-7 replace the old ad-hoc `/dagsocial/sync/1` stream protocol.
 Codes 2-5 replace the old `/dagsocial/headers/1` protocol. The old protocols
 are deleted.
 
-> ⚠ **VIOLATED — "The old protocols are deleted" is false, and the replacement is the part
-> that does not exist.** `/dagsocial/headers/1` is **live, and is the only path fork
-> resolution uses.** Framed **codes 6–7 have never carried a byte.** So the sentence has it
-> exactly backwards: the protocol described as deleted is the one in production, and the
-> one described as its replacement is unused.
+> ⚠ **VIOLATED — narrowed 2026-08-10. The verdict stands; both of its supporting claims have
+> since gone stale.** "The old protocols are deleted" remains false: `/dagsocial/headers/1` is
+> **live, and is the only path fork resolution uses.**
 >
-> This matters beyond bookkeeping: the legacy path is where peer headers arrive as a bare
-> `decode()` plus a cast with no shape check, feeding `cumulativeWork` unbounded. Anyone
-> hardening "the sync path" from this document would harden the wrong one.
+> Two corrections, both true when originally written. **Framed codes 6–7 do now carry bytes** —
+> `node.ts:956,961` dispatch `MSG_GET_SUB_BLOCK` and answer `MSG_SUB_BLOCK_RESPONSE`. And the
+> **bare-`decode()`-plus-a-cast gap is closed** (PR #33): both arms are `arr(item, lp)` over the
+> same positional codec as the rest of the package (`sync-codec.ts:358,362`), so every element
+> runs the four-part boundary check on its own byte span. What has *not* changed is the reason
+> the verdict stays — anyone hardening "the sync path" from this document would still harden the
+> wrong one.
 >
-> `ARCHITECTURE.md` also describes header-first sync as implemented. Both are wrong; fix
-> together.
+> `ARCHITECTURE.md` also describes header-first sync as implemented. Still wrong; fix together.
 
 ---
 
@@ -911,7 +917,7 @@ interface NetConfig {
   // Network — both REQUIRED, both supplied by the node from its resolved profile.
   // No defaults; see §Magic Bytes and §Consensus parameters net enforces.
   magic: number                    // mainnet 0x4D444147 · testnet 0x54444147 · devnet 0x44444147
-  postPowTargetBits: number        // ⚠ NOT IMPLEMENTED — field does not exist yet
+  postPowTargetBits: number        // gossip verifies post PoW against this before relay
 
   // Peer discovery
   minPeers: number                 // floor for fill phase (default 3)
@@ -938,18 +944,24 @@ them.
 
 | Value | Why net needs it | Today |
 |---|---|---|
-| `magic` | Frame assembly and the frame-magic check | ⚠ VIOLATED — see §Magic Bytes |
-| `postPowTargetBits` | `gossip.ts:242` verifies post PoW before relay | ⚠ VIOLATED — imports the constant from `@dagsocial/types` |
+| `magic` | Frame assembly and the frame-magic check | ✅ Supplied by the node from its resolved profile — see §Magic Bytes |
+| `postPowTargetBits` | `gossip.ts:255` verifies post PoW before relay | ✅ Supplied by the node; `net/src` imports no PoW constant |
 
-> ⚠ **`gossip.ts:242` has the same defect node closed as audit A6.** It calls
-> `v.verifyPoW(powInput, post.powNonce, POST_POW_TARGET_BITS)` against the compile-time
-> constant, so post difficulty is network-invariant at the relay boundary even though it is a
-> profile field. **A devnet node would reject its own network's posts** — mined at devnet's
-> target, checked against mainnet's — before they ever reach the node. It must read
-> `config.postPowTargetBits`, supplied by the node.
+> ✅ **RESOLVED — verified 2026-08-10, closed by P2-A.** `gossip.ts:255` calls
+> `v.verifyPoW(powInput, post.powNonce, postPowTargetBits)` with the parameter threaded from
+> `config.postPowTargetBits` (`node.ts:669`), and `POST_POW_TARGET_BITS` appears nowhere in
+> `net/src`. *Historical:* it checked against the compile-time constant, making post difficulty
+> network-invariant at the relay boundary even though it is a profile field — **a devnet node
+> would have rejected its own network's posts**, mined at devnet's target and checked against
+> mainnet's, before they ever reached the node.
 
-> ⚠ **VIOLATED — `NETWORK_MAGIC`, an undocumented `network-identity` environment read.**
-> `net/src/config.ts:5`:
+> ✅ **RESOLVED — verified 2026-08-10. The resolution stated at the foot of this note was
+> carried out:** `net/src/config.ts` no longer exists, `loadNetConfig` is gone, and
+> `NETWORK_MAGIC` appears in no `src` in any package. Net receives configuration; it does not
+> resolve it.
+>
+> ⚠ **VIOLATED (historical) — `NETWORK_MAGIC`, an undocumented `network-identity` environment
+> read.** `net/src/config.ts:5`:
 > ```ts
 > magic: parseInt(process.env['NETWORK_MAGIC'] ?? '0x54444147', 16), // default testnet
 > ```
