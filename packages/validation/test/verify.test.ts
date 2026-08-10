@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, EMPTY_STATE_ROOT, MAX_PARENT_REFS, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 /**
@@ -77,6 +77,69 @@ describe('verifyPoW', () => {
     for (let i = 0; i < 5; i++) {
       expect(verifyPoW(input, nonce, 4)).toBe(true);
     }
+  });
+
+  // Frozen vectors for `blake2b512(input ‖ vlqU(nonce))[0..32]` — the byte-level
+  // pin on this function.
+  //
+  // Hand-derived from TYPES_INTERFACE → Serialization ("Layout — Post" and the
+  // `vlqU` primitive), never regenerated from `powNonceBytes` or `verifyPoW`: a
+  // pin taken from the code it pins holds just as firmly over a wrong layout.
+  //
+  // `zeroBits` is each frozen hash's own leading-zero count, so the pair of
+  // `verifyPoW` assertions binds the predicate to that exact hash rather than to
+  // a target it could clear by luck.
+  const POW_INPUT = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+  const POW_VECTORS = [
+    {
+      name: 'nonce 0 — the one-byte tail',
+      nonce: 0,
+      tail: '00',
+      hash: '10b36dad94a527c35dfd73b25f2c57aecb89a1e2ae439f0480e3851b9e7d5c2c',
+      zeroBits: 3,
+    },
+    {
+      name: 'nonce 846843 — a three-byte tail',
+      nonce: 846843,
+      tail: 'fbd733',
+      hash: '00000ccb03e1c855ef30382d081a3d8a12123ad21b7d1dabfd4e2e0acaa869a4',
+      zeroBits: 20,
+    },
+    {
+      name: 'nonce MAX_SAFE_INTEGER — the widest in-domain tail',
+      nonce: Number.MAX_SAFE_INTEGER,
+      tail: 'ffffffffffffff0f',
+      hash: '0bee307f3941808713bce4d8af5e84598ab3622b2fecfc6883e9e904c1bc84f5',
+      zeroBits: 4,
+    },
+  ];
+
+  for (const v of POW_VECTORS) {
+    it(`pins the PoW hash at ${v.name}`, () => {
+      expect(Buffer.from(powNonceBytes(v.nonce)).toString('hex')).toBe(v.tail);
+      const hash = createHash('blake2b512')
+        .update(Buffer.concat([POW_INPUT, Buffer.from(powNonceBytes(v.nonce))]))
+        .digest()
+        .subarray(0, 32);
+      expect(hash.toString('hex')).toBe(v.hash);
+      expect(verifyPoW(POW_INPUT, v.nonce, v.zeroBits)).toBe(true);
+      expect(verifyPoW(POW_INPUT, v.nonce, v.zeroBits + 1)).toBe(false);
+    });
+  }
+
+  it('does not accept a solution encoded as a fixed-width tail', () => {
+    // A post nonce is `vlqU` and an ordering-block nonce is `encodeLE64`
+    // (VALIDATION_INTERFACE → Invariants). Two encodings, no shared code — so a
+    // nonce is a solution under one of them, not under both.
+    const nonce = 846843;
+    const wide = Buffer.alloc(8);
+    wide.writeBigUInt64LE(BigInt(nonce));
+    const wideHash = createHash('blake2b512')
+      .update(Buffer.concat([POW_INPUT, wide]))
+      .digest()
+      .subarray(0, 32);
+    expect(verifyPoW(POW_INPUT, nonce, 20)).toBe(true);
+    expect(wideHash[0]).not.toBe(0);
   });
 });
 

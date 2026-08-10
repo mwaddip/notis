@@ -59,15 +59,4 @@ describe('verifyPoW', () => {
     // Same nonce, different input → should fail
     expect(verifyPoW(differentInput, nonce, targetBits)).toBe(false);
   });
-
-  it('known answer: pre-computed valid nonce for known input at targetBits=4', () => {
-    // Pre-computed: input=[0xde,0xad,0xbe,0xef], targetBits=4 → nonce=18
-    // Hash: 03b04b30bb313f48d159a82750aa5710d836eb4aac67e3e4288b0d96d1c35a64
-    // First byte 0x03 = 00000011 → 4 leading zero bits
-    const input = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
-    const nonce = 18;
-    const targetBits = 4;
-
-    expect(verifyPoW(input, nonce, targetBits)).toBe(true);
-  });
 });
