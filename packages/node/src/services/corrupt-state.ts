@@ -49,6 +49,68 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
 }
 
 /**
+ * A stored block whose bytes do not decode.
+ *
+ * The positional format made this the shape local corruption actually arrives
+ * in. Under cbor a header outside the encodable domain round-tripped intact and
+ * failed later, at `blockHash` — the sibling above. Under positional encoding it
+ * never comes back out at all: `writeVlqU` sentinels an out-of-domain value so
+ * the row is still *written*, and `readVlqU` refuses the ten bytes past
+ * `MAX_SAFE_INTEGER` that sentinel decodes to. The store read throws first, and
+ * `blockHash` is never reached.
+ *
+ * **Why this is corrupt state and not a rejection, stated as provenance rather
+ * than as a guess about the error class.** The decode that raises it reads a
+ * row of `ordering_blocks`, and that table has exactly one INSERT
+ * (`store/ordering.ts`), reached from exactly one caller in `src`
+ * (`block-apply.ts`'s `storeCreateOrderingBlock`), downstream of the
+ * `verifyOrderingBlockStructure` gate. What that INSERT stores is
+ * `encodeHeader`/`encodeSubBlockTree`/`encodeUtxoTxTree` **of the decoded
+ * block** — our own re-encoding, never the bytes a peer sent. So there is no
+ * input a peer can choose that reaches this decoder: a row that will not decode
+ * means the row changed after we wrote it, or our writer and our reader
+ * disagree. Corruption, or a bug in us. Both are what fail-stop is for.
+ *
+ * ⚠ **The distinction this type exists to keep is the one between those bytes
+ * and the block's own**, and it is why the naming happens at the read rather
+ * than at the apply funnel's catch. `decodeTx` over `utxoTxTree.utxoTxs[i]`
+ * raises the same `ReaderError` class from bytes the *producer* chose. That
+ * call has its own local catch and skips the entry, so recognising corruption
+ * by error class at the funnel would not be exploitable today — but it would
+ * make the funnel's totality-vs-untrusted-input property rest on that local
+ * catch and on every future one, with a remote node-kill as the failure mode
+ * and no test that would notice the day one is missing. Measured, not reasoned:
+ * that arm was built and run, and the test pinning the producer-bytes direction
+ * passed under it.
+ *
+ * The live reason, as opposed to that latent one, is reach. `getOrderingBlock`
+ * is read by `extendsOurTip`, `findForkPoint`, `revertBlock`, the block creator
+ * and two routes as well as by apply, and only apply's read passes through a
+ * catch that could promote anything. `extendsOurTip` in particular runs on the
+ * gossip path *before* apply and outside `handleOrderingBlock`'s inner try, so
+ * a bare `ReaderError` there reaches `failStopIfCorruptChain`, fails its
+ * `instanceof`, and is re-thrown out of an `async` handler to end the process
+ * as an unhandled rejection — no FATAL line, no site, no height, and the death
+ * decided by the runtime rather than by us, which is exactly what the header of
+ * this file says it must not be. Naming the fault where the row is read covers
+ * every one of those callers at once.
+ */
+export class UnreadableStoredBlockError extends CorruptChainStateError {
+  constructor(site: string, height: number, cause: unknown) {
+    super(
+      site,
+      height,
+      `our stored block at height ${height} does not decode — ` +
+      `${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    // The reader's own diagnosis, kept whole. Which field of which struct
+    // refused is the only thing that says *what* is corrupt, and re-deriving it
+    // from the message is the prose-parsing this family refuses to do.
+    this.cause = cause;
+  }
+}
+
+/**
  * A height that should hold a block and does not.
  *
  * `ordering_blocks` holds exactly heights 1..MAX with no holes, and the store

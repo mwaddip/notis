@@ -45,7 +45,6 @@ const utxoFixture: UtxoTxTree = {
 };
 
 const subBlockFixture: SubBlockTree = {
-  subBlockRefs: ['aa'.repeat(32)],
   subBlockEntries: [
     {
       postId: 'aa'.repeat(32),

@@ -27,6 +27,7 @@ import {
   readBool,
   readBytesN,
   readHexN,
+  readLp,
   readLpUtf8,
   readOpt,
   readVlqS,
@@ -36,6 +37,22 @@ import {
 import { postPowPreimage, type Post } from '../../src/post.js';
 import { serializePruneEntry, TRIGGER, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
+import {
+  encodeHeader,
+  encodeSubBlockTree,
+  encodeUtxoTxTree,
+  encodeSubBlock,
+  encodeOrderingBlock,
+} from '../../src/serialization.js';
+import type {
+  BlockHeader,
+  CoinbaseOutput,
+  OrderingBlock,
+  SubBlock,
+  SubBlockEntry,
+  SubBlockTree,
+  UtxoTxTree,
+} from '../../src/block.js';
 import { hex, registerStruct, type ValueCodec } from './harness.js';
 
 // ---------------------------------------------------------------------------
@@ -286,6 +303,251 @@ const pruneEntryCodec: ValueCodec<PruneEntry> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// The block structs — TYPES_INTERFACE → Layout — Block (Phase 3b)
+// ---------------------------------------------------------------------------
+//
+// ⚠ **These are new, not reset.** The dispatch brief described block-struct
+// vectors as being "reset to the new format"; there were none. Before Phase 3b
+// this corpus covered `postFields`, `boxContent` and `pruneEntry` — the three
+// Phase 2 id preimages — and the corpus files are `primitives`, `probe`,
+// `post`, `boxes` and `prune`. So the block half of the conformance suite is
+// being written for the first time here, which makes it a larger deliverable
+// than "reset" implies and is worth knowing before anyone reads a byte count as
+// a diff.
+//
+// Same discipline as above: the **write** half is the production codec, so a
+// vector pins the shipped encoder; the **read** half is written independently
+// from the layout table, so `decodeStruct`'s re-encode compare has two
+// implementations to disagree.
+
+const blockHeaderCodec: ValueCodec<BlockHeader> = {
+  parse(json: unknown): BlockHeader {
+    const j = json as Record<string, unknown>;
+    return {
+      protocolVersion: j.protocolVersion as number,
+      height: j.height as number,
+      prevBlockHash: j.prevBlockHash as string,
+      subBlockRoot: j.subBlockRoot as string,
+      utxoTxRoot: j.utxoTxRoot as string,
+      stateRoot: j.stateRoot as string,
+      // Bytes, where its three `b32` table-neighbours are hex. The JSON spells
+      // it as hex like everything else; the in-memory type is what differs.
+      validatorId: hex(j.validatorId as string),
+      powNonce: j.powNonce as number,
+      powTargetBits: j.powTargetBits as number,
+      createdAt: j.createdAt as number,
+    };
+  },
+  write(w: ByteWriter, h: BlockHeader): void {
+    w.writeBytes(encodeHeader(h));
+  },
+  read(r: ByteReader): BlockHeader {
+    return {
+      protocolVersion: readVlqU(r),
+      height: readVlqU(r),
+      prevBlockHash: readHexN(r, 32),
+      subBlockRoot: readHexN(r, 32),
+      utxoTxRoot: readHexN(r, 32),
+      stateRoot: readHexN(r, 33),   // b33 — the AVL+ digest carries a height byte
+      validatorId: readBytesN(r, 32),
+      powNonce: readVlqU(r),
+      powTargetBits: readVlqU(r),
+      createdAt: readVlqU(r),
+    };
+  },
+};
+
+/** Independent readers for the three nested structs, from the layout lines. */
+function readEntry(r: ByteReader): SubBlockEntry {
+  return {
+    postId: readHexN(r, 32),
+    parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
+    author: readHexN(r, 32),   // hex, unlike the header's validatorId
+  };
+}
+
+function readPrune(r: ByteReader): PruneEntry {
+  return {
+    rootPostHash: readHexN(r, 32),
+    subtreePostIds: readArr(r, (rr) => readHexN(rr, 32)),
+    subtreeMerkleRoot: readBytesN(r, 32),
+    authorId: readBytesN(r, 32),
+    authorSignature: readBytesN(r, 64),
+    trigger: TRIGGER.read(r),
+  };
+}
+
+function readCoinbase(r: ByteReader): CoinbaseOutput {
+  return {
+    owner: readBytesN(r, 32),
+    value: readVlqU64(r),        // bigint — the throwing writer's row
+    lockedUntilBlock: readVlqU(r),
+    isTreasury: readBool(r),     // strict 0/1; 0xff has no decoding
+  };
+}
+
+function parseEntry(j: Record<string, unknown>): SubBlockEntry {
+  return {
+    postId: j.postId as string,
+    parentRefs: j.parentRefs as string[],
+    author: j.author as string,
+  };
+}
+
+function parsePrune(j: Record<string, unknown>): PruneEntry {
+  return {
+    rootPostHash: j.rootPostHash as string,
+    subtreePostIds: j.subtreePostIds as string[],
+    subtreeMerkleRoot: hex(j.subtreeMerkleRoot as string),
+    authorId: hex(j.authorId as string),
+    authorSignature: hex(j.authorSignature as string),
+    trigger: j.trigger as PruneEntry['trigger'],
+  };
+}
+
+function parseCoinbase(j: Record<string, unknown>): CoinbaseOutput {
+  return {
+    owner: hex(j.owner as string),
+    value: BigInt(j.value as string),   // decimal string — JSON cannot carry a u64
+    lockedUntilBlock: j.lockedUntilBlock as number,
+    isTreasury: j.isTreasury as boolean,
+  };
+}
+
+const subBlockTreeCodec: ValueCodec<SubBlockTree> = {
+  parse(json: unknown): SubBlockTree {
+    const j = json as Record<string, unknown>;
+    return {
+      // No `subBlockRefs`: the vector file has no way to spell it, which is the
+      // deletion stated in the conformance suite rather than only in the type.
+      subBlockEntries: (j.subBlockEntries as Record<string, unknown>[]).map(parseEntry),
+      pruneEntries: (j.pruneEntries as Record<string, unknown>[]).map(parsePrune),
+    };
+  },
+  write(w: ByteWriter, t: SubBlockTree): void {
+    w.writeBytes(encodeSubBlockTree(t));
+  },
+  read(r: ByteReader): SubBlockTree {
+    return {
+      subBlockEntries: readArr(r, readEntry),
+      pruneEntries: readArr(r, readPrune),
+    };
+  },
+};
+
+const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
+  parse(json: unknown): UtxoTxTree {
+    const j = json as Record<string, unknown>;
+    return {
+      utxoTxIds: j.utxoTxIds as string[],
+      utxoTxs: (j.utxoTxs as string[]).map(hex),
+      coinbaseOutputs: (j.coinbaseOutputs as Record<string, unknown>[]).map(parseCoinbase),
+    };
+  },
+  write(w: ByteWriter, t: UtxoTxTree): void {
+    w.writeBytes(encodeUtxoTxTree(t));
+  },
+  read(r: ByteReader): UtxoTxTree {
+    return {
+      utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
+      utxoTxs: readArr(r, readLp),   // opaque: transactions are length-prefixed bytes
+      coinbaseOutputs: readArr(r, readCoinbase),
+    };
+  },
+};
+
+/** The post as `encodePost` writes it: the six preimage fields, then two more. */
+function readWirePost(r: ByteReader): Post {
+  return {
+    content: readLpUtf8(r),
+    author: readBytesN(r, 32),
+    parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
+    challenge: readBytesN(r, 32),
+    protocolVersion: readVlqU(r),
+    timestamp: readVlqU(r),
+    powNonce: readVlqU(r),
+    signature: readBytesN(r, 64),
+  };
+}
+
+function parseWirePost(j: Record<string, unknown>): Post {
+  return {
+    content: j.content as string,
+    author: hex(j.author as string),
+    parentRefs: j.parentRefs as string[],
+    challenge: hex(j.challenge as string),
+    protocolVersion: j.protocolVersion as number,
+    timestamp: j.timestamp as number,
+    powNonce: j.powNonce as number,
+    signature: hex(j.signature as string),
+  };
+}
+
+const subBlockCodec: ValueCodec<SubBlock> = {
+  parse(json: unknown): SubBlock {
+    const j = json as Record<string, unknown>;
+    return {
+      subBlockId: j.subBlockId as string,
+      post: parseWirePost(j.post as Record<string, unknown>),
+      producerId: hex(j.producerId as string),   // bytes; subBlockId is hex
+      protocolVersion: j.protocolVersion as number,
+    };
+  },
+  write(w: ByteWriter, sb: SubBlock): void {
+    w.writeBytes(encodeSubBlock(sb));
+  },
+  read(r: ByteReader): SubBlock {
+    // `postBytes` is read inline — no length prefix, because every post field
+    // is fixed-width, length-prefixed or a VLQ, so the post is self-delimiting.
+    return {
+      subBlockId: readHexN(r, 32),
+      post: readWirePost(r),
+      producerId: readBytesN(r, 32),
+      protocolVersion: readVlqU(r),
+    };
+  },
+};
+
+const orderingBlockCodec: ValueCodec<OrderingBlock> = {
+  parse(json: unknown): OrderingBlock {
+    const j = json as Record<string, unknown>;
+    return {
+      header: blockHeaderCodec.parse(j.header),
+      subBlockTree: subBlockTreeCodec.parse(j.subBlockTree),
+      utxoTxTree: utxoTxTreeCodec.parse(j.utxoTxTree),
+      validatorSignature: hex(j.validatorSignature as string),
+    };
+  },
+  write(w: ByteWriter, b: OrderingBlock): void {
+    w.writeBytes(encodeOrderingBlock(b));
+  },
+  read(r: ByteReader): OrderingBlock {
+    // Each `lp` section is decoded through its own reader over a bounded slice,
+    // mirroring production's nested boundary check: a section that overruns its
+    // parent or leaves slack inside it is caught at the section, not at the
+    // frame.
+    const section = <T>(f: (rr: ByteReader) => T): T => {
+      const bytes = readLp(r);
+      const inner = new ByteReader(bytes);
+      const value = f(inner);
+      if (!inner.isExhausted) throw new Error('orderingBlock: slack inside an lp section');
+      return value;
+    };
+    return {
+      header: section((rr) => blockHeaderCodec.read(rr)),
+      subBlockTree: section((rr) => subBlockTreeCodec.read(rr)),
+      utxoTxTree: section((rr) => utxoTxTreeCodec.read(rr)),
+      validatorSignature: readBytesN(r, 64),
+    };
+  },
+};
+
 registerStruct('postFields', postFieldsCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
+registerStruct('blockHeader', blockHeaderCodec);
+registerStruct('subBlockTree', subBlockTreeCodec);
+registerStruct('utxoTxTree', utxoTxTreeCodec);
+registerStruct('subBlock', subBlockCodec);
+registerStruct('orderingBlock', orderingBlockCodec);

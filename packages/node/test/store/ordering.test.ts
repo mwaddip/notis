@@ -36,9 +36,9 @@ function makeOrderingBlock(
     header: {
       protocolVersion: 1,
       height: 1,
-      prevBlockHash: '00'.repeat(64),
-      subBlockRoot: '00'.repeat(64),
-      utxoTxRoot: '00'.repeat(64),
+      prevBlockHash: '00'.repeat(32),
+      subBlockRoot: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: uid('validator-1'),
       powNonce: 0,
@@ -46,12 +46,11 @@ function makeOrderingBlock(
       createdAt: Date.now(),
     },
     subBlockTree: {
-      subBlockRefs: ['sb-1', 'sb-2'],
       subBlockEntries: [],
       pruneEntries: [],
     },
     utxoTxTree: {
-      utxoTxIds: ['tx-1'],
+      utxoTxIds: ['1a'.repeat(32)],
       utxoTxs: [],
       coinbaseOutputs: [],
     },
@@ -93,9 +92,9 @@ describe('ordering store', () => {
       header: {
         protocolVersion: 1,
         height: 1,
-        prevBlockHash: 'aa'.repeat(64),
-        subBlockRoot: 'bb'.repeat(64),
-        utxoTxRoot: 'cc'.repeat(64),
+        prevBlockHash: 'aa'.repeat(32),
+        subBlockRoot: 'bb'.repeat(32),
+        utxoTxRoot: 'cc'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: uid('validator-alice'),
         powNonce: 42,
@@ -103,12 +102,11 @@ describe('ordering store', () => {
         createdAt: 1234567890,
       },
       subBlockTree: {
-        subBlockRefs: ['sb-ref-1', 'sb-ref-2'],
         subBlockEntries: [],
         pruneEntries: [],
       },
       utxoTxTree: {
-        utxoTxIds: ['tx-id-1'],
+        utxoTxIds: ['2b'.repeat(32)],
         utxoTxs: [],
         coinbaseOutputs: [
           {
@@ -129,9 +127,9 @@ describe('ordering store', () => {
     const h = result!.header;
     expect(h.height).toBe(1);
     expect(h.protocolVersion).toBe(1);
-    expect(h.prevBlockHash).toBe('aa'.repeat(64));
-    expect(h.subBlockRoot).toBe('bb'.repeat(64));
-    expect(h.utxoTxRoot).toBe('cc'.repeat(64));
+    expect(h.prevBlockHash).toBe('aa'.repeat(32));
+    expect(h.subBlockRoot).toBe('bb'.repeat(32));
+    expect(h.utxoTxRoot).toBe('cc'.repeat(32));
     expect(h.validatorId).toEqual(uid('validator-alice'));
     expect(h.powNonce).toBe(42);
     expect(h.powTargetBits).toBe(14);
@@ -142,7 +140,16 @@ describe('ordering store', () => {
     );
 
     // subBlockTree
-    expect(result!.subBlockTree.subBlockRefs).toEqual(['sb-ref-1', 'sb-ref-2']);
+    //
+    // DELETED 2026-08-10 (Phase 3b): `expect(result!.subBlockTree.subBlockRefs)
+    // .toEqual(['sb-ref-1', 'sb-ref-2'])`. The field is gone from the wire, and
+    // the fixture values were not post ids in the first place — `'sb-ref-1'` is
+    // seven characters where a `b32` row needs 32 bytes, so under the positional
+    // codec this fixture has no encoding at all. It survived because cbor wrote
+    // any string, which is the same reason the field itself survived unchecked.
+    // Read-back of the committed lists is what the store owes, and that is
+    // asserted here and below.
+    expect(result!.subBlockTree.subBlockEntries).toEqual([]);
     // DELETED 2026-08-08: `expect(result!.subBlockTree.stumpIds).toEqual(['stump-aaa'])`.
     // `stumpIds` is not a field of `SubBlockTree` (it is `subBlockRefs`,
     // `subBlockEntries`, `pruneEntries`) and the string appears nowhere in any
@@ -163,7 +170,7 @@ describe('ordering store', () => {
     // thing it exists to check. `net`'s `headers.test.ts` carried the identical
     // defect on the identical field (fixed in e9d4eda): Spec B P0's bigint
     // migration left systematic residue in storage round-trip tests.
-    expect(result!.utxoTxTree.utxoTxIds).toEqual(['tx-id-1']);
+    expect(result!.utxoTxTree.utxoTxIds).toEqual(['2b'.repeat(32)]);
     expect(result!.utxoTxTree.coinbaseOutputs).toHaveLength(1);
     expect(result!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
 

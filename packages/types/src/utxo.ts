@@ -83,7 +83,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *
  * Shared prefix, then the per-type fields in their normative order:
  *
- *   enum8(boxType) ‖ vlqU(value) ‖ <per-type>
+ *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
  *
  *   | karma     | b32(owner) ‖ lpUtf8(proofSource) ‖ opt(decayBurn)          |
  *   | credit    | b32(owner) ‖ vlqS(proofSource) ‖ opt(lockedUntilBlock)     |
@@ -91,7 +91,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *   | bond      | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
  *   |           |   ‖ opt(b32(inviteePublicKey)) ‖ vlqU(probationStartBlock) |
  *   |           |   ‖ vlqU(probationEndBlock)                               |
- *   | post_lock | vlqU(originalValue) ‖ b32(owner) ‖ b32(targetPostId)       |
+ *   | post_lock | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
  *   | vouch     | b32(voucherId) ‖ b32(targetId)                            |
  *
  * **`guard` is gone from the consensus bytes (P2-C row C10).** It is a pure
@@ -132,6 +132,15 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *
  * **One field is not fixed-width**: `bond.inviteePublicKey` is 0-or-32 bytes and
  * therefore `opt(b32)` — see `writeOptBytesNOrThrow`.
+ *
+ * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
+ * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
+ * The bytes are identical over the overlapping range, which is why writing
+ * `vlqU` here was harmless to read and wrong to rely on: `vlqU` is total by
+ * sentinel and `vlqU64` throws, and spec §2.5 names the `…OrThrow` writers
+ * precisely so the totality exception is visible at the call site rather than
+ * inferred from a field's type. Found by Phase 5 hand-deriving goldens off the
+ * contract; the contract's own cells are corrected too.
  */
 export function canonicalBoxBytes(candidate: BoxCandidate): Uint8Array {
   const w = new ByteWriter();

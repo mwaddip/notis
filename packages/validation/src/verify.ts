@@ -536,12 +536,20 @@ export function verifyOrderingBlockStructure(
   if (headerFailure) {
     return { valid: false, error: BLOCK_HEADER_FIELD_ERROR[headerFailure.field] };
   }
-  if (!Array.isArray(block.subBlockTree?.subBlockRefs)) {
-    return { valid: false, error: 'Ordering block missing subBlockTree.subBlockRefs' };
-  }
-  if (!Array.isArray(block.subBlockTree.subBlockEntries) ||
-      block.subBlockTree.subBlockEntries.length !== block.subBlockTree.subBlockRefs.length) {
-    return { valid: false, error: 'Ordering block subBlockEntries must align with subBlockRefs' };
+  // The `subBlockRefs` presence and alignment checks stood here and went with
+  // the field (Phase 3b; spec §1.2, §4.1). They were the whole of that field's
+  // validation — `Array.isArray` plus a length equal to `subBlockEntries`' —
+  // and the values they admitted drove a mempool eviction and a mempool
+  // injection while `subBlockRoot` and `blockHash` stayed unchanged.
+  //
+  // What remains is `subBlockEntries`' own presence check, which the alignment
+  // check used to carry as its first clause. It keeps the `?.`, so a block with
+  // no `subBlockTree` at all is still rejected here rather than throwing in the
+  // loop below — that case was covered by the deleted `subBlockRefs` check, and
+  // dropping both would have moved it from a stated rejection to a TypeError.
+  // The message follows `pruneEntries`' below rather than inventing a phrasing.
+  if (!Array.isArray(block.subBlockTree?.subBlockEntries)) {
+    return { valid: false, error: 'Ordering block missing subBlockTree.subBlockEntries' };
   }
   // Validate each entry. All three fields are `b32` at the codec boundary —
   // hex `string` in memory, raw bytes on the wire — so their domain is the hex

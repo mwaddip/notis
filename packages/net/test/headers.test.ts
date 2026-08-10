@@ -59,7 +59,7 @@ function makeMockOrderingBlock(
 ): OrderingBlock {
   return {
     header: makeMockHeader(height, prevBlockHash),
-    subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
@@ -471,7 +471,11 @@ describe('handler: requestBlocks (simulated)', () => {
     const returned = result.blocks[0]!;
     expect(returned.header.height).toBe(1);
     expect(returned.header.protocolVersion).toBe(PROTOCOL_VERSION);
-    expect(returned.subBlockTree.subBlockRefs).toEqual([]);
+    // `subBlockRefs` was asserted here and went with the field (Phase 3b). What
+    // it was really checking is that the served block carries its body trees
+    // intact, so the assertion moves to the list that is actually committed.
+    expect(returned.subBlockTree.subBlockEntries).toEqual([]);
+    expect(returned.subBlockTree.pruneEntries).toEqual([]);
     expect(returned.utxoTxTree.coinbaseOutputs.length).toBe(1);
     // `100n`, not `100`. `CoinbaseOutput.value` is bigint (P0 migration) and
     // cbor-x round-trips a bigint back as a bigint. The fixture and this

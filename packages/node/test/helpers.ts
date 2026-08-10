@@ -561,7 +561,6 @@ export async function makeApplicableBlock(
   const miner = opts.miner ?? makeTestIdentity();
   const subBlockEntries = opts.subBlockEntries ?? [];
   const subBlockTree = {
-    subBlockRefs: subBlockEntries.map((e) => e.postId),
     subBlockEntries,
     pruneEntries: opts.pruneEntries ?? [],
   };

@@ -1171,8 +1171,24 @@ authority alone.
 throwing-writer obligation is now larger in proportion, not smaller.** The withdrawn `networkType`
 row was the header's only `enum8` — a **total** writer whose presence was explicitly argued to add
 nothing to that obligation. Removing it removes the one row that was already discharged. What is left
-is **five throwing rows** (`b32` ×4 — `prevBlockHash`, `subBlockRoot`, `utxoTxRoot`, `validatorId` —
-plus `b33` ×1) and **five `vlqU`**, which are total *by sentinel* and
+is **five throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
+first grouped them as one, which is the `bond.inviteePublicKey` failure committed inside the note
+warning about it:**
+
+| Rows | In-memory type | Writer |
+|---|---|---|
+| `prevBlockHash`, `subBlockRoot`, `utxoTxRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
+| **`validatorId`** | **`Uint8Array`** (`UserId`) | **`writeBytesNOrThrow(…, 32)`** |
+| `stateRoot` | `string` (hex) | `writeHexNOrThrow(…, 33)` |
+
+**`validatorId` written off its table-neighbours throws on EVERY block.** The same split runs
+through the other structs: `CoinbaseOutput.owner` and `SubBlock.producerId` are **bytes**, while
+`SubBlockEntry.author` is **hex** — and all four are described in prose as "a 32-byte public key".
+Two further rows say `vlqU`/`u8` in the layout while the field is `bigint`/`boolean`, needing
+`writeVlqU64OrThrow` and `writeBool`. **`b32` in a layout table names a width, not an input type.**
+Found by the 3b executor, 2026-08-10.
+
+The five `vlqU` rows are total *by sentinel* and
 therefore **collide rather than throw** — the `createdAt` failure mode Phase 1f closed, and the
 reason a panic-shaped search is not sufficient here. **Phase 3 must still run the writer-versus-schema-type
 table against the block structs before pinning any width**, exactly as stated at the end of

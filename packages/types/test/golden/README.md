@@ -23,11 +23,20 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `post.json` | `postFieldBytes` — the post id and PoW preimage (Phase 2) |
 | `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type (Phase 2), and both states of `bond.inviteePublicKey` |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage (Phase 2) |
+| `block.json` | The six block structs and the ordering-block framing (Phase 3b) |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |
 | `probe.ts` | The probe struct — a synthetic struct with a field of every kind |
-| `structs.ts` | The three Phase 2 struct codecs |
+| `structs.ts` | The Phase 2 id-preimage codecs and the Phase 3b block codecs |
 
-Phase 3 adds `block.json` beside these, in the same shape.
+`block.json` covers `blockHeader`, `subBlockTree` (with and without prune
+entries), `utxoTxTree` (with and without transactions and coinbase outputs),
+`subBlock` and `orderingBlock` — each at a typical value and at its smallest
+legal one, because the all-zeros case is where a transposition of two
+same-width fields becomes invisible.
+
+⚠ **These were written at Phase 3b, not reset.** The dispatch brief described
+block-struct vectors as being reset to the new format; the corpus had none, so
+the block half of the conformance suite is new work rather than a re-freeze.
 
 ### Two kinds of struct codec, and the difference is the point
 

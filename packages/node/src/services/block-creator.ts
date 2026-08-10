@@ -384,8 +384,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     );
   }
 
-  const subBlockRefs = resolvedSubBlocks.map((sb) => sb.subBlockId);
-
   // Build subBlockEntries for the block (committed in the Merkle tree).
   // Both parentRefs and author are read off the resolved post — never off a
   // client-supplied claim — so an honest producer's entries always match the
@@ -420,7 +418,6 @@ export function createOrderingBlock(): OrderingBlock | null {
 
   // 17. Build the body trees
   const subBlockTree: SubBlockTree = {
-    subBlockRefs,
     subBlockEntries: subBlockEntriesForBlock,
     pruneEntries,
   };

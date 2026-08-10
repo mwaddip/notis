@@ -10,6 +10,7 @@ import {
   computePostId,
   PROTOCOL_VERSION,
   cumulativeWork,
+  ReaderError,
 } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
@@ -29,6 +30,8 @@ import {
   makePost,
   makeTestConfig,
   makeTestIdentity,
+  signHeader,
+  solveHeaderPow,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -83,6 +86,18 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
   return (await import(
     '../../src/services/block-creator.js'
   )) as unknown as BlockCreatorModule;
+}
+
+/**
+ * The block's Merkle helpers, from the graph the current test is driving. Same
+ * module as `importBlockCreator`, separate only because that helper's type is
+ * the timer-owning surface and widening it would offer `startBlockCreator` to
+ * every caller that just wants to re-derive a root.
+ */
+async function importBlockCreatorRoots() {
+  return (await import('../../src/services/block-creator.js')) as unknown as {
+    computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
+  };
 }
 
 async function importIdentities() {
@@ -169,6 +184,11 @@ async function importCorruptState() {
   return (await import('../../src/services/corrupt-state.js')) as unknown as {
     UnhashableStoredHeaderError: new (site: string, height: number) => Error;
     MissingStoredBlockError: new (site: string, height: number) => Error;
+    UnreadableStoredBlockError: new (
+      site: string,
+      height: number,
+      cause: unknown,
+    ) => Error;
   };
 }
 
@@ -355,7 +375,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
@@ -381,7 +401,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
@@ -698,15 +718,33 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: 4,
         createdAt,
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     });
 
     // `createdAt: -1` is outside `vlqU`'s domain, and the field nothing checked
-    // before Phase 1f. cbor round-trips it, so the corruption survives the
-    // store — which is the only way in: `createOrderingBlock` is what apply
-    // calls *after* the gate that would have refused this header.
+    // before Phase 1f. The only way in is the store: `createOrderingBlock` is
+    // what apply calls *after* the gate that would have refused this header.
+    //
+    // ⚠ **Phase 3b changed where this surfaces, and the change is structural.**
+    // Under cbor the corruption round-tripped, so the header came back out of
+    // the store intact and failed later, at `blockHash` — which is what
+    // `UnhashableStoredHeaderError` was built to report. Under the positional
+    // format `-1` writes `VLQ_SENTINEL`, so the row is still *written* but can
+    // never be *read*: `readVlqU` refuses ten bytes past `MAX_SAFE_INTEGER`.
+    //
+    // The consequence is bigger than this fixture. Every value `readVlqU`,
+    // `readHexN` and `readBytesN` can produce is already inside
+    // `verifyHeaderFieldDomains` — safe non-negative integers, lowercase hex of
+    // the exact width, exactly 32 bytes — so **a stored header that decodes is
+    // always hashable**, and `blockHash` can no longer answer `null` on this
+    // path at all. The decode boundary subsumes the domain check, which is the
+    // "serializer is the validator" property arriving for the header.
+    //
+    // Reported to main: that makes `UnhashableStoredHeaderError` unreachable
+    // from the store, i.e. dead in `src`. Removing it is node's call and needs
+    // its own enumeration, so it stays and these tests pin what happens now.
     const block = buildBlock(1, -1);
     ordering.createOrderingBlock(block);
     expect(ordering.getCurrentHeight()).toBe(1);
@@ -730,40 +768,127 @@ describe('a stored header that cannot be hashed', () => {
     }
   }
 
-  it('extendsOurTip reports the site and height, as a typed error', async () => {
-    const { block, forkResolution, corruptState } = await storeCorruptTip();
+  it('a header outside the domain is UNREADABLE, not merely unhashable', async () => {
+    const { forkResolution, corruptState } = await storeCorruptTip();
 
-    const caught = thrownBy(() => forkResolution.extendsOurTip(block));
-    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
-    expect((caught as { site: string }).site).toBe('extendsOurTip');
+    // The row was written — `writeVlqU` is total and sentinels `-1` — and it
+    // cannot be read back. Both halves matter: the write is why the corruption
+    // still gets into the store at all, and the read is why it can never come
+    // out pretending to be a header.
+    const caught = thrownBy(() => forkResolution.extendsOurTip(
+      { header: { height: 2 } } as unknown as OrderingBlock,
+    ));
+
+    // What it surfaces AS is the fix. A bare `ReaderError` here says only
+    // "some bytes did not decode" — the same sentence peer bytes produce — and
+    // every boundary downstream treats it as one. `getOrderingBlock` knows
+    // more than that: the bytes are ours. So it says so, in the vocabulary the
+    // boundary already acts on.
+    expect(caught).toBeInstanceOf(corruptState.UnreadableStoredBlockError);
+    expect((caught as { site: string }).site).toBe('getOrderingBlock');
     expect((caught as { height: number }).height).toBe(1);
+
+    // The reader's own diagnosis is carried, not replaced: `cause` keeps which
+    // field of which struct refused, which is the only thing that says *what*
+    // is corrupt. By name, not `instanceof` — `vi.resetModules()` gives the
+    // dynamically imported graph its own copy of every class, so a cross-graph
+    // `instanceof` compares two identical definitions and answers false.
+    const cause = (caught as { cause: unknown }).cause;
+    expect((cause as Error).name).toBe('ReaderError');
+    expect((cause as Error).message).toMatch(/exceeds safe integer range/);
+    expect((caught as Error).message).toMatch(/exceeds safe integer range/);
   });
 
-  it('findForkPoint fails on our own chain before any peer header matters', async () => {
-    const { header, forkResolution, corruptState } = await storeCorruptTip();
+  it('every stored header that decodes is inside the domain — so blockHash cannot be null', async () => {
+    // The claim the four typed-error tests used to rest on, inverted. It is not
+    // an assertion about these values: it is that the reader's *range* is a
+    // subset of the domain, so no round-trip can produce a header the domain
+    // rejects. Checked over the widest values each writer admits.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ordering = await importOrdering();
+    const { verifyHeaderFieldDomains } = await import('@dagsocial/validation');
 
-    // An empty peer batch: nothing here can be blamed on what a peer sent.
-    const caught = thrownBy(() => forkResolution.findForkPoint(header, []));
-    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
-    expect((caught as { site: string }).site).toBe('findForkPoint');
-    expect((caught as { height: number }).height).toBe(1);
+    const extremes: OrderingBlock = {
+      header: {
+        protocolVersion: PROTOCOL_VERSION,
+        height: 1,
+        prevBlockHash: 'ff'.repeat(32),
+        subBlockRoot: '00'.repeat(32),
+        utxoTxRoot: 'a0'.repeat(32),
+        stateRoot: 'ff'.repeat(33),
+        validatorId: new Uint8Array(32).fill(0xff),
+        powNonce: Number.MAX_SAFE_INTEGER,
+        powTargetBits: 0,
+        createdAt: Number.MAX_SAFE_INTEGER,
+      },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      validatorSignature: new Uint8Array(64),
+    };
+    ordering.createOrderingBlock(extremes);
+
+    const readBack = ordering.getOrderingBlock(1)!;
+    expect(verifyHeaderFieldDomains(readBack.header)).toEqual({ valid: true });
+    expect(blockHash(readBack.header)).not.toBeNull();
   });
 
-  it('applyOrderingBlock re-throws it instead of rejecting the arriving block', async () => {
+  // **WHERE PHASE 3b MOVED THIS FAIL-STOP, AND WHERE IT NOW LIVES.**
+  //
+  // Before: a stored header outside the domain came back out of the store
+  // intact, `blockHash` answered `null`, and the apply path raised
+  // `UnhashableStoredHeaderError` — typed, naming its site and height, and
+  // re-thrown through `applyOrderingBlock`'s totality catch so that local
+  // corruption could not be filed as a network problem.
+  //
+  // Under the positional format the header does not decode at all, so the store
+  // read throws before `blockHash` is ever reached. For one commit that arrived
+  // as a bare `ReaderError`, which is **not** in the funnel's re-throw
+  // allowlist: the totality catch absorbed it into `return false`, `reorg`
+  // reported its generic "block at height N rejected", and `index.ts` logged
+  // that as `Fork resolution error` and carried on. The two cases below pinned
+  // that, deliberately asserting the wrong behaviour so it stayed visible; they
+  // are inverted now that the door is watched again.
+  //
+  // **The fix is in the store, not in the catch.** At the catch, `err
+  // instanceof ReaderError` is equally true for `decodeTx` over the block's own
+  // `utxoTxs` — bytes the *producer* chose. Inside `getOrderingBlock` the
+  // provenance is not inferred, it is structural: `ordering_blocks` has exactly
+  // one INSERT, in `block-apply` downstream of the structure gate, and what it
+  // stores is our own re-encoding of the decoded block rather than any bytes a
+  // peer sent. A row that will not decode is therefore our corruption or our
+  // bug, never a peer's input — so it leaves as `UnreadableStoredBlockError`,
+  // a `CorruptChainStateError`, which the funnel's existing arm already carries
+  // and the boundary already fail-stops on. No new escape from the catch.
+  //
+  // The load-bearing difference is **reach**, and the first test below is where
+  // it shows: `extendsOurTip` reads the same row on the gossip path *before*
+  // apply and outside `handleOrderingBlock`'s inner try, so an arm in the
+  // funnel's catch never sees it — a bare `ReaderError` there fails
+  // `failStopIfCorruptChain`'s `instanceof` and ends the process as an
+  // unhandled rejection instead, with no FATAL line and no site or height.
+  // Five other callers (`findForkPoint`, `revertBlock`, the block creator, two
+  // routes) are outside that catch as well.
+  //
+  // Reachability, stated so the severity is not overread: a header can only
+  // reach the store outside the domain if it bypassed `verifyHeaderFieldDomains`
+  // (Phase 1f), which apply runs. So the trigger is a corrupt or hand-edited
+  // database, or a downgrade — which is precisely the population
+  // `failStopIfCorruptChain` exists for.
+
+  it('applyOrderingBlock surfaces the unreadable store row instead of swallowing it', async () => {
     const { buildBlock, corruptState } = await storeCorruptTip();
     const { applyOrderingBlock } = (await import(
       '../../src/services/block-apply.js'
     )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
 
-    // A structurally valid height-2 block arriving on a chain whose height-1
-    // header has no hash. It gets no further than the chain-link check, which
-    // is the point: the funnel's totality catch turns every other unexpected
-    // throw into `false`, and this one has to come out instead — otherwise
-    // local corruption becomes a permanent rejection of every subsequent block,
-    // logged as though the block were at fault.
+    // `false` would read as "the arriving block was bad" for a fault that is
+    // entirely local — and would then repeat for every block after it, since
+    // the same unreadable row is the chain link every one of them is checked
+    // against.
     const caught = thrownBy(() => applyOrderingBlock(buildBlock(2, 1)));
-    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
-    expect((caught as { site: string }).site).toBe('applyOrderingBlock');
+    expect(caught).toBeInstanceOf(corruptState.UnreadableStoredBlockError);
+    expect((caught as { site: string }).site).toBe('getOrderingBlock');
     expect((caught as { height: number }).height).toBe(1);
   });
 
@@ -786,7 +911,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: 4,
         createdAt: 1,
       },
-      subBlockTree: { subBlockRefs: [], subBlockEntries: [], pruneEntries: [] },
+      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     });
@@ -836,19 +961,79 @@ describe('a stored header that cannot be hashed', () => {
     expect((caught as { height: number }).height).toBe(2);
   });
 
-  it('reorg propagates it instead of reporting a rejected block', async () => {
+  it('reorg propagates the corruption instead of reporting a rejected block', async () => {
     const { buildBlock, forkResolution, corruptState } = await storeCorruptTip();
 
-    // The reorg path is the one that would re-swallow this. `applyOrderingBlock`
-    // answering `false` makes `reorg` throw its own generic
-    // `reorg failed: block at height N rejected`, which `index.ts`'s
-    // fork-resolution catch logs as `Fork resolution error` and carries on —
-    // local corruption filed as a network problem. The typed error has to come
-    // out with its identity intact for the boundary to recognise it.
+    // **The sharper of the two**: `reorg failed: block at height N rejected` is
+    // the exact sentence the original comment said must never be produced for
+    // this fault. It is what `reorg` throws when `applyOrderingBlock` answers
+    // `false`, and `index.ts`'s fork-resolution catch logs it as
+    // `Fork resolution error` and carries on — local corruption filed as a
+    // network problem.
+    //
+    // `reorg`'s own catch restores the prover and re-throws unchanged, so the
+    // typed error reaches the boundary with its identity intact and
+    // `index.ts:342` lets it past rather than warning over it.
     const caught = thrownBy(() => forkResolution.reorg(1, [buildBlock(2, 1)]));
-    expect(caught).toBeInstanceOf(corruptState.UnhashableStoredHeaderError);
-    expect((caught as { site: string }).site).toBe('applyOrderingBlock');
+    expect(caught).toBeInstanceOf(corruptState.UnreadableStoredBlockError);
     expect((caught as Error).message).not.toContain('reorg failed');
+  });
+
+  it('undecodable bytes a PEER chose stay a rejection, and never a halt', async () => {
+    // The other half of the separation. `decodeTx` over
+    // `utxoTxTree.utxoTxs[i]` reads bytes the *producer* chose, so a
+    // `ReaderError` from there is ordinary malformed input: the loop skips the
+    // entry and the block applies without it.
+    //
+    // ⚠ **What this test does NOT prove — measured, not assumed.** The
+    // alternative fix (an `err instanceof ReaderError` arm in the funnel's
+    // catch) was built and run against this test, and this test PASSED under
+    // it. It cannot discriminate, because the decode above has its own local
+    // catch and a producer's `ReaderError` therefore never reaches the funnel's
+    // catch to be promoted. The hazard in that design is latent, not live: it
+    // makes funnel totality depend on every present and future decode of
+    // block-carried bytes being locally caught, with a remote node-kill as the
+    // failure mode and nothing that would notice the day one is added. The test
+    // that *does* discriminate is `extendsOurTip`'s, at the top of this
+    // describe — that path never enters the funnel, so only a fix at the store
+    // read reaches it.
+    //
+    // Kept anyway, because the arm it pins had no test at all: nothing else in
+    // the suite exercises the funnel's decode-failure `continue`.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const miner = makeTestIdentity();
+    const block = await makeApplicableBlock({ miner });
+
+    const { computeUtxoTxRoot } = await importBlockCreatorRoots();
+    block.utxoTxTree.utxoTxIds = ['00'.repeat(32)];
+    block.utxoTxTree.utxoTxs = [new Uint8Array([0xff, 0xff, 0xff])];
+    // The Merkle commitment covers the bytes, so it has to be re-derived — a
+    // block whose root disagrees with its body is rejected at step 4 and would
+    // never reach the tx loop this test is about. Nonce and signature cover the
+    // header, so both follow.
+    block.header.utxoTxRoot = computeUtxoTxRoot(block.utxoTxTree);
+    block.header.powNonce = solveHeaderPow(block.header);
+    block.validatorSignature = signHeader(block.header, miner.privateKey);
+
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const caught = thrownBy(() => applyOrderingBlock(block));
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(caught).toBeNull();
+    // Not merely "it did not throw": the decode really was attempted and really
+    // did fail, so the absence of a throw is this arm's doing rather than the
+    // bytes never having been read.
+    expect(
+      warnings.some((w) => w.includes('Failed to decode UTXO tx')),
+      `no decode warning; got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
   });
 });
 

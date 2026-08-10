@@ -282,7 +282,6 @@ describe('block-creator', () => {
     // At genesis (height 0→1), this produces a block with coinbase outputs.
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
-    expect(block!.subBlockTree.subBlockRefs).toEqual([]);
     expect(block!.subBlockTree.subBlockEntries).toEqual([]);
     expect(block!.utxoTxTree.coinbaseOutputs.length).toBeGreaterThan(0);
   });
@@ -319,13 +318,13 @@ describe('block-creator', () => {
     const block = bc.createOrderingBlock();
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
-    expect(block!.subBlockTree.subBlockRefs).toContain(postId);
+    expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
 
     // Verify subBlockEntries in the block
     expect(block!.subBlockTree.subBlockEntries).toBeDefined();
-    expect(block!.subBlockTree.subBlockEntries.length).toBe(
-      block!.subBlockTree.subBlockRefs.length,
-    );
+    // The entries-versus-refs length assertion stood here and went with the
+    // field (Phase 3b). It would now compare `subBlockEntries` against itself.
+    expect(block!.subBlockTree.subBlockEntries).toHaveLength(1);
     for (const entry of block!.subBlockTree.subBlockEntries) {
       expect(entry.postId).toBe(postId);
       expect(entry.parentRefs).toEqual(post.parentRefs);
@@ -360,7 +359,7 @@ describe('block-creator', () => {
 
     const block = bc.createOrderingBlock();
     expect(block).not.toBeNull();
-    expect(block!.subBlockTree.subBlockRefs).toEqual([postId]);
+    expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toEqual([postId]);
     expect(block!.header.validatorId).toBeTruthy();
     expect(block!.validatorSignature.length).toBe(64);
     const h = blockHash(block!.header);
@@ -609,7 +608,7 @@ describe('block-creator', () => {
     // The batch-linked UTXO tx ID should be in utxoTxIds
     expect(block!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
     // The sub-block should be referenced
-    expect(block!.subBlockTree.subBlockRefs).toContain(postId);
+    expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
     // Mempool should be empty (both confirmed)
     const remaining = mempool.getPendingEntries(100);
     expect(remaining).toHaveLength(0);
@@ -628,7 +627,7 @@ describe('block-creator', () => {
       parentRefs: ['bb'.repeat(32)],
       author: 'cc'.repeat(32),
     };
-    const tree = { subBlockRefs: [postId], subBlockEntries: [entry], pruneEntries: [] };
+    const tree = { subBlockEntries: [entry], pruneEntries: [] };
     // Author flipped, nothing else — if the root moved, the block is bound to
     // the authorship claim and a producer cannot rewrite it after mining.
     const flipped = {

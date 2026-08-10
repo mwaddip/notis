@@ -149,8 +149,30 @@ export interface SubBlockEntry {
   author: string;        // hex-encoded 32-byte author public key of the post
 }
 
+/**
+ * `subBlockRefs` was here and is **DELETED** (Phase 3b; spec §1.2, §4.1).
+ *
+ * It was uncommitted — `computeSubBlockRoot` builds its leaves from
+ * `subBlockEntries` and `pruneEntries` and never read it — and unvalidated
+ * beyond `Array.isArray` plus a length equal to `subBlockEntries.length`.
+ * Measured: a block whose refs named entirely different post ids was accepted
+ * with an unchanged `subBlockRoot` and an unchanged `blockHash`, and element
+ * types were never checked at all. Those attacker-chosen values reached a
+ * mempool **eviction** (`removeSubBlockEntries`) and, through the journal's
+ * `confirmedSubBlockIds`, a mempool **injection** on reorg.
+ *
+ * The asymmetry was the defect: apply confirmed from `subBlockEntries`, which is
+ * committed, while rollback un-confirmed from `subBlockRefs`, which was not.
+ *
+ * Deleted rather than pinned because it was exactly
+ * `subBlockEntries.map(e => e.postId)` for any honest block — this comment used
+ * to say so itself, calling it "derived from subBlockEntries, kept for
+ * ordering" — and because this unit moves every committed byte anyway, so
+ * removing a wire field costs nothing it would have cost under a tightening.
+ * Consumers derive it (Phase 3a) and the two JSON routes still emit it, so the
+ * HTTP response shape is unchanged.
+ */
 export interface SubBlockTree {
-  subBlockRefs: PostId[];           // derived from subBlockEntries, kept for ordering
   subBlockEntries: SubBlockEntry[]; // topology committed in the block
   pruneEntries: PruneEntry[];       // prune entries committed in this block
 }

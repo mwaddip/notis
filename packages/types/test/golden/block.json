@@ -1,0 +1,300 @@
+{
+  "vectors": [
+    {
+      "name": "blockHeader/typical",
+      "codec": "blockHeader",
+      "value": {
+        "protocolVersion": 1,
+        "height": 12345,
+        "prevBlockHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "subBlockRoot": "2222222222222222222222222222222222222222222222222222222222222222",
+        "utxoTxRoot": "3333333333333333333333333333333333333333333333333333333333333333",
+        "stateRoot": "444444444444444444444444444444444444444444444444444444444444444444",
+        "validatorId": "5555555555555555555555555555555555555555555555555555555555555555",
+        "powNonce": 987654321,
+        "powTargetBits": 12,
+        "createdAt": 1754600000000
+      },
+      "bytes": "01b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb28833",
+      "note": "Ten fields. validatorId is b32 from BYTES; the three roots above it are b32 from HEX."
+    },
+    {
+      "name": "blockHeader/genesis-zeros",
+      "codec": "blockHeader",
+      "value": {
+        "protocolVersion": 1,
+        "height": 1,
+        "prevBlockHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "subBlockRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "utxoTxRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+        "stateRoot": "000000000000000000000000000000000000000000000000000000000000000000",
+        "validatorId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "powNonce": 0,
+        "powTargetBits": 4,
+        "createdAt": 0
+      },
+      "bytes": "01010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007777777777777777777777777777777777777777777777777777777777777777000400",
+      "note": "Every vlqU field at 0 — one byte each. stateRoot is 33 bytes, not 32."
+    },
+    {
+      "name": "subBlockTree/empty",
+      "codec": "subBlockTree",
+      "value": {
+        "subBlockEntries": [],
+        "pruneEntries": []
+      },
+      "bytes": "0000",
+      "note": "Two zero counts, two bytes total. subBlockRefs is deleted — a third array would show here."
+    },
+    {
+      "name": "subBlockTree/entries-and-prune",
+      "codec": "subBlockTree",
+      "value": {
+        "subBlockEntries": [
+          {
+            "postId": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "parentRefs": [],
+            "author": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+          },
+          {
+            "postId": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+            "parentRefs": [
+              "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+            ],
+            "author": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          }
+        ],
+        "pruneEntries": [
+          {
+            "rootPostHash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+            "subtreePostIds": [
+              "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+            ],
+            "subtreeMerkleRoot": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+            "authorId": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "authorSignature": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+            "trigger": "storage_prune"
+          }
+        ]
+      },
+      "bytes": "02a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101",
+      "note": "The prune entry is serializePruneEntry verbatim — the committed Merkle leaf preimage."
+    },
+    {
+      "name": "utxoTxTree/empty",
+      "codec": "utxoTxTree",
+      "value": {
+        "utxoTxIds": [],
+        "utxoTxs": [],
+        "coinbaseOutputs": []
+      },
+      "bytes": "000000"
+    },
+    {
+      "name": "utxoTxTree/txs-and-coinbase",
+      "codec": "utxoTxTree",
+      "value": {
+        "utxoTxIds": [
+          "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+          "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2"
+        ],
+        "utxoTxs": [
+          "deadbeef",
+          ""
+        ],
+        "coinbaseOutputs": [
+          {
+            "owner": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "value": "500000000000000000",
+            "lockedUntilBlock": 720,
+            "isTreasury": false
+          },
+          {
+            "owner": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            "value": "0",
+            "lockedUntilBlock": 0,
+            "isTreasury": true
+          }
+        ]
+      },
+      "bytes": "02f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0002b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001",
+      "note": "value is vlqU64 (bigint, throwing); isTreasury is writeBool (total, strict 0/1); an empty utxoTx is a bare zero length."
+    },
+    {
+      "name": "subBlock/with-parents",
+      "codec": "subBlock",
+      "value": {
+        "subBlockId": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "post": {
+          "content": "golden vector post",
+          "author": "6666666666666666666666666666666666666666666666666666666666666666",
+          "parentRefs": [
+            "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2"
+          ],
+          "challenge": "9999999999999999999999999999999999999999999999999999999999999999",
+          "protocolVersion": 1,
+          "timestamp": 1754600000000,
+          "powNonce": 424242,
+          "signature": "03030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303"
+        },
+        "producerId": "6666666666666666666666666666666666666666666666666666666666666666",
+        "protocolVersion": 1
+      },
+      "bytes": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a112676f6c64656e20766563746f7220706f7374666666666666666666666666666666666666666666666666666666666666666602a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a29999999999999999999999999999999999999999999999999999999999999999018094bdb28833b2f21903030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303666666666666666666666666666666666666666666666666666666666666666601",
+      "note": "postBytes is inline with no length prefix — the post is self-delimiting."
+    },
+    {
+      "name": "orderingBlock/full",
+      "codec": "orderingBlock",
+      "value": {
+        "header": {
+          "protocolVersion": 1,
+          "height": 12345,
+          "prevBlockHash": "1111111111111111111111111111111111111111111111111111111111111111",
+          "subBlockRoot": "2222222222222222222222222222222222222222222222222222222222222222",
+          "utxoTxRoot": "3333333333333333333333333333333333333333333333333333333333333333",
+          "stateRoot": "444444444444444444444444444444444444444444444444444444444444444444",
+          "validatorId": "5555555555555555555555555555555555555555555555555555555555555555",
+          "powNonce": 987654321,
+          "powTargetBits": 12,
+          "createdAt": 1754600000000
+        },
+        "subBlockTree": {
+          "subBlockEntries": [
+            {
+              "postId": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+              "parentRefs": [],
+              "author": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+            },
+            {
+              "postId": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+              "parentRefs": [
+                "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+              ],
+              "author": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+            }
+          ],
+          "pruneEntries": [
+            {
+              "rootPostHash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+              "subtreePostIds": [
+                "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+              ],
+              "subtreeMerkleRoot": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+              "authorId": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "authorSignature": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+              "trigger": "storage_prune"
+            }
+          ]
+        },
+        "utxoTxTree": {
+          "utxoTxIds": [
+            "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+            "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2"
+          ],
+          "utxoTxs": [
+            "deadbeef",
+            ""
+          ],
+          "coinbaseOutputs": [
+            {
+              "owner": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+              "value": "500000000000000000",
+              "lockedUntilBlock": 720,
+              "isTreasury": false
+            },
+            {
+              "owner": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+              "value": "0",
+              "lockedUntilBlock": 0,
+              "isTreasury": true
+            }
+          ]
+        },
+        "validatorSignature": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      },
+      "bytes": "b00101b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb28833e60202a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101980102f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0002b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "note": "lp(header) || lp(subBlockTree) || lp(utxoTxTree) || b64(sig). vlqU length prefixes, not u32BE."
+    },
+    {
+      "name": "orderingBlock/empty-body",
+      "codec": "orderingBlock",
+      "value": {
+        "header": {
+          "protocolVersion": 1,
+          "height": 1,
+          "prevBlockHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "subBlockRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+          "utxoTxRoot": "0000000000000000000000000000000000000000000000000000000000000000",
+          "stateRoot": "000000000000000000000000000000000000000000000000000000000000000000",
+          "validatorId": "7777777777777777777777777777777777777777777777777777777777777777",
+          "powNonce": 0,
+          "powTargetBits": 4,
+          "createdAt": 0
+        },
+        "subBlockTree": {
+          "subBlockEntries": [],
+          "pruneEntries": []
+        },
+        "utxoTxTree": {
+          "utxoTxIds": [],
+          "utxoTxs": [],
+          "coinbaseOutputs": []
+        },
+        "validatorSignature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "bytes": "a601010100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000077777777777777777777777777777777777777777777777777777777777777770004000200000300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "note": "The smallest legal block: both body sections are two bytes, so both prefixes are one byte."
+    }
+  ],
+  "rejects": [
+    {
+      "name": "blockHeader/trailing-byte",
+      "codec": "blockHeader",
+      "bytes": "01b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb2883300",
+      "failure": "trailing-bytes",
+      "note": "Step 2 — appended junk is a rejection, not slack."
+    },
+    {
+      "name": "blockHeader/non-minimal-vlq",
+      "codec": "blockHeader",
+      "bytes": "8200b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb28833",
+      "failure": "non-canonical",
+      "note": "Step 3 — 8200 and 01 both decode to 1; only the re-encode compare separates them."
+    },
+    {
+      "name": "blockHeader/truncated",
+      "codec": "blockHeader",
+      "bytes": "01b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094",
+      "code": "truncated",
+      "note": "Step 1 — wire refuses a short read; not a boundary-check failure."
+    },
+    {
+      "name": "orderingBlock/trailing-byte",
+      "codec": "orderingBlock",
+      "bytes": "b00101b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb28833e60202a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101980102f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0002b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd00",
+      "failure": "trailing-bytes"
+    },
+    {
+      "name": "orderingBlock/section-overruns-parent",
+      "codec": "orderingBlock",
+      "bytes": "ff7f01b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb28833e60202a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101980102f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0002b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "code": "truncated",
+      "note": "The header section declares 16383 bytes inside a frame that has far fewer."
+    },
+    {
+      "name": "orderingBlock/truncated-signature",
+      "codec": "orderingBlock",
+      "bytes": "b00101b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d6030c8094bdb28833e60202a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101980102f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0002b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "code": "truncated",
+      "note": "The final b64 is 32 bytes short."
+    },
+    {
+      "name": "subBlockTree/truncated-entry",
+      "codec": "subBlockTree",
+      "bytes": "02a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "code": "truncated"
+    }
+  ]
+}

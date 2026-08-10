@@ -8,6 +8,7 @@ import {
   decodeUtxoTxTree,
 } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
+import { UnreadableStoredBlockError } from '../services/corrupt-state.js';
 
 // ---------------------------------------------------------------------------
 // Row shape (blob-based)
@@ -26,13 +27,42 @@ interface OrderingBlockRow {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * The one frame that knows these bytes are ours.
+ *
+ * A decode failure here is never "bad input" — nothing a peer sends is stored
+ * in these three columns, only this node's own re-encoding of a block that
+ * already cleared the apply gate (the full argument, with the writer
+ * enumeration and the rejected alternative, is on `UnreadableStoredBlockError`).
+ * Downstream that fact is gone: `applyOrderingBlock`'s totality catch sees a
+ * `ReaderError` and cannot tell it from the one `decodeTx` raises over the
+ * block's own `utxoTxs`, which is peer-chosen and an ordinary rejection. And
+ * apply is only one of six callers — `extendsOurTip`, `findForkPoint`,
+ * `revertBlock`, the block creator and two routes read through here too, none
+ * of them through a catch that could promote anything.
+ *
+ * `CorruptChainStateError` is what that catch already re-throws and what
+ * `failStopIfCorruptChain` already stops for, so this needs no boundary edit:
+ * exactly the property `corrupt-state.test.ts` pins as "a third kind must not
+ * need a boundary edit to be fatal".
+ */
 function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
-  return {
-    header: decodeHeader(new Uint8Array(row.header_cbor)),
-    subBlockTree: decodeSubBlockTree(new Uint8Array(row.subblock_tree_cbor)),
-    utxoTxTree: decodeUtxoTxTree(new Uint8Array(row.utxotx_tree_cbor)),
-    validatorSignature: new Uint8Array(row.validator_signature),
-  };
+  try {
+    return {
+      header: decodeHeader(new Uint8Array(row.header_cbor)),
+      subBlockTree: decodeSubBlockTree(new Uint8Array(row.subblock_tree_cbor)),
+      utxoTxTree: decodeUtxoTxTree(new Uint8Array(row.utxotx_tree_cbor)),
+      validatorSignature: new Uint8Array(row.validator_signature),
+    };
+  } catch (err) {
+    // Every throw, not only `ReaderError`. The codec's contract is that decode
+    // raises `ReaderError` (`CodecError` extends it), but the claim being made
+    // is about the *bytes* — that they are ours — and that holds however the
+    // decoder fails. Narrowing to a class would leave a `TypeError` from a
+    // decoder bug reported as an arriving block's rejection, which is the same
+    // misattribution one layer down.
+    throw new UnreadableStoredBlockError('getOrderingBlock', row.height, err);
+  }
 }
 
 // ---------------------------------------------------------------------------
