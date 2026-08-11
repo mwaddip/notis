@@ -21,9 +21,9 @@ export type PruneTrigger = 'author' | 'storage_prune';
  *
  * **Tags reserve retired values and are never renumbered.** A renumber
  * silently moves every prune Merkle leaf and every id covering the tag, with no
- * compiler signal — the T2b `0x03` lesson, now inside a consensus preimage.
+ * compiler signal, and this tag sits inside a consensus preimage.
  *
- * Exported because `Stump` (Phase 3) and the golden-vector harness both need
+ * Exported because `Stump` and the golden-vector harness both need
  * *this* table rather than a second copy of it: two implementations of one tag
  * table is the drift class this format exists to close.
  */
@@ -90,12 +90,12 @@ export type StumpId = string;
 /**
  * Deterministic ID for a PruneEntry.
  *
- * ⚠ **Still the old dialect, and deliberately out of this phase's scope.**
- * `rootPostHash` enters as the UTF-8 of its hex text while the two byte fields
- * enter raw, so this is the last preimage in the file that is not the
- * positional format. It is not a `serializePruneEntry` caller and no committed
- * root covers it — the id is a mempool/store key — so moving it is an
- * independent change; flagged for main rather than folded in here.
+ * ⚠ **Not the positional format, and deliberately so.** `rootPostHash` enters
+ * as the UTF-8 of its hex text while the two byte fields enter raw, so this is
+ * the one preimage in this file that does not go through the codec layer. It is
+ * not a `serializePruneEntry` caller and no committed root covers it — the id is
+ * a mempool/store key — so moving it is an independent byte change, flagged
+ * rather than folded in here.
  */
 export function computePruneEntryId(entry: PruneEntry): string {
   const h = createHash('blake2b512');
@@ -118,16 +118,11 @@ export function computePruneEntryId(entry: PruneEntry): string {
  *   | 5 | authorSignature   | b64 (bytes)    |
  *   | 6 | trigger           | enum8          |
  *
- * Field order matches the CBOR object literal this replaces, so the change is
- * **dialect-only**: same coverage, one encoding language. The old form went
- * through `cbor-x`'s *default* `encode`, which tags every `Uint8Array` with
- * `d840` and writes ids as hex text — 428 bytes for a two-id entry against 226
- * here.
- *
  * Every field is fixed-width, so **every writer throws** outside its domain
- * (spec §2.5): there is no unreachable sentinel at a fixed width, and padding a
- * malformed id to 32 bytes would map it onto a well-formed entry's leaf. The
- * domain is `verifyOrderingBlockStructure`'s (Phase 1e), which pins the hex and
+ * (TYPES_INTERFACE → Totality): there is no unreachable sentinel at a fixed
+ * width, and padding a malformed id to 32 bytes would map it onto a well-formed
+ * entry's leaf. The
+ * domain is `verifyOrderingBlockStructure`'s, which pins the hex and
  * byte widths of every prune-entry field before a block reaches the Merkle
  * builder.
  */

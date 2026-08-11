@@ -1,7 +1,6 @@
 /**
  * The positional codec layer — field primitives and the boundary check.
  *
- * Spec: `docs/specs/2026-08-09-positional-wire-format.md`.
  * Contract: `contracts/TYPES_INTERFACE.md` → Serialization.
  *
  * This module is the seam between `@dagsocial/wire` (raw `ByteReader` /
@@ -11,18 +10,19 @@
  *  1. **The notation** of the contract's Primitives table, one function per
  *     row, so a struct codec reads like its byte-layout table and a reviewer
  *     can cross-check the two line by line.
- *  2. **Encode-side totality** (spec §2.5) — wire's writers throw; these
- *     absorb an out-of-domain value into an unreachable sentinel wherever
- *     that is possible, and are named `…OrThrow` wherever it is not.
- *  3. **The four-part boundary check** (spec §2.1) as one entry point, so no
- *     struct codec can skip a step.
+ *  2. **Encode-side totality** (TYPES_INTERFACE → Totality) — wire's writers
+ *     throw; these absorb an out-of-domain value into an unreachable sentinel
+ *     wherever that is possible, and are named `…OrThrow` wherever it is not.
+ *  3. **The four-part boundary check** (TYPES_INTERFACE → The boundary check)
+ *     as one entry point, so no struct codec can skip a step.
  *
- * No node builtins and no `Buffer`: Phase 7 puts the demo UI on this same
- * codec, and `@dagsocial/wire` is browser-clean for that reason. Hex
- * conversion below is hand-rolled rather than `Buffer.from(hex, 'hex')` both
- * for that and because `Buffer` silently drops invalid nibbles.
+ * No node builtins and no `Buffer`: the demo UI is a second implementation of
+ * these preimages in browser JS, so this codec has to stay runnable there, and
+ * `@dagsocial/wire` is browser-clean for the same reason. Hex conversion below
+ * is hand-rolled rather than `Buffer.from(hex, 'hex')` both for that and
+ * because `Buffer` silently drops invalid nibbles.
  *
- * ⚠ **No hashing lives here** (spec §2.4). This layer produces preimages; the
+ * ⚠ **No hashing lives here.** This layer produces preimages; the
  * `blake2b512(…).subarray(0, 32)` that consumes them stays where it is.
  */
 
@@ -59,11 +59,6 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  * `b32`/`b33`/`b64` (a fixed-width field's wire domain is every value of that
  * width). Those writers throw and say so in their names; their domains must be
  * established upstream.
- *
- * ⚠ The contract calls the `bigint` case "the one stated exception". It is
- * the one that was *noticed*, but it is not the only one — the rule above
- * yields four, and the other three are fixed-width fields the spec introduced
- * in the same change. Recorded for main; see the Phase 1b report.
  */
 export const VLQ_SENTINEL = 0xffff_ffff_ffff_ffffn;
 
@@ -96,7 +91,7 @@ function isBytes(v: unknown): v is Uint8Array {
 // ---------------------------------------------------------------------------
 //
 // Ids, roots and digests are hex `string` in memory and raw bytes on the wire
-// (spec §2.3). The conversion lives here and nowhere else: a `hexToBuf` or a
+// (TYPES_INTERFACE → Primitives). The conversion lives here and nowhere else: a `hexToBuf` or a
 // `.toString('hex')` at any other encoding site is a double-hexing defect.
 //
 // Lowercase only. Every producer in the repo emits `.digest().toString('hex')`,
@@ -149,9 +144,9 @@ export type CodecFailure =
  * A boundary-check rejection.
  *
  * Extends `ReaderError` because the contract is "decode throws `ReaderError`;
- * every caller converts it to a verdict" (spec §2.1 step 4) — the three
- * existing call sites catch that class, and spec §2.2 routes it to
- * `PenaltyKind.ProtocolViolation`.
+ * every caller converts it to a verdict" (TYPES_INTERFACE → The boundary check,
+ * step 4) — callers catch that class, and `NET_INTERFACE` → Peer Penalty System
+ * routes it to `PenaltyKind.ProtocolViolation`.
  *
  * ⚠ `code` is `'invalid-tag'` because `ReaderErrorCode` — owned by
  * `@dagsocial/wire` — has no member meaning "well-formed but not canonical".
@@ -257,7 +252,7 @@ export function readVlqS(r: ByteReader): number {
 /**
  * `vlqU(x)` — unsigned VLQ from a **`bigint`**, over the full u64.
  *
- * **THROWS. The one writer here that does, and deliberately** (spec §2.5).
+ * **THROWS, and deliberately** (TYPES_INTERFACE → Totality).
  * `value: bigint` fields span the entire u64 wire domain, so no sentinel is
  * unreachable: an all-ones u64 is a legal box value, and writing it to signal
  * "malformed" would make a malformed box encode identically to a well-formed
@@ -267,8 +262,8 @@ export function readVlqS(r: ByteReader): number {
  * Every call site must therefore establish the domain first. Named for that:
  * the exception is visible where it is used, not buried in this docstring.
  *
- * Spec §2.5 assigns that establishing to the call site, not to this writer —
- * NODE_INTERFACE → "The output domain check".
+ * TYPES_INTERFACE → Totality assigns that establishing to the call site, not to
+ * this writer — see NODE_INTERFACE → "The output domain check".
  *
  * @throws {Error} if `value` is negative or above `2^64 - 1`
  */
@@ -300,12 +295,13 @@ export function readVlqU64(r: ByteReader): bigint {
  * sentinel. Padding or truncating a malformed id to `n` bytes would map it
  * onto a well-formed id's encoding.
  *
- * ⚠ **Domain obligation, currently unmet for posts.**
- * `@dagsocial/validation`'s `isSignablePost` pins `typeof ref === 'string'` and
- * `isBytes(author)` but **not** their lengths, so `signingHash` is today
- * reachable with a 31-byte author or a `parentRefs` entry of `"hello"`. Once
- * `post.ts` moves onto fixed-width fields (Phase 2), that is a live panic and
- * an M-5/M-6 regression unless the guard is tightened first.
+ * **The post path's domain is established upstream, not here.**
+ * `@dagsocial/validation`'s `verifyPostFieldDomains` pins `author` and
+ * `challenge` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex,
+ * and `isSignablePost` is exactly that check — so `signingHash` cannot reach
+ * these writers out of domain. Lowercase is load-bearing: `'AB…'` and `'ab…'`
+ * decode to identical bytes, so accepting both would make this boundary
+ * non-injective.
  *
  * @throws {Error} unless `hex` is exactly `n * 2` lowercase hex characters
  */
@@ -484,8 +480,8 @@ export interface Enum8<T extends string> {
  *
  * **Tags reserve retired values and are never renumbered** (TYPES_INTERFACE →
  * Primitives). A renumber silently moves every id and `stateRoot` covering the
- * tag — the T2b `0x03` lesson, now inside id preimages. Reserve a retired tag
- * by leaving its number out of the table, never by reusing it.
+ * tag, and these tags sit inside id preimages. Reserve a retired tag by leaving
+ * its number out of the table, never by reusing it.
  *
  * The table itself is code, not untrusted input, so the construction-time
  * checks below throw: a duplicate or out-of-range tag is a build defect and
@@ -531,12 +527,12 @@ export function enum8<T extends string>(name: string, tags: Readonly<Record<T, n
 
 /**
  * A struct's normative byte layout: the field order *is* the specification
- * (spec §2.3), and `write` and `read` must walk it in the same order.
+ * (TYPES_INTERFACE → Primitives), and `write` and `read` must walk it in the
+ * same order.
  *
  * Supply the pair; `decodeStruct` supplies all four steps of the boundary
- * check. That direction matters — an "assert canonical" a caller has to
- * remember to invoke is the exact shape that produced this defect class
- * (`verifyOrderingBlockStructure` *was* the someone-else-re-checks-it step).
+ * check. That direction matters — an "assert canonical" step a caller has to
+ * remember to invoke is the exact shape that produced this defect class.
  */
 export interface StructCodec<T> {
   /** Diagnostic name — appears in every rejection message. */
@@ -554,7 +550,7 @@ export function encodeStruct<T>(codec: StructCodec<T>, value: T): Uint8Array {
 
 /**
  * Decode a struct through its layout, performing the whole boundary check
- * (spec §2.1). One entry point, four steps:
+ * (TYPES_INTERFACE → The boundary check). One entry point, four steps:
  *
  *  1. **Project onto the schema** — `codec.read` walks the declared fields in
  *     normative order. Unknown keys are unrepresentable; key order does not
