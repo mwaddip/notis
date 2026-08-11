@@ -30,8 +30,9 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   computePostId, signingHash, postPowPreimage, computeBoxId, computeTxId,
-  computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS,
+  computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS, powNonceBytes,
 } from '@dagsocial/types';
+import { verifyPoW } from '../../src/services/pow.js';
 import type {
   CandidateOf,
   Post, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox, VouchBox,
@@ -305,6 +306,43 @@ function extractConst(src: string, name: string): string {
   return src.slice(start, end === -1 ? undefined : end);
 }
 
+/**
+ * The byte primitives: every declaration whose job is to emit wire bytes. The
+ * completeness audit at the bottom of this file derives its vocabulary from this
+ * array, so a primitive added here extends the audit with it.
+ */
+const BYTE_PRIMITIVES = [
+  'vlqU', 'vlqS', 'vlqU64', 'vlqBigInt', 'lp', 'lpUtf8', 'arr', 'opt',
+  'boolByte', 'enum8Tag', 'b32Bytes', 'b32Hex', 'b32Either', 'optB32Either',
+] as const;
+
+/** The rest of what the mirror evaluates: helpers, the id preimages, the PoW pair. */
+const MIRRORED_OTHER = [
+  'buf2hex', 'hex2buf', 'concatUint8Arrays',
+  'isEncodableVlqU', 'isEncodableVlqS',
+  'postFieldBytes', 'buildPowInput',
+  'powNonceTail', 'postPowHash', 'countLeadingZeroBits',
+  'computePostId', 'canonicalBoxBytes', 'boxTypeFields',
+  'computeBoxId', 'computeCandidateBoxId', 'computeTxId',
+] as const;
+
+/** Every function declaration the mirror lifts out of `index.html`. */
+const MIRRORED_FUNCTIONS: readonly string[] = [...BYTE_PRIMITIVES, ...MIRRORED_OTHER];
+
+/** Consts the mirror lifts. A top-level one may itself construct bytes. */
+const MIRRORED_CONSTS = [
+  'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'BOX_TYPE_TAGS',
+] as const;
+
+/** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
+const RETURNED = [
+  'postFieldBytes', 'buildPowInput', 'computePostId',
+  'powNonceTail', 'postPowHash', 'countLeadingZeroBits',
+  'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'boolByte', 'enum8Tag',
+  'b32Bytes', 'b32Hex',
+  'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
+] as const;
+
 interface UiCrypto {
   postFieldBytes: (
     content: string, author: Uint8Array, parentRefs: string[],
@@ -312,6 +350,9 @@ interface UiCrypto {
   ) => Uint8Array;
   buildPowInput: UiCrypto['postFieldBytes'];
   computePostId: (post: Record<string, unknown>) => string;
+  powNonceTail: (nonce: number) => Uint8Array;
+  postPowHash: (powInput: Uint8Array, nonce: number) => Uint8Array;
+  countLeadingZeroBits: (buf: Uint8Array) => number;
   vlqU: (n: number) => Uint8Array;
   vlqS: (n: number) => Uint8Array;
   vlqU64: (v: bigint) => Uint8Array;
@@ -345,44 +386,9 @@ function loadUiCrypto(): UiCrypto {
   const html = readFileSync(INDEX_HTML, 'utf8');
   const source = [
     'const encoder = new TextEncoder();',
-    extractConst(html, 'POST_ID_DOMAIN'),
-    extractConst(html, 'BOX_ID_DOMAIN'),
-    extractConst(html, 'TX_ID_DOMAIN'),
-    extractConst(html, 'VLQ_SENTINEL'),
-    extractConst(html, 'BOX_TYPE_TAGS'),
-    extractDeclaration(html, 'function buf2hex('),
-    extractDeclaration(html, 'function hex2buf('),
-    extractDeclaration(html, 'function concatUint8Arrays('),
-    // The positional codec layer — the mirror of @dagsocial/types src/codec.ts.
-    extractDeclaration(html, 'function isEncodableVlqU('),
-    extractDeclaration(html, 'function isEncodableVlqS('),
-    extractDeclaration(html, 'function vlqBigInt('),
-    extractDeclaration(html, 'function vlqU('),
-    extractDeclaration(html, 'function vlqS('),
-    extractDeclaration(html, 'function vlqU64('),
-    extractDeclaration(html, 'function b32Bytes('),
-    extractDeclaration(html, 'function b32Hex('),
-    extractDeclaration(html, 'function b32Either('),
-    extractDeclaration(html, 'function optB32Either('),
-    extractDeclaration(html, 'function lp('),
-    extractDeclaration(html, 'function lpUtf8('),
-    extractDeclaration(html, 'function arr('),
-    extractDeclaration(html, 'function opt('),
-    extractDeclaration(html, 'function boolByte('),
-    extractDeclaration(html, 'function enum8Tag('),
-    // The three id preimages built on it.
-    extractDeclaration(html, 'function postFieldBytes('),
-    extractDeclaration(html, 'function buildPowInput('),
-    extractDeclaration(html, 'function computePostId('),
-    extractDeclaration(html, 'function canonicalBoxBytes('),
-    extractDeclaration(html, 'function boxTypeFields('),
-    extractDeclaration(html, 'function computeBoxId('),
-    extractDeclaration(html, 'function computeCandidateBoxId('),
-    extractDeclaration(html, 'function computeTxId('),
-    'return { postFieldBytes, buildPowInput, computePostId,\n' +
-    '         vlqU, vlqS, vlqU64, lp, lpUtf8, arr, opt, boolByte, enum8Tag,\n' +
-    '         b32Bytes, b32Hex,\n' +
-    '         canonicalBoxBytes, computeBoxId, computeTxId, computeCandidateBoxId };',
+    ...MIRRORED_CONSTS.map((name) => extractConst(html, name)),
+    ...MIRRORED_FUNCTIONS.map((name) => extractDeclaration(html, `function ${name}(`)),
+    `return { ${RETURNED.join(', ')} };`,
   ].join('\n\n');
 
   return new Function('blake2b', source)(blake2bShim) as UiCrypto;
@@ -922,5 +928,281 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
     const uiId = ui.computeTxId(asUi(repointed));
     expect(uiId).not.toBe(GOLDEN_LIKE_TX_ID);
     expect(uiId).toBe(computeTxId(repointed));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The post-PoW nonce tail, and the predicate the UI decides with it (Phase 8b)
+// ---------------------------------------------------------------------------
+
+describe('demo UI ↔ @dagsocial/types post-PoW nonce tail', () => {
+  // TYPES_INTERFACE → Serialization → "Layout — Post" makes `powNonceBytes` the
+  // tail's only writer, so the UI's copy is a mirror and not a second dialect.
+  // These are the values `packages/types/test/golden/post.json` freezes for it —
+  // including the out-of-domain sentinel, because the tail is total on both sides
+  // and four out-of-domain nonces sharing one tail is a property, not an accident.
+  const FROZEN_NONCES = [0, 127, 128, 1000000, Number.MAX_SAFE_INTEGER, -1];
+
+  it.each(FROZEN_NONCES)('powNonceTail(%d) is byte-identical to powNonceBytes', (n) => {
+    expect(hexOf(ui.powNonceTail(n))).toBe(hexOf(powNonceBytes(n)));
+  });
+
+  it('computePostId reaches the same tail writer, not a second copy of it', () => {
+    // The id's nonce row must move with `powNonceTail`, which is what stops the
+    // two UI call sites drifting apart the way the UI and validation once did.
+    const tail = ui.powNonceTail(GOLDEN_POST.powNonce);
+    expect(hexOf(tail)).toBe(hexOf(powNonceBytes(GOLDEN_POST.powNonce)));
+    expect(ui.computePostId(GOLDEN_POST as unknown as Record<string, unknown>))
+      .toBe(computePostId(GOLDEN_POST));
+  });
+});
+
+describe('demo UI PoW predicate ↔ @dagsocial/validation verifyPoW', () => {
+  const INPUTS = {
+    'three-bytes': new Uint8Array([0x01, 0x02, 0x03]),
+    'empty': new Uint8Array([]),
+    '32-zero-bytes': new Uint8Array(32),
+  } satisfies Record<string, Uint8Array>;
+
+  // Every row carries the zero-bit count its digest actually opens with, so
+  // `targetBits` is CHOSEN, never searched. A test that mines through the predicate
+  // it is testing cannot fail (carried #31, deleted from pow.test.ts in this phase).
+  //
+  // The hash column is regenerated rather than hand-derived: the LAYOUT is pinned
+  // upstream by types' golden vectors, written from the layout table. What these rows
+  // pin is that two independent implementations of the same predicate agree —
+  // `validation/src/verify.ts` and the demo UI compute the same concat, the same
+  // blake2b512, the same [0..32] and the same leading-zero test, sharing no code.
+  const ROWS = [
+    { input: 'three-bytes', nonce: 0, zeroBits: 0, hash: 'ca8a13775dfec26a67ac1f7f19a2f01417bf74ea9d32c5a0c97ba6e672b397a1' },
+    { input: 'three-bytes', nonce: 1, zeroBits: 2, hash: '2b64d5317f8a756bdf36152e0cf8d11bf3d64d0f0757acddbda7b91637255119' },
+    { input: 'three-bytes', nonce: 127, zeroBits: 2, hash: '365c35d560d5098d733cd8616880664fd220bdffa5181d3f1e0f235c2c7bb245' },
+    { input: 'three-bytes', nonce: 128, zeroBits: 0, hash: '8aa077826cc617670c94e07ea476567f5dbd3b4837ff3f04442a877e081b54a3' },
+    { input: 'three-bytes', nonce: 1000000, zeroBits: 5, hash: '0431e9d873053b76056b851cc66b4cfddbf0d19fd4db8c149dec44aeffa44a06' },
+    { input: 'three-bytes', nonce: 212554, zeroBits: 17, hash: '00004189c1bb78326f134603e69f033328f154395b18881789bd8f970f268b9c' },
+    { input: 'empty', nonce: 0, zeroBits: 2, hash: '2fa3f686df876995167e7c2e5d74c4c7b6e48f8068fe0e44208344d480f7904c' },
+    { input: 'empty', nonce: 1000000, zeroBits: 1, hash: '4612328d490fb0ca9ab63e82fb3400f7bca2da13928cddd5913e0b9c9d65ae93' },
+    { input: '32-zero-bytes', nonce: 0, zeroBits: 0, hash: 'e5950b21be53a5b576e5f131289b05ebb19bd8fdb20eb7168466b26651d62fa8' },
+    { input: '32-zero-bytes', nonce: 1000000, zeroBits: 5, hash: '06e52d645229208556c3d379c1a00e40b54c8126338d360c0d6d1db61d5b8738' },
+  ] as const;
+
+  it.each(ROWS)('$input @ nonce $nonce: the UI digest is verifyPoW\'s', (row) => {
+    const input = INPUTS[row.input];
+    const hash = ui.postPowHash(input, row.nonce);
+    expect(hexOf(hash)).toBe(row.hash);
+    expect(ui.countLeadingZeroBits(hash)).toBe(row.zeroBits);
+  });
+
+  it.each(ROWS)('$input @ nonce $nonce: both predicates hold at $zeroBits and fail one bit tighter', (row) => {
+    const input = INPUTS[row.input];
+    const uiHolds = (bits: number): boolean =>
+      ui.countLeadingZeroBits(ui.postPowHash(input, row.nonce)) >= bits;
+
+    // A `bits` that holds and a `bits` that fails FOR THE SAME NONCE, so neither a
+    // constant-true nor a constant-false predicate survives either side.
+    expect(uiHolds(row.zeroBits)).toBe(true);
+    expect(verifyPoW(input, row.nonce, row.zeroBits)).toBe(true);
+    expect(uiHolds(row.zeroBits + 1)).toBe(false);
+    expect(verifyPoW(input, row.nonce, row.zeroBits + 1)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Completeness audit — a mirror's coverage is a claim about a LIST
+// ---------------------------------------------------------------------------
+
+/**
+ * Byte construction in `index.html` must sit inside something the mirror evaluates.
+ *
+ * Adding a name to `MIRRORED_OTHER` fixes one omission. This re-derives the list
+ * instead, because the defect's shape is *a list nobody re-derives*: an omitted
+ * function signals nothing, which is how `solvePoW` stayed unmirrored while the
+ * suite was green.
+ *
+ * ⚠ **This narrows the class; it does not close it.** The audit keys on a
+ * VOCABULARY drawn from `BYTE_PRIMITIVES`. Byte assembly written without any of
+ * those names — a bare `new Uint8Array([…])`, a hand-rolled push loop, a DataView
+ * write — is invisible to it. Nor can it see a function that calls a *mirrored*
+ * builder with the wrong arguments: it sees construction, not correctness. A reader
+ * who takes the vocabulary for the whole class repeats the mistake one level down.
+ */
+const AUDIT_VOCABULARY: readonly string[] = [
+  ...BYTE_PRIMITIVES,
+  'blake2b', 'concatUint8Arrays', 'encoder.encode',
+];
+
+/**
+ * Scopes that construct bytes and are deliberately not mirrored — one line of reason
+ * each. Every entry here was surfaced by this audit, not anticipated; each is a
+ * hashing site with no layout decision in it, and none is the post-PoW tail.
+ */
+const AUDIT_ALLOW: Record<string, string> = {
+  signPost:
+    'its PREIMAGE is mirrored (buildSignHashInput -> buildPowInput); its digest line is NOT — uiSigningHash re-implements blake2b(input, null, 64).slice(0, 32) test-side rather than evaluating signPost, so changing this call to slice(0, 16) would fail nothing. An unpinned two-line copy, carried deliberately.',
+  attachFeedHandlers:
+    'hashes a server-issued challenge before Ed25519 signing — it takes no layout decision',
+  'createInviteBtn#click':
+    'hashes 32 random bytes into an invite secretHash — it takes no layout decision',
+};
+
+interface Scope { name: string; start: number; end: number; }
+interface Finding { scope: string; token: string; line: number; }
+
+/** Blank comments and string/template bodies, preserving every offset. */
+function maskSource(s: string): string {
+  const out = s.split('');
+  let i = 0;
+  let state: 'line' | 'block' | 'str' | null = null;
+  let quote: string | null = null;
+  while (i < s.length) {
+    const ch = s[i];
+    const next = s[i + 1];
+    if (state === 'line') { if (ch === '\n') state = null; else out[i] = ' '; i++; continue; }
+    if (state === 'block') {
+      if (ch === '*' && next === '/') { out[i] = ' '; out[i + 1] = ' '; i += 2; state = null; continue; }
+      if (ch !== '\n') out[i] = ' ';
+      i++; continue;
+    }
+    if (state === 'str') {
+      if (ch === '\\') { out[i] = ' '; if (s[i + 1] !== '\n') out[i + 1] = ' '; i += 2; continue; }
+      if (ch === quote) { state = null; quote = null; i++; continue; }
+      if (ch !== '\n') out[i] = ' ';
+      i++; continue;
+    }
+    if (ch === '/' && next === '/') { out[i] = ' '; out[i + 1] = ' '; i += 2; state = 'line'; continue; }
+    if (ch === '/' && next === '*') { out[i] = ' '; out[i + 1] = ' '; i += 2; state = 'block'; continue; }
+    if (ch === '"' || ch === "'" || ch === '`') { out[i] = ' '; quote = ch; state = 'str'; i++; continue; }
+    i++;
+  }
+  return out.join('');
+}
+
+/** End offset (exclusive) of the block opened by the first `{` at or after `from`. */
+function blockEnd(masked: string, from: number): number {
+  let depth = 0;
+  for (let i = masked.indexOf('{', from); i < masked.length && i !== -1; i++) {
+    if (masked[i] === '{') depth++;
+    else if (masked[i] === '}') { depth--; if (depth === 0) return i + 1; }
+  }
+  throw new Error(`unterminated block at offset ${from}`);
+}
+
+/**
+ * Every scope a byte site can be attributed to, innermost-first at use.
+ *
+ * Three shapes, because two of them are the blind spots of the first: a declared
+ * function, a function or arrow bound to a name, and an inline DOM handler — which
+ * has no name of its own, so it takes the element id and event as its address.
+ */
+function namedScopes(src: string, masked: string): Scope[] {
+  const scopes: Scope[] = [];
+  for (const m of masked.matchAll(/\bfunction\s+([A-Za-z0-9_$]+)\s*\(/g)) {
+    scopes.push({ name: m[1]!, start: m.index, end: blockEnd(masked, m.index) });
+  }
+  const bound = /\b(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z0-9_$]+\s*=>)/g;
+  for (const m of masked.matchAll(bound)) {
+    scopes.push({ name: m[1]!, start: m.index, end: blockEnd(masked, m.index) });
+  }
+  // Matched on the raw source: a handler's address is its element id and event, and
+  // both are string literals, which `maskSource` blanks. Offsets are preserved, so
+  // requiring the call itself to survive masking is what keeps a commented-out
+  // registration from registering a scope.
+  const handler = /getElementById\(\s*'([A-Za-z0-9_]+)'\s*\)\s*\.addEventListener\(\s*'([a-z]+)'\s*,\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{/g;
+  for (const m of src.matchAll(handler)) {
+    if (!masked.startsWith('getElementById', m.index)) continue;
+    scopes.push({ name: `${m[1]!}#${m[2]!}`, start: m.index, end: blockEnd(masked, m.index) });
+  }
+  return scopes;
+}
+
+/** The single-statement scope of a top-level `const NAME = …` initialiser. */
+function constInitScopes(masked: string): Scope[] {
+  const scopes: Scope[] = [];
+  for (const m of masked.matchAll(/\b(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=/g)) {
+    const nl = masked.indexOf('\n', m.index);
+    scopes.push({ name: m[1]!, start: m.index, end: nl === -1 ? masked.length : nl });
+  }
+  return scopes;
+}
+
+function auditByteConstruction(): { findings: Finding[]; unattributed: Finding[] } {
+  const src = readFileSync(INDEX_HTML, 'utf8');
+  const masked = maskSource(src);
+  const scopes = namedScopes(src, masked);
+  const consts = constInitScopes(masked);
+  const lineOf = (off: number): number => masked.slice(0, off).split('\n').length;
+
+  const findings: Finding[] = [];
+  const unattributed: Finding[] = [];
+  for (const token of AUDIT_VOCABULARY) {
+    const re = new RegExp(`(?<![A-Za-z0-9_$.])${token.replace('.', '\\.')}\\s*\\(`, 'g');
+    for (const m of masked.matchAll(re)) {
+      const off = m.index;
+      const inner = scopes
+        .filter((s) => off > s.start && off < s.end)
+        .sort((a, b) => (b.end - b.start) - (a.end - a.start))
+        .pop();
+      if (inner) {
+        // A declaration's own header is not a call site of itself.
+        if (inner.name === token && off === inner.start + 'function '.length) continue;
+        findings.push({ scope: inner.name, token, line: lineOf(off) });
+        continue;
+      }
+      const asConst = consts.find((c) => off > c.start && off < c.end);
+      if (asConst) { findings.push({ scope: asConst.name, token, line: lineOf(off) }); continue; }
+      unattributed.push({ scope: '<no named scope>', token, line: lineOf(off) });
+    }
+  }
+  return { findings, unattributed };
+}
+
+describe('demo UI byte-construction completeness audit', () => {
+  const { findings, unattributed } = auditByteConstruction();
+  const covered = (scope: string): boolean =>
+    MIRRORED_FUNCTIONS.includes(scope)
+    || (MIRRORED_CONSTS as readonly string[]).includes(scope)
+    || scope in AUDIT_ALLOW;
+
+  it('finds byte construction at all — a vocabulary that matches nothing proves nothing', () => {
+    expect(findings.length).toBeGreaterThan(20);
+    expect(new Set(findings.map((f) => f.scope)).size).toBeGreaterThan(10);
+  });
+
+  it('every byte-constructing scope is mirrored or allow-listed', () => {
+    const unexplained = findings
+      .filter((f) => !covered(f.scope))
+      .map((f) => `${f.scope} — ${f.token}( at index.html:${f.line}`);
+    expect([...new Set(unexplained)]).toEqual([]);
+  });
+
+  it('no byte construction sits outside every named scope', () => {
+    // An anonymous site has no stable address, so it cannot be allow-listed either.
+    // The fix for one is to give it a name.
+    expect(unattributed.map((f) => `${f.token}( at index.html:${f.line}`)).toEqual([]);
+  });
+
+  it('solvePoW constructs no bytes', () => {
+    // Named on purpose. It is the site this audit exists to cover, so exempting it
+    // would have been the audit's first act — the extraction is what keeps the
+    // allow-list honest rather than self-serving.
+    expect(Object.keys(AUDIT_ALLOW)).not.toContain('solvePoW');
+    expect(findings.filter((f) => f.scope === 'solvePoW')).toEqual([]);
+  });
+
+  it('the allow-list carries a reason per entry and no dead entries', () => {
+    for (const [scope, reason] of Object.entries(AUDIT_ALLOW)) {
+      expect(reason.length).toBeGreaterThan(20);
+      expect(findings.some((f) => f.scope === scope)).toBe(true);
+    }
+  });
+
+  it('the mirror still names the tail writer, the hash and the predicate', () => {
+    for (const name of ['powNonceTail', 'postPowHash', 'countLeadingZeroBits']) {
+      expect(MIRRORED_FUNCTIONS).toContain(name);
+      expect(RETURNED as readonly string[]).toContain(name);
+    }
+    expect(typeof ui.powNonceTail).toBe('function');
+    expect(typeof ui.postPowHash).toBe('function');
+    expect(typeof ui.countLeadingZeroBits).toBe('function');
   });
 });
