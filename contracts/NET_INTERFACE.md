@@ -737,7 +737,35 @@ The sync/gossip event loop MUST prioritize:
 1. Control events (reorg notification, peer disconnect, new peer) —
    unbounded channel, never dropped
 2. Data events (post received, post acknowledged) — bounded channel, lossy
+   above `MAX_DATA_QUEUE`
 3. Timer ticks — fallback
+4. **It MUST wait when all three are idle.** With both queues empty and no tick
+   due, the loop blocks until an enqueue or the next tick. It does not re-poll.
+
+**Yielding is not waiting.** `await new Promise(r => setImmediate(r))` returns to
+the event loop and comes straight back, so a loop that "yields" every iteration
+still consumes a core continuously while doing nothing. Clause 4 is a cost
+obligation and is as binding as the three ordering rules above it.
+
+> ⚠ **Clause 4 exists because it was absent, and the absence cost a core.**
+> Clauses 1–3 were ported from `ergo-node-rust`'s `facts/sync.md`, which
+> describes a Tokio `select! { biased; … }` loop. `select!` parks the task until
+> a receiver or timer is ready, so **the source document never had to state
+> clause 4 — the runtime guaranteed it.** Everything that document wrote down
+> came across faithfully, `MAX_DATA_QUEUE = 64` included. Only the guarantee that
+> was never text was lost, and JavaScript offers no equivalent: `.shift()` on an
+> array has no readiness to await.
+>
+> Measured 2026-08-11: 100% of one core, permanently, on an idle node — and on
+> every node since the loop landed. Invisible to 3029 passing tests, because no
+> test suite measures cost.
+>
+> **The porting rule this yields, which applies to every contract taken from that
+> template:** *a specification omits precisely what its source runtime provides
+> for free, and the omission only becomes visible in a runtime that does not.*
+> Before porting a design across languages, enumerate what the source language
+> was doing unstated — for this loop the whole answer is one line: `select!`
+> sleeps, `.shift()` does not.
 
 ## Local-Serve-Before-Relay
 

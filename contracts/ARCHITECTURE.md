@@ -81,6 +81,33 @@ included), and distribute credit rewards.
 
 ## Design Principles
 
+### Correct and cheap are separate obligations, and only one is instrumented
+
+A contract that states *what* a component computes can be satisfied completely by
+an implementation that computes it as expensively as possible. Types, tests,
+review and CI all check correctness; **nothing in this repo measures cost.** A
+component that spins a core, allocates without bound, or polls where it could
+wait produces correct results, promptly, forever — and every gate stays green.
+
+So where idle behaviour, cadence, or an allocation ceiling is load-bearing, the
+contract states it as an obligation with a number, not as an implementation
+detail. `NET_INTERFACE → Biased Event Loop` clause 4 is the worked example, and
+`MAX_DATA_QUEUE` / `MAX_OUTSTANDING_IDS` are the shape to copy.
+
+> ⚠ **Ported specifications drop exactly what the source runtime guaranteed.**
+> Several contracts here were templated from `ergo-node-rust`'s `facts/`. That
+> node is Rust on Tokio, where `select!` parks a task until a channel or timer is
+> ready — so its documents never had to say "wait when idle." The guarantee lived
+> in the primitive, not the prose. Ported to JavaScript, every written clause
+> survived and the unwritten one did not: the sync loop consumed 100% of a core,
+> permanently, from the day it landed until 2026-08-11.
+>
+> **Before porting a design across runtimes, enumerate what the source language
+> was providing unstated.** A specification is silent about whatever its origin
+> made free, and that silence is invisible until it is read somewhere else.
+
+---
+
 ### Node as record-keeper, not ranker
 
 The node's job is to faithfully record, validate, and serve data — posts, likes,
