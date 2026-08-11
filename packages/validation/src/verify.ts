@@ -93,28 +93,6 @@ function isU64Safe(v: unknown): v is number {
 }
 
 /**
- * True iff `hash` opens with at least `targetBits` zero bits.
- *
- * A `targetBits` beyond the hash's own bit length is unsatisfiable, hence
- * `false`. The previous inline loops read past the end of the array instead,
- * where `undefined & mask` coerces to `0` — so an all-zero digest satisfied an
- * arbitrarily large target rather than none. (The practically reachable
- * accept-anything case was a `NaN`/`Infinity` `targetBits`, whose loop never
- * ran at all; `isU64Safe` now rejects that before we get here.)
- */
-function hasLeadingZeroBits(hash: Uint8Array, targetBits: number): boolean {
-  if (targetBits > hash.length * 8) return false;
-  for (let i = 0; i < targetBits; i++) {
-    const byteIdx = Math.floor(i / 8);
-    const bitIdx = 7 - (i % 8);
-    const byte = hash[byteIdx];
-    if (byte === undefined) return false; // unreachable given the bound above
-    if ((byte & (1 << bitIdx)) !== 0) return false;
-  }
-  return true;
-}
-
-/**
  * A `PostId` as it appears in `parentRefs`: exactly 64 lowercase hex
  * characters, the output shape of `computePostId`'s `.toString('hex')`.
  *
@@ -343,12 +321,60 @@ export function verifyHeaderFieldDomains(header: unknown): { valid: boolean; err
 }
 
 // ---------------------------------------------------------------------------
+// The PoW admission rule
+// ---------------------------------------------------------------------------
+
+/**
+ * The inclusive maximum acceptable PoW digest for `targetBits`, big-endian, 32
+ * bytes. `null` for a target outside `[0, 256]`, which a caller reads as "no
+ * digest can satisfy this" and answers `false`.
+ *
+ * VALIDATION_INTERFACE → powTarget / meetsPowTarget. Inclusive
+ * (`2^(256−targetBits) − 1`) rather than the exclusive threshold, because the
+ * exclusive form is `2^256` at `targetBits = 0` and does not fit the digest
+ * width; the inclusive form makes both extremes ordinary values.
+ *
+ * Unit 2 replaces this derivation with a fractional-bits one. `meetsPowTarget`
+ * is unaffected — see `docs/specs/2026-08-11-difficulty-retarget.md` §2.2.
+ */
+export function powTarget(targetBits: number): Uint8Array | null {
+  if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
+  const target = new Uint8Array(32).fill(0xff);
+  const wholeBytes = targetBits >> 3;
+  for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
+  const remainderBits = targetBits & 7;
+  if (remainderBits !== 0 && wholeBytes < 32) target[wholeBytes] = 0xff >> remainderBits;
+  return target;
+}
+
+/**
+ * True iff `hash` is at or below `target`, both read big-endian.
+ *
+ * VALIDATION_INTERFACE → powTarget / meetsPowTarget: the single PoW admission
+ * rule in the repo — the verifier and every solver answer this question and no
+ * other. Byte-wise rather than BigInt because a solver runs it once per nonce.
+ *
+ * A `hash` shorter than `target` is refused rather than zero-extended: a digest
+ * that cannot be compared over the target's full width does not meet it.
+ */
+export function meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean {
+  for (let i = 0; i < target.length; i++) {
+    const h = hash[i];
+    const c = target[i];
+    if (h === undefined || c === undefined) return false;
+    if (h < c) return true;
+    if (h > c) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // verifyPoW
 // ---------------------------------------------------------------------------
 
 /**
- * Post PoW: `blake2b512(input ‖ powNonceBytes(nonce))[0..32]` opens with at
- * least `targetBits` zero bits.
+ * Post PoW: `blake2b512(input ‖ powNonceBytes(nonce))[0..32]` meets the target
+ * `targetBits` expands to.
  *
  * The tail is `@dagsocial/types`' to write — TYPES_INTERFACE → Serialization →
  * "Layout — Post" is the layout, and `powNonceBytes` its only writer, so this
@@ -365,9 +391,11 @@ export function verifyPoW(input: Uint8Array, nonce: number, targetBits: number):
   if (!isBytes(input)) return false;
   if (!isU64Safe(nonce)) return false;
   if (!isU64Safe(targetBits)) return false;
+  const target = powTarget(targetBits);
+  if (target === null) return false;
   const buf = Buffer.concat([Buffer.from(input), Buffer.from(powNonceBytes(nonce))]);
   const hash = createHash('blake2b512').update(buf).digest().subarray(0, 32);
-  return hasLeadingZeroBits(hash, targetBits);
+  return meetsPowTarget(hash, target);
 }
 
 // ---------------------------------------------------------------------------
@@ -875,6 +903,8 @@ export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
   // (M-6) — the bound that keeps `BigInt` / `writeBigUInt64LE` from throwing.
   const preimage = computePowHash(header);
   if (preimage === null) return false;
+  const target = powTarget(header.powTargetBits);
+  if (target === null) return false;
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));
   const hash = createHash('blake2b512')
@@ -882,7 +912,7 @@ export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
     .update(nonceBuf)
     .digest()
     .subarray(0, 32);
-  return hasLeadingZeroBits(hash, header.powTargetBits);
+  return meetsPowTarget(hash, target);
 }
 
 // ---------------------------------------------------------------------------
