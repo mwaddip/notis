@@ -14,7 +14,13 @@ const MINER_PUBKEY = (process.env.MINER_PUBKEY ?? '').trim();
 const DUTY_WINDOW_MS = 1000;
 
 // ---------------------------------------------------------------------------
-// PoW solver — byte-identical to block-creator.ts solvePoW()
+// PoW solver
+//
+// This script is standalone — `node:crypto` and nothing else, so the machine
+// that mines needs no build step (MINING_INTERFACE → Miner Script). It therefore
+// carries its own copy of the admission rule instead of importing it, and
+// `test/unit/miner-mirror.test.ts` is what holds that copy to
+// `@dagsocial/validation` — VALIDATION_INTERFACE → powTarget / meetsPowTarget.
 // ---------------------------------------------------------------------------
 
 function encodeLE64(n) {
@@ -23,23 +29,53 @@ function encodeLE64(n) {
   return buf;
 }
 
+function powTarget(targetBits) {
+  if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
+  const target = new Uint8Array(32).fill(0xff);
+  const wholeBytes = targetBits >> 3;
+  for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
+  const remainderBits = targetBits & 7;
+  if (remainderBits !== 0) target[wholeBytes] = 0xff >> remainderBits;
+  return target;
+}
+
+function meetsPowTarget(hash, target) {
+  for (let i = 0; i < target.length; i++) {
+    const h = hash[i];
+    const c = target[i];
+    if (h === undefined || c === undefined) return false;
+    if (h < c) return true;
+    if (h > c) return false;
+  }
+  return true;
+}
+
+/**
+ * The target a solver iterates against, hoisted out of its loop — it depends
+ * only on `targetBits`, and deriving it per nonce would allocate once per hash.
+ *
+ * `targetBits` arrives off a mining template, so a value no digest can satisfy
+ * is reachable. It raises rather than spinning: the caller's retry loop logs it
+ * and repolls.
+ */
+function requireTarget(targetBits) {
+  const target = powTarget(targetBits);
+  if (target === null) {
+    throw new Error(`Unsatisfiable powTargetBits from template: ${targetBits}`);
+  }
+  return target;
+}
+
 function solvePoW(powPreimage, targetBits) {
+  const target = requireTarget(targetBits);
   let nonce = 0;
   while (true) {
-    const nonceBuf = encodeLE64(nonce);
     const hash = createHash('blake2b512')
       .update(powPreimage)
-      .update(nonceBuf)
+      .update(encodeLE64(nonce))
       .digest()
       .subarray(0, 32);
-    let bits = 0;
-    for (let i = 0; i < 32 && bits < targetBits; i++) {
-      if (hash[i] === 0) { bits += 8; continue; }
-      let mask = 0x80;
-      while ((hash[i] & mask) === 0 && bits < targetBits) { bits++; mask >>= 1; }
-      break;
-    }
-    if (bits >= targetBits) return nonce;
+    if (meetsPowTarget(hash, target)) return nonce;
     nonce++;
   }
 }
@@ -54,6 +90,7 @@ async function throttledSolvePoW(powPreimage, targetBits) {
     return solvePoW(powPreimage, targetBits);
   }
 
+  const target = requireTarget(targetBits);
   const workMs = DUTY_WINDOW_MS * MINER_PCT / 100;
   const sleepMs = DUTY_WINDOW_MS - workMs;
   let nonce = 0;
@@ -63,20 +100,12 @@ async function throttledSolvePoW(powPreimage, targetBits) {
 
     // Work window: tight loop until deadline or solution
     while (Date.now() < deadline) {
-      const nonceBuf = encodeLE64(nonce);
       const hash = createHash('blake2b512')
         .update(powPreimage)
-        .update(nonceBuf)
+        .update(encodeLE64(nonce))
         .digest()
         .subarray(0, 32);
-      let bits = 0;
-      for (let i = 0; i < 32 && bits < targetBits; i++) {
-        if (hash[i] === 0) { bits += 8; continue; }
-        let mask = 0x80;
-        while ((hash[i] & mask) === 0 && bits < targetBits) { bits++; mask >>= 1; }
-        break;
-      }
-      if (bits >= targetBits) return nonce;
+      if (meetsPowTarget(hash, target)) return nonce;
       nonce++;
     }
 
