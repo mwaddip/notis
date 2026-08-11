@@ -815,15 +815,35 @@ function computeTxId(tx) {
 // PoW
 // ===========================================================================
 
-function countLeadingZeroBits(buf) {
-  let bits = 0;
-  for (let i = 0; i < buf.length; i++) {
-    if (buf[i] === 0) { bits += 8; continue; }
-    let mask = 0x80;
-    while ((buf[i] & mask) === 0) { bits++; mask >>= 1; }
-    break;
+/**
+ * The PoW admission rule, mirrored from `@dagsocial/validation` —
+ * VALIDATION_INTERFACE.md → powTarget / meetsPowTarget. This page is served
+ * statically with no bundler, so it cannot import the pair; `ui-crypto-mirror.test.ts`
+ * extracts both declarations by name and holds them to validation's.
+ *
+ * `powTarget` expands a bit count into the inclusive 32-byte maximum acceptable
+ * digest and returns null outside [0, 256]; `meetsPowTarget` answers hash <= target,
+ * both big-endian.
+ */
+function powTarget(targetBits) {
+  if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
+  const target = new Uint8Array(32).fill(0xff);
+  const wholeBytes = targetBits >> 3;
+  for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
+  const remainderBits = targetBits & 7;
+  if (remainderBits !== 0) target[wholeBytes] = 0xff >> remainderBits;
+  return target;
+}
+
+function meetsPowTarget(hash, target) {
+  for (let i = 0; i < target.length; i++) {
+    const h = hash[i];
+    const c = target[i];
+    if (h === undefined || c === undefined) return false;
+    if (h < c) return true;
+    if (h > c) return false;
   }
-  return bits;
+  return true;
 }
 
 /** PoW preimage = postFieldBytes; the nonce tail is appended by postPowHash. */
@@ -846,10 +866,15 @@ function postPowHash(powInput, nonce) {
 }
 
 function solvePoW(powInput, targetBits, onProgress) {
+  // Hoisted: the target depends only on targetBits, so deriving it per nonce
+  // would allocate once per hash. The server issues targetBits with the
+  // challenge, so a value no digest can satisfy is reachable here.
+  const target = powTarget(targetBits);
+  if (target === null) throw new Error('solvePoW: unsatisfiable targetBits ' + targetBits);
   let nonce = 0;
   const start = performance.now();
   while (true) {
-    if (countLeadingZeroBits(postPowHash(powInput, nonce)) >= targetBits) return nonce;
+    if (meetsPowTarget(postPowHash(powInput, nonce), target)) return nonce;
 
     nonce++;
     if (nonce % 200000 === 0) {

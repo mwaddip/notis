@@ -33,6 +33,7 @@ import {
   computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS, powNonceBytes,
 } from '@dagsocial/types';
 import { verifyPoW } from '../../src/services/pow.js';
+import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
   Post, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox, VouchBox,
@@ -255,47 +256,12 @@ function toUiForm(box: AnyBox): Record<string, unknown> {
  *
  * Skips braces inside string literals and comments so a future comment or
  * string containing `{`/`}` cannot truncate the slice.
+ *
+ * Shared with `miner-mirror.test.ts`, the other consumer that cannot import
+ * `@dagsocial/validation` and is held by a mirror instead.
  */
-function extractDeclaration(src: string, header: string): string {
-  const start = src.indexOf(header);
-  if (start === -1) throw new Error(`index.html no longer declares: ${header}`);
-
-  const open = src.indexOf('{', start);
-  if (open === -1) throw new Error(`no body found for: ${header}`);
-
-  let depth = 0;
-  let quote: string | null = null;
-  let comment: 'line' | 'block' | null = null;
-
-  for (let i = open; i < src.length; i++) {
-    const ch = src[i];
-    const next = src[i + 1];
-
-    if (comment === 'line') {
-      if (ch === '\n') comment = null;
-      continue;
-    }
-    if (comment === 'block') {
-      if (ch === '*' && next === '/') { comment = null; i++; }
-      continue;
-    }
-    if (quote) {
-      if (ch === '\\') { i++; continue; }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '/' && next === '/') { comment = 'line'; i++; continue; }
-    if (ch === '/' && next === '*') { comment = 'block'; i++; continue; }
-    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
-
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return src.slice(start, i + 1);
-    }
-  }
-  throw new Error(`unterminated body for: ${header}`);
-}
+const extractDeclaration = (src: string, header: string): string =>
+  extractDeclarationFrom(src, header, 'index.html');
 
 /** Return a single-line `const NAME = …;` declaration. */
 function extractConst(src: string, name: string): string {
@@ -321,7 +287,7 @@ const MIRRORED_OTHER = [
   'buf2hex', 'hex2buf', 'concatUint8Arrays',
   'isEncodableVlqU', 'isEncodableVlqS',
   'postFieldBytes', 'buildPowInput',
-  'powNonceTail', 'postPowHash', 'countLeadingZeroBits',
+  'powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget',
   'computePostId', 'canonicalBoxBytes', 'boxTypeFields',
   'computeBoxId', 'computeCandidateBoxId', 'computeTxId',
 ] as const;
@@ -337,7 +303,7 @@ const MIRRORED_CONSTS = [
 /** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
 const RETURNED = [
   'postFieldBytes', 'buildPowInput', 'computePostId',
-  'powNonceTail', 'postPowHash', 'countLeadingZeroBits',
+  'powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget',
   'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'boolByte', 'enum8Tag',
   'b32Bytes', 'b32Hex',
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
@@ -352,7 +318,8 @@ interface UiCrypto {
   computePostId: (post: Record<string, unknown>) => string;
   powNonceTail: (nonce: number) => Uint8Array;
   postPowHash: (powInput: Uint8Array, nonce: number) => Uint8Array;
-  countLeadingZeroBits: (buf: Uint8Array) => number;
+  powTarget: (targetBits: number) => Uint8Array | null;
+  meetsPowTarget: (hash: Uint8Array, target: Uint8Array) => boolean;
   vlqU: (n: number) => Uint8Array;
   vlqS: (n: number) => Uint8Array;
   vlqU64: (v: bigint) => Uint8Array;
@@ -990,13 +957,16 @@ describe('demo UI PoW predicate ↔ @dagsocial/validation verifyPoW', () => {
     const input = INPUTS[row.input];
     const hash = ui.postPowHash(input, row.nonce);
     expect(hexOf(hash)).toBe(row.hash);
-    expect(ui.countLeadingZeroBits(hash)).toBe(row.zeroBits);
+    // `zeroBits` is the exact count, so the digest meets that target and no
+    // tighter one — which pins the count without the predicate returning one.
+    expect(ui.meetsPowTarget(hash, ui.powTarget(row.zeroBits)!)).toBe(true);
+    expect(ui.meetsPowTarget(hash, ui.powTarget(row.zeroBits + 1)!)).toBe(false);
   });
 
   it.each(ROWS)('$input @ nonce $nonce: both predicates hold at $zeroBits and fail one bit tighter', (row) => {
     const input = INPUTS[row.input];
     const uiHolds = (bits: number): boolean =>
-      ui.countLeadingZeroBits(ui.postPowHash(input, row.nonce)) >= bits;
+      ui.meetsPowTarget(ui.postPowHash(input, row.nonce), ui.powTarget(bits)!);
 
     // A `bits` that holds and a `bits` that fails FOR THE SAME NONCE, so neither a
     // constant-true nor a constant-false predicate survives either side.
@@ -1197,12 +1167,13 @@ describe('demo UI byte-construction completeness audit', () => {
   });
 
   it('the mirror still names the tail writer, the hash and the predicate', () => {
-    for (const name of ['powNonceTail', 'postPowHash', 'countLeadingZeroBits']) {
+    for (const name of ['powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget']) {
       expect(MIRRORED_FUNCTIONS).toContain(name);
       expect(RETURNED as readonly string[]).toContain(name);
     }
     expect(typeof ui.powNonceTail).toBe('function');
     expect(typeof ui.postPowHash).toBe('function');
-    expect(typeof ui.countLeadingZeroBits).toBe('function');
+    expect(typeof ui.powTarget).toBe('function');
+    expect(typeof ui.meetsPowTarget).toBe('function');
   });
 });

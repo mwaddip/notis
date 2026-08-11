@@ -59,8 +59,10 @@ NEW_WIN=$(kitty @ launch --type=window --cwd=/home/mwaddip/projects/dagsocial/pa
 kitty @ send-text --match=id:$NEW_WIN 'ac'
 kitty @ send-text --match=id:$NEW_WIN $'\r'
 
-# Wait ~10s for Claude to come up, then inject prompt instruction
-kitty @ send-text --match=id:$NEW_WIN 'use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
+# Wait ~10s for Claude to come up, then inject prompt instruction.
+# EVERY cross-session message is prefixed [sender->recipient] (user, 2026-08-11) — several
+# windows are live at once, and an unprefixed line says nothing about where it came from.
+kitty @ send-text --match=id:$NEW_WIN '[notismain-><component>] use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
 
 # Delay, submit, and VERIFY (see the warning below). No approval gate — main
 # dispatches autonomously (user, 2026-08-09). The verification below is NOT the
@@ -88,7 +90,11 @@ sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be 
 4. **No dispatch gate** — main dispatches autonomously (user, 2026-08-09; previously waived
    per-session at Phase 1d, now standing). The post-submit `get-text` verification is separate
    and still required.
-5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Main reviews and commits each phase; component sessions do not commit.**
+5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Component sessions commit their own work; they never push.** Main reviews, pushes, and opens the PR.
+6. **The contract change rides the same branch as the code that implements it** (user, 2026-08-11).
+   Not merged ahead of it — one PR shows the rule and its implementation together, so a reviewer can
+   check they agree instead of taking it on trust. It also means the executor's tree already holds the
+   contract they are building against.
 
 ### Prompt boilerplate
 
@@ -104,14 +110,16 @@ Read ./CLAUDE.md and follow its read-first list before starting.
 ...
 
 ## Coordination
-When done, send a brief completion summary back to the main session window:
-    kitty @ send-text --match=id:<MAIN_WINDOW_ID> 'one-line summary of what was done'
+When done, send a brief completion summary back to the main session window. **Keep the
+`[<component>->notismain]` prefix** — main has several windows reporting into it, and an
+unprefixed line does not identify itself as a reply:
+    kitty @ send-text --match=id:<MAIN_WINDOW_ID> '[<component>->notismain] one-line summary of what was done'
     kitty @ send-text --match=id:<MAIN_WINDOW_ID> $'\r'
 ```
 
 ### Main session vs component sessions
 
-The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and push their own work.
+The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and **commit** their own work. **Pushing is main's, always** — a component session that pushes has published work nobody reviewed.
 
 ## Key invariants
 

@@ -17,6 +17,43 @@ Exports from `packages/validation/src/index.ts`.
 
 ## PoW Verification
 
+### powTarget / meetsPowTarget
+
+```
+powTarget(targetBits: number): Uint8Array | null
+meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean
+```
+
+The single PoW admission rule. `powTarget` expands a target-bits count into the **inclusive** 32-byte
+maximum acceptable digest; `meetsPowTarget` answers `hash <= target`, both read big-endian. Every PoW
+question in the repo — the verifier's and every solver's — is this pair and nothing else.
+
+A *solver* that holds no predicate and asks the verifier instead — `node/test/helpers.ts`'s
+`solveHeaderPow` is the example — inherits this rule with no edit and is the shape to prefer. **"PoW
+solvers" and "PoW predicates" are different enumerations**; only the second should ever be counted
+when asking how many places implement this rule.
+
+`powTarget` returns `null` for a `targetBits` that is not a safe integer in `[0, 256]`. A caller reads
+`null` as "no digest can satisfy this" and answers `false`. Neither function throws, on any input.
+
+**Inclusive, not exclusive.** The exclusive threshold `2^(256 − targetBits)` is `2^256` at
+`targetBits = 0` and is not representable in 32 bytes. The inclusive `2^(256 − targetBits) − 1` is
+`0xff × 32` at one end and `0x00 × 32` at the other, so both extremes are ordinary values and the
+domain needs no special case.
+
+**Why a pair rather than one function.** The expansion is the half that changes when difficulty stops
+being a whole number of bits; the comparison never does. Splitting them is what lets a retarget
+replace the schedule without touching the admission rule — difficulty-retarget spec, Unit 2.
+
+**Solvers hoist the expansion.** `powTarget` depends only on `targetBits`, so a solver derives it once
+per template and calls `meetsPowTarget` per nonce. Deriving it inside the loop allocates once per hash.
+
+**Two consumers cannot import this package and mirror it instead** — `public/index.html` (served
+statically, no bundler) and `scripts/miner.mjs` (standalone by decision: it depends on `node:crypto`
+alone and runs on a machine that does not build the workspace). Each is held by a test that extracts
+the declaration **by name** and cross-checks it against this package. A mirror that stops finding its
+declaration fails, which is the property it exists for.
+
 ### verifyPoW
 
 ```
@@ -25,8 +62,8 @@ verifyPoW(input: Uint8Array, nonce: number, targetBits: number): boolean
 
 Appends the nonce using **`powNonceBytes` from `@dagsocial/types`** — `vlqU(nonce)`, the same
 tail `computePostId` appends — concatenates `input ‖ powNonceBytes(nonce)`, hashes with
-blake2b512, takes the first 32 bytes, and checks that the result has at least `targetBits`
-leading zero bits.
+blake2b512, takes the first 32 bytes, and answers `meetsPowTarget(hash, powTarget(targetBits))` —
+`false` when `powTarget` returns `null`.
 
 **It does not encode the nonce itself.** That layout belongs to `TYPES_INTERFACE.md` →
 Serialization → "Layout — Post". A local copy here is exactly what let this function and
@@ -52,8 +89,9 @@ verifyOrderingBlockPoW(header: BlockHeader): boolean
 
 Computes the PoW preimage via `computePowHash(header)`, encodes `header.powNonce`
 as u64 LE, hashes `preimage || nonceBytes` with blake2b512, takes the first 32
-bytes, and checks that the result has at least `header.powTargetBits` leading zero
-bits. Guards its inputs (M-5 / M-6): returns `false` — never throws — if the
+bytes, and answers `meetsPowTarget(hash, powTarget(header.powTargetBits))` —
+`false` when `powTarget` returns `null`.
+Guards its inputs (M-5 / M-6): returns `false` — never throws — if the
 header is not CBOR-encodable, or if `powNonce` / `powTargetBits` is not a
 non-negative safe integer.
 
