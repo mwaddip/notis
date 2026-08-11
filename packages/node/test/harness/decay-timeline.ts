@@ -8,33 +8,31 @@ import {
 } from '../helpers.js';
 
 /**
- * Spec G phase D — the decay golden-output harness.
+ * The decay golden-output harness.
  *
- * Phase D moves the decay clock off box `createdAtBlock` and onto the committed
- * `IdentityRecord`. Spec G D10 requires that swap to be **behaviour-identical**:
- * the same owners must decay, at the same heights, by the same amounts. Any
- * difference is a bug in the phase, not a design improvement.
+ * Decay is a consensus path (NODE_INTERFACE → Karma decay), so what it needs is
+ * a check that the same owners decay at the same heights by the same amounts —
+ * a change in any of the three is a fork, never an improvement.
  *
- * This module is the only real check of that. It drives a timeline of blocks
- * against the **production** code path — the real store (`insertBox`,
- * `consumeBox`, `getKarmaBoxes`), the real block journal, the real `mintKarma`,
- * and the real `applyKarmaDecay` — and captures what came out. The outputs were
- * frozen as fixtures *before* any phase-D source edit; after the swap the same
- * timelines must reproduce them exactly.
+ * This module is that check. It drives a timeline of blocks against the
+ * **production** code path — the real store (`insertBox`, `consumeBox`,
+ * `getKarmaBoxes`), the real block journal, the real `mintKarma`, and the real
+ * `applyKarmaDecay` — and captures burn amounts, balances and heights. The
+ * captures are frozen as fixtures, and any edit to the decay path has to
+ * reproduce them exactly.
  *
- * **Why the real store and not an in-memory fake.** The swap's correctness lives
- * in two places at once: `insertBox` must record `lastActivityBlock` from the
- * open journal's height, and `decay.ts` must read the record back. A fake store
- * would be a reimplementation of the first half, and the harness would then
- * verify a mirror instead of the shipped code — the trap phase B's report §4a
- * documents. Driving SQLite means the height the record gets is the height the
- * journal actually carried.
+ * **Why the real store and not an in-memory fake.** The behaviour lives in two
+ * places at once: `insertBox` records `lastActivityBlock` from the open
+ * journal's height, and `decay.ts` reads the record back. A fake store is a
+ * reimplementation of the first half, which would leave this harness verifying
+ * a mirror rather than the shipped code. Driving SQLite means the height the
+ * record gets is the height the journal actually carried.
  *
  * The harness is deliberately blind to *how* the clock is stored: a scenario
  * says "credit this owner at height H" and "run decay at height H", and the
- * capture is burn amounts, balances and heights. Nothing in it names
- * `createdAtBlock` or `IdentityRecord`, so the same file is a valid description
- * of both implementations.
+ * capture is burn amounts, balances and heights. Nothing in it names the
+ * storage at all, so a scenario stays a valid description across a change of
+ * mechanism — which is what lets the fixtures survive one.
  */
 
 // ---------------------------------------------------------------------------
@@ -52,18 +50,16 @@ export interface DecayCfg {
  * One thing that happens inside a block, in the order listed.
  *
  * `mint` is the production activity producer: `mintKarma` consumes every
- * existing karma box for the owner and emits one consolidated replacement
- * (forced consolidation, Spec G D9). That is the shape the ledger is normally
- * in, and the shape the old and new clocks are meant to agree on.
+ * existing karma box for the owner and emits one consolidated replacement, so
+ * an owner normally holds exactly one. That is the shape the ledger is usually
+ * in.
  *
  * `seed` inserts a karma box **without** consolidating — the shape reached when
  * an identity receives karma it did not pay for (invite claim, then a faucet
- * grant: neither transaction spends the recipient's existing karma box). The old
- * clock reads the *oldest* such box and the new one reads the *newest*, so this
- * is where the two implementations legitimately part company (Spec G §7: this
- * unit removes the blocker on karma consolidation precisely because the record
- * no longer breaks when old boxes persist). Kept in its own fixture group so the
- * difference is recorded rather than hidden.
+ * grant: neither transaction spends the recipient's existing karma box). A clock
+ * kept on the boxes has to choose between the oldest and the newest here, and
+ * the committed record does not, which is why multi-box owners get their own
+ * fixture group rather than being folded into the consolidated ones.
  */
 export type Step =
   | { at: number; op: 'mint'; owner: string; amount: bigint }
@@ -144,11 +140,9 @@ type Modules = Awaited<ReturnType<typeof loadModules>>;
  * Kept as one function so the shape the harness injects and the shape block
  * application injects stay visibly the same.
  *
- * The two record accessors are the **only** change phase D made to this file:
- * `DecayDeps` grew them, so any injector must supply them. They are the real
- * store primitives, not stand-ins — a harness-local record map would be a
- * reimplementation of the half `insertBox` owns, and the fixtures would then be
- * checking a mirror. The frozen fixtures themselves are untouched.
+ * `getIdentityRecord`/`putIdentityRecord` are the real store primitives, not
+ * stand-ins. A harness-local record map would be a reimplementation of the half
+ * `insertBox` owns, and the fixtures would then be checking a mirror.
  */
 function decayDeps(m: Modules): Parameters<Modules['decay']['applyKarmaDecay']>[0] {
   return {
@@ -182,9 +176,8 @@ function totalKarma(m: Modules, owner: Uint8Array): bigint {
  * Run one scenario and capture its outputs.
  *
  * Every block is wrapped in a real `beginBlockJournal(height)` /
- * `finishBlockJournal()` pair, because that is where the settled height lives:
- * `insertBox` takes no height argument, and the field it could read
- * (`createdAtBlock`) is the one Spec G deletes.
+ * `finishBlockJournal()` pair, because that is the only place the settled height
+ * lives: `insertBox` takes no height argument and a box carries none.
  */
 export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> {
   const m = await loadModules();

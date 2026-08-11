@@ -40,8 +40,8 @@ function preimagePost(
 
 /**
  * PoW preimage — delegates to @dagsocial/types rather than rebuilding the
- * canonical encoding (audit M-1). A local copy here would let the harness mine
- * against bytes the node no longer verifies.
+ * canonical encoding (TYPES_INTERFACE → Canonical field encoding). A local copy
+ * here would let the harness mine against bytes the node does not verify.
  */
 export function powInput(
   content: string, author: Uint8Array, parents: string[],
@@ -96,8 +96,8 @@ export function txToApi(tx: UtxoTransaction): Record<string, unknown> {
         )
       : undefined,
     protocolVersion: tx.protocolVersion,
-    // Present ⟺ the tx is a like (P2-D) — the JSON edge must not drop it,
-    // since it sits inside the signed bytes.
+    // Present ⟺ the tx is a like — the JSON edge must not drop it, since it
+    // sits inside the signed bytes.
     ...(tx.likeTarget !== undefined ? { likeTarget: tx.likeTarget } : {}),
   };
 }
@@ -136,7 +136,7 @@ export function postLockTx(
 }
 
 /**
- * Like tx (P2-D burn shape) — karma(total) → karma(total − LIKE_KARMA_COST),
+ * Like tx, the burn shape — karma(total) → karma(total − LIKE_KARMA_COST),
  * `likeTarget` naming the post inside the signed bytes. The deficit IS the
  * like; a like is a transaction, never a box, and unlike is not a feature.
  */
