@@ -56,10 +56,8 @@ const MIGRATIONS = [
   // ordering and display only. See NODE_INTERFACE "created_at_block is a store
   // column, never a consensus input".
   //
-  // tx_id/output_index are the box's creating-transaction provenance (Spec G
-  // phase B) and became NOT NULL in phase G3b, in the same commit as the
-  // box-field deletions: tightening them invalidates the same test fixtures the
-  // deletions do, so two passes would edit every one of them twice.
+  // tx_id/output_index are the box's creating-transaction provenance
+  // (NODE_INTERFACE → "Box provenance columns").
   //
   // NOT NULL is also the only thing here that fails LOUDLY. `TextEncoder`
   // encodes `undefined` as zero bytes and `u32BE` maps it to the sentinel, so a
@@ -71,16 +69,13 @@ const MIGRATIONS = [
   // valid block can trip the constraint — it turns a derivation bug into a loud
   // failure instead of silent state corruption.
   //
-  // `last_touch_block` was here and is gone with phase G3b: `lastTouchBlock`
-  // left the box protocol, and the column had no reader anywhere — only the
-  // INSERT that wrote it.
   `CREATE TABLE IF NOT EXISTS utxo_boxes (
     id TEXT PRIMARY KEY,
-    box_type TEXT NOT NULL,           -- 'karma' | 'credit' | 'like' | 'invite' | 'bond' | 'post_lock'
+    box_type TEXT NOT NULL,           -- 'karma' | 'credit' | 'vouch' | 'invite' | 'bond' | 'post_lock'
     value INTEGER NOT NULL,
     created_at_block INTEGER NOT NULL,
     spent_at_block INTEGER,           -- NULL = unspent
-    owner BLOB,                       -- 32-byte public key (NULL for like/invite boxes)
+    owner BLOB,                       -- 32-byte public key (NULL for invite/bond/vouch boxes)
     guard TEXT NOT NULL,
     proof_source TEXT,                -- PostId | StumpHash | InviteTxId | block height
     extra_data TEXT,                  -- JSON for box-specific fields (secretHash, likerId, targetPostId, etc.)
@@ -98,7 +93,7 @@ const MIGRATIONS = [
   // blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32], never the raw bytes —
   // both are total functions of the identity, so the two cannot drift.
   //
-  // like_carry (P2-D): outstanding like accrual < LIKES_PER_KARMA_PAYOUT,
+  // like_carry: outstanding like accrual < LIKES_PER_KARMA_PAYOUT,
   // written only by per-block like settlement. Committed state — it enters the
   // record's AVL value encoding as an always-present field.
   `CREATE TABLE IF NOT EXISTS identity_records (
@@ -108,7 +103,7 @@ const MIGRATIONS = [
     like_carry INTEGER NOT NULL DEFAULT 0
   )`,
 
-  // Like-records (P2-D): (liker, targetPostId) pairs,
+  // Like-records (NODE_INTERFACE → "Like-records"): (liker, targetPostId) pairs,
   // written ONLY at block application, never by an HTTP route. Content-layer
   // consensus state (the block_topology tier): deterministic by replay,
   // journalled with exact inverses, not in the stateRoot. Records die with
@@ -121,9 +116,9 @@ const MIGRATIONS = [
     PRIMARY KEY (target_post_id, liker_id)
   )`,
 
-  // Mempool (unified sub-block + UTXO transaction pool)
-  // Schema change: subblock_cbor BLOB → subblock_id TEXT (ID-based, not CBOR-based).
-  // Existing databases with the old schema will fail — pre-stable, DB reset acceptable.
+  // Mempool (unified sub-block + UTXO transaction pool). Sub-blocks are held by
+  // id, not CBOR. A database predating a schema change fails at the version
+  // gate rather than migrating — pre-stable, DB reset acceptable.
   //
   // The like_/invite_/vouch_ columns are gate metadata (audit M-8): populated by
   // insertUtxoTx from the tx outputs so the correctness gates are plain SQL over

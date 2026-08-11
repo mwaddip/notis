@@ -49,7 +49,7 @@ export interface PostStore {
   /** Check existence without reading full data. */
   has(typeId: number, id: Uint8Array): boolean;
 
-  // ---- Canonical branch (populated in Phase 4) ----
+  // ---- Canonical branch ----
 
   /** Best post at a given sequence number. Null if no post at that depth. */
   bestPostAt(sequence: number): Uint8Array | null;

@@ -31,7 +31,8 @@ interface UtxoRow {
   created_at_block: bigint;
   owner: Buffer | null;
   extra_data: string | null;
-  // Creating-transaction provenance (Spec G phase B), NOT NULL as of G3b.
+  // Creating-transaction provenance, NOT NULL
+  // (NODE_INTERFACE → "Box provenance columns").
   tx_id: string;
   output_index: bigint;
 }
@@ -91,27 +92,12 @@ function pubkeyToHex(pk: Uint8Array): string {
 /**
  * Provenance as the row carries it.
  *
- * `tx_id`/`output_index` became NOT NULL in phase G3b, so this is now
- * unconditional — the conditional-assignment discipline it replaced existed
- * because a nullable column could yield a box with no provenance. With the
- * columns NOT NULL that shape is unrepresentable at the row level.
+ * Unconditional because `tx_id`/`output_index` are NOT NULL: a row cannot yield
+ * a box without provenance, so there is nothing to assign conditionally.
  *
- * ⚠ **The byte-level half of this rationale is retired (Phase 5).** It used to
- * read that an explicitly-`undefined` key is *byte-visible in the AVL value*,
- * because cbor-x encoded it as `f7` and incremented the fixed two-byte map
- * header — so a box rebuilt here could hash differently from the same box built
- * by a producer. The AVL value is now positional (`boxRecordBytes`): it has no
- * keys and no map header, the layout writes its declared fields and reads its
- * declared fields, and a stray or `undefined` key is **unrepresentable rather
- * than merely dangerous**. The NOT NULL columns remain the reason this function
- * is unconditional; they are no longer the *only* thing standing between the
- * store and a restart-triggered `stateRoot` divergence.
- *
- * Key **order** likewise no longer matters, and for a stronger reason than the
- * G3b one this comment used to give ("both encoders sort keys"): there is no
- * sort because there are no keys. The old "append provenance after every
- * candidate field, and make every producer do the same" rule — the rule
- * `post_lock` violated — is retired structurally.
+ * Key order and stray keys are not a hazard here either — the AVL value is
+ * positional (`boxRecordBytes`), so the layout writes the fields it declares
+ * and one it does not declare is unrepresentable rather than merely dangerous.
  */
 function provenanceOf(row: UtxoRow): { txId: string; index: number } {
   return { txId: row.tx_id, index: Number(row.output_index) };
@@ -120,18 +106,16 @@ function provenanceOf(row: UtxoRow): { txId: string; index: number } {
 /**
  * The height to record in the `created_at_block` **store column**.
  *
- * Taken from the open block journal, never from the box (Spec G phase G checklist
- * item 7). Until G3b the box carried a `createdAtBlock` and `insertBox` wrote
- * that, which was indistinguishable from this because every production producer
- * set the field to the block height anyway — the rule was correct but
- * unenforceable. Deleting the field is what proves it: there is now nothing else
- * `insertBox` could read.
+ * Taken from the open block journal, never from the box (NODE_INTERFACE → "Box
+ * Identity and Mint Provenance"). A box carries no height field at all, so
+ * there is nothing else `insertBox` could read — the rule is enforced by
+ * construction rather than by discipline at each producer.
  *
  * `0` when no journal is open. That is every non-block path — genesis and
  * bootstrap — and it is honest rather than a fallback: those boxes were not
  * created by block application, and `0` is not a real block height. The column
- * is display and `getUnspentBoxes` ordering only; consensus must never read it
- * (Spec G D3), so an approximate value here cannot reach the `stateRoot`.
+ * is display and `getUnspentBoxes` ordering only; consensus must never read it,
+ * so an approximate value here cannot reach the `stateRoot`.
  */
 function settledHeight(): number {
   return openBlockJournalHeight() ?? 0;
@@ -237,14 +221,15 @@ function rowToBox(row: UtxoRow): AnyBox {
       return {
         id: row.id,
         boxType: 'vouch',
-        // The row's real value, NOT the literal 1n this used to fabricate.
-        // The box id hashes `canonicalBoxBytes` — value included — so a store
-        // that rewrites the value on read returns a box whose bytes no longer
-        // match its own id, and an AVL prover re-bootstrapped from SQLite
-        // would diverge from one fed at insert time. The cast pin
-        // (`vouch.value == VOUCH_KARMA_AMOUNT`, P2-B phase 2) is what makes
-        // every *new* vouch hold exactly 1; the store's job is to round-trip
-        // what is actually on disk. The `as` cast bridges VouchBox's literal
+        // The row's real value, never a fabricated literal `1n`. The box id
+        // hashes `canonicalBoxBytes` — value included — so a store that
+        // rewrites the value on read returns a box whose bytes do not match
+        // its own id, and an AVL prover re-bootstrapped from SQLite diverges
+        // from one fed at insert time. The cast pin
+        // (`vouch.value == VOUCH_KARMA_AMOUNT`, NODE_INTERFACE → "Vouch
+        // transition rules") is what makes every *new* vouch hold exactly 1;
+        // the store's job is to round-trip what is actually on disk. The
+        // `as` cast bridges VouchBox's literal
         // `1n` value type, which documents the pinned constant rather than a
         // storage guarantee.
         value: row.value as VouchBox['value'],
@@ -535,17 +520,17 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
 
 /**
  * Bump an identity's activity clock to the height of the block being applied
- * (Spec G phase D; NODE_INTERFACE → "Populating the record").
+ * (NODE_INTERFACE → "Populating the record").
  *
- * Called from `insertBox` for every karma box with `decayBurn !== true` — which
- * is *exactly* the old staleness predicate ("no unspent non-decay karma box
- * newer than the threshold") read from the other end. Recording it at the store
- * choke point is what makes the clock swap behaviour-preserving by
- * construction rather than by re-derivation at each of the eight producers.
+ * Called from `insertBox` for every karma box with `decayBurn !== true` — the
+ * staleness predicate ("no unspent non-decay karma box newer than the
+ * threshold") read from the write end. Recording it at the store choke point is
+ * what makes the clock correct by construction rather than by re-derivation at
+ * each of the eight producers.
  *
  * `lastDecayBlock` is carried through untouched: the fields of the record
  * have different writers, and an activity bump that reset the decay clock would
- * hand the owner a free interval. `likeCarry` (P2-D) likewise — it is
+ * hand the owner a free interval. `likeCarry` likewise — it is
  * settlement-owned, and zeroing it here would confiscate accrued likes on
  * every karma receipt.
  *
@@ -585,7 +570,7 @@ export function insertBox(box: AnyBox): void {
   let owner: Buffer | null = null;
   let proofSource: string | null = null;
   // Set below iff this box is a non-decay karma box — the identity whose
-  // activity clock this insertion advances (Spec G phase D). Carried out of the
+  // activity clock this insertion advances. Carried out of the
   // switch rather than bumped inside it so the record is written *after* the
   // box row and its journal entry, keeping reverse-order rollback in the order
   // the two writes happened.
@@ -666,13 +651,13 @@ export function insertBox(box: AnyBox): void {
       throw new Error(`Unknown box type: ${(box as AnyBox).boxType}`);
   }
 
-  // Plain INSERT, deliberately not INSERT OR REPLACE: two byte-identical boxes
-  // in one block collide on the `id` PRIMARY KEY today, which the apply
-  // funnel's totality catch turns into a block rejection. OR REPLACE would
-  // silently drop the colliding box instead — state corruption in place of a
-  // loud failure. Provenance-derived ids make the collision structurally
-  // impossible at phase G; until then the loud failure is the correct
-  // behaviour (NODE_INTERFACE → "Box provenance columns").
+  // Plain INSERT, deliberately not INSERT OR REPLACE: an id collision hits the
+  // `id` PRIMARY KEY, which the apply funnel's totality catch turns into a
+  // block rejection. OR REPLACE would silently drop the colliding box instead —
+  // state corruption in place of a loud failure. Provenance-derived ids make
+  // the collision structurally unreachable, so this is the backstop for that
+  // property rather than a live path (NODE_INTERFACE → "Box provenance
+  // columns").
   db.prepare(
     `INSERT INTO utxo_boxes
        (id, box_type, value, created_at_block, spent_at_block,

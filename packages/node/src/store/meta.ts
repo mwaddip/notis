@@ -1,10 +1,7 @@
 import { getDb } from './db.js';
 
 /**
- * Bumped 0 → 1 by Spec G phase G3b — the first time this counter has ever
- * moved, and the first time it could earn its keep.
- *
- * Bumped 1 → 2 by P2-D N2a: the `like_records` table and
+ * Version 2 requires the `like_records` table and
  * `identity_records.like_carry`. `CREATE TABLE IF NOT EXISTS` does not tighten
  * an existing database, so a v1 `dagsocial.db` would keep an `identity_records`
  * with no `like_carry` column and fail at the first record read — late,
@@ -79,10 +76,10 @@ export function writeSchemaVersion(version: number): void {
  * before anything reads the store. Three outcomes:
  *
  * - **stored === CURRENT_SCHEMA_VERSION** — proceed;
- * - **stored === 0** — a never-stamped database: stamp it and proceed. Exact
- *   for every file stamped since G3b; a pre-G3b file also reads 0 and would be
- *   adopted, accepted because every such file predates several fresh-DB
- *   mandates and cannot hold a valid chain;
+ * - **stored === 0** — a never-stamped database: stamp it and proceed. A file
+ *   old enough to predate stamping altogether also reads 0 and is adopted,
+ *   accepted because any such file predates several fresh-DB mandates and
+ *   cannot hold a valid chain;
  * - **anything else** — THROW. There are no registered migrations
  *   (pre-stable, DB reset acceptable), and silently stamping a stale file
  *   would defeat the counter: the tables keep their old shape (`CREATE TABLE

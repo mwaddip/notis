@@ -18,7 +18,7 @@ export interface BoxMutation {
   box?: AnyBox;
 }
 
-/** One identity-record write, in application order (Spec G phase B). */
+/** One identity-record write, in application order. */
 export interface RecordMutation {
   kind: 'record';
   /** hex — H(IDENTITY_KEY_DOMAIN ‖ identityId), the AVL key. */
@@ -42,7 +42,7 @@ export interface RecordMutation {
  * `kind` turns "a new entity kind was added and nobody updated the prover feed"
  * into a TypeScript exhaustiveness error. That compile-time check is the only
  * enforcement this invariant has; a parallel array would reinstate exactly the
- * drift-by-omission shape P1 removed.
+ * drift-by-omission shape the single log exists to remove.
  *
  * The typed side-records below (`confirmedSubBlockIds`, `vouchCooldown*`, …)
  * stay separate arrays because they are **not** in the `stateRoot` — they are
@@ -65,11 +65,11 @@ export interface BlockJournal {
   confirmedSubBlockIds: string[];
   /** Mempool re-insertion only. */
   appliedUtxoTxs: Array<{ txId: string; txCbor: Uint8Array }>;
-  /** Inverse: deleteLikeRecord (P2-D). */
+  /** Inverse: deleteLikeRecord. */
   likeRecordInsertions: Array<{ targetPostId: string; likerId: UserId }>;
   /**
    * Inverse: restoreLikeRecord — a reverted prune restores the pruned
-   * subtree's like-records exactly, all three columns (P2-D).
+   * subtree's like-records exactly, all three columns.
    */
   likeRecordDeletions: Array<{
     targetPostId: string;
@@ -154,13 +154,12 @@ export function isBlockJournalOpen(): boolean {
 
 /**
  * The height of the block currently being applied, or null when no journal is
- * open (Spec G phase D).
+ * open.
  *
  * The identity record's activity clock is bumped at the `insertBox` choke
  * point, and that choke point has no height of its own: `insertBox` takes no
- * height argument, and the box field it could read — `createdAtBlock` — is the
- * one Spec G deletes, so reading it would reintroduce exactly the dependency
- * phase D exists to remove and would break outright at phase G.
+ * height argument, and a box carries no height field, so there is nothing on
+ * the box to read either.
  *
  * `beginBlockJournal(height)` already carries the *settled* height, and the
  * record is only meaningful during block application, which is precisely when a
@@ -220,7 +219,7 @@ export function recordIdentityRecordPut(
   openJournal.mutations.push(entry);
 }
 
-/** Record an applied like-record insertion (insertLikeRecord — P2-D). */
+/** Record an applied like-record insertion (insertLikeRecord). */
 export function recordLikeRecordInsertion(targetPostId: string, likerId: UserId): void {
   if (openJournal === null) return;
   openJournal.likeRecordInsertions.push({ targetPostId, likerId });
@@ -228,7 +227,7 @@ export function recordLikeRecordInsertion(targetPostId: string, likerId: UserId)
 
 /**
  * Record like-record rows captured BEFORE deletion
- * (deleteLikeRecordsForPosts — P2-D), full rows so rollback restores them
+ * (deleteLikeRecordsForPosts), full rows so rollback restores them
  * exactly.
  */
 export function recordLikeRecordDeletions(

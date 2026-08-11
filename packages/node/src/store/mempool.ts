@@ -81,8 +81,8 @@ interface GateMetadata {
  * kind wins for the output-derived columns — the gate columns are singular per
  * the contract, matching the services' own `outputs.find(...)` semantics.
  *
- * The like columns derive from the tx-level `likeTarget` field (P2-D): a like
- * is a burn transaction, not a box. The liker is the karma inputs' owner — the
+ * The like columns derive from the tx-level `likeTarget` field: a like is a
+ * burn transaction, not a box. The liker is the karma inputs' owner — the
  * single signing key. The store cannot resolve input boxes, so the signature
  * map is where the transaction itself names that key; `castLike` enforces
  * exactly one signature on entry, and a multi-key map derives no liker (the
@@ -156,10 +156,10 @@ export function insertUtxoTx(
 // ---------------------------------------------------------------------------
 // Correctness gates (audit M-8)
 //
-// SQL over the gate-metadata columns — never a bounded scan. The previous
-// implementations decoded getPendingEntries(1000) per request, so any entry
-// past row 1000 was invisible to the duplicate-like and MAX_PENDING_INVITES
-// checks. Parameters are hex strings, compared against the columns as stored.
+// SQL over the gate-metadata columns — never a bounded scan. A gate that
+// decodes `getPendingEntries(N)` per request cannot see an entry past row N,
+// which makes the duplicate-like and MAX_PENDING_INVITES checks silently
+// partial. Parameters are hex strings, compared against the columns as stored.
 // ---------------------------------------------------------------------------
 
 export function hasPendingLike(targetPostId: string, likerId: string): boolean {
@@ -187,9 +187,9 @@ export function hasPendingVouch(voucherId: string): boolean {
 }
 
 /**
- * Delete confirmed sub-block entries by postId. Replaces block application's
- * fetch-1000-and-find loop, which stopped removing entries past row 1000
- * (bookkeeping only — no consensus behavior change). Chunked because a single
+ * Delete confirmed sub-block entries by postId — a keyed DELETE, never a
+ * bounded fetch-and-find loop, which would stop removing entries past its cap
+ * (bookkeeping only — no consensus behaviour change). Chunked because a single
  * block may carry up to `maxSubBlocksPerBlock` refs, above SQLite's bound
  * parameter limit.
  */
@@ -261,7 +261,7 @@ export function insertMempoolPrune(
  * One row's entry, or `null` when this node cannot read a blob it wrote.
  *
  * Isolated per row, and it decides two things at once. A sibling's failure must
- * not destroy a readable row — the old bulk `map` after a bulk DELETE lost the
+ * not destroy a readable row — a bulk `map` after a bulk DELETE loses the
  * whole batch to one bad blob. And the unreadable row is dropped rather than
  * re-raised, because it sits in front of `drainMempoolPrunes`, the miner's
  * first read at every block interval: a row nobody can decode would otherwise
