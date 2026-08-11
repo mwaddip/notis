@@ -8,8 +8,10 @@ standing context — read it and the linked docs before touching code.
 2. `~/.claude/RTK.md` — RTK proxy rules (`rtk proxy` for completeness-critical searches/diffs).
 3. `../../CLAUDE.md` (repo root) — project overview + Design-by-Contract dispatch workflow.
 4. `../../contracts/ARCHITECTURE.md` — architecture + invariants.
-5. `../../contracts/VALIDATION_INTERFACE.md` — this package's contract.
-6. Your task's spec in `../../docs/specs/`.
+5. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. Internalize on session start; they
+   bias where you spend *extra* scrutiny, and 5 is competent everywhere by default.
+6. `../../contracts/VALIDATION_INTERFACE.md` — this package's contract.
+7. Your task's spec in `../../docs/specs/`.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
