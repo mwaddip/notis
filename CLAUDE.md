@@ -59,8 +59,10 @@ NEW_WIN=$(kitty @ launch --type=window --cwd=/home/mwaddip/projects/dagsocial/pa
 kitty @ send-text --match=id:$NEW_WIN 'ac'
 kitty @ send-text --match=id:$NEW_WIN $'\r'
 
-# Wait ~10s for Claude to come up, then inject prompt instruction
-kitty @ send-text --match=id:$NEW_WIN 'use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
+# Wait ~10s for Claude to come up, then inject prompt instruction.
+# EVERY cross-session message is prefixed [sender->recipient] (user, 2026-08-11) — several
+# windows are live at once, and an unprefixed line says nothing about where it came from.
+kitty @ send-text --match=id:$NEW_WIN '[notismain-><component>] use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
 
 # Delay, submit, and VERIFY (see the warning below). No approval gate — main
 # dispatches autonomously (user, 2026-08-09). The verification below is NOT the
@@ -108,8 +110,10 @@ Read ./CLAUDE.md and follow its read-first list before starting.
 ...
 
 ## Coordination
-When done, send a brief completion summary back to the main session window:
-    kitty @ send-text --match=id:<MAIN_WINDOW_ID> 'one-line summary of what was done'
+When done, send a brief completion summary back to the main session window. **Keep the
+`[<component>->notismain]` prefix** — main has several windows reporting into it, and an
+unprefixed line does not identify itself as a reply:
+    kitty @ send-text --match=id:<MAIN_WINDOW_ID> '[<component>->notismain] one-line summary of what was done'
     kitty @ send-text --match=id:<MAIN_WINDOW_ID> $'\r'
 ```
 
