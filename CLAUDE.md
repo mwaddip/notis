@@ -128,6 +128,12 @@ The main session owns contracts and prompts. It never edits component source cod
 open, and a bare `Phase N` resolves to nothing anywhere. A comment either states the rule as it stands
 now, or names the contract section that states it — `TYPES_INTERFACE → Layout — Stump`, never `Phase 2`.
 
+**`prompts/` is the same dead end and is easier to miss** — **3 of its 291 `.md` files are tracked**,
+so a comment citing an executor REPORT there resolves for whoever wrote it and for nobody else. The
+two known instances both cite `prompts/node-fail-stop-reachability-measure-REPORT.md`, which is not
+one of the three. **`contracts/` is the only citable directory.** A measurement worth keeping belongs
+in the contract, not behind a pointer to a file that was never committed.
+
 **Cite a contract section by its PROSE NAME, never by a phase-tagged parenthetical.** Several headings
 embed their own tags — `### Bond transition rules (P2-B phase 1)`, `### Per-block like settlement
 (P2-D — replaced the epoch tally)`. The prose name is what a reader greps and what survives; the
