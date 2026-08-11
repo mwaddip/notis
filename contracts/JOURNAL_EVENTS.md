@@ -4,9 +4,16 @@
 **Stability:** stable
 **Last verified against code:** 2026-08-06
 
-> ⚠ **PARTIAL — and the shortfall is most of the document.**
+> ⚠ **PARTIAL — and the shortfall is most of the document. Re-verified 2026-08-11.**
 > **17 of the 22 events declared "stable" below are never emitted, and 8 have no emitter
-> anywhere in the codebase.** This file was written 2026-07-26 and **not one line was
+> anywhere in the codebase.**
+>
+> **Both halves re-derived: 22 events are declared, and these 8 do not appear in any
+> package's `src` at all** — `api_listening`, `dag_load_started`, `dag_load_complete`,
+> `db_open_started`, `db_open_complete`, `migration_started`, `migration_complete`,
+> `sync_complete`. The other 14 names occur somewhere in `src`, but **occurring is not
+> emitting**: a name can appear in a type or a comment. The "17 never emitted" figure was not
+> re-derived here and rests on the original audit; the 8 is exact. This file was written 2026-07-26 and **not one line was
 > changed** through Specs A–G; the Peer and Sync families predate the net package's peer
 > discovery and sync work, and the Migration family predates the schema-version guard.
 > Treat every event here as unimplemented unless you have found its emitter. "Stability:

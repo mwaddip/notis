@@ -46,7 +46,11 @@ mismatches.
   asymmetry is exactly what lets the layer above detect non-minimal input.
 
 > ⚠ **THIS PACKAGE IS A CONSENSUS DEPENDENCY.** Per
-> `docs/specs/2026-08-09-positional-wire-format.md`; landed in Phase 1b.
+> `docs/specs/2026-08-09-positional-wire-format.md`; landed in Phase 1b. Re-verified
+> 2026-08-11. **A standing warning, not one of the status markers** in
+> `ARCHITECTURE.md` §Status markers — it states a property of the package, so it does not
+> decay and does not need retiring. See §VLQ Standalone Functions, where this being true is
+> what falsified that note's safety argument.
 >
 > **`@dagsocial/types` is a consumer** — it declares the workspace dependency and `codec.ts`,
 > `post.ts`, `stump.ts` and `utxo.ts` all import from here. That makes this the repo's **base codec
@@ -328,17 +332,36 @@ Concatenates all accumulated chunks into a single `Uint8Array` and returns it.
 
 ## VLQ Standalone Functions
 
-> ⚠ **VLQ decoding accepts non-minimal encodings, and no canonicality rule is stated or
-> enforced.** A value has multiple valid byte forms — redundant continuation bytes decode to
-> the same number — so wire bytes are **malleable**: the same message can be re-encoded to
-> different bytes that decode identically.
+> ⚠ **QUALIFIED — VLQ *decoding* still accepts non-minimal encodings, but the fork risk this
+> note warned about is closed, by a mechanism it did not anticipate. Verified 2026-08-11.**
+> A value has multiple valid byte forms — redundant continuation bytes decode to the same
+> number — so raw VLQ input is **malleable**: the same message can be re-encoded to different
+> bytes that decode identically. That much is unchanged.
 >
-> **Why this is `trap` and not `fork-risk` today: no frame bytes are ever hashed.** Frame
-> and VLQ encodings sit outside every consensus preimage — ids and roots are computed over
-> CBOR structures, never over wire framing. **If that ever stops being true — if any framed
-> byte enters a hash, a signature, or a Merkle leaf — VLQ malleability becomes a consensus
-> fork and this must be fixed first.** Recorded as a premise so the dependency is visible
-> rather than rediscovered.
+> ⚠ **This note's original safety argument is now FALSE, and its own trigger condition has
+> fired.** It read: *"no frame bytes are ever hashed … ids and roots are computed over CBOR
+> structures, never over wire framing. If that ever stops being true — if any framed byte
+> enters a hash, a signature, or a Merkle leaf — VLQ malleability becomes a consensus fork and
+> this must be fixed first."*
+>
+> **VLQ bytes are now inside consensus preimages.** `types/src/post.ts` writes
+> `protocolVersion` and `timestamp` through `writeVlqU` into `postFieldBytes`, and the post id
+> and PoW preimage both end in `vlqU(powNonce)`; `types/src/utxo.ts` imports the same writers.
+> Every committed byte moved onto this package in the positional bundle — that is what made it
+> the base codec layer, as §Consensus dependency above says.
+>
+> **What closes the risk instead: the decode boundary rejects non-minimal input.**
+> `types/src/codec.ts`'s `decodeStruct` decodes, asserts `isExhausted`, then **re-encodes and
+> byte-compares** — and names "a non-minimal VLQ" as precisely the case that step catches,
+> noting the compare is not redundant because *decode is permissive and re-encode is minimal*.
+> So a malleated encoding cannot survive into a hash: it is rejected before it reaches one.
+>
+> ⚠ **The demanded fix landed for an unrelated reason, and nobody came back here.** Phase 3b
+> built the re-encode compare to make unknown fields unrepresentable, not to answer this note.
+> The hazard was closed as a side effect and the warning went on describing an argument that
+> had stopped being true. **Scope of this verification:** `decodeStruct`'s three steps were read
+> directly; it was *not* exhaustively proven that every consensus decode path routes through
+> `decodeStruct`. That enumeration is what would upgrade this from `QUALIFIED` to `RESOLVED`.
 
 ### `encodeVlqU(value: number): Uint8Array`
 

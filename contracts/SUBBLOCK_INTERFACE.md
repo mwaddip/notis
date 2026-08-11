@@ -105,6 +105,14 @@ decodeSubBlock(bytes: Uint8Array): SubBlock
 > **One invariant elsewhere in this file is outright violated:** "unreferenced sub-blocks
 > survive in the mempool" is broken by the block creator's own cleanup — and that survival
 > is the premise the §Relationship to Ergo Sub-Blocks comparison rests on.
+>
+> ⚠ **Partially re-verified 2026-08-11.** `removeSubBlockEntries` exists
+> (`node/src/store/mempool.ts`) and is called from `node/src/services/block-apply.ts` with
+> `subBlockIdsOf(block.subBlockTree)` — so entries **referenced by an applied block** are
+> evicted, which is expected. **What was not re-derived is the path that evicts *unreferenced*
+> entries**, which is the one the violation claim turns on. The verdict is carried forward on
+> the original measurement, not re-established here; treat it as unconfirmed rather than as
+> holding, and see carried register #28 for the block creator's eviction loop.
 
 ```
                    ┌──────────┐
@@ -187,8 +195,15 @@ of posting against stale UTXO state, not a protocol defect.
 >    is `subblock_id TEXT` and always was. `MEMPOOL_INTERFACE.md` states both versions in
 >    the same file, in different sections; the id version is the correct one.
 > 2. **The insert is NOT idempotent, and "sub-block ID is the primary key" is not true** —
->    there is no primary key, no unique index and no dedup on that column. So the stated
->    reason for idempotency does not exist, and neither does the property.
+>    the `PRIMARY KEY` is `rowid INTEGER PRIMARY KEY AUTOINCREMENT`. So the stated reason for
+>    idempotency does not exist, and neither does the property.
+>
+> ⚠ **Re-verified 2026-08-11, and one detail has changed: an index on that column now exists.**
+> `node/src/store/db.ts` creates `idx_mempool_subblock_id ON mempool(subblock_id) WHERE
+> subblock_id IS NOT NULL`. It is a **plain index, not `UNIQUE`** — it speeds lookups and
+> enforces nothing, so the conclusion is unaffected. Recorded because "there is an index on
+> subblock_id" reads like dedup to anyone checking this claim quickly, and the original wording
+> ("no unique index") would look wrong at a glance.
 >
 > Loopback is therefore **not** harmless by the mechanism claimed here. Whether it is
 > harmless by some other route is untested. Do not rely on this paragraph.

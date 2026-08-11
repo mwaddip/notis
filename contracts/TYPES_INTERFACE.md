@@ -775,10 +775,23 @@ response, only `MAX_STREAM_BYTES` is.
 
 ## Serialization (`serialization.ts`)
 
-> ⚠ **AHEAD OF CODE — the positional wire format.** Everything from here to "Export table" below
-> describes the format being built by `docs/specs/2026-08-09-positional-wire-format.md`, not the
-> code as it stands. The code is still `cbor-x`. Do not read this section as a description of
-> current behaviour until this marker is removed.
+> ✅ **RESOLVED — this section describes the code. Verified 2026-08-11.** It read
+> `AHEAD OF CODE` until Phase 9, with the disclaimer *"The code is still `cbor-x`. Do not read
+> this section as a description of current behaviour."* The positional bundle
+> (`docs/specs/2026-08-09-positional-wire-format.md`, Phases 0–8) is merged, so **everything
+> from here to the Export table is now a description of running code** and should be read as
+> one.
+>
+> ⚠ **Two encoders are still CBOR and are not covered by that statement.** `encodeTx` /
+> `decodeTx` and `encodeStump` / `decodeStump` in `types/src/serialization.ts` are bare
+> `cbor-x`, so the gossip UTXO-transaction path and every stump still travel as CBOR. **No
+> phase claims them** — carried register #6. Everything under a committed root is positional;
+> these two are not under one.
+>
+> ⚠ **This marker disclaimed roughly 500 lines, which is why retiring it matters more than the
+> count suggests.** A marker saying "do not read this as current" creates an **unreviewed
+> region**: for as long as it stood, no reader had reason to check any claim beneath it against
+> the code. Anything that drifted in that span drifted unobserved.
 
 All wire format is a **positional byte layout** built on `@dagsocial/wire` (`ByteReader` /
 `ByteWriter` / VLQ — in-repo, zero dependencies, browser-clean). HTTP API is JSON. Signatures and
@@ -1273,10 +1286,16 @@ See `NODE_INTERFACE` → C7.
 
 ### Export table
 
-> ⚠ **AHEAD OF CODE.** The signatures below are unchanged by the migration — every
-> `encodeX`/`decodeX` keeps its name and type. What changes is the bytes they produce and the
-> guarantees they carry: "CBOR encode" becomes the positional layout above, and every `decodeX`
-> gains the four-step boundary check. The rows are left describing CBOR until the code moves.
+> ✅ **RESOLVED — the code has moved. Verified 2026-08-11.** This read `AHEAD OF CODE` until
+> Phase 9 and ended *"the rows are left describing CBOR until the code moves."* The signatures
+> are indeed unchanged — every `encodeX`/`decodeX` kept its name and type — and what changed is
+> the bytes they produce and the guarantees they carry: the positional layout above, plus the
+> four-step boundary check on every `decodeX`.
+>
+> ⚠ **The rows below were "left describing CBOR" and that wording is now the hazard.** Any row
+> still describing a CBOR encode is describing the old format, **except** the `Tx` and `Stump`
+> rows, where CBOR is still correct (carried register #6). Read a CBOR mention here as stale
+> unless it names one of those two.
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in
@@ -1337,11 +1356,18 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 
 ### Network profiles
 
-> ✅ **IMPLEMENTED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10.** It
-> read "No profile type, table or selector exists"; all three do — `NetworkType`,
-> `NETWORK_PROFILES` and `profileFor` in `types/src/network.ts` — and the node resolves the
-> profile once at startup from `NETWORK_TYPE`, freezing it into `Config`
-> (`node/src/config.ts:63`), which is the resolution rule stated at the end of this section.
+> ✅ **RESOLVED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10,
+> re-verified 2026-08-11.** It read "No profile type, table or selector exists"; all three do —
+> `NetworkType`, `NETWORK_PROFILES` and `profileFor` in `types/src/network.ts` — and the node
+> resolves the profile once at startup from `NETWORK_TYPE`, freezing it into `Config`: the
+> `profileFor(process.env['NETWORK_TYPE'] ?? 'testnet')` call in `node/src/config.ts`, which is
+> the resolution rule stated at the end of this section.
+>
+> ⚠ **The pin here read `node/src/config.ts:63`, which is now `bootstrapPeers`.** Named symbol
+> replaces it. **The same stale pin is cited by carried register #12**, whose open item is that
+> `types/src/network.ts` still calls the table "purely additive — nothing consumes it yet"
+> while node's config does consume it. That item is real; its line number is not. **Types' file,
+> so a types session's edit** — main records it here rather than reaching across.
 > Consensus constants are no longer environment-readable either — `NODE_INTERFACE §Configuration`
 > records P2-A removing all ten (PR #8, verified 2026-08-07). See `ARCHITECTURE §Network Identity`
 > for the mechanism and the reasoning.
