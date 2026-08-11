@@ -151,11 +151,12 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
   switch (box.boxType) {
     case 'karma':
       writeBytesNOrThrow(w, box.owner, 32);
-      // `lpUtf8`, not `b32`: verified against the producers, not inferred from
-      // the type. Production stamps `mint-<height>`, `decay-<height>`,
-      // `faucet:system`, `genesis:system` and `invite-cancel:<id>` here, and
-      // node's own output-shape schema types it as a free `'string'`. A `b32`
-      // would throw on every karma mint the node performs.
+      // `lpUtf8`, not `b32`: the stamped set mixes short tags with 64-char hex
+      // ids. Node's mint paths write `mint-<height>`, `decay-<height>`,
+      // `faucet`, `faucet:system` and `genesis:system`; the demo UI's tx
+      // builders write `invite-create`, `invite-cancel`, the target PostId and
+      // the claimed invite's BoxId. Node's output-shape schema types the field
+      // a free `'string'`. A `b32` would throw on every tag-shaped one.
       writeLpUtf8(w, box.proofSource);
       writeOpt(w, box.decayBurn, writeBool);
       return;
@@ -677,7 +678,7 @@ export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   guard: 'owner_signature';
-  proofSource: string;        // PostId | StumpHash | InviteTxId
+  proofSource: string;        // Free-form tag or hex id — the stamped set is in writeBoxTypeFields
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
   decayBurn?: boolean;
