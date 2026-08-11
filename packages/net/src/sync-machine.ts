@@ -86,6 +86,16 @@ const MAX_OUTSTANDING_IDS = 4 * MAX_INV_IDS;
 const SYNCED_POLL_INTERVAL_MS = 30_000;
 /** Maximum data events in the queue before dropping oldest. */
 const MAX_DATA_QUEUE = 64;
+/**
+ * How often the loop runs its own timer tick.
+ *
+ * The tick services two deadlines — stall rotation at STALL_TIMEOUT_MS and the
+ * periodic SyncInfo at SYNCED_POLL_INTERVAL_MS — so the period only has to be
+ * fine enough to add no meaningful skew to the shorter of them. One second
+ * bounds that skew at a second and costs one wakeup per second on an idle node.
+ * This is the machine's own cadence: the node layer drives nothing.
+ */
+const TIMER_TICK_INTERVAL_MS = 1_000;
 
 // ---------------------------------------------------------------------------
 // SyncMachine
@@ -94,14 +104,15 @@ const MAX_DATA_QUEUE = 64;
 /**
  * Core sync state machine with biased event loop.
  *
- * Event-driven — the node calls `onPeerActive`, `handleMessage`, `onTimerTick`,
- * and `onPeerDisconnect`. The machine owns sync phase, peer selection, stall
- * detection, and rotation.
+ * Event-driven — the node calls `onPeerActive`, `handleMessage`, and
+ * `onPeerDisconnect`. The machine owns sync phase, peer selection, stall
+ * detection, rotation, and its own timer cadence.
  *
  * **Biased event loop** (call `start()` to begin):
  * 1. Control events (peer connect/disconnect, sync-info) — unbounded, never dropped
  * 2. Data events (inv, modifier req/resp) — bounded, lossy above MAX_DATA_QUEUE
- * 3. Timer tick — fallback, lowest priority
+ * 3. Timer tick — fallback, lowest priority, every TIMER_TICK_INTERVAL_MS
+ * 4. Idle — parks until an enqueue or the tick deadline; it does not re-poll
  *
  * Call `flush()` to synchronously drain all queued events (useful in tests).
  */
@@ -145,6 +156,15 @@ export class SyncMachine {
   private running = false;
 
   /**
+   * Resolver for a parked event loop, or null while the loop is not parked.
+   * Set under `parkUntilWork`, called by `wake`.
+   */
+  private idleWakeup: (() => void) | null = null;
+
+  /** Epoch ms at which the loop's next timer tick falls due. */
+  private nextTickMs = 0;
+
+  /**
    * @param onProtocolViolation Called when a message fails the decode boundary,
    *   so the node layer can penalize the sending peer. Defaults to a no-op for
    *   callers that only want the state machine.
@@ -179,6 +199,9 @@ export class SyncMachine {
   /** Stop the background event loop. Idempotent. */
   stop(): void {
     this.running = false;
+    // A parked loop is holding a tick timer; waking it lets the `running` check
+    // retire both on this turn rather than at the next deadline.
+    this.wake();
   }
 
   // -----------------------------------------------------------------------
@@ -191,14 +214,19 @@ export class SyncMachine {
    * Priority order:
    * 1. Drain ALL control events (unbounded, never dropped)
    * 2. Process ONE data event (bounded, lossy)
-   * 3. Timer tick (fallback, lowest priority)
+   * 3. Timer tick, once TIMER_TICK_INTERVAL_MS is due (fallback, lowest priority)
    *
-   * Yields to the microtask queue between iterations to prevent CPU spinning.
+   * With work pending the loop yields between iterations, so one data event per
+   * turn stays the fairness bound and I/O keeps its share of the thread. With
+   * both queues empty it parks in `parkUntilWork` until an enqueue, `stop()`, or
+   * the tick deadline — NET_INTERFACE → Biased Event Loop, clause 4.
    *
    * Every dispatch is isolated (see `dispatchControlEvent`) — a throwing
    * handler must degrade one message, never abandon the loop.
    */
   private async eventLoop(): Promise<void> {
+    this.nextTickMs = Date.now();
+
     while (this.running) {
       // 1. Drain control events first (never dropped)
       while (this.controlQueue.length > 0) {
@@ -212,12 +240,50 @@ export class SyncMachine {
         this.dispatchDataEvent(dataEvent);
       }
 
-      // 3. Fallback: timer tick
-      this.dispatchTimerTick();
+      // 3. Fallback: timer tick, on its own deadline
+      if (Date.now() >= this.nextTickMs) {
+        this.dispatchTimerTick();
+        this.nextTickMs = Date.now() + TIMER_TICK_INTERVAL_MS;
+      }
 
-      // Small yield to prevent CPU spinning
-      await new Promise((resolve) => setImmediate(resolve));
+      if (this.controlQueue.length > 0 || this.dataQueue.length > 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      } else {
+        await this.parkUntilWork();
+      }
     }
+  }
+
+  /**
+   * Block until an enqueue, `stop()`, or the next tick deadline — whichever
+   * lands first.
+   *
+   * The emptiness check above and the assignment below both run on this same
+   * turn, so no enqueue can slip between them and leave the loop parked on work
+   * it already has.
+   */
+  private parkUntilWork(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.idleWakeup = null;
+        resolve();
+      }, Math.max(0, this.nextTickMs - Date.now()));
+
+      this.idleWakeup = () => {
+        clearTimeout(timer);
+        this.idleWakeup = null;
+        resolve();
+      };
+    });
+  }
+
+  /**
+   * Resume a parked loop. Every path that makes work available calls this —
+   * `pushControl`, `pushData`, `stop()` — so a newly queued event is dispatched
+   * on the next turn instead of waiting out the tick deadline.
+   */
+  private wake(): void {
+    this.idleWakeup?.();
   }
 
   // -----------------------------------------------------------------------
@@ -315,7 +381,7 @@ export class SyncMachine {
       this.rejectMessage(peerId, MSG_HANDSHAKE, `advertised height out of range: ${String(peerHeight)}`);
       return;
     }
-    this.controlQueue.push({ type: 'peer-active', peerId, peerHeight });
+    this.pushControl({ type: 'peer-active', peerId, peerHeight });
   }
 
   /**
@@ -343,7 +409,7 @@ export class SyncMachine {
           return;
         }
         if (!this.withinCap(peerId, code, 'SyncInfo anchors', info.anchors.length)) return;
-        this.controlQueue.push({ type: 'sync-info', peerId, info });
+        this.pushControl({ type: 'sync-info', peerId, info });
         break;
       }
       case MSG_INV: {
@@ -353,7 +419,7 @@ export class SyncMachine {
           return;
         }
         if (!this.withinCap(peerId, code, 'Inv ids', inv.ids.length)) return;
-        this.enqueueData({ type: 'inv', peerId, inv });
+        this.pushData({ type: 'inv', peerId, inv });
         break;
       }
       case MSG_MODIFIER_REQUEST: {
@@ -363,7 +429,7 @@ export class SyncMachine {
           return;
         }
         if (!this.withinCap(peerId, code, 'ModifierRequest ids', req.ids.length)) return;
-        this.enqueueData({ type: 'modifier-request', peerId, req });
+        this.pushData({ type: 'modifier-request', peerId, req });
         break;
       }
       case MSG_MODIFIER_RESPONSE: {
@@ -375,7 +441,7 @@ export class SyncMachine {
         if (!this.withinCap(peerId, code, 'ModifierResponse modifiers', resp.modifiers.length)) {
           return;
         }
-        this.enqueueData({ type: 'modifier-response', peerId, resp });
+        this.pushData({ type: 'modifier-response', peerId, resp });
         break;
       }
       // Unknown message types are silently ignored.
@@ -412,8 +478,8 @@ export class SyncMachine {
   /**
    * Periodic timer tick.
    *
-   * Called by the event loop as lowest-priority fallback. Also called
-   * directly by the node's setInterval for the 30 s periodic check.
+   * Driven by the event loop every TIMER_TICK_INTERVAL_MS as its lowest-priority
+   * fallback. Public so a caller without a running loop can step it directly.
    *
    * - Checks for stall (no progress in STALL_TIMEOUT_MS).
    * - Sends periodic SyncInfo while syncing/synced.
@@ -446,7 +512,7 @@ export class SyncMachine {
    * Enqueues a control event — processed with top priority.
    */
   onPeerDisconnect(peerId: string): void {
-    this.controlQueue.push({ type: 'peer-disconnect', peerId });
+    this.pushControl({ type: 'peer-disconnect', peerId });
   }
 
   // -----------------------------------------------------------------------
@@ -486,19 +552,30 @@ export class SyncMachine {
   }
 
   // -----------------------------------------------------------------------
-  // Internal — data queue enqueue (bounded, lossy)
+  // Internal — queue enqueue
+  //
+  // The two queues are reachable only through these, and both wake the loop, so
+  // clause 4's "the loop parks until an enqueue" cannot be broken by a future
+  // caller that pushes and forgets.
   // -----------------------------------------------------------------------
+
+  /** Enqueue a control event. Unbounded — control events are never dropped. */
+  private pushControl(event: ControlEvent): void {
+    this.controlQueue.push(event);
+    this.wake();
+  }
 
   /**
    * Enqueue a data event. If the queue is at capacity, the oldest event is
    * dropped to make room (lossy behavior).
    */
-  private enqueueData(event: DataEvent): void {
+  private pushData(event: DataEvent): void {
     if (this.dataQueue.length >= MAX_DATA_QUEUE) {
       // Drop the oldest event to make room
       this.dataQueue.shift();
     }
     this.dataQueue.push(event);
+    this.wake();
   }
 
   // -----------------------------------------------------------------------

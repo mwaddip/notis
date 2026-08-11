@@ -685,9 +685,9 @@ export class NetNode {
       await this.dialBootstrapPeer(addr);
     }
 
-    // Start periodic timer: sync machine tick + outbound manager
+    // Start periodic timer: outbound manager + peer discovery. The sync machine
+    // keeps its own tick cadence inside its event loop.
     this.syncTimer = setInterval(() => {
-      this.syncMachine?.onTimerTick();
       if (this.libp2p && this.outboundMgr) {
         // Both phases count outbound connections only — inbound connections
         // filling our slots must never suppress our own dialing (eclipse

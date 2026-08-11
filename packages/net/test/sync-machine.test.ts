@@ -1314,4 +1314,86 @@ describe('SyncMachine', () => {
       expect(servedModifierCount(sent)).toBe(1);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Idle event loop (NET_INTERFACE → Biased Event Loop, clause 4)
+  //
+  // Cost is the property under test here, and no assertion on sync *output*
+  // can see it: the loop produced correct results while consuming a core.
+  // These pin the loop's behaviour between events instead — how often it
+  // does work when it has none, and how fast it reacts when work arrives.
+  // -----------------------------------------------------------------------
+
+  describe('idle event loop', () => {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('does not re-poll while both queues are empty', async () => {
+      const { machine } = makeMachine();
+      const ticks = vi.spyOn(machine, 'onTimerTick');
+
+      machine.start();
+      try {
+        await sleep(100);
+      } finally {
+        machine.stop();
+      }
+
+      // One tick is due on entry; the next is a second away. A polling loop
+      // ran this tens of thousands of times over the same window.
+      expect(ticks.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(ticks.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+
+    it('dispatches a control event enqueued while parked, without waiting for the tick', async () => {
+      let dispatchedAt = 0;
+      let signal: () => void = () => {};
+      const dispatched = new Promise<void>((resolve) => { signal = resolve; });
+
+      const { machine } = makeMachine({
+        store: {
+          // handlePeerActive is the first thing to read the store, so this
+          // stamps the moment the event was actually dispatched.
+          chainHeight: () => {
+            if (dispatchedAt === 0) {
+              dispatchedAt = Date.now();
+              signal();
+            }
+            return 0;
+          },
+        },
+      });
+
+      machine.start();
+      try {
+        await sleep(100); // let the loop park on its tick deadline
+        const enqueuedAt = Date.now();
+        machine.onPeerActive('peer1', 100);
+        await dispatched;
+
+        expect(dispatchedAt - enqueuedAt).toBeLessThan(100);
+        expect(machine.getState().phase).toBe('syncing');
+        expect(machine.getState().syncPeerId).toBe('peer1');
+      } finally {
+        machine.stop();
+      }
+    });
+
+    it('keeps ticking while parked, and stops ticking once stopped', async () => {
+      const { machine } = makeMachine();
+      const ticks = vi.spyOn(machine, 'onTimerTick');
+
+      machine.start();
+      await sleep(1200);
+
+      // Parking must not starve the tick — stall rotation depends on it.
+      const whileRunning = ticks.mock.calls.length;
+      expect(whileRunning).toBeGreaterThanOrEqual(2);
+
+      machine.stop();
+      await sleep(1200);
+
+      // stop() retires the pending tick timer rather than leaving it armed.
+      expect(ticks.mock.calls.length).toBe(whileRunning);
+    });
+  });
 });
