@@ -635,12 +635,11 @@ export function verifyOrderingBlockStructure(
     if (!isHex32(entry.postId)) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid postId' };
     }
-    // `MAX_PARENT_REFS`, not a literal `8`. Every enforcement site imports the
+    // `MAX_PARENT_REFS`, not a literal. Every enforcement site imports the
     // constant — node's `verifyPost` and `verifyPostForRelay`, and
-    // `verifyParentRefsCount` above. A literal here would be a no-op only while
-    // the constant is 8: the moment it moves, the literal would cap this path —
-    // the one that feeds `insertPostPlaceholder` — at the old value while the
-    // post path used the new one.
+    // `verifyParentRefsCount` above. A literal here would pin this path — the
+    // one that feeds `insertPostPlaceholder` — to whatever the constant read
+    // when it was written, while the post path tracked the constant itself.
     if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > MAX_PARENT_REFS) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid parentRefs' };
     }
