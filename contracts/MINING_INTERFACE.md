@@ -96,7 +96,8 @@ verifyOrderingBlockPoW(header: BlockHeader): boolean
    (no-panic — returns `false`, never throws)
 2. `preimage = computePowHash(header)` (as above)
 3. `hash = blake2b512(preimage || encodeLE64(header.powNonce)).subarray(0, 32)`
-4. Count leading zero bits in `hash` ≥ `header.powTargetBits`
+4. `meetsPowTarget(hash, powTarget(header.powTargetBits))` — the shared admission rule
+   (`VALIDATION_INTERFACE § powTarget / meetsPowTarget`), not a local bit count
 
 ## Difficulty Schedule
 
@@ -386,7 +387,11 @@ script; deployed via `scripts/dagsocial-miner.service`):
 1. `GET /mining/template` (Bearer `MINING_SECRET`; `?miner=MINER_PUBKEY` when
    set) → reads `powPreimage`, `header.powTargetBits`, `header.height`
 2. Loop: `nonce++`, `hash = blake2b512(hex2buf(powPreimage) || encodeLE64(nonce))`,
-   check leading zeros
+   test with its **own mirrored copy** of `meetsPowTarget` against a `powTarget` hoisted
+   out of the loop. The script stays standalone — `node:crypto` only, no build step, because
+   the machine that mines is not required to build the workspace — so agreement with
+   `@dagsocial/validation` is enforced by a mirror test that extracts both declarations by
+   name, not by an import
 3. `POST /mining/submit` (Bearer) with `{ height, powNonce }`
 4. Repeat
 
