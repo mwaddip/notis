@@ -404,7 +404,7 @@ describe('block-creator', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 5. Template assembly carries no retired fields (P2-D N3a; T2b deleted them)
+  // 5. Template assembly carries exactly the live utxoTxTree keys
   // -----------------------------------------------------------------------
 
   it('template assembly carries exactly the live utxoTxTree keys', async () => {
@@ -430,17 +430,16 @@ describe('block-creator', () => {
     const block = bc.createOrderingBlock();
 
     expect(block).not.toBeNull();
-    // T2b: the retired fields are deleted from the type itself; the produced
-    // tree carries exactly the live keys. Exact-set, so a retired key
-    // sneaking back in — or a new one added untested — fails here (block
-    // body CBOR is consensus-visible bytes).
+    // The type carries exactly the live keys, so the produced tree does too.
+    // Exact-set, so a stray key sneaking back in — or a new one added
+    // untested — fails here (block body CBOR is consensus-visible bytes).
     expect(Object.keys(block!.utxoTxTree).sort()).toEqual(
       ['coinbaseOutputs', 'utxoTxIds', 'utxoTxs'],
     );
   });
 
   // -----------------------------------------------------------------------
-  // 6. Former epoch boundaries are ordinary heights (P2-D N3a)
+  // 6. Former epoch boundaries are ordinary heights
   // -----------------------------------------------------------------------
 
   it('a block at a former epoch boundary (height % 60 === 0) carries no tally and applies like any other height', async () => {

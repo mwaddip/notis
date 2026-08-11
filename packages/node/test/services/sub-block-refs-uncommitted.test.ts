@@ -9,50 +9,39 @@ import { hex, makeApplicableBlock, makePost, makeTestIdentity } from '../helpers
 // `subBlockRefs` is uncommitted — every consumer must read `subBlockEntries`
 // ---------------------------------------------------------------------------
 //
-// `computeSubBlockRoot` builds its leaves from `subBlockEntries` and
-// `pruneEntries`; it never reads `subBlockRefs`. The verifier checks that the
-// refs are an array whose *length* matches the entries, and nothing else. So a
-// block whose refs name entirely different post ids carries an unchanged
-// `subBlockRoot`, an unchanged `blockHash`, a still-valid PoW solution and a
-// still-valid validator signature — it is accepted.
+// The block commits two arrays, and `subBlockRefs` is not one of them
+// (TYPES_INTERFACE → "Layout — Block"). `computeSubBlockRoot` builds its leaves
+// from `subBlockEntries` and `pruneEntries`, and `verifyOrderingBlockStructure`
+// carries no companion refs check at all. Where the name survives it is
+// derived: the HTTP DTOs in `routes/blocks.ts` and `routes/mining.ts` build it
+// with `subBlockIdsOf(subBlockTree)`.
 //
-// The defect that made that matter was an asymmetry: apply *confirmed* from the
-// committed `subBlockEntries` while the journal — replayed on reorg — recorded
-// the uncommitted `subBlockRefs`. Three state effects, across two sinks:
+// What this file pins is the behavioural half, which is independent of any
+// field: **apply must evict and journal the ids the block COMMITS to.** Three
+// state effects, across two sinks:
 //
-//   - `removeSubBlockEntries(refs)` → `DELETE FROM mempool WHERE entry_type =
+//   - `removeSubBlockEntries` → `DELETE FROM mempool WHERE entry_type =
 //     'subblock' AND subblock_id IN (…)`, committed with the accepted block. An
 //     eviction primitive: unconfirmed sub-blocks dropped network-wide without
 //     ever being confirmed.
-//   - `recordConfirmedSubBlocks(refs)` → the journal's `confirmedSubBlockIds`,
+//   - `recordConfirmedSubBlocks` → the journal's `confirmedSubBlockIds`,
 //     which has *two* readers, not one. `revertBlock` replays it as
-//     `unconfirmPost(id)` (`fork-resolution.ts:214`) — un-confirming ids the
-//     forward pass never confirmed and leaving the ones it did — and `reorg`
-//     phase 2 replays it as `insertMempoolSubBlock(id, …)` (`:335`), an
-//     injection primitive that *writes* attacker-chosen ids into the mempool,
-//     needing no pooled victim entry the way eviction did.
+//     `unconfirmPost` — un-confirming ids the forward pass never confirmed and
+//     leaving the ones it did — and `reorg` phase 2 replays it as
+//     `insertMempoolSubBlock`, an injection primitive that *writes* ids into
+//     the mempool, needing no pooled victim entry the way eviction does.
 //
 // Only the first two are asserted below. The injection path shares its input
 // with the un-confirm path — the same journal array, asserted whole with
 // `toEqual` — so closing it is the same closure, but it is a distinct effect
 // and naming it here is what keeps it from going missing again.
 //
-// ⚠ **Phase 3b has now deleted the field, and this file said in advance that it
-// would stop being writable.** The paragraph above is history: the poisoned
-// fixture — a block whose refs named posts its entries did not — was the proof
-// that 3a's derivation closed the defect, and it was expressible only while
-// there were two lists to disagree. There is one list now, so the disagreement
-// is not merely rejected, it is **unrepresentable**; that half is pinned where
-// it belongs, in `@dagsocial/types` (`serialization.test.ts` → "the field is
+// The fixtures keep a second, uncommitted post — the eviction bystander and the
+// un-confirm bystander — so a regression that widened either sink beyond
+// `subBlockEntries` still fails here. That a disagreeing refs list is
+// **unrepresentable** rather than merely rejected is pinned where it belongs,
+// in `@dagsocial/types` (`serialization.test.ts` → "the field is
 // unrepresentable, not merely unwritten").
-//
-// The file is kept rather than deleted, because the behavioural half is
-// independent of the field and is still the thing that would break: **apply
-// must evict and journal the ids the block COMMITS to.** The fixtures keep
-// their second, uncommitted post — the eviction victim and the un-confirm
-// victim — so a regression that widened either sink beyond `subBlockEntries`
-// still fails here. What is gone is the attacker's ability to *choose* that
-// second id, which is exactly what the deletion bought.
 
 const EXPIRY = 1000;
 
@@ -119,19 +108,13 @@ function postStatus(db: Database.Database, postId: string): string | null {
 /**
  * A block that commits to exactly one post.
  *
- * ⚠ **This was `makePoisonedBlock` until Phase 3b**, and it took a second post
- * id to write into `subBlockTree.subBlockRefs` after `makeApplicableBlock` had
- * sealed the header — the point being that `subBlockRoot`, `powNonce` and
- * `validatorSignature` all covered the entries and none of them covered the
- * refs, so the poison left a block that was, by every committed measure, the
- * same block.
- *
- * There is nowhere to put a poison now. The second post survives in the callers
- * as an uncommitted bystander instead of an attacker-named target: it is in the
- * mempool and the DAG, it is not in this block's entries, and every assertion
- * below says it must be left alone. That still fails if a consumer widens
- * beyond `subBlockEntries` — what it no longer does is let the attacker pick
- * which bystander.
+ * There is nowhere to put a poison: with one committed list, a block whose refs
+ * disagree with its entries is unrepresentable rather than merely rejected. The
+ * second post survives in the callers as an uncommitted bystander rather than
+ * an attacker-named target — it is in the mempool and the DAG, it is not in
+ * this block's entries, and every assertion below says it must be left alone.
+ * That still fails if a consumer widens beyond `subBlockEntries`; what it
+ * cannot do is let an attacker pick which bystander.
  */
 async function makeCommittingBlock(
   entryPost: { postId: string; authorHex: string },
