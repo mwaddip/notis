@@ -95,10 +95,9 @@ export interface CoinbaseOutput {
  * That third reach adds no surface the other two did not already have, in either
  * direction: a gossiped block reaches apply through `decodeOrderingBlock`, which
  * has closed the domain above; a self-produced one carries node's own coinbase
- * construction, which is exactly what `encodeOrderingBlock` already encodes. It
- * does mean an out-of-domain value now throws inside root computation rather
- * than inside framing — a stated rejection either way only because the apply
- * funnel's totality catch is there to convert it.
+ * construction, which is exactly what `encodeOrderingBlock` already encodes.
+ * Neither reach is where the rejection is stated: the upstream domain check
+ * above is, and it is what makes this encoder's throw unreachable.
  */
 export function coinbaseOutputBytes(o: CoinbaseOutput): Uint8Array {
   const w = new ByteWriter();

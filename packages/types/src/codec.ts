@@ -267,11 +267,8 @@ export function readVlqS(r: ByteReader): number {
  * Every call site must therefore establish the domain first. Named for that:
  * the exception is visible where it is used, not buried in this docstring.
  *
- * Spec §2.5 assigns that establishing to the call site, not to this writer.
- * Node's embedded-tx admission (`applyMutationPhase`) is the worked example:
- * `checkTxEnvelope` and `checkOutputShape` both run before it hashes, which is
- * what makes the throw unreachable there — NODE_INTERFACE → "The output domain
- * check".
+ * Spec §2.5 assigns that establishing to the call site, not to this writer —
+ * NODE_INTERFACE → "The output domain check".
  *
  * @throws {Error} if `value` is negative or above `2^64 - 1`
  */
