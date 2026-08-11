@@ -35,8 +35,8 @@ function makeIdGenerator() {
  *
  * `txId`/`index` are real all the same: they are required box fields, they ride
  * the AVL value, and the round-trip assertion at the bottom of the suite reads
- * them back — with no provenance on the fixture, that assertion compared
- * `undefined` to `undefined`.
+ * them back. A fixture that left them off would make that assertion compare
+ * `undefined` to `undefined` and pass on a codec that dropped the tail.
  */
 function makeKarmaBox(id: string, value: bigint, block: number, seed: number): StoredBox {
   const owner = new Uint8Array(32);
@@ -222,11 +222,11 @@ describe('AVL integration — full pipeline', () => {
       ).toBeNull();
     }
 
-    // Consumed box should NOT exist either (it was consumed at height 2, but
-    // we rolled back to height 1 where it WAS alive — wait, the box was
-    // alive at height 1, so it should be present after rollback to height 1).
-    // Actually: created1[0] was consumed at block 2. At block 1 it was alive.
-    // So after rollback to height 1, it SHOULD be present.
+    // `created1[0]` is consumed at block 2, so it is ALIVE at height 1 and the
+    // rollback must resurrect it. This is the direction that distinguishes a
+    // real rollback from a tree that only ever removes: the two assertions above
+    // both hold for a prover that discards later blocks without restoring
+    // earlier ones.
     const recreatedKey = Buffer.from(created1[0]!.id, 'hex');
     const recreatedValue = handle.prover.unauthenticatedLookup(recreatedKey);
     expect(recreatedValue, 'box consumed at height 2 should be alive after rollback to height 1').not.toBeNull();
@@ -250,9 +250,10 @@ describe('AVL integration — full pipeline', () => {
     const withId = deserializeBoxWithId(sampleBox.id, sampleRaw!);
     expect(withId.id).toBe(sampleBox.id);
     expect(withId.boxType).toBe('karma');
-    // The AVL value carries provenance and must (contract 1a): "a box id is a
-    // total function of the stored box" is only checkable *from a proof* if the
-    // proof's value carries everything the derivation consumes.
+    // The AVL value carries provenance, and must: NODE_INTERFACE → Invariants
+    // requires that a box id be a total function of the stored box, which is
+    // only checkable *from a proof* if the proof's value carries everything the
+    // derivation consumes.
     expect(withId.txId).toBe(sampleBox.txId);
     expect(withId.index).toBe(sampleBox.index);
   });

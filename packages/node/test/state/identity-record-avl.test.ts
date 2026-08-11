@@ -19,7 +19,8 @@ import type { IdentityRecord } from '../../src/store/identity-records.js';
 import { fixtureProvenance } from '../helpers.js';
 
 /**
- * Spec G phase B3 — identity records as the AVL tree's second entity kind.
+ * Identity records as the AVL tree's second entity kind — NODE_INTERFACE →
+ * "Two entity kinds" and Layout — IdentityRecord.
  */
 
 function makeAvlDb(): Database.Database {
@@ -92,7 +93,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       makeKarmaBox('01'.repeat(32)),
       withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n,
         owner, guard: 'owner_signature', proofSource: 1 }),
-      // 0x03 was 'like' — retired (P2-D), tag byte reserved.
+      // No 0x03 row: that tag is the reserved `like` gap, and no box emits it.
       withProvenance('04'.repeat(32), { boxType: 'invite', value: 50n,
         secretHash: new Uint8Array(randomBytes(32)), inviterId: owner,
         guard: 'hash_preimage_with_bond' }),
@@ -286,8 +287,9 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const { prover: p2 } = createAvlProver(db2);
     const boxes = [makeKarmaBox('ee'.repeat(32))];
 
-    // Pins that the new parameter is inert when unused — every pre-B3 caller
-    // keeps its digest.
+    // `recordPuts` is inert when empty: a caller that passes no records reaches
+    // the same digest as one that omits the argument. Without this, adding a
+    // record kind to the feed would silently move every box-only caller's root.
     const d1 = applyBlockMutations(p1, [], boxes);
     const d2 = applyBlockMutations(p2, [], boxes, []);
     expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
@@ -295,7 +297,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// P2-D N2a — `likeCarry` in the record's AVL value encoding.
+// `likeCarry` in the record's AVL value encoding — an always-present field
+// (NODE_INTERFACE → Layout — IdentityRecord).
 // ---------------------------------------------------------------------------
 
 describe('likeCarry in the record encoding (P2-D N2a)', () => {
@@ -333,7 +336,7 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
   // equal values would have hidden it.
   const GOLDEN_ZERO = '802a0700';
   const GOLDEN_THREE = '802a0703';
-  /** The pre-P2-D shape — same layout, `likeCarry` absent. */
+  /** The same layout with `likeCarry` absent — the shape a reader must reject. */
   const GOLDEN_PRE_P2D = '802a07';
 
   it('golden bytes: {42, 7, likeCarry: 0n} — the field is present at zero', () => {
@@ -345,14 +348,11 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
     expect(Buffer.from(bytes).toString('hex')).toBe(GOLDEN_THREE);
   });
 
-  // ⚠ The cbor-era version of this test asserted that zero and non-zero carry
-  // encode to the SAME LENGTH, on the reasoning that "the map header counts 3
-  // keys either way". Under `vlqU64` that reasoning is dead and the equal
-  // length is a COINCIDENCE of two small values — cbor-x wrote a fixed-width
-  // 8-byte integer, VLQ writes as many bytes as the magnitude needs. Re-pinning
-  // it verbatim would have preserved an assertion whose stated justification is
-  // false, so it is replaced by the property that is actually true, and the
-  // variable width is made explicit rather than left to be discovered.
+  // ⚠ `likeCarry` is `vlqU64`, so its width tracks its MAGNITUDE. Two records
+  // whose carries encode to the same length say nothing about the field — below
+  // 128 every value is one byte, and an assertion resting on that reads as a
+  // structural rule while pinning a coincidence. The rows below make the width
+  // change explicit instead of leaving it to be discovered by a fork.
   it('likeCarry is variable-width under vlqU64 — equal length below 128 is not a rule', () => {
     const len = (carry: bigint): number =>
       serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: carry }).length;
@@ -369,19 +369,19 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
   });
 
   it('bytes missing likeCarry are REJECTED, not defaulted to 0n', () => {
-    // A pre-P2-D record value must fail loudly: a silent 0n default would mask
-    // exactly the fork the always-present rule exists to prevent. Under the
-    // positional layout the reader simply runs out of input — the field is not
-    // optional, so there is nothing to be absent.
+    // A record value without the field must fail loudly: a silent 0n default
+    // would mask exactly the fork the always-present rule exists to prevent.
+    // Under the positional layout the reader simply runs out of input — the
+    // field is not optional, so there is nothing to be absent.
     const preP2D = Buffer.from(GOLDEN_PRE_P2D, 'hex');
     expect(() => deserializeIdentityRecord(preP2D)).toThrow();
   });
 
   it('trailing bytes and non-minimal VLQ are both rejected (boundary check 2 and 3)', () => {
-    // `decodeStruct` gives the record the same four-part check the box arm
-    // gets, and these two arms had NO cbor-era equivalent. Without step 3 two
-    // distinct byte strings decode to one record — two AVL values for one
-    // state, which is a fork with no producer disagreement behind it.
+    // `decodeStruct` gives the record the same four-step boundary check the box
+    // arm gets. Without the minimality step two distinct byte strings decode to
+    // one record — two AVL values for one state, which is a fork with no
+    // producer disagreement behind it.
     expect(() => deserializeIdentityRecord(Buffer.from(GOLDEN_ZERO + 'ff', 'hex'))).toThrow();
     // `80 2a 07 8000` — likeCarry 0 written in two bytes instead of one.
     expect(() => deserializeIdentityRecord(Buffer.from('802a078000', 'hex'))).toThrow();
