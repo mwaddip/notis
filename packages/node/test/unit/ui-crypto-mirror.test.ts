@@ -1038,7 +1038,7 @@ const AUDIT_VOCABULARY: readonly string[] = [
  */
 const AUDIT_ALLOW: Record<string, string> = {
   signPost:
-    'hashes a preimage buildSignHashInput already built; the digest rule is pinned by uiSigningHash, but signPost itself is async over crypto.subtle and is not evaluated here',
+    'its PREIMAGE is mirrored (buildSignHashInput -> buildPowInput); its digest line is NOT — uiSigningHash re-implements blake2b(input, null, 64).slice(0, 32) test-side rather than evaluating signPost, so changing this call to slice(0, 16) would fail nothing. An unpinned two-line copy, carried deliberately.',
   attachFeedHandlers:
     'hashes a server-issued challenge before Ed25519 signing — it takes no layout decision',
   'createInviteBtn#click':
