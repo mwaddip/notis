@@ -381,10 +381,10 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     // content built incrementally vs sorted-rebuild matched digests in only
     // 6/10 rounds), so digest equality across a rebuild is not a property
     // the tree has for any set, transfer or no transfer — that latent
-    // rebuild defect is Spec B territory, reported to main. What THIS unit
-    // owns is that the box table and the tree agree on content, which the
-    // pre-fix direct mutation broke: SQL held transferred boxes the tree
-    // never saw.
+    // rebuild defect is not this unit's to close. What THIS unit owns is that
+    // the box table and the tree agree on content: a direct store mutation
+    // that bypassed the tree would leave SQL holding transferred boxes the
+    // tree never saw.
     vi.resetModules();
     db = await importDb();
     db.initDb(FORK_DB);
