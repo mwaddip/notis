@@ -88,7 +88,7 @@ sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be 
 4. **No dispatch gate** — main dispatches autonomously (user, 2026-08-09; previously waived
    per-session at Phase 1d, now standing). The post-submit `get-text` verification is separate
    and still required.
-5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Main reviews and commits each phase; component sessions do not commit.**
+5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Component sessions commit their own work; they never push.** Main reviews, pushes, and opens the PR.
 
 ### Prompt boilerplate
 
@@ -111,7 +111,7 @@ When done, send a brief completion summary back to the main session window:
 
 ### Main session vs component sessions
 
-The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and push their own work.
+The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and **commit** their own work. **Pushing is main's, always** — a component session that pushes has published work nobody reviewed.
 
 ## Key invariants
 
