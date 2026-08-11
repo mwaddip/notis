@@ -24,16 +24,14 @@ powTarget(targetBits: number): Uint8Array | null
 meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean
 ```
 
-> ⚠ **AHEAD OF CODE — written 2026-08-11, unimplemented at `695eb5d`.** Neither function exists yet.
-> `verify.ts` answers PoW with a module-private `hasLeadingZeroBits` bit walk, and four further
-> copies of that walk live in `@dagsocial/node` — `block-creator.ts`, **two** in `scripts/miner.mjs`,
-> and `public/index.html`. This section specifies the replacement;
-> `docs/specs/2026-08-11-difficulty-retarget.md` §2 is the unit.
-> **Retire this marker when that unit merges.**
-
 The single PoW admission rule. `powTarget` expands a target-bits count into the **inclusive** 32-byte
 maximum acceptable digest; `meetsPowTarget` answers `hash <= target`, both read big-endian. Every PoW
 question in the repo — the verifier's and every solver's — is this pair and nothing else.
+
+A *solver* that holds no predicate and asks the verifier instead — `node/test/helpers.ts`'s
+`solveHeaderPow` is the example — inherits this rule with no edit and is the shape to prefer. **"PoW
+solvers" and "PoW predicates" are different enumerations**; only the second should ever be counted
+when asking how many places implement this rule.
 
 `powTarget` returns `null` for a `targetBits` that is not a safe integer in `[0, 256]`. A caller reads
 `null` as "no digest can satisfy this" and answers `false`. Neither function throws, on any input.
