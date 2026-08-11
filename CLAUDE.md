@@ -121,6 +121,23 @@ unprefixed line does not identify itself as a reply:
 
 The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and **commit** their own work. **Pushing is main's, always** — a component session that pushes has published work nobody reviewed.
 
+## What we write down
+
+**Everything we write describes reality as it is.** Code comments, commit bodies, PR bodies, titles —
+all of it states the present tense of the current tree.
+
+**Not backward-looking.** How it used to work, what was fixed, what went wrong before, what a previous
+encoder did, why the change is justified. None of that is a fact about the tree a reader is holding,
+and each such sentence is a second claim that decays on its own schedule.
+
+**Forward-looking only when it is a deliberate stub for planned work**, and marked as one — the
+contracts' `AHEAD OF CODE`. That is the single exception, because a stub's whole purpose is to say the
+code is not there yet.
+
+The two sections below are this rule applied to code and to changelog prose. Where reasoning genuinely
+has to survive, it goes in `contracts/` as a rule or in a `prompts/<task>-REPORT.md`, both of which a
+reader can check against the tree.
+
 ## Comment style
 
 **Cite the CONTRACT, not the spec.** `docs/specs/` is gitignored and holds **zero tracked files**, so
