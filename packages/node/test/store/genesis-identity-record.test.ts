@@ -9,7 +9,7 @@ import {
 } from '../../src/mint-provenance.js';
 
 /**
- * Spec G phase D — genesis writes its own identity record.
+ * Genesis writes its own identity record.
  *
  * `ensureSystemKarmaBox` is the one non-decay karma producer that runs
  * **outside** block application. `insertBox`'s choke point takes the activity
@@ -73,10 +73,11 @@ describe('genesis identity record (Spec G phase D)', () => {
     // `getCurrentHeight()` is 0 on a fresh chain, and genesis clamps to 1.
     const box = s.system.ensureSystemKarmaBox(keypair.publicKey, 0);
 
-    // The box carries no height field any more (phase G3b), so the cross-check
-    // is against the height baked into its **mint txId** — which is now the only
-    // place a genesis height appears in the box, and is consensus-visible where
-    // `created_at_block` never was.
+    // A box carries no height field, so the cross-check is against the height
+    // baked into its **mint txId** — the only place a genesis height appears in
+    // the box, and consensus-visible, which the `created_at_block` store column
+    // is not (NODE_INTERFACE → "`created_at_block` is a store column, never a
+    // consensus input").
     expect(box.txId).toBe(mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), 1));
     expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
       lastActivityBlock: 1,

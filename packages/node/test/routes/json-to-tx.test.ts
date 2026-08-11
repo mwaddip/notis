@@ -4,10 +4,10 @@ import { PROTOCOL_VERSION } from '@dagsocial/types';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 
 /**
- * L-11 — `jsonToTx` used to copy the client-supplied box `value` verbatim,
- * which is the lever the C-1 forgery relied on. A `value` is bigint at
- * runtime (Spec B P0): the JSON edge coerces a decimal string or
- * safe-integer number to bigint and enforces `0 <= value < 2^64`.
+ * `jsonToTx` is the JSON edge, and a client-supplied box `value` copied through
+ * it verbatim is a forgery lever. `value` is a bigint at runtime
+ * (TYPES_INTERFACE → Value denomination), so this edge coerces a decimal string
+ * or a safe-integer number to bigint and enforces `0 <= value < 2^64`.
  */
 describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
   const ownerHex = 'ab'.repeat(32);

@@ -37,7 +37,7 @@ export type TxId = string;
 const encoder = new TextEncoder();
 
 /**
- * Domain separators (Spec G).
+ * Domain separators — TYPES_INTERFACE → BoxId.
  *
  * Box ids, transaction ids and identity-record keys all live in one 32-byte
  * keyspace, and the AVL tree holds more than one entity kind, so the
@@ -57,10 +57,11 @@ export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
  * **Tag 3 is permanently burnt** for the retired `like` box type. Reserving a
  * retired tag rather than renumbering is not tidiness: `boxType` is the first
  * byte of every box's identity preimage, so a renumber silently moves every box
- * id and every `stateRoot` covering them, with no compiler signal. That is the
- * T2b `0x03` lesson (node's `serialize-box.ts` removed a tag without
- * renumbering for exactly this reason), now applying inside the id preimage
- * itself. Reserve by leaving the number out of this table; never reuse it.
+ * id and every `stateRoot` covering them, with no compiler signal. That is
+ * TYPES_INTERFACE → Primitives' rule that enum tags reserve retired values and
+ * are never renumbered, applying inside the id preimage itself — and node's AVL
+ * value (`state/serialize-box.ts`) reads this same table. Reserve by leaving
+ * the number out of this table; never reuse it.
  */
 const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
   karma: 0,
@@ -94,25 +95,21 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *   | post_lock | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
  *   | vouch     | b32(voucherId) ‖ b32(targetId)                            |
  *
- * **`guard` is gone from the consensus bytes (P2-C row C10).** It is a pure
- * function of `boxType` — one guard string per type, with no box choosing
- * between two — so it carried zero information in a preimage while costing 16
- * to 30 bytes in every box id (the key name plus the guard string). The field
- * stays on the interfaces; it simply stops being hashed.
+ * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
+ * Boxes). It is a pure function of `boxType` — one guard string per type, with
+ * no box choosing between two — so it carries zero information in a preimage.
+ * The field stays on the interfaces; it is not hashed.
  *
- * **Provenance is structurally absent**, not stripped at runtime. The old form
- * destructured `id`/`txId`/`index` out of the object and CBOR-encoded the rest,
- * so "provenance is not in the candidate bytes" was a rule someone had to
- * remember; here there is no branch that could write them. `computeBoxId` binds
- * provenance by appending it *after* these bytes, which is what keeps the
- * derivation non-circular.
+ * **Provenance is structurally absent**, not stripped at runtime: there is no
+ * branch here that could write `id`/`txId`/`index`, so "provenance is not in
+ * the candidate bytes" is a property of this encoder rather than a rule a
+ * caller has to remember. `computeBoxId` binds provenance by appending it
+ * *after* these bytes, which is what keeps the derivation non-circular.
  *
- * **Key order is not a thing any more.** The G3b `sortKeys` pass existed
- * because cbor-x emitted map keys in JS insertion order, making a producer's
- * field order consensus-visible; a positional format has fixed field order, so
- * that whole class is retired by construction rather than by a sort. A stray
- * extra key on a box object is likewise unrepresentable now — the encoder reads
- * the fields it declares and nothing else.
+ * **Key order does not exist.** Field order is fixed by the table above, so a
+ * producer's own field order is not consensus-visible and no sorting pass is
+ * required to make it so. A stray extra key on a box object is likewise
+ * unrepresentable — the encoder reads the fields it declares and nothing else.
  *
  * ## Totality
  *
@@ -122,8 +119,8 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  * boxes with different bogus types do share bytes — the same malformed-only
  * residue the numeric sentinel has.
  *
- * **`value` throws** outside `[0, 2^64)`, and that is the spec's one originally
- * stated exception (§2.5, layout D6): `value: bigint` spans the entire u64 wire
+ * **`value` throws** outside `[0, 2^64)`, one of the non-total writers
+ * TYPES_INTERFACE → Totality names: `value: bigint` spans the entire u64 wire
  * domain, so no sentinel is unreachable — an all-ones u64 is a legal value, and
  * writing it to mean "malformed" would give a malformed box a well-formed box's
  * id. The fixed-width `b32` fields throw for the same structural reason. Their
@@ -135,12 +132,11 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
- * The bytes are identical over the overlapping range, which is why writing
- * `vlqU` here was harmless to read and wrong to rely on: `vlqU` is total by
- * sentinel and `vlqU64` throws, and spec §2.5 names the `…OrThrow` writers
- * precisely so the totality exception is visible at the call site rather than
- * inferred from a field's type. Found by Phase 5 hand-deriving goldens off the
- * contract; the contract's own cells are corrected too.
+ * The bytes are identical over the overlapping range, so the difference is
+ * invisible in a golden vector and cannot be inferred from a field's type:
+ * `vlqU` is total by sentinel and `vlqU64` throws. TYPES_INTERFACE → Totality
+ * names the `…OrThrow` writers precisely so the totality exception is visible
+ * at the call site.
  */
 export function canonicalBoxBytes(candidate: BoxCandidate): Uint8Array {
   const w = new ByteWriter();
@@ -155,11 +151,12 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
   switch (box.boxType) {
     case 'karma':
       writeBytesNOrThrow(w, box.owner, 32);
-      // `lpUtf8`, not `b32`: verified against the producers, not inferred from
-      // the type. Production stamps `mint-<height>`, `decay-<height>`,
-      // `faucet:system`, `genesis:system` and `invite-cancel:<id>` here, and
-      // node's own output-shape schema types it as a free `'string'`. A `b32`
-      // would throw on every karma mint the node performs.
+      // `lpUtf8`, not `b32`: the stamped set mixes short tags with 64-char hex
+      // ids. Node's mint paths write `mint-<height>`, `decay-<height>`,
+      // `faucet`, `faucet:system` and `genesis:system`; the demo UI's tx
+      // builders write `invite-create`, `invite-cancel`, the target PostId and
+      // the claimed invite's BoxId. Node's output-shape schema types the field
+      // a free `'string'`. A `b32` would throw on every tag-shaped one.
       writeLpUtf8(w, box.proofSource);
       writeOpt(w, box.decayBurn, writeBool);
       return;
@@ -211,7 +208,7 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
  * and every unassigned tag, so the writer's total-by-sentinel arm has no
  * decoding at all — a malformed box cannot round-trip as if it were fine.
  *
- * **`guard` is not returned**, because it is not in the bytes (C10). It is a
+ * **`guard` is not returned**, because it is not in the bytes. It is a
  * pure function of `boxType` — each box interface types it as a single literal —
  * so a consumer that needs it synthesises it from the discriminator. Returning
  * it here would have this package assert an authorization fact it does not own,
@@ -342,9 +339,9 @@ function writeOptBytesNOrThrow(w: ByteWriter, bytes: Uint8Array, n: number): voi
  * domain excludes the sentinel itself, so a well-formed value never collides
  * with a malformed one.
  *
- * ⚠ **Nothing in THIS package hashes a `u32BE` any more.** Phase 2a-ii moved
- * the last two — `computeCandidateBoxId`'s `index` and `computeMintTxId`'s
- * `height` — onto `vlqU`. It survives for one reason only:
+ * ⚠ **Nothing in THIS package hashes a `u32BE`.** `computeCandidateBoxId`'s
+ * `index` and `computeMintTxId`'s `height` are both `vlqU`. It survives for one
+ * reason only:
  *
  * **Two mint `subject` encodings are `u32BE`, and subjects are the caller's.**
  * `coinbase` and `genesis` encode a `u32BE` selector
@@ -354,9 +351,10 @@ function writeOptBytesNOrThrow(w: ByteWriter, bytes: Uint8Array, n: number): voi
  * it and drifting — a silent divergence would move mint txIds, and through them
  * every box id, with nothing to catch it.
  *
- * So this is now a **caller-side helper, not part of any preimage this package
- * writes**, and the subject encodings are the one place the old dialect still
- * reaches an id. Unifying them is `NODE_INTERFACE`'s call, not this file's.
+ * So this is a **caller-side helper, not part of any preimage this package
+ * writes**, and the mint subject encodings are the one place a fixed-width
+ * big-endian integer reaches an id. Unifying them is `NODE_INTERFACE`'s call,
+ * not this file's.
  */
 const U32_SENTINEL = 0xffffffff;
 
@@ -367,7 +365,7 @@ export function u32BE(n: number): Uint8Array {
 }
 
 /**
- * A box **with its provenance** — TYPES_INTERFACE → Layout — Boxes (D4):
+ * A box **with its provenance** — TYPES_INTERFACE → Layout — Boxes:
  *
  *   boxRecordBytes = canonicalBoxBytes(candidate) ‖ b32(txId) ‖ vlqU(index)
  *
@@ -377,25 +375,23 @@ export function u32BE(n: number): Uint8Array {
  * and **this** is what the AVL value and the store hold. The `id` is never
  * encoded — it *is* the hash of these bytes under `BOX_ID_DOMAIN`.
  *
- * It was written inline inside `computeCandidateBoxId` until Phase 3b, on the
- * ground that a second copy could drift from the id's preimage. Extracting it
- * removes that risk rather than taking it on: the id derivation below now calls
- * this function, so the AVL value and the box id are the same bytes by
- * construction and not by two implementations agreeing.
+ * **The id derivation below calls this function**, so the AVL value and the box
+ * id are the same bytes by construction and not by two implementations
+ * agreeing.
  *
- * **`txId` crosses as 32 raw bytes, not as the UTF-8 of its hex text** (Phase
- * 2a-ii). The prior form was argued for on two grounds, and the positional
- * format answers both somewhere better:
+ * **`txId` crosses as 32 raw bytes, not as the UTF-8 of its hex text.** Two
+ * properties a text encoding would give for free are secured elsewhere instead:
  *
- * - *"a hex decode throws on a malformed txId, so text keeps this total"* — true,
- *   and now deliberate. `b32` throws, and the domain is established at every
- *   call site instead: every `txId` reaching here is a `.toString('hex')` output
- *   of `computeTxId` or `computeMintTxId`, so it is 64 lowercase hex by
- *   construction. A throwing writer with an established domain is the format's
- *   standard trade (spec §2.5), not an exception.
- * - *"decoding would map `AB…`/`ab…` onto one id"* — the collision is removed
- *   rather than tolerated: `b32` accepts lowercase only, so an uppercase id has
- *   **no encoding at all** instead of sharing one.
+ * - *Totality.* A hex decode throws on a malformed `txId`, so text would keep
+ *   this function total by itself. `b32` throws, and the domain is established
+ *   at every call site instead: every `txId` reaching here is a
+ *   `.toString('hex')` output of `computeTxId` or `computeMintTxId`, so it is
+ *   64 lowercase hex by construction. A throwing writer with an established
+ *   domain is this format's standard trade (TYPES_INTERFACE → Totality), not an
+ *   exception.
+ * - *Injectivity.* A decode would map `AB…` and `ab…` onto one id. `b32`
+ *   accepts lowercase only, so an uppercase id has **no encoding at all**
+ *   instead of sharing one.
  *
  * `index` is `vlqU`, which is total by sentinel — so an out-of-domain index
  * still cannot panic this function, and still cannot impersonate a valid one.
@@ -419,13 +415,14 @@ export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: numbe
  * direction. Every other wire struct in this repo is a pair; this one is too.
  *
  * Goes through `decodeStruct`, so it carries the whole four-part boundary check
- * (spec §2.1): schema projection, exhaustion, and the re-encode compare that
+ * (TYPES_INTERFACE → The boundary check): schema projection, exhaustion, and
+ * the re-encode compare that
  * rejects a non-minimal VLQ. Truncation and an unknown `boxType` tag come from
  * the readers themselves. So a value the store hands back is not merely
  * parseable — it is the *only* byte string that decodes to it.
  *
- * **`candidate.guard` is absent**, per C10: it is not in the bytes and it is a
- * pure function of `boxType`. See `readBoxContentFields`.
+ * **`candidate.guard` is absent**: it is not in the bytes and it is a pure
+ * function of `boxType`. See `readBoxContentFields`.
  *
  * @throws {ReaderError} — `CodecError` for a boundary-check failure, wire's own
  *   for a short read or an unknown tag. Callers convert it to a verdict.
@@ -443,7 +440,7 @@ export interface BoxRecord {
 
 /**
  * A box candidate as the **bytes** carry it — every per-type field except
- * `guard`, which C10 removed from the encoding.
+ * `guard`, which is not in the encoding.
  *
  * The omission is applied per union member, not to the union: `Omit` on a union
  * collapses it to the common keys, which here would leave `boxType` and `value`
@@ -482,7 +479,7 @@ const BOX_RECORD: StructCodec<BoxRecord> = {
 };
 
 /**
- * Box id from creating-transaction provenance (Spec G):
+ * Box id from creating-transaction provenance — TYPES_INTERFACE → BoxId:
  *
  *   blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes(candidate, txId, index) )[0:32]
  *
@@ -509,14 +506,14 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * Subject bytes are the caller's, per `NODE_INTERFACE.md`'s reason/subject
  * table; this package never sees a postId.
  *
- * `like-payout` is P2-D's per-block like settlement (one mint per author per
- * block, subject = the raw author key).
+ * `like-payout` settles likes per block (ARCHITECTURE → Per-block accrual and
+ * settlement): one mint per author per block, subject = the raw author key.
  *
- * Retired members (P2-D): `'author-reward'` and `'liker-refund'` (the
- * epoch-tally pair `like-payout` superseded), and `'prune-refund-liker'` (likes
- * are one-way burns; prune settlement refunds no liker). They were retired
- * before any tag existed, so there is no tag of theirs to burn — but see
- * `MINT_REASON` for the rule that applies to the next retirement.
+ * **Retired reasons — reserved, never reuse:** `'author-reward'`,
+ * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
+ * prune settlement refunds no liker). None of them holds a number in
+ * `MINT_REASON`, so there is no tag of theirs to burn — but see `MINT_REASON`
+ * for the rule that applies to the next retirement.
  */
 export type MintReason =
   | 'coinbase'
@@ -529,7 +526,7 @@ export type MintReason =
   | 'prune-refund-author';
 
 /**
- * The `MintReason` tag table (Phase 2a-ii).
+ * The `MintReason` tag table.
  *
  * A closed set of ASCII tags inside a consensus preimage is exactly what
  * `enum8` is for, and it is what `boxType` and `trigger` already use — writing
@@ -539,15 +536,15 @@ export type MintReason =
  * Two things it buys beyond uniformity:
  *
  * - **Exhaustiveness is compile-time.** `Readonly<Record<MintReason, number>>`
- *   means a new member cannot be added without assigning it a tag. The previous
- *   form let a new reason ship with no thought given to its encoding at all.
- * - **Prefix-freeness stops being a property anyone has to maintain.** The old
- *   preimage was `reason ‖ subject` with the reason as bare ASCII, so
- *   cross-reason injectivity rested on no member being a prefix of another —
- *   true, test-pinned, and one careless addition away from false. A one-byte tag
- *   makes it structural.
+ *   means a new member cannot be added without assigning it a tag. Without the
+ *   table, a new reason ships with no thought given to its encoding at all.
+ * - **Prefix-freeness stops being a property anyone has to maintain.** Written
+ *   as bare ASCII into a `reason ‖ subject` preimage, cross-reason injectivity
+ *   would rest on no member being a prefix of another — checkable, pinnable, and
+ *   one careless addition away from false. A one-byte tag makes it structural.
  *
- * **Tags reserve retired values and are never renumbered** (D1). A renumber
+ * **Tags reserve retired values and are never renumbered** (TYPES_INTERFACE →
+ * Primitives). A renumber
  * moves every mint txId carrying the tag and, through `computeCandidateBoxId`,
  * every box id minted under it — with no compiler signal. Reserve by leaving the
  * number out of this table; never reuse it.
@@ -573,11 +570,11 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
  *
  * `subject` bytes are the **caller's** to encode — this package does not know
  * what a postId or a voucher pair is; the per-reason encoding table belongs to
- * `NODE_INTERFACE.md`. It is **length-prefixed** here, which retires that
- * table's other standing obligation: the previous form appended it raw, so the
- * contract had to require every per-reason subject encoding to be fixed-length
- * or self-delimiting. `lp()` makes uniqueness within a reason structural, in the
- * same way the tag makes it structural across reasons.
+ * `NODE_INTERFACE.md`. It is **length-prefixed** here, and that is what makes
+ * uniqueness *within* a reason structural, the same way the tag makes it
+ * structural *across* reasons. Appended raw, two different subjects could
+ * concatenate identically, and every per-reason subject encoding would have to
+ * be fixed-length or self-delimiting for the contract to hold.
  *
  * Total throughout: `vlqU` and `lp` sentinel rather than throw, and `enum8`
  * writes its reserved `0xff` for a tag outside the table. A malformed mint
@@ -599,14 +596,13 @@ export function computeMintTxId(height: number, reason: MintReason, subject: Uin
 /**
  * Box id of a **stored** box — a total function of the box itself.
  *
- * As of Spec G phase G3b this is exactly `computeCandidateBoxId` applied to the
- * box's own provenance, so there is one derivation rather than two. The legacy
- * content hash it replaced (`blake2b512(canonicalBoxBytes(box))`, no domain tag,
- * no provenance in the preimage) is gone — that derivation is what M-11 was:
- * it hashed the apply-mutated `createdAtBlock`, so a stored box could not match
- * its own id. Deleting the field and binding the id to `txId ‖ index` is what
- * makes `stored.id === computeBoxId(stored)` hold **by construction** for every
- * box in the UTXO set, checkable by any light client, indexer or AVL prover.
+ * Exactly `computeCandidateBoxId` applied to the box's own provenance, so there
+ * is one derivation rather than two. Binding the id to `txId ‖ index` instead of
+ * to content alone is what makes `stored.id === computeBoxId(stored)` hold **by
+ * construction** for every box in the UTXO set, checkable by any light client,
+ * indexer or AVL prover. A content-only hash cannot: it would cover whatever
+ * block application mutates, and a stored box would stop matching its own id —
+ * audit M-11.
  *
  * Takes one argument, and must keep taking one: a second argument would mean the
  * box no longer carries what its id derives from.
@@ -619,10 +615,13 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
 // Box types
 // ---------------------------------------------------------------------------
 
-// 'block_apply' replaced 'epoch_tally' (P2-D): the meaning was always
-// "consumable only by block application", and there is no epoch. The retired
-// 'epoch_tally' string stays reserved — never reuse: guard strings are box
-// content, inside the box-id preimage.
+// `'block_apply'` means "consumable only by block application"; there is no
+// epoch. **`'epoch_tally'` is a retired guard string — reserved, never reuse.**
+// Node's `checkOutputShape` rejects any guard that is not the canonical one for
+// its `boxType`, so reinstating the name would silently make an output shape
+// that is invalid today valid. Guard is *not* in the id preimage (see
+// `canonicalBoxBytes`), so this reservation is a validation-rule one, not an
+// identity one.
 export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'inviter_signature' | 'bond_dual' | 'hash_preimage_with_bond';
 
 /**
@@ -630,26 +629,27 @@ export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'in
  * hashes. No `id`, no provenance.
  */
 export interface BoxCandidate {
-  // boxType 'like' retired (P2-D) — string reserved, never reuse: boxType is
-  // box content, inside the box-id preimage.
+  // `'like'` is a retired box type — string reserved, never reuse. `boxType` is
+  // box content and the first byte of every id preimage; `BOX_TYPE` above burns
+  // tag 3 for it.
   boxType: 'karma' | 'credit' | 'invite' | 'bond' | 'post_lock' | 'vouch';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
-  // `createdAtBlock` was here and is **deleted** (Spec G phase G3b, D3). It was
-  // the only apply-mutated field, and its presence is what made the id
-  // dishonest. The node still records the settled height in a `created_at_block`
-  // store column, which consensus code must never read: it is not committed in
-  // the `stateRoot`, so a node bootstrapping from an AVL snapshot cannot
-  // reconstruct it. The decay clock reads a committed per-identity record.
+  // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
+  // apply-mutated field in the candidate makes the id dishonest: the box the
+  // store holds stops matching its own derivation. The node records the settled
+  // height in a `created_at_block` store column, which consensus code must never
+  // read — it is not committed in the `stateRoot`, so a node bootstrapping from
+  // an AVL snapshot cannot reconstruct it. The decay clock reads a committed
+  // per-identity record.
 }
 
 /**
  * A box as it exists in the ledger, the store and the AVL value: a candidate
  * plus the provenance that gives it identity.
  *
- * `txId`/`index` are **required** (Spec G phase G3a), which is what makes "has
- * an id but no provenance" — the M-11 state — unrepresentable rather than merely
- * discouraged. A producer that forgets provenance is now a compile error, in the
- * same way phase G2 turned a missing `MintContext` into one.
+ * `txId`/`index` are **required**, which is what makes "has an id but no
+ * provenance" — the M-11 state — unrepresentable rather than merely discouraged.
+ * A producer that forgets provenance is a compile error.
  *
  * `id` stays optional: producers build the candidate-plus-provenance object and
  * hash *it* to get the id, so the value is genuinely absent for one expression.
@@ -678,9 +678,8 @@ export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   guard: 'owner_signature';
-  proofSource: string;        // PostId | StumpHash | InviteTxId
-  // `lastTouchBlock` was here and is **deleted** (Spec G phase G3b). It had no
-  // reader anywhere in `src` — the decay clock reads the committed per-identity
+  proofSource: string;        // Free-form tag or hex id — the stamped set is in writeBoxTypeFields
+  // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
   decayBurn?: boolean;
 }
@@ -713,19 +712,20 @@ export interface BondBox extends BoxBase {
   inviterId: UserId;               // Owner — the inviter
   /**
    * Which output of this bond's **own creating transaction** is the paired
-   * InviteBox. Replaces `inviteBoxId: BoxId` (user decision, 2026-08-06).
+   * InviteBox — an index, not a box id (user decision, 2026-08-06).
    *
    * A box id here would be **circular**: the id derives from the creating
    * transaction's `txId`, and this is a content field, so it sits inside the
-   * bytes `computeTxId` hashes. Measured: no fixed point exists. Spec G §3.1's
-   * "no circularity" argument covers *provenance* fields (`computeTxId` excludes
-   * `id`/`txId`/`index`) and does not reach a content field carrying a box id.
+   * bytes `computeTxId` hashes. Measured: no fixed point exists. The
+   * no-circularity argument in TYPES_INTERFACE → BoxId covers *provenance*
+   * fields (`computeTxId` excludes `id`/`txId`/`index`) and does not reach a
+   * content field carrying a box id.
    *
    * An index is not merely a workaround for that. The bond and the invite are
    * always outputs of one transaction, so pairing by position makes a bond that
-   * points at *someone else's* invite inexpressible rather than caught late —
-   * the old field could name any box in the world and was only checked when it
-   * was dereferenced, one transaction later. The invite resolves from
+   * points at *someone else's* invite inexpressible rather than caught late — a
+   * box id could name any box in the world, and is checked only when it is
+   * dereferenced, one transaction later. The invite resolves from
    * `(bond.txId, inviteOutputIndex)`, which `UNIQUE(tx_id, output_index)`
    * already indexes.
    */
@@ -736,9 +736,9 @@ export interface BondBox extends BoxBase {
    * pre-committed bond would let the inviter reclaim immediately and make the
    * network's only sybil cost free.
    *
-   * The width is the field's whole subtlety, and this comment used to read
-   * "32 raw bytes — set during commit", which is what the layout table was
-   * drafted from. It encodes as `opt(b32)`; see `writeOptBytesNOrThrow`.
+   * The width is the field's whole subtlety: "32 raw bytes" is wrong for the
+   * unclaimed case, and the layout follows the width rather than the declared
+   * type. It encodes as `opt(b32)`; see `writeOptBytesNOrThrow`.
    */
   inviteePublicKey: Uint8Array;
   probationStartBlock: number;     // Set during commit
@@ -789,7 +789,7 @@ export type AnyBoxCandidate =
 export interface UtxoTransaction {
   inputs: BoxId[];
   /**
-   * Candidates, not boxes (Spec G phase G3a). A transaction's outputs cannot
+   * Candidates, not boxes. A transaction's outputs cannot
    * carry provenance: their `txId` is the id of the very transaction being
    * built, so a signed output with an `id` in it would be circular. Block
    * application materializes them — see node's `materializeOutput`.
@@ -799,7 +799,8 @@ export interface UtxoTransaction {
   preimages?: Record<string, Uint8Array>;  // boxId → hash preimage for hash_preimage guards
   protocolVersion: number;
   /**
-   * Present ⟺ this transaction is a like on the named post (P2-D). The field
+   * Present ⟺ this transaction is a like on the named post (ARCHITECTURE →
+   * The like transaction). The field
    * sits inside the `computeTxId` preimage, so the signature covers the
    * target and a relay cannot re-point a like. This package defines only the
    * field and its encoding; the biconditional itself — present ⟺ the tx
@@ -819,24 +820,20 @@ export interface UtxoTransaction {
  *   | 4 | protocolVersion | vlqU                                         |
  *   | 5 | likeTarget      | opt(b32)                                     |
  *
- * Order preserves the pre-migration sequence, so the change is dialect-only in
- * *coverage* — but it is the one place in this phase where the dialect change
- * closes a real defect rather than only unifying a style. **This is P2-C row C1,
- * satisfied structurally:**
+ * **Every field is counted, tagged or length-prefixed, and each one is
+ * load-bearing for injectivity:**
  *
- * - `inputs` and `outputs` were concatenated with **no count and no length
- *   prefix** (`for (const input of tx.inputs) h.update(input)`), and
- *   `canonicalBoxBytes` is variable-length — so two different output lists
- *   could concatenate to identical bytes. `arr()`'s count prefix closes it.
- * - `protocolVersion` went in as `String(...)`, unprefixed decimal text: the
- *   exact M-1 pattern, one struct over. It is `vlqU` now.
- * - `likeTarget` presence was marked by an ASCII `like:` tag chosen so a
- *   decimal `protocolVersion` could not forge it. `opt()`'s 0/1 tag replaces
- *   the trick, and preserves the `!== undefined` distinction — an empty-string
- *   target still hashes differently from absence.
- * - `preimages` already sorted by key, so the normative sort **ratifies**
- *   existing behaviour here rather than changing it. Keys are lowercase hex, so
- *   sorting the strings and sorting the decoded bytes give the same order.
+ * - `inputs` and `outputs` carry `arr()`'s count prefix. Concatenated without
+ *   one, two different output lists could produce identical bytes, since
+ *   `canonicalBoxBytes` is variable-length.
+ * - `protocolVersion` is `vlqU`. As unprefixed decimal text it would be the
+ *   exact M-1 collision pattern, one struct over.
+ * - `likeTarget` presence is `opt()`'s 0/1 tag, which needs no in-band marker
+ *   that a neighbouring field could forge, and preserves the `!== undefined`
+ *   distinction — an empty-string target hashes differently from absence.
+ * - `preimages` is sorted by key, per the normative map sort. Keys are
+ *   lowercase hex, so sorting the strings and sorting the decoded bytes give
+ *   the same order.
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  */
@@ -861,31 +858,29 @@ function txIdBytes(tx: UtxoTransaction): Uint8Array {
  * Deterministic transaction ID: `blake2b512(TX_ID_DOMAIN ‖ txIdBytes)[0:32]`.
  *
  * Outputs go through `canonicalBoxBytes`, so identity has exactly **one** box
- * encoding rather than two that must be kept in agreement. This matters from
- * Spec G phase C on: once producers materialize outputs with `txId`/`index`
- * set, a local `{ id, ...rest }` strip would hash provenance into the very txId
- * that provenance is derived from — circular, and it would make a
- * transaction's id depend on ids that cannot exist until that id is known.
- * Under the positional encoder those fields are not merely stripped, they have
- * no writer.
+ * encoding rather than two that must be kept in agreement. Node's
+ * `materializeOutput` sets `txId`/`index` on outputs, so a local
+ * `{ id, ...rest }` strip here would hash provenance into the very txId that
+ * provenance derives from — circular, and it would make a transaction's id
+ * depend on ids that cannot exist until that id is known. Under this encoder
+ * those fields are not merely stripped: they have no writer.
  *
- * `TX_ID_DOMAIN` is applied as of Spec G phase G3b. Box ids, transaction ids and
+ * `TX_ID_DOMAIN` separates this preimage. Box ids, transaction ids and
  * identity-record keys share one 32-byte keyspace and the AVL tree holds two
  * entity kinds, so the separation has to be in the preimage. This is also **the
- * only implementation** — node's `utxo-engine.ts` carried a second one until
- * G3b deleted it; it verified signatures against an untagged id while every
- * builder signed a tagged one.
+ * only implementation**, and must stay so — a second one that omitted the tag
+ * would verify signatures against an untagged id while every builder signed a
+ * tagged one.
  *
- * ⚠ **This function now throws on an out-of-domain transaction**, where the
- * text-and-concatenation form absorbed almost anything. `checkTxEnvelope`
+ * ⚠ **This function throws on an out-of-domain transaction.** `checkTxEnvelope`
  * establishes the domain of `inputs`, the `preimages` keys and `likeTarget`
  * (all pinned at 64 lowercase hex) — but it deliberately does **not** type the
  * output entries, and `checkOutputShape` runs later, at `validateTx` step 4.
  * At `block-apply.ts`'s embedded-tx path only the envelope has run, so an
  * output carrying a `value` outside the u64 or a 31-byte `owner` reaches a
- * throwing writer there. Spec §2.5 books an explicit domain check at that call
- * site to Phase 6; that obligation is **wider than the `bigint` the spec names**
- * — it covers every fixed-width output field.
+ * throwing writer there. TYPES_INTERFACE → Totality books an explicit domain
+ * check at that call site; the obligation is **wider than the `bigint` the
+ * contract names** — it covers every fixed-width output field.
  */
 export function computeTxId(tx: UtxoTransaction): TxId {
   return createHash('blake2b512')

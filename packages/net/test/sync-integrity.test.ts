@@ -26,7 +26,8 @@ import type { Inv, ModifierRequest } from '../src/sync-types.js';
  * Sync-conversation outstanding-ids cap. Kept in lockstep with
  * MAX_OUTSTANDING_IDS in src/sync-machine.ts — deliberately not imported: the
  * cap tests must fail loudly if the implementation constant drifts, and this
- * file must still load against pre-fix sources for vacuity runs.
+ * file must still load against a tree without these checks, for the vacuity
+ * runs each case documents.
  */
 const OUTSTANDING_CAP = 4 * MAX_INV_IDS;
 
@@ -162,9 +163,10 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('response binding — injection (M-10a)', () => {
-    // PRE-FIX: this case FAILS — handleModifierResponseMsg ignored its peer id
-    // and never checked for an outstanding request, so peer B's response
-    // reached store.appendBlocks and reset the stall clock.
+    // Vacuity check: without response binding this case fails. If
+    // handleModifierResponseMsg ignores its peer id and never checks for an
+    // outstanding request, peer B's response reaches store.appendBlocks and
+    // resets the stall clock.
     it('drops a response from a non-sync peer while a request to the sync peer is outstanding', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -203,8 +205,8 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('response binding — unsolicited ids', () => {
-    // PRE-FIX: this case FAILS — nothing checked whether an id was requested,
-    // so the never-requested id reached store.appendBlocks.
+    // Vacuity check: this case fails without the requested-id check — the
+    // never-requested id reaches store.appendBlocks.
     it('drops ids never requested, then still accepts the requested ones', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -239,9 +241,9 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('stall clock (M-10b)', () => {
-    // PRE-FIX: this case FAILS — lastProgressMs was reset for ANY non-empty
-    // modifiers array, so junk every <60s kept the victim pinned to the peer
-    // forever and rotatePeer never ran.
+    // Vacuity check: this case fails if lastProgressMs resets for ANY non-empty
+    // modifiers array — junk every <60s then pins the victim to the peer
+    // forever and rotatePeer never runs.
     it('rotates away from a peer feeding non-advancing responses', () => {
       const { machine, appended } = makeMachine(); // appendBlocks does NOT advance height
       peerActive(machine, 'peerA', 100); // t=0: enters syncing, clock reset
@@ -292,7 +294,8 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('partial responses', () => {
-    // PRE-FIX: the final step FAILS — a re-sent consumed id was re-applied.
+    // Vacuity check: the final step fails without consumed-id tracking — a
+    // re-sent consumed id is re-applied.
     it('applies a subset, keeps the remainder outstanding, rejects re-sends of consumed ids', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -309,7 +312,7 @@ describe('sync integrity (audit M-10)', () => {
       expect(violations).toHaveLength(0);
     });
 
-    // PRE-FIX: FAILS — both copies were appended.
+    // Vacuity check: without per-response dedup both copies are appended.
     it('processes a duplicate id within one response once', () => {
       const { machine, appended } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -339,7 +342,8 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('lifecycle — rotation and disconnect', () => {
-    // PRE-FIX: both cases FAIL — the late response was applied.
+    // Vacuity check: both cases fail without the rotation clear — the late
+    // response is applied.
     it('drops a late response for ids requested before a stall rotation', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -387,9 +391,9 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('request provenance (M-10c)', () => {
-    // PRE-FIX: FAILS — handleInvMsg ignored its peer id, so B's Inv made us
-    // send a ModifierRequest to the sync peer and (post-binding) would have
-    // grown the outstanding set on a third party's say-so.
+    // Vacuity check: this fails if handleInvMsg ignores its peer id — B's Inv
+    // then sends a ModifierRequest to the sync peer and grows the outstanding
+    // set on a third party's say-so.
     it('ignores a third-party Inv: no request sent, nothing becomes outstanding', () => {
       const { machine, sent, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -417,7 +421,7 @@ describe('sync integrity (audit M-10)', () => {
       expect(appended).toHaveLength(1);
     });
 
-    // PRE-FIX: FAILS — the request repeated both copies of x.
+    // Vacuity check: without Inv dedup the request repeats both copies of x.
     it('deduplicates ids repeated within one Inv', () => {
       const { machine, sent } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -428,7 +432,8 @@ describe('sync integrity (audit M-10)', () => {
       expect(reqs[0]!.req.ids).toEqual(['x', 'y']);
     });
 
-    // PRE-FIX: FAILS — the second request re-asked for x.
+    // Vacuity check: without the outstanding-set check the second request
+    // re-asks for x.
     it('does not re-request ids that are already outstanding', () => {
       const { machine, sent } = makeMachine();
       peerActive(machine, 'peerA', 100);
@@ -446,7 +451,7 @@ describe('sync integrity (audit M-10)', () => {
   // -----------------------------------------------------------------------
 
   describe('outstanding-set cap', () => {
-    // PRE-FIX: FAILS — no cap existed; every Inv produced a full request.
+    // Vacuity check: without the cap every Inv produces a full request.
     it('trims requests at the cap, refuses past it, and frees budget on acceptance', () => {
       const { machine, sent, appended } = makeMachine();
       peerActive(machine, 'peerA', 10_000);

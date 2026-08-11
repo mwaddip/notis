@@ -176,39 +176,24 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
   });
 
   it('rejects the same block with powNonce NaN (M-6 — pre-fix code Accepted this)', () => {
-    // Vacuity evidence: against pre-fix gossip.ts this exact message was
-    // ACCEPTED and forwarded mesh-wide. verifyOrderingBlockStructure guarded
-    // powNonce with `typeof !== 'number' || < 0`, and `typeof NaN ===
-    // 'number'` while `NaN < 0` is false — so structure passed, the version
-    // check passed, and nothing else ran before Accept. The single-field-delta
-    // control that Accepts is the mined-nonce case above.
-    //
-    // Phase 1f moved the rejection one gate earlier. `verifyOrderingBlockStructure`
-    // now states the header's whole encodable domain, and `powNonce` is a
-    // `vlqU` field, so `isU64Safe` refuses NaN at `gossip.ts:98` — before
-    // net's own PoW check at `:114` ever runs. Same `Reject`, same kind, peer
-    // and weight; the attribution improved, because the gate now names the
-    // field instead of blaming PoW for a header that never reached it.
+    // The single-field-delta control that Accepts is the mined-nonce case
+    // above.
     const { topicValidators, peerMgr, penaltySpy } = makeHarness();
     const validate = topicValidators.get(TOPICS.orderingBlock)!;
     const peer = newPeer(peerMgr);
 
-    // ⚠ **Phase 3b moved the rejection a second time, and changed its severity.**
-    // The comment above describes gate 1f-1; what follows supersedes its last
-    // paragraph.
+    // `powNonce` is a `vlqU` field and `NaN` is outside its encodable domain,
+    // so it writes `VLQ_SENTINEL` — ten bytes past `MAX_SAFE_INTEGER` — which
+    // `readVlqU` refuses to decode. The message dies at the decode boundary and
+    // never reaches `verifyOrderingBlockStructure` at all.
     //
-    // The old claim was "NaN survives the CBOR wire round-trip — this is a
-    // reachable network input". Under the positional format it does not. `NaN`
-    // is outside `vlqU`'s encodable domain, so it writes `VLQ_SENTINEL` — ten
-    // bytes past `MAX_SAFE_INTEGER` — and `readVlqU` refuses to decode it. The
-    // message no longer reaches `verifyOrderingBlockStructure` at all.
-    //
-    // The penalty class changes with it, from a 100-point misbehavior to a
-    // permanent ban, and **that is the decided semantics, not a regression**
-    // (spec §2.2): if the serializer is the validator, bytes that do not decode
-    // are malformed rather than merely bogus. The one-way sentinel is what makes
-    // it safe — a malformed value encodes, but its encoding decodes to nothing,
-    // so it can never impersonate a well-formed header.
+    // The verdict is therefore a permanent ban rather than a 100-point
+    // misbehavior penalty, and that is the decided semantics
+    // (NET_INTERFACE → Stage 1): where the serializer is the validator
+    // (ARCHITECTURE → Wire Format), bytes that do not decode are malformed
+    // rather than merely bogus. The one-way sentinel is what makes it safe — a
+    // malformed value encodes, but its encoding decodes to nothing, so it can
+    // never impersonate a well-formed header.
     const block = makeBlock({ ...baseHeader, powNonce: Number.NaN });
     const encoded = encodeOrderingBlock(block);
 
@@ -233,36 +218,20 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     const peer = newPeer(peerMgr);
 
     // Single-field delta from the accepted anchor: only height changes.
-    // Pre-fix, height NaN/floats passed structure (`< 1` is false for NaN;
-    // 1.5 >= 1) and were forwarded. The distinct reason string still proves the
-    // rejection is attributable to height rather than to PoW (which the height
-    // change also breaks) — that property is what this test is for.
     //
-    // What moved in Phase 1f is *which* gate supplies it.
-    // `verifyOrderingBlockStructure` now states the header's encodable domain,
-    // so `isU64Safe` refuses NaN and 1.5 at `gossip.ts:98`, before net's own
-    // `Number.isSafeInteger` add-on at `:109` ever ran. 1f-3 deleted that
-    // add-on and renamed this test off "via the height guard" — a test named
-    // for a gate that no longer exists is the vacuity pattern, and the name is
-    // the last thing to go stale because nothing type-checks it.
+    // `height` is a `vlqU` row, so NaN and 1.5 are outside its encodable domain
+    // and sentinel on encode with no decoding — no peer can put either on the
+    // wire, and the verdict is a permanent ban rather than a misbehavior
+    // penalty, for the reason given above the powNonce case.
     //
-    // This test is also the deletion's standing evidence. It drives the real
+    // The struct is therefore also checked directly below, driving the real
     // `verifyOrderingBlockStructure` (the harness injects the package, not a
-    // stub) and asserts the *structure gate's* message. It passed before the
-    // deletion, which is what proved the guard never fired for these inputs;
-    // it must keep passing after, which is what proves nothing was lost. The
-    // general case is a subset argument rather than these two values:
-    // `isU64Safe` rejects everything `Number.isSafeInteger` rejects, and more.
-    // ⚠ **Phase 3b moves it once more, for the reason above the powNonce case.**
-    // `height` is a `vlqU` row, so NaN and 1.5 sentinel on encode and have no
-    // decoding — the structure gate never sees them, and the verdict is a
-    // permanent ban rather than a misbehavior penalty (spec §2.2).
-    //
-    // The *deletion evidence* this test carries for 1f-3 survives the move and
-    // is restated below over the struct directly: `verifyOrderingBlockStructure`
-    // still rejects these two by name, so nothing was lost when net's
-    // `Number.isSafeInteger` add-on went. What changed is that no peer can put
-    // them on the wire in the first place.
+    // stub): the structure gate independently rejects both values by name, and
+    // its distinct reason string is what proves the rejection is attributable
+    // to height rather than to PoW, which the height change also breaks. That
+    // attribution is the property this test exists for, and it holds as a
+    // subset argument rather than as a claim about two values — `isU64Safe`
+    // rejects everything `Number.isSafeInteger` rejects, and more.
     const block = makeBlock({ ...baseHeader, powNonce: minedNonce, height: badHeight });
 
     expect(verifyOrderingBlockStructure(block)).toEqual({
@@ -339,12 +308,12 @@ describe('sub-block topic validator (Stage 1)', () => {
   });
 
   it('rejects the same sub-block with a corrupted signature (pre-fix code Accepted this)', () => {
-    // Vacuity evidence: against pre-fix gossip.ts this exact message was
-    // ACCEPTED and forwarded — runStage1SubBlock never called
-    // verifyPostSignature, and the PoW preimage excludes the signature, so
-    // every check that did run still passes here. The single-field-delta
-    // control that Accepts is the real-signature case above. This is the
-    // NET_INTERFACE Stage-1 drift being closed.
+    // Non-vacuity: the signature is the only thing here that can reject this
+    // message. The PoW preimage excludes it, so every other check in
+    // `runStage1SubBlock` passes on these exact bytes — drop
+    // `verifyPostSignature` and the message is Accepted and forwarded. The
+    // single-field-delta control that Accepts is the real-signature case above.
+    // This is the signature check NET_INTERFACE → Stage 1 requires.
     const badSig = new Uint8Array(validPost.signature);
     badSig[0] = badSig[0]! ^ 0xff;
     const sb: SubBlock = {
@@ -411,21 +380,15 @@ describe('sub-block topic validator (Stage 1)', () => {
   });
 
   it('a sub-block with a missing post cannot reach the validator at all', () => {
-    // ⚠ **Rewritten by Phase 3b, because its premise stopped existing.** It used
-    // to build a post-less sub-block, hand it to `encodeSubBlock`, and assert
-    // that the topic validator rejected the resulting message with
-    // 'Sub-block missing post'.
-    //
-    // Under a positional format there is no such message. `encodeSubBlock`
-    // writes the post's fields inline, so a sub-block without one has no
-    // encoding, and no byte string decodes to one either — a decoder reading
-    // the post's fields runs off the end of the buffer. The malformed input the
-    // test wanted to transmit is unrepresentable on the wire, which is the
-    // property the migration exists to produce.
+    // There is no such message to send. `encodeSubBlock` writes the post's
+    // fields inline, so a sub-block without one has no encoding, and no byte
+    // string decodes to one either — a decoder reading the post's fields runs
+    // off the end of the buffer. A post-less sub-block is unrepresentable on
+    // the wire, which is the property a positional format exists to produce.
     //
     // Both halves are pinned, because "unrepresentable" is a claim about the
-    // encoder *and* the decoder, and the check that used to catch it still
-    // exists for the paths that do not cross a codec.
+    // encoder *and* the decoder, and the structure gate still covers the paths
+    // that do not cross a codec.
     const { post: _post, ...rest } = validSubBlock;
     expect(() => encodeSubBlock(rest as SubBlock)).toThrow();
 
@@ -433,7 +396,7 @@ describe('sub-block topic validator (Stage 1)', () => {
     expect(() => decodeSubBlock(truncated)).toThrow(ReaderError);
 
     // The structure gate keeps its verdict for callers that hold a struct
-    // rather than bytes — it is not reached through gossip any more, but it is
+    // rather than bytes. Gossip does not reach it for this input, but it is
     // still the rule, and deleting a check needs the same care as adding one.
     expect(verifySubBlockStructure(rest as SubBlock))
       .toEqual({ valid: false, error: 'Sub-block missing post' });
@@ -513,22 +476,15 @@ describe('sub-block topic validator (per-network post difficulty)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Dispatch listener — Phase 1f-3b, the catch whose comment promised a log
+// Dispatch listener — decode failure and handler throw, contained separately
 //
-// The catch at the end of the `gossipsub:message` listener read:
+// The `gossipsub:message` listener gives each its own span and logs both: a
+// decode failure past the topic validator is our bug, a handler throw is the
+// app layer's, and one span over both would report neither.
 //
-//     } catch {
-//       // Decode failure here would indicate a validator bug — the message
-//       // already passed the topic validator.  Log and move on.
-//     }
-//
-// There was no log. So the one condition the comment names produced complete
-// silence, and — because the `try` spanned the handler call as well, which the
-// comment never claimed — so did every throw out of an app-layer handler.
-//
-// These tests drive the REAL listener registered by subscribeTopics. The
-// harness above stubs `addEventListener`, so the listener was never captured
-// and none of this path had any coverage; this one captures it.
+// These tests drive the REAL listener registered by `subscribeTopics`. The
+// harness above stubs `addEventListener` and so never captures the listener,
+// which leaves this path uncovered; this one captures it.
 // ---------------------------------------------------------------------------
 
 type GossipListener = (evt: {

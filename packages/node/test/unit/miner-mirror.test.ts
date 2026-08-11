@@ -9,8 +9,8 @@
  * meetsPowTarget, "two consumers cannot import this package and mirror it instead".
  *
  * The property that makes it worth having is that a *missing* declaration fails.
- * The script previously carried the comment "byte-identical to block-creator.ts
- * solvePoW()" — a duplication claim checked by nothing.
+ * A comment asserting the copy is byte-identical would be a duplication claim
+ * checked by nothing; the extraction is checked every run.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -57,8 +57,9 @@ describe('miner.mjs PoW predicate ↔ @dagsocial/validation', () => {
   const miner = loadMinerPredicate();
 
   it('declares each half exactly once', () => {
-    // The defect this unit removes was TWO copies of the walk in this one file —
-    // `solvePoW` and `throttledSolvePoW` each carried their own.
+    // The script has two solvers — `solvePoW` and `throttledSolvePoW` — and they
+    // share one copy of each half. A second declaration is a second walk this
+    // mirror does not extract, so the count is what keeps the pin exhaustive.
     const src = readFileSync(MINER, 'utf8');
     expect(src.split('function powTarget(').length - 1).toBe(1);
     expect(src.split('function meetsPowTarget(').length - 1).toBe(1);

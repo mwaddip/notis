@@ -123,7 +123,7 @@ describe('OutboundManager', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Outbound-only counting (contract: "Outbound Manager", audit L-14 phase 2)
+  // Outbound-only counting (NET_INTERFACE → Outbound Manager)
   // -----------------------------------------------------------------------
 
   describe('planTick counts outbound connections only (eclipse resistance)', () => {

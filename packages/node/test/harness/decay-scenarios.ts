@@ -1,18 +1,18 @@
 import type { DecayCfg, Scenario } from './decay-timeline.js';
 
 /**
- * The timelines the phase-D golden fixtures were captured from.
+ * The timelines the golden decay fixtures are captured from.
  *
  * Split into two groups on purpose:
  *
  *  - **`EQUIVALENT_SCENARIOS`** — the equivalence gate. Every one of these must
- *    reproduce its frozen capture byte-for-byte after the record swap. They
- *    cover the ledger shape production is actually in: forced karma
- *    consolidation (Spec G D9) leaves at most one karma box per owner, which is
- *    what makes "oldest non-decay box" and "last activity" the same number.
+ *    reproduce its frozen capture byte-for-byte. They cover the ledger shape
+ *    production is actually in: forced karma consolidation leaves at most one
+ *    karma box per owner, so "oldest non-decay box" and "last activity" are the
+ *    same number and no clock design can tell them apart.
  *
- *  - **`DIVERGENT_SCENARIOS`** — a shape where the two clocks legitimately
- *    disagree, captured so the disagreement is on the record rather than
+ *  - **`DIVERGENT_SCENARIOS`** — a multi-box shape where those two readings
+ *    part company, captured so the difference is on the record rather than
  *    missing. See `decay-divergence.test.ts`.
  *
  * All heights and amounts are chosen so every arithmetic step is checkable by
@@ -31,18 +31,17 @@ export const FAST: DecayCfg = {
 };
 
 /**
- * The production constants **as they stood when the golden fixture was
- * captured** (pre-P2A, 2-minute-block basis), frozen as literals on purpose.
+ * Production-scale constants, frozen as literals on purpose.
  *
- * The fixture exists to prove the box-age → identity-record swap
- * behaviour-identical, so the constants' *live* values are irrelevant to the
- * property under test — "production scale" means production at capture time.
- * Reading the live constants here pinned the golden's outputs while letting
- * its inputs float, which is how the P2-A unit correction (20160→40320,
- * 720→1440) broke the capture without any behaviour changing. All four fields
- * are frozen, not just the two P2-A moved: all four are inputs of the frozen
- * outputs, and two of them staying equal to the live constants would be luck,
- * not construction.
+ * ⚠ **A frozen output demands frozen inputs.** These fixtures pin what the
+ * decay path produces, so reading the live constants here would pin the
+ * outputs while letting the inputs float: a units correction elsewhere then
+ * breaks the capture with no behaviour having changed, and the break reads as
+ * a decay regression.
+ *
+ * All four fields are frozen, not only the ones that have moved. Every one of
+ * them is an input of the frozen outputs, and a field that happens to equal the
+ * live constant today is equal by luck rather than by construction.
  */
 export const PROD: DecayCfg = {
   staleThresholdBlocks: 20160,
@@ -123,13 +122,11 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // The intra-block adjacency phase C's report §6.6 established is reachable:
-    // block application runs `applyKarmaDecay` before `processVouchCooldowns`,
-    // so a vouch settlement can mint karma for an owner decay just fired for,
-    // **at the same height**. Under the swap that mint writes
-    // `lastActivityBlock` to the same height decay wrote `lastDecayBlock`; under
-    // the old code it created a non-decay karma box at that height. Both must
-    // reset staleness identically.
+    // The intra-block adjacency is reachable: block application runs
+    // `applyKarmaDecay` before `processVouchCooldowns`, so a vouch settlement
+    // can mint karma for an owner decay has just fired for, **at the same
+    // height**. That mint writes `lastActivityBlock` to the very height decay
+    // wrote `lastDecayBlock`, and staleness has to restart from it.
     name: 'decay-then-mint-same-block',
     cfg: FAST,
     owners: ['alice'],
@@ -203,10 +200,10 @@ export const DIVERGENT_SCENARIOS: Scenario[] = [
     // mints a second one to the same identity (its input is the *system* karma
     // box). Neither spends what the recipient already holds, so both survive.
     //
-    // The old clock reads the **oldest** non-decay box; the record reads the
-    // **newest** activity. Spec G §7 names this as the blocker this unit
-    // removes, so the difference is intended — but it is a behavioural
-    // difference, so it is captured rather than assumed away.
+    // This is the shape where "oldest non-decay box" and "newest activity" are
+    // different numbers, so a clock kept on the boxes and a clock kept on the
+    // record answer differently. The committed record reads the newest. That is
+    // a behavioural choice, so it is captured rather than assumed away.
     name: 'two-non-decay-boxes-at-different-heights',
     cfg: FAST,
     owners: ['alice'],

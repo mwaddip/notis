@@ -38,7 +38,7 @@ import type {
 // The process config, distinct from the injected `config` below. The two
 // emission values read off it are re-checked by the applier against the same
 // singleton (`block-apply` §5, §5b), and `computeBlockReward` runs on the apply
-// path of server-role nodes, where the injected one was never assigned.
+// path of server-role nodes, where the injected one is never assigned.
 import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
 import { expectedTarget } from './difficulty.js';
@@ -85,7 +85,6 @@ export function computeSubBlockRoot(tree: SubBlockTree): string {
       // lives in `subBlockEntryBytes`, not here.
       leafHash('subblock', subBlockEntryBytes(entry))),
     ...tree.pruneEntries.map((entry) =>
-      // Tag changed from 'stump' to 'prune' (intentional breaking change, per verifiable-prune spec)
       leafHash('prune', Buffer.from(serializePruneEntry(entry)))),
   ];
   return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
@@ -383,7 +382,7 @@ export function createOrderingBlock(): OrderingBlock | null {
   // Either failure means the store is no longer what this node wrote.
   //
   // Both go to the boundary rather than declining to produce. Declining is the
-  // producer's mirror of the rejection the apply funnel used to make: the timer
+  // producer's mirror of blaming an arriving block for our own store: the timer
   // fires again, reads the same broken row, declines again, and a node that
   // never produces while staying up is indistinguishable from an idle miner —
   // the same silence, from the other end of the same fault.
@@ -479,8 +478,8 @@ export function createOrderingBlock(): OrderingBlock | null {
   // VERIFY_STATE_ROOT on rejects such a block, which is correct.
   const speculation = computePostBlockStateRoot(candidate, newHeight);
 
-  // 19c. A body the mutation phase rejected must not be mined or templated
-  // (P2-B 1c): the PoW would be spent on a block this node's own apply — and
+  // 19c. A body the mutation phase rejected must not be mined or templated:
+  // the PoW would be spent on a block this node's own apply — and
   // every peer's — rejects. Reachable with unmutated code: a pooled tx whose
   // validity reads third-party state (a bond settlement's threshold leg) goes
   // stale in the pool while its inputs stay live. Evict what the body included

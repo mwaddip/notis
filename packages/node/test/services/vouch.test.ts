@@ -221,8 +221,9 @@ describe('vouch service', () => {
   // ten such boxes, which is why the check lives here and not in a fixture:
   // the in-memory object is exactly what did NOT disagree.
   //
-  // `types/src/utxo.ts:210-212` says this holds "by construction for every box
-  // in the UTXO set, checkable by any light client, indexer or AVL prover".
+  // `computeBoxId` in `@dagsocial/types` says this holds "by construction for
+  // every box in the UTXO set, checkable by any light client, indexer or AVL
+  // prover".
   // Measured false for a number-valued box, true for a bigint-valued one.
   // -------------------------------------------------------------------------
   it('every seeded karma and vouch box still derives its own id after storage', () => {

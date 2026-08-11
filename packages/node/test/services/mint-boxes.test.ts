@@ -23,7 +23,7 @@ import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
  * The producer-built objects come from the **block journal**, not from a
  * test-local reconstruction: the journal records the object `insertBox`
  * actually received, so these assertions bite on the shipped producer rather
- * than on a mirror of it (the trap phase B's report §4a documents).
+ * than on a mirror of it.
  */
 
 async function importDbFresh() {
@@ -79,7 +79,7 @@ function makeAvlDb(): Database.Database {
   return database;
 }
 
-// Deterministic fixtures — no randomness, no Date.now() (Spec G §6 hygiene).
+// Deterministic fixtures — no randomness, no Date.now().
 const user = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const POST_A = 'a1'.repeat(32);
 const HEIGHT = 700;

@@ -18,7 +18,7 @@ import { ClientError } from './client-error.js';
 const LIKE_TARGET_RE = /^[0-9a-f]{64}$/;
 
 /**
- * Cast a like on a target post (P2-D: the like is a burn transaction).
+ * Cast a like on a target post. A like is a burn transaction, never a box.
  *
  * Receives a pre-built, signed UtxoTransaction from the client with
  * `likeTarget` set. The engine enforces the biconditional like shape — karma
@@ -55,10 +55,8 @@ export function castLike(
   if (!post) {
     throw new ClientError(`Post not found: ${likeTarget}`);
   }
-  // A stump has no `content`; a live Post always does. (The previous check
-  // tested `'subtreeMerkleRoot' in post`, a field no Stump ever carried — it
-  // could never fire. The same dead check was removed from feed-service and
-  // stump-engine in the NX follow-up.)
+  // A stump has no `content`; a live Post always does. Discriminate on that,
+  // never on a field no Stump carries either way — such a test cannot fire.
   if (!('content' in post)) {
     throw new ClientError('Cannot like a pruned post');
   }

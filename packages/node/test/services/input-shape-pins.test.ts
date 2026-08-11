@@ -14,7 +14,7 @@
 //     and B's karma became A's. Consensual, but karma is non-transferable by
 //     rule — a consensual transfer is still a transfer, and it prices
 //     off-chain. The audit's most severe class, and unlike the unlike-path
-//     instance it does NOT close when P2-D lands.
+//     instance it is NOT closed by per-block like settlement.
 //   - K2: block application detects an unvouch by walking the inputs for a
 //     VouchBox, writes ONE escrow row, and breaks — while the transition arm
 //     asked only for zero outputs and conservation exempts zero-output vouch

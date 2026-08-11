@@ -253,13 +253,11 @@ describe('posts routes', () => {
     }, 1);
     const newKarmaId = newKarma.id;
 
-    // The lock names the post it locks, computed from the very fields posted
-    // below. It used to be `targetPostId: ''` with a comment saying it "will be
-    // filled by postId after submission" — nothing ever filled it, and CBOR
-    // encoded the empty string without complaint, so the fixture had been
-    // locking *no post* since it was written. `b32` has no encoding for it,
-    // which is what surfaced that. A client genuinely can compute this: the post
-    // id is a function of fields it already holds, which is the whole reason the
+    // The lock names the post it locks, computed here from the very fields
+    // posted below. Nothing downstream fills a blank in: `targetPostId` is
+    // `b32`, so an empty string has no encoding at all and a lock naming *no
+    // post* cannot be built. A client genuinely can compute this — the post id
+    // is a function of fields it already holds, which is the whole reason the
     // lock can be submitted in the same batch as the post.
     const targetPostId = computePostId({
       content: 'hello mempool',

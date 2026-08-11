@@ -167,13 +167,13 @@ describe('UTXO routes', () => {
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
-    // Guard strings are box CONTENT — they sit inside the box-id preimage — so
-    // these two fixtures described boxes that could never exist. `hash_preimage`
-    // and `inviter_signature` are the pre-bond-dual names; `InviteBox.guard` is
-    // `hash_preimage_with_bond` and `BondBox.guard` is `bond_dual`. The bond was
-    // also missing `inviteOutputIndex`, which the guard error was masking: a
-    // bond resolves its invite through `(txId, inviteOutputIndex)`, so a bond
-    // without it cannot name the invite it shipped with.
+    // ⚠ Guard strings are box CONTENT — they sit inside the box-id preimage —
+    // so a fixture spelling one wrong describes a box that could never exist.
+    // `InviteBox.guard` is `hash_preimage_with_bond`; `BondBox.guard` is
+    // `bond_dual` (TYPES_INTERFACE → BoxGuard). The bond also needs
+    // `inviteOutputIndex`: it resolves its invite through
+    // `(txId, inviteOutputIndex)`, so without it the bond cannot name the
+    // invite it shipped with.
     const inviteBox = seedProvenance<InviteBox>({
       boxType: 'invite' as const,
       value: 10n,
@@ -359,9 +359,9 @@ describe('UTXO routes', () => {
     });
 
     it('backstops a junk protocolVersion with a 400', async () => {
-      // Pre-gate this pooled and applied end-to-end when the client signed it
-      // as such — `protocolVersion` was validated nowhere, only the block
-      // header's was.
+      // A transaction carries its own `protocolVersion`, and the block header's
+      // gate says nothing about it. Without a check at this edge a client that
+      // signs a junk version has it pooled and applied end-to-end.
       const res = await request('/credits/transfer', 'POST', {
         tx: {
           inputs: [seededBoxId],

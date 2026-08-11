@@ -7,7 +7,8 @@ import {
 
 // Arbitrary u32s: the codec is magic-agnostic — it compares whatever value it was
 // handed. Deliberately not the network magics from @dagsocial/types; even a test-only
-// import would blur the layering that keeps wire dependency-free (P2-A phase 5).
+// import would blur the layering that keeps wire dependency-free
+// (WIRE_INTERFACE → Exports).
 const TEST_MAGIC = 0x11223344;
 const OTHER_MAGIC = 0x55667788;
 
@@ -94,9 +95,9 @@ describe('encodeFrame / decodeFrame', () => {
   });
 
   describe('unsigned magic assembly (audit L-15)', () => {
-    // Pre-fix these failed: the magic was assembled with a signed `<<` chain,
-    // so any magic >= 0x80000000 came out negative and never compared equal —
-    // decodeFrame threw on the CORRECT magic in the accept case below.
+    // These exercise the `>>> 0` in decodeFrame: assembled with a bare signed
+    // `<<` chain, any magic >= 0x80000000 is negative and never compares equal,
+    // so decodeFrame would throw on the CORRECT magic in the accept case below.
     const HIGH_BIT_MAGIC = 0x80da6717;
     const OTHER_HIGH_BIT_MAGIC = 0xdeadbeef;
 

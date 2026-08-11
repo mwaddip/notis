@@ -25,8 +25,8 @@ export interface LikesDeps extends UtxoEngineDeps {
 export function createRouter(deps: LikesDeps): Router {
   const router = Router();
 
-  // POST /likes — cast a like on a post (P2-D: a client-signed burn tx with
-  // `likeTarget` set). This is the router's only route: unlike is not a
+  // POST /likes — cast a like on a post: a client-signed burn tx with
+  // `likeTarget` set. This is the router's only route: unlike is not a
   // feature, so no removal endpoint exists.
   router.post('/', (req, res) => {
     const body = req.body as { tx?: Record<string, unknown> };

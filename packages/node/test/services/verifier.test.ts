@@ -375,11 +375,11 @@ describe('verifyPost', () => {
         { value: POST_LOCK_REPLY_COST },
       ]);
       // A well-formed PostId that no post claims. It must be 64 lowercase hex:
-      // a real PostId is always `computePostId`'s hex digest, and since Phase 1d
+      // a real PostId is always `computePostId`'s hex digest, and
       // `verifyPostFieldDomains` rejects anything else at step 0 — before this
       // test's actual subject, the step-8 parent-existence check, is reached.
-      // The old fixture ('nonexistent-parent-id', 21 chars) was never emittable
-      // by any producer.
+      // A short non-hex id would therefore never reach that check, and no
+      // producer could emit one.
       const ABSENT_PARENT = 'de'.repeat(32);
       let post = makePost({ parentRefs: [ABSENT_PARENT] });
       const powInput = buildPowInput(post);

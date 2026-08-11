@@ -147,10 +147,9 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { materializeOutput } = await import('../../src/services/utxo-engine.js');
     initDb(':memory:');
 
-    // `post_lock` is deliberately absent: it carries a pre-existing
-    // producer-vs-`rowToBox` field order divergence (`originalValue` and
-    // `createdAtBlock` swapped) that phase G owns (contract 1b), so byte
-    // identity does not hold for it and never did.
+    // `post_lock` is deliberately absent: it carries a producer-vs-`rowToBox`
+    // field order divergence (`originalValue` and `createdAtBlock` swapped), so
+    // byte identity does not hold for it.
     const candidates: AnyBoxCandidate[] = [
       {
         boxType: 'karma', value: 5n, owner: user(0xe1),

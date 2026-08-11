@@ -2,21 +2,22 @@
  * The wire codecs — positional for every block struct, `cbor-x` for the two
  * that no block embeds.
  *
- * Spec: `docs/specs/2026-08-09-positional-wire-format.md`.
  * Contract: `contracts/TYPES_INTERFACE.md` → Serialization → Layout — Block.
  *
  * Each struct below is written as a `StructCodec` whose `write` and `read` walk
  * the same field list in the same order, laid out to be read line-by-line
  * against the contract's layout table. **Field order IS the specification**
- * (spec §2.3): reordering one is a consensus change with no compiler signal,
- * which is why the two halves sit adjacent rather than in separate sections.
+ * (TYPES_INTERFACE → Primitives): reordering one is a consensus change with no
+ * compiler signal, which is why the two halves sit adjacent rather than in
+ * separate sections.
  *
  * Every `decodeX` goes through `decodeStruct`, so it carries the whole
- * four-part boundary check (spec §2.1) — schema projection, exhaustion, and the
- * re-encode compare that rejects a non-minimal VLQ. Unknown keys are
- * unrepresentable and key order does not exist, which is what closes §1.1: an
- * ordering block carrying arbitrary extra keys used to produce a byte-identical
- * `blockHash` while the encoding differed by 395 bytes.
+ * four-part boundary check (TYPES_INTERFACE → The boundary check) — schema
+ * projection, exhaustion, and the re-encode compare that rejects a non-minimal
+ * VLQ. Unknown keys are unrepresentable and key order does not exist, which is
+ * what shuts the open-map defect TYPES_INTERFACE → Serialization measures: an
+ * ordering block carrying arbitrary extra keys hashing to a byte-identical
+ * `blockHash` while the encoding differs by 395 bytes.
  *
  * ## The three element writers hold no layout of their own
  *
@@ -29,15 +30,17 @@
  * own** — a reviewer can check that at a glance, which is the point of the
  * shape.
  *
- * ## What is still `cbor-x`, and why that is not an oversight
+ * ## What is `cbor-x`, and why that is not an oversight
  *
  * `encodeStump` and `encodeTx`. Neither is reachable from a block struct —
  * `SubBlockTree` commits `PruneEntry`, not `Stump`, and `UtxoTxTree` carries
  * transactions as `arr(utxoTxs, lp)`, opaque length-prefixed bytes. So neither
- * is forced by this phase and neither is a consensus preimage: transaction
- * identity comes from `computeTxId` (already positional, Phase 2), and the
- * stump codec has no committed root over it. `TYPES_INTERFACE` → Layout — Stump
- * does specify a positional form for `Stump`; it is unclaimed by any phase.
+ * is a consensus preimage: transaction identity comes from `computeTxId`, which
+ * is positional, and no committed root covers the stump codec.
+ *
+ * ⚠ **`TYPES_INTERFACE` → Layout — Stump specifies a positional form for
+ * `Stump` that this file does not implement**, and its Serialization section
+ * records the same gap for `encodeTx`. Nothing here closes either.
  *
  * ## `encodePost` moved, and the contract is why
  *
@@ -105,7 +108,7 @@ import {
  * `content` (`lpUtf8`), `protocolVersion`, `timestamp` and `powNonce` (`vlqU`)
  * are total by sentinel. `author`, `challenge` and every `parentRefs` entry are
  * fixed-width and throw, and their domain is `verifyPostFieldDomains`
- * (`@dagsocial/validation`, Phase 1c) — 32 bytes, 32 bytes, 64 lowercase hex.
+ * (`@dagsocial/validation`) — 32 bytes, 32 bytes, 64 lowercase hex.
  *
  * ⚠ **`signature` and `powNonce` are the exception, and it is not discharged.**
  * `verifyPostFieldDomains` stops after `timestamp`, deliberately: it is the
@@ -113,9 +116,11 @@ import {
  * `b64(signature)` — a throwing writer — has no width check anywhere in the
  * repo (`verifyPostSignature` pins `isBytes` only, and says outright that a
  * wrong *length* is left to `crypto.verify`), and `powNonce` has none either,
- * so it collides on the sentinel instead. Reported to main as Phase 3b's gate
- * finding: this is the 1c situation one struct over, and closing it belongs in
- * `@dagsocial/validation`, upstream of the encoder (spec §2.5).
+ * so it collides on the sentinel instead. It is the same shape
+ * `verifyPostFieldDomains` closes for the signable fields, one struct over, and
+ * closing it belongs in `@dagsocial/validation`, upstream of the encoder — the
+ * rule TYPES_INTERFACE → Totality states for every throwing writer. **The
+ * contract does not yet book this pair as an outstanding obligation.**
  */
 const POST: StructCodec<Post> = {
   name: 'post',
@@ -152,14 +157,13 @@ export function decodePost(bytes: Uint8Array): Post {
 }
 
 // ---------------------------------------------------------------------------
-// Stump — still cbor-x
+// Stump — cbor-x
 // ---------------------------------------------------------------------------
 //
 // No block struct embeds a `Stump`: `SubBlockTree` commits `PruneEntry`, whose
-// preimage moved with Phase 2. `TYPES_INTERFACE` → Layout — Stump specifies a
-// positional form, and no phase claims it; flagged to main rather than folded
-// in here, because moving it would be a byte change nothing in this phase
-// forces.
+// preimage is positional. `TYPES_INTERFACE` → Layout — Stump specifies a
+// positional form for `Stump` too, and this codec does not implement it — an
+// open gap, flagged rather than closed here, because closing it moves bytes.
 
 export function encodeStump(stump: Stump): Uint8Array {
   return encode(stump) as unknown as Uint8Array;
@@ -175,7 +179,8 @@ export function decodeStump(bytes: Uint8Array): Stump {
 
 /**
  * Ten fields. `protocolVersion` is **first** so it can be read before any
- * version-dependent dispatch exists to need it (spec §2.3); there is exactly one
+ * version-dependent dispatch exists to need it (TYPES_INTERFACE → Layout —
+ * Block); there is exactly one
  * version today, and this pins the seam without building the version-keyed rule
  * table, which does not exist. Do not write code here that assumes it does.
  *
@@ -186,15 +191,16 @@ export function decodeStump(bytes: Uint8Array): Stump {
  * `b32` and its totality note groups them as "`b32` ×4". Reading the row off its
  * neighbours rather than off the field's schema type gives a writer that throws
  * on **every** block — the `bond.inviteePublicKey` failure exactly, which is why
- * `TYPES_INTERFACE` → Layout — Boxes requires this phase to run writer-versus-
- * schema-type field by field. `verifyHeaderFieldDomains`' own table agrees:
+ * `TYPES_INTERFACE` → Layout — Boxes requires each writer to be checked against
+ * its field's schema type, one row at a time.
+ * `verifyHeaderFieldDomains`' own table agrees:
  * `isHex32` for the three, `isBytesOfLength(v, 32)` for this one.
  *
  * ## Totality
  *
  * Five throwing rows (`b32` ×4, `b33` ×1) and five `vlqU`, which are total by
  * sentinel and therefore **collide rather than throw**. All ten are pinned by
- * `verifyHeaderFieldDomains` (Phase 1f), which is the only header domain in the
+ * `verifyHeaderFieldDomains`, which is the only header domain in the
  * repo and which `blockHash` / `computePowHash` run internally — so the two
  * functions that reach this encoder establish their own precondition rather than
  * trusting thirteen call sites to remember it.
@@ -245,7 +251,7 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
  * `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)` — all three hex.
  *
  * **The write half delegates to `subBlockEntryBytes` rather than restating the
- * layout**, for the reason `writePruneEntry` below has since Phase 2: those
+ * layout**, for the same reason `writePruneEntry` below does: those
  * bytes are the Merkle leaf preimage committed under `subBlockRoot`, so an
  * entry's wire form and its committed form must be the same bytes. The layout,
  * the writer choice per row (`author` is hex where the header's `validatorId` is
@@ -276,7 +282,7 @@ function readSubBlockEntry(r: ByteReader): SubBlockEntry {
  * `boxRecordBytes` delegates its content half to `canonicalBoxBytes`.
  *
  * Every field is fixed-width and throws; the domain is
- * `verifyOrderingBlockStructure`'s per-entry checks (Phase 1e), which pin the
+ * `verifyOrderingBlockStructure`'s per-entry checks, which pin the
  * hex alphabet on the two id fields and `isBytes` plus an exact length on the
  * three byte fields.
  */
@@ -296,21 +302,17 @@ function readPruneEntry(r: ByteReader): PruneEntry {
 }
 
 /**
- * Two arrays, and **`subBlockRefs` is not one of them** (spec §1.2, §4.1).
+ * Two arrays, and **`subBlockRefs` is not one of them** (TYPES_INTERFACE →
+ * Layout — Block).
  *
- * It was uncommitted — `computeSubBlockRoot` builds its leaves from
- * `subBlockEntries` and `pruneEntries` and never reads it — unvalidated beyond a
- * length check, and it drove state mutation: a block whose refs named entirely
- * different post ids was accepted with an unchanged `subBlockRoot` and an
- * unchanged `blockHash`, and those attacker-chosen ids reached a mempool
- * eviction and a mempool injection. It was also exactly
- * `subBlockEntries.map(e => e.postId)` for any honest block, so deleting it
- * costs nothing: consumers derive it (Phase 3a), and the two JSON routes still
- * emit the field so the HTTP response shape is unchanged.
- *
- * Deleted rather than pinned because this unit moves every byte anyway — under a
- * tightening the redundancy would have had to stay, since removing a wire field
- * moves bytes.
+ * It is absent from the struct, not merely from the committed bytes.
+ * `computeSubBlockRoot` builds its leaves from `subBlockEntries` and
+ * `pruneEntries` alone, so a `subBlockRefs` field here would be uncommitted:
+ * refs naming entirely different post ids would ride an unchanged
+ * `subBlockRoot` and an unchanged `blockHash` into mempool eviction and mempool
+ * injection. It is also exactly `subBlockEntries.map(e => e.postId)` for any
+ * honest block, so consumers derive it — `subBlockIdsOf` in node — and the two
+ * JSON routes emit the field, leaving the HTTP response shape unchanged.
  */
 const SUB_BLOCK_TREE: StructCodec<SubBlockTree> = {
   name: 'subBlockTree',
@@ -456,10 +458,9 @@ export function decodeSubBlock(bytes: Uint8Array): SubBlock {
  * `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖
  * `b64(validatorSignature)`.
  *
- * The length prefixes were hand-rolled `u32BE` (`DataView.setUint32` out,
- * `readUInt32BE` back) and are `vlqU` now, which is what makes them the same
- * primitive as every other count and length in the format instead of a fourth
- * integer convention living in one function.
+ * The length prefixes are `vlqU` — the same primitive as every other count and
+ * length in the format, rather than a fourth integer convention living in one
+ * function.
  *
  * **The boundary check runs at the outer level AND inside each `lp` section.**
  * Each section is decoded through its own `decodeStruct`, so a malformed header
@@ -505,19 +506,19 @@ export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
 }
 
 // ---------------------------------------------------------------------------
-// UTXO transaction — still cbor-x
+// UTXO transaction — cbor-x
 // ---------------------------------------------------------------------------
 //
-// `serializeTx` lived here and was deleted by Spec G phase G3b, for the reason
-// phase 0 deleted `serializeBox`: no `src` caller, and built on cbor-x's
-// *default* `encode` — neither of the two encoders that matter. A transaction's
-// identity comes from `computeTxId` in `utxo.ts`, which is positional as of
-// Phase 2 and routes outputs through `canonicalBoxBytes`.
+// ⚠ **No `serializeTx` and no `serializeBox` here, and neither may be added.** A
+// transaction's identity comes from `computeTxId` in `utxo.ts`, which is
+// positional and routes outputs through `canonicalBoxBytes`; a third encoder
+// built on cbor-x's *default* `encode` would be neither of the two encoders that
+// matter (`TYPES_INTERFACE` → BoxId).
 //
 // These two are what `UtxoTxTree.utxoTxs` carries, and the tree carries them as
 // `arr(utxoTxs, lp)` — opaque bytes with a length prefix — so no block struct
-// depends on their shape and this phase does not force them. `TYPES_INTERFACE` →
-// Layout — UtxoTransaction specifies the positional form; it is unclaimed.
+// depends on their shape. `TYPES_INTERFACE` → Layout — UtxoTransaction specifies
+// a positional form this codec does not implement.
 
 export function encodeTx(tx: UtxoTransaction): Uint8Array {
   return encode(tx) as unknown as Uint8Array;

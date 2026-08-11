@@ -2,11 +2,11 @@
  * The probe struct — a local test struct that exercises every row of the
  * Primitives table at once, and every step of the boundary check.
  *
- * It is deliberately **not** a production struct. Phase 1b ships the codec
- * layer ahead of the structs that will use it (Phases 2–5), so the harness
- * needs something to be a struct *for* — and a synthetic one is better than an
- * early half-migrated `Post`, because it can carry a field of every kind
- * without committing to any layout that is still main's to specify.
+ * It is deliberately **not** a production struct. A synthetic one can carry a
+ * field of every kind at once without committing to any real layout, so the
+ * harness and the boundary check get exercised against something that is not
+ * also a consensus preimage — a production struct would tie the harness's
+ * coverage to whatever fields that struct happens to have.
  *
  * Phases 2–5 replace this as the primary subject: they register their real
  * struct codecs the same way (`registerStruct`) and add `<struct>.json` beside

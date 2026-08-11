@@ -76,12 +76,11 @@ const testConfig = makeTestConfig({
 // Dynamic import helpers
 // ---------------------------------------------------------------------------
 
-// No hand-written module shapes below. Each of these carried one, and each had
-// drifted from the module it stands for — `importUtxo` was missing
-// `getKarmaBoxes` and `getBoxByProvenance` (both called in this file),
-// `importBlockCreator` typed `startBlockCreator` against `typeof testConfig`
-// rather than `Config`. A duplicate declaration of a module's surface cannot
-// help but rot; the module's own type cannot.
+// No hand-written module shapes below. A cast that re-declares a module's
+// surface drifts from it silently: a missing export makes the test that needed
+// it a compile error rather than a written test, and a parameter typed against
+// a local literal instead of `Config` checks the fixture against itself. The
+// module's own type cannot rot away from the module.
 async function importDb() {
   return import('../../src/store/db.js');
 }
@@ -98,7 +97,7 @@ async function importUtxo() {
   return import('../../src/store/utxo.js');
 }
 
-/** The read path as server.ts wires it (N4a): counts and likers from like_records. */
+/** The read path as server.ts wires it: counts and likers from like_records. */
 async function importFeedReadPath() {
   const posts = await import('../../src/store/posts.js');
   const utxo = await import('../../src/store/utxo.js');
@@ -189,10 +188,9 @@ function makePost(authorId: Uint8Array, content = 'test post'): Post {
 }
 
 function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox {
-  // `seed` was `createdAtBlock` before phase G3b deleted the field. It is no
-  // longer a box property — it only varies the fixture's synthetic provenance,
-  // so two boxes that differ solely by the height a caller passed still get
-  // distinct ids rather than colliding on UNIQUE(tx_id, output_index).
+  // `seed` is not a box property: it only varies the fixture's synthetic
+  // provenance, so two boxes differing solely by the height a caller passed
+  // still get distinct ids rather than colliding on UNIQUE(tx_id, output_index).
   const box = seedProvenance<KarmaBox>({
     boxType: 'karma',
     value,
@@ -289,17 +287,17 @@ describe('full-pipeline', () => {
     const posts = await importPosts();
     posts.insertPost(post, encodePost(post));
 
-    // ---- Step 0: Confirm the target first (N2b: a like on an unconfirmed
-    // post is invalid at apply, so the canonical flow likes an
-    // already-confirmed post; the confirm-and-like-in-one-block shape is
-    // test 2 below). Block 1 carries the sub-block alone.
+    // ---- Step 0: Confirm the target first. A like on an unconfirmed post is
+    // invalid at apply, so the canonical flow likes an already-confirmed post;
+    // the confirm-and-like-in-one-block shape is test 2 below. Block 1 carries
+    // the sub-block alone.
     const mempool = await importMempool();
     mempool.insertSubBlock(postId, 1000);
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     expect(bc.createOrderingBlock()).not.toBeNull();
 
-    // Build and sign the burn-shape like tx (P2-D): one karma output at
+    // Build and sign the burn-shape like tx: one karma output at
     // −LIKE_KARMA_COST, likeTarget inside the signed bytes, no box output.
     const changeVal = karmaBox.value - LIKE_KARMA_COST;
     const likeTx: UtxoTransaction = {
@@ -344,7 +342,7 @@ describe('full-pipeline', () => {
     expect(newKarma).not.toBeNull();
     expect(newKarma!.value).toBe(changeVal);
 
-    // ---- Step 4 (N4a): the feed/read path reports the applied like-record ----
+    // ---- Step 4: the feed/read path reports the applied like-record ----
     // Apply wrote the record; the API's likeCount and likers must come from it.
     const f = await importFeedReadPath();
     expect(f.hasLikeRecord(postId, liker.userId)).toBe(true);
@@ -388,7 +386,7 @@ describe('full-pipeline', () => {
     const mempool = await importMempool();
     mempool.insertSubBlock(postId, 1000);
 
-    // Cast like via service (P2-D burn shape)
+    // Cast like via service — the burn shape
     const changeVal = karmaBox.value - LIKE_KARMA_COST;
     const likeTx: UtxoTransaction = {
       inputs: [karmaBox.id!],
@@ -458,13 +456,12 @@ describe('full-pipeline', () => {
 
     // Build invite tx with 3 outputs: karma change + invite + bond.
     //
-    // This fixture used to carry the exact lying shape the guard-shape pin
-    // rejects: a stray `inviteeId` key on the invite (no such field exists on
-    // InviteBox — the invitee is unknown until commit), plus the unreachable
-    // guard strings 'hash_preimage'/'inviter_signature'-era values instead of
-    // the canonical 'hash_preimage_with_bond'/'bond_dual'. It passed only
-    // while nothing validated output shape, and the boxes it stored disagreed
-    // with every reconstruction of them.
+    // ⚠ The guard-shape pin rejects a lying invite fixture, and this one has to
+    // stay honest: no stray `inviteeId` key (`InviteBox` has no such field —
+    // the invitee is unknown until commit), and the canonical guard strings
+    // 'hash_preimage_with_bond' / 'bond_dual' (TYPES_INTERFACE → BoxGuard).
+    // Both are box CONTENT, so a fixture that gets either wrong stores boxes
+    // that disagree with every reconstruction of them.
     const changeVal = 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA;
     const inviteTx: UtxoTransaction = {
       inputs: [karmaBox.id!],
@@ -542,16 +539,14 @@ describe('full-pipeline', () => {
     expect(newKarma!.value).toBe(changeVal);
   });
   // -------------------------------------------------------------------------
-  // 4. Predicted-id flows through a real block funnel (Spec G phase G3b)
+  // 4. The invite pairing through a real block funnel
   //
-  // The unlike half of this pair died with P2-D: no flow predicts a box id
-  // anymore (a like is a burn transaction, not a box, and unlike is not a
-  // feature), so the exactness test went with it. What remains is the INVITE
-  // path, which no longer predicts anything either — its bond names an output
-  // index, so what it needs is proof that a bond pointing at the wrong output
-  // is REJECTED AT CREATE, which is the property pairing by index buys and the
-  // thing that makes a mispaired bond inexpressible rather than late-failing
-  // as a dangling reference.
+  // No flow predicts a box id: a like is a burn transaction rather than a box,
+  // and the invite path names an OUTPUT INDEX instead of an id. So the property
+  // to prove is not exactness of a prediction but that a bond pointing at the
+  // wrong output is REJECTED AT CREATE — which is what pairing by index buys,
+  // and what makes a mispaired bond inexpressible rather than surfacing one
+  // transaction later as a dangling reference.
   // -------------------------------------------------------------------------
 
   it('invite: a bond naming the wrong output index is rejected at create — and the right one still applies', async () => {
@@ -594,12 +589,12 @@ describe('full-pipeline', () => {
       return tx;
     };
 
-    // ---- The property Option 1 buys: a mispaired bond cannot be created ----
+    // ---- The property: a mispaired bond cannot be created ----
     //
-    // Index 0 is the KARMA output, not the invite. Before Option 1 this field
-    // was a BoxId that nothing validated at create, so a wrong value surfaced
-    // one transaction later as "InviteBox not found for bond commit" — a
-    // dangling reference. It is now a rejected transaction.
+    // Index 0 is the KARMA output, not the invite. `createInvite` validates the
+    // index against its own outputs, so a wrong value is a rejected transaction
+    // here rather than an "InviteBox not found for bond commit" one
+    // transaction later.
     const karmaA = makeKarmaBox(100n, inviter.userId, 0);
     utxo.insertBox(karmaA);
     expect(() => invitesSvc.createInvite(deps, buildInviteTx(0, karmaA), 0))

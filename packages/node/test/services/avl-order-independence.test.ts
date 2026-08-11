@@ -25,9 +25,8 @@ import {
 // two nodes therefore bootstrap the identical box set in opposite orders,
 // and an unsorted feed builds two differently-shaped AVL trees.
 //
-// (Until P2-D N3a this scenario ran on the retired like/epoch machinery; that
-// world is deleted, so the divergently-ordered set is now plain karma boxes
-// that nothing spends. The property under test is unchanged.)
+// (The divergently-ordered set is plain karma boxes that nothing spends — the
+// property under test does not depend on what the boxes are.)
 //
 // Fixture discipline, learned by measuring an unsorted prover: the box ids
 // must be FIXED, not random. Whether two insertion orders of the same keys

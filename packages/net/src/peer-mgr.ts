@@ -5,7 +5,7 @@ const STALL_TIMEOUT_MS = 30_000; // 30 seconds
 
 /**
  * Points drained from an accumulated penalty score per elapsed
- * `penaltySafeIntervalMs` (contract: "Accrual and decay (audit L-13)").
+ * `penaltySafeIntervalMs` (NET_INTERFACE → Accrual and decay).
  * Break-even is one MisbehaviorPenalty (100) per interval: misbehave
  * faster and the score climbs toward a ban, slower and it fades to zero.
  */
@@ -178,8 +178,8 @@ export class PeerManager {
   }
 
   /**
-   * Shared accrual + decay for every non-permanent penalty (contract:
-   * "Accrual and decay (audit L-13)").
+   * Shared accrual + decay for every non-permanent penalty
+   * (NET_INTERFACE → Accrual and decay).
    *
    * Every penalty accrues — none are discarded for arriving quickly.
    * Instead the accumulated score decays by PENALTY_DECAY_PER_INTERVAL per

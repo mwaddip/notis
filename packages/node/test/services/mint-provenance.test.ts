@@ -17,7 +17,7 @@ import {
 } from '../../src/mint-provenance.js';
 import type { MintContext } from '../../src/mint-provenance.js';
 
-// Deterministic fixtures — no Date.now(), no randomness (Spec G §6 hygiene).
+// Deterministic fixtures — no Date.now(), no randomness.
 const pubkey = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const postId = (fill: string): string => fill.repeat(64).slice(0, 64);
 

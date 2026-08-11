@@ -98,8 +98,8 @@ describe('PostService', () => {
     expect(typeof result.postId).toBe('string');
     expect(result.expiresAtHeight).toBeGreaterThan(0);
     expect(result.subBlock).toBeDefined();
-    // T2b shape pin at the producer: a sub-block carries exactly the post —
-    // no likeBoxes sidecar key (deleted; sub-block CBOR is consensus bytes).
+    // Shape pin at the producer: a sub-block carries exactly the post and its
+    // envelope — no sidecar keys (sub-block CBOR is consensus bytes).
     expect(Object.keys(result.subBlock).sort()).toEqual(
       ['post', 'producerId', 'protocolVersion', 'subBlockId'],
     );

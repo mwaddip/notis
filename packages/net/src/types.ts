@@ -15,8 +15,8 @@ export const MSG_GET_PEERS = 8;
 export const MSG_PEERS = 9;
 export const MSG_GET_POSTS = 10;
 export const MSG_POSTS = 11;
-// Codes 12–13 are retired (P2-F F1) — reserved, never reuse (NET_INTERFACE
-// → Message Codes). The next new message type starts at 14.
+// Codes 12–13 are retired — reserved, never reuse (NET_INTERFACE → Message
+// Codes). The next new message type starts at 14.
 
 // ---------------------------------------------------------------------------
 // Modifier type IDs

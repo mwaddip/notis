@@ -141,10 +141,9 @@ function legacyPostId(p: Post): string {
  * mirrored in the other breaks this vector. Do not "fix" a failure by editing
  * the constants — the encoding is protocol-breaking and unversioned.
  *
- * **Reset for the positional dialect (Phase 2).** Two things moved at once and
- * the movement table in `prompts/types-id-preimages-REPORT.md` separates them:
- * the encoding (fixed-width LE → VLQ, hex-text refs → raw bytes) and the
- * fixture (`MAX_PARENT_REFS` 8 → 1, so one ref rather than two).
+ * The fixture carries exactly **one** parent ref, because `MAX_PARENT_REFS` is
+ * 1, and the ref is raw bytes rather than hex text, because `parentRefs` is
+ * `arr(refs, b32)` (TYPES_INTERFACE → Layout — Post).
  *
  * Adjacent fields carry **distinct non-zero values** — `author` is `00..1f`,
  * `challenge` is `20..3f`, the ref is `11…`, `protocolVersion` is 1 and the
@@ -206,11 +205,11 @@ describe('canonical field encoding (M-1)', () => {
   });
 
   it('an id crosses the preimage as 32 RAW bytes, not as 64 hex characters', () => {
-    // The dialect change with the largest byte impact, and the one a mirror
-    // implementation is most likely to get wrong: under the old encoding a
-    // parent ref cost `u32LE(64) ‖ utf8(hex)` = 68 bytes, and it now costs 32.
-    // Asserted as a length delta rather than against a constant so it stays
-    // true if the fixture's other fields change.
+    // The largest byte difference in the layout, and the one a mirror
+    // implementation is most likely to get wrong: a parent ref costs 32 bytes,
+    // not the 68 that a length-prefixed hex text would (`u32LE(64) ‖
+    // utf8(hex)`). Asserted as a length delta rather than against a constant so
+    // it stays true if the fixture's other fields change.
     const withRef = postPowPreimage(GOLDEN_POST);
     const without = postPowPreimage({ ...GOLDEN_POST, parentRefs: [] });
     expect(withRef.length - without.length).toBe(32);
@@ -222,14 +221,16 @@ describe('canonical field encoding (M-1)', () => {
   });
 
   it('the M-1 collision pair still yields distinct ids — preserved, not introduced', () => {
-    // The defect M-1 closed, re-checked after the dialect moved. `postFieldBytes`
-    // was ALREADY injective before this migration (spec §3.1) — it moved for one
-    // encoding language, not to fix anything — so the job of this assertion is
-    // to prove the property survived rather than that it arrived.
+    // The defect audit M-1 closed. `postFieldBytes` is injective by
+    // construction — every variable-length field is length-prefixed and the ref
+    // array is counted (TYPES_INTERFACE → Canonical field encoding) — so this
+    // assertion guards the property against a dialect change rather than
+    // recording its arrival.
     const a: Post = { ...GOLDEN_POST, powNonce: 5, timestamp: 23 };
     const b: Post = { ...GOLDEN_POST, powNonce: 52, timestamp: 3 };
     expect(computePostId(a)).not.toBe(computePostId(b));
-    // Vacuity check: this pair DID collide under the old concatenation.
+    // Vacuity check: this pair DOES collide under the undelimited
+    // concatenation `legacyPostId` above models.
     expect(legacyPostId(a)).toBe(legacyPostId(b));
   });
 
@@ -271,14 +272,15 @@ describe('canonical field encoding (M-1)', () => {
   });
 
   it('an empty parentRef is unrepresentable, and absence is still distinguishable', () => {
-    // Restates "an empty parentRefs array is distinguishable from an empty
-    // ref". `''` was a legal ref under the old dialect — `LP(utf8(''))` is four
-    // zero bytes — and the explicit count was what separated `[]` from `['']`.
-    // `b32` removes the input instead of distinguishing it.
+    // Under a length-prefixed text encoding `''` is a legal ref — `LP(utf8(''))`
+    // is four zero bytes — and only the explicit count separates `[]` from
+    // `['']`. `b32` removes the input instead of distinguishing it: an empty
+    // ref has no encoding at all.
     const none: Post = { ...GOLDEN_POST, parentRefs: [] };
     const empty: Post = { ...GOLDEN_POST, parentRefs: [''] };
     expect(() => computePostId(empty)).toThrow(/64 lowercase hex chars/);
-    // Vacuity check: both appended nothing under the old encoding.
+    // Vacuity check: both append nothing under the undelimited concatenation
+    // `legacyPostId` models.
     expect(legacyPostId(none)).toBe(legacyPostId(empty));
     // The count prefix still does its job for the in-domain pair.
     expect(computePostId(none)).not.toBe(computePostId({ ...GOLDEN_POST, parentRefs: [GOLDEN_REF] }));
@@ -382,8 +384,8 @@ describe('constants', () => {
 
   it('karma constants are defined', () => {
     expect(KARMA_POSTING_MINIMUM).toBe(1n);
-    expect(KARMA_STALE_THRESHOLD_BLOCKS).toBe(40320); // 28 days at 60s blocks (P2-A unit correction)
-    expect(KARMA_DECAY_INTERVAL_BLOCKS).toBe(1440); // 24 hours at 60s blocks (P2-A unit correction)
+    expect(KARMA_STALE_THRESHOLD_BLOCKS).toBe(40320); // 28 days at 60s blocks
+    expect(KARMA_DECAY_INTERVAL_BLOCKS).toBe(1440); // 24 hours at 60s blocks
     expect(KARMA_DECAY_AMOUNT).toBe(5n);
     expect(KARMA_MINIMUM).toBe(10n);
   });

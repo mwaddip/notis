@@ -22,24 +22,25 @@ import type { ScenarioCapture } from '../harness/decay-timeline.js';
  * mints another to the same identity (input: the *system* karma box). Neither
  * spends what the recipient already holds.
  *
- * **This is an accepted, deliberate deviation from Spec G D10 — not an
- * incidental one.** Spec G §3.4 asserted `owedPeriods` equivalence on the
- * premise that "forced consolidation means normally one karma box (oldest ==
- * newest == last touch)". That premise is false: `applyTx` does not
- * consolidate, so any transaction that mints karma to an owner **without
- * spending that owner's existing karma** — the faucet grant (its only input is
- * the *system* karma box) and the invite claim (its inputs are the InviteBox and
- * BondBox) — leaves two non-decay karma boxes standing.
+ * **This is an accepted, deliberate deviation — not an incidental one.** An
+ * `owedPeriods` equivalence argument would need the premise that forced
+ * consolidation leaves normally one karma box (oldest == newest == last touch).
+ * That premise is false: `applyTx` does not consolidate, so any transaction
+ * that mints karma to an owner **without spending that owner's existing
+ * karma** — the faucet grant (its only input is the *system* karma box) and the
+ * invite claim (its inputs are the InviteBox and BondBox) — leaves two
+ * non-decay karma boxes standing.
  *
- * Decay is now measured from the most recent activity rather than from the
- * oldest surviving box. That change was reviewed and accepted deliberately, and
- * §3.4's false premise is being corrected in the spec and the contract. This
- * file is the pinned record of the difference, kept out of the golden set so
- * that neither can be mistaken for the other.
+ * Decay is therefore measured from the most recent activity rather than from
+ * the oldest surviving box, which is the clock NODE_INTERFACE → "Karma decay
+ * (periodic burn)" states: `owedPeriods` reads
+ * `max(lastActivityBlock, lastDecayBlock)`. This file is the pinned record of
+ * the difference, kept out of the golden set so that neither can be mistaken
+ * for the other.
  *
- * The frozen `preSwap` capture stays in the fixture as the record of what the
- * ledger used to do. This file's expectation is the one thing in phase D that
- * moved on purpose; the equivalence gate's fixtures did not move at all.
+ * The frozen `preSwap` capture stays in the fixture as the baseline the
+ * divergence is measured against; the equivalence gate's fixtures are
+ * unaffected.
  */
 
 const FIXTURE_PATH = fileURLToPath(new URL('../fixtures/decay-divergence.json', import.meta.url));

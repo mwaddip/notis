@@ -5,16 +5,15 @@ import type { AnyBox, KarmaBox, CreditBox } from '@dagsocial/types';
 import { fixtureProvenance } from '../helpers.js';
 
 /**
- * Spec G phase B — box provenance columns (`tx_id`, `output_index`).
+ * Box provenance columns (`tx_id`, `output_index`).
  *
- * The consensus hazard these tests exist for: `state/serialize-box.ts` strips
- * only `id`/`boxType`, so provenance reaches the AVL *value*, and cbor-x
- * distinguishes an absent key from a present-but-`undefined` one. If `rowToBox`
- * assigned `txId: undefined`/`index: undefined` unconditionally, a box read back
- * from SQLite would serialize to different bytes than the same box built by a
- * producer — so a node that restarts and re-bootstraps its prover from
- * `getUnspentBoxes` would compute a different `stateRoot` than one that stayed
- * up. A restart-triggered consensus fork, from nothing but an object shape.
+ * The consensus hazard these tests exist for: provenance is the tail of the AVL
+ * value — `boxRecordBytes` ends `b32(txId) ‖ vlqU(index)` (TYPES_INTERFACE →
+ * Layout — Boxes) — so a `rowToBox` that reconstructed a box with either half
+ * missing would serialize to different bytes than the same box built by a
+ * producer. A node that restarts and re-bootstraps its prover from
+ * `getUnspentBoxes` then computes a different `stateRoot` than one that stayed
+ * up: a restart-triggered consensus fork, from nothing but an object shape.
  */
 
 async function importDbFresh() {
@@ -91,10 +90,7 @@ describe('box provenance columns (Spec G phase B)', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
 
-  // --- round-trip, provenance unset (the phase-B state) ---------------------
-
-
-  // --- round-trip, provenance set (what phase C will produce) --------------
+  // --- round-trip through insertBox -> rowToBox -----------------------------
 
   it('provenance round-trips through insertBox -> rowToBox when set', async () => {
     const { initDb } = await importDbFresh();
@@ -140,11 +136,11 @@ describe('box provenance columns (Spec G phase B)', () => {
 
     expect(withProv.txId).toBe(txId);
     expect(withProv.index).toBe(7);
-    // The "and a box WITHOUT provenance keeps none" half of this case went with
-    // the columns: `tx_id`/`output_index` are NOT NULL as of phase G3b, so a box
-    // with no provenance cannot be stored at all. `rowToBox` assigns both
-    // unconditionally now, which is what makes the old explicit-`undefined`
-    // hazard (contract 1a) unrepresentable rather than merely avoided.
+    // There is no "and a box WITHOUT provenance keeps none" case to write:
+    // `tx_id`/`output_index` are NOT NULL, so a box missing either cannot be
+    // stored, and `rowToBox` assigns both unconditionally. A box carrying an
+    // explicit `undefined` in one of those slots is unrepresentable here rather
+    // than merely avoided.
   });
 
   // --- the AVL-value byte identity that makes a restart safe ---------------

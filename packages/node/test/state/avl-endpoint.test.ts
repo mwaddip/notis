@@ -40,7 +40,7 @@ describe('GET /api/v1/proof/:boxId', () => {
       ...candidate,
       ...fixtureProvenance(candidate, 1),
     };
-    // Spec G phase D: the tree holds two entity kinds, so the fixture does too.
+    // One tree holds both entity kinds, so the fixture does too.
     applyBlockMutations(handle.prover, [], [box], [
       { key: RECORD_KEY, record: { lastActivityBlock: 7, lastDecayBlock: 3, likeCarry: 0n } },
     ]);
@@ -77,12 +77,13 @@ describe('GET /api/v1/proof/:boxId', () => {
     expect(res.body.proof).toBeTruthy(); // exclusion proof still returned
   });
 
-  // --- Two entity kinds (Spec G phase D) -----------------------------------
+  // --- Two entity kinds -----------------------------------------------------
 
   it('serves an identity record instead of throwing on it', async () => {
-    // The phase-D obligation. Keys are indistinguishable from outside — both
-    // kinds are 32 bytes of hash output — so a client can ask for a record key,
-    // and before this the endpoint decoded every value as a box and 500'd.
+    // NODE_INTERFACE → "Two entity kinds". Keys are indistinguishable from
+    // outside — both kinds are 32 bytes of hash output — so a client asking for
+    // a record key is reachable, and an endpoint that decoded every value as a
+    // box would 500 on committed state it is required to serve.
     const res = await request(app)
       .get('/api/v1/proof/' + RECORD_KEY)
       .expect(200);
@@ -118,8 +119,8 @@ describe('GET /api/v1/proof/:boxId', () => {
   });
 
   it('serves a record from a historical version too', async () => {
-    // The rollback branch is a separate code path from the at-tip branch, and
-    // it had its own `deserializeBoxWithId` call.
+    // The historical answer is built by a separate branch from the at-tip one,
+    // with its own `decodeValue` call, so covering the tip proves nothing here.
     const handle = createAvlProver(db);
     applyBlockMutations(handle.prover, [], [], [
       { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, likeCarry: 0n } },

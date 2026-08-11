@@ -25,17 +25,16 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 // ---------------------------------------------------------------------------
 // Why this file exists
 //
-// Phase 1f-3 migrated exactly one `src` line — `LazySyncStore.getOrderingBlockId`
-// moved from `blockHash` inside a `try`/`catch` to the guarded
-// `blockHash`. Main then mutated that method to unconditionally return
-// `null` and all 410 tests still passed: the method had **no coverage at all**.
-// A total lobotomy that the suite cannot see is the strongest possible evidence
-// that the suite was not testing the thing.
+// Without this file `LazySyncStore.getOrderingBlockId` has no coverage at all:
+// mutate the method to unconditionally return `null` and the rest of the suite
+// stays green. A total lobotomy the suite cannot see is the strongest possible
+// evidence that the suite is not testing the thing.
 //
 // So these tests drive the real method on the real class. Every case below
-// fails against `return null`, and the class-B cases fail against the pre-1f
-// `blockHash` + `catch` as well — which is what makes them a pin on the change
-// rather than a restatement of whatever the code currently does.
+// fails against `return null`, and the class-B cases fail against an unguarded
+// `blockHash` as well — they pin the guard, not merely the method, which is
+// what makes them something other than a restatement of whatever the code
+// currently does.
 // ---------------------------------------------------------------------------
 
 function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
@@ -125,7 +124,7 @@ describe('LazySyncStore.getOrderingBlockId — in-domain headers (class A)', () 
 });
 
 // ---------------------------------------------------------------------------
-// Class B — out of domain but still CBOR-encodable: the behaviour 1f changed
+// Class B — out of domain but still encodable: the headers the guard catches
 // ---------------------------------------------------------------------------
 
 describe('LazySyncStore.getOrderingBlockId — out-of-domain headers (class B)', () => {
@@ -137,10 +136,9 @@ describe('LazySyncStore.getOrderingBlockId — out-of-domain headers (class B)',
     // 2^60 would all collide on one hash: serving an id here would advertise a
     // sync anchor that several distinct headers share.
     //
-    // Deliberately NOT written as "differs from the unguarded blockHash" — that
-    // function is `@deprecated` and 1f-4 deletes it, which would break this
-    // test. The delta against the same header with a valid createdAt proves the
-    // same thing and survives 1f-4.
+    // Written as a delta against the same header with a valid createdAt, not
+    // against a second hashing function: `blockHash` is the only one, and an
+    // assertion phrased against a helper is only as durable as the helper.
     const good = makeHeader({ createdAt: 1_000_000 });
     const bad = makeHeader({ createdAt: Number.NaN });
 
@@ -168,8 +166,8 @@ describe('LazySyncStore.getOrderingBlockId — out-of-domain headers (class B)',
   });
 
   it('a validatorId that is a 32-character string, not 32 bytes, yields null', () => {
-    // Phase 1e's finding, reached through this method: a length check would
-    // accept this and the encoder would not. `isBytesOfLength` checks type
+    // A length check alone would accept this and the encoder would not.
+    // `isBytesOfLength` checks type
     // before width, so it lands as `null` rather than as a throw.
     const store = storeServing(
       new Map([[1, makeBlock(makeHeader({ validatorId: 'x'.repeat(32) as unknown as Uint8Array }))]]),
@@ -268,15 +266,15 @@ describe('NetNode.setHeadersHandler wiring', () => {
 });
 
 // ---------------------------------------------------------------------------
-// appendBlocks — Phase 1f-3b, the swallow that spanned decode AND dispatch
+// appendBlocks — decode and dispatch fail for different reasons
 //
-// The old body wrapped both in one `try` and logged every escape as "failed to
-// decode block". Two consequences: a throw out of node's `applyOrderingBlock`
-// was reported as a decode failure, and the loop carried on to the next block —
-// applying blocks past the one that failed, though they are chain-linked.
+// One `try` over both would log every escape as "failed to decode block": a
+// throw out of node's `applyOrderingBlock` reported as a decode failure, and
+// the loop carrying on to apply blocks past the one that failed, though they
+// are chain-linked. So the `try` covers the decode alone.
 //
-// Like `getOrderingBlockId` before it, the real method had no coverage at all:
-// every existing test stubs `appendBlocks` on a fake `SyncStore`.
+// Like `getOrderingBlockId`, the real method is otherwise uncovered — every
+// test outside this file stubs `appendBlocks` on a fake `SyncStore`.
 // ---------------------------------------------------------------------------
 
 /** A store whose block handler records what it is given, and can be made to throw. */
@@ -302,8 +300,8 @@ describe('LazySyncStore.appendBlocks', () => {
 
   it('skips an undecodable entry and still applies the rest', () => {
     // A decode failure is genuinely the sender's fault and genuinely
-    // per-modifier — the other entries decode independently — so this one keeps
-    // the `continue` the old code had.
+    // per-modifier — the other entries decode independently — so this one
+    // `continue`s rather than stopping the batch.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const seen: number[] = [];
     const store = storeApplying((b) => seen.push(b.header.height));
@@ -318,9 +316,10 @@ describe('LazySyncStore.appendBlocks', () => {
   });
 
   it('propagates a handler throw instead of reporting it as a decode failure', () => {
-    // The misattribution defect. Pre-fix this threw inside the `try` and was
-    // logged as "failed to decode block" — a consensus-apply failure wearing a
-    // wire-format label, sending whoever read the log to the wrong package.
+    // The misattribution this guards against: inside the decode `try` this
+    // throw logs as "failed to decode block" — a consensus-apply failure
+    // wearing a wire-format label, sending whoever reads the log to the wrong
+    // package.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const store = storeApplying(() => {
       throw new Error('apply exploded');

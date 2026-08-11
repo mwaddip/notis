@@ -971,15 +971,16 @@ describe('a stored header that cannot be hashed', () => {
     const { buildBlock, forkResolution, corruptState } = await storeCorruptTip();
 
     // **The sharper of the two**: `reorg failed: block at height N rejected` is
-    // the exact sentence the original comment said must never be produced for
-    // this fault. It is what `reorg` throws when `applyOrderingBlock` answers
+    // the one sentence that must never be produced for this fault. It is what
+    // `reorg` throws when `applyOrderingBlock` answers
     // `false`, and `index.ts`'s fork-resolution catch logs it as
     // `Fork resolution error` and carries on — local corruption filed as a
     // network problem.
     //
     // `reorg`'s own catch restores the prover and re-throws unchanged, so the
-    // typed error reaches the boundary with its identity intact and
-    // `index.ts:342` lets it past rather than warning over it.
+    // typed error reaches the boundary with its identity intact and the
+    // fork-resolution catch in `index.ts` lets it past rather than warning
+    // over it.
     const caught = thrownBy(() => forkResolution.reorg(1, [buildBlock(2, 1)]));
     expect(caught).toBeInstanceOf(corruptState.UnreadableStoredBlockError);
     expect((caught as Error).message).not.toContain('reorg failed');

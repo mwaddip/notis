@@ -26,17 +26,16 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
-// The sync stream handler — Phase 1f-3b, the third and widest swallow
+// The sync stream handler — one span per failure owner
 //
-// The handler's `try` spanned the stream read, the frame decode, all four
-// serve branches, every `sink`, the app-layer `postsHandler` callback and the
-// whole `syncMachine.handleMessage` dispatch. Its `catch` was bare — no error
-// binding, no log — and replied with an empty frame. So a throw anywhere in
-// sync dispatch was absorbed in complete silence and the peer simply got an
-// empty answer.
+// The handler covers the stream read, the frame decode, four serve branches,
+// every `sink`, the app-layer `postsHandler` callback and the whole
+// `syncMachine.handleMessage` dispatch. A single `try` over all of it would
+// answer every one of them with an empty frame and no log, so each owner gets
+// its own span and its own message: net's decode/guard layer and the app
+// callback log at `error`, the outer stream-level span at `warn`.
 //
-// Three for three: every catch in this file had a span wider than the failure
-// it was written for. These tests drive the REAL handler.
+// These tests drive the REAL handler.
 // ---------------------------------------------------------------------------
 
 const MAGIC = 0x54444147;
@@ -295,9 +294,8 @@ describe('sync stream handler — app-layer callback failures', () => {
   });
 
   it('does not penalise the peer for our own handler throwing', async () => {
-    // A failure in node's callback is not misbehaviour by the sender. The old
-    // catch could not have penalised (it did nothing at all), and the new one
-    // must not start.
+    // A failure in node's callback is not misbehaviour by the sender, so the
+    // handler logs and answers but records no penalty.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { send, peerMgr, peerId } = makeHandlerHarness({
       postsHandler: () => {
@@ -361,7 +359,7 @@ describe('sync stream handler — the outer span', () => {
   it('logs a stream-level failure rather than replying empty in silence', async () => {
     // A source that dies mid-read stands in for the ordinary case: a peer that
     // drops the connection. `warn`, not `error` — this one is not necessarily
-    // anyone's bug — but it is no longer nothing, which is what it was.
+    // anyone's bug — but it is logged, not swallowed.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { sendBrokenStream } = makeHandlerHarness();
 

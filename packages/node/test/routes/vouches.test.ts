@@ -2,17 +2,16 @@
 // Vouch routes THROUGH THE JSON EDGE (NODE_INTERFACE → Vouches, "The JSON
 // edge").
 //
-// These did not exist, and that absence is what hid the defect: vouch coverage
-// was service-level only, handing `castVouch`/`initiateUnvouch` raw
-// `Uint8Array` objects that never touched `jsonToTx`. Over real HTTP the cast
-// was INEXPRESSIBLE — `BINARY_BOX_FIELDS` lacked `voucherId`/`targetId`, so
-// both arrived as hex strings and died at `validateTx`'s step-4 schema, which
-// wants `bytes32`. A whole route pair, unreachable, with a green suite.
+// ⚠ Service-level coverage cannot stand in for these. A test that hands
+// `castVouch`/`initiateUnvouch` raw `Uint8Array` objects never touches
+// `jsonToTx`, so it cannot see a `BINARY_BOX_FIELDS` entry missing for
+// `voucherId`/`targetId` — over real HTTP those arrive as hex strings and die
+// at `validateTx`'s step-4 `bytes32` schema. The route pair can be unreachable
+// with the whole suite green; only this edge notices.
 //
-// The demo UI's vouch buttons are still unmigrated (they POST `{userId,
-// targetId}` with no `tx` and die at the routes' `tx required` 400). That is a
-// separate recorded phase; this file restores the edge underneath it and stops
-// there.
+// The demo UI's vouch buttons remain unmigrated: they POST `{userId,
+// targetId}` with no `tx` and get the routes' `tx required` 400. This file
+// covers the edge underneath them and stops there.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -280,8 +279,8 @@ describe('vouch routes — the JSON edge', () => {
   });
 
   it('POST /vouches still requires a tx — the unmigrated UI shape 400s', async () => {
-    // Documents, not fixes, the recorded UI phase: the demo's button sends
-    // this and gets a 400 before `jsonToTx` runs.
+    // Documents rather than fixes the unmigrated UI: the demo's button sends
+    // exactly this, and gets a 400 before `jsonToTx` runs.
     const res = await request('/', 'POST', { userId: voucher.hex, targetId: target.hex });
     expect(res.status).toBe(400);
     expect((res.data as Record<string, unknown>)['reason']).toBe('tx required');
@@ -325,8 +324,9 @@ describe('vouch routes — the JSON edge', () => {
       voucherId: voucher.hex,
       targetId: target.hex,
     });
-    // Without this an unvouch was unbuildable from the API alone: the
-    // transaction spends a NAMED box and no read surface exposed one.
+    // Without a `boxId` in the listing an unvouch is unbuildable from the API
+    // alone: the transaction spends a NAMED box, and this is the only read
+    // surface that exposes one.
     expect(body.vouches[0]!['boxId']).toMatch(/^[0-9a-f]{64}$/);
   });
 

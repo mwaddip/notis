@@ -128,7 +128,7 @@ describe('db lifecycle', () => {
     expect(dagPostsNames).toContain('status');
     expect(dagPostsNames).toContain('block_height');
 
-    // ordering_blocks (blob-based from Phase 2 block-header split)
+    // ordering_blocks — one blob column per body section, plus the header
     const orderCols = db.pragma('table_info(ordering_blocks)') as Array<{ name: string }>;
     const orderNames = orderCols.map((c) => c.name);
     expect(orderNames).toContain('height');
@@ -138,8 +138,9 @@ describe('db lifecycle', () => {
     expect(orderNames).toContain('validator_signature');
     expect(orderNames).toContain('created_at');
 
-    // like_records (P2-D N2a) — the contract's exact three columns, with the
-    // composite PK on (target_post_id, liker_id): the structural dedup.
+    // like_records — the contract's exact three columns (NODE_INTERFACE →
+    // Like-records), with the composite PK on (target_post_id, liker_id): the
+    // structural dedup.
     const likeRecCols = db.pragma('table_info(like_records)') as Array<{
       name: string; notnull: number; pk: number;
     }>;
@@ -152,7 +153,7 @@ describe('db lifecycle', () => {
     expect(likeRecByName.get('applied_at_block')!.pk).toBe(0);
     expect(likeRecCols.every((c) => c.notnull === 1)).toBe(true);
 
-    // identity_records gains like_carry (P2-D N2a), NOT NULL with default 0.
+    // identity_records carries like_carry, NOT NULL with default 0.
     const idRecCols = db.pragma('table_info(identity_records)') as Array<{
       name: string; notnull: number;
     }>;

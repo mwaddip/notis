@@ -146,11 +146,12 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
   // valid, nothing about the object's shape is known: the fields below are
   // decoded CBOR from an untrusted producer, and `pruneEntries` in particular
   // reaches `Buffer.from` and `createHash().update()` further down, which throw
-  // on a number or a plain object. This used to run only in the gossip topic
-  // validator, so the pull-sync path — CBOR-decode straight into the apply
-  // handler — arrived here with fields of arbitrary type. Enforcing it in the
-  // funnel makes the guarantee path-independent, as already done for the PoW
-  // target (M-2), coinbase maturity (M-3), and the validator signature (H-1).
+  // on a number or a plain object. It runs in the funnel rather than in the
+  // gossip topic validator alone, so the guarantee is path-independent: the
+  // pull-sync path CBOR-decodes straight into the apply handler, and a
+  // validator-only check leaves it reachable with fields of arbitrary type.
+  // Same shape as the PoW target (M-2), coinbase maturity (M-3), and the
+  // validator signature (H-1).
   const structure = validation.verifyOrderingBlockStructure(block);
   if (!structure.valid) {
     console.warn(`Rejected block: invalid structure: ${structure.error}`);
@@ -235,9 +236,9 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     // `currentHeight` *is* `MAX(height)` over this table, so a missing block at
     // exactly that height is not "we don't have it yet" — it is the row the tip
     // was read from having gone. Same fault as the unhashable header below it,
-    // and it used to be reported the opposite way: as the arriving block's
-    // rejection, which blames a peer for our own store and then repeats for
-    // every block after it.
+    // and it throws rather than rejecting: reporting it as the arriving block's
+    // rejection blames a peer for our own store and then repeats for every
+    // block after it.
     const prevBlock = getOrderingBlock(currentHeight);
     if (!prevBlock) {
       throw new MissingStoredBlockError('applyOrderingBlock', currentHeight);
@@ -424,7 +425,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
  * first-occurrence order, which `applyBlockMutations` then replaces with the
  * canonical one (M-12). Created-box bytes come from the journal's recorded
  * payload, never a store re-fetch: `getBox` returns null for a created-then-
- * consumed box and used to silently drop it.
+ * consumed box, so a re-fetch would silently drop it.
  */
 function proverFeedFromJournal(
   journal: BlockJournal,
@@ -496,8 +497,8 @@ class SpeculativeRollback extends Error {
 /**
  * What the speculative state-root run answered. The two non-computed arms are
  * deliberately not one `null`: they demand opposite reactions from the block
- * creator, and conflating them is exactly the P2-B 1c defect — a node mining
- * a body its own mutation phase had already rejected.
+ * creator, and conflating them puts a node back on the defect this type exists
+ * to prevent — mining a body its own mutation phase has already rejected.
  */
 export type StateRootSpeculation =
   /** The post-block digest the header must commit to. Mine over it. */
@@ -686,9 +687,9 @@ function applyMutationPhase(
   }
 
   // Still remove confirmed entries from local mempool (if we have them).
-  // One DELETE keyed by subblock_id — the former fetch-1000-and-find loop
-  // silently stopped removing entries past row 1000 (audit M-8, bookkeeping
-  // only: those entries lingered until expiry, no consensus effect).
+  // One DELETE keyed by subblock_id, never a bounded fetch-and-find loop: a
+  // row cap silently stops removing entries past it (audit M-8, bookkeeping
+  // only — the stragglers linger until expiry, no consensus effect).
   removeSubBlockEntries(subBlockIdsOf(block.subBlockTree));
 
   // 8. Compute DAG scores and evaluate canonical tip
@@ -870,12 +871,13 @@ function applyMutationPhase(
     consumeBox,
     getKarmaBox,
     // Bond settlement's unlock predicate reads the invitee's current summed
-    // karma (P2-B phase 1). The store's getKarmaValue is the single
-    // implementation shared with the pool and relay paths — a different read
-    // here would be a consensus split, not a style difference (phase 1b).
+    // karma (NODE_INTERFACE → "Bond transition rules"). The store's
+    // getKarmaValue is the single implementation shared with the pool and relay
+    // paths — a different read here would be a consensus split, not a style
+    // difference.
     getKarmaValue,
-    // The vouch cast's cooldown gate (P2-B phase 2) — same single-
-    // implementation rule as getKarmaValue.
+    // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
+    // rules") — same single-implementation rule as getKarmaValue.
     hasActiveVouchCooldown,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
@@ -974,7 +976,7 @@ function applyMutationPhase(
     queue.push({ txId, tx, outputs });
   }
 
-  // P2-D per-block like accrual: in-memory, this invocation only — the
+  // Per-block like accrual: in-memory, this invocation only — the
   // end-of-phase settlement (§11b) reads both maps. Local by design, so the
   // speculative (creator) run accrues and settles identically and its rollback
   // discards everything with it.
@@ -1009,7 +1011,7 @@ function applyMutationPhase(
         return false;
       }
 
-      // P2-D like apply rules (NODE_INTERFACE "Per-block like settlement"):
+      // Like apply rules (NODE_INTERFACE "Per-block like settlement"):
       // re-checked at apply — consensus, not gateway courtesy — and BEFORE
       // applyTx, so a failing like never mutates state. Any failure rejects
       // the whole block, like any other invalid embedded tx.
@@ -1077,9 +1079,8 @@ function applyMutationPhase(
             // The escrow records the ACTUAL staked value, never the constant
             // (audit F-consensus-3): maturity re-mints exactly what the box
             // held, so the round trip is conservation-structural rather than
-            // true by coincidence. With the cast pinned to VOUCH_KARMA_AMOUNT
-            // the two agree for every post-pin vouch; a pre-pin box still
-            // settles to what it actually locked.
+            // true by coincidence. It does not depend on the cast's
+            // VOUCH_KARMA_AMOUNT pin holding for the box in hand.
             insertVouchCooldown(
               vb.voucherId,
               vb.targetId,
@@ -1088,7 +1089,8 @@ function applyMutationPhase(
             );
           }
           // validateTx above pinned the unvouch shape to exactly one VouchBox
-          // input (P2-B phase 4), so first-match is exhaustive, not lossy.
+          // input (NODE_INTERFACE → "Vouch transition rules"), so first-match
+          // is exhaustive, not lossy.
           break;
         }
       }
@@ -1144,7 +1146,7 @@ function applyMutationPhase(
     );
   }
 
-  // 11b. Per-block like settlement (P2-D — NODE_INTERFACE "Per-block like
+  // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like
   // settlement"). Entirely derived — nothing rides in the block, so producer
   // and verifier cannot disagree on it. Order pinned by the contract:
   // embedded txs → author settlement → post-lock vesting → decay → vouch
@@ -1182,8 +1184,9 @@ function applyMutationPhase(
   }
 
   // Post-lock vesting, ascending post-id order, for posts liked this block
-  // that hold a live PostLockBox: the retired epoch schedule evaluated per
-  // block.
+  // that hold a live PostLockBox. Evaluated per block, from the post's lifetime
+  // like count — so the result is independent of how the likes were spread
+  // across blocks.
   for (const postId of [...likesPerPost.keys()].sort()) {
     const lockBox = getPostLockBox(postId);
     if (!lockBox || !lockBox.id) continue;

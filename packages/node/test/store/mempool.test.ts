@@ -62,9 +62,10 @@ const TARGET_ID = '11'.repeat(32);
 const bytes = (hex: string) => new Uint8Array(Buffer.from(hex, 'hex'));
 
 /**
- * P2-D like tx: the gate columns derive from the tx-level `likeTarget` and the
- * single signing key — never from an output. The karma output is shape-realism
- * only; the store does not inspect it for the like gate.
+ * A like tx: the gate columns derive from the tx-level `likeTarget` and the
+ * single signing key — never from an output (NODE_INTERFACE → Per-block like
+ * settlement). The karma output is shape-realism only; the store does not
+ * inspect it for the like gate.
  */
 function likeTx(targetPostId: string, likerHex: string) {
   return {
@@ -72,8 +73,8 @@ function likeTx(targetPostId: string, likerHex: string) {
     outputs: [
       {
         boxType: 'karma',
-        // `bigint`, as the type declares. It was `99` — CBOR encoded the number
-        // silently; the positional writer has no `number` branch for a u64.
+        // `bigint`, as the type declares: the positional writer has no `number`
+        // branch for a u64, so a plain `99` here has no encoding at all.
         value: 99n,
         owner: bytes(likerHex),
         guard: 'owner_signature',
@@ -132,11 +133,10 @@ function pruneEntry(rootPostHash: string) {
     authorId: new Uint8Array(32),
     subtreeMerkleRoot: new Uint8Array(32),
     subtreePostIds: [rootPostHash],
-    // `authorSignature`, which is what `PruneEntry` actually declares. The
-    // fixture said `signature` and the `as any` hid it; cbor-x encoded whatever
-    // keys were present, so a misnamed field was simply a differently-shaped map
-    // that still serialized. The positional writer reads declared fields by
-    // name, so the typo became `undefined` at a fixed-width writer.
+    // `authorSignature` is the name `PruneEntry` declares, and the `as any` on
+    // this fixture is what would hide a misspelling of it. The positional writer
+    // reads declared fields by name, so a typo reaches a fixed-width writer as
+    // `undefined` rather than riding along as an extra map key.
     authorSignature: new Uint8Array(64),
     protocolVersion: 1,
   } as any;
@@ -356,7 +356,7 @@ describe('mempool store', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Correctness gates (audit M-8)
+  // Correctness gates (MEMPOOL_INTERFACE → Correctness gates)
   // -------------------------------------------------------------------------
 
   describe('gate metadata and correctness gates', () => {
@@ -453,15 +453,15 @@ describe('mempool store', () => {
   });
 
   // -------------------------------------------------------------------------
-  // removeSubBlockEntries (audit M-8)
+  // removeSubBlockEntries
   // -------------------------------------------------------------------------
 
   // The pool row is the only copy of a queued prune between `POST
   // /posts/:id/prune` and the block that carries it, and `drainMempoolPrunes`
   // is the miner's first read of it — inside `createOrderingBlock`, which no
-  // frame wraps in a try/catch. Nothing asserted the pair before: every prune
-  // test stopped at the insert, so the writer and the reader were free to speak
-  // different codecs.
+  // frame wraps in a try/catch. A prune test that stops at the insert leaves
+  // the writer and the reader free to speak different codecs, so what this
+  // needs to assert is the PAIR.
   describe('prune entry round-trip', () => {
     it('drains back exactly what was inserted', async () => {
       const mem = await importMempoolFresh();
@@ -510,9 +510,9 @@ describe('mempool store', () => {
 
       const drained = mem.drainMempoolPrunes(32);
 
-      // The readable sibling survives — one bad blob used to lose the batch,
-      // and the miner stops producing for as long as any row it cannot read
-      // stays in front of the drain.
+      // The readable sibling survives. A drain that failed the whole batch on
+      // one bad blob would stop the miner producing for as long as any row it
+      // cannot read stays in front of it.
       expect(drained.map((e) => e.rootPostHash)).toEqual([ROOT_2]);
       expect(mem.getPendingEntries(10)).toHaveLength(0);
       expect(errors).toHaveBeenCalledOnce();
@@ -574,7 +574,7 @@ describe('mempool store', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Size cap — reject, never evict (audit M-8)
+  // Size cap — reject, never evict
   // -------------------------------------------------------------------------
 
   describe('size cap', () => {

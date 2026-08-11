@@ -90,7 +90,7 @@ export type HandshakePayload =
 
 /**
  * Decode a handshake payload per the frame error-code policy
- * (WIRE_INTERFACE.md → "ReaderError codes", audit L-15):
+ * (WIRE_INTERFACE → ReaderError codes):
  *
  * - a valid frame yields its body;
  * - a frame bearing a recognized foreign network magic is a wrong-network
@@ -187,20 +187,17 @@ export class LazySyncStore implements SyncStore {
     if (block && typeof block === 'object' && 'header' in block) {
       const header = (block as { header: unknown }).header;
       if (header && typeof header === 'object') {
-        // The `try`/`catch` this replaces solved the problem locally before the
-        // library did: it existed because `blockHash` handed the header straight
-        // to `encodeHeader` with an unenforced precondition, so an unencodable
-        // header threw here. Phase 1f moved that precondition inside
-        // `blockHash`, which returns `null` on exactly the headers
-        // `verifyHeaderFieldDomains` rejects — so this method absorbs an
-        // *absence* and gains no knowledge of what a well-formed header is.
+        // No `try`/`catch` here, and none is needed: `blockHash` enforces its
+        // own precondition and returns `null` on exactly the headers
+        // `verifyHeaderFieldDomains` rejects (VALIDATION_INTERFACE → blockHash).
+        // So this method absorbs an *absence* and gains no knowledge of what a
+        // well-formed header is.
         //
-        // The guarded call rejects strictly more than the `catch` did: a header
-        // that is out of domain but still CBOR-encodable (`createdAt: NaN`, a
-        // negative `height`, a non-hex `prevBlockHash`) used to yield an id and
-        // now yields `null`. That is the point of 1f — under a positional
-        // encoder those headers share one `blockHash` by sentinel collision, so
-        // serving an id for them would be advertising a colliding anchor.
+        // `null` is the right answer for a header that is out of domain but
+        // still encodable (`createdAt: NaN`, a negative `height`, a non-hex
+        // `prevBlockHash`): under a positional encoder those headers share one
+        // `blockHash` by sentinel collision, so serving an id for them would be
+        // advertising a colliding anchor.
         return blockHash(header as Parameters<typeof blockHash>[0]);
       }
     }
@@ -262,12 +259,12 @@ export class LazySyncStore implements SyncStore {
     for (const raw of _blocks) {
       if (!(raw instanceof Uint8Array)) continue;
 
-      // The `try` covers the decode and nothing else. It used to span the
-      // handler call as well, so every throw out of `applyOrderingBlock` —
-      // node's block-apply funnel — was reported as "failed to decode block".
-      // Malformed peer bytes and a failure inside consensus apply are
-      // different events with different owners; one label for both is a
-      // misattribution that sends the reader to the wrong package.
+      // The `try` covers the decode and nothing else. Widening it over the
+      // handler call would report every throw out of `applyOrderingBlock` —
+      // node's block-apply funnel — as "failed to decode block". Malformed peer
+      // bytes and a failure inside consensus apply are different events with
+      // different owners; one label for both is a misattribution that sends the
+      // reader to the wrong package.
       let block: OrderingBlock;
       try {
         block = decodeOrderingBlock(raw);
@@ -285,9 +282,8 @@ export class LazySyncStore implements SyncStore {
       // block it rejects and reserves throwing for conditions that are not
       // about this block's validity — corrupt local state, or a bug. Catching
       // those here would hide exactly the class of failure that must not be
-      // hidden, and — because the old catch sat inside the loop — would carry
-      // on and apply the *following* blocks, which are chain-linked to the one
-      // that just failed.
+      // hidden, and — this being inside the loop — would carry on and apply the
+      // *following* blocks, which are chain-linked to the one that just failed.
       //
       // Propagating lands in `SyncMachine.dispatchDataEvent`, which logs the
       // event type and the peer and contains the failure to one message. That
@@ -317,11 +313,9 @@ export class LazySyncStore implements SyncStore {
  *
  * Module-level and exported for the reason `servePeersBody`,
  * `decodeHandshakePayload` and `LazySyncStore` are: the tests drive **this**
- * function rather than a copy of the serve loops. That was not an abstract
- * preference here — `headers.test.ts` held a `simulateHeadersHandler`
- * re-implementation, so the whole suite stayed green while the response wire
- * format changed underneath it, which is the one thing a protocol suite exists
- * to notice.
+ * function rather than a copy of the serve loops. A test double that
+ * re-implements those loops stays green through a change to the response wire
+ * format, which is the one thing a protocol suite exists to notice.
  *
  * Both arms are bounded twice: by what the peer asked for, and by
  * `MAX_LEGACY_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
@@ -917,9 +911,10 @@ export class NetNode {
        * hanging until its own timeout. Used only on paths that failed to
        * produce a real response; the success paths sink their own frames.
        *
-       * The empty frame is not the problem this phase fixes and is kept
-       * everywhere it was. What is fixed is that sending it used to be the
-       * *whole* response to a failure, with nothing written down anywhere.
+       * It answers the peer and nothing more: each failure path below logs
+       * before calling it, so the empty frame is never the whole record of a
+       * failure. The one silent caller is the not-Active drop just below, which
+       * is routine policy rather than a failure.
        */
       const replyEmpty = async (): Promise<void> => {
         try {
@@ -1024,8 +1019,8 @@ export class NetNode {
           }
           // The app-layer callback gets its own span. It is node's code, not
           // ours and not the peer's, so a throw here is neither a wire fault
-          // nor a reason to penalise the sender — but folding it into the
-          // outer catch made it indistinguishable from a broken stream.
+          // nor a reason to penalise the sender. Folding it into the outer
+          // catch would make it indistinguishable from a broken stream.
           let entries;
           try {
             entries = this.postsHandler(request.postIds);
@@ -1056,8 +1051,7 @@ export class NetNode {
         // What is left after the two narrow spans above: stream I/O, the frame
         // decode fallback, and the sub-block / peer-exchange serve paths. A
         // dropped connection mid-stream is ordinary and lands here, which is
-        // why this is `warn` rather than `error` — but it is no longer
-        // nothing, which is what it was.
+        // why this is `warn` rather than `error`.
         console.warn(`[net] sync stream handler failed for ${peerId}: ${String(err)}`);
         await replyEmpty();
       }
@@ -1414,14 +1408,18 @@ export class NetNode {
 
   /**
    * Register a storage-backed headers handler. Wires into the sync machine's
-   * store adapter and also registers a legacy protocol handler for backward
-   * compatibility with peers that use the old /dagsocial/headers/1 protocol.
+   * store adapter and also serves `/dagsocial/headers/1`.
+   *
+   * That protocol is named "legacy" throughout this file but is not a
+   * compatibility shim: it is the live transport fork resolution uses, and the
+   * framed codes 2-5 carry none of that traffic (NET_INTERFACE →
+   * `/dagsocial/headers/1` responses — positional, `arr(item, lp)`).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     // Wire into sync store bridge
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));
 
-    // Also register legacy headers protocol handler for backward compat
+    // Also serve the headers protocol
     if (!this.headersHandlerRegistered && this.libp2p) {
       const libp2p = this.libp2p;
       libp2p.handle(HEADERS_PROTOCOL, async ({ stream }) => {

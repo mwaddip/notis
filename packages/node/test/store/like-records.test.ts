@@ -3,12 +3,13 @@ import type Database from 'better-sqlite3';
 import { uid } from '../helpers.js';
 
 /**
- * P2-D N2a — the like-record store (NODE_INTERFACE "Like-records").
+ * The like-record store (NODE_INTERFACE → Like-records).
  *
- * `(liker, targetPostId)` pairs written only at block application. Nothing
- * calls these yet — N2b wires block application — so the tests exercise the
- * primitives directly, the same way the identity-record store was tested in
- * its own build phase.
+ * `(liker, targetPostId)` pairs, written only at block application. These tests
+ * drive the primitives directly, with no producer in the way, so what they pin
+ * is the row boundary and the composite key. The callers — block application's
+ * dedup gate and insert, the mempool gate, and fork rollback's delete — are
+ * covered in their own suites.
  */
 
 // ---------------------------------------------------------------------------

@@ -18,21 +18,20 @@ import {
 } from '../helpers.js';
 
 /**
- * Spec G phase D2 — `insertBox` populates the identity record's activity clock.
+ * `insertBox` populates the identity record's activity clock.
  *
- * The clock moves off box `createdAtBlock` and onto the committed record, and
- * the swap is only behaviour-preserving if the record says the same thing the
- * boxes used to. The choke point is what makes that true by construction:
- * `insertBox` bumps `lastActivityBlock` for exactly the boxes the old staleness
- * predicate counted — karma boxes with `decayBurn !== true` — so no producer
- * has to remember to do it.
+ * The staleness clock lives in the committed record, and `insertBox` is the
+ * choke point that keeps it there: it bumps `lastActivityBlock` for exactly the
+ * boxes staleness counts — karma boxes with `decayBurn !== true` — so no
+ * producer has to remember to do it.
  *
  * The height comes from the **open journal**, never from the box. `insertBox`
- * takes no height, and `createdAtBlock` is the field Spec G removes: reading it
- * would reintroduce the dependency this phase exists to delete, and would break
- * outright at phase G. These tests therefore always drive a journal height that
- * differs from the box's own `createdAtBlock`, so a implementation reading the
- * box cannot pass.
+ * takes no height, and a box carries none: `createdAtBlock` is not a box field,
+ * and the `created_at_block` COLUMN is store-only, which consensus code must
+ * never read (NODE_INTERFACE → "`created_at_block` is a store column, never a
+ * consensus input"). Every test below therefore drives a journal height that
+ * differs from the seed its fixture was built with, so an implementation that
+ * reached back into the box for a height could not pass.
  */
 
 async function importDbFresh() {
@@ -42,9 +41,9 @@ async function importDbFresh() {
   };
 }
 
-// The module's own type, not a hand-written one-entry shape: this declaration
-// listed `insertBox` alone, so reading a box back to check its id was a compile
-// error rather than a missing test.
+// The module's own type, not a hand-written shape listing the one or two
+// exports in use: under a hand-written shape, reaching for another export is a
+// compile error, and the test that needed it goes unwritten instead.
 async function importUtxoFresh() {
   return import('../../src/store/utxo.js');
 }
@@ -80,9 +79,9 @@ function karmaBox(
     value,
     owner: o,
     guard: 'owner_signature',
-    // `seed` was `createdAtBlock` before phase G3b deleted the field. It stays
-    // as a fixture discriminator so distinct boxes keep distinct proofSources —
-    // and therefore distinct ids — but it is no longer a box field.
+    // `seed` is a fixture discriminator, NOT a box field: it rides
+    // `proofSource` so that distinct boxes keep distinct ids. Nothing reads it
+    // back, and the journal height is what the clock assertions turn on.
     proofSource: `p-${seed}-${value}-${decayBurn ?? 'n'}`,
   };
   if (decayBurn !== undefined) candidate.decayBurn = decayBurn;
@@ -104,21 +103,17 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
   afterEach(() => { vi.resetModules(); });
 
   // -------------------------------------------------------------------------
-  // Phase 4 deliverable: id integrity across the store round-trip.
+  // Id integrity across the store round-trip.
   //
-  // The point of fixing this file was not the `n` suffix — it was that
-  // `karmaBox(o, seed, value)` was called as `karmaBox(alice, 100n, 42)` at all
-  // thirteen sites, so `value` received the NUMBER 42 and `seed` the bigint
-  // 100n. Both halves did damage. `u32BE(100n)` is not a number, so provenance
-  // fell to the `0xffffffff` sentinel; and a number-valued box hashes
-  // differently from the same box read back, because the store reads through
-  // `.safeIntegers()` and hands back a bigint. The id was computed before that
-  // laundering, so `stored.id !== computeBoxId(stored)` — a box in the UTXO set
-  // no light client could validate, which `types/src/utxo.ts:210-212` says holds
-  // "by construction for every box".
+  // TYPES_INTERFACE → BoxId states that `stored.id === computeBoxId(stored)`
+  // holds "by construction for every box in the UTXO set". A box that breaks it
+  // is one no light client can validate, and the store is where it breaks:
+  // `value` is written as a bigint and read back through `.safeIntegers()`, so
+  // a fixture built with a NUMBER value hashes one way in memory and another
+  // way on the way out.
   //
-  // This asserts it against a REAL store round-trip rather than the in-memory
-  // fixture, because the in-memory object is exactly what did NOT disagree.
+  // The assertion therefore runs against a REAL store round-trip. The in-memory
+  // object is exactly the side that cannot disagree with itself.
   // -------------------------------------------------------------------------
   it('a seeded box read back from the store still derives its own id', async () => {
     const { initDb } = await importDbFresh();
@@ -161,9 +156,9 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
-    // `applyTx` rewrites `createdAtBlock` to the settled height, but every other
-    // producer sets it itself — and phase G deletes the field. The record must
-    // never depend on it.
+    // The seed and the journal height are deliberately far apart. A box carries
+    // no height of its own, so an implementation that found one to read would
+    // be reading the store's display column — the one consensus must not touch.
     const alice = owner('alice');
     beginBlockJournal(90);
     insertBox(karmaBox(alice, 7, 100n));
@@ -197,7 +192,8 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
-    // `!== true`, matching the old predicate — not `=== undefined`.
+    // The predicate is `decayBurn !== true`, not `=== undefined`: an explicit
+    // `false` is activity, and only decay's own replacement box is not.
     const alice = owner('alice');
     beginBlockJournal(50);
     insertBox(karmaBox(alice, 50, 100n, false));
@@ -246,8 +242,8 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
-    // Genesis and bootstrap: `insertBox` behaves exactly as before, because
-    // there is no settled height to record.
+    // Genesis and bootstrap insert boxes outside any block, and there is no
+    // settled height to record — so `insertBox` writes the box and no clock.
     const alice = owner('alice');
     insertBox(karmaBox(alice, 1, 100n));
 

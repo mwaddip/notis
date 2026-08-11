@@ -13,23 +13,22 @@ import type { UserId } from '@dagsocial/types';
  *   stale       = (height − lastActivityBlock) >= staleThresholdBlocks
  *   owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / interval )
  *
- * `>=`, not `>`: the box-height predicate this replaced was
- * `createdAtBlock > height − threshold`, i.e. stale iff `height − A >= threshold`.
- * The contract's prose said `>` and was off by one; `decay.ts` carries the full
- * argument, and Spec G D10 requires the swap to be behaviour-identical.
+ * `>=`, not `>`: an identity last active at `A` is stale iff
+ * `A <= height − threshold`, i.e. `height − A >= threshold`. A `>` is off by
+ * one; `decay.ts` carries the full argument.
  *
- * **Phase D populates this.** `insertBox` bumps `lastActivityBlock` from the
+ * **Who populates this.** `insertBox` bumps `lastActivityBlock` from the
  * open journal's height for every karma box with `decayBurn !== true`;
  * `applyKarmaDecay` bumps `lastDecayBlock` when it fires; and
  * `ensureSystemKarmaBox` writes genesis's own record, since it runs outside
  * block application where the choke point has no height to read.
  *
- * **Key type is `UserId`** — the raw 32 Ed25519 public-key bytes. There is no
- * separate identity type: Spec G D5's branded `IdentityId` is **withdrawn**,
- * because box `owner`/`likerId`/`inviterId`/`voucherId` are the same pubkey and
- * all `UserId`, so key rotation would have to move box ownership too. The two
- * types move together or not at all, and branding two semantically identical
- * things buys no safety while costing a cast at every boundary.
+ * **Key type is `UserId`** — the raw 32 Ed25519 public-key bytes, and there is
+ * deliberately no separate identity type. Box `owner`/`likerId`/`inviterId`/
+ * `voucherId` are the same pubkey and all `UserId`, so key rotation would have
+ * to move box ownership too: the two move together or not at all, and branding
+ * two semantically identical things buys no safety while costing a cast at
+ * every boundary.
  *
  * The SQL table keys on those raw bytes; the **AVL** key is derived from them
  * (see `identityRecordKey`). Both are total functions of the identity, so the
@@ -42,7 +41,7 @@ export interface IdentityRecord {
   lastDecayBlock: number;
   /**
    * Outstanding like accrual, `< LIKES_PER_KARMA_PAYOUT` — written ONLY by
-   * per-block like settlement (P2-D). No other path may touch it; every other
+   * per-block like settlement. No other path may touch it; every other
    * writer of this record carries the stored value through unchanged.
    *
    * `bigint` although the value is tiny: it is karma-denominated committed
@@ -94,11 +93,11 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
 /**
  * Every identity record in the store, ordered by raw identity bytes.
  *
- * Its one production caller — `bootstrapAvlProver` in `src/index.ts` — was
- * deleted in P2-B phase 4: the rebuild-from-store path was unreachable under
- * `@ergots/avltree` 0.4.0 and unsound anyway (NODE_INTERFACE → the SUPERSEDED
- * note on `bootstrapAvlProver`, 2026-08-07). The full-set read remains for the
- * store's own unit tests.
+ * No production caller: the rebuild-from-store path it fed
+ * (`bootstrapAvlProver` from `src/index.ts`) is unsound, because AVL+ tree
+ * shape is history-dependent (NODE_INTERFACE → the SUPERSEDED note on
+ * `bootstrapAvlProver`, 2026-08-07). The full-set read remains for the store's
+ * own unit tests.
  *
  * The SQL `ORDER BY` is not the canonical order — the AVL key is a *hash* of
  * these bytes, so a prover feed sorts by that instead. This ordering only

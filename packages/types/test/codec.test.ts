@@ -366,9 +366,9 @@ describe('the boundary check', () => {
   });
 
   it('every rejection is a ReaderError, so callers catch one class', () => {
-    // Spec §2.1 step 4: the codec signals by throwing; the three existing call
-    // sites already try-wrap ReaderError, and §2.2 routes it to
-    // PenaltyKind.ProtocolViolation.
+    // TYPES_INTERFACE → The boundary check, step 4: the codec signals by
+    // throwing, callers try-wrap ReaderError, and NET_INTERFACE → Peer Penalty
+    // System routes it to PenaltyKind.ProtocolViolation.
     for (const input of [
       Uint8Array.of(1, 1), // trailing
       Uint8Array.of(0x81, 0x00), // non-canonical

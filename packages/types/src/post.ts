@@ -23,23 +23,21 @@ export interface Post {
 }
 
 // ---------------------------------------------------------------------------
-// Canonical field encoding (audit M-1, positional dialect since Phase 2)
+// Canonical field encoding — TYPES_INTERFACE → Canonical field encoding
 // ---------------------------------------------------------------------------
 //
-// The pre-M-1 preimages concatenated fields with no delimiters, so distinct
-// field tuples produced identical bytes: (powNonce=5, timestamp=23) and
-// (52, 3) both yielded …"5""23"… == …"52""3"… → the same postId. M-1 closed
-// that by making every variable-length field length-prefixed and giving the
-// ref array an explicit count.
+// `postFieldBytes` is **injective**: every variable-length field is
+// length-prefixed and the ref array carries an explicit count, so no two
+// distinct posts share one encoding. Numeric fields are encoded, never
+// stringified — an undelimited `String(n)` concatenation collides, since
+// (powNonce=5, timestamp=23) and (52, 3) both yield …"5""23"… == …"52""3"…,
+// one postId for two posts. That is the defect audit M-1 closed, and
+// injectivity is the property every later dialect change has had to preserve;
+// the tests pin that exact pair to distinct ids.
 //
-// ⚠ **This phase changes the DIALECT, not the coverage.** `postFieldBytes` was
-// already positional and injective, and it did not need migrating to close any
-// defect — see spec §3.1. It moves so that the repo has exactly *one* encoding
-// language: fixed-width little-endian integers become VLQ, and ids stop
-// crossing a preimage as the UTF-8 of their hex text (68 bytes per parent ref)
-// and cross as the 32 raw bytes they name. Injectivity is therefore
-// **preserved, not introduced** — the M-1 collision pair must still yield
-// distinct ids after the move, which the tests pin.
+// One encoding language throughout: integers are VLQ rather than fixed-width
+// little-endian, and ids cross a preimage as the 32 raw bytes they name rather
+// than as the UTF-8 of their hex text.
 //
 // Encoding is protocol-breaking and unversioned. It MUST stay byte-identical
 // here and in the demo-UI JS (packages/node/public/index.html); the frozen
@@ -65,7 +63,8 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *   | 5 | protocolVersion | vlqU           |
  *   | 6 | timestamp       | vlqU           |
  *
- * **Field order IS the specification** (spec §2.3): reordering it is a
+ * **Field order IS the specification** (TYPES_INTERFACE → Primitives):
+ * reordering it is a
  * consensus change with no compiler signal, so the calls below are laid out to
  * be read line-by-line against that table.
  *
@@ -74,7 +73,7 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *
  * ## Totality — which writers throw here, and why that is safe
  *
- * Split, deliberately (spec §2.5, TYPES_INTERFACE → Totality):
+ * Split, deliberately (TYPES_INTERFACE → Totality):
  *
  * - `lpUtf8`, `vlqU` are **total**. A value outside the encodable domain takes
  *   the all-ones sentinel instead of throwing, because the encodable domain
@@ -89,11 +88,10 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *   map it onto a **well-formed post's** encoding, a consensus-level collision
  *   strictly worse than the panic it avoids.
  *
- * The three throwing fields therefore have their domain established upstream,
- * one phase ahead of this one: `verifyPostFieldDomains` in
- * `@dagsocial/validation` (Phase 1c) pins `author`/`challenge` at 32 bytes and
- * every ref at 64 **lowercase** hex characters, and node's `verifyPost`,
- * `verifyPostForRelay` and `content-sweep` gates call it (Phase 1d). Lowercase
+ * The three throwing fields therefore have their domain established upstream:
+ * `verifyPostFieldDomains` in `@dagsocial/validation` pins `author`/`challenge`
+ * at 32 bytes and every ref at 64 **lowercase** hex characters, and node's
+ * `verifyPost`, `verifyPostForRelay` and `content-sweep` gates call it. Lowercase
  * is load-bearing: `'AB…'` and `'ab…'` decode to identical bytes, so accepting
  * both would make this encoding non-injective at the hex boundary.
  */

@@ -6,14 +6,14 @@
 // reach the same verdict for the same bytes. It therefore may NOT be expressed
 // with runtime Unicode general-category escapes (`\p{C}` / `\P{C}`).
 //
-// The old implementation was `/^[\P{C}\n]*$/u`. `\P{C}` excludes `\p{Cn}`
-// (unassigned), and which codepoints are unassigned changes with the Unicode
-// data version each Node/V8 build ships. Two honest nodes on different builds
-// therefore reached *different verdicts* for the same content — a consensus
-// split. (Node 22.19 ships Unicode 16.0; Node 20 shipped 15.0/15.1.)
+// Concretely: `/^[\P{C}\n]*$/u` would not do, because `\P{C}` excludes `\p{Cn}`
+// (unassigned) and which codepoints are unassigned changes with the Unicode data
+// version each Node/V8 build ships. Two honest nodes on different builds would
+// reach *different verdicts* for the same content — a consensus split. (Node
+// 22.19 ships Unicode 16.0; Node 20 shipped 15.0/15.1.)
 //
-// The fix is this static table: the union of the Unicode general categories
-// `Cc` (control), `Cf` (format), `Cs` (surrogate) and `Co` (private use),
+// This static table is what avoids that: the union of the Unicode general
+// categories `Cc` (control), `Cf` (format), `Cs` (surrogate) and `Co` (private use),
 // enumerated once at a **pinned Unicode version**, minus U+000A (line feed,
 // which stays allowed). `Cn` (unassigned) is deliberately NOT rejected —
 // allowing it is precisely what removes the version dependence, because a

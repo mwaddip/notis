@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes — the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). RESET at Phase 2: cbor-x maps became a positional layout, `guard` left the consensus bytes (P2-C row C10), and every box id moved. One vector per box type, because the per-type field lists are six separate layouts sharing a two-field prefix — plus a second bond vector, because `bond.inviteePublicKey` is the one 0-or-32-byte field in the box arms and its two states are two encodings, not one.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes — the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are six separate layouts sharing a two-field prefix — plus a second bond vector, because `bond.inviteePublicKey` is the one 0-or-32-byte field in the box arms and its two states are two encodings, not one.",
   "vectors": [
     {
       "name": "box/karma-minimal",

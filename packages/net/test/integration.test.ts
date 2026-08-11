@@ -19,7 +19,8 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 function makeConfig(bootstrapPeers: string[] = []): NetConfig {
   return {
     // Testnet magic — both nodes must agree; also proves the wire path does
-    // not silently frame as mainnet (P2-A phase 3b).
+    // not silently frame as mainnet (ARCHITECTURE → What varies per network,
+    // and what must not).
     magic: 0x54444147,
     // Matches the 20-bit target the fixtures below are mined at.
     postPowTargetBits: 20,
@@ -49,9 +50,9 @@ const validators: NetValidators = {
 const TIMEOUT = 25000;
 
 /**
- * Brute-force a PoW nonce with the predicate the relay gate itself calls
- * (`gossip.ts:255`). 20 bits target (~1M iterations worst case, typically a
- * few hundred ms in Node.js).
+ * Brute-force a PoW nonce with the predicate the relay gate itself calls —
+ * `verifyPoW`, from `runStage1SubBlock`. 20 bits target (~1M iterations worst
+ * case, typically a few hundred ms in Node.js).
  *
  * The nonce tail's encoding belongs to `@dagsocial/types` and is pinned there
  * by golden vectors; a harness that re-derives a consensus rule is a second
@@ -138,7 +139,7 @@ describe('Two-node integration', () => {
     // Compute valid PoW nonce (20-bit target, Stage 1 validates it).
     // The preimage comes from @dagsocial/types — gossip's Stage-1 check calls
     // postPowPreimage(post), so mining against a local copy of the encoding
-    // (as this test used to) silently stops matching (audit M-1).
+    // silently stops matching the moment the encoding moves (audit M-1).
     // powNonce is excluded from the preimage, so the placeholder is irrelevant.
     const powInput = postPowPreimage({ ...postBase, powNonce: 0 });
     const nonce = solvePoW(powInput, 20);
@@ -241,22 +242,17 @@ describe('Two-node integration', () => {
     });
 
     // Broadcast an invalid sub-block (empty content — fails ContentLimits).
-    // T2b re-derived: with the structure gate's likeBoxes check gone, this
-    // fixture still passes structure and still dies at ContentLimits — the
+    // This fixture passes the structure gate and dies at ContentLimits, so the
     // rejection fires for its intended reason.
     //
-    // ⚠ **Phase 3b made the old fixture unsendable, and the shape of that is
-    // worth keeping.** It read `subBlockId: 'bad'`, `author: 'user1'`,
-    // `producerId: 'user1'` — three fields that were never valid values, tolerated
-    // because cbor encodes any string. Under fixed-width writers they have no
-    // encoding, so `broadcastSubBlock` throws in the *test* before anything is
-    // published, and the test would have been asserting that nothing arrived
-    // because nothing was ever sent.
-    //
-    // The fields are therefore given their real shapes and the *intended*
-    // defect is kept as the only one: empty content, which fails ContentLimits.
-    // Encoding is not validation, so this still crosses the wire and is still
-    // rejected at Stage 1 — which is what the test is for.
+    // ⚠ **Every field except `content` carries its real shape, and that is
+    // load-bearing.** Placeholder ids like `subBlockId: 'bad'` or
+    // `author: 'user1'` have no encoding under fixed-width writers, so
+    // `broadcastSubBlock` would throw inside the *test* before anything is
+    // published — leaving it asserting that nothing arrived because nothing was
+    // ever sent. Empty content is kept as the only defect precisely because
+    // encoding is not validation: it still crosses the wire and is still
+    // rejected at Stage 1, which is what the test is for.
     const invalidSb = {
       subBlockId: 'ba'.repeat(32),
       post: {

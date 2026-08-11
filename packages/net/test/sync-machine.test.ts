@@ -793,7 +793,8 @@ describe('SyncMachine', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Config magic is used verbatim — no fallback (P2-A phase 3b)
+  // Config magic is used verbatim — no fallback
+  // (ARCHITECTURE → What varies per network, and what must not)
   // -----------------------------------------------------------------------
 
   describe('config magic', () => {
@@ -838,11 +839,8 @@ describe('SyncMachine', () => {
       machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, body);
       machine.flush();
 
-      // Currently sends response only when modifiers are found.
-      // The implementation iterates heights to find matching IDs.
-      // Since getOrderingBlock returns an object, a modifier is produced.
-      // However the data field is empty Uint8Array in the current implementation.
-      // The response is only sent if modifiers.length > 0.
+      // A response goes out only when at least one modifier is found — the
+      // 'does not respond when no blocks match' case below is the control.
       expect(sent.length).toBe(1);
       expect(sent[0]!.peerId).toBe('peer1');
     });
@@ -997,8 +995,9 @@ describe('SyncMachine', () => {
         machine.handleMessage('attacker', MSG_MODIFIER_REQUEST, new Uint8Array(encode({ typeId: 101 })));
         await settle();
 
-        // The loop must still be processing — before the fix this event was
-        // never seen, because the loop promise had already rejected.
+        // The loop must still be processing. If the throw above escaped the
+        // per-event frame the loop promise would already have rejected and this
+        // event would never be seen.
         machine.onPeerActive('peer1', 100);
         await settle();
 
@@ -1056,9 +1055,9 @@ describe('SyncMachine', () => {
 
     it('isolates a throwing appendBlocks on the DATA path', () => {
       // The two tests above throw from `chainHeight` during `onPeerActive` — a
-      // *control* event, so they exercise `dispatchControlEvent`. Phase 1f-3b
-      // made `LazySyncStore.appendBlocks` propagate a block-handler throw
-      // instead of swallowing it, and the frame that must then contain it is
+      // *control* event, so they exercise `dispatchControlEvent`.
+      // `LazySyncStore.appendBlocks` propagates a block-handler throw rather
+      // than swallowing it, and the frame that has to contain it is
       // `dispatchDataEvent`. Structurally identical helper, but the claim is
       // about the data path, so it is measured on the data path.
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1237,8 +1236,9 @@ describe('SyncMachine', () => {
       );
       machine.flush();
 
-      // One pass over heights 0..CHAIN_HEIGHT. The pre-fix nested loop read
-      // ~MAX_INV_IDS × CHAIN_HEIGHT heights for the same message.
+      // One pass over heights 0..CHAIN_HEIGHT. Nesting the height scan inside
+      // the id loop reads ~MAX_INV_IDS × CHAIN_HEIGHT heights for this same
+      // message, which is what this count exists to catch.
       expect(reads).toHaveLength(CHAIN_HEIGHT + 1);
       expect(sent).toHaveLength(1);
     });

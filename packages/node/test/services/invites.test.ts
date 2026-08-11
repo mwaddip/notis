@@ -1098,13 +1098,11 @@ describe('invites service', () => {
   // -----------------------------------------------------------------------
   // 10. Bond-commit signature guard (audit H-2)
   //
-  // The bond_dual commit path (`checkGuards` Path 3 in utxo-engine) used to
-  // accept any non-empty `signatures` map once the preimage matched, and
-  // `commitInvite` only checked that an entry for the invitee key existed. So
-  // consensus accepted a commit whose signature did not verify at all, and a
-  // commit could bind a key the committer did not control. The guard now
-  // requires a VALID Ed25519 signature from the committed invitee — the
-  // OUTPUT BondBox's `inviteePublicKey`.
+  // The bond_dual commit path (`checkGuards` Path 3 in utxo-engine) requires a
+  // VALID Ed25519 signature from the committed invitee — the OUTPUT BondBox's
+  // `inviteePublicKey`. A non-empty `signatures` map with a matching preimage
+  // is not enough: without verifying the signature, consensus would accept a
+  // commit binding a key the committer does not control.
   //
   // Deliberately NOT covered here: the bearer front-run. `InviteBox.secretHash
   // = H(s)` names no invitee, so an observer who learns `s` can still commit
@@ -1173,8 +1171,8 @@ describe('invites service', () => {
 
     it('rejects a commit whose signature under the committed key does not verify', () => {
       const tx = buildCommitTx(inviteePubKey);
-      // A 64-byte signature slot with garbage contents: the old guard only
-      // checked that the map was non-empty, so this used to be accepted.
+      // A 64-byte signature slot with garbage contents: well-formed enough to
+      // satisfy a non-emptiness check, so only real verification rejects it.
       tx.signatures[inviteePubKeyHex] = new Uint8Array(64).fill(0x7f);
 
       const result = validateTx(deps, tx, 5);

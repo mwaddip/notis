@@ -26,10 +26,9 @@ import {
 } from '../helpers.js';
 
 /**
- * Spec G phase C4 — the invite flow's *predicted* box ids.
+ * The invite flow's *predicted* box ids.
  *
- * This is the flow that parked `p3a-box-id-parked` (Spec G §1 defect 3): the
- * client is handed an InviteBox id before the box exists, bakes it into
+ * The client is handed an InviteBox id before the box exists, bakes it into
  * `bond.inviteBoxId`, and `utxo-engine.ts` dereferences it on-chain at bond
  * commit. If the service predicts a different id than block application
  * materializes, the bond dangles — and it fails as a missing box at commit

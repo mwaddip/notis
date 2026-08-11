@@ -181,10 +181,10 @@ describe('feed-service', () => {
   });
 
   it('getThread on a pruned root returns the stump shell as StumpJson', () => {
-    // CHANGED 2026-08-08 alongside `getPost` above: the stump arm used to cast
-    // the raw object through `as unknown as PostJson` — a cast that asserted
-    // a lie the compiler then had to be told to ignore. `ThreadJson.post` is
-    // now `PostJson | StumpJson | null` and the cast is gone.
+    // `ThreadJson.post` is `PostJson | StumpJson | null`, so the stump arm
+    // needs no cast: the shell below is asserted at its own type rather than
+    // through an `as unknown as PostJson` the compiler would have to be told
+    // to ignore.
     const t = feedService.getThread(prunedRootId);
     expect(t).not.toBeNull();
     expect(t!.ancestors).toEqual([]);

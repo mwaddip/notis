@@ -31,11 +31,11 @@ import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBl
  * The guarded function answers `null` on exactly the headers
  * `verifyHeaderFieldDomains` rejects, so a `null` here means the *fixture* drifted
  * out of the domain — not that the code under test is wrong. It says so at the
- * fixture rather than surfacing as `Buffer.from(null)` three frames later, which
- * is the same argument that produced this phase.
+ * fixture rather than surfacing as `Buffer.from(null)` three frames later —
+ * the same argument that puts the guard inside the encoder-backed functions.
  *
  * Deliberately not used for the poison fixtures: those are outside the domain on
- * purpose, and hash through the transcribed pre-change encoder instead.
+ * purpose, and hash through the transcribed unguarded encoder instead.
  */
 function mustHash(header: BlockHeader): string {
   const hash = blockHash(header);
@@ -501,12 +501,13 @@ describe('verifyParentRefsCount', () => {
   });
 
   // Both bounds are written against the constant, the shape the ordering-block
-  // path already uses (`refs(n)`, below). The literals they replaced were `8`
-  // and `9`, and when `MAX_PARENT_REFS` moved to 1 they failed differently:
-  // `8` broke loudly, while `9` kept passing and quietly stopped testing the
-  // off-by-one it existed for — 9 is now eight *over* the bound, not one over.
-  // A test that still passes for a weaker reason than its name claims shows up
-  // in no failure list, which is why the bound is never spelled as a number.
+  // path already uses (`refs(n)`, below). Spelled as literals they fail
+  // asymmetrically the moment `MAX_PARENT_REFS` moves: a hardcoded bound breaks
+  // loudly, while a hardcoded bound-plus-one keeps passing and quietly stops
+  // testing the off-by-one it exists for — it lands many *over* the bound rather
+  // than one over. A test that still passes for a weaker reason than its name
+  // claims shows up in no failure list, which is why the bound is never spelled
+  // as a number.
   //
   // Placeholder refs, not hex ids, on purpose: `verifyParentRefsCount` checks
   // array-ness and length and nothing else, and the fixtures say so.
@@ -530,9 +531,9 @@ describe('verifyParentRefsCount', () => {
 // ---------------------------------------------------------------------------
 
 describe('verifySubBlockStructure', () => {
-  // A UserId is 32 raw bytes — an Ed25519 public key. These fixtures carried
-  // the display string 'user1', which no identity can ever be; the test tree
-  // was unchecked, so it typechecked as nothing.
+  // A UserId is 32 raw bytes — an Ed25519 public key, never a display string.
+  // Stated as a typed constant so the fixtures cannot drift back: the test tree
+  // is type-checked (`tsconfig.test.json`), so a `string` here does not compile.
   const TEST_USER: Uint8Array = new Uint8Array(32).fill(1);
 
   const makeBasePost = (): Post => ({
@@ -557,13 +558,14 @@ describe('verifySubBlockStructure', () => {
   });
 
   it('T2b pin: accepts a sub-block without the retired likeBoxes field', () => {
-    // Two-sided pin, after-leg. Before-leg captured on the pre-T2b tree
-    // (2026-08-08): this exact shape was rejected with
+    // Two-sided pin, after-leg. Before-leg is a dated measurement, taken on the
+    // tree that still carried the sidecar field (2026-08-08): this exact shape
+    // was rejected with
     // { valid: false, error: 'Sub-block likeBoxes must be an array' }.
-    // The `as SubBlock` cast is gone with the typed test tree: once
-    // `producerId` is real bytes this object IS a complete SubBlock, which is
-    // precisely the claim — `likeBoxes` is retired, so nothing is missing. The
-    // compiler now proves that instead of being told to assume it.
+    // No `as SubBlock` cast, deliberately — with `producerId` as real bytes this
+    // object IS a complete `SubBlock`, which is precisely the claim. `likeBoxes`
+    // is retired, so nothing is missing, and the compiler proves that rather
+    // than being told to assume it.
     const sb: SubBlock = {
       subBlockId: 'ab'.repeat(32),
       post: makeBasePost(),
@@ -711,16 +713,13 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
   });
 
-  // `rejects block with subBlockEntries misaligned with subBlockRefs` stood
-  // here and died with the field it aligned against (Phase 3b). There is no
-  // second list to be misaligned with: `subBlockEntries` is the committed
-  // topology and `subBlockRefs` was an uncommitted copy of its `postId`s.
+  // There is no alignment case to pin here, because there is no second list to
+  // be misaligned with: the committed topology is `subBlockEntries` and
+  // `pruneEntries` alone (TYPES_INTERFACE → Layout — Block).
   //
-  // What replaces it is the half of that check which was load-bearing and which
-  // it carried as its first clause — `subBlockEntries` is present and is an
-  // array. Deleting a check needs the same care as adding one, so both of the
-  // cases the pair used to cover are pinned, including the one that used to be
-  // caught by the *other* deleted check.
+  // What the two cases below pin is the half that is load-bearing without it —
+  // `subBlockEntries` is present and is an array, and a block carrying no
+  // `subBlockTree` at all is a verdict rather than a TypeError.
 
   it('rejects a block whose subBlockTree has no subBlockEntries array', () => {
     const block = makeValidBlock();
@@ -835,9 +834,9 @@ describe('verifyOrderingBlockStructure', () => {
   // stored in `ordering_blocks` and read back as `UnreadableStoredBlockError`
   // → `failStopIfCorruptChain` → `process.exit(1)`. The trigger is automatic —
   // `extendsOurTip` reads the stored tip on every arriving gossip block — and
-  // the row is on disk, so it survives restart. The other two close the §2.5
-  // defects reported at the same rows in Phase 4b: a reachable writer throw,
-  // and a second sentinel collision.
+  // the row is on disk, so it survives restart. The other two close the two
+  // remaining ways an out-of-domain field escapes the encoder: a reachable
+  // writer throw, and a second sentinel collision (TYPES_INTERFACE → Totality).
   //
   // Each pin is exercised on the value that was MEASURED rather than a
   // convenient one, and each is separately shown NOT to reject what an honest
@@ -867,10 +866,10 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('isTreasury: every non-boolean collided on the 0xff byte readBool refuses', () => {
     // `writeBool` is `value === true ? 1 : value === false ? 0 : 0xff`, so the
-    // entire non-boolean domain mapped onto one encoding — a root collision —
-    // and onto a byte `readBool` rejects, which is what made it a stored-row
-    // poison rather than a cosmetic defect. The field is read by nothing else:
-    // `block-apply.ts:611-615` never passes it to `mintCredits`.
+    // entire non-boolean domain maps onto one encoding — a root collision — and
+    // onto a byte `readBool` rejects, which is what makes it a stored-row poison
+    // rather than a cosmetic defect. No consensus path reads the field:
+    // `block-apply`'s coinbase loop never passes it to `mintCredits`.
     const nonBooleans = ['yes', 0, 1, {}, null];
     const encodings = nonBooleans.map((v) =>
       hexOf(coinbaseOutputBytes({ ...goodCoinbase(), isTreasury: v } as unknown as CoinbaseOutput)),
@@ -892,9 +891,10 @@ describe('verifyOrderingBlockStructure', () => {
   });
 
   it('accepts isTreasury: false — the value a truthiness test would eat', () => {
-    // The honest producer emits `false` on every single-output block
-    // (`block-creator.ts:626`), so a `!out.isTreasury` style check would reject
-    // the overwhelmingly common case. The pin is on the type, not the value.
+    // The honest producer emits `false` on every single-output block —
+    // `block-creator`'s `buildCoinbaseOutputs` sets `isTreasury: true` only on
+    // the treasury output — so a `!out.isTreasury` style check would reject the
+    // overwhelmingly common case. The pin is on the type, not the value.
     const block = makeValidBlock();
     block.utxoTxTree.coinbaseOutputs = [
       { ...goodCoinbase(), isTreasury: false },
@@ -966,9 +966,10 @@ describe('verifyOrderingBlockStructure', () => {
   it('value at 2^64 is the writer throw this pin makes unreachable', () => {
     // `writeVlqU64OrThrow` is the codec's one throwing writer, and node reaches
     // it at `computeUtxoTxRoot` — apply-funnel step 4, ahead of the coinbase sum
-    // at step 5 — so without this pin a malformed block became an "unexpected
-    // failure" logged by the funnel's totality catch rather than the stated
-    // rejection §2.1 step 4 requires. The domain belongs upstream of the encoder.
+    // at step 5 — so without this pin a malformed block becomes an "unexpected
+    // failure" logged by the funnel's totality catch rather than a stated
+    // rejection (NODE_INTERFACE → Ordering block apply-time authorization). The
+    // domain belongs upstream of the encoder.
     expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n })).toThrow();
     expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n - 1n })).not.toThrow();
   });
@@ -995,9 +996,9 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('lockedUntilBlock: 2^60, Infinity and 1e300 all collided on one encoding', () => {
     // All three clear the `>= header.height` floor, which is why a lower bound
-    // alone never saw them, and `writeVlqU` is total by sentinel — so they did
-    // not throw, they collided: three distinct blocks, one `utxoTxRoot`. The
-    // `createdAt` defect Phase 1f closed on the header, one struct over.
+    // alone cannot see them, and `writeVlqU` is total by sentinel — so they do
+    // not throw, they collide: three distinct blocks, one `utxoTxRoot`.
+    // `HEADER_DOMAIN`'s `createdAt` rule is the same pin one struct over.
     const encodings = [2 ** 60, Infinity, 1e300].map((v) =>
       hexOf(coinbaseOutputBytes({ ...goodCoinbase(), lockedUntilBlock: v })),
     );
@@ -1084,8 +1085,8 @@ describe('verifyOrderingBlockStructure', () => {
     { name: 'subtreePostIds not an array', over: { subtreePostIds: 'aa'.repeat(32) }, error: 'invalid subtreePostIds' },
     { name: 'subtreePostIds holds a non-string', over: { subtreePostIds: [42] }, error: 'subtreePostId must be 64 lowercase hex' },
     { name: 'subtreePostIds holds a short string', over: { subtreePostIds: ['aa'] }, error: 'subtreePostId must be 64 lowercase hex' },
-    // The alphabet, which the old message claimed and the old check did not
-    // enforce: 64 characters that are not hex.
+    // The alphabet, not just the width: 64 characters that are not hex, which a
+    // length-only check waves through while the message still says "hex".
     { name: 'subtreePostIds holds a 64-char non-hex string', over: { subtreePostIds: ['zz'.repeat(32)] }, error: 'subtreePostId must be 64 lowercase hex' },
     { name: 'subtreePostIds holds an uppercase-hex id', over: { subtreePostIds: ['AA'.repeat(32)] }, error: 'subtreePostId must be 64 lowercase hex' },
     { name: 'rootPostHash is 64 chars of non-hex', over: { rootPostHash: 'zz'.repeat(32) }, error: 'invalid rootPostHash' },
@@ -1140,7 +1141,7 @@ describe('verifyOrderingBlockStructure', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 1e — the hex-alphabet pin has teeth
+// The hex-alphabet pin has teeth
 //
 // Every block below is mined and signed for real, and differs from a control
 // block that this function accepts in exactly one field. So for each case the
@@ -1149,8 +1150,8 @@ describe('verifyOrderingBlockStructure', () => {
 // block and shown to pass, and the control proves the rest of the structure
 // check passes on an otherwise identical object.
 //
-// The path this closes is not the preimage but the store. `block-apply.ts:579`
-// takes `subBlockId = entry.postId` and `:584` writes
+// The path this closes is not the preimage but the store. `block-apply`'s
+// entry loop takes `subBlockId = entry.postId` and calls
 // `insertPostPlaceholder(subBlockId, entry.parentRefs)` whenever a block
 // confirms a sub-block whose content has not arrived; `insertPost` then
 // upgrades the row without ever revisiting `parent_refs`. A 64-character
@@ -1177,20 +1178,19 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   };
 
   /**
-   * The rule as it stood before this phase, transcribed from the code it
-   * replaced (`typeof ref !== 'string' || ref.length !== 64`). Keeping it here
-   * is what makes "accepted today" a measurement rather than a memory: every
-   * poison below is asserted to satisfy it.
+   * A length check with no alphabet — what these fields are held to if the hex
+   * pin is removed. Transcribed here so that "the alphabet is the only thing
+   * rejecting this" is a measurement rather than a memory: every poison below is
+   * asserted to satisfy it.
    */
   const preChangeRule = (v: unknown): boolean => typeof v === 'string' && v.length === 64;
 
   /**
-   * `isEncodableHeader`'s rule for the string header fields, transcribed from
-   * the code Phase 1f replaced (`typeof h.prevBlockHash !== 'string'` and the
-   * four lines around it). It was the *only* header gate `verifyOrderingBlockPoW`
-   * and `verifyValidatorSignature` had, which is what let a poisoned header mine
-   * and sign — so asserting a poison satisfies it makes "it used to ride through
-   * PoW" a measurement rather than a memory.
+   * A bare type check on the string header fields — the whole of what they are
+   * held to if `HEADER_DOMAIN` is removed, leaving `verifyOrderingBlockPoW` and
+   * `verifyValidatorSignature` with no other header gate. Transcribed here so
+   * that "the poison mines and signs under the weaker rule" is a measurement
+   * rather than a memory.
    */
   const preChangeEncoderRule = (v: unknown): boolean => typeof v === 'string';
 
@@ -1207,18 +1207,17 @@ describe('ordering-block hex domains — the pin has teeth', () => {
    * genuinely mined and signed header.
    *
    * `subBlockRoot` and `utxoTxRoot` are producer-chosen 64-hex strings here,
-   * not recomputed: this function does not recompute them (that is apply-time,
-   * in `@dagsocial/node`), and a malicious validator computes the real roots
-   * over its own poisoned body anyway — `computeSubBlockRoot`'s leaf preimage
-   * is `JSON.stringify({postId, parentRefs, author})`, which accepts any
-   * string. Nothing about the poison is visible to PoW or to the signature.
+   * not recomputed: `verifyOrderingBlockStructure` does not recompute them
+   * (that is apply-time, in `@dagsocial/node`), and the header commits only to
+   * the root strings it declares. So nothing about a poisoned entry is visible
+   * to PoW or to the signature.
    */
   const makeBlock = (
     body: Partial<OrderingBlock['subBlockTree']> & { utxoTxIds?: string[] } = {},
     headerOver: Partial<BlockHeader> = {},
     /**
      * Header fields substituted **after** mining and signing, for values that
-     * cannot be mined at all: `isEncodableHeader` gates `verifyOrderingBlockPoW`
+     * cannot be mined at all: `HEADER_DOMAIN` gates `verifyOrderingBlockPoW`
      * and `blockHash`, so a header holding a non-`Uint8Array` `validatorId` or a
      * non-string `stateRoot` has no PoW solution to find. That is not a gap in
      * the fixture — it is the finding, and the tests using this argument assert
@@ -1274,9 +1273,9 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   });
 
   /**
-   * The Stage-1 ordering-block pipeline as `net/gossip.ts:94-122` runs it,
-   * minus the structure step — so a `true` here means the *only* remaining
-   * question is what this phase changed.
+   * The Stage-1 ordering-block pipeline as `net`'s `orderingBlock` topic
+   * validator runs it, minus the structure step — so a `true` here means the
+   * *only* remaining question is the structure check itself.
    */
   const everythingElsePasses = (block: OrderingBlock): boolean =>
     verifyProtocolVersion(block.header.protocolVersion) &&
@@ -1334,22 +1333,17 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   ];
 
   /**
-   * The header half of Phase 1e's demonstration, **moved here by Phase 1f**.
+   * The header half of the demonstration — the same poisons, in header fields.
    *
-   * These four cases used to sit in `CASES` above, and each asserted that a
-   * header carrying the poison *still cleared PoW and the validator signature* —
-   * which was true, because `isEncodableHeader` was the only header gate those
-   * two functions had and it checked `typeof === 'string'` and nothing more. 1f
-   * replaces that gate with the full domain, so the claim inverts: the poison no
-   * longer mines at all, and the fixture cannot even be built with `headerOver`
-   * (`solve()` throws `unsolvable fixture`). The poison is therefore spliced in
-   * **after** mining and signing, exactly as an attacker splicing a field into a
-   * signed block would leave it.
+   * These cannot be mined into a fixture: with `HEADER_DOMAIN` in front of the
+   * encoders a poisoned header has no PoW solution and `solve()` throws
+   * `unsolvable fixture`. The poison is therefore spliced in **after** mining
+   * and signing, exactly as an attacker splicing a field into an already-signed
+   * block would leave it.
    *
-   * Recorded rather than deleted because the movement *is* the phase: 1f is not
-   * only a `createdAt` pin and a fork-resolution guard — it also tightens
-   * `verifyOrderingBlockPoW` and `verifyValidatorSignature` on every string
-   * header field, and this is the measurement of that.
+   * That is what these cases measure and `CASES` cannot: the domain pin reaches
+   * `verifyOrderingBlockPoW` and `verifyValidatorSignature`, not only the
+   * structure check.
    */
   const HEADER_CASES: Array<{ name: string; poison: string; over: Partial<BlockHeader>; error: string }> = [
     { name: 'header.prevBlockHash', poison: NON_HEX_64, over: { prevBlockHash: NON_HEX_64 }, error: 'invalid prevBlockHash' },
@@ -1396,7 +1390,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     describe(c.name, () => {
       it('was accepted by the rule this phase replaced', () => {
         expect(preChangeRule(c.poison)).toBe(true);
-        // And by the encoder guard 1f replaced, which is why it used to mine.
+        // And by the bare type check, which is what would let it mine.
         expect(preChangeEncoderRule(c.poison)).toBe(true);
       });
 
@@ -1422,19 +1416,11 @@ describe('ordering-block hex domains — the pin has teeth', () => {
         expect(verifyHeaderFieldDomains(block.header).valid).toBe(false);
       });
 
-      // Deleted in 1f-4: 'and the unguarded pair still encodes it — the expand
-      // step changed nothing there'. It asserted that the *unguarded*
-      // `blockHash` still returned a 64-char string for this poison while the
-      // guarded one returned null — i.e. that the expand step had not leaked
-      // into the old name. The contraction deleted the unguarded pair, so both
-      // halves of that comparison are now the same function and the property is
-      // unconstructible, not merely untested. No coverage is lost: the '1f'
-      // case directly above pins the surviving behaviour for this same poison.
     });
   }
 
   // -------------------------------------------------------------------------
-  // stateRoot — 66 characters, and it was not checked at all
+  // stateRoot — 66 characters, not 64
   // -------------------------------------------------------------------------
 
   describe('header.stateRoot', () => {
@@ -1447,17 +1433,14 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       });
     });
 
-    // Every value here is a *string*, so `isEncodableHeader` let it through and
-    // the header mined and signed with the poison inside its own PoW preimage —
-    // which is what these tests asserted at Phase 1e (`verifyOrderingBlockPoW`
-    // and `verifyValidatorSignature` both `true`, structure the only rejector).
-    //
-    // **Phase 1f inverts that half.** `isEncodableHeader` is gone and both
-    // functions now establish the full header domain, so none of these mines any
-    // more and the fixture has to splice the poison in after signing. The
-    // `preChangeEncoderRule` assertion is what keeps "it used to ride through
-    // PoW" a measurement; the label assertion is what proves 1e's diagnosis did
-    // not move when its check was delegated.
+    // Every value here is a *string*, so a bare type check admits it and the
+    // header would mine and sign with the poison inside its own PoW preimage.
+    // `HEADER_DOMAIN` is what closes that: `verifyOrderingBlockPoW` and
+    // `verifyValidatorSignature` establish the full header domain, so none of
+    // these mines and the fixture has to splice the poison in after signing.
+    // The `preChangeEncoderRule` assertion is what keeps the counterfactual a
+    // measurement; the label assertion is what pins the structure check's own
+    // diagnosis, which delegating the domain must not move.
     const BAD_STATE_ROOTS: Array<[string, string]> = [
       ['64 hex characters — a 32-byte digest where 33 belong', '00'.repeat(32)],
       ['66 characters of non-hex', 'zz'.repeat(33)],
@@ -1480,11 +1463,11 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     }
 
     it('a non-string stateRoot was already unminable — the pin states the verdict, it does not change it', () => {
-      // `isEncodableHeader` requires `typeof stateRoot === 'string'`, so this
-      // header has no PoW solution and `verifyOrderingBlockPoW` rejects it
-      // today. Worth pinning as a separate claim: it is the one stateRoot case
-      // that is NOT a behavioural change, and folding it in with the five above
-      // would overstate what this phase rejects.
+      // A non-string fails even a bare type check, so this header has no PoW
+      // solution and `verifyOrderingBlockPoW` rejects it whether or not the
+      // domain pin is in place. Pinned as a separate claim precisely because of
+      // that: folding it in with the five above would credit the alphabet and
+      // width rules with a rejection they are not responsible for.
       const block = makeBlock({}, {}, { stateRoot: 42 as unknown as string });
       expect(verifyOrderingBlockPoW(block.header)).toBe(false);
       const result = verifyOrderingBlockStructure(block);
@@ -1513,11 +1496,11 @@ describe('ordering-block hex domains — the pin has teeth', () => {
 
     for (const bad of IMPOSTORS(32)) {
       it(`rejects a validatorId that is ${label(bad)}`, () => {
-        // Substituted after mining: `isEncodableHeader` already demands a byte
-        // view, so this header has no PoW solution and never had one. Unlike
-        // the hex cases, this is not new rejection — it moves the verdict from
-        // "PoW failed" to "the structure gate names the field", which is where
-        // the contract says structure validation is supposed to answer.
+        // Substituted after mining: even a bare type check demands a byte view
+        // for `validatorId`, so this header has no PoW solution either way.
+        // Unlike the hex cases, the pin adds no rejection here — it moves the
+        // verdict from "PoW failed" to "the structure gate names the field",
+        // which is where the contract says structure validation answers.
         const block = makeBlock({}, {}, { validatorId: bad as Uint8Array });
         expect(verifyOrderingBlockPoW(block.header)).toBe(false);
         const result = verifyOrderingBlockStructure(block);
@@ -1569,12 +1552,11 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       expect(result.error).toContain('invalid parentRefs');
     });
 
-    // The point of the two above: they are written against the constant, so
-    // when `MAX_PARENT_REFS` moves (Phase 2 takes it to 1) the boundary moves
-    // with it and no edit is needed here. A literal `8` in the source would
-    // leave the post path capped at the new value while this path — the one
-    // that feeds `insertPostPlaceholder` — kept accepting the old one, and
-    // this test would not notice.
+    // The point of the two above: they are written against the constant, so if
+    // `MAX_PARENT_REFS` moves the boundary moves with it and no edit is needed
+    // here. A literal in the source would leave this path — the one that feeds
+    // `insertPostPlaceholder` — pinned to the constant's old reading while the
+    // post path tracked the new one, and this test would not notice.
     it('tracks the constant rather than the number 8', () => {
       const atBound = refs(MAX_PARENT_REFS);
       const overBound = refs(MAX_PARENT_REFS + 1);
@@ -1712,15 +1694,14 @@ describe('verifyBlockChainLink', () => {
     validatorSignature: new Uint8Array(64),
   });
 
-  // `'0000'` here until Phase 1f: a four-character `prevBlockHash` no producer
-  // could ever emit (a real one is `blockHash`'s 64 lowercase hex, always). It
-  // survived because this function's only header gate was `isEncodableHeader`,
-  // which checked `typeof === 'string'`. Under the header domain the *previous*
-  // block is now rejected outright, so all three tests below would have gone
-  // green-but-vacuous — "rejects mismatched prevBlockHash" passing on a
-  // malformed-`prev` rejection that never reached the comparison. The genuine
-  // hash is what each test needs, so `GENESIS_PREV` is well-formed and the
-  // mismatch case uses a well-formed *wrong* hash.
+  // Both fixtures are inside the header domain, deliberately. A short stand-in
+  // like `'0000'` is a `prevBlockHash` no producer could emit — a real one is
+  // `blockHash`'s 64 lowercase hex, always — and `verifyBlockChainLink` rejects
+  // the *previous* block outright for it, which would leave all three tests
+  // below green-but-vacuous: "rejects mismatched prevBlockHash" would pass on a
+  // malformed-`prev` rejection that never reached the comparison. So
+  // `GENESIS_PREV` is well-formed and the mismatch case uses a well-formed
+  // *wrong* hash.
   const GENESIS_PREV = '00'.repeat(32);
   const WRONG_HASH = 'ff'.repeat(32);
 
@@ -1938,9 +1919,10 @@ describe('integer guards on nonce and targetBits (M-6)', () => {
   }
 
   it('rejects a targetBits wider than the 256-bit digest', () => {
-    // The old loop indexed past the end of the digest, where `undefined & mask`
-    // coerces to 0. That only mis-accepted an all-zero digest (unreachable in
-    // practice), unlike the NaN/Infinity cases above which accepted any hash.
+    // A bit walk over `targetBits` indexes past the end of the digest here,
+    // where `undefined & mask` coerces to 0 — which mis-accepts an all-zero
+    // digest only (unreachable in practice), unlike the NaN/Infinity cases
+    // above, where a walk of zero iterations accepts any hash at all.
     expect(verifyPoW(input, goodNonce, 257)).toBe(false);
     expect(verifyPoW(input, goodNonce, 1_000_000)).toBe(false);
   });
@@ -2238,7 +2220,8 @@ describe('no-panic on malformed input (M-5)', () => {
     expect(verifyOrderingBlockPoW(makeHeader({ powNonce: -1 }))).toBe(false);
     expect(verifyOrderingBlockPoW(makeHeader({ powNonce: 1.5 }))).toBe(false);
     expect(verifyOrderingBlockPoW(makeHeader({ powTargetBits: NaN }))).toBe(false);
-    // Wider than the digest — the old loop accepted every hash here.
+    // Wider than the digest — `powTarget` answers `null` rather than a target
+    // no digest can be compared against.
     expect(verifyOrderingBlockPoW(makeHeader({ powTargetBits: 1_000_000 }))).toBe(false);
     expect(verifyBlockChainLink(null as any, goodBlock)).toBe(false);
     expect(verifyBlockChainLink(goodBlock, null as any)).toBe(false);
@@ -2347,25 +2330,22 @@ describe('integer guards on protocolVersion and timestamp (M-6)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fixed-width field domains — the b32 precondition (spec §2.5 / §6.1)
+// Fixed-width field domains — the b32 precondition
 // ---------------------------------------------------------------------------
 //
-// `author` and `challenge` become `b32`, `parentRefs` becomes `arr(refs, b32)`.
-// A fixed-width writer's wire domain IS its encodable domain, so it has no
-// unreachable sentinel and must throw rather than pad or truncate — padding
-// would map a malformed id onto a well-formed one's encoding. The domain has to
-// be established before that writer is reachable.
+// `author` and `challenge` are `b32`, `parentRefs` is `arr(refs, b32)`
+// (TYPES_INTERFACE → Layout — Post). A fixed-width writer's wire domain IS its
+// encodable domain, so it has no unreachable sentinel and must throw rather
+// than pad or truncate — padding would map a malformed id onto a well-formed
+// one's encoding. The domain has to be established before that writer is
+// reachable.
 //
-// The pin is only meaningful if it fires, and proving that it fires got harder
-// in Phase 2, not easier. Before the migration each case was *signed over its
-// own malformed fields*, so raw `crypto.verify` could show the signature was
-// genuine and the domain pin was therefore the only thing rejecting the post.
-// That evidence no longer exists: a post outside the domain has no encoding, so
-// `signingHash` cannot be reached and such a post **cannot be signed at all**.
-// It is not weaker evidence obtained differently — the state it described is
-// unreachable now.
+// The pin is only meaningful if it fires, and the most direct evidence for that
+// — a genuinely signed post that is out of domain — cannot be built: such a post
+// has no encoding, so `signingHash` is unreachable and it **cannot be signed at
+// all**.
 //
-// What replaces it, per case:
+// What stands in for it, per case:
 //
 //  1. **Build well-formed, sign, then poison.** The honest twin is kept and
 //     asserted `{ valid: true }`, so the two objects differ in exactly the one
@@ -2463,10 +2443,9 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
 
   it('TEETH: a post with a non-hex parentRef passes every other Stage-1 check and is now rejected', () => {
     // 64 characters, count within MAX_PARENT_REFS, a string — so it satisfies
-    // `verifyParentRefsCount` and the old `typeof ref === 'string'` guard, and
-    // before this phase `postFieldBytes` length-prefixed the UTF-8 of the text
-    // and encoded it faithfully. Under `arr(refs, b32)` it has no encoding —
-    // which is why the poison now goes on *after* the signature.
+    // `verifyParentRefsCount` and any bare `typeof ref === 'string'` guard.
+    // Under `arr(refs, b32)` it has no encoding at all, which is why the poison
+    // goes on *after* the signature.
     const { honest, post } = signedThenPoisoned({ parentRefs: ['z'.repeat(64)] });
     const sb = { ...subBlockOf(honest), post };
 
@@ -2505,9 +2484,10 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   it('TEETH: `verifySubBlockStructure` rejected nothing about the post before — now it gates gossip', () => {
-    // This sub-block satisfies every check the function made prior to this
-    // phase: post present, subBlockId present, protocolVersion a number,
-    // producerId present. It is `net/gossip.ts:201`, which gates `:222`.
+    // This sub-block satisfies every check that does not look inside the post:
+    // post present, subBlockId present, protocolVersion a number, producerId
+    // present. The caller is `net`'s `runStage1SubBlock`, which runs this
+    // function before it builds `postPowPreimage`.
     const { honest, post } = signedThenPoisoned({ author: new Uint8Array(31).fill(4) });
     const sb = { ...subBlockOf(honest), post };
     expect(sb.post).toBeTruthy();
@@ -2571,26 +2551,21 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   it('the widths it rejects encoded faithfully before this phase, and have no encoding now — a domain pin, not a collision fix', () => {
     // BOTH halves, because the pair is the claim.
     //
-    // BEFORE: `author` went in length-prefixed, so a 31-byte and a 32-byte
-    // author produced *different* preimages. Nothing was colliding, and that is
-    // precisely why no existing check caught the narrowing — the field was
-    // encoded faithfully at every width, and it acquired a domain rather than
-    // losing an ambiguity. That assertion cannot be executed any more: the
-    // encoder it described is deleted, and re-implementing it here would be a
-    // mirror of a dead dialect, which is the drift class this format exists to
-    // remove. It is recorded here and pinned by its consequences below.
+    // A length-prefixed `author` encodes 31 and 32 bytes to *different*
+    // preimages, so nothing collides at any width — which is why an injectivity
+    // check never had reason to look at this field, and why `b32` gives it a
+    // domain rather than taking away an ambiguity. Under `b32`, fixed-width,
+    // 31 bytes has no encoding at all.
     //
-    // AFTER: `b32` is fixed-width, so 31 bytes has no encoding at all.
-    //
-    // If this had been a *collision* fix, the honest 32-byte case would have
-    // had to move too — a colliding pair is repaired by changing what both
-    // members encode to. It does not move, and that asymmetry is the evidence.
+    // A *collision* fix would have to move the honest 32-byte case too: a
+    // colliding pair is repaired by changing what both members encode to. It
+    // does not move, and that asymmetry is the evidence.
     const { honest: full, post: short } = signedThenPoisoned({
       author: new Uint8Array(31).fill(4),
     });
 
-    // Half one — the width that used to encode faithfully now has no encoding,
-    // and the writer says which width it refused.
+    // Half one — the out-of-domain width has no encoding, and the writer says
+    // which width it refused.
     expect(() => postPowPreimage(short)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
 
     // Half two — the honest width is untouched. It still encodes, and it still
@@ -2706,17 +2681,17 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   it('accepts the full MAX_PARENT_REFS-wide honest case', () => {
-    // Driven by the constant, not by `length: 8` — the shape `refs(n)` on the
-    // ordering-block path already uses. The literal made the test name false
-    // the moment the constant moved, and it is the name that carries the
-    // property: whatever the bound is, a post sitting exactly on it is accepted
-    // by all three checks at once.
+    // Driven by the constant, not by a literal — the shape `refs(n)` on the
+    // ordering-block path already uses. A literal falsifies the test name the
+    // moment the constant moves, and it is the name that carries the property:
+    // whatever the bound is, a post sitting exactly on it is accepted by all
+    // three checks at once.
     //
-    // Honest about what this now proves: at MAX_PARENT_REFS = 1 it is a
-    // one-ref post, so it no longer discriminates "many refs" from "one ref"
-    // and largely overlaps the well-formed case above. What survives is the
-    // agreement of the three checks at the bound, plus a tripwire that
-    // self-adjusts if the bound ever moves back up.
+    // Honest about what that proves at `MAX_PARENT_REFS = 1`: this is a one-ref
+    // post, so it does not discriminate "many refs" from "one ref" and largely
+    // overlaps the well-formed case above. What survives is the agreement of the
+    // three checks at the bound, plus a tripwire that self-adjusts if the bound
+    // moves up.
     const refs = Array.from({ length: MAX_PARENT_REFS }, (_, i) =>
       computePostId(signedPost({ content: `parent ${i}` })),
     );
@@ -2752,15 +2727,12 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The three SubBlock domain pins (spec §2.5)
+// The three SubBlock domain pins
 //
 // `SUB_BLOCK` is `b32(subBlockId) ‖ postBytes ‖ b32(producerId) ‖
-// vlqU(protocolVersion)`. The embedded post was pinned by Phase 1c; its three
-// siblings were pinned by nothing — truthiness on the two `b32` rows and
-// `typeof === 'number'` on the `vlqU` one.
-//
-// The two failure modes are different and both are demonstrated below, because
-// a test that only chases panics can see one of them:
+// vlqU(protocolVersion)`. Each field around the embedded post carries its own
+// pin, and the two failure modes are different, so both are demonstrated below
+// — a test that only chases panics can see one of them:
 //
 //   - `b32` is fixed-width, so it has no unreachable sentinel and the writer
 //     THROWS.
@@ -2772,9 +2744,9 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
 // establishes all three domains before `verifySubBlockStructure` sees the
 // object — `readHexN` yields lowercase hex, `readBytesN(32)` yields 32 bytes,
 // and `readVlqU` throws past `MAX_SAFE_INTEGER`. The pins are the stated
-// rejection for every path that builds a `SubBlock` some other way, of which
-// `net/node.ts:951` / `:960` — a store read cast `as SubBlock` and handed
-// straight to `encodeSubBlock` — is the one with no check between.
+// rejection for every path that builds a `SubBlock` some other way — including
+// `net`'s serve path, where `encodeServableSubBlock` runs this function over a
+// store read and declines to serve rather than reaching `encodeSubBlock`.
 // ---------------------------------------------------------------------------
 
 describe('the SubBlock domain pins have teeth (spec §2.5)', () => {
@@ -2962,8 +2934,8 @@ describe('the SubBlock domain pins have teeth (spec §2.5)', () => {
 
     it('is a domain pin and not a version check — 0 and 2 are accepted here', () => {
       // `verifyProtocolVersion` is the membership test and it is a separate
-      // function, run separately on the relay path (`gossip.ts:247`). Pinning
-      // membership here would be a second statement of that rule.
+      // function, run separately on the relay path by `net`'s
+      // `runStage1SubBlock`. Pinning membership here would restate that rule.
       for (const v of [0, 2, Number.MAX_SAFE_INTEGER]) {
         expect(verifySubBlockStructure(poison({ protocolVersion: v }))).toEqual({ valid: true });
         expect(verifyProtocolVersion(v)).toBe(false);
@@ -2991,25 +2963,23 @@ describe('the SubBlock domain pins have teeth (spec §2.5)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 1f — the header encoders establish their own domain (spec §6.2)
+// The header encoders establish their own domain
 //
-// Two defects, and only one of them is a panic.
+// Two failure modes, and only one of them is a panic.
 //
-// The first is an ungated door into `encodeHeader`. `net/sync.ts:103` returns
-// `decode(response) as BlockHeader[]` — a raw cbor-x decode and a TypeScript
-// cast, with no runtime validation of any kind, not even `Array.isArray` — and
-// `node/index.ts:240` hands those bare headers to `findForkPoint`, which calls
-// `blockHash` at `fork-resolution.ts:65`. `blockHash` checks nothing.
-// `verifyOrderingBlockStructure` cannot cover that path: it takes an
-// `OrderingBlock` and the path carries headers.
+// The first is an ungated door into `encodeHeader`. `blockHash` and
+// `computePowHash` are reachable with headers no structure check has seen:
+// node's fork resolution holds bare peer `BlockHeader`s, and
+// `verifyOrderingBlockStructure` cannot cover that path because it takes an
+// `OrderingBlock`. The guard therefore lives in the two encoder-backed
+// functions themselves (VALIDATION_INTERFACE → blockHash).
 //
-// The second does not throw, which is why a search for panics could not see it.
-// `createdAt` had no domain check anywhere in the repo, and its layout writer is
-// `vlqU`, which is total *by sentinel* — so `NaN`, `-1`, `1.5` and `2^60` would
-// all encode to `VLQ_SENTINEL`, giving distinct headers one `blockHash`, one PoW
-// preimage and one signature verdict. cbor-x distinguishes those values today,
-// which is the half this file can measure: the malleability is something the
-// migration would *introduce*, not something already present.
+// The second does not throw, which is why a search for panics cannot see it.
+// `createdAt`'s layout writer is `vlqU`, which is total *by sentinel* — so
+// `NaN`, `-1`, `1.5` and `2^60` all encode to `VLQ_SENTINEL`, giving distinct
+// headers one `blockHash`, one PoW preimage and one signature verdict.
+// `encodeHeader` is positional (`encodeStruct(HEADER, …)`), so that collision is
+// live and `HEADER_DOMAIN`'s `createdAt` rule is what closes it.
 // ---------------------------------------------------------------------------
 
 describe('the header domain pin has teeth (spec §6.2)', () => {
@@ -3035,49 +3005,37 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The rules Phase 1f replaced, transcribed from the code it deleted.
+  // The weaker rules, transcribed
   //
-  // Keeping them here is what makes "accepted today" a measurement rather than
-  // a memory — the 1c idiom. All of them ran on the *pre-change* implementation
-  // and are reproduced verbatim.
+  // Each is what these fields are held to without `HEADER_DOMAIN` in front of
+  // them. Keeping them here is what makes "accepted under the weaker rule" a
+  // measurement rather than a memory.
   //
-  // **1f-4 note.** These used to borrow the unguarded `blockHash` /
-  // `computePowHash`, which the contraction deleted. Borrowing was always the
-  // weak spot: a reference implementation that calls the code under test is not
-  // independent of it, and the deletion merely made that visible. The two
-  // encoders below are now transcribed like everything else in this section —
-  // they are the deleted functions verbatim, which is exactly `blockHash` /
-  // `computePowHash` minus the domain guard. That is what lets a poison fixture
-  // still be mined and signed here after the guarded pair refuses it, which is
-  // the whole mechanism these demonstrations need.
+  // Transcribed rather than borrowed, at every layer — a reference
+  // implementation that calls the code under test is not independent of it, and
+  // that includes reaching the live `encodeHeader` underneath. What these need
+  // is `blockHash` / `computePowHash` minus the domain guard, which is what
+  // lets a poison fixture be mined and signed here after the guarded pair
+  // refuses it.
   // -------------------------------------------------------------------------
 
-  /** `isEncodableHeader`'s rule for `createdAt`: `typeof h.createdAt !== 'number'`. */
+  /** A bare type check on `createdAt` — its rule without `HEADER_DOMAIN`. */
   const preChangeCreatedAtRule = (v: unknown): boolean => typeof v === 'number';
 
   /**
-   * `encodeHeader` minus the domain guard.
+   * `encodeHeader` minus the domain guard, transcribed rather than called.
    *
-   * ⚠ **Added by Phase 3b, and its absence was a hole in 1f's own argument.**
-   * The two functions below transcribed `blockHash` / `computePowHash` verbatim
-   * — and 1f's note above says exactly why transcribing matters, that "a
-   * reference implementation that calls the code under test is not independent
-   * of it". But both transcriptions still called the live `encodeHeader`, so
-   * the borrowing was removed one layer and left in place at the next.
+   * Calling the live `encodeHeader` would reinstate the borrowing one layer
+   * down: it is fixed-width, so `b33(stateRoot)` throws on a 64-character
+   * poison and the demonstration would stop at module load — the reference
+   * implementation inheriting the very property it exists to stand apart from.
    *
-   * That was invisible while `encodeHeader` was `cbor-x`, which is total: every
-   * poison fixture encoded, so a "pre-change" hash really was pre-change.
-   * Phase 3b makes the encoder fixed-width, `b33(stateRoot)` throws on a
-   * 64-character poison, and the whole demonstration stops at module load — the
-   * reference implementation inheriting the change it exists to predate.
-   *
-   * So the encoder is transcribed too. Same field order, same writers, and
-   * **byte-identical to `encodeHeader` for any header inside the domain** —
-   * which is what keeps `blockHash(clean) === preChangeBlockHash(clean)` a real
-   * no-movement pin rather than a tautology. Outside the domain it substitutes a
-   * value-derived filler instead of throwing, reproducing the property the old
-   * encoder had: a poisoned header got *some* encoding, so it could be mined and
-   * signed, and nothing objected. The filler is derived from the value so two
+   * Same field order, same writers, and **byte-identical to `encodeHeader` for
+   * any header inside the domain** — which is what keeps
+   * `blockHash(clean) === preChangeBlockHash(clean)` a real no-movement pin
+   * rather than a tautology. Outside the domain it substitutes a value-derived
+   * filler instead of throwing, so a poisoned header still gets *some* encoding
+   * and can be mined and signed. The filler is derived from the value, so two
    * distinct poisons keep distinct hashes.
    */
   const domainFiller = (v: unknown, n: number): Uint8Array =>
@@ -3109,7 +3067,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     return w.toBytes();
   };
 
-  /** `blockHash` exactly as it stood before Phase 1f — no domain guard, total. */
+  /** `blockHash` without the domain guard — total, never `null`. */
   const preChangeBlockHash = (h: BlockHeader): string =>
     createHash('blake2b512')
       .update(Buffer.from(preChangeEncodeHeader(h)))
@@ -3117,7 +3075,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       .subarray(0, 32)
       .toString('hex');
 
-  /** `computePowHash` exactly as it stood before Phase 1f — no domain guard, total. */
+  /** `computePowHash` without the domain guard — total, never `null`. */
   const preChangePowHash = (h: BlockHeader): Buffer =>
     createHash('blake2b512')
       .update(Buffer.from(preChangeEncodeHeader({ ...h, powNonce: 0 })))
@@ -3132,7 +3090,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     return true;
   };
 
-  /** `verifyOrderingBlockPoW` exactly as it stood before Phase 1f. */
+  /** `verifyOrderingBlockPoW` over the unguarded preimage above. */
   const preChangePoW = (h: BlockHeader): boolean => {
     if (!Number.isSafeInteger(h.powNonce) || h.powNonce < 0) return false;
     if (!Number.isSafeInteger(h.powTargetBits) || h.powTargetBits < 0) return false;
@@ -3183,9 +3141,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
   it('accepts the header the honest producer emits', () => {
     expect(verifyHeaderFieldDomains(header())).toEqual({ valid: true });
-    // `block-creator.ts:411-422` builds exactly these shapes: roots from the
-    // Merkle/AVL computations, `validatorId` a 32-byte key, `createdAt` a
-    // `Date.now()`. Nothing in the honest production path leaves the domain.
+    // `block-creator`'s `createOrderingBlock` builds exactly these shapes: roots
+    // from the Merkle/AVL computations, `validatorId` a 32-byte key, `createdAt`
+    // a `Date.now()`. Nothing in the honest production path leaves the domain.
     expect(verifyHeaderFieldDomains(header({ createdAt: Date.now() }))).toEqual({ valid: true });
     expect(verifyHeaderFieldDomains(header({ stateRoot: EMPTY_STATE_ROOT }))).toEqual({ valid: true });
     expect(verifyHeaderFieldDomains(header({ height: 1, powNonce: 0, powTargetBits: 0 }))).toEqual({ valid: true });
@@ -3280,26 +3238,27 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
   describe('the throw case: a bare header on the fork-resolution path', () => {
     // 64 hex where 66 belong — a 32-byte digest in the 33-byte `stateRoot`.
-    // Under Phase 3 this reaches `b33`, a fixed-width writer with no sentinel to
-    // fall back on, so it throws; the throw lands in `node/index.ts:298`'s broad
-    // catch and the node silently declines to reorg.
+    // This reaches `b33`, a fixed-width writer with no sentinel to fall back on,
+    // so an unguarded encode throws rather than returning a verdict, and the
+    // throw escapes into whatever catch node's ordering-block handler wraps
+    // `resolveFork` in. `blockHash` answering `null` is what keeps it a verdict.
     const POISON = '00'.repeat(32);
     const poisoned = solvePreChange(header({ stateRoot: POISON }));
     const sig = signHeader(poisoned);
 
     it('is accepted by every rule this phase replaced', () => {
-      // `isEncodableHeader` asked `typeof stateRoot === 'string'` and no more.
+      // A bare `typeof stateRoot === 'string'` and no more.
       expect(typeof POISON).toBe('string');
       expect(preChangePoW(poisoned)).toBe(true);
       expect(signatureIsGenuine(poisoned, sig)).toBe(true);
     });
 
     it('reached the encoder with nothing in front of it, and encoded', () => {
-      // This was the whole defect: `findForkPoint` called `blockHash(header)` on
-      // a bare peer header that had passed no check whatsoever, and the encoder
-      // was happy, so nothing anywhere objected. Stated over the transcribed
-      // pre-change encoder, because the guarded one now refuses this header —
-      // which is the fix, and is pinned in the next case.
+      // The shape of the defect the guard closes: `findForkPoint` reaches
+      // `blockHash(header)` with a bare peer header, and an unguarded encoder
+      // hashes it happily, so nothing anywhere objects. Stated over the
+      // transcribed encoder, because the guarded one refuses this header — which
+      // is the fix, and is pinned in the next case.
       expect(() => preChangeBlockHash(poisoned)).not.toThrow();
       expect(preChangeBlockHash(poisoned)).toHaveLength(64);
     });
@@ -3324,8 +3283,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   // -------------------------------------------------------------------------
   // Demonstration 2 — the collision case, two-sided
   //
-  // This one is the whole point. Without the first half it proves nothing about
-  // why the phase exists.
+  // The half a search for panics cannot find. Without both sides it proves
+  // nothing: a rejection means little unless the unguarded encoder is shown to
+  // collapse these values onto one hash.
   // -------------------------------------------------------------------------
 
   describe('the collision case: createdAt', () => {
@@ -3336,28 +3296,16 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       ['2^60', 2 ** 60],
     ];
 
-    // ⚠ **Rewritten by Phase 3b, and the reason is that its tense expired.**
-    //
-    // As written at 1f this said "TODAY they hash differently — the collision is
-    // one the migration would INTRODUCE", and asserted four distinct hashes
-    // through the pre-change encoder. That was a claim about `cbor-x`, which is
-    // self-describing: a float NaN, a negative integer, a non-integral float and
-    // a large integer were four distinct encodings. Pinning that distinctness
-    // was what made the collapse a regression the migration would *cause* rather
-    // than a defect it inherited — sound, and only expressible while cbor was
-    // still the encoder.
-    //
-    // Phase 3b is that migration. "Today" is now the positional format, the
-    // four encodings are one, and the old assertion asserts the opposite of the
-    // truth. The historical leg survives as the record in spec §6.2 and in this
-    // comment; what replaces it is stronger than a contrast, because the
-    // collapse can now be *demonstrated* rather than predicted:
+    // Under the positional encoder this collapse is demonstrable rather than
+    // predicted: all four values sit outside `vlqU`'s encodable domain, take
+    // `VLQ_SENTINEL`, and land on one encoding. Both sides are pinned below,
+    // because the collapse only means something alongside its converse — an
+    // in-domain `createdAt` still moves the hash.
 
     it('the migration DOES collapse all four onto one preimage — shown, not predicted', () => {
       // All four are outside `vlqU`'s encodable domain, so all four take
-      // `VLQ_SENTINEL` and the four headers share one encoding. This is the
-      // regression 1f existed to get in front of, running here as a fact about
-      // the shipped encoder.
+      // `VLQ_SENTINEL` and the four headers share one encoding — a fact about
+      // the shipped encoder, measured here rather than argued.
       const hashes = OUT_OF_DOMAIN.map(([, v]) => preChangeBlockHash(header({ createdAt: v })));
       expect(new Set(hashes).size).toBe(1);
       // And it is a genuine collision, not the encoder ignoring the field: an
@@ -3404,9 +3352,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   // -1 → integer, 1.5 → real, 2^60 → integer). `NaN` is the one exception —
   // it binds as REAL NaN, which SQLite treats as NULL, so it trips the NOT NULL
   // constraint *inside the apply transaction* and the funnel's totality catch
-  // logs "unexpected failure during apply" rather than a stated rejection. That
-  // is the same defect shape the spec's boundary check names (§2.1 step 4), so
-  // 1f fixes NaN too — just one gate earlier than the other three.
+  // logs "unexpected failure during apply" rather than a stated rejection
+  // (NODE_INTERFACE → Ordering block apply-time authorization). The domain pin
+  // covers NaN too — just one gate earlier than the other three.
   describe.each([
     ['-1', -1],
     ['1.5', 1.5],
@@ -3418,8 +3366,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     const block = blockOf(poisoned, sig);
 
     it('clears the rule that governed the field', () => {
-      // One occurrence in the whole package before 1f — `isEncodableHeader`'s
-      // `typeof === 'number'`, which admits NaN, ±Infinity, -1 and 1.5.
+      // A bare `typeof === 'number'` admits NaN, ±Infinity, -1 and 1.5, so it
+      // governs the field without constraining it at all.
       expect(preChangeCreatedAtRule(bad)).toBe(true);
     });
 
@@ -3429,11 +3377,10 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     });
 
     it('and the structure gate objects to nothing else about it', () => {
-      // The proof that the pre-1f structure check accepted this block: after 1f
-      // it fails with the `createdAt` message and no other. Every other check in
-      // that function — entry alignment, prune entries, utxoTx alignment,
-      // coinbase outputs, validatorSignature, the height and target floors —
-      // still passes on this exact object.
+      // `createdAt` is the sole objection: the block fails with that message and
+      // no other. Every other check in that function — the entries, prune
+      // entries, utxoTx alignment, coinbase outputs, validatorSignature, the
+      // height and target floors — still passes on this exact object.
       const result = verifyOrderingBlockStructure(block);
       expect(result.valid).toBe(false);
       expect(result.error).toBe('Ordering block header missing or invalid createdAt');
@@ -3478,10 +3425,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     });
 
     it('the guarded pair agrees with the pre-change encoders on every in-domain header', () => {
-      // The phase's invariant: no honest byte moves. If this fails, `blockHash`
-      // is not the same function plus a gate. Stated against the transcribed
-      // pre-change encoders now that the unguarded pair is deleted — the claim
-      // is unchanged, and it is still two independent sides.
+      // The invariant that makes the guard safe: no honest byte moves. If this
+      // fails, `blockHash` is not the unguarded encoder plus a gate — it is a
+      // different function, and every stored hash is a different value.
       const variants: Partial<BlockHeader>[] = [
         {},
         { height: 1 },
@@ -3503,9 +3449,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     });
 
     it('the two callers of the domain agree — one statement, no drift', () => {
-      // The reason this is one function rather than two: `isEncodableHeader` and
-      // `verifyOrderingBlockStructure` used to state the header domain
-      // separately. A poison either fails both or neither.
+      // The reason the domain is one table rather than a rule per caller:
+      // `verifyHeaderFieldDomains` and `verifyOrderingBlockStructure` both read
+      // `HEADER_DOMAIN`, so a poison fails both or neither.
       const poisons: Partial<BlockHeader>[] = [
         { prevBlockHash: 'zz'.repeat(32) },
         { subBlockRoot: 'AB'.repeat(32) },
@@ -3534,8 +3480,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   // -------------------------------------------------------------------------
 
   describe('totality on adversarial input', () => {
-    // `conforms` is not a hedge — it names the honest exceptions, in the idiom
-    // Phase 1e established. The corpus holds `0`, which IS a well-formed value
+    // `conforms` is not a hedge — it names the honest exceptions, so a "rejects
+    // everything" sweep cannot pass by rejecting too much. The corpus holds `0`,
+    // which IS a well-formed value
     // for every `vlqU` field: the domain is "non-negative safe integer", and a
     // zero height, nonce or timestamp is inside it. (`height >= 1` is a
     // *semantic* floor and lives in `verifyOrderingBlockStructure`, not here.)
@@ -3579,8 +3526,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
           expect(() => computePowHash(h)).not.toThrow();
           expect(blockHash(h) === null).toBe(!ok);
           expect(computePowHash(h) === null).toBe(!ok);
-          // Where the corpus value conforms, the guard must be transparent —
-          // the whole point of the phase is that no honest byte moves.
+          // Where the corpus value conforms, the guard must be transparent: it
+          // adds rejections, and no honest byte moves.
           if (ok) {
             expect(blockHash(h)).toBe(preChangeBlockHash(h));
             expect(computePowHash(h)).toEqual(preChangePowHash(h));

@@ -51,8 +51,8 @@ export interface CoinbaseOutput {
  * **These bytes are the `'coinbase'` Merkle leaf preimage and the output's wire
  * encoding, and they are the same bytes** (TYPES_INTERFACE → Layout — Merkle
  * leaf preimages). `UtxoTxTree`'s element writer delegates here rather than
- * restating the layout, for the reason `writePruneEntry` has delegated to
- * `serializePruneEntry` since Phase 2: an output's wire form and its committed
+ * restating the layout, for the same reason `writePruneEntry` delegates to
+ * `serializePruneEntry`: an output's wire form and its committed
  * form must be one statement, because two statements of one layout drift with no
  * compiler signal and a consistent transposition round-trips perfectly — no
  * round-trip test can see it.
@@ -60,9 +60,6 @@ export interface CoinbaseOutput {
  * ⚠ **The `leafHash('coinbase', …)` domain tag stays outside.** This returns the
  * output bytes alone; the caller supplies the tag. That is what makes the wire
  * form and the preimage byte-identical rather than merely parallel.
- *
- * The contract's table writes row 2 as `vlqU`; it is `vlqU64` because the field
- * is `bigint`, and the distinction is the throwing/total one, not a byte one.
  *
  * ⚠ **Three of these four rows are where the contract's notation and the field's
  * schema type disagree, and each disagreement points at a different writer.**
@@ -80,9 +77,9 @@ export interface CoinbaseOutput {
  *
  * ## Domain
  *
- * All four fields have their domain established upstream of this encoder (spec
- * §2.5), in `@dagsocial/validation` — VALIDATION_INTERFACE →
- * `verifyOrderingBlockStructure`.
+ * All four fields have their domain established upstream of this encoder
+ * (TYPES_INTERFACE → Totality), in `@dagsocial/validation` —
+ * VALIDATION_INTERFACE → `verifyOrderingBlockStructure`.
  *
  * Decode closes the reachable half of each: `readVlqU` throws past
  * `MAX_SAFE_INTEGER`, `readVlqU64` wraps into the u64 domain, `readBool` rejects
@@ -231,8 +228,8 @@ export interface SubBlockEntry {
  * **These bytes are the `'subblock'` Merkle leaf preimage and the entry's wire
  * encoding, and they are the same bytes** (TYPES_INTERFACE → Layout — Merkle
  * leaf preimages). `SubBlockTree`'s element writer delegates here rather than
- * restating the layout, for the reason `writePruneEntry` has delegated to
- * `serializePruneEntry` since Phase 2: an entry's wire form and its committed
+ * restating the layout, for the same reason `writePruneEntry` delegates to
+ * `serializePruneEntry`: an entry's wire form and its committed
  * form must be one statement, because two statements of one layout drift with no
  * compiler signal and a consistent transposition round-trips perfectly — no
  * round-trip test can see it.
@@ -247,8 +244,8 @@ export interface SubBlockEntry {
  * declared `string` above and `verifyOrderingBlockStructure` checks it with
  * `isHex32`.
  *
- * Every row throws, and every row is pinned by `verifyOrderingBlockStructure`
- * (Phase 1e), including `parentRefs.length <= MAX_PARENT_REFS`.
+ * Every row throws, and every row is pinned by `verifyOrderingBlockStructure`,
+ * including `parentRefs.length <= MAX_PARENT_REFS`.
  */
 export function subBlockEntryBytes(e: SubBlockEntry): Uint8Array {
   const w = new ByteWriter();
@@ -259,27 +256,23 @@ export function subBlockEntryBytes(e: SubBlockEntry): Uint8Array {
 }
 
 /**
- * `subBlockRefs` was here and is **DELETED** (Phase 3b; spec §1.2, §4.1).
+ * **Two arrays, and `subBlockRefs` is not one of them** (TYPES_INTERFACE →
+ * Layout — Block).
  *
- * It was uncommitted — `computeSubBlockRoot` builds its leaves from
- * `subBlockEntries` and `pruneEntries` and never read it — and unvalidated
- * beyond `Array.isArray` plus a length equal to `subBlockEntries.length`.
- * Measured: a block whose refs named entirely different post ids was accepted
- * with an unchanged `subBlockRoot` and an unchanged `blockHash`, and element
- * types were never checked at all. Those attacker-chosen values reached a
- * mempool **eviction** (`removeSubBlockEntries`) and, through the journal's
+ * `computeSubBlockRoot` builds its leaves from `subBlockEntries` and
+ * `pruneEntries` alone, so a `subBlockRefs` field here would be uncommitted:
+ * refs naming entirely different post ids would ride an unchanged
+ * `subBlockRoot` and an unchanged `blockHash`, and still reach a mempool
+ * **eviction** (`removeSubBlockEntries`) and, through the journal's
  * `confirmedSubBlockIds`, a mempool **injection** on reorg.
  *
- * The asymmetry was the defect: apply confirmed from `subBlockEntries`, which is
- * committed, while rollback un-confirmed from `subBlockRefs`, which was not.
+ * The asymmetry is what makes that reachable rather than merely untidy: apply
+ * confirms from `subBlockEntries`, which is committed, so an uncommitted
+ * parallel list on the rollback side lets the two disagree.
  *
- * Deleted rather than pinned because it was exactly
- * `subBlockEntries.map(e => e.postId)` for any honest block — this comment used
- * to say so itself, calling it "derived from subBlockEntries, kept for
- * ordering" — and because this unit moves every committed byte anyway, so
- * removing a wire field costs nothing it would have cost under a tightening.
- * Consumers derive it (Phase 3a) and the two JSON routes still emit it, so the
- * HTTP response shape is unchanged.
+ * It is also exactly `subBlockEntries.map(e => e.postId)` for any honest block,
+ * so consumers derive it — `subBlockIdsOf` in node — and the two JSON routes
+ * emit the field, leaving the HTTP response shape unchanged.
  */
 export interface SubBlockTree {
   subBlockEntries: SubBlockEntry[]; // topology committed in the block

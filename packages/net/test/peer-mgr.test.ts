@@ -85,15 +85,15 @@ describe('PeerManager', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Penalty accrual + decay (contract: "Accrual and decay (audit L-13)")
+  // Penalty accrual + decay (NET_INTERFACE → Accrual and decay)
   // -----------------------------------------------------------------------
 
   it('always accrues: 5 rapid MisbehaviorPenalties ban the peer (fails pre-fix)', () => {
-    // Pre-fix, the safe-interval cooldown discarded 4 of the 5 rapid
-    // penalties (score 100, no ban) — ban pressure was independent of attack
-    // rate. Post-fix every penalty accrues: 5 × 100 = 500 >= threshold.
-    // Nonzero timestamp: the pre-fix cooldown skipped itself while
-    // lastPenaltyTime was 0, so a t=0 flood would ban even pre-fix.
+    // Every penalty accrues: 5 × 100 = 500 >= threshold. A safe-interval
+    // cooldown would discard 4 of these 5 (score 100, no ban), making ban
+    // pressure independent of attack rate. The nonzero timestamp is what makes
+    // that check meaningful — such a cooldown skips itself while
+    // lastPenaltyTime is 0, so a t=0 flood would ban either way.
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
     for (let i = 0; i < 5; i++) {
@@ -380,8 +380,7 @@ describe('PeerManager', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Ban propagation to PeerDb (contract: "Ban surfaces are unified",
-  // audit L-14 phase 2)
+  // Ban propagation to PeerDb (NET_INTERFACE → Ban surfaces are unified)
   // -----------------------------------------------------------------------
 
   describe('ban propagation to PeerDb', () => {

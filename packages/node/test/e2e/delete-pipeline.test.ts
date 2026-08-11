@@ -125,7 +125,8 @@ function preimagePost(content: string, author: Uint8Array, parents: string[], ch
   };
 }
 
-// PoW preimage — the canonical encoding from @dagsocial/types (audit M-1).
+// PoW preimage — the canonical encoding from @dagsocial/types
+// (TYPES_INTERFACE → Canonical field encoding).
 function powInput(content: string, author: Uint8Array, parents: string[], chal: Uint8Array, ts: number): Uint8Array {
   return postPowPreimage(preimagePost(content, author, parents, chal, ts));
 }

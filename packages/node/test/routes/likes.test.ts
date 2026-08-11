@@ -103,8 +103,9 @@ async function request(
 }
 
 /**
- * Build a signed burn-shape like tx (P2-D) and its JSON form: karma box in,
- * one karma output at −LIKE_KARMA_COST, `likeTarget` naming the post.
+ * Build a signed burn-shape like tx and its JSON form: karma box in, one karma
+ * output at −LIKE_KARMA_COST, `likeTarget` naming the post
+ * (NODE_INTERFACE → Per-block like settlement).
  */
 function buildLikeTx(
   karmaBox: KarmaBox,
@@ -223,7 +224,7 @@ describe('likes routes', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Route error policy (audit L-12, M-8) — a service's intentional rejection
+  // NODE_INTERFACE → Route error policy — a service's intentional rejection
   // reaches the client; an unexpected error never does.
   // ---------------------------------------------------------------------------
 
@@ -310,8 +311,8 @@ describe('likes routes', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // POST /likes/remove — the route no longer exists (unlike is not a feature).
-  // Router-level wiring assertion: no tombstone, no 410 — a plain 404.
+  // There is no POST /likes/remove — unlike is not a feature. Router-level
+  // wiring assertion: no tombstone, no 410 — a plain 404.
   // ---------------------------------------------------------------------------
 
   it('POST /likes/remove returns 404 — the route is gone', async () => {

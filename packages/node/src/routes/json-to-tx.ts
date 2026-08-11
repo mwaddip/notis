@@ -11,12 +11,11 @@ const BINARY_BOX_FIELDS = new Set([
   'secretHash',       // InviteBox
   'inviterId',        // InviteBox, BondBox
   'inviteePublicKey', // BondBox
-  // VouchBox. Missing until 2026-08-08, which made the vouch cast
-  // INEXPRESSIBLE over HTTP JSON: both fields arrived as hex strings and died
-  // at `validateTx`'s step-4 schema, which wants `bytes32`. Invisible to the
-  // suite because vouch coverage was service-level only — raw `Uint8Array`
-  // objects, never through this edge. The demo UI's `canonicalBoxBytes` mirror
-  // already listed both, so this is the receiver catching up with the sender.
+  // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over
+  // HTTP JSON — the value arrives as a hex string and dies at `validateTx`'s
+  // step-4 schema, which wants `bytes32`. Service-level tests cannot see it:
+  // they pass raw `Uint8Array` objects and never cross this edge. This list and
+  // the demo UI's `canonicalBoxBytes` mirror must name the same fields.
   'voucherId',        // VouchBox
   'targetId',         // VouchBox
 ]);
@@ -59,7 +58,7 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // the default.
   const protocolVersion = (raw.protocolVersion as number) ?? PROTOCOL_VERSION;
 
-  // ---- likeTarget (P2-D) ----
+  // ---- likeTarget ----
   // Carried through only when present — presence is `!== undefined`, matching
   // the `computeTxId` tail rule. The JSON edge must neither drop nor invent
   // the field: it sits inside the signed bytes, so dropping it breaks every
@@ -77,9 +76,8 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     // uses one line below, and for the same reason. `preimages: undefined`
     // leaves a present key holding `undefined`, which `computeTxId` hashes as
     // absent (falsy) but `checkTxEnvelope` rejects as the CBOR-reachable
-    // ambiguity it is. Every preimage-free HTTP transaction carried one until
-    // the envelope gate measured it, so the contract's claim that this edge
-    // "normalizes {} to absent" was true only in effect, never in structure.
+    // ambiguity it is. "Normalizes {} to absent" has to hold in structure, not
+    // merely in effect: a present key holding `undefined` is not an absent key.
     ...(Object.keys(preimages).length > 0 ? { preimages } : {}),
     protocolVersion,
     ...(likeTarget !== undefined ? { likeTarget } : {}),

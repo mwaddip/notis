@@ -32,13 +32,11 @@ export const GENESIS_FAUCET_CREDITS = 1;
 
 const utf8 = new TextEncoder();
 
-// `u32BE` is *imported* from types, not mirrored here (phase G checklist item
-// 9). It was a byte-for-byte copy until types exported it, and a copy is
-// exactly what could not be allowed to drift: these bytes land in a `subject`,
-// which types hashes as opaque input, so a divergence would silently move mint
-// txIds — and therefore box ids — with nothing to catch it. One implementation
-// now feeds both `computeMintTxId`'s height field and the subjects below,
-// sentinel behaviour included.
+// `u32BE` is *imported* from types and must never be mirrored here. These bytes
+// land in a `subject`, which types hashes as opaque input, so a second copy
+// drifting would silently move mint txIds — and therefore box ids — with
+// nothing to catch it. One implementation feeds both `computeMintTxId`'s height
+// field and the subjects below, sentinel behaviour included.
 
 /**
  * Concatenate subject parts. Plain byte concatenation with no length prefix —
@@ -70,9 +68,7 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 // (and, as it happens, subject shape — NODE_INTERFACE → reason/subject table);
 // `like-payout` and `decay` share exact subject bytes — one raw pubkey — with
 // the tag as the only separator. Getting one wrong produces a box-id
-// collision, not an error. (The epoch-tally and prune-liker reason pairs this
-// comment used to cite are retired, P2-D; their strings stay reserved in
-// types' MintReason tombstone.)
+// collision, not an error.
 //
 // Byte forms follow TYPES_INTERFACE → "Pinned byte forms": a hex-typed value
 // (`PostId`) enters as the UTF-8 bytes of its hex text, a `Uint8Array`-typed
@@ -89,8 +85,8 @@ export function vouchSettleContext(voucherId: Uint8Array, targetId: Uint8Array):
 }
 
 /**
- * `like-payout` — 32 bytes: the credited author's raw pubkey (P2-D per-block
- * like settlement). Fixed length, so the injectivity rule holds by
+ * `like-payout` — 32 bytes: the credited author's raw pubkey (per-block like
+ * settlement). Fixed length, so the injectivity rule holds by
  * construction. One mint per author per block, which is what makes
  * `(height, 'like-payout', author)` unique: the settlement consolidates every
  * like the author received in the block into a single mint.

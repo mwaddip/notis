@@ -719,13 +719,13 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     };
   }
 
-  // Pins the contract obligation (NODE_INTERFACE "Pruning" step 4;
-  // ARCHITECTURE §3 lifecycle step 7): a node holding no DAG content for the
-  // subtree records the same stump at settlement, every field derived from
-  // the verified entry or the carrying block's height. This passes before
-  // the P2-F F1 change too — the pre-change insert was unconditional only
-  // incidentally (pruneSubtree returns silently on zero rows) — so it pins
-  // the obligation rather than reproducing a bug.
+  // Pins the contract obligation (NODE_INTERFACE → "Pruning" step 4;
+  // ARCHITECTURE → "Prune lifecycle" step 7): a node holding no DAG content for
+  // the subtree records the same stump at settlement, every field derived from
+  // the verified entry or the carrying block's height. An unconditional insert
+  // would satisfy this only incidentally — `pruneSubtree` returns silently on
+  // zero rows — so the assertion is written against the obligation rather than
+  // against any one implementation of it.
   it('records the stump at settlement on a node holding no DAG content', async () => {
     const db = await importDb();
     db.initDb(':memory:');

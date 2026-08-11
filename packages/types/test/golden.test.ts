@@ -2,7 +2,8 @@
  * The golden-vector suite — the corpus in `test/golden/*.json`, run.
  *
  * Every vector is asserted in both directions and every decode goes through
- * `decodeStruct`, so the four-part boundary check (spec §2.1) covers even a
+ * `decodeStruct`, so the four-part boundary check (TYPES_INTERFACE → The
+ * boundary check) covers even a
  * one-byte fixture. See `test/golden/README.md` for the file format.
  */
 

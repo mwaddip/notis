@@ -77,8 +77,8 @@ export interface VerifierDeps {
    * The store's real signature. Both arms are meaningful here rather than
    * incidental: a parent ref may name a live post OR a stump, and both are
    * valid parents (NODE_INTERFACE → Posts). The two call sites below use it
-   * as an existence check, so the union needs no narrowing — but typing it
-   * `unknown` hid that the stump case was deliberate.
+   * as an existence check, so the union needs no narrowing — but an `unknown`
+   * here would hide that the stump case is deliberate.
    */
   getPost: (id: string) => Post | Stump | null;
   /** Raw CBOR bytes for a post, used for independent hash recomputation. */

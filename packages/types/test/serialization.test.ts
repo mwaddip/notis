@@ -1,21 +1,18 @@
 /**
- * The wire codecs, after Phase 3b moved every block struct onto the positional
- * layout.
+ * The wire codecs — every block struct on the positional layout.
  *
  * Three kinds of test here, and the split is deliberate:
  *
- *  1. **Two-sided movement pins.** Where P2-D pinned "this id did not move",
- *     these pin "this moved, from exactly X to exactly Y" (spec §7). A
- *     round-trip test passes before and after a byte-format change and so
- *     proves nothing about the change; these are what make each movement
- *     *intentional* rather than merely observed.
+ *  1. **Two-sided movement pins**, which fix "this encodes to exactly these
+ *     bytes" in both directions. A round-trip test passes before and after a
+ *     byte-format change and so proves nothing about the change; these are what
+ *     make each movement *intentional* rather than merely observed.
  *  2. **Rejections.** The four-part boundary check is the reason this format
  *     exists, and it is only real if the rejections are pinned per failure
  *     kind. A `toThrow()` with no class and no reason passes for the wrong
  *     reason as readily as the right one.
- *  3. **Closure tests for the defects the migration exists to close** —
- *     §1.1's open key set, §1.2's uncommitted `subBlockRefs`, and §1.5's
- *     non-minimal VLQ.
+ *  3. **Closure tests for the three defects an open map format allows** — an
+ *     open key set, an uncommitted `subBlockRefs`, and a non-minimal VLQ.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -64,11 +61,9 @@ const sig64 = new Uint8Array(64).fill(0xcd);
 function makePost(): Post {
   return {
     content: 'Hello, DAGsocial!',
-    // `['ref1', 'ref2']` until Phase 3b, and they were never valid: a parent ref
-    // is a 32-byte post id, and under the old dialect it crossed the wire as the
-    // UTF-8 of its hex text, so any string encoded faithfully. `b32` gives them
-    // no encoding at all, which is how a fixture that had been wrong since it
-    // was written finally said so.
+    // Real 32-byte post ids, because `b32` gives an arbitrary string like
+    // `'ref1'` no encoding at all. A hex-text encoding would take any string
+    // faithfully and let a wrong fixture pass unnoticed.
     parentRefs: ['1a'.repeat(32), '2b'.repeat(32)],
     author: userA,
     challenge,
@@ -152,7 +147,7 @@ function makeOrderingBlock(): OrderingBlock {
 }
 
 // A CANDIDATE, not a box: `UtxoTransaction.outputs` is `AnyBoxCandidate[]`
-// (Spec G phase G3a). An output cannot carry provenance — its `txId` would be
+// (TYPES_INTERFACE → BoxId). An output cannot carry provenance — its `txId` would be
 // the id of the transaction being built, which is circular — so the fixture is
 // typed as what it actually is rather than given invented `txId`/`index`.
 function makeKarmaBox(): CandidateOf<KarmaBox> {
@@ -316,7 +311,7 @@ describe('positional serialization', () => {
   });
 
   // -------------------------------------------------------------------------
-  // §1.2 — subBlockRefs is gone
+  // subBlockRefs is gone
   // -------------------------------------------------------------------------
 
   describe('subBlockRefs is deleted (spec §1.2, §4.1)', () => {
@@ -349,7 +344,7 @@ describe('positional serialization', () => {
   });
 
   // -------------------------------------------------------------------------
-  // §1.1 — the open key set is closed
+  // The open key set is closed
   // -------------------------------------------------------------------------
 
   describe('unknown keys are unrepresentable (spec §1.1)', () => {
@@ -373,10 +368,10 @@ describe('positional serialization', () => {
     });
 
     it('two nodes cannot hold byte-different blobs for one block hash', () => {
-      // The §1.1 defect stated as its consequence: `createOrderingBlock`
-      // re-encoded from the parsed struct, so retained junk was written to disk
-      // and re-propagated on serve. With junk unrepresentable, re-encoding a
-      // decoded block is a fixed point.
+      // The open-key-set defect stated as its consequence: `createOrderingBlock`
+      // re-encodes from the parsed struct, so any junk a decoder retained would
+      // be written to disk and re-propagated on serve. With junk
+      // unrepresentable, re-encoding a decoded block is a fixed point.
       const bytes = encodeOrderingBlock(makeOrderingBlock());
       expect(hex(encodeOrderingBlock(decodeOrderingBlock(bytes)))).toBe(hex(bytes));
     });
@@ -406,7 +401,7 @@ describe('positional serialization', () => {
     });
 
     it('step 3 — a non-minimal VLQ decodes to the same value and is still rejected', () => {
-      // §1.5: `0x81 0x00` and `0x01` both decode to 1, and wire accepts the
+      // `0x81 0x00` and `0x01` both decode to 1, and wire accepts the
       // padded form deliberately. Canonicity is enforced by the compare and
       // nowhere else, which is why tightening the reader for symmetry would
       // break it. `protocolVersion` is the header's first field, so padding it

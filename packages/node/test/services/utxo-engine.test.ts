@@ -1438,11 +1438,9 @@ describe('validateAndApplyTx', () => {
 
       const result = validateTx(deps, tx, 10);
 
-      // Until P2-B phase 1 this was accepted, and that acceptance was the
-      // control's assertion: the inviter may direct the value anywhere. That is
-      // no longer true — the bond's value only ever returns to the inviter
-      // (audit F-consensus-1), so an attacker-owned cancel output is illegal
-      // whoever signs it. The control's *meaning* survives the inversion:
+      // The bond's value only ever returns to the inviter (NODE_INTERFACE →
+      // "Bond transition rules", audit F-consensus-1), so an attacker-owned
+      // cancel output is illegal whoever signs it. This is still a control:
       // failing at the transition layer proves conservation and every guard
       // passed on this exact transaction.
       expect(result.valid).toBe(false);

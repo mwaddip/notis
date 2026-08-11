@@ -141,9 +141,9 @@ export function faucetGrant(
       proofSource: 'faucet',
     };
 
-    // The precomputed output `id`s are gone: nothing read them, and `computeTxId`
-    // strips them through `canonicalBoxBytes` before hashing, so the id the
-    // system key signs below is byte-identical to what it was.
+    // The outputs carry no precomputed `id`, and nothing needs one: `computeTxId`
+    // hashes outputs through `canonicalBoxBytes`, which encodes no provenance, so
+    // the id the system key signs below does not depend on it either way.
     const tx: UtxoTransaction = {
       inputs: [systemBox.id!],
       outputs: [newSystemBox, userBox],

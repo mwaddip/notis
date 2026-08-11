@@ -81,8 +81,8 @@ export function loadConfig(): Readonly<Config> {
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
     publicUrl: process.env['PUBLIC_URL'] ?? '/',
     // The challenge endpoint advertises this and the verifier enforces it — both
-    // read this one field, so a node can no longer claim a difficulty it does
-    // not check (audit A6).
+    // read this one field, so a node cannot claim a difficulty it does not
+    // check (audit A6).
     postPowTargetBits: profile.postPowTargetBits,
     challengeWindowBlocks: parseInt(
       process.env['CHALLENGE_WINDOW_BLOCKS'] ?? String(CHALLENGE_WINDOW_BLOCKS),
@@ -149,8 +149,8 @@ export function loadConfig(): Readonly<Config> {
 
 /**
  * The treasury key's domain, established where it enters this node's config
- * surface rather than where it is encoded (spec §2.5: the domain belongs
- * upstream of the encoder).
+ * surface rather than where it is encoded (TYPES_INTERFACE → "Totality": a
+ * throwing writer's domain belongs upstream of the encoder).
  *
  * `buildCoinbaseOutputs` turns this string into a `CoinbaseOutput.owner`, whose
  * writer is `writeBytesNOrThrow(…, 32)` — and `Buffer.from(s, 'hex')` stops at

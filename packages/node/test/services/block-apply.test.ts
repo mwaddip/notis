@@ -545,12 +545,12 @@ describe('block-apply journal recording', () => {
       prevBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
       subBlockRoot: computeSubBlockRoot(subBlockTree),
       utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
-      // EMPTY_STATE_ROOT, not a hand-written literal: stateRoot is hex(33) = 66
-      // characters, and this site carried 64 (a 32-byte root) while :386 and
-      // :433 in this same file use the constant correctly. Since Phase 1e pins
-      // the width, the 64-char value rejects the block one gate EARLIER than the
-      // validator signature — reintroducing exactly the vacuity the comment
-      // below guards against, while the test stayed green.
+      // EMPTY_STATE_ROOT, not a hand-written literal: `stateRoot` is hex(33) =
+      // 66 characters (VALIDATION_INTERFACE → `verifyHeaderFieldDomains`), so a
+      // hand-written 64-char 32-byte root rejects the block at the width gate,
+      // one gate EARLIER than the validator signature — reintroducing exactly
+      // the vacuity the comment below guards against, and the test would still
+      // pass.
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: miner.userId,
       powNonce: 0,
@@ -1270,18 +1270,17 @@ describe('block-apply mint provenance', () => {
   });
 
   it('the same-block decay-then-settle adjacency resets the clock exactly as the boxes did', async () => {
-    // Spec G phase D. The same funnel as the test above, read through the
-    // *clock* rather than the outpoints.
+    // The same funnel as the test above, read through the *clock* rather than
+    // the outpoints (NODE_INTERFACE → "Identity Records").
     //
-    // `applyKarmaDecay` runs at block-apply.ts:1018 and `processVouchCooldowns`
-    // at :1026, so at height 4 decay writes `lastDecayBlock: 4` and the
-    // settlement's mint then writes `lastActivityBlock: 4` — both halves land
-    // on the same height, in that order.
+    // `applyKarmaDecay` (§12) runs before `processVouchCooldowns` (§12b), so at
+    // height 4 decay writes `lastDecayBlock: 4` and the cooldown settlement's
+    // mint then writes `lastActivityBlock: 4` — both halves land on the same
+    // height, in that order.
     //
-    // Under the old code the settlement created a *non-decay* karma box at
-    // height 4, which reset staleness for every subsequent block. The record
-    // has to reproduce that, and it does for two independent reasons worth
-    // pinning separately:
+    // Staleness therefore restarts from height 4 for every subsequent block,
+    // and the record holds that for two independent reasons worth pinning
+    // separately:
     //
     //   staleness    (h − 4) >= 3 only from h = 7, so blocks 5 and 6 are quiet;
     //   owedPeriods  max(4, 4) = 4, the same clock start the single surviving
@@ -1738,8 +1737,9 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
 
   // ⚠ Every fixture in this cluster carries ONE parent ref, and that is
   // load-bearing rather than cosmetic. `MAX_PARENT_REFS` is 1, and
-  // `verifyOrderingBlockStructure` enforces it at `block-apply.ts:143` — ahead
-  // of the entry-vs-post comparison at `:599` that these tests exist for. A
+  // `verifyOrderingBlockStructure` enforces it in the structure gate at the top
+  // of `applyOrderingBlock` — ahead of the entry-vs-post comparison against
+  // `realParents` that these tests exist for. A
   // two-ref fixture is therefore rejected for its COUNT, so the three
   // `toBe(false)` cases below would keep passing with the H-3 comparison
   // deleted entirely. Only the control fails loudly; the rest fail silently, so
@@ -1840,8 +1840,8 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
   // have gone on passing with the property deleted. That is worse than failing,
   // and it is why this is a deletion rather than a re-fixture.
   //
-  // **What is no longer covered, stated plainly:** the H-3 comparison at
-  // `block-apply.ts:599` is sequence-wise —
+  // **What is no longer covered, stated plainly:** the H-3 comparison against
+  // `realParents` is sequence-wise —
   // `entry.parentRefs.every((ref, j) => ref === realParents[j])` — and at width
   // 1 sequence-wise and set-wise are indistinguishable. So nothing now
   // distinguishes the current implementation from a set comparison; if
@@ -1994,16 +1994,17 @@ describe('block-apply funnel totality', () => {
     expect(applied).toBe(false);
 
     // ---- the verdict, by its exact label -----------------------------------
-    // `verifyOrderingBlockStructure` owns this rejection (`verify.ts:619`), and
+    // `verifyOrderingBlockStructure` owns this rejection (it lives in
+    // `@dagsocial/validation`, not in this package), and
     // naming the string is what stops the test passing on some *other*
     // rejection — a root mismatch, say, which is what a fixture that injected
     // the entry and asserted only `false` would silently have settled for.
     expect(warnings, `got ${JSON.stringify(warnings)}`).toContain(STRUCTURE_REJECTION);
 
     // ---- THE ORDERING PIN --------------------------------------------------
-    // Structure at `block-apply.ts:143`, Merkle recomputation at `:269`. That
-    // ordering only became load-bearing in this phase: `computeSubBlockRoot`
-    // used to CBOR-encode anything and is now partial, so if the two ever swap,
+    // The structure gate runs at the top of `applyOrderingBlock`, Merkle
+    // recomputation later in the same funnel (§4). That ordering is
+    // load-bearing: `computeSubBlockRoot` is partial, so if the two ever swap,
     // this block throws into the funnel's totality catch instead of producing a
     // verdict. Nothing else in the suite would notice — `applyOrderingBlock`
     // answers `false` either way — so the absence of that catch's log line is

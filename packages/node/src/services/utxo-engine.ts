@@ -9,22 +9,12 @@ import {
 } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBox, AnyBoxCandidate, BoxGuard, KarmaBox, BondBox, InviteBox, VouchBox } from '@dagsocial/types';
 
-// A local `computeTxIdLocal` lived here — a second implementation of
-// `computeTxId` with its own cbor-x `Encoder` — and was **deleted** by Spec G
-// phase G3b. It was not a helper: it produced the hash signatures are verified
-// against (`checkGuards`) and the `txId` every output is materialized under
-// (`validateTx`), while every *builder* and `block-apply` used types'
-// `computeTxId`. Two consensus-critical hash implementations that agreed only by
-// coincidence — identical `Encoder` options, neither applying a domain tag, and
-// no output carrying `txId`/`index` at runtime, since the strip rules differed
-// (types routes outputs through `canonicalBoxBytes`; this stripped `id` only,
-// the same defect in its sixth location).
-//
-// Its stated justification — "avoiding module-resolution drift between the types
-// dist and the node runtime" — guarded a problem that does not exist: the store
-// holds exactly one cbor-x. It bought no safety and cost a divergence surface
-// that G3b would have detonated, since applying `TX_ID_DOMAIN` to types alone
-// would leave builders signing a tagged id while this verified an untagged one.
+// `computeTxId` has exactly one implementation and it is types'. This engine
+// must never grow a local copy: the id it returns is both the hash `checkGuards`
+// verifies signatures against and the `txId` every output is materialized under,
+// so a second hasher is a divergence surface that agrees only by coincidence —
+// same `Encoder` options, same strip rule, same domain tag, all by hand
+// (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
 import { ed25519PublicKeyToKeyObject } from '@dagsocial/validation';
 import { config } from '../config.js';
@@ -60,11 +50,11 @@ export interface UtxoEngineDeps {
   /**
    * True while a cooldown row exists for `(voucherId, targetId)`.
    *
-   * Consensus input (P2-B phase 2): a vouch cast is invalid while the pair is
-   * cooling down. Without the gate a block-embedded vouch→unvouch pair for a
-   * pair with a live cooldown reaches `insertVouchCooldown`'s INSERT OR
-   * REPLACE and destroys the first escrow's pending re-mint on the forward
-   * path. Backed by the store's `hasActiveVouchCooldown` at every production
+   * Consensus input (NODE_INTERFACE → "Vouch transition rules"): a vouch cast
+   * is invalid while the pair is cooling down. Without the gate a
+   * block-embedded vouch→unvouch pair for a pair with a live cooldown reaches
+   * `insertVouchCooldown`'s INSERT OR REPLACE and destroys the first escrow's
+   * pending re-mint on the forward path. Backed by the store's `hasActiveVouchCooldown` at every production
    * site — row existence IS activity, since matured rows are deleted by
    * `processVouchCooldowns` in the same block application that mints them.
    */
@@ -114,9 +104,9 @@ function verifyGuardSignature(
  * Check legal box transitions for a given set of inputs and outputs.
  * Assumes all inputs have the same boxType (pre-checked).
  *
- * Height-aware since P2-B phase 1: the bond commit and settlement rules are
- * predicates on the height the transaction settles at, not on its contents
- * alone.
+ * Height-aware: the bond commit and settlement rules are predicates on the
+ * height the transaction settles at, not on its contents alone
+ * (NODE_INTERFACE → "Bond transition rules").
  */
 function checkTransitions(
   inputs: AnyBox[],
@@ -125,7 +115,7 @@ function checkTransitions(
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
 ): { valid: boolean; error?: string } {
-  // P2-D: a like transaction (`likeTarget` present) has exactly one legal
+  // A like transaction (`likeTarget` present) has exactly one legal
   // shape — the liker's karma boxes in, one karma box out (the arm in the
   // karma case below). Gated here so the mixed-input shapes (invite claim,
   // invite cancel) cannot carry a bolted-on `likeTarget` through their own
@@ -223,7 +213,7 @@ function checkTransitions(
 
   switch (inputType) {
     // ------------------------------------------------------------------
-    // KarmaBox → KarmaBox (same owner, balance change; the P2-D like burn
+    // KarmaBox → KarmaBox (same owner, balance change; the like burn
     //                      when `likeTarget` is present)
     // KarmaBox → KarmaBox + InviteBox + BondBox (invite creation)
     // ------------------------------------------------------------------
@@ -234,8 +224,8 @@ function checkTransitions(
       const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
 
-      // A 'like'-type output is an illegal transition as of P2-D: a like is a
-      // burn transaction named by `likeTarget`, never a box.
+      // A 'like'-type output is an illegal transition: a like is a burn
+      // transaction named by `likeTarget`, never a box.
       const totalOutputs =
         karmaOutputs.length + inviteOutputs.length + bondOutputs.length + postLockOutputs.length + vouchOutputs.length;
 
@@ -246,11 +236,12 @@ function checkTransitions(
         };
       }
 
-      // All karma inputs must share one owner (P2-B phase 4). Every karma
-      // output is pinned to `inputKarma.owner` below, but nothing bound the
-      // inputs to each other — validateTx step 3 only requires a common
-      // boxType — so [karmaA, karmaB] → karmaA validated with both owners
-      // co-signing, and B's karma became A's. Consensual, but karma is
+      // All karma inputs must share one owner (NODE_INTERFACE → "Karma
+      // transition rules"). Every karma output is pinned to `inputKarma.owner`
+      // below, but nothing else binds the inputs to each other — validateTx
+      // step 3 only requires a common boxType — so without this check
+      // [karmaA, karmaB] → karmaA validates with both owners co-signing, and
+      // B's karma becomes A's. Consensual, but karma is
       // non-transferable by rule: a consensual transfer is still a transfer,
       // and it prices off-chain. Self-consolidation of one owner's boxes is
       // the legitimate multi-input case and stays legal; credits are
@@ -304,7 +295,7 @@ function checkTransitions(
       }
 
       if (likeTarget !== undefined) {
-        // P2-D like arm: `likeTarget` present ⇒ this exact shape and nothing
+        // Like arm: `likeTarget` present ⇒ this exact shape and nothing
         // else. All inputs are karma boxes sharing one owner (pinned above),
         // the single output is a karma box with that same owner (pinned
         // above), and the transaction burns exactly LIKE_KARMA_COST. The
@@ -344,11 +335,10 @@ function checkTransitions(
         }
         const vouchOut = vouchOutputs[0] as VouchBox;
         // The stake is pinned at cast: a vouch is one vote and always stakes
-        // exactly VOUCH_KARMA_AMOUNT (audit F-consensus-3). Before the pin,
-        // value was bounded only by conservation and `checkOutputValues` —
-        // which permits 0n — while unvouch escrowed the constant: a 0-value
-        // vouch matured into 1 karma minted from nothing, and a 100-value
-        // vouch destroyed 99.
+        // exactly VOUCH_KARMA_AMOUNT (audit F-consensus-3). Without this pin
+        // the only bound on the stake is conservation, which permits 0n, while
+        // unvouch escrows the constant regardless: a 0-value vouch matures into
+        // 1 karma minted from nothing, and a 100-value vouch destroys 99.
         if (vouchOut.value !== VOUCH_KARMA_AMOUNT) {
           return {
             valid: false,
@@ -391,7 +381,7 @@ function checkTransitions(
           };
         }
         // A bond is born uncommitted; committed state is reachable only
-        // through the commit transition (P2-B phase 2). Without this pin an
+        // through the commit transition. Without this pin an
         // inviter emits a bond *born committed* with a zeroed window, and the
         // settlement rule accepts an immediate reclaim to themselves — every
         // clause satisfied, the expiry leg vacuously true — while the
@@ -473,7 +463,7 @@ function checkTransitions(
       }
 
       // No burn shape. Conservation rejects this first through `validateTx`
-      // (the zero-output exemption is vouch-only as of P2-B phase 1), so this
+      // (the zero-output exemption is vouch-only), so this
       // arm is the second of two independent layers rather than the reachable
       // one — kept because a transition table that *accepts* `bond → ∅` is a
       // consensus rule waiting to be re-exposed by any future reordering.
@@ -512,10 +502,10 @@ function checkTransitions(
             `and cancel shapes`,
         };
       }
-      // The bond's value only ever returns to the inviter (audit
-      // F-consensus-1). Before this pin, the committed invitee — whose
-      // signature satisfies `bond_dual` Path 2 — could sign `bond → own
-      // KarmaBox` and take the deposit outright.
+      // The bond's value only ever returns to the inviter (NODE_INTERFACE →
+      // "Bond transition rules", audit F-consensus-1). Without this pin the
+      // committed invitee — whose signature satisfies `bond_dual` Path 2 —
+      // signs `bond → own KarmaBox` and takes the deposit outright.
       const karmaOut = karmaOutputs[0] as KarmaBox;
       if (Buffer.from(karmaOut.owner).toString('hex') !==
           Buffer.from(bondIn.inviterId).toString('hex')) {
@@ -577,11 +567,12 @@ function checkTransitions(
           error: `VouchBox can only be spent to produce no outputs (unvouch)`,
         };
       }
-      // An unvouch consumes exactly one VouchBox (P2-B phase 4). Block
-      // application walks the inputs for a VouchBox, writes ONE escrow row,
-      // and stops — while conservation exempts zero-output vouch spends
-      // wholesale, however many inputs. A two-VouchBox unvouch therefore
-      // consumed both stakes and escrowed one, destroying the other. Burning
+      // An unvouch consumes exactly one VouchBox (NODE_INTERFACE → "Vouch
+      // transition rules"). Block application walks the inputs for a VouchBox,
+      // writes ONE escrow row, and stops — while conservation exempts
+      // zero-output vouch spends wholesale, however many inputs. Without this
+      // bound a two-VouchBox unvouch consumes both stakes and escrows one,
+      // destroying the other. Burning
       // several stakes in one transaction has no meaning in the design, so
       // the shape is inexpressible rather than handled — the same reasoning
       // as the bond settlement's single-input bound.
@@ -603,28 +594,26 @@ function checkTransitions(
 // Internal validation helpers (extracted from validateAndApplyTx)
 // ---------------------------------------------------------------------------
 
-// `checkOutputValues` lived here and retired with the field-type pin: the
-// schema's `u64` spec on every `value` (and `originalValue`) is the same
-// bound with the same owner-per-rule discipline — one table, not a value
-// check here and a type table there. `json-to-tx.ts`'s `assertValidBoxValue`
-// stays as the HTTP-edge ergonomics twin, not the consensus gate.
+// The consensus bound on every `value` (and `originalValue`) is the schema's
+// `u64` spec below — one table, not a separate value check alongside a type
+// table. `json-to-tx.ts`'s `assertValidBoxValue` is the HTTP-edge ergonomics
+// twin, not the consensus gate.
 
 /**
  * The one canonical guard per boxType. A guard is a pure function of the
  * discriminant — it carries zero information of its own — so any other value
- * on an output is a lie about the bytes, not an alternative spend policy.
+ * on an output is a lie about the box, not an alternative spend policy.
+ *
+ * ⚠ **`guard` is NOT in the consensus bytes.** `canonicalBoxBytes` writes
+ * `boxType`, `value` and the per-type tail and never the guard, so this table
+ * decides nothing about the id preimage or the AVL leaf — it is an interface
+ * rule the schema enforces on candidates.
  *
  * `rowToBox` (store/utxo.ts) fabricates these same constants when it rebuilds
- * a box from its row. The two tables must never disagree: this one decides
- * what enters the committed bytes (id preimage, AVL leaf), that one decides
- * what every later read reconstructs, and the store invariant
- * `computeBoxId(rowToBox(row)) === row.id` holds only while they match.
- * Deliberately NOT imported from the store — the engine owns the consensus
- * rule, the store mirrors it.
- *
- * Scheduled retirement (P2-C bundle): when `guard` leaves the consensus bytes
- * entirely, this table retires with it and the key-set half of the shape
- * check below keeps the schema closed.
+ * a box from its row, so the two tables must still agree: an output the schema
+ * accepts and a row-rebuilt box of the same type have to present the same
+ * object. Deliberately NOT imported from the store — the engine owns the rule,
+ * the store mirrors it.
  */
 const CANONICAL_GUARD: Record<AnyBox['boxType'], BoxGuard> = {
   karma: 'owner_signature',
@@ -656,9 +645,9 @@ type FieldType =
 const U64_BOUND = 1n << 64n;
 
 const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expected: string }> = {
-  // The bound absorbed from the retired `checkOutputValues`: a negative value
-  // balances conservation sums while minting into a sibling box, and at/above
-  // 2^64 cbor-x leaves the uniform uint64 encoding for a tag-2 bignum.
+  // The value bound: a negative value balances conservation sums while
+  // minting into a sibling box, and at/above 2^64 cbor-x leaves the uniform
+  // uint64 encoding for a tag-2 bignum.
   u64: {
     ok: (v) => typeof v === 'bigint' && v >= 0n && v < U64_BOUND,
     expected: 'a non-negative bigint < 2^64',
@@ -678,19 +667,18 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
    * held as a `Uint8Array`; the pair is the whole reason this needs its own
    * entry rather than reusing one.
    *
-   * ⚠ **This closes a live no-panic violation, not a style gap.** The field was
-   * typed `'string'` here while `canonicalBoxBytes` writes it with
-   * `writeHexNOrThrow(…, 32)`, which throws on anything that is not exactly 64
-   * lowercase hex. Under the pre-migration encoder any string encoded, so the
-   * mismatch cost nothing; from Phase 2 on, a `post_lock` output carrying
-   * `targetPostId: 'hello'` clears step 4 and then makes `computeTxId` **throw**
-   * at `validateTx`'s last line — turning an invalid transaction into an
-   * exception on an adversary-supplied value. `VALIDATION_INTERFACE`'s no-panic
-   * rule forbids exactly that.
+   * ⚠ **This entry holds a no-panic violation shut, it is not a style gap.**
+   * `canonicalBoxBytes` writes the field with `writeHexNOrThrow(…, 32)`, which
+   * throws on anything that is not exactly 64 lowercase hex. Type it `'string'`
+   * here and a `post_lock` output carrying `targetPostId: 'hello'` clears step 4
+   * and then makes `computeTxId` **throw** at `validateTx`'s last line — turning
+   * an invalid transaction into an exception on an adversary-supplied value.
+   * `VALIDATION_INTERFACE`'s no-panic rule forbids exactly that.
    *
-   * The fix belongs here and not in the encoder: spec §2.5 is explicit that a
-   * throwing writer's domain is established upstream, and adding a guard inside
-   * `canonicalBoxBytes` is what the format forbids. The schema is the upstream.
+   * The width belongs here and not in the encoder: a throwing writer's domain is
+   * established upstream (TYPES_INTERFACE → "Totality"), and adding a guard
+   * inside `canonicalBoxBytes` is what the format forbids. The schema is the
+   * upstream.
    */
   hex32: {
     ok: (v) => typeof v === 'string' && HEX64.test(v),
@@ -700,8 +688,7 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
   // "transfer" sentinel every user-path credit transfer and faucet grant
   // stamps (routes/utxo.ts). The value set is closed — {-1} ∪ heights — so a
   // -5 is a lie, not a type; `v >= 0` admits -0, hence the Object.is guard.
-  // P2-C row C8 deletes `proofSource` from the consensus bytes entirely; this
-  // spec retires with it.
+  // Scheduled retirement with the field itself (TYPES_INTERFACE → "CreditBox").
   heightOrTransfer: {
     ok: (v) =>
       typeof v === 'number' &&
@@ -846,17 +833,17 @@ function checkHexKeyedByteMap(
  * `tx.outputs`, this one pins that `tx` has the four fields at all and that
  * every one of them is the type its readers assume. Both exist for the same
  * reason — the transaction is attacker-controlled structure arriving over HTTP
- * JSON, gossip CBOR, and block-embedded CBOR — and until this gate landed the
- * envelope was the half nobody checked: measured on the pre-gate tree,
- * `inputs: null` threw at step 1's `.length`, `inputs: 5` at `new Set(5)`,
- * `inputs: [{}]` at the SQLite bind inside `getBox`, `outputs: null` inside
- * `checkOutputShape` itself, a non-array `outputs` OBJECT slipped that loop
- * (`length` undefined) and threw at conservation's `.reduce`, a missing or
- * `null` `signatures` threw at `tx.signatures[hexKey]`, and `likeTarget: null`
- * plus non-`Uint8Array` `preimages` values threw inside `computeTxId` — which
- * `checkGuards` calls on its first line, so the whole envelope reached the
- * hasher. Every one was an HTTP 500 or, through the block funnel, a
- * whole-block rejection logged as an unexpected failure.
+ * JSON, gossip CBOR, and block-embedded CBOR — and the envelope is the half
+ * nothing else checks. Measured without this gate: `inputs: null` throws at
+ * step 1's `.length`, `inputs: 5` at `new Set(5)`, `inputs: [{}]` at the SQLite
+ * bind inside `getBox`, `outputs: null` inside `checkOutputShape` itself, a
+ * non-array `outputs` OBJECT slips that loop (`length` undefined) and throws at
+ * conservation's `.reduce`, a missing or `null` `signatures` throws at
+ * `tx.signatures[hexKey]`, and `likeTarget: null` plus non-`Uint8Array`
+ * `preimages` values throw inside `computeTxId` — which `checkGuards` calls on
+ * its first line, so the whole envelope reaches the hasher. Each one is an HTTP
+ * 500 or, through the block funnel, a whole-block rejection logged as an
+ * unexpected failure.
  *
  * **Total**: returns `{valid: false}` and never throws for any decoded-CBOR
  * value. Error strings quote input through `describeValue`, never bare
@@ -864,12 +851,12 @@ function checkHexKeyedByteMap(
  *
  * The key set is **closed**. `computeTxId` hashes only the known fields, so an
  * extra envelope key is free malleability: two distinct CBOR byte strings
- * carrying one txId. Measured pre-gate — `{…, bogusKey: 'free'}` and the clean
- * tx hash identically, and the junk rode through validation into the store.
- * A key present with the value `undefined` rejects for the twin reason: CBOR
- * encodes `undefined`, `computeTxId`'s presence test is `!== undefined`, so a
- * present-`undefined` `likeTarget` hashes as absent (also measured) — the gate
- * refuses the ambiguity rather than picking a side.
+ * carrying one txId. Measured without this gate: `{…, bogusKey: 'free'}` and
+ * the clean tx hash identically, and the junk rides through validation into the
+ * store. A key present with the value `undefined` rejects for the twin reason:
+ * CBOR encodes `undefined`, `computeTxId`'s presence test is `!== undefined`,
+ * so a present-`undefined` `likeTarget` hashes as absent (also measured) — the
+ * gate refuses the ambiguity rather than picking a side.
  *
  * Presence is decided with `Object.hasOwn`, never truthiness or `in` — see
  * `isPlainObject` for what that buys and what it does not.
@@ -1101,21 +1088,17 @@ const OUTPUT_SHAPE: Record<
  * pin, NODE_INTERFACE → "Output shape").
  *
  * Outputs are attacker-controlled structure (HTTP JSON via `jsonToTx`, gossip
- * and block-embedded CBOR), and both bytes-level consumers hash whatever keys
- * the object carries: `canonicalBoxBytes` (the id preimage) strips only
- * `id`/`txId`/`index`, `serializeBox` (the AVL leaf, so the `stateRoot`)
- * strips only `id`/`boxType`. An accepted key the schema does not pin — or a
- * lying `guard`, or a mistyped field — becomes a committed byte that
- * `rowToBox`'s reconstruction (canonical guard, typed columns, no stray keys)
- * can never reproduce: the store and the tree then permanently disagree about
- * the box's bytes, the divergence surface under journal replay and any future
- * snapshot sync. A mistyped field can also poison the row itself — a string
- * `originalValue` stored once made every later `rowToBox` of that box throw.
+ * and block-embedded CBOR). The committed encoders are positional —
+ * `canonicalBoxBytes` (the id preimage) and `serializeBox` (the AVL leaf, so
+ * the `stateRoot`) each write the fields their layout declares and nothing
+ * else — so a stray key is unrepresentable in the bytes. It still reaches
+ * everything else: the object `insertBox` writes, the stored row, and every
+ * later read. A mistyped field poisons the row itself — a string
+ * `originalValue` in a stored row makes every later `rowToBox` of that box
+ * throw.
  *
  * Four rules per output:
- * - a key outside the closed set is a REJECT, never a silent strip — a
- *   stripped key would change the bytes the client signed, so their txId and
- *   signature would refer to an object the node never stored;
+ * - a key outside the closed set is a REJECT, never a silent strip;
  * - `guard` must equal the boxType's one canonical guard;
  * - every present field's runtime type matches its `FieldType` spec in
  *   OUTPUT_SHAPE (`TYPES_INTERFACE` box definitions are the authority);
@@ -1125,16 +1108,13 @@ const OUTPUT_SHAPE: Record<
  *   instead of retrieving `Object.prototype.constructor` and throwing.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
- * they are structurally outside every committed byte (`canonicalBoxBytes`
- * strips them from the txId and box-id preimages, `materializeOutput` strips
- * them before appending the real provenance), so the schema is compared in
- * candidate form.
+ * they are structurally outside every committed byte (no layout declares them;
+ * `materializeOutput` strips them before appending the real provenance), so the
+ * schema is compared in candidate form.
  *
- * A key that is present with the value `undefined` is a reject in both
- * positions: cbor-x encodes the key into the id preimage (`"decayBurn" f7`),
- * while `insertBox`/`rowToBox` treat `undefined` as absence and drop it — the
- * exact bytes-vs-store divergence this check closes. Presence means "own
- * enumerable key with a defined value".
+ * A key present with the value `undefined` is a reject rather than treated as
+ * absent: presence means "own enumerable key with a defined value", so no
+ * reader downstream has to decide which of the two an ambiguous shape meant.
  *
  * Exported for direct testing. Through `validateTx` this check runs at step 4
  * — the first consumer of `tx.outputs` — so it is the PRIMARY gate for every
@@ -1221,7 +1201,7 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  * payouts, decay, coinbase), never inside a user transaction, so no box type
  * gets a blanket exemption. Two deliberate carve-outs exist:
  *
- * - **The like burn (P2-D)** — `likeTarget` present ⟺ the transaction burns
+ * - **The like burn** — `likeTarget` present ⟺ the transaction burns
  *   exactly `LIKE_KARMA_COST` from karma inputs. This is the biconditional's
  *   value half: `likeTarget` absent ⇒ zero deficit as always (strict equality
  *   below), present ⇒ exactly that deficit — never more, never less, never a
@@ -1237,12 +1217,12 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *   UTXO set (and therefore outside the AVL+ state root) is a known wart —
  *   modelling it as a maturing box is tracked separately.
  *
- * The BondBox once shared the zero-output exemption and **lost it** in P2-B
- * phase 1. Forfeiture is not implemented and no legal transition destroys a
- * bond, so an exemption here bought nothing but a burn shape — one the
- * *committed invitee* could reach, since their signature satisfies `bond_dual`,
- * letting them torch the inviter's stake out of spite. The karma-econ vesting
- * design owns forfeiture and will define its burn path when it lands.
+ * The BondBox has **no** zero-output exemption, deliberately. Forfeiture is not
+ * implemented and no legal transition destroys a bond, so an exemption here
+ * would buy nothing but a burn shape — one the *committed invitee* can reach,
+ * since their signature satisfies `bond_dual`, letting them torch the inviter's
+ * stake out of spite. The karma-econ vesting design owns forfeiture and will
+ * define its burn path when it lands.
  */
 function checkValueConservation(
   inputBoxes: AnyBox[],
@@ -1253,7 +1233,7 @@ function checkValueConservation(
   // (field-type pin), so the bigint sums below are total — this function must
   // never run on outputs that have not passed `checkOutputShape`.
 
-  // P2-D like carve. `likeTarget` names a like, and a like burns exactly
+  // Like carve. `likeTarget` names a like, and a like burns exactly
   // LIKE_KARMA_COST from the liker's karma — any other deficit, a surplus, a
   // conserving transaction, or non-karma inputs under this field are invalid.
   if (likeTarget !== undefined) {
@@ -1397,8 +1377,8 @@ function checkGuards(
         // stored box id (user decision, 2026-08-06): a box id here would be
         // circular, since it derives from the very txId that hashes this field.
         // The pair is confined to one transaction by construction, so this
-        // cannot reach an invite the bond did not ship with — the old
-        // `getBox(inviteBoxId)` could name any box in the world.
+        // cannot reach an invite the bond did not ship with; resolving from a
+        // stored box id could name any box in the world.
         const pairedInviteBox = deps.getBoxByProvenance(
           bondBox.txId,
           bondBox.inviteOutputIndex,
@@ -1478,7 +1458,7 @@ function checkGuards(
  *    `tx.outputs`, so steps 5–7 dereference output fields under a schema
  *    guarantee.
  * 5. Face-value conservation — sum(in) == sum(out) for every box type (two
- *    carve-outs: the P2-D like burn — `likeTarget` present ⟺ deficit exactly
+ *    carve-outs: the like burn — `likeTarget` present ⟺ deficit exactly
  *    LIKE_KARMA_COST — and the zero-output VouchBox spend). The `value` TYPE
  *    bound lives in step 4's schema.
  * 6. Guard satisfaction (signatures)
@@ -1499,7 +1479,7 @@ export function validateTx(
   // ---- 0. Transaction envelope shape ----
   // Ahead of every other read of `tx`: steps 1–7 index `tx.inputs`, iterate
   // `tx.outputs`, and hash the whole envelope inside `computeTxId`, all of
-  // which were throw sites for a malformed envelope before this gate.
+  // which are throw sites for a malformed envelope without this gate.
   const envelopeCheck = checkTxEnvelope(tx);
   if (!envelopeCheck.valid) return envelopeCheck;
 
@@ -1549,10 +1529,10 @@ export function validateTx(
   // field-type pin) ----
   // First consumer of `tx.outputs`, ahead of every semantic rule: steps 5–7
   // dereference output fields under the schema's key-set and type guarantees
-  // instead of defending per-site. (The guard-shape pin had placed this at
-  // step 7 to preserve arm-specific errors; the field-type pin moved it —
-  // rejections of MALFORMED outputs now surface shape errors, the accepted
-  // set for well-typed outputs is unchanged.)
+  // instead of defending per-site. Placing it here rather than at step 7
+  // changes only which error a MALFORMED output surfaces (a shape error, not
+  // an arm-specific one); the accepted set for well-typed outputs is identical
+  // either way.
   const shapeCheck = checkOutputShape(tx.outputs);
   if (!shapeCheck.valid) return shapeCheck;
 
@@ -1590,7 +1570,8 @@ export function validateTx(
 /**
  * Turn a transaction output candidate into the box that goes into the ledger:
  * the creating transaction's real id, the output's position within
- * `tx.outputs`, and the derived box id (Spec G phase C3).
+ * `tx.outputs`, and the derived box id (NODE_INTERFACE → "Box Identity and
+ * Mint Provenance").
  *
  * The `txId` is passed in rather than recomputed. `computeTxId` hashes outputs
  * through `canonicalBoxBytes`, so it does not *observe* provenance — which
@@ -1600,20 +1581,12 @@ export function validateTx(
  * Any client-supplied `id`/`txId`/`index` is **stripped before** the canonical
  * pair is appended, not overwritten in place.
  *
- * ⚠ **The consensus half of this rationale is retired (Phase 5), and the rule
- * stays for the other half.** It used to read: cbor-x emits map keys in
- * insertion order under `variableMapSize: false`, so overwriting would leave
- * the keys wherever the client's CBOR happened to put them while `rowToBox`
- * appends them last, the two shapes would serialize to different AVL bytes, and
- * a node that restarted and re-bootstrapped its prover from SQLite would
- * compute a different `stateRoot` than one that stayed up. That encoder is
- * gone — the AVL value is positional, so key order is not observable and the
- * two shapes now produce identical bytes.
- *
- * What survives is not about bytes: stripping makes "this box's provenance came
- * from the client" unrepresentable, where overwriting merely corrects it after
- * the fact. Outputs are attacker-controlled, so the difference is between a
- * shape that cannot exist and one that depends on every later reader
+ * Stripping rather than overwriting is not about bytes — the AVL value is
+ * positional, so key order is not observable and either shape serializes the
+ * same. It is about representability: stripping makes "this box's provenance
+ * came from the client" unrepresentable, where overwriting merely corrects it
+ * after the fact. Outputs are attacker-controlled, so the difference is between
+ * a shape that cannot exist and one that depends on every later reader
  * overwriting in the same order.
  *
  * Exported because `block-apply.ts` materializes the outputs of block-embedded
@@ -1672,17 +1645,11 @@ export function applyTx(
       deps.consumeBox(id, currentBlockHeight);
     }
     for (const box of outputsWithIds) {
-      // The box goes in exactly as `materializeOutput` built it. This used to
-      // rewrite `createdAtBlock` to the settled height while leaving the id
-      // committed to the client's *declared* height — that discrepancy **was**
-      // M-11, and phase G3b closes it by deleting the field rather than by
-      // rewriting it here. The settled height still reaches the
-      // `created_at_block` store column; `insertBox` takes it from the open
-      // journal, which is the only place it can now come from.
-      //
-      // Spreading the box would also be wrong now for a second reason: any key
-      // added or reordered here changes the id, since `computeBoxId` hashes the
-      // box itself.
+      // The box goes in exactly as `materializeOutput` built it. Spreading it
+      // is wrong: any key added or reordered here changes the id, since
+      // `computeBoxId` hashes the box itself. The settled height reaches the
+      // `created_at_block` store column through `insertBox`, which takes it
+      // from the open journal — the only place it can come from.
       deps.insertBox(box);
     }
   });

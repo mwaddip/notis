@@ -74,9 +74,9 @@ export async function requestSubBlock(
 // The **request** is still raw CBOR — a `{ startHeight, maxCount, endHeight,
 // mode }` control message with no consensus bytes in it, shape-checked at the
 // far end by `decodeLegacyHeadersRequest`. The **responses** carry whole blocks
-// and headers and are positional: see `sync-codec.ts` →
-// "Legacy /dagsocial/headers/1 responses" for what that closed and why a shape
-// check on the cbor path would have been the wrong fix.
+// and headers and are positional: see `lpItemsCodec` in `sync-codec.ts` for
+// what that closes and why a shape check over `cbor-x` is the wrong instrument
+// here.
 //
 // An unparseable response **throws** rather than resolving to `[]`. The two are
 // not interchangeable here: `index.ts`'s fork resolution feeds `requestBlocks`'

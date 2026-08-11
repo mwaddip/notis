@@ -69,7 +69,7 @@
       "codec": "bool",
       "bytes": "02",
       "code": "invalid-tag",
-      "note": "Strict tags — no truthy coercion, per spec §2.3."
+      "note": "Strict tags — no truthy coercion, per TYPES_INTERFACE -> Primitives."
     },
     {
       "name": "tag/opt-two",

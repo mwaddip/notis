@@ -101,9 +101,9 @@ describe('ensureSchemaVersion — the startup gate (P2-D N2a)', () => {
   it('REFUSES a v1-stamped database instead of silently adopting it', () => {
     initDb(':memory:');
     writeSchemaVersion(1);
-    // No migration path exists — the previous behaviour ("running
-    // migrations..." then stamp) would leave a v1 identity_records with no
-    // like_carry column running until the first record read.
+    // No migration path exists, so refusing is the only safe answer: a v1
+    // `identity_records` has no `like_carry` column, and stamping the file
+    // current would let the node run until the first record read.
     expect(() => ensureSchemaVersion()).toThrow(/schema version is 1/i);
     // And it did NOT stamp on the way out.
     expect(schemaVersion()).toBe(1);

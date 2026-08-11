@@ -121,6 +121,75 @@ unprefixed line does not identify itself as a reply:
 
 The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and **commit** their own work. **Pushing is main's, always** — a component session that pushes has published work nobody reviewed.
 
+## What we write down
+
+**Everything we write describes reality as it is.** Code comments, commit bodies, PR bodies, titles —
+all of it states the present tense of the current tree.
+
+**Not backward-looking.** How it used to work, what was fixed, what went wrong before, what a previous
+encoder did, why the change is justified. None of that is a fact about the tree a reader is holding,
+and each such sentence is a second claim that decays on its own schedule.
+
+**Forward-looking only when it is a deliberate stub for planned work**, and marked as one — the
+contracts' `AHEAD OF CODE`. That is the single exception, because a stub's whole purpose is to say the
+code is not there yet.
+
+The two sections below are this rule applied to code and to changelog prose. Where reasoning genuinely
+has to survive, it goes in `contracts/` as a rule or in a `prompts/<task>-REPORT.md`, both of which a
+reader can check against the tree.
+
+## Comment style
+
+**Cite the CONTRACT, not the spec.** `docs/specs/` is gitignored and holds **zero tracked files**, so
+`(Phase 3b; spec §1.2)` in a committed comment points at a document nobody who clones this repo can
+open, and a bare `Phase N` resolves to nothing anywhere. A comment either states the rule as it stands
+now, or names the contract section that states it — `TYPES_INTERFACE → Layout — Stump`, never `Phase 2`.
+
+**`prompts/` is the same dead end and is easier to miss** — **3 of its 291 `.md` files are tracked**,
+so a comment citing an executor REPORT there resolves for whoever wrote it and for nobody else. The
+two known instances both cite `prompts/node-fail-stop-reachability-measure-REPORT.md`, which is not
+one of the three. **`contracts/` is the only citable directory.** A measurement worth keeping belongs
+in the contract, not behind a pointer to a file that was never committed.
+
+**Cite a contract section by its PROSE NAME, never by a phase-tagged parenthetical.** Several headings
+embed their own tags — `### Bond transition rules (P2-B phase 1)`, `### Per-block like settlement
+(P2-D — replaced the epoch tally)`. The prose name is what a reader greps and what survives; the
+parenthetical is the half the reconciliation will rewrite.
+
+**Never narrate replaced code.** How a function used to behave is not a fact about the current tree.
+No reader has to reason about code that is gone, and a narrated history is a second claim that decays
+independently of the one beside it. This is the retroactive half of *comments point, don't narrate*.
+
+⚠ **This binds code comments. `contracts/` is deliberately exempt for now** — it carries 8
+`docs/specs/` citations and 110 lines with a `Phase N` tag, and some are load-bearing while the
+contract-vs-code reconciliation is unwritten (user, 2026-08-11). **Do not sweep `contracts/` under
+this rule.** The exemption ends with that reconciliation spec, not with this cleanup.
+
+## Commit and PR bodies
+
+Same principle one level up: **describe what the change does, not the road to it.**
+
+**The what, not the why.** *"Fixes an issue where `x` became `y`"* is a complete description. *"…because
+`x` is not `y`, and the last time `a` became `b` it went unnoticed for months"* is a justification
+nobody asked for. **A fix needs no excuse.** The reasoning that produced a change belongs in the REPORT
+or the contract, where it can be checked; in a PR it is unfalsifiable padding.
+
+**No anecdotes, no history.** A body recounting how a node once burned a core for weeks is telling a
+story rather than describing a diff — and stories drift: that one overstated the lifetime of a
+ten-day-old package. If a past incident genuinely bears on the change, it belongs in the contract as a
+rule, not in a PR as a memory.
+
+**Caps: ~800 characters for a commit body, ~2000 for a PR** (user, 2026-08-10). Over the cap, cut a
+whole section rather than trimming sentences — detail relocates to the REPORT, referenced by path.
+
+**Titles are `type(scope): plain summary` — and the summary names the SUBJECT, not the class of
+change** (user, 2026-08-11). *"correct five service-test claims that time had made false"* describes a
+category of fix and could head twenty different commits; *"karma, decay and credits stop citing the
+removed `sortKeys` pass"* names what was actually wrong and where. **The test: if swapping in a
+different subject leaves the title still true, it is too abstract.** Plain means concrete, not vague —
+naming a function, file or claim is what makes a title plain, and dropping the technical noun is what
+makes it useless.
+
 ## Key invariants
 
 - Post content: 1–300 UTF-8 bytes (`MAX_CONTENT_BYTES`)

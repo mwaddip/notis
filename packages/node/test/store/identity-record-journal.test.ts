@@ -7,7 +7,8 @@ import type { BlockJournal, RecordMutation } from '../../src/store/journal.js';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
 
 /**
- * Spec G phase B2 — identity records in the block journal, and their rollback.
+ * Identity records in the block journal, and their rollback
+ * (NODE_INTERFACE → Block Journal).
  *
  * `putIdentityRecord` is a recording primitive at the store choke point: while
  * a journal is open it captures the row it replaces before writing. Rollback
@@ -173,7 +174,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     // One log, not parallel arrays: application order is preserved across kinds.
     // The middle `record` is the activity-clock bump `insertBox` itself makes
-    // for the karma box above (Spec G phase D); the last is the explicit put.
+    // for the karma box above; the last is the explicit put.
     expect(j.mutations.map((m) => m.kind)).toEqual(['box', 'record', 'record']);
   });
 

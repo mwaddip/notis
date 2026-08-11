@@ -2,12 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { powTarget, meetsPowTarget } from '../src/index.js';
 
 /**
- * The superseded implementation, copied verbatim from `verify.ts` as it stood
- * at 695eb5d, kept as a differential oracle.
+ * The bit-walk form of the same admission rule, copied verbatim from `verify.ts`
+ * at 695eb5d and kept as a differential oracle for `powTarget` /
+ * `meetsPowTarget` (VALIDATION_INTERFACE → powTarget / meetsPowTarget).
  *
- * ⚠ Unit 1 only. Unit 2 makes targets fractional and this oracle false by
- * construction; the retarget unit deletes this function and the two tests below
- * that use it. It is not a second implementation to be maintained.
+ * ⚠ **An oracle, not a second implementation to be maintained.** It is true only
+ * while targets are whole bits. Anything that makes a target finer than one bit
+ * makes this function false by construction, and the answer is then to delete it
+ * and the three tests below that use it — never to patch it into agreement.
  */
 function legacyHasLeadingZeroBits(hash: Uint8Array, targetBits: number): boolean {
   if (targetBits > hash.length * 8) return false;

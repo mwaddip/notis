@@ -132,8 +132,9 @@ function preimagePost(content: string, author: Uint8Array, parents: string[], ch
   };
 }
 
-// PoW preimage — the canonical encoding from @dagsocial/types (audit M-1).
-// A local copy would mine against bytes the node no longer verifies.
+// PoW preimage — the canonical encoding from @dagsocial/types
+// (TYPES_INTERFACE → Canonical field encoding). A local copy would mine against
+// bytes the node does not verify.
 function powInput(content: string, author: Uint8Array, parents: string[], chal: Uint8Array, ts: number): Uint8Array {
   return postPowPreimage(preimagePost(content, author, parents, chal, ts));
 }
@@ -309,7 +310,7 @@ describe('E2E Pipeline', () => {
     console.log(`Pre-decay karma: ${s}`);
     for (let i=0; i<30; i++) {
       await wait(2000);
-      // /status reports `blockHeight`; `currentHeight` printed as undefined.
+      // /status reports the tip as `blockHeight`, not `currentHeight`.
       const h1 = (await get(`${A1}/status`) as { blockHeight: number }).blockHeight;
       const h2 = (await get(`${A2}/status`) as { blockHeight: number }).blockHeight;
       console.log(`  H1=${h1} H2=${h2}`);

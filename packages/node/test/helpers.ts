@@ -112,8 +112,9 @@ export function makePost(authorId: Uint8Array, content = 'test post'): Post {
  *
  * Fixtures seed boxes directly into the store rather than through a real
  * transaction or a mint, so they have no txId of their own — but `tx_id` and
- * `output_index` are NOT NULL as of Spec G phase G3b, and the box id now derives
- * from them. This manufactures a stand-in.
+ * `output_index` are NOT NULL, and the box id derives from them
+ * (NODE_INTERFACE → Box Identity and Mint Provenance). This manufactures a
+ * stand-in.
  *
  * Deterministic on the candidate bytes plus the seed height, so a fixture built
  * twice with the same arguments gets the same box id and golden vectors stay
@@ -121,8 +122,8 @@ export function makePost(authorId: Uint8Array, content = 'test post'): Post {
  * depend on how many boxes a test happened to build first.
  *
  * `nonce` is the escape hatch for a test that deliberately seeds two *identical*
- * boxes — without it they would derive one txId and trip
- * `UNIQUE(tx_id, output_index)`, which is the collision the id PK used to have.
+ * boxes — without it they derive one txId and trip
+ * `UNIQUE(tx_id, output_index)`.
  *
  * Its own domain tag, so a fixture id can never be mistaken for one a real mint
  * or transaction would produce.
@@ -159,10 +160,10 @@ export type Stored<B extends AnyBox = AnyBox> = B & { id: BoxId };
 /**
  * Give a hand-built candidate the provenance and id a stored box must have.
  *
- * The shape every local fixture factory needs since phase G3b: seeding a box
- * straight into the store now requires `tx_id`/`output_index` (NOT NULL) and an
- * `id` that actually derives from them. Mutates in place so a factory that
- * already holds a reference to the candidate keeps seeing the finished box.
+ * Seeding a box straight into the store requires `tx_id`/`output_index` (NOT
+ * NULL) and an `id` that actually derives from them, which is the shape every
+ * local fixture factory needs. Mutates in place so a factory that already holds
+ * a reference to the candidate keeps seeing the finished box.
  *
  * Returns `Stored<T>`: this function always assigns `id`, so a caller that then
  * has to write `box.id!` is being told something false by the type.
@@ -294,8 +295,9 @@ export function makeKarmaBox(
 }
 
 /**
- * Build a signed like transaction — the P2-D burn shape a real client submits:
- * the liker's karma box is consumed into a single karma change box at
+ * Build a signed like transaction — the burn shape a real client submits
+ * (NODE_INTERFACE → Per-block like settlement): the liker's karma box is
+ * consumed into a single karma change box at
  * `−LIKE_KARMA_COST`, with `likeTarget` naming the post inside the signed
  * bytes. A like is a transaction, never a box.
  *
@@ -331,7 +333,7 @@ export function makeLikeTx(
  * The karma change box a `makeLikeTx` output creates, with its stored id.
  *
  * Routed through the production `materializeOutput` rather than re-deriving
- * here: the id now binds the creating transaction, so a fixture that computed it
+ * here: the id binds the creating transaction, so a fixture that computed it
  * any other way would be asserting against its own arithmetic instead of the
  * node's.
  */
@@ -347,23 +349,23 @@ export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
  * value the node would run with, and a fixture states only its deliberate
  * deviations.
  *
- * Every hand-written config literal in this tree had already fallen behind —
- * thirteen fields missing, including `verifyStateRoot`, `maxMempoolEntries` and
- * `avlKeyLength`. **Measured inert:** `startBlockCreator` reads six fields
- * (`orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`, `maxSubBlocksPerBlock`,
- * `miningMode`, `creditTreasuryPct`, `treasuryPubKey`), every fixture supplies
- * all six, and the three consumers of the missing fields
- * (`block-apply.ts:341`, `store/mempool.ts:65`, `state/avl-prover.ts:41`) import
- * the module-level `config` singleton, never the argument. No test mocks
- * `src/config.js`, so nothing else could reach them either.
+ * ⚠ A hand-written literal in place of this cannot be caught by the type
+ * checker if the parameter it is passed to is typed as the literal itself —
+ * `(cfg: typeof testConfig) => void` mentions `Config` nowhere and checks the
+ * argument against its own shape. Every call site must be declared `Config`, or
+ * the fixture is only ever compared to itself. Probe rather than argument:
+ * change one `Config` field's type (`creditTreasuryPct: number → bigint`) and
+ * every call site should fail.
  *
- * What this removes is the hiding mechanism, not an error: the fixtures were
- * passed to `startBlockCreator: (cfg: typeof testConfig) => void`, a parameter
- * typed as the incomplete literal itself — a declaration that mentions `Config`
- * nowhere and therefore checks the argument against itself. The parameter is
- * `Config` now, in all twelve. Verified by probe rather than by argument:
- * changing one `Config` field's type (`creditTreasuryPct: number → bigint`)
- * failed all twelve; before, it could not have reached any of them.
+ * A missing field also fails QUIETLY rather than at the type checker, because
+ * `block-creator.ts` is the only consumer that reads config off its argument
+ * (`startBlockCreator` assigns it to the module-level `config`), and it reads
+ * exactly six: `orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`,
+ * `maxSubBlocksPerBlock`, `miningMode`, `creditTreasuryPct`, `treasuryPubKey`.
+ * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
+ * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
+ * imports the `src/config.js` singleton, which no test mocks, so an incomplete
+ * fixture is simply never observed.
  *
  * Note what this design does with a newly *required* field: it fills it with the
  * value production runs with, silently and correctly, rather than failing the
@@ -379,17 +381,17 @@ export function makeTestConfig(overrides: Partial<Config> = {}): Config {
  * A map keyed by **bytes**, for mocks that stand in for a store lookup.
  *
  * Production compares `user_id` as a SQLite BLOB — **by value**
- * (`store/challenges.ts:25-34` binds `Buffer.from(userId)`). A plain `Map`
- * keyed by a `Uint8Array` compares **by reference**, so a mock built that way
- * is strictly *less* permissive than the thing it stands in for: it hits only
- * while a test reuses one array instance, and the moment a key is built twice
- * (`uid('alice')` returns a fresh array each call) the lookup returns
- * `undefined` and the test reads "no active challenge" instead of failing.
+ * (`getActiveChallenge` binds `Buffer.from(userId)`). A plain `Map` keyed by a
+ * `Uint8Array` compares **by reference**, so a mock built that way is strictly
+ * *less* permissive than the thing it stands in for: it hits only while a test
+ * reuses one array instance, and the moment a key is built twice (`uid('alice')`
+ * returns a fresh array each call) the lookup returns `undefined` and the test
+ * reads "no active challenge" instead of failing.
  *
- * The verifier mocks got this right for `karmaBoxes` (hex key) and wrong for
- * `identities`/`challenges` in the same object literal. Hex-keying at each call
- * site would fix today's sites and leave the next one free to get it wrong
- * again; converting on the way in cannot be forgotten.
+ * ⚠ That failure is silent, and one object literal can get it right for one
+ * field and wrong for the next. Hex-keying at each call site fixes the sites
+ * that exist and leaves the next one free to get it wrong again; converting on
+ * the way in cannot be forgotten.
  */
 export class ByteKeyedMap<V> {
   private readonly inner = new Map<string, V>();
@@ -430,9 +432,9 @@ export function hex(bytes: Uint8Array): string {
  * The first nonce that satisfies the header's declared target, found with the
  * production verifier.
  *
- * Hand-built blocks have to carry a real solution now that `powTargetBits` must
- * equal the height schedule: declaring target 0 to sail past PoW — how these
- * tests used to reach the checks behind it — is itself a rejected block.
+ * Hand-built blocks have to carry a real solution: `powTargetBits` must equal
+ * the height schedule, so declaring target 0 to sail past PoW is itself a
+ * rejected block and never reaches the checks behind it.
  */
 export function solveHeaderPow(header: BlockHeader): number {
   for (let nonce = 0; ; nonce++) {
@@ -442,13 +444,15 @@ export function solveHeaderPow(header: BlockHeader): number {
 
 /**
  * The validator signature a block creator produces: raw Ed25519 over the 32
- * bytes of `blockHash(header)` (block-creator.ts:238, :556).
+ * bytes of `blockHash(header)`. `block-creator.ts` signs this way at both of
+ * its block-finalizing sites, and apply verifies it (NODE_INTERFACE → Block
+ * finalization).
  *
- * Hand-built blocks have to carry a real signature now that apply verifies it
- * (H-1) — an all-zero placeholder is rejected before any check behind it, which
- * would make every post-signature rejection test assert its own reason
- * vacuously. Call this only once `powNonce` is final: the nonce is a header
- * field, so it is inside the hash being signed.
+ * Hand-built blocks therefore have to carry a real signature — an all-zero
+ * placeholder is rejected before any check behind it, which would make every
+ * post-signature rejection test assert its own reason vacuously. Call this only
+ * once `powNonce` is final: the nonce is a header field, so it is inside the
+ * hash being signed.
  */
 export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Array {
   // A header outside the encodable domain has no hash, so there is nothing to
@@ -511,10 +515,10 @@ export async function makeApplicableBlock(
     powTargetBits?: number;
     lockedUntilBlock?: number;
     /** Override the post-block state root — a block committing to state it
-     *  does not produce (H-6 divergence). */
+     *  does not produce. */
     stateRoot?: string;
     /** Sign with this key instead of the miner's — a block whose signature does
-     *  not come from the key its `validatorId` names (H-1 forged authorship). */
+     *  not come from the key its `validatorId` names (forged authorship). */
     signWith?: KeyObject;
     /** Height to build at; anything above 1 chain-links to the stored block below. */
     height?: number;
@@ -596,9 +600,10 @@ export async function makeApplicableBlock(
     validatorSignature: new Uint8Array(64),
   } as unknown as OrderingBlock;
 
-  // Post-block state root (H-6), obtained the way the block creator obtains
-  // it: by running this body through the apply path's own mutation phase and
-  // rolling it back. It has to be final before the nonce and the signature,
+  // Post-block state root (NODE_INTERFACE → Post-block stateRoot), obtained the
+  // way the block creator obtains it: by running this body through the apply
+  // path's own mutation phase and rolling it back. It has to be final before
+  // the nonce and the signature,
   // which both cover the header. No prover — most suites — speculates
   // `no-prover`, and apply skips the check there, so EMPTY_STATE_ROOT stands
   // in. A `body-rejected` body gets EMPTY_STATE_ROOT too: the helper's job is
@@ -641,8 +646,8 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
         )
       : undefined,
     protocolVersion: tx.protocolVersion,
-    // Present ⟺ the tx is a like (P2-D) — the JSON edge must not drop it,
-    // since it sits inside the signed bytes.
+    // Present ⟺ the tx is a like — the JSON edge must not drop it, since it
+    // sits inside the signed bytes.
     ...(tx.likeTarget !== undefined ? { likeTarget: tx.likeTarget } : {}),
   };
 }
