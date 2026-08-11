@@ -77,7 +77,7 @@ const MIGRATIONS = [
     spent_at_block INTEGER,           -- NULL = unspent
     owner BLOB,                       -- 32-byte public key (NULL for invite/bond/vouch boxes)
     guard TEXT NOT NULL,
-    proof_source TEXT,                -- PostId | StumpHash | InviteTxId | block height
+    proof_source TEXT,                -- karma: a provenance tag or id; credit: a block height or -1; NULL for the other four types (@dagsocial/types → writeBoxTypeFields)
     extra_data TEXT,                  -- JSON for box-specific fields (secretHash, likerId, targetPostId, etc.)
     tx_id TEXT NOT NULL,              -- Creating transaction — real or synthetic mint (Spec G)
     output_index INTEGER NOT NULL,    -- u32 position within that transaction's outputs
