@@ -386,6 +386,23 @@ export function blockWork(targetBits: number): bigint | null {
   return (1n << 256n) / (t + 1n);
 }
 
+/**
+ * The total work of a header sequence.
+ *
+ * A header outside `blockWork`'s domain contributes nothing rather than
+ * throwing: the array reaches here from the wire, where `powTargetBits` is any
+ * `number`, and refusing the whole comparison over one bad member would hand a
+ * peer a way to void a fork-choice decision.
+ */
+export function cumulativeWork(headers: BlockHeader[]): bigint {
+  let sum = 0n;
+  for (const h of headers) {
+    const work = blockWork(h.powTargetBits);
+    if (work !== null) sum += work;
+  }
+  return sum;
+}
+
 // ---------------------------------------------------------------------------
 // verifyPoW
 // ---------------------------------------------------------------------------

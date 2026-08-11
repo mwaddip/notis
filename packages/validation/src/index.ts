@@ -3,6 +3,7 @@ export {
   powTarget,
   meetsPowTarget,
   blockWork,
+  cumulativeWork,
   verifyPoW,
   verifyPostSignature,
   verifyValidatorSignature,
