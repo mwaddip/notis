@@ -8,11 +8,12 @@ import type { AnyBox, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox, Vouc
 /**
  * Every fixture below is a GENUINE box: `seedProvenance` gives it real
  * `txId`/`index` and an `id` that derives from them, so `computeBoxId(box) ===
- * box.id` holds. Before, they carried a hand-written `id` — several of them not
- * even hex (`'gh'.repeat(32)`) — and no provenance at all, which meant the
- * round-trip never covered the two fields the box type most recently gained.
- * A codec test whose fixtures omit fields is a codec test that does not cover
- * them.
+ * box.id` holds.
+ *
+ * That is a requirement rather than tidiness. `serializeBox` writes the
+ * provenance tail, so a fixture carrying a hand-written `id` and no `txId`/
+ * `index` round-trips fields the codec never encoded — a codec test whose
+ * fixtures omit fields does not cover them.
  */
 
 /**
@@ -50,15 +51,11 @@ describe('serializeBox', () => {
   });
 
   it('the retired like tag 3 stays reserved — decode rejects it', () => {
-    // T2b: the 'like' box type is deleted and its tag reserved, so bytes
-    // carrying it must fail loudly rather than decode as some other type.
-    //
-    // The tag is `3` under `enum8` where it used to be `0x03` under this
-    // package's own numbering — the same number by coincidence, not by
-    // construction. Phase 5 retired the second numbering (NODE_INTERFACE →
-    // "Two entity kinds"); `enum8` reserves 3 as well, which is why the
-    // discipline survived the renumbering intact even though `invite` moved
-    // from 0x04 to 2.
+    // The 'like' box type is deleted and `enum8` reserves 3 between `invite`
+    // and `bond` rather than closing the gap (TYPES_INTERFACE → Layout —
+    // Boxes), so bytes carrying it must fail loudly rather than decode as some
+    // other type. The reservation is what makes the rejection a property of the
+    // tag table instead of a special case somebody has to remember.
     const bytes = new Uint8Array([0x03, 0x00]); // reserved tag + a value byte
     expect(() => deserializeBox(bytes)).toThrow(/unknown tag 3/);
   });
@@ -75,13 +72,14 @@ describe('serializeBox', () => {
   });
 
   // Two arms, because `inviteePublicKey` is `opt(b32)` and they encode
-  // differently: empty → `00`, committed → `01 ‖ 32 bytes`. The old single
-  // fixture passed `new Uint8Array(32)` — thirty-two ZERO bytes, which is the
-  // *committed* arm carrying an implausible key, so the unclaimed arm went
-  // uncovered. Unclaimed is the shape production actually creates:
-  // `utxo-engine.ts:403` rejects an invite-create whose bond output has a
-  // non-empty key, because a pre-committed bond would let the inviter reclaim
-  // immediately and make the network's only sybil cost free.
+  // differently: empty → `00`, committed → `01 ‖ 32 bytes`. A 32-zero-byte key
+  // is the COMMITTED arm carrying an implausible value, not the unclaimed one,
+  // so a single fixture spelled that way covers one arm twice.
+  //
+  // Unclaimed is the shape production creates: `checkTransitions` rejects an
+  // invite-create whose bond output has a non-empty key, because a
+  // pre-committed bond would let the inviter reclaim immediately and make the
+  // network's only sybil cost free (NODE_INTERFACE → Bond transition rules).
   //
   // `probationStartBlock`/`probationEndBlock` differ (100/140) for the same
   // reason `post_lock` below uses unequal values: they are adjacent `vlqU`
@@ -121,13 +119,11 @@ describe('serializeBox', () => {
     const box = seedProvenance<PostLockBox>({
       boxType: 'post_lock' as const,
       // ⚠ `value` and `originalValue` MUST differ, and so must `owner` and
-      // `targetPostId`. Both are adjacent same-width pairs in the layout, and
-      // this fixture used to carry 5n/5n and 0x44/'44' — identical on both
-      // counts, so a transposition of either pair was invisible to it. That is
-      // the exact defect class G3b's `sortKeys` pass existed to prevent
-      // (`originalValue`/`createdAtBlock` transposed between producer and
-      // `rowToBox`), on the exact adjacent pair. The fixture was written before
-      // field order was load-bearing and never revisited when it became so.
+      // `targetPostId`. Each is an adjacent same-width pair in the layout
+      // (TYPES_INTERFACE → Layout — Boxes), and the positional format carries no
+      // key names, so field ORDER is the only thing distinguishing the halves of
+      // a pair. Equal values make a transposition of that pair encode and decode
+      // identically, and the round-trip below passes on a swapped writer.
       value: 5n,
       originalValue: 9n,
       owner: new Uint8Array(32).fill(0x44),
@@ -186,15 +182,13 @@ describe('serializeBox', () => {
 // Golden bytes — the AVL box value IS `boxRecordBytes`
 // ---------------------------------------------------------------------------
 //
-// ⚠ **Added by Phase 5, and the reason is an audit finding rather than a
-// migration chore.** Before this block the AVL *box* format was pinned by
-// ZERO assertions in the whole package: every test above is a round-trip or a
-// determinism check, which passes for any self-consistent codec, and every
-// hex assertion elsewhere in the suite compares `serializeBox(a)` against
-// `serializeBox(b)` — both sides move together. No golden `stateRoot` literal
-// exists either. Measured: swapping the entire value format from cbor to
-// positional broke four tests in this package, all of them identity-record
-// goldens, and not one box test. Records were pinned; boxes were not.
+// ⚠ **These assertions are the only pin on the AVL box format in this
+// package.** Every test above is a round-trip or a determinism check, and both
+// pass for ANY self-consistent codec; every hex assertion elsewhere in the
+// suite compares `serializeBox(a)` against `serializeBox(b)`, so both sides move
+// together. No golden `stateRoot` literal exists either. Delete this block and
+// the value format can be replaced wholesale with the suite green — which is a
+// silent chain split, because the format is committed in `stateRoot`.
 //
 // Every expected string below was **hand-derived from `TYPES_INTERFACE` →
 // Layout — Boxes before the encoder was run**, then checked against it. A
@@ -260,7 +254,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
-      '02' +            // enum8(invite) = 2 — NOT 0x04; the old numbering is retired
+      '02' +            // enum8(invite) = 2
       '0a' +            // vlqU64(10)
       '22'.repeat(32) + // b32(secretHash)
       '33'.repeat(32) + // b32(inviterId)   ← differs from secretHash on purpose
@@ -276,7 +270,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
-      '04' +            // enum8(bond) = 4 — the gap at 3 is the retired `like`
+      '04' +            // enum8(bond) = 4 — 3 is the reserved `like` gap
       '05' +            // vlqU64(5)
       '33'.repeat(32) + // b32(inviterId)
       '02' +            // vlqU(inviteOutputIndex)
@@ -338,18 +332,16 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
 // ---------------------------------------------------------------------------
 
 describe('boxId is a total function of the AVL value', () => {
-  // `NODE_INTERFACE` §1a argues the value must carry everything the id
-  // derivation consumes, so that "a box id is a total function of the stored
-  // box" is checkable **from a proof** rather than trusted. With the value
-  // equal to `boxRecordBytes` that stops being an argument and becomes an
-  // identity a test can hold:
+  // NODE_INTERFACE → Invariants requires that a box id be a total function of
+  // the stored box. The AVL value IS `boxRecordBytes`, so that stops being an
+  // argument about which fields the value happens to carry and becomes an
+  // identity a test can hold **from the proof alone**:
   //
   //     boxId = blake2b512(BOX_ID_DOMAIN ‖ avlValue)[0:32]
   //
-  // Under the cbor form it was only nearly true — the value carried `guard`,
-  // which the derivation does not consume, and omitted `boxType`, which it
-  // does. Nothing could have pinned it, because the two byte strings differed.
-  // A light client can now recompute the key of any box it is served.
+  // It holds exactly because the two byte strings are the same string: a value
+  // carrying a field the derivation ignores, or omitting one it consumes, would
+  // break it. A light client recomputes the key of any box it is served.
   const boxIdFromAvlValue = (value: Uint8Array): string =>
     Buffer.from(
       createHash('blake2b512').update(Buffer.from(BOX_ID_DOMAIN)).update(Buffer.from(value)).digest(),

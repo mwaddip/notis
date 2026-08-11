@@ -146,9 +146,10 @@ describe('block-apply integration', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec B P2 (M-12): the AVL digest is insertion-order-sensitive, so the
-// prover boundary sorts every feed. Same box sets in any input order must
-// land on the identical digest.
+// The AVL digest is insertion-order-sensitive, so the prover boundary sorts
+// every feed (NODE_INTERFACE → AVL+ State Root). Same box sets in any input
+// order must land on the identical digest — two nodes ordering one block's
+// mutations differently is a silent chain split, not a caught error.
 // ---------------------------------------------------------------------------
 
 describe('canonical prover-feed ordering (M-12)', () => {
@@ -250,7 +251,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
     expect(Buffer.from(d1!).equals(Buffer.from(d2!))).toBe(true);
   });
 
-  // --- Two entity kinds through bootstrap (Spec G phase D) -----------------
+  // --- Two entity kinds through bootstrap -----------------------------------
 
   it('bootstrapAvlProver: shuffled records → identical digest', () => {
     const h1 = createAvlProver(db);
@@ -351,15 +352,14 @@ function makeAvlDb(): Database.Database {
 
 /**
  * A karma box with a **caller-chosen id**, which is what this suite is for: the
- * id is the AVL key, and the canonical-ordering tests (M-12) need to control
- * sort order directly, so `BASE_IDS` is deliberately unsorted. These boxes
- * therefore do NOT satisfy `id === computeBoxId(box)` — nothing here asserts
- * that, and nothing here seeds a store.
+ * id is the AVL key, and the ordering tests need to control sort order directly,
+ * so `BASE_IDS` is deliberately unsorted. These boxes therefore do NOT satisfy
+ * `id === computeBoxId(box)` — nothing here asserts that, and nothing here seeds
+ * a store.
  *
  * `txId`/`index` are real regardless: they are required box fields and they ride
  * the AVL *value*, so a fixture without them serializes to leaf bytes no
- * production box could produce. `height` finally has a job — it was an unused
- * parameter, and it is the provenance seed.
+ * production box could produce. `height` is the provenance seed.
  */
 function makeKarmaBox(id: string, value: bigint, height: number): AnyBox & { id: string } {
   const candidate = {
