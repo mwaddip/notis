@@ -89,6 +89,10 @@ sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be 
    per-session at Phase 1d, now standing). The post-submit `get-text` verification is separate
    and still required.
 5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Component sessions commit their own work; they never push.** Main reviews, pushes, and opens the PR.
+6. **The contract change rides the same branch as the code that implements it** (user, 2026-08-11).
+   Not merged ahead of it — one PR shows the rule and its implementation together, so a reviewer can
+   check they agree instead of taking it on trust. It also means the executor's tree already holds the
+   contract they are building against.
 
 ### Prompt boilerplate
 
