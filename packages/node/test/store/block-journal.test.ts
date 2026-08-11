@@ -130,9 +130,9 @@ describe('block journal (store choke-point recording)', () => {
     s.insertBox(box);
     const j = s.finishBlockJournal();
 
-    // Spec G phase D: a non-decay karma box also advances its owner's activity
-    // clock at this same choke point, so the karma case journals two mutations
-    // — the box, then the record it caused, in that order.
+    // A non-decay karma box also advances its owner's activity clock at this
+    // same choke point, so the karma case journals two mutations — the box,
+    // then the record it caused, in that order.
     expect(j.mutations[0]).toEqual({ kind: 'box', op: 'insert', boxId: 'box-k1', box });
     expect(j.mutations[1]).toMatchObject({
       kind: 'record',
@@ -234,8 +234,8 @@ describe('block journal (store choke-point recording)', () => {
     const j = s.finishBlockJournal();
 
     // Each karma insert is immediately followed by the activity-clock record it
-    // caused (Spec G phase D) — the record's position in the log is what makes
-    // reverse-order rollback undo the write before deleting the box behind it.
+    // caused — the record's position in the log is what makes reverse-order
+    // rollback undo the write before deleting the box behind it.
     expect(j.mutations.map((m) => [m.kind, (m as { op?: string }).op, (m as { boxId?: string }).boxId])).toEqual([
       ['box', 'insert', 'new-1'],
       ['record', undefined, undefined],
