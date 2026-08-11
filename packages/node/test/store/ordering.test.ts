@@ -141,35 +141,24 @@ describe('ordering store', () => {
 
     // subBlockTree
     //
-    // DELETED 2026-08-10 (Phase 3b): `expect(result!.subBlockTree.subBlockRefs)
-    // .toEqual(['sb-ref-1', 'sb-ref-2'])`. The field is gone from the wire, and
-    // the fixture values were not post ids in the first place — `'sb-ref-1'` is
-    // seven characters where a `b32` row needs 32 bytes, so under the positional
-    // codec this fixture has no encoding at all. It survived because cbor wrote
-    // any string, which is the same reason the field itself survived unchecked.
-    // Read-back of the committed lists is what the store owes, and that is
-    // asserted here and below.
+    // `SubBlockTree` has exactly two fields — `subBlockEntries` and
+    // `pruneEntries` (TYPES_INTERFACE → Ordering block) — and both are
+    // asserted, so this covers the whole struct rather than a sample of it.
+    //
+    // Asserting a name the struct does not declare is the trap here: it reads
+    // as coverage while pinning the storage codec's tolerance for an unknown
+    // key, which is a property of cbor-x and not of the protocol.
     expect(result!.subBlockTree.subBlockEntries).toEqual([]);
-    // DELETED 2026-08-08: `expect(result!.subBlockTree.stumpIds).toEqual(['stump-aaa'])`.
-    // `stumpIds` is not a field of `SubBlockTree` (it is `subBlockRefs`,
-    // `subBlockEntries`, `pruneEntries`) and the string appears nowhere in any
-    // package's `src`. The assertion could only ever have passed because the
-    // storage codec preserved a key the fixture itself wrote — so it pinned the
-    // encoder's tolerance for unknown keys, not a protocol field. Prune
-    // commitments travel in `pruneEntries`, which the round-trip below covers.
     expect(result!.subBlockTree.pruneEntries).toEqual([]);
 
     // utxoTxTree
     //
-    // CHANGED 2026-08-08: the fixture wrote `value: 100` and this asserted
-    // `toBe(100)`. `CoinbaseOutput.value` is bigint, so a real block
-    // round-tripping through this store returns `100n` and the assertion would
-    // have FAILED on real data — it could only pass on a fixture lying in the
-    // same direction. Fixture and assertion agreed with each other while both
-    // diverged from the type, so the round-trip test could not detect the one
-    // thing it exists to check. `net`'s `headers.test.ts` carried the identical
-    // defect on the identical field (fixed in e9d4eda): Spec B P0's bigint
-    // migration left systematic residue in storage round-trip tests.
+    // ⚠ `CoinbaseOutput.value` is a **bigint**, and both the fixture at the top
+    // of this test and the assertion below must spell it `100n`. A round-trip
+    // test is the one shape where a fixture and an assertion can agree with each
+    // other while both disagree with the type: write `100` in the fixture, assert
+    // `toBe(100)`, and the test passes on data no real block produces — so it
+    // detects nothing, which is the single thing it exists to do.
     expect(result!.utxoTxTree.utxoTxIds).toEqual(['2b'.repeat(32)]);
     expect(result!.utxoTxTree.coinbaseOutputs).toHaveLength(1);
     expect(result!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);

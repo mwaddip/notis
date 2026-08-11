@@ -145,9 +145,8 @@ describe('utxo store', () => {
     expect(result.owner).toEqual(OWNER_A);
     expect(result.guard).toBe('owner_signature');
     expect(result.proofSource).toBe('tx-post-abc');
-    // `createdAtBlock`/`lastTouchBlock` were asserted here and are gone with
-    // phase G3b. Provenance is what round-trips now, and it has to: the box id
-    // derives from it, so a row that lost it would reconstruct a box that no
+    // Provenance is what the row has to carry back: the box id derives from
+    // `txId`/`index`, so a row that lost either reconstructs a box that no
     // longer hashes to its own key.
     expect(result.txId).toBe(box.txId);
     expect(result.index).toBe(box.index);
