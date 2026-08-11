@@ -90,7 +90,7 @@
       "value": { "$special": "NaN" },
       "bytes": "ffffffffffffffffff01",
       "decode": false,
-      "note": "The all-ones u64 sentinel. Ported from post.ts:41-57 — it is unreachable from a valid `number` field, so a malformed value never collides with a well-formed one."
+      "note": "The all-ones u64 sentinel. Ported from post.ts's Totality note — it is unreachable from a valid `number` field, so a malformed value never collides with a well-formed one."
     },
     {
       "name": "vlqU/sentinel-infinity",

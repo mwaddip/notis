@@ -97,8 +97,8 @@ describe('total writers never throw', () => {
 
   it('the sentinel is unreachable from a valid number field', () => {
     // The domain tops out at 2^53-1, whose encoding is eight bytes. The
-    // sentinel is ten. No valid value can reach it — the argument post.ts:41-57
-    // makes for its all-ones sentinel, in the VLQ dialect.
+    // sentinel is ten. No valid value can reach it — the argument post.ts's
+    // Totality note makes for its all-ones sentinel, in the VLQ dialect.
     expect(bytes((w) => writeVlqU(w, Number.MAX_SAFE_INTEGER))).toHaveLength(8);
     expect(bytes((w) => writeVlqU(w, Number.NaN))).toHaveLength(10);
   });
