@@ -164,7 +164,14 @@ rule, not in a PR as a memory.
 
 **Caps: ~800 characters for a commit body, ~2000 for a PR** (user, 2026-08-10). Over the cap, cut a
 whole section rather than trimming sentences — detail relocates to the REPORT, referenced by path.
-Titles stay `type(scope): plain summary`: plain words in the title, technical register in the body.
+
+**Titles are `type(scope): plain summary` — and the summary names the SUBJECT, not the class of
+change** (user, 2026-08-11). *"correct five service-test claims that time had made false"* describes a
+category of fix and could head twenty different commits; *"karma, decay and credits stop citing the
+removed `sortKeys` pass"* names what was actually wrong and where. **The test: if swapping in a
+different subject leaves the title still true, it is too abstract.** Plain means concrete, not vague —
+naming a function, file or claim is what makes a title plain, and dropping the technical noun is what
+makes it useless.
 
 ## Key invariants
 
