@@ -248,7 +248,7 @@
       "codec": "vlqU64",
       "value": "18446744073709551615",
       "bytes": "ffffffffffffffffff01",
-      "note": "⚠ These are the sentinel's bytes, and here they are a LEGAL value. That is precisely why the bigint writer throws instead of sentinelling — spec §2.5."
+      "note": "⚠ These are the sentinel's bytes, and here they are a LEGAL value. That is precisely why the bigint writer throws instead of sentinelling — TYPES_INTERFACE -> Totality."
     },
 
     {

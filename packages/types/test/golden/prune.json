@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for serializePruneEntry — the prune Merkle leaf preimage committed under subBlockRoot (TYPES_INTERFACE -> Layout - Stump / PruneEntry). RESET at Phase 2: the CBOR form went through cbor-x's DEFAULT encoder, which tags every Uint8Array with d840 and writes ids as hex text, so a two-id entry cost 428 bytes against 226 here.",
+  "$description": "Struct-level golden vectors for serializePruneEntry — the prune Merkle leaf preimage committed under subBlockRoot (TYPES_INTERFACE -> Layout - Stump / PruneEntry). Every field is fixed-width, so every writer throws outside its domain rather than sentinelling.",
   "vectors": [
     {
       "name": "prune/author-two-ids",

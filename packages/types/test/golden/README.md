@@ -2,14 +2,13 @@
 
 Committed fixture bytes for `@dagsocial/types`' codec layer. Two jobs:
 
-1. **Drift detector for Phases 2–5.** Every id, root and preimage in the system moves during the
-   positional-format migration. This corpus is what separates *moved because the dialect changed*
-   from *moved because something is wrong* — the migration's dominant risk is a real defect hiding
-   inside a wall of expected failures.
-2. **Conformance suite afterwards.** The `.json` files contain no TypeScript. An independent
-   implementation reads them directly and checks itself against the same bytes. Half the reason the
-   positional format exists is that "whatever `cbor-x` 1.6.4 emits" is not a specification anyone
-   can write against — see `docs/specs/2026-08-09-positional-wire-format.md` §1.3.
+1. **Drift detector.** Every id, root and preimage in the system is frozen here, so this corpus is
+   what separates *moved because the dialect changed* from *moved because something is wrong* — the
+   dominant risk in any format change is a real defect hiding inside a wall of expected failures.
+2. **Conformance suite.** The `.json` files contain no TypeScript. An independent implementation
+   reads them directly and checks itself against the same bytes. Half the reason the positional
+   format exists is that "whatever `cbor-x` 1.6.4 emits" is not a specification anyone can write
+   against (`contracts/TYPES_INTERFACE.md` → Serialization).
 
 Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serialization.
 
@@ -20,13 +19,13 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `primitives.json` | One group per row of the Primitives table, at its boundaries |
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
-| `post.json` | `postFieldBytes` — the post id and PoW preimage (Phase 2) — plus `powNonceBytes` and the two composed (Phase 8) |
-| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type (Phase 2), and both states of `bond.inviteePublicKey` |
-| `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage (Phase 2) |
-| `block.json` | The six block structs and the ordering-block framing (Phase 3b), plus the two element preimages (Phase 4a) |
+| `post.json` | `postFieldBytes` — the post id and PoW preimage — plus `powNonceBytes` and the two composed |
+| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type, and both states of `bond.inviteePublicKey` |
+| `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage |
+| `block.json` | The six block structs and the ordering-block framing, plus the two element preimages |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |
 | `probe.ts` | The probe struct — a synthetic struct with a field of every kind |
-| `structs.ts` | The Phase 2 id-preimage codecs, the Phase 3b block codecs, the Phase 4a element codecs |
+| `structs.ts` | The id-preimage codecs, the block codecs, the element codecs |
 
 `block.json` covers `blockHeader`, `subBlockTree` (with and without prune
 entries), `utxoTxTree` (with and without transactions and coinbase outputs),
@@ -38,15 +37,11 @@ It also covers `subBlockEntry` and `coinbaseOutput` **on their own**, not only
 inside the trees that embed them. Those two are the block's other Merkle leaf
 preimages — `leafHash('subblock', …)` under `subBlockRoot` and
 `leafHash('coinbase', …)` under `utxoTxRoot`, as `prune.json` already is for
-`leafHash('prune', …)` — so from Phase 4 node hashes them directly and a
-conformance implementation must be able to check one leaf without building a
-tree around it. The domain tag is **not** in the vector bytes; it is the
-caller's, which is what makes the leaf preimage and the wire encoding the same
-bytes rather than merely parallel ones.
-
-⚠ **These were written at Phase 3b, not reset.** The dispatch brief described
-block-struct vectors as being reset to the new format; the corpus had none, so
-the block half of the conformance suite is new work rather than a re-freeze.
+`leafHash('prune', …)` — so node hashes them directly and a conformance
+implementation must be able to check one leaf without building a tree around it.
+The domain tag is **not** in the vector bytes; it is the caller's, which is what
+makes the leaf preimage and the wire encoding the same bytes rather than merely
+parallel ones.
 
 ### Two kinds of struct codec, and the difference is the point
 
@@ -62,13 +57,13 @@ proves the preimage is self-delimiting and canonical, which a one-directional "t
 frozen" assertion cannot. None of those three preimages is decoded anywhere in production; the
 readers exist for that check and for the conformance role the corpus takes on afterwards.
 
-Register a Phase 3 struct the same way: production writer, independent reader, `registerStruct`.
+Register a new struct the same way: production writer, independent reader, `registerStruct`.
 
 ## A vector may exceed a validation bound — silently, it may not
 
 This corpus pins the **encodable** domain, which is deliberately wider than the valid one: the
 sentinel discipline lives in that gap, and a field's domain is established upstream of the encoder,
-never inside it (`TYPES_INTERFACE.md` → Totality; spec §2.5). So `post/wide-numerics` carries a
+never inside it (`TYPES_INTERFACE.md` → Totality). So `post/wide-numerics` carries a
 `protocolVersion` of 2⁵³−1 and `post/multibyte-content` carries two `parentRefs` where
 `MAX_PARENT_REFS` is 1 — both deliberately, because the writer has no cap and something must pin
 what it does past one.

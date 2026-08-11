@@ -1,5 +1,5 @@
 /**
- * The Phase 2 struct codecs — the three id preimages, as golden-vector codecs.
+ * The id-preimage struct codecs, as golden-vector codecs.
  *
  * These differ from `probe.ts` in one deliberate way, and it is the point of
  * the file: **the write half is the production function.** `probe` is a
@@ -174,8 +174,9 @@ const powPreimageCodec: ValueCodec<PowPreimage> = {
  * A box as its identity preimage sees it.
  *
  * **`guard` is not a member**, and that is structural rather than an omission:
- * it left the consensus bytes with P2-C row C10, so a corpus entry has no way
- * to carry it and the decode direction could not reconstruct it if it did.
+ * it is not in the consensus bytes (TYPES_INTERFACE → Layout — Boxes), so a
+ * corpus entry has no way to carry it and the decode direction could not
+ * reconstruct it if it did.
  * Provenance (`id`/`txId`/`index`) is absent for the same reason.
  */
 export type BoxContent =
@@ -360,17 +361,8 @@ const pruneEntryCodec: ValueCodec<PruneEntry> = {
 };
 
 // ---------------------------------------------------------------------------
-// The block structs — TYPES_INTERFACE → Layout — Block (Phase 3b)
+// The block structs — TYPES_INTERFACE → Layout — Block
 // ---------------------------------------------------------------------------
-//
-// ⚠ **These are new, not reset.** The dispatch brief described block-struct
-// vectors as being "reset to the new format"; there were none. Before Phase 3b
-// this corpus covered `postFields`, `boxContent` and `pruneEntry` — the three
-// Phase 2 id preimages — and the corpus files are `primitives`, `probe`,
-// `post`, `boxes` and `prune`. So the block half of the conformance suite is
-// being written for the first time here, which makes it a larger deliverable
-// than "reset" implies and is worth knowing before anyone reads a byte count as
-// a diff.
 //
 // Same discipline as above: the **write** half is the production codec, so a
 // vector pins the shipped encoder; the **read** half is written independently
@@ -479,13 +471,13 @@ function parseCoinbase(j: Record<string, unknown>): CoinbaseOutput {
 // Merkle leaf preimages: `leafHash('subblock', …)` under `subBlockRoot` and
 // `leafHash('coinbase', …)` under `utxoTxRoot`, exactly as `serializePruneEntry`
 // is the `'prune'` one. They earn their own vectors rather than riding inside
-// `subBlockTree` / `utxoTxTree` because from Phase 4 node hashes them directly,
-// so they need the same cross-implementation anchor every other preimage here
-// has — a conformance reader must be able to check one leaf without building a
-// tree around it.
+// `subBlockTree` / `utxoTxTree` because node hashes them directly, so they need
+// the same cross-implementation anchor every other preimage here has — a
+// conformance reader must be able to check one leaf without building a tree
+// around it.
 //
 // The readers and parsers are the tree codecs' own (`readEntry` / `readCoinbase`,
-// written independently from the layout table at Phase 3b), which is what makes
+// written independently from the layout table), which is what makes
 // a moved element byte fail here **and** in the enclosing tree vector.
 
 const subBlockEntryCodec: ValueCodec<SubBlockEntry> = {

@@ -8,13 +8,14 @@
  *
  * Two jobs, in this order of importance:
  *
- *  1. **Drift detector for Phases 2–5.** Every id, root and preimage in the
- *     system is about to move. The corpus is what separates "moved because we
- *     changed the dialect" from "moved because something is wrong".
- *  2. **Conformance suite afterwards.** The `.json` files carry no TypeScript:
- *     an independent implementation reads them directly and checks itself
- *     against the same bytes. That is half the reason the positional format
- *     exists at all — see `docs/specs/2026-08-09-positional-wire-format.md` §1.3.
+ *  1. **Drift detector.** Every id, root and preimage in the system is frozen
+ *     here, so the corpus is what separates "moved because the dialect changed"
+ *     from "moved because something is wrong".
+ *  2. **Conformance suite.** The `.json` files carry no TypeScript: an
+ *     independent implementation reads them directly and checks itself against
+ *     the same bytes. That is half the reason the positional format exists —
+ *     a format nobody can write a second implementation of is not a
+ *     specification.
  *
  * See `README.md` in this directory for how to add a vector.
  */

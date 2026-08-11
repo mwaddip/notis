@@ -35,11 +35,9 @@ describe('PruneEntry', () => {
   });
 
   it('serializePruneEntry lays the fields out in their normative order', () => {
-    // Replaces a CBOR round-trip (`decode(bytes).rootPostHash === …`). There is
-    // no map to look a key up in any more — field ORDER is the specification —
+    // There is no map to look a key up in — field ORDER is the specification —
     // so the check is positional: read each field back out at its offset. Note
-    // every id is 32 raw bytes here, not 64 characters of hex text; the entry
-    // went from 428 bytes to 226.
+    // every id is 32 raw bytes here, not 64 characters of hex text.
     const entry = makeEntry();
     const hex = Buffer.from(serializePruneEntry(entry)).toString('hex');
     let at = 0;
@@ -58,10 +56,10 @@ describe('PruneEntry', () => {
 
   it('serializePruneEntry has no encoding for an out-of-domain field', () => {
     // Every field is fixed-width, so every writer throws rather than sentinels
-    // (spec §2.5): at a fixed width there is no unreachable sentinel, and
-    // padding a short id to 32 bytes would map a malformed entry onto a
-    // well-formed one's Merkle leaf. `verifyOrderingBlockStructure` (Phase 1e)
-    // is what keeps these throws unreachable in production.
+    // (TYPES_INTERFACE → Totality): at a fixed width there is no unreachable
+    // sentinel, and padding a short id to 32 bytes would map a malformed entry
+    // onto a well-formed one's Merkle leaf. `verifyOrderingBlockStructure` is
+    // what keeps these throws unreachable in production.
     expect(() => serializePruneEntry(makeEntry({ rootPostHash: 'nope' })))
       .toThrow(/64 lowercase hex chars/);
     expect(() => serializePruneEntry(makeEntry({ subtreePostIds: ['b'.repeat(63)] })))

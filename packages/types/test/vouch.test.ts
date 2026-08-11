@@ -7,9 +7,9 @@ import {
 } from '../src/index.js';
 import type { VouchBox } from '../src/index.js';
 
-// Provenance is REQUIRED on every box (Spec G phase G3a): `computeBoxId`
-// derives the id from `txId ‖ index`, so a box without it is not a box.
-// These fixtures predate G3a, and an unchecked test tree let them stand.
+// Provenance is REQUIRED on every box (TYPES_INTERFACE → BoxId): `computeBoxId`
+// derives the id from `txId ‖ index`, so a box without it is not a box — which
+// is why these fixtures carry one.
 const FIXTURE_TX_ID = 'd'.repeat(64);
 
 describe('VouchBox', () => {

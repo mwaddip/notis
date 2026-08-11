@@ -25,18 +25,18 @@ import {
 import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
-// A UserId is 32 raw bytes; `inviterId` is one. The fixtures below carried
-// the display string 'user456'.
+// A UserId is 32 raw bytes; `inviterId` is one, so a display string like
+// 'user456' is not a valid fixture value.
 const inviter = new Uint8Array(32).fill(0x56);
-// Provenance is REQUIRED on every box (Spec G phase G3a) — `computeBoxId`
+// Provenance is REQUIRED on every box (TYPES_INTERFACE → BoxId) — `computeBoxId`
 // takes `Omit<BoxBase, 'id'>` and derives the id from `txId ‖ index`, so a
-// fixture without it is not a box at all. These predate G3a.
+// fixture without it is not a box at all.
 const FIXTURE_TX_ID = 'e'.repeat(64);
 
-// Box ids and public keys are `b32` in every preimage now, so a fixture id has
-// to be 64 lowercase hex characters to have an encoding at all. The `'in1'` /
-// `'box_a'` placeholders these replace were legal only while ids entered a
-// preimage as their own text.
+// Box ids and public keys are `b32` in every preimage, so a fixture id has to
+// be 64 lowercase hex characters to have an encoding at all. A `'in1'` or
+// `'box_a'` placeholder is legal only where ids enter a preimage as their own
+// text, which they do not here.
 const IN_1 = '1a'.repeat(32);
 const IN_2 = '2b'.repeat(32);
 const PUBKEY_HEX = '3c'.repeat(32);
@@ -87,16 +87,14 @@ function makeBondBox(): BondBox {
     value: 20n,
     inviterId: inviter,
     inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    // REQUIRED since P2-B phase 1 and absent from this fixture: the bond
-    // resolves its paired InviteBox by `(bond.txId, bond.inviteOutputIndex)`.
-    // A newly-required field silently missing from a mock is exactly the rot
-    // an unchecked test tree hides.
+    // REQUIRED: the bond resolves its paired InviteBox by
+    // `(bond.txId, bond.inviteOutputIndex)`, so a fixture without it is not a
+    // bond box.
     inviteOutputIndex: 2,
     probationStartBlock: 17,
     probationEndBlock: 1017,
-    // RETIRED guard string. The BondBox guard is `bond_dual` — the rename
-    // happened when the bond gained its three satisfaction paths (inviter
-    // signature, committed-invitee signature, preimage commit).
+    // `bond_dual` is the canonical guard for a BondBox — see `BondBox` in
+    // `src/utxo.ts` for the satisfaction paths it names.
     guard: 'bond_dual',
     txId: FIXTURE_TX_ID,
     index: 3,
@@ -156,16 +154,12 @@ describe('boxes', () => {
     });
 
     it('is DETERMINED by the provenance on the box', () => {
-      // The inversion of the phase C0 test that lived here. Until phase G3b the
-      // assertion was that provenance is *stripped* — the legacy derivation had
-      // no `txId`/`index` in the preimage, so a box hashed the same bare or
-      // materialized, and the test existed to prove the single-strip-rule fix
-      // was not a no-op. Under the provenance derivation that property is
-      // exactly wrong: an id that ignored its own provenance would be the M-11
-      // id again.
+      // An id that ignored its own provenance would be the M-11 id: a box that
+      // hashes the same bare or materialized, so "predictable at signing time"
+      // and "honest about the stored box" stop being the same value.
       //
-      // Same boxes, opposite claim — moving the same `(txId, index)` pair must
-      // move the id, and two indices under one txId must not collide.
+      // So: moving the same `(txId, index)` pair must move the id, and two
+      // indices under one txId must not collide.
       for (const bare of [makeKarmaBox(), makeCreditBox(), makeInviteBox(), makeBondBox()]) {
         const at3 = { ...bare, txId: GOLDEN_TX_ID, index: 3 };
         const at4 = { ...bare, txId: GOLDEN_TX_ID, index: 4 };
@@ -187,28 +181,23 @@ describe('boxes', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Frozen golden vectors (P0 — bigint box values; positional since Phase 2)
+// Frozen golden vectors — bigint box values, positional layout
 // ---------------------------------------------------------------------------
 
 /**
  * Frozen golden vectors — the cross-implementation anchor for the box identity
  * encoding.
  *
- * **Reset for the positional dialect (Phase 2).** `value` used to encode as a
- * CBOR uint64 (`0x1b` + 8 bytes BE) inside a cbor-x map with a fixed two-byte
- * header; it is `vlqU` now, `guard` has left the consensus bytes entirely
- * (P2-C row C10) and field order comes from the layout table rather than from a
- * key sort. Every box id and tx id below moved — see the movement table in
- * `prompts/types-id-preimages-REPORT.md`. Do not "fix" a failure by editing the
- * hashes: the encoding is protocol-breaking and unversioned.
+ * `value` is `vlqU`, `guard` is absent from the consensus bytes, and field order
+ * comes from the layout table rather than from a key sort (TYPES_INTERFACE →
+ * Layout — Boxes). Do not "fix" a failure by editing the hashes: the encoding is
+ * protocol-breaking and unversioned.
  *
- * The wide-int pin **moved from `createdAtBlock` to `proofSource`** (Spec G
- * phase G3b). `createdAtBlock: 70000` used to be the only box field above
- * 65536, which is what locked the wide-int encoding path; deleting the field
- * would otherwise have dropped that coverage silently, because a karma box's
- * canonical bytes carry no numeric field beyond `value`. `CreditBox.proofSource`
- * is a block height and carries the pin now — and it is `vlqS`, because the same
- * field also carries `-1`, the transfer sentinel.
+ * **`CreditBox.proofSource` carries the wide-int pin.** A karma box's canonical
+ * bytes hold no numeric field beyond `value`, so without a box field above
+ * 65536 the wide-int encoding path has no coverage here. `proofSource` is a
+ * block height and is `vlqS`, because the same field also carries `-1`, the
+ * transfer sentinel — so it pins the signed wide path specifically.
  *
  * Candidates and boxes are separate because the derivation is layered: the
  * candidates define the transaction, the transaction defines its id, and that id
@@ -313,17 +302,17 @@ describe('golden vectors (positional box encoding)', () => {
   it('golden vector: full canonical identity bytes are frozen', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
-    // The karma box went from 114 bytes to 43: no map header, no key names, no
-    // `guard`, and a one-byte `value` where CBOR spent nine.
+    // 43 bytes: no map header, no key names, no `guard`, and a one-byte
+    // `value`.
     expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(43);
   });
 
   it('guard has left the consensus bytes (P2-C row C10)', () => {
     // `guard` is a pure function of `boxType` — one guard string per type, no
-    // box choosing between two — so it carried zero information in a preimage
-    // while costing 16-30 bytes in every box id. Removing a field is only safe
-    // where it is derivable, which is the whole argument, so pin BOTH halves:
-    // the string is absent from the bytes, and changing it changes no id.
+    // box choosing between two — so it carries zero information in a preimage.
+    // An absent field is only safe where it is derivable, which is the whole
+    // argument, so pin BOTH halves: the string is absent from the bytes, and
+    // changing it changes no id.
     const hex = Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex');
     expect(hex).not.toContain(Buffer.from('owner_signature', 'utf8').toString('hex'));
     const wrongGuard = { ...GOLDEN_KARMA_CANDIDATE, guard: 'block_apply' as never };
@@ -360,12 +349,12 @@ describe('golden vectors (positional box encoding)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spec G — provenance-derived identity
+// Provenance-derived identity — TYPES_INTERFACE → BoxId
 // ---------------------------------------------------------------------------
 
 /**
  * Independent mirror of the src writer — the encoding under test, not a reuse of
- * it. Stays hand-written now that `u32BE` is exported: the golden vectors below
+ * it. Stays hand-written even though `u32BE` is exported: the golden vectors below
  * are only an anchor if the bytes they feed come from somewhere other than the
  * function under test, and it is the *in-domain* half this pins, so the mirror
  * deliberately omits the sentinel branch.
@@ -432,7 +421,7 @@ describe('canonicalBoxBytes', () => {
 });
 
 // ---------------------------------------------------------------------------
-// bond.inviteePublicKey — the one 0-or-32-byte field (Phase 2a-iii)
+// bond.inviteePublicKey — the one 0-or-32-byte field
 // ---------------------------------------------------------------------------
 
 /**
@@ -582,16 +571,15 @@ describe('bond.inviteePublicKey is opt(b32), not b32', () => {
 });
 
 /**
- * `u32BE` after phase 2a-ii: a **caller-side subject encoder**, not part of any
- * preimage this package writes.
+ * `u32BE` is a **caller-side subject encoder**, not part of any preimage this
+ * package writes: `computeCandidateBoxId`'s `index` and `computeMintTxId`'s
+ * `height` are both `vlqU`.
  *
- * Both of its former uses here — `computeCandidateBoxId`'s `index` and
- * `computeMintTxId`'s `height` — are `vlqU` now. It survives because
- * `NODE_INTERFACE.md`'s reason/subject table gives the `coinbase` and `genesis`
- * mints a `u32BE` selector as their `subject`, and subject bytes are the
- * caller's; exporting one implementation is what stops node reimplementing it
- * and drifting. So these tests still pin a live, protocol-visible encoding —
- * just one owned by a different contract.
+ * It is exported because `NODE_INTERFACE.md`'s reason/subject table gives the
+ * `coinbase` and `genesis` mints a `u32BE` selector as their `subject`, and
+ * subject bytes are the caller's; one implementation is what stops node
+ * reimplementing it and drifting. So these tests pin a live, protocol-visible
+ * encoding — just one owned by a different contract.
  */
 describe('u32BE', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
@@ -714,12 +702,11 @@ describe('computeCandidateBoxId', () => {
   });
 
   it('IS computeBoxId — one derivation, not two', () => {
-    // The inversion of the phase-A test that asserted these two must not be
-    // confusable, back when `computeBoxId` still carried the legacy content
-    // hash. Phase G3b collapsed them: `computeBoxId(box)` is defined as
-    // `computeCandidateBoxId(box, box.txId, box.index)`.
+    // `computeBoxId(box)` is defined as
+    // `computeCandidateBoxId(box, box.txId, box.index)` — one derivation, so
+    // the two can never be confusable rather than merely happening to agree.
     //
-    // This is the property the whole spec turns on — a creator predicting an id
+    // This is the property the whole design turns on — a creator predicting an id
     // before the box exists and a verifier re-deriving it from the stored box
     // must run the *same* function, or "predictable" and "honest" are two
     // different ids again.
@@ -776,18 +763,16 @@ describe('computeCandidateBoxId', () => {
 });
 
 /**
- * `boxRecordBytes` — the box-with-provenance encoding (Layout — Boxes, D4).
+ * `boxRecordBytes` — the box-with-provenance encoding (TYPES_INTERFACE →
+ * Layout — Boxes).
  *
- * Extracted out of `computeCandidateBoxId` in Phase 3b, because Phase 5 needs
- * exactly these bytes for the AVL value and a second copy over there would be a
- * second implementation of a consensus preimage. The inline comment it replaces
- * named the risk it was avoiding — "written inline here so the two cannot
- * drift" — so these tests are that guarantee, moved from a comment into the
- * suite.
+ * These are exactly the bytes node's AVL value holds, and `computeCandidateBoxId`
+ * hashes the same function's output, so the two cannot drift. A second copy of
+ * this layout in `node` would be a second implementation of a consensus
+ * preimage; these tests are what keeps that from being a promise in a comment.
  *
- * The first two are the ones with teeth: they fail if the extraction changed a
- * byte, and they keep failing if anyone later edits one of the two functions
- * without the other.
+ * The first two are the ones with teeth: they fail if either function's bytes
+ * move, and they keep failing if anyone edits one of the two without the other.
  */
 describe('boxRecordBytes', () => {
   it('IS the preimage computeCandidateBoxId hashes — one encoding, not two', () => {
@@ -825,8 +810,8 @@ describe('boxRecordBytes', () => {
   });
 
   it('golden vector: the karma record at (GOLDEN_TX_ID, 0) is frozen', () => {
-    // Phase 5 commits these bytes into `stateRoot`, so freeze them here — where
-    // the encoder lives — rather than only at the consumer.
+    // These bytes are committed into `stateRoot` as the AVL value, so freeze
+    // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
       '09b0c0e3fb832cd886114f0d099ec751537cef8377d7bc5a935f1ddf9c8eef62' + // b32 txId
@@ -971,8 +956,8 @@ describe('computeMintTxId', () => {
 
   it('separates like-payout from postlock-unlock for the same subject bytes', () => {
     // The reason tag is the only separator when two same-height mints share
-    // subject bytes — under P2-D the accrual payout and a lock vesting unlock
-    // both land on an author in one block's settlement.
+    // subject bytes — the accrual payout and a lock vesting unlock both land on
+    // an author in one block's settlement.
     const subject = new Uint8Array(32).fill(0x11);
     expect(computeMintTxId(70000, 'like-payout', subject))
       .not.toBe(computeMintTxId(70000, 'postlock-unlock', subject));
@@ -1016,13 +1001,13 @@ describe('computeMintTxId', () => {
   });
 
   it('cross-reason injectivity is STRUCTURAL now — the prefix-free rule is retired', () => {
-    // What this replaces: "no reason is a prefix of another", which held
-    // because `reason ‖ subject` appended bare ASCII with no length prefix, so
-    // one careless addition to the set would have made two mint preimages
-    // ambiguous. The property was true, test-pinned, and permanently fragile.
+    // With `reason ‖ subject` appending bare ASCII and no length prefix,
+    // cross-reason injectivity would rest on "no reason is a prefix of
+    // another" — checkable and pinnable, but one careless addition to the set
+    // away from two ambiguous mint preimages.
     //
     // `enum8(reason)` is one byte from a closed table, so the question cannot
-    // be asked any more. Kept as an assertion rather than deleted, because the
+    // be asked. Kept as an assertion rather than deleted, because the
     // ONLY thing that could reopen it is someone changing the reason encoding
     // back to text — and this is where that would be noticed.
     const subject = new Uint8Array(8).fill(0x77);
@@ -1033,13 +1018,13 @@ describe('computeMintTxId', () => {
       return bytes;
     });
     expect(new Set(tags.map((b) => b.toString('hex'))).size).toBe(ALL_MINT_REASONS.length);
-    // Prefix-freeness of the STRINGS is no longer load-bearing: a member could
-    // legally be named `decay-extra` now. Asserted as the retirement, so that
-    // re-adding the old rule reads as a deliberate step backwards.
+    // Prefix-freeness of the STRINGS is not load-bearing: a member could
+    // legally be named `decay-extra`. Asserted anyway, so that making the rule
+    // load-bearing again reads as a deliberate step backwards.
     const namesArePrefixFree = ALL_MINT_REASONS.every((a) =>
       ALL_MINT_REASONS.every((b) => a === b || !b.startsWith(a)),
     );
-    expect(namesArePrefixFree).toBe(true); // still true — but no longer required
+    expect(namesArePrefixFree).toBe(true); // true, but not required
   });
 
   it('the reason contributes exactly one byte, from a closed table', () => {
@@ -1228,10 +1213,10 @@ describe('transactions', () => {
     });
 
     it('the input list is counted, not just concatenated (P2-C row C1)', () => {
-      // Inputs and outputs used to be `h.update`d back to back with no count
-      // and no length prefix. `arr()`'s count byte is what makes a one-input
-      // and a two-input transaction structurally distinct rather than
-      // accidentally so.
+      // Concatenated back to back with no count and no length prefix, a
+      // one-input and a two-input transaction could produce the same bytes.
+      // `arr()`'s count byte is what makes them structurally distinct rather
+      // than accidentally so.
       const one: UtxoTransaction = { inputs: [IN_1], outputs: [], signatures: {}, protocolVersion: 2 };
       const two: UtxoTransaction = { inputs: [IN_1, IN_2], outputs: [], signatures: {}, protocolVersion: 2 };
       expect(computeTxId(one)).not.toBe(computeTxId(two));
@@ -1262,8 +1247,8 @@ describe('transactions', () => {
     });
 
     it('is unaffected by provenance set on an output', () => {
-      // Outputs are hashed as *candidates*. From Spec G phase C on, producers
-      // materialize outputs with txId/index set; if computeTxId hashed those,
+      // Outputs are hashed as *candidates*. Producers materialize outputs with
+      // txId/index set (node's `materializeOutput`); if computeTxId hashed those,
       // the txId would depend on ids derived from the txId itself — circular.
       // One box encoding (canonicalBoxBytes) is what makes this hold, and
       // positionally there is no writer for provenance at all.
@@ -1349,11 +1334,11 @@ describe('transactions', () => {
       expect(typeof id).toBe('string');
       expect(id.length).toBe(64);
 
-      // Under the old encoding `preimages: {}` was truthy, iterated zero keys
-      // and contributed nothing — so present-but-empty and absent produced the
+      // An encoding that treated `preimages: {}` as truthy, iterated zero keys
+      // and contributed nothing would give present-but-empty and absent the
       // identical txId. `checkTxEnvelope` rejects `{}` for exactly that reason;
-      // `opt()` now makes the two distinct at the encoding layer as well, so
-      // the gate stops being the only thing standing between them.
+      // `opt()` makes the two distinct at the encoding layer as well, so the
+      // gate is not the only thing standing between them.
       const empty: UtxoTransaction = { ...absent, preimages: {} };
       expect(computeTxId(empty)).not.toBe(id);
     });
@@ -1384,13 +1369,12 @@ describe('transactions', () => {
 
     it('the tail contribution is opt(b32) after protocolVersion — independently recomputed', () => {
       // Mirror written from the contract text (TYPES_INTERFACE → Layout —
-      // UtxoTransaction), not by calling the function under test — the G3b
-      // lesson: a golden regenerated after the fact pins nothing.
+      // UtxoTransaction), not by calling the function under test: a golden
+      // regenerated from the implementation pins nothing.
       //
-      // The old encoding marked presence with an ASCII `like:` tag, chosen
-      // because a decimal `protocolVersion` could not forge it. `opt()`'s 0/1
-      // tag retires the trick: presence is a byte, not a string that has to be
-      // unforgeable against its neighbour.
+      // Presence is `opt()`'s 0/1 tag — a byte, not an in-band string like an
+      // ASCII `like:` marker that would have to be unforgeable against whatever
+      // its neighbouring field can encode.
       const tx: UtxoTransaction = { ...GOLDEN_TX, likeTarget: TARGET_A };
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));

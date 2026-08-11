@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for postFieldBytes — the post id and PoW preimage (TYPES_INTERFACE -> Layout - Post). RESET at Phase 2: these bytes are the positional dialect, not the fixed-width-LE one, and every post id in the system moved with them. The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical.",
+  "$description": "Struct-level golden vectors for postFieldBytes — the post id and PoW preimage (TYPES_INTERFACE -> Layout - Post). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical.",
   "vectors": [
     {
       "name": "post/minimal",
