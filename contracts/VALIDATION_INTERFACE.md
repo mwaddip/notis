@@ -54,6 +54,35 @@ alone and runs on a machine that does not build the workspace). Each is held by 
 the declaration **by name** and cross-checks it against this package. A mirror that stops finding its
 declaration fails, which is the property it exists for.
 
+### blockWork / cumulativeWork
+
+```
+blockWork(targetBits: number): bigint | null
+cumulativeWork(headers: BlockHeader[]): bigint
+```
+
+How much work a header claims, and how much a sequence of them claims together. `blockWork` is
+**`2^256 / (target + 1)`**, where `target` is `powTarget`'s expansion of `targetBits`.
+
+**The identity is exact at every whole-bit target, and inclusivity is what makes it so.** `target + 1`
+is precisely `2^(256 − targetBits)`, so the quotient is `2^targetBits` with no remainder. An
+*exclusive* target would floor to one less at every integer target — which is detectable, and the
+regression that detects it is the agreement check against `1n << bits` across the whole domain.
+
+`blockWork` returns `null` for exactly the inputs `powTarget` refuses, so the domain is stated once
+rather than re-derived. `cumulativeWork` **skips** such a header rather than throwing: the array
+reaches it from the wire, where `powTargetBits` is any `number`, and refusing a whole comparison over
+one bad member would hand a peer a way to void a fork-choice decision.
+
+**This lives here and not in `@dagsocial/types` because it depends on `powTarget`**, and the
+dependency runs `validation → types`. Work accounting is a PoW question, which is this package's
+remit; its former home next to `BlockHeader` was proximity, not ownership.
+
+**A chain's work and a header sequence's work are different questions.** `net`'s
+`NetNode.cumulativeWork()` walks its own store and answers the first; this function is handed headers
+and answers the second. They share only `blockWork`, and neither is a copy of the other — an
+enumeration of "what computes work" that greps this function's callers will not reach `net`.
+
 ### verifyPoW
 
 ```
