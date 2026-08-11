@@ -41,7 +41,7 @@ import {
 //   - apply-time like rules (confirmed + live target, author from topology,
 //     structural dedup, liker = karma input owner) — any failure rejects the
 //     whole block;
-//   - author settlement arithmetic (carry, integer payout, the §1.3.1
+//   - author settlement arithmetic (carry, integer payout, the
 //     grouping-independence property) and mint identity;
 //   - post-lock vesting per block;
 //   - exact inverses for every new mutation class (apply → revert → re-apply
@@ -429,7 +429,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
       ),
     ).toBe(true);
 
-    // 3 + 2 likes accrue per AUTHOR (design track §1.3.1) → one 4n mint. A
+    // 3 + 2 likes accrue per AUTHOR (NODE_INTERFACE → "Per-block like
+    // settlement") → one 4n mint. A
     // per-post settlement would have derived the same (height, reason,
     // subject) twice and tripped UNIQUE(tx_id, output_index), rejecting the
     // block — so applying at all is itself part of the property.
@@ -850,14 +851,13 @@ describe('per-block like settlement (P2-D N2b)', () => {
       .not.toContain(Buffer.from('block_apply').toString('hex'));
 
     // ⚠ **What this costs, stated rather than left implicit.** `remainder!.guard`
-    // is fabricated by the store on read (`store/utxo.ts:219` returns the
-    // per-boxType constant), and the id no longer covers the guard either — so
-    // as of C10 **nothing** here can catch a producer that writes the retired
-    // `epoch_tally` into the `guard` column. That is not a regression this test
-    // can close: the column is now derived data on both sides, and the honest
-    // remedy is to stop storing it. Flagged for whichever phase owns C8's
-    // neighbourhood; recorded here so the gap is visible at the site that used
-    // to cover it.
+    // is fabricated by the store on read (`rowToBox` reconstructs it as a
+    // per-boxType constant from the discriminant), and the id does not cover
+    // the guard either — so **nothing** here can catch a producer that writes
+    // the retired `epoch_tally` into the `guard` column. That is not a
+    // regression this test can close: the column is derived data on both sides,
+    // and the honest remedy is to stop storing it. Recorded here so the gap is
+    // visible at the site that would otherwise appear to cover it.
   });
 
   // -------------------------------------------------------------------------

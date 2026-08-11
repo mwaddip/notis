@@ -630,18 +630,15 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   });
 
   it('identity record: two puts to one key in one block reach the tree as the LAST value', async () => {
-    // The record mutation class, and with it the coverage gap phase B's report
-    // §5 handed forward.
-    //
-    // Phase B built `proverFeedFromJournal`'s record arm — including the
-    // collapse-duplicates-to-last-write rule — and could not test it: nothing
-    // populated records, so deleting the arm outright killed nothing. This is
-    // the first block that writes the same record key **twice**.
+    // The record mutation class: a block that writes the same record key
+    // **twice**, which is what exercises `proverFeedFromJournal`'s
+    // collapse-duplicates-to-last-write rule. Without a second write to one
+    // key, deleting that rule outright kills nothing.
     //
     // Two puts in one block need decay and a karma mint for the same owner at
     // one height, which the mutation phase's ordering makes reachable:
-    // `applyKarmaDecay` (block-apply.ts:1018) writes `lastDecayBlock`, then
-    // `processVouchCooldowns` (:1026) mints and `insertBox` writes
+    // `applyKarmaDecay` (§12) writes `lastDecayBlock`, then
+    // `processVouchCooldowns` (§12b) mints and `insertBox` writes
     // `lastActivityBlock`. Journal order carries which came last; a sort by key
     // cannot, which is why the collapse lives in the feed and not in
     // `applyBlockMutations`.

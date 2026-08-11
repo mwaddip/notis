@@ -170,8 +170,9 @@ const subBlockFixture: SubBlockTree = {
 
 /**
  * `b32('aa'×32)` ‖ `arr` count 1 = `01` ‖ `b32('bb'×32)` ‖ `b32('cc'×32)`.
- * Same shape as the frozen `subBlockEntry/typical`, which carries a count of
- * `02` between its two ref rows.
+ * Same shape as the frozen `subBlockEntry/typical`, which carries the same `01`
+ * over a single ref row — `MAX_PARENT_REFS` is 1, so one ref is the typical
+ * case and `subBlockEntry/thread-root` is the empty `00` one.
  */
 const SUBBLOCK_LEAF_PREIMAGE = `${'aa'.repeat(32)}01${'bb'.repeat(32)}${'cc'.repeat(32)}`;
 
@@ -217,7 +218,7 @@ describe('Phase 4b Merkle leaf preimages', () => {
     expect(computeUtxoTxRoot(utxoFixture)).toBe(PINNED_UTXO_TX_ROOT);
   });
 
-  // Two-sided movement pin (spec §7): the roots moved, and here is exactly what
+  // Two-sided movement pin: the roots moved, and here is exactly what
   // they moved from. Every committed byte moves in this bundle, so the fresh
   // chain + wiped AVL store the standing deploy gate already mandates covers it.
   it('both roots moved off the JSON preimages', () => {

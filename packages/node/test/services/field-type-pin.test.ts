@@ -524,14 +524,13 @@ describe('field-type pin', () => {
 
   describe('CBOR ingress (block funnel)', () => {
     /**
-     * ⚠ **The poison changed field, and the reason is worth reading.**
+     * ⚠ **Why the poison is `proofSource` and not `originalValue`.**
      *
-     * This carried the class-3 poison — a string `originalValue` on the
-     * post_lock — and it cannot any more: `originalValue` is `vlqU64`, which
-     * **throws** on a non-bigint, so the block is unbuildable at the producer
-     * and, if the bytes were spliced in afterwards, `computeTxId` would throw at
-     * `block-apply.ts:867` into the funnel's *totality catch* — the exact path
-     * this test exists to prove is not taken.
+     * A string `originalValue` on the post_lock cannot serve: `originalValue`
+     * is `vlqU64`, which **throws** on a non-bigint, so the block is
+     * unbuildable at the producer and, if the bytes were spliced in afterwards,
+     * `computeTxId` would throw into the funnel's *totality catch* — the exact
+     * path this test exists to prove is not taken.
      *
      * So the poison has to be one whose writer is **total**, or the funnel never
      * reaches the gate under test. `proofSource` on karma is `lpUtf8`: a number
