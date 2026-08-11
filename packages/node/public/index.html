@@ -826,19 +826,30 @@ function countLeadingZeroBits(buf) {
   return bits;
 }
 
-/** PoW preimage = postFieldBytes; solvePoW appends vlqU(nonce). */
+/** PoW preimage = postFieldBytes; the nonce tail is appended by postPowHash. */
 function buildPowInput(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
   return postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp);
+}
+
+/**
+ * The post-PoW nonce tail. TYPES_INTERFACE.md → Serialization → "Layout — Post" names
+ * powNonceBytes in @dagsocial/types as its only writer and forbids anything else from
+ * constructing it; this is that writer's mirror, and the sole tail writer on this side.
+ */
+function powNonceTail(nonce) {
+  return vlqU(nonce);
+}
+
+/** blake2b512(powInput ‖ powNonceTail(nonce))[0..32] — the digest verifyPoW decides on. */
+function postPowHash(powInput, nonce) {
+  return blake2b(concatUint8Arrays([powInput, powNonceTail(nonce)]), null, 64).slice(0, 32);
 }
 
 function solvePoW(powInput, targetBits, onProgress) {
   let nonce = 0;
   const start = performance.now();
   while (true) {
-    const nonceBytes = vlqU(nonce);
-    const combined = concatUint8Arrays([powInput, nonceBytes]);
-    const hash = blake2b(combined, null, 64).slice(0, 32);
-    if (countLeadingZeroBits(hash) >= targetBits) return nonce;
+    if (countLeadingZeroBits(postPowHash(powInput, nonce)) >= targetBits) return nonce;
 
     nonce++;
     if (nonce % 200000 === 0) {
@@ -1248,7 +1259,7 @@ function computePostId(post) {
   const combined = concatUint8Arrays([
     POST_ID_DOMAIN,
     postFieldBytes(post.content, aBytes, post.parentRefs, cBytes, post.protocolVersion, post.timestamp),
-    vlqU(post.powNonce),
+    powNonceTail(post.powNonce),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
