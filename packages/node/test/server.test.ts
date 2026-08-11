@@ -11,9 +11,9 @@ import { profileFor } from '@dagsocial/types';
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Every field this literal already set is kept verbatim; `makeTestConfig` fills
-// the thirteen `Config` requires and it never stated (helpers.ts explains why
-// none of them was reachable).
+// The literal below states only this suite's deliberate deviations;
+// `makeTestConfig` supplies every other `Config` field from the loaded
+// singleton, so the fixture cannot fall behind the type (see `helpers.ts`).
 function makeConfig(overrides?: Partial<Config>): Config {
   return makeTestConfig({
     port: 0,
@@ -94,7 +94,7 @@ describe('server', () => {
   });
 
   // The mount gate is the isFaucetNetwork allow-list — testnet/devnet only
-  // (NODE_INTERFACE §Faucet) — so devnet must get the real router and mainnet
+  // (NODE_INTERFACE → Faucet) — so devnet must get the real router and mainnet
   // the 403 stub. An empty POST discriminates the two without touching the
   // store: the real router answers 400 (userId required) before any db access,
   // the stub answers 403.

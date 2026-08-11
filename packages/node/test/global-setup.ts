@@ -6,8 +6,8 @@
 // The e2e suites (`test/e2e/*`) spawn `packages/node/dist/index.js` as a child
 // process, so they exercise whatever was last built rather than the current
 // source. `vitest run` builds nothing, so a suite invoked without a preceding
-// build silently reports on a stale binary — that is how a real regression got
-// through green tests.
+// build reports on a stale binary, silently and greenly — a regression in the
+// current source is invisible to it.
 //
 // The e2e suite is the build's ONLY consumer: unit tests resolve `@dagsocial/*`
 // to `src` via the workspace vitest alias (contracts/ARCHITECTURE.md → "Build
@@ -15,8 +15,8 @@
 // the effective exclude list the build is skipped — it would cost a full
 // workspace build per run and write four siblings' `dist` for nothing, and
 // concurrent `dist` writes are the recorded race surface in the multi-window
-// workflow. The gate keys on the resolved config, so the post-P2-D rewrite
-// that removes the exclusion re-arms the build automatically.
+// workflow. The gate keys on the resolved config, so whatever removes the
+// exclusion re-arms the build automatically — nobody has to remember this file.
 //
 // This lives in `globalSetup` rather than a `pretest` script so the guarantee
 // holds on every entry point into the suite: `pnpm test`, a bare `vitest run`,
