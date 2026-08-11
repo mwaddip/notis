@@ -148,6 +148,24 @@ independently of the one beside it. This is the retroactive half of *comments po
 contract-vs-code reconciliation is unwritten (user, 2026-08-11). **Do not sweep `contracts/` under
 this rule.** The exemption ends with that reconciliation spec, not with this cleanup.
 
+## Commit and PR bodies
+
+Same principle one level up: **describe what the change does, not the road to it.**
+
+**The what, not the why.** *"Fixes an issue where `x` became `y`"* is a complete description. *"…because
+`x` is not `y`, and the last time `a` became `b` it went unnoticed for months"* is a justification
+nobody asked for. **A fix needs no excuse.** The reasoning that produced a change belongs in the REPORT
+or the contract, where it can be checked; in a PR it is unfalsifiable padding.
+
+**No anecdotes, no history.** A body recounting how a node once burned a core for weeks is telling a
+story rather than describing a diff — and stories drift: that one overstated the lifetime of a
+ten-day-old package. If a past incident genuinely bears on the change, it belongs in the contract as a
+rule, not in a PR as a memory.
+
+**Caps: ~800 characters for a commit body, ~2000 for a PR** (user, 2026-08-10). Over the cap, cut a
+whole section rather than trimming sentences — detail relocates to the REPORT, referenced by path.
+Titles stay `type(scope): plain summary`: plain words in the title, technical register in the body.
+
 ## Key invariants
 
 - Post content: 1–300 UTF-8 bytes (`MAX_CONTENT_BYTES`)
