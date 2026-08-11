@@ -1,7 +1,7 @@
 # DAGsocial Architecture
 
 **Protocol version:** 1
-**Last updated:** 2026-08-07
+**Last updated:** 2026-08-11
 
 ## Status markers — the convention for every contract in this directory
 
@@ -11,7 +11,9 @@ describing a mechanism that was documented and never built all read with identic
 A repo-wide audit found **41 `never-true` claims against 25 genuine drift** — the dominant
 failure was not documentation falling behind code, it was documentation that was never true.
 
-**Every section that is not plainly describing running code MUST carry one of these:**
+**Every section that is not plainly describing running code MUST carry one of these**, and each one
+**carries the date it was last verified** — `> ⚠ VIOLATED — verified 2026-08-11` — so a reader can
+judge the claim's age without `git blame`. **An undated marker is an unverified one.**
 
 | Marker | Meaning |
 |---|---|
@@ -19,11 +21,45 @@ failure was not documentation falling behind code, it was documentation that was
 | `> ⚠ PARTIAL` | Some of it runs. The marker must say which part |
 | `> ⚠ NEVER BUILT — NOT PLANNED` | Was documented, never built, and there is no intent to build it. Kept so nobody re-adds it believing it was an oversight |
 | `> ⚠ VIOLATED` | The rule is **correct** and the code breaks it. **Never weaken the rule to match the code** |
+| `> ⚠ FALSE` | The text **was never true**. It does not state a rule the code should meet. **Correct or delete the text — never change code to satisfy it** |
+| `> ⚠ UNENFORCED` | The rule is stated and **nothing checks it**. No violating code path is claimed; if one is, that is `VIOLATED` |
+| `> ⚠ QUALIFIED` | The claim survives, but narrower than written. The marker must state the narrowing |
 | `> ⚠ SUPERSEDED` | Replaced by a later decision; points at it |
+| `> ⚠ AHEAD OF CODE` | The contract deliberately leads the code. **The only marker that asserts nothing about the current tree**, and therefore the only one that does not decay |
+| `> ✅ RESOLVED` | A previously-marked defect is closed. Names what closed it and when. Kept so the reasoning survives its own fix |
 
 **The markers are mandatory, not optional.** An optional marker reproduces the exact defect
 this convention exists to fix — a reader cannot tell whether its absence means "verified" or
 "nobody looked."
+
+**`⚠` means open, `✅` means closed.** A reader skimming for what still needs attention reads the
+sigil, not the word.
+
+⚠ **`FALSE` and `VIOLATED` are opposites and must not be swapped.** `VIOLATED` says the rule is right
+and the code is wrong, so the reader's job is to fix the code — and this convention forbids the
+alternative. Marking a never-true sentence `VIOLATED` therefore instructs the next reader to make the
+code satisfy a rule that was always wrong. The preamble above names never-true text as the
+*dominant* failure this convention exists for; `FALSE` is the marker for it.
+
+**One name per concept.** `DONE`, `CLOSED`, `LANDED` and `IMPLEMENTED` are all `RESOLVED`;
+`PARTLY IMPLEMENTED` is `PARTIAL`; `PREMISE` is `QUALIFIED`; `WRONG` and `WAS FALSE` are `FALSE`.
+A second name for a class is invisible to any sweep that greps the first — which is how sixteen
+markers survived every contract sweep this project has run.
+
+**Row annotations are not section markers.** `⚠ DELETED`, `⚠ TO BE DELETED` and similar inside a
+table row annotate one symbol's lifecycle. They are not one of the markers above and a marker sweep
+does not chase them.
+
+⚠ **Markers also hide in table cells.** A sweep keyed on the `> ⚠ **NAME**` shape cannot see a marker
+written inside a `|` row — one sat in §Protocol-breaking changes for the whole positional bundle and
+survived Phase 9's first pass. **Put status in a marker, not in a parenthetical.**
+
+**Cite code by SYMBOL, not by line number.** `file.ts:NNN` rots silently: nothing recompiles a
+contract, so a pin is wrong the moment an unrelated edit shifts the file, and the next reader lands
+on unrelated code with no signal. Phase 9 found **4 of 7 pins in this file wrong** — three moved by
+one 16-line insertion above them, and one named a file in the wrong package. Name the function, the
+constant, or the interface; add a line number only as evidence for a *dated* verdict, where being a
+snapshot is the point.
 
 **Why this works:** the one section of this document with no false invariant
 (§Block Application Journal) is also the only one written *after* its implementation existed.
@@ -314,16 +350,28 @@ Classes are defined in `NODE_INTERFACE.md → Configuration`.
 | `KARMA_DECAY_AMOUNT` | **consensus** | 5 | Karma burned per period |
 | `KARMA_MINIMUM` | **consensus** | 10 | Floor — decay never reduces below this |
 
-> ✅ **RESOLVED — verified 2026-08-10, closed by P2-A.** None of the four is
-> environment-readable. `config.ts:107-108` take the two `*_BLOCKS` values from the network
-> profile; `:109-110` take `KARMA_DECAY_AMOUNT` and `KARMA_MINIMUM` as `@dagsocial/types`
-> constants, and the code states the rule in place. *Historical:* all four were `process.env`
-> reads, and none appeared in `NODE_INTERFACE.md`'s Configuration table until 2026-08-06.
+> ✅ **RESOLVED — closed by P2-A, re-verified 2026-08-11.** None of the four is
+> environment-readable. In `node/src/config.ts`, `karmaStaleThresholdBlocks` and
+> `karmaDecayIntervalBlocks` are taken from the network profile, and `karmaDecayAmount` /
+> `karmaMinimum` from the `@dagsocial/types` constants `KARMA_DECAY_AMOUNT` and `KARMA_MINIMUM`;
+> the code states the rule in place. *Historical:* all four were `process.env` reads, and none
+> appeared in `NODE_INTERFACE.md`'s Configuration table until 2026-08-06.
+>
+> ⚠ **All three line pins in this note had rotted, each by exactly 16 lines** — `config.ts:107-108`
+> now lands on `miningMode`/`miningSecret`, and `:109-110` on unrelated fields. One insertion above
+> them moved every pin at once and nothing signalled it. **Named symbols replace the numbers here**,
+> per the Phase 9 rule: a corrected number rots again on the next commit that touches the file.
 
 > ✅ **RESOLVED 2026-08-06 — the target block time is 60 seconds, and the two `*_BLOCKS`
-> values are recomputed above.** ✅ **Landed — `constants.ts:43-44` hold `40320` and `1440`**
-> (checked 2026-08-10; this sentence said "the code still holds `20160` / `720`; Phase 2
-> changes `constants.ts`" and was never updated after Phase 2 did).
+> values are recomputed above. Re-verified 2026-08-11.** `KARMA_STALE_THRESHOLD_BLOCKS` and
+> `KARMA_DECAY_INTERVAL_BLOCKS` hold `40320` and `1440` in **`packages/types/src/constants.ts`**.
+> (Historical: this sentence once said "the code still holds `20160` / `720`; Phase 2 changes
+> `constants.ts`" and was never updated after Phase 2 did.)
+>
+> ⚠ **The old pin read `constants.ts:43-44` with no package, and a reader following the
+> `config.ts` reference beside it would look in `node/` — which has no `constants.ts` at all.**
+> The values are in `types/`. Right line numbers, wrong package: the failure mode carried
+> register #25 describes, found here independently.
 >
 > The karma pair were the **only** constants on a 2-minute basis — `CREDIT_MINER_REWARD_DELAY`
 > and `MEMPOOL_EXPIRY_BLOCKS` (both `720` = ~12h), `CREDIT_EPOCH_BLOCKS` (`129_600` = ~90d)
@@ -420,12 +468,14 @@ stamps `-1` as the transfer sentinel; and `post_lock.targetPostId` needed a
 `hex32` type added in the wire-format bundle, having been admitted as any
 `string` while `canonicalBoxBytes` wrote it with a throwing fixed-width writer.
 
-> ⚠ **AHEAD OF CODE — the inbound obligation becomes structural.** Under the positional wire format
-> (`docs/specs/2026-08-09-positional-wire-format.md`), "any path admitting client-supplied structure
-> into those bytes must hold it to a closed schema" stops being an obligation a check must enforce
-> and becomes a property of the encoding: a positional layout has nowhere to put an unknown field,
-> and a field's width and type are fixed by its writer. The closed-schema check remains as
-> defence-in-depth for JSON-sourced input, which does not pass through the codec.
+> ✅ **RESOLVED — the inbound obligation is now structural. Verified 2026-08-11.** This read
+> `AHEAD OF CODE` until Phase 9; the positional bundle
+> (`docs/specs/2026-08-09-positional-wire-format.md`) is merged, so it describes running code and is
+> no longer forward-looking. "Any path admitting client-supplied structure into those bytes must hold
+> it to a closed schema" is no longer an obligation a check must enforce: it is a property of the
+> encoding, because a positional layout has nowhere to put an unknown field and a field's width and
+> type are fixed by its writer. The closed-schema check remains as defence-in-depth for JSON-sourced
+> input, which does not pass through the codec.
 >
 > The outbound obligation is **unchanged and still carries its full weight**. A positional codec
 > guarantees that bytes *decode* to a well-formed value; it says nothing about whether a typed view
@@ -591,7 +641,9 @@ on the ledger.
 
 ### Username claims
 
-> ⚠ **SUPERSEDED (user decision, 2026-08-06) — usernames are NOT claim posts.**
+> ⚠ **SUPERSEDED (user decision, 2026-08-06) — usernames are NOT claim posts. Verified
+> 2026-08-11: no `username` code exists in any `src` tree, so nothing was built against the
+> superseded model.**
 > The first-claim-wins, post-based, prune-to-release model described below is replaced by a
 > **UTXO asset**: a username is **tradeable for credits**, **free to claim while unused**,
 > and **burnable by its owner**. Nothing in this section survives that change — the claim
@@ -629,11 +681,14 @@ pruned by its author, and pruning it releases the name.
 
 ### Profile root
 
-> ⚠ **NOT IMPLEMENTED — intended design, zero code.** Profiles **stay DAG-native**: a
-> profile is a *self post* (user, 2026-08-06), unlike usernames, which became a UTXO asset.
+> ⚠ **NOT IMPLEMENTED — intended design, zero code. Verified 2026-08-11.** Profiles **stay
+> DAG-native**: a profile is a *self post* (user, 2026-08-06), unlike usernames, which became a
+> UTXO asset.
 >
 > **Blocking dependency, live here:** the marker post below carries `type: "profile"`, and
-> **`Post` has no `type` field** — nor any other discriminator. So profiles cannot be built
+> **`Post` has no `type` field** — nor any other discriminator (`types/src/post.ts`, `Post` is
+> eight fields: content, author, parentRefs, challenge, powNonce, protocolVersion, timestamp,
+> signature). So profiles cannot be built
 > until post typing exists, and adding a field to `Post` enters `postFieldBytes`, which
 > **moves every post id**. That makes it a protocol-breaking change that should ride with
 > another id-moving change rather than go alone.
@@ -920,9 +975,10 @@ deflationary pressure on karma supply and makes invite decisions consequential.
 ## Validators
 
 > ⚠ **NOT IMPLEMENTED as described — 35 lines, 100% original 2026-07-20 text, written
-> before any of it existed.** Block production works, but the "validator" as a *distinct
-> role* with the responsibilities enumerated below is not a thing the code has: block
-> production is a node mode (`NODE_ROLE=miner`), not a separate class of participant with
+> before any of it existed. Verified 2026-08-11.** Block production works, but the "validator"
+> as a *distinct role* with the responsibilities enumerated below is not a thing the code has:
+> `NODE_ROLE` is parsed as a config mode in `node/src/config.ts` and gates whether
+> `MINING_SECRET` is required — it is a node mode, not a separate class of participant with
 > its own lifecycle. Read this as design intent and verify every claim against
 > `MINING_INTERFACE.md` and `block-creator.ts` before relying on it.
 >
@@ -978,10 +1034,13 @@ separate keys if desired.
 ## Genesis
 
 > ⚠ **NOT IMPLEMENTED — 22 lines, 100% original 2026-07-20 text, and it ships in a state
-> that cannot run.** `GENESIS_COMMITTEE_KEYS` is `[]` with "TBD at genesis" recorded only
-> in `TYPES_INTERFACE.md`, and **nothing fails loudly if a chain starts with an empty
-> committee** — there is no startup assertion, so the two-phase model below silently has no
-> phase one. Committee dissolution (`BOOTSTRAP_PERIOD_BLOCKS`) is likewise unimplemented.
+> that cannot run. Verified 2026-08-11, every limb.** `GENESIS_COMMITTEE_KEYS` is `[]`
+> (`types/src/constants.ts`) and **all three network profiles freeze it empty**
+> (`types/src/network.ts` — mainnet, testnet, devnet alike). **Nothing fails loudly if a chain
+> starts with an empty committee** — a search for any startup assertion on committee emptiness
+> returns nothing — so the two-phase model below silently has no phase one. Committee
+> dissolution is likewise unimplemented: `BOOTSTRAP_PERIOD_BLOCKS` and `bootstrapPeriodBlocks`
+> appear **only in `types/src`**, with no reader anywhere in `node/src` (carried register #19).
 >
 > **Genesis is where an unset consensus parameter is least recoverable** — it is baked into
 > the first block and every state root after it. Before any launch: decide the committee
@@ -1026,7 +1085,7 @@ outstanding against the live node, which still runs a pre-Spec-B chain:
 | P3 | `stateRoot` semantics |
 | Spec G | box ids (provenance-derived) |
 | P2-D | sub-block and block-body CBOR shape, post-lock box ids |
-| **positional wire format** (AHEAD OF CODE) | **every committed byte** |
+| **positional wire format** (Phases 0–8, shipped 2026-08-11) | **every committed byte** |
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
@@ -1101,9 +1160,26 @@ before multi-node operation rather than after it.
 
 ### Wire Format
 
-Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip messages are raw CBOR. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
+Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip
+bodies are positional for sub-blocks and ordering blocks, and CBOR for UTXO transactions and stumps —
+see the marker below. The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
+not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
 
-> ⚠ **AHEAD OF CODE — gossip stops being CBOR, and `@dagsocial/wire` becomes the base codec layer.**
+> ⚠ **PARTIAL — the migration this marker predicted has SHIPPED except for two encoders.
+> Re-verified 2026-08-11.** It read `AHEAD OF CODE` until Phase 9; the positional bundle
+> (Phases 0–8) is merged, so the forward-looking framing was stale.
+>
+> **Positional today:** gossip decodes sub-blocks and ordering blocks through `decodeSubBlock` and
+> `decodeOrderingBlock` (`net/src/gossip.ts:78`, `:97`), which are the positional decoders.
+> **Still CBOR:** `encodeTx`/`decodeTx` (`types/src/serialization.ts:522-528`) and
+> `encodeStump`/`decodeStump` (`:164-170`) are bare `cbor-x`, so the gossip UTXO-transaction path
+> (`gossip.ts:136`) and every stump still travel as CBOR. **No phase claims these two** — carried
+> register #6.
+>
+> ⚠ **The old headline said "gossip stops being CBOR" while its own body said CBOR survives in
+> net's transport framing.** Both halves were written at once and contradicted each other; the
+> resolution is the split above — per *message type*, not per *layer*.
+>
 > Per `docs/specs/2026-08-09-positional-wire-format.md`.
 >
 > **Every consensus preimage becomes a positional byte layout** built on `@dagsocial/wire` — the
@@ -1126,22 +1202,39 @@ Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum
 > in the demo UI. After this, the format is a byte layout an independent implementation can be
 > written against, which is the precondition for the light-client and browser-extension tracks.
 >
-> **Layering change:** `@dagsocial/types` gains a dependency on `@dagsocial/wire`, so wire is no
-> longer net-only — it is the base codec layer, and its writers produce box ids, tx ids, post ids,
-> Merkle roots and the `stateRoot`. It keeps zero dependencies. See `WIRE_INTERFACE.md`.
+> **Layering — done, verified 2026-08-11.** `@dagsocial/types` depends on `@dagsocial/wire`
+> (`packages/types/package.json:21`), so wire is no longer net-only: it is the base codec layer, and
+> its writers produce box ids, tx ids, post ids, Merkle roots and the `stateRoot`. It keeps zero
+> dependencies. See `WIRE_INTERFACE.md`.
+>
+> ⚠ **`@dagsocial/wire` is still described as "stream framing" outside this file** — `CLAUDE.md:26`
+> and `README.md:318`. That description predates the layering change and now understates the package.
+> Both are root-level files, not contracts. (`NET_INTERFACE.md:14` also says "stream framing", but
+> correctly: it describes what *net* uses wire for, not what wire is.)
 
 ---
 
 ## Network Identity
 
-> ⚠ **PARTIAL — the reason has changed twice, most recently 2026-08-10.** It used to be "one of
-> the three commitment layers remains"; that layer is now **withdrawn by decision**, so the
-> commitment table is complete at two layers. The *selection* half then kept it open on the
-> grounds that **nine consensus parameters were still independently environment-readable** —
-> that is now false, and the PR cited in the same sentence is what closed it: P2-A (PR #8,
-> `4670ae5`) removed all ten, verified 2026-08-07 (`NODE_INTERFACE §Configuration`). What keeps
-> this marker open instead is the **bypass** — three profile fields are read as module constants
-> and never reach the profile at all; see the note under §Network identity.
+> ✅ **RESOLVED — the reason changed three times and the last one has now closed too. Verified
+> 2026-08-11.** It read `PARTIAL` until Phase 9.
+>
+> The history, because each step retired a different justification: (1) "one of the three
+> commitment layers remains" — that layer was **withdrawn by decision**, so the commitment table
+> is complete at two layers. (2) The *selection* half then held it open on the grounds that
+> **nine consensus parameters were still independently environment-readable** — false since P2-A
+> (PR #8, `4670ae5`) removed all ten, verified 2026-08-07 (`NODE_INTERFACE §Configuration`).
+> (3) It was then held open by a **bypass** — profile fields read as module constants instead of
+> from the profile. **That is now closed as well.**
+>
+> **Method, so this is refutable:** every `readonly` field name was extracted from
+> `types/src/network.ts` and each tested for a `profile.<field>` read in `node/src/config.ts`.
+> Every real field is read from the profile except four — `bootstrapPeriodBlocks`,
+> `genesisCommitteeKeys`, `genesisKarmaPerMember`, `genesisCreditsPerMember` — which have **no
+> reader anywhere in `node/src` at all**. That is *unbuilt*, not *bypassed*: they serve the
+> committee machinery §Genesis marks `NOT IMPLEMENTED`. A field nothing reads cannot diverge
+> from the profile; it equally cannot be relied on. Carried register #19 tracks them, and this
+> pass reproduced its four independently.
 >
 > **Built.** `NETWORK_TYPE` selects a `NetworkProfile` that carries the wire magic and every
 > consensus parameter together; an unrecognised value throws at startup. `NetConfig.magic` is
@@ -1303,10 +1396,12 @@ Every post, stump, ordering block, sub-block, and UTXO transaction carries a
 An object with an old version is validated against that version's rules
 forever. A node rejects objects with an unsupported protocol version.
 
-> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not.** There is **no
-> version-keyed rule table and no dispatch**. Validation is a **strict equality check
-> against `PROTOCOL_VERSION`**, so rejecting unsupported versions works, while "validated
-> against that version's rules forever" describes a mechanism that was never built.
+> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not. Verified 2026-08-11.**
+> There is **no version-keyed rule table and no dispatch**. Validation is a **strict equality
+> check against `PROTOCOL_VERSION`** at all four sites that test it — `verifier.ts:142` and
+> `:244` (posts), `utxo-engine.ts:987` (transactions), `block-apply.ts:268` (block headers),
+> every one of them `!== PROTOCOL_VERSION`. So rejecting unsupported versions works, while
+> "validated against that version's rules forever" describes a mechanism that was never built.
 >
 > **The consequence is worse than a missing feature: the first version bump makes existing
 > history un-resyncable.** Under strict equality a v2 node rejects every v1 object,
@@ -1360,9 +1455,10 @@ forever. A node rejects objects with an unsupported protocol version.
   > found by accident while implementing. **Do not read "closes by feature removal" as "the
   > class is handled."**
 - Credits are freely tradeable
-  > ✅ **RESOLVED — verified 2026-08-10, closed by P2-B phase 3.** `sendCredits`
-  > (`services/credits.ts:108`) validates the client's transaction and then calls
-  > `insertUtxoTx`, which is `INSERT INTO mempool … 'utxo_tx'` (`store/mempool.ts:140-143`);
+  > ✅ **RESOLVED — closed by P2-B phase 3, re-verified 2026-08-11.** `sendCredits`
+  > (`node/src/services/credits.ts`) validates the client's transaction and then calls
+  > `insertUtxoTx`, which is `INSERT INTO mempool … VALUES ('utxo_tx', …)` in
+  > `node/src/store/mempool.ts`;
   > it returns `status: 'pending'` and the route broadcasts. Every remaining `consumeBox` /
   > `insertBox` caller is block application, revert, or genesis bootstrap — none is reachable
   > from a route. *Historical:* it mutated the UTXO set **outside block application** — no
@@ -1419,18 +1515,20 @@ forever. A node rejects objects with an unsupported protocol version.
 - Invite secrets are hash-locked, portable bearer instruments
 - An invite can be cancelled by the inviter (before claim) or claimed by the
   preimage holder
-  > ⚠ **QUALIFIED — "bearer instrument" is no longer the whole story.** §Invite System
-  > records that a commit now requires a signature from the committed key (audit H-2), so
-  > the preimage alone is not sufficient. This bullet was not updated when that landed 200
-  > lines above it.
+  > ⚠ **QUALIFIED — "bearer instrument" is no longer the whole story. Verified 2026-08-11.**
+  > §Invite System records that a commit now requires a signature from the committed key
+  > (audit H-2), so the preimage alone is not sufficient. This bullet was not updated when that
+  > landed 200 lines above it.
 - Invite bonds are lost if the invitee's karma drops below the posting minimum
   during probation
-  > ⚠ **VIOLATED — narrowed 2026-08-10. The failure this marker described is closed; a
-  > different one remains, and it is the rule itself.** All three checks it called missing
-  > exist: `utxo-engine.ts:520-526` requires the settlement karma output be owned by the
-  > **inviter**, which closes "the bond can be taken by the invitee" outright; `:531` requires
-  > probation to have expired; `:532-533` requires the invitee's karma to meet
-  > `INVITE_KARMA_THRESHOLD`.
+  > ⚠ **VIOLATED — narrowed 2026-08-10, re-verified 2026-08-11. The failure this marker
+  > described is closed; a different one remains, and it is the rule itself.** All three checks
+  > it called missing exist, in `node/src/services/utxo-engine.ts`'s bond-settlement arm: the
+  > settlement karma output must be owned by the **inviter** (which closes "the bond can be
+  > taken by the invitee" outright), `probationExpired` requires probation to have elapsed, and
+  > `thresholdMet` requires the invitee's karma to reach `INVITE_KARMA_THRESHOLD`. **All three
+  > line pins here still resolved correctly** — unlike the three in §Karma decay, which had all
+  > rotted.
   >
   > **What remains unimplemented is forfeiture — there is no such path at all.** Nothing burns
   > the bond when the invitee's karma drops below the posting minimum during probation.
@@ -1438,7 +1536,8 @@ forever. A node rejects objects with an unsupported protocol version.
   > an invitee who never engages costs the inviter a wait rather than the bond. The rule is
   > right and stays.
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
-  > ⚠ **SUPERSEDED (2026-08-06).** Usernames become a **UTXO asset**: tradeable for
+  > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
+  > Usernames become a **UTXO asset**: tradeable for
   > credits, free to claim while unused, burnable by the owner. Not a claim post, so
   > "DAG-native" and "prunable by holder" no longer apply. Deferred — see §Username claims
   > and design track §5.9. **Profiles are unaffected and stay DAG-native as self-posts.**
@@ -1451,9 +1550,10 @@ forever. A node rejects objects with an unsupported protocol version.
   **the like burn** — `LIKE_KARMA_COST` leaves the liker per like, `x−1` per `x` returns
   via `like-payout`, net 1 burned per `LIKES_PER_KARMA_PAYOUT` likes.
 - Total credit supply = genesis + ordering block rewards - future sinks
-  > ⚠ **QUALIFIED — true in shape, but "total" is currently unbounded.** The reward
-  > function has **no terminus**: it floors at `CREDIT_TAIL_REWARD` and mints 2 credits per
-  > block forever, while `MINING_INTERFACE.md` states a fixed ~453.9M total. Emission is
+  > ⚠ **QUALIFIED — true in shape, but "total" is currently unbounded. Verified 2026-08-11.**
+  > The reward function has **no terminus**: `block-creator.ts` floors it at
+  > `CREDIT_TAIL_REWARD` (`2n * 10n ** 8n`, i.e. 2 credits) and mints that per block forever,
+  > while `MINING_INTERFACE.md` states a fixed ~453.9M total. Emission is
   > decided to **terminate** (Ergo shape, decay to zero, no tail — design track §5.7), and
   > every current total-supply figure in the repo is wrong until that lands.
 - Every UTXO transaction conserves value, with exactly **one stated exception: the like
@@ -1512,7 +1612,7 @@ See `SUBBLOCK_INTERFACE.md` for the full contract.
 
 ### Network identity
 
-> ⚠ **PARTLY IMPLEMENTED — corrected 2026-08-10. These four are NOT part of the 48 verified
+> ⚠ **PARTIAL — corrected 2026-08-10, re-verified 2026-08-11. These four are NOT part of the 48 verified
 > above and carry no audit verdict.** Bullets 2, 3 and 4 hold today; bullet 1 does not, and
 > carries its own note.
 >
@@ -1527,12 +1627,20 @@ See `SUBBLOCK_INTERFACE.md` for the full contract.
   environment-readable. Two nodes agreeing on `NETWORK_TYPE` cannot differ on any value it
   selects.
 
-  > ✅ **RESOLVED 2026-08-10 — satisfied for every value anything reads.** Two distinct violations
-  > closed in sequence. **Environment-readability**: P2-A removed all ten consensus values from the
+  > ✅ **RESOLVED 2026-08-10 — satisfied for every value anything reads. Re-verified 2026-08-11
+  > by re-deriving every `NetworkProfile` field and testing each for a `profile.<field>` read in
+  > `node/src/config.ts`; this note's four residue fields came back exactly.** Two distinct
+  > violations closed in sequence. **Environment-readability**: P2-A removed all ten consensus values from the
   > environment (PR #8, verified 2026-08-07 — `NODE_INTERFACE §Configuration`). **Bypass**: five
   > profile fields were read as module constants, so `NETWORK_TYPE` did not select them at all and
   > a devnet node ran mainnet emission, maturity, vouch-cooldown and probation timing. All five now
   > resolve through `Config` from the profile.
+  >
+  > ⚠ **This note was correct while §Network Identity's marker, which pointed AT it, was not.**
+  > That marker held itself open on the bypass — the very thing this note records as closed —
+  > and cited "the note under §Network identity" in the same sentence. **A cross-reference is not
+  > a read**: the citation was carried forward while the cited text moved underneath it. Both are
+  > now `RESOLVED`.
   >
   > **Residue, and it is a different class.** Four profile fields have no reader anywhere in
   > `packages/node`: `bootstrapPeriodBlocks`, `genesisCommitteeKeys`, `genesisKarmaPerMember`,
@@ -1578,35 +1686,64 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **No method panics on untrusted input** — every deserialization and
   signature-verification function returns a `Result<T, Error>` equivalent.
   No `unwrap()`, no `as` casts that truncate, no OOM on adversarial input.
-  > ⚠ **FALSE on all three limbs, and the `as`-cast clause names the wrong hazard.**
-  > *Panics:* the Stage-1 pipeline has an unguarded throwing step between its documented
-  > calls. *OOM:* `cumulativeWork` allocates ~128 MB on an attacker-supplied
-  > `powTargetBits` and `readArray` pre-allocates its declared length before reading an
-  > element. *Casts:* the legacy headers path is a bare `decode()` plus cast with no shape
-  > check.
-  > **A TypeScript `as` cast does not truncate — it erases at compile time and asserts a
-  > type that was never checked.** That is a *different and larger* hazard than Rust's
+  > ⚠ **FALSE on the `as`-cast clause only — the OOM and cast limbs are CLOSED. Verified
+  > 2026-08-11.** This marker said "FALSE on all three limbs"; two have since been fixed.
+  > - *OOM — closed.* `readArray` bounds on `MAX_ARRAY_LENGTH` **and** on bytes remaining
+  >   before allocating (`wire/src/reader.ts:3`, `:149`, `:153-157`), and `cumulativeWork`
+  >   skips any `powTargetBits` that is not a safe integer within
+  >   `[0, MAX_SATISFIABLE_TARGET_BITS]` (`types/src/block.ts:205`). Neither allocates on
+  >   attacker-chosen input.
+  > - *Casts — closed.* The sync decode boundary shape-checks every field and never throws;
+  >   malformed CBOR collapses to `null` and the returned object is rebuilt from checked
+  >   fields only (`net/src/sync-codec.ts:55-74`).
+  > - *Panics — **not re-verified**.* The original claim named "an unguarded throwing step
+  >   between the Stage-1 pipeline's documented calls" without pinning a file or line, and it
+  >   could not be relocated from that description. **Unknown, not holding** — re-derive it
+  >   before relying on either answer.
+  >
+  > **The `as`-cast clause is why this marker stays, and it was never true rather than having
+  > gone stale.** A TypeScript `as` cast does not truncate — it erases at compile time and
+  > asserts a type that was never checked. That is a *different and larger* hazard than Rust's
   > truncating numeric cast: it produces no runtime error at all. The clause reads as
   > transliterated Rust and should name the real risk — unvalidated `as` on decoded input.
 - **Validate, don't trust** — independently recompute every self-reported
   claim. A post's parent hash, PoW solution, and signature MUST be verified
   by the local node before the post enters the store.
-  > ⚠ **FALSE — two paths write before verifying.** `insertPostPlaceholder` writes a
-  > confirmed row before anything verifies it; and a post is written to `dag_posts` before
-  > its karma-lock transaction validates, with no rollback. (A third path — `onStump`
-  > storing unauthenticated gossip stumps — was closed by P2-F F1: no network path writes
-  > `dag_stumps` anymore; see §3.) **Post PoW is not verified at ordering time either**:
-  > `verifyPoW` has two call sites, both in the verifier, neither reachable from block
-  > application.
+  > ⚠ **FALSE — two paths write before verifying. Verified 2026-08-11.**
+  > `insertPostPlaceholder` writes a confirmed row before anything verifies it; and a post is
+  > written to `dag_posts` before its karma-lock transaction validates, with no rollback.
+  > (A third path — `onStump` storing unauthenticated gossip stumps — was closed by P2-F F1:
+  > no network path writes `dag_stumps` anymore; see §3.)
+  >
+  > ⚠ **The PoW sentence this marker used to carry was wrong and is corrected here.** It said
+  > *"`verifyPoW` has two call sites, both in the verifier"*. There are **three**, and one is
+  > not in the verifier: `net/src/gossip.ts:255` (gossip relay validation),
+  > `verifier.ts:165` (inside `verifyPost`) and `verifier.ts:253` (inside
+  > `verifyPostForRelay`). There is also a **re-export** at `node/src/services/pow.ts:3`,
+  > which is a second entry point under a different module path and is invisible to a search
+  > for callers of the original.
+  >
+  > **What was re-verified:** the call sites and that node's `verifyPost` is reached from
+  > `post-service.ts:145`, the submission path. **What was not:** exhaustive unreachability
+  > from block application. The original "neither reachable from block application" is
+  > therefore neither confirmed nor refuted here — it rests on a search this pass did not run.
 - **Never add checks the reference lacks** — extra validation rules beyond
   the protocol spec create fork surfaces. Every rule is either
   protocol-spec or explicitly local-policy-only.
-  > ⚠ **UNENFORCED, and the premise has no referent.** There **is** no reference
-  > implementation — this node is the only one — so "the reference" names nothing.
-  > **Nothing in the repo marks any rule as protocol-spec or local-policy-only**, which is
-  > precisely the gap the parameter-class convention now fills for configuration and which
-  > remains open for validation rules. `verifyContentCharacters` is an example: an unlisted
-  > post-validity rule that is neither declared protocol nor declared local.
+  > ⚠ **UNENFORCED, and the premise has no referent. Verified 2026-08-11.** There **is** no
+  > reference implementation — this node is the only one — so "the reference" names nothing.
+  > The gap the parameter-class convention fills for configuration remains open for
+  > validation rules: there is no repo-wide register saying which post-validity rules are
+  > protocol and which are local policy.
+  >
+  > ⚠ **This marker's example is stale and is corrected here.** It named
+  > `verifyContentCharacters` as "neither declared protocol nor declared local". It is now
+  > **declared**, at its own definition: `validation/src/content-charset.ts:5` states it is
+  > *"a **consensus Stage-1 check**: every node must reach the same verdict for the same
+  > bytes"*, and derives the pinned-codepoint implementation from that. The declaration lives
+  > in source rather than in a register, which is why a contract-side search did not see it —
+  > and that is the actual shape of the gap: **the knowledge exists per-rule and is nowhere
+  > aggregated.**
 
 ### Storage guarantees
 - **Single-transaction atomic writes** — every post insertion that touches
@@ -1623,7 +1760,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > prefer it: PoW-weighting would let **hashpower buy canonical prominence**, which
   > contradicts *the node records, it doesn't rank*.
   >
-  > ⚠ **PREMISE — re-argue this before making post difficulty dynamic.** The equivalence
+  > ⚠ **QUALIFIED — re-argue this before making post difficulty dynamic. Verified 2026-08-11.**
+  > The equivalence
   > holds **only while post PoW difficulty is static.** If a retarget or user-chosen
   > difficulty is introduced, uniform weight stops equalling cumulative work and this must
   > be decided again — at which point the second reason becomes load-bearing rather than
@@ -1632,13 +1770,16 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **Sort-order determinism** — any operation feeding a Merkle tree or
   content hash MUST have a documented, identical sort order across all
   implementations.
-  > ✅ **CLOSED by Phase 4, 2026-08-10 — the record below is kept because the reasoning
+  > ✅ **RESOLVED — closed by Phase 4, 2026-08-10, re-verified 2026-08-11. The record below is
+  > kept because the reasoning
   > generalises, and because "replace, do not specify" is the decision that produced the whole
   > positional-format bundle.** Both leaves now hash the committed struct's own wire bytes
   > (`subBlockEntryBytes`, `coinbaseOutputBytes`), stated once in `@dagsocial/types`. All five
   > leaf types — `subblock`, `prune`, `coinbase`, `utxotx`, `stump` — speak one dialect.
   >
-  > ⚠ **WAS FALSE on "documented" — and the fix was to change the format, not to document it.**
+  > **The record — this text was FALSE on "documented", and the fix was to change the format
+  > rather than to document it.** No `⚠`: the defect is closed by the `RESOLVED` above, and a
+  > `⚠` here would read as open work.
   > Two consensus Merkle leaf preimages (`subblock`, `coinbase`) were `JSON.stringify` output
   > feeding `subBlockRoot` and `utxoTxRoot` under PoW. Documenting them would commit every
   > future implementation to replicating **ECMAScript JSON semantics** — key order equal to
@@ -1663,12 +1804,18 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **No dependencies above the package's abstraction level** — the storage
   layer depends only on DB bindings and hashing. It MUST NOT import post
   content types, networking code, or UI code.
-  > ⚠ **FALSE in the positive clause; the prohibition holds.** `store/` value-imports CBOR
-  > serializers (`encodeTx`, `decodeTx`, `encodeStump`, `serializePruneEntry`) and
-  > `store/mempool.ts` imports `../config.js` — **the application layer, imported by the
-  > storage layer, and load-bearing** (it carries `MAX_MEMPOOL_ENTRIES` into the capacity
-  > check). The *prohibitions* are respected: post content types are `import type` only,
-  > and there is no networking or UI import.
+  > ⚠ **FALSE in the positive clause; the prohibition holds. Verified 2026-08-11.** `store/`
+  > value-imports serializers — `decodeTx` (`store/faucet-grants.ts:1`), `encodeTx`
+  > (`store/mempool.ts:9`), `encodeStump` (`store/stumps.ts:2`) — and `store/mempool.ts:2`
+  > imports `../config.js`: **the application layer, imported by the storage layer, and
+  > load-bearing** (it carries the mempool cap into the capacity check at `:65`). The
+  > *prohibitions* are respected: post content types are `import type` only, and there is no
+  > networking or UI import.
+  >
+  > **Two details in the old wording were stale and are corrected here:** `serializePruneEntry`
+  > is **no longer** among store's imports — `mempool.ts` takes `computePruneEntryId` instead —
+  > and the capacity constant is now read as `config.maxMempoolEntries`, not the bare
+  > `MAX_MEMPOOL_ENTRIES` the marker named.
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — all five packages carry it.** Note it lives in `packages/*/CLAUDE.md`, not in
@@ -1677,21 +1824,28 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 ### Data integrity
 - **Timestamps are untrusted** — timing-sensitive logic uses DAG depth or
   local wall clock, never a remote post's self-reported timestamp.
-  > ⚠ **FALSE — and the invariant's own escape clause is the deeper problem.** Live
-  > violations: `store/posts.ts` orders feeds by `ORDER BY timestamp DESC` on the
-  > self-reported value; `getPendingPosts` does the same; `sqlite-store.ts` writes
-  > `Date.now()` into the column that is **inside `computePostId`**; the demo UI ranks its
-  > feed by `post.timestamp`.
+  > ⚠ **FALSE — and the invariant's own escape clause is the deeper problem. Verified
+  > 2026-08-11.** Live violations: `store/posts.ts:242` orders feeds by
+  > `ORDER BY timestamp DESC` on the self-reported value; `getPendingPosts` (`posts.ts:256`)
+  > orders on the same untrusted column — **`ASC`, not `DESC` as this marker previously
+  > said**; `sqlite-store.ts:37` writes `Date.now()` into the column that is **inside
+  > `computePostId`**; the demo UI ranks its feed by `post.timestamp`.
   > **"or local wall clock" contradicts the project's own rule that on-chain time is block
   > height.** A *local* wall clock is precisely what makes two nodes disagree. That clause
   > should be struck, not merely qualified — it licenses the failure mode it exists to
   > prevent.
 - **Precondition/postcondition documentation** on every public function in
   the store and service layers.
-  > ⚠ **FALSE — 174 exported functions across `store/` and `services/`, and exactly one
-  > file in `packages/node/src` contains the word "Precondition".** Either the invariant is
-  > adopted for real or it should be dropped; as written it is aspiration in the present
-  > indicative, which is the failure mode the status markers exist to prevent.
+  > ⚠ **FALSE — 172 exported functions across `store/` and `services/`, and exactly one
+  > file in `packages/node/src` contains the word "Precondition". Re-counted 2026-08-11.**
+  > Either the invariant is adopted for real or it should be dropped; as written it is
+  > aspiration in the present indicative, which is the failure mode the status markers exist
+  > to prevent.
+  >
+  > ⚠ **The count was 174 when this marker was written and nothing re-derived it.** It is a
+  > worked example of why every marker here now carries a verification date: the *substance*
+  > held — one file, out of 172 — while the number quietly went wrong. A reader who spot-checks
+  > the number and finds it off has no way to tell whether the argument moved with it.
 
 ---
 
@@ -1740,7 +1894,9 @@ Six rules govern it:
    What the wired trees caught immediately, none of it visible before: a mock summing karma as a JS
    number behind a `bigint` interface whose value the route renders with `.toString()` (wrong output
    past 2^53); fixtures seeding boxes whose `stored.id !== computeBoxId(stored)`, violating the
-   invariant `types/src/utxo.ts:210-212` calls true by construction; and two fixtures carrying
+   invariant `computeBoxId` calls true by construction (`types/src/utxo.ts`, at the
+   `stored.id === computeBoxId(stored)` note above the function — **not `:210-212`, which the old
+   pin named and which is an unrelated comment about `BOX_TYPE.read`**); and two fixtures carrying
    retired guard strings, which are box CONTENT inside the id preimage and therefore described boxes
    that cannot exist. Each package
    carries a `tsconfig.test.json` (`include: ["src", "test"]`) wired into its `typecheck` script, so
@@ -1837,15 +1993,19 @@ fresh. Namespacing keeps the option open to split into separate stores later
   > P2-D (unlike, by feature removal), and `sendCredits` rides block application since
   > P2-B phase 3. See §Invariants → Cross-layer.
 - ~~Like system: locked likes (karma staking) + free likes (post-50), epoch tally~~
-  > ⚠ **SUPERSEDED.** Likes are one-way at 1 karma with no refund, no free tier and no
-  > epoch. The **free-like tier has no producer anywhere in the node** — correctly never
+  > ⚠ **SUPERSEDED. Verified 2026-08-11.** Likes are one-way at 1 karma with no refund, no free
+  > tier and no epoch — `node/src/services/likes.ts` states the rule at its head ("no free tier,
+  > no refund"). The **free-like tier has no producer anywhere in the node** — correctly never
   > built rather than a gap. See §Likes.
 - Invite system: hash-locked bearer invites, bond/probation, cancel
-  > ⚠ **PARTIAL.** A commit now requires a signature from the committed key (H-2), so
-  > "bearer" is qualified; and **bond forfeiture on probation failure is not enforced** —
-  > the invitee can take the bond.
+  > ⚠ **PARTIAL. Verified 2026-08-11.** A commit now requires a signature from the committed key
+  > (H-2), so "bearer" is qualified; and **bond forfeiture on probation failure is not enforced** —
+  > the invitee can take the bond. `node/src/services/utxo-engine.ts` states this at its bond
+  > section: *"Forfeiture is not implemented"*, and records that the economics design owns it.
 - ~~Post karma locking with gradual unlock at epoch boundaries~~
-  > ⚠ **PARTIAL.** The post bond (`PostLockBox`) is real and stays — it is the anti-dodge
+  > ⚠ **PARTIAL. Verified 2026-08-11** — `PostLockBox` is a live interface in
+  > `types/src/utxo.ts` and a member of the `AnyBox` union. The post bond is real and stays — it is
+  > the anti-dodge
   > mechanism. But **"at epoch boundaries" is superseded**: vesting moves to per-block with
   > the epoch's removal, and the `epoch_tally` guard becomes "consumable only by block
   > application."

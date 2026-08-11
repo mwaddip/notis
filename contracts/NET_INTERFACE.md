@@ -47,36 +47,46 @@ framed — they carry raw CBOR directly on the wire as before.
 **The magic is a field of the network profile** (`TYPES_INTERFACE §Network profiles`),
 resolved once at startup from `NETWORK_TYPE`. It is never a per-call-site default.
 
-> ✅ **RESOLVED — verified 2026-08-10. All four links below were annotated ✅ as they closed;
-> only this verdict line was never updated,** so a skim read an open defect while a careful read
-> showed it fully resolved. The caveat under link 4 is a *separate*, still-open gap and is not
-> part of this resolution.
+> ✅ **RESOLVED — verified 2026-08-10, re-verified 2026-08-11 and the last two caveats closed
+> with it.** All four links below were annotated ✅ as they closed; only this verdict line was
+> never updated, so a skim read an open defect while a careful read showed it fully resolved.
+> The two caveats that were still open in 2026-08-10 — the test-side typecheck hole and the
+> "separation does not exist" conclusion — are **both closed as of this pass**; see below.
 >
-> ⚠ **VIOLATED (historical) — the magic is not a fallback, it is the only path. Every node frames
-> as mainnet, on every network, unconditionally.** Measured 2026-08-06, four links:
+> **The record — this was VIOLATED, measured 2026-08-06, and is closed.** No `⚠`: every link
+> below resolved, and a `⚠` here would read as open work. At the time the magic was not a
+> fallback but the only path, and every node framed as mainnet on every network,
+> unconditionally. Four links:
 >
-> 1. **This contract declares `magic: number`** (required). **The code declared
->    `magic?: number`** (`net/src/types.ts:131`) — a pre-existing contract/code drift.
+> 1. **This contract declares `magic: number`** (required). **The code declared it optional**
+>    (`magic?` on `NetConfig` in `net/src/types.ts`) — a pre-existing contract/code drift.
 >    ✅ **Closed by P2-A phase 3b** — the field is required.
-> 2. **The only caller never passed it.** `node/src/index.ts:147-160` constructed `NetConfig`
->    with eleven fields; `magic` was not among them. ✅ **Closed by P2-A phase 2b** — node
->    resolves the profile and passes `config.profile.magic`.
+> 2. **The only caller never passed it.** `node/src/index.ts` constructed `NetConfig` with
+>    eleven fields; `magic` was not among them. ✅ **Closed by P2-A phase 2b** — node resolves
+>    the profile and passes `config.profile.magic` at the single construction site.
 > 3. Ten sites therefore always took `?? MAGIC_MAINNET` — nine in `node.ts`, one in
->    `sync-machine.ts:160`. ✅ **Closed by P2-A phase 3b** — all ten deleted; a missing `magic`
->    is now a compile error at the single construction site.
+>    `sync-machine.ts`. ✅ **Closed by P2-A phase 3b** — all ten deleted; a missing `magic`
+>    is now a compile error.
 > 4. `NETWORK_MODE` fed none of them. ✅ **Closed by P2-A phase 2b** — `NETWORK_TYPE` selects
 >    the profile, and the profile carries the magic.
 >
-> ⚠ **The guarantee in link 3 covers production callers only.** `net`'s `typecheck` is
-> `tsc --noEmit` with `"include": ["src"]`, and vitest does not check types — so **no test-side
-> `NetConfig` literal is statically enforced.** One omitting `magic` would frame with
-> `(undefined << 24 | …) === 0` silently. Extending the guarantee needs a test-covering
-> tsconfig in net's typecheck script; that is the workspace-wide `include: ["src"]` gap, not a
-> net-specific one.
+> ✅ **RESOLVED — the test-side hole in link 3 is closed too. Verified 2026-08-11.** This note
+> used to warn that link 3 covered production callers only, because `net`'s `typecheck` was
+> `tsc --noEmit` over `"include": ["src"]`, leaving no test-side `NetConfig` literal statically
+> enforced. **That is no longer so:** net's `typecheck` script is
+> `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, and `tsconfig.test.json` declares
+> `"include": ["src", "test"]`. The fix it asked for landed and was recorded in
+> `ARCHITECTURE.md` §Build and test resolution — **but never propagated back to this note**,
+> which went on describing the gap for as long as it took Phase 9 to read both.
 >
-> So the transport separation this table describes **does not exist at all**. `MAGIC_TESTNET`
-> has no production consumer; its only reference outside the table is a classifier
-> (`bogus-addr.ts:85`). Testnet and mainnet peers assemble each other's frames today.
+> ✅ **RESOLVED — the transport separation now EXISTS, and this note's conclusion was inverted.
+> Verified 2026-08-11.** It ended *"the transport separation this table describes does not exist
+> at all; `MAGIC_TESTNET` has no production consumer … testnet and mainnet peers assemble each
+> other's frames today."* All three clauses are false now. `MAGIC_TESTNET` is carried by the
+> **testnet profile itself** (`types/src/network.ts`, `magic: MAGIC_TESTNET`) and re-exported
+> through `net/src/frame.ts` and `net/src/index.ts`; node passes `config.profile.magic`, so a
+> testnet node frames as testnet. The classifier in `bogus-addr.ts` is no longer its only
+> reference.
 >
 > **`NetConfig.magic` becomes required, with no fallback.** A default is the wrong shape
 > here — an unset network is not a mainnet node, it is a misconfigured one, and defaulting
@@ -173,14 +183,29 @@ are deleted.
 > **live, and is the only path fork resolution uses.**
 >
 > Two corrections, both true when originally written. **Framed codes 6–7 do now carry bytes** —
-> `node.ts:956,961` dispatch `MSG_GET_SUB_BLOCK` and answer `MSG_SUB_BLOCK_RESPONSE`. And the
-> **bare-`decode()`-plus-a-cast gap is closed** (PR #33): both arms are `arr(item, lp)` over the
-> same positional codec as the rest of the package (`sync-codec.ts:358,362`), so every element
-> runs the four-part boundary check on its own byte span. What has *not* changed is the reason
-> the verdict stays — anyone hardening "the sync path" from this document would still harden the
-> wrong one.
+> `net/src/node.ts` dispatches `MSG_GET_SUB_BLOCK` and answers `MSG_SUB_BLOCK_RESPONSE`. And the
+> **bare-`decode()`-plus-a-cast gap is closed** (PR #33): both arms go through `lpItemsCodec`
+> (`legacyBlocksResponse` and `legacyHeadersResponse` in `net/src/sync-codec.ts`) over the same
+> positional codec as the rest of the package, so every element runs the four-part boundary check
+> on its own byte span. What has *not* changed is the reason the verdict stays — anyone hardening
+> "the sync path" from this document would still harden the wrong one.
 >
-> `ARCHITECTURE.md` also describes header-first sync as implemented. Still wrong; fix together.
+> ⚠ **Re-verified 2026-08-11: the verdict holds and both line pins had rotted.**
+> `/dagsocial/headers/1` is live — `HEADERS_PROTOCOL` is declared in `net/src/sync.ts`, served
+> via `libp2p.handle(HEADERS_PROTOCOL, …)` and requested through `requestHeaders`, all in
+> `net/src/node.ts`. The old pins `node.ts:956,961` now land on `let code: number;` and
+> `body = framed.body;`, and `sync-codec.ts:358,362` on closing braces. **Symbols replace them.**
+>
+> ⚠ **This note used to say `ARCHITECTURE.md` also describes header-first sync as implemented.
+> It does not — verified 2026-08-11, the phrase appears nowhere in that file.** The claim lives
+> in `CLAUDE.md`, `README.md` (three places), and **this contract's own opening line**. Fix
+> those together; `ARCHITECTURE.md` needs nothing.
+>
+> ⚠ **Second instance of one pattern:** a Phase 9 item also booked "`ARCHITECTURE.md` describes
+> `@dagsocial/wire` as the stream-framing package", and that text is in `CLAUDE.md`/`README.md`
+> too. **`ARCHITECTURE.md` is being cited as the home of root-level prose it does not contain** —
+> when correcting a claim, re-derive where the claim actually lives rather than inheriting the
+> pointer.
 
 ---
 
@@ -236,9 +261,11 @@ sends its magic; the inbound side echoes it back. Both sides verify the
 magic matches their own network's magic bytes in the frame. Anti-replay,
 validates both sides agree on network.
 
-> ⚠ **NOT IMPLEMENTED — the anti-replay check does not exist.** Both sides generate a
-> `sessionMagic` and **neither ever echoes or compares it.** The field is populated and
-> discarded, so the handshake provides no replay protection whatsoever. Network agreement
+> ⚠ **NOT IMPLEMENTED — the anti-replay check does not exist. Verified 2026-08-11.** Both sides
+> generate a `sessionMagic` (`net/src/node.ts`, `Math.random()`-derived) and **neither ever
+> echoes or compares it.** `net/src/handshake.ts` bounds-checks the field and copies it into the
+> parsed result; that is the whole of its handling. The field is populated and discarded, so the
+> handshake provides no replay protection whatsoever. Network agreement
 > is established by the **frame magic** (`MAGIC_MAINNET`/`MAGIC_TESTNET`), which is a
 > separate mechanism and does work — so the second half of this paragraph holds while the
 > first does not.
@@ -301,11 +328,19 @@ All messages are CBOR-encoded bodies wrapped in frames.
 > and has **no body-download phase**; the watermark and durability protocol described
 > below is unimplemented. Two specific mechanisms documented here do not exist:
 >
-> - **Common-ancestor discovery.** `anchors` are built, sent, validated and capped — and
->   **never read** by the receiver. There is no ancestor search.
-> - **The framed protocol is not the live path.** `/dagsocial/headers/1` — documented
->   elsewhere in this file as *deleted* — is live and is the **only** path fork resolution
->   uses. Framed codes 6–7 have never carried a byte.
+> - **Common-ancestor discovery.** `anchors` are built (`getAnchors` in `net/src/node.ts`), sent
+>   (`net/src/sync-machine.ts`), decoded (`net/src/sync-codec.ts`) and capped — and **never
+>   read** by the receiver: the cap check counts them, nothing consumes their values. There is
+>   no ancestor search. **Verified 2026-08-11.**
+> - **The framed protocol is not the live path.** `/dagsocial/headers/1` — described elsewhere
+>   in this file as *removed* — is live and is the **only** path fork resolution uses.
+>
+>   ⚠ **This bullet used to end "Framed codes 6–7 have never carried a byte", and that is
+>   FALSE — corrected 2026-08-11.** `net/src/node.ts` dispatches `MSG_GET_SUB_BLOCK` and answers
+>   `MSG_SUB_BLOCK_RESPONSE`. The `⚠ VIOLATED` note ~150 lines above **already recorded this**
+>   as one of its "two corrections". **Two markers in one file, on one subject, disagreeing** —
+>   the same shape as the removed-protocols table below. The live-path claim is what survives;
+>   the never-carried-a-byte claim does not.
 >
 > Per-mechanism status is marked below. Inventory: `prompts/audit-net.report.md`.
 
@@ -584,9 +619,12 @@ in (from a handshake or from intake), so a well-behaved node cannot
 produce an invalid entry.
 
 > ⚠ **VIOLATED — that justification enumerates two intakes and there are three.
-> Recorded 2026-08-10.** `PeerDb`'s constructor loads persisted rows straight
-> from `PeerStorage.loadAll()` into `entries`, filtered only for our own address
-> (`peerdb.ts:22-27`). It is the third intake and the one that validates nothing.
+> Recorded 2026-08-10, re-verified 2026-08-11.** `PeerDb`'s constructor loads persisted rows
+> straight from `PeerStorage.loadAll()` into `entries`, filtered only for our own address —
+> the `for (const rec of storage.loadAll())` loop in `net/src/peerdb.ts`. It is the third
+> intake and the one that validates nothing. (`loadAll` resolves to `loadAllPeers` in
+> `node/src/store/peers.ts`.) **This note's line pin was one of the few in this file that
+> still resolved correctly.**
 > Node's `loadAllPeers` skips a row whose capabilities JSON is *corrupt*, but does
 > not bound the values and never inspects `protocol_version`.
 >
@@ -864,12 +902,19 @@ the band-aid; the root cause was the second dialect, so the dialect is gone.
 Removed protocols:
 - Old `/dagsocial/sync/1` (individual sub-block request/response) —
   replaced by framed GetSubBlock/SubBlockResponse (codes 6-7)
-- ~~`/dagsocial/headers/1` — replaced by framed SyncInfo/Inv/ModifierRequest/ModifierResponse
-  (codes 2-5)~~ ⚠ **WRONG, and it was wrong when written.** The framed codes exist; nothing routes
-  fork resolution through them. This row said "removed" of the one protocol the live path depends on,
-  while a ⚠ note ~600 lines up already said so — **the contract contradicted itself in two places and
-  the table half was never corrected.** Retiring it in favour of codes 2-5 is a real question and is
-  still open; until then this table describes what runs.
+- **`/dagsocial/headers/1` — NOT removed. Still live, and still the path fork resolution uses.**
+
+  > ⚠ **FALSE — this row claimed a removal that never happened, and it was false when written.
+  > Verified 2026-08-11.** The strikethrough is deleted rather than kept: struck text is skipped
+  > by every reader, so a live warning parked inside it is invisible — and this row is the one
+  > entry in a "Removed protocols" list that describes a protocol still carrying production
+  > traffic. The framed codes 2-5 exist; nothing routes fork resolution through them.
+  > `HEADERS_PROTOCOL` is declared in `net/src/sync.ts` and served from `net/src/node.ts`.
+  >
+  > **The contract contradicted itself in two places** — a `⚠` note ~600 lines above said the
+  > protocol was live while this table said it was removed, and only the note was ever corrected.
+  > Retiring it in favour of codes 2-5 is a real question and is **still open**; until then this
+  > table describes what runs.
 
 ---
 
@@ -1008,21 +1053,28 @@ them.
 | `magic` | Frame assembly and the frame-magic check | ✅ Supplied by the node from its resolved profile — see §Magic Bytes |
 | `postPowTargetBits` | `gossip.ts:255` verifies post PoW before relay | ✅ Supplied by the node; `net/src` imports no PoW constant |
 
-> ✅ **RESOLVED — verified 2026-08-10, closed by P2-A.** `gossip.ts:255` calls
+> ✅ **RESOLVED — closed by P2-A, re-verified 2026-08-11.** `net/src/gossip.ts` calls
 > `v.verifyPoW(powInput, post.powNonce, postPowTargetBits)` with the parameter threaded from
-> `config.postPowTargetBits` (`node.ts:669`), and `POST_POW_TARGET_BITS` appears nowhere in
-> `net/src`. *Historical:* it checked against the compile-time constant, making post difficulty
+> `this.config.postPowTargetBits` in `net/src/node.ts`, and `POST_POW_TARGET_BITS` occurs
+> **0 times across every package's `src`**.
+>
+> ⚠ **It occurs 10 times in `net/test`.** The production path is clean; the test tree still
+> asserts against the compile-time constant rather than the profile field. That passes only
+> because the suite runs on the profile where the two are equal by construction — carried
+> register #23, and this is a net-side instance of it. *Historical:* it checked against the compile-time constant, making post difficulty
 > network-invariant at the relay boundary even though it is a profile field — **a devnet node
 > would have rejected its own network's posts**, mined at devnet's target and checked against
 > mainnet's, before they ever reached the node.
 
-> ✅ **RESOLVED — verified 2026-08-10. The resolution stated at the foot of this note was
-> carried out:** `net/src/config.ts` no longer exists, `loadNetConfig` is gone, and
-> `NETWORK_MAGIC` appears in no `src` in any package. Net receives configuration; it does not
-> resolve it.
+> ✅ **RESOLVED — verified 2026-08-10, re-verified 2026-08-11 by count. The resolution stated at
+> the foot of this note was carried out:** `net/src/config.ts` no longer exists, `loadNetConfig`
+> occurs 0 times in any `src`, and `NETWORK_MAGIC` occurs 0 times in any `src` in any package.
+> Net receives configuration; it does not resolve it.
 >
-> ⚠ **VIOLATED (historical) — `NETWORK_MAGIC`, an undocumented `network-identity` environment
-> read.** `net/src/config.ts:5`:
+> **The record — this was VIOLATED: `NETWORK_MAGIC`, an undocumented `network-identity`
+> environment read.** No `⚠`: it is closed, and the code below is quoted from a file that has
+> since been deleted. **A pin into a file that no longer exists is correct here** — being gone
+> is the resolution, not rot. It read, in the former `net/src/config.ts`:
 > ```ts
 > magic: parseInt(process.env['NETWORK_MAGIC'] ?? '0x54444147', 16), // default testnet
 > ```

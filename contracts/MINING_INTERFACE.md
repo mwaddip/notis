@@ -111,9 +111,10 @@ Phase 1 uses a **fixed target**, sourced from the network profile:
 expectedTarget(height) = profile.orderingBlockPowTargetBits   // constant in height, Phase 1
 ```
 
-> ✅ **IMPLEMENTED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10.** It
+> ✅ **RESOLVED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10,
+> re-verified 2026-08-11.** It
 > read "the profile does not exist yet"; it does (`TYPES_INTERFACE §Network profiles`), and
-> `config.ts:101` sources `orderingBlockPowTargetBits` from it, so the value is no longer a
+> `node/src/config.ts` sources `orderingBlockPowTargetBits` from it, so the value is no longer a
 > per-process environment read. ⚠ **The `VIOLATED` note under invariants 4/5/7 still describes
 > the environment-read world and has not been re-ruled** — do not read the two as agreeing.
 >
@@ -276,16 +277,25 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 | `CREDIT_INITIAL_REWARD` | constant | no | Credits per block in the fixed-rate period, base units of 10⁻⁸ |
 | `CREDIT_TREASURY_PCT` | constant | no | Percent to treasury |
 
-> ⚠ **PARTLY IMPLEMENTED — corrected 2026-08-10. The old text said all of these were
-> environment-readable; none of the three states below is that.** `orderingBlockPowTargetBits`
-> and `treasuryPubKey` are profile-sourced (`config.ts:101,103`). The other three are
-> **neither profile-sourced nor environment-readable**: `block-creator.ts:242,246,619` and
-> `block-apply.ts:338` read `CREDIT_FIXED_RATE_BLOCKS`, `CREDIT_EPOCH_BLOCKS` and
-> `CREDIT_MINER_REWARD_DELAY` as module constants, bypassing the profile.
+> ✅ **RESOLVED — the bypass is closed. All five are profile-sourced. Verified 2026-08-11.**
+> This read `PARTLY IMPLEMENTED` until Phase 9.
 >
-> **So devnet's compressed values for those three are defined and never read** — a devnet node
-> runs mainnet emission and maturity timing. `block-apply.ts:338` is an apply-time check, which
-> makes re-pointing it a consensus change rather than a refactor. Recorded as a node unit.
+> `orderingBlockPowTargetBits` and `treasuryPubKey` were already profile-sourced. **The other
+> three now are too:** `node/src/config.ts` reads `creditFixedRateBlocks`, `creditEpochBlocks`
+> and `creditMinerRewardDelay` from the profile, `computeBlockReward` uses
+> `nodeConfig.creditFixedRateBlocks` / `nodeConfig.creditEpochBlocks` rather than the module
+> constants, and **`CREDIT_FIXED_RATE_BLOCKS` and `CREDIT_EPOCH_BLOCKS` occur zero times in
+> `packages/node/src`**.
+>
+> **Devnet's compressed values are now read.** `types/src/network.ts` sets `1000` and `100` on
+> the devnet profile against mainnet's constants, and those are the numbers a devnet node uses.
+> The consequence this marker recorded — *"a devnet node runs mainnet emission and maturity
+> timing"* — no longer holds.
+>
+> ⚠ **The record of what it was, because the fix crossed a consensus boundary.**
+> `block-apply.ts`'s maturity check is apply-time, so re-pointing it at the profile was a
+> **consensus change rather than a refactor** — noted here so the change is visible to anyone
+> reconstructing why devnet and mainnet emission diverged.
 >
 > ⚠ **The bypass class is wider than this table.** This table holds mining values, so an
 > enumeration run from it finds three. Enumerating `NetworkProfile` itself finds **five** — the
@@ -322,7 +332,7 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    schedule is a pure function of height, that is the same value on every node and
    for all time.
 
-> ✅ **RESOLVED — verified 2026-08-10, closed by P2-A.** `config.ts:101` sources
+> ✅ **RESOLVED — closed by P2-A, re-verified 2026-08-11.** `node/src/config.ts` sources
 > `orderingBlockPowTargetBits` from the network profile, so it is no longer a per-process
 > environment value and both consequences below are closed: there is no per-process
 > `ORDERING_BLOCK_POW_TARGET_BITS` for two nodes to diverge on, and changing the value now
@@ -331,19 +341,29 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 >
 > *Historical, kept because the reasoning is the record:*
 >
-> ⚠ **VIOLATED — invariants 4, 5 and 7. The rules are correct; the implementation is not.**
-> `expectedTarget(_height)` **discards its height argument** and returns
-> `config.orderingBlockPowTargetBits`, a per-process environment value. Two consequences,
-> and the second is the worse one:
+> ⚠ **VIOLATED — invariants 4, 5 and 7. The rules are correct; the implementation is not.
+> Re-verified 2026-08-11: the core violation stands, and one of its two consequences has
+> closed.** `expectedTarget(_height)` in `node/src/services/difficulty.ts` **discards its
+> height argument** and returns `config.orderingBlockPowTargetBits` — three lines, no schedule.
 >
-> 1. **Cross-node.** Two nodes with different `ORDERING_BLOCK_POW_TARGET_BITS` reject each
->    other's blocks on *every* block — a permanent partition from the first block after
->    divergence, not a reorg.
-> 2. **Retroactive.** Because height is ignored, changing the value re-targets *history*:
->    on the next resync, reorg, or restart-and-revalidate, every previously-accepted block
->    is re-checked against the new value and rejected. Invariant 7's "the same value on
->    every node and for all time" is precisely what does not hold. A schedule keyed to
->    height would have that property; a constant read from the environment cannot.
+> 1. ✅ **Cross-node — CLOSED.** This said *"two nodes with different
+>    `ORDERING_BLOCK_POW_TARGET_BITS` reject each other's blocks on every block."* That
+>    environment variable no longer exists: P2-A removed it, and the value is now
+>    **profile-sourced** (`node/src/config.ts` takes it from `profile.orderingBlockPowTargetBits`).
+>    Two nodes on the same network agree by construction, and two on different networks carry
+>    different frame magic and never peer. **The per-process divergence this described is gone.**
+> 2. ⚠ **Retroactive — STILL OPEN, and it is the worse one.** Because height is ignored,
+>    changing the value re-targets *history*: on the next resync, reorg, or
+>    restart-and-revalidate, every previously-accepted block is re-checked against the new
+>    value and rejected. Invariant 7's "the same value on every node and for all time" is
+>    precisely what does not hold. Profile-sourcing narrowed the blast radius from
+>    per-process to per-release; **it did not make the check height-keyed.** A schedule keyed
+>    to height would have that property; a single constant, wherever it is read from, cannot.
+>
+> ⚠ **`expectedTarget` being constant is load-bearing elsewhere.** The reorg guard checks
+> **height** as a proxy for the **work** criterion, and the two coincide *only* because this
+> function returns a network constant. Whoever lands retargeting owns both — carried register
+> #5, and `NODE_INTERFACE` states the same expiry on its reorg bullet.
 >
 > These invariants are **kept as written** — they state the intended rule, and Phase 2
 > makes them true. Do not weaken them to match the code.

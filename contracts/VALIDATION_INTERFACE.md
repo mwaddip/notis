@@ -373,20 +373,23 @@ is `isU64Safe`**, **`producerId` is exactly 32 bytes**, and
 **`verifyPostFieldDomains(sb.post)`**. Returns `{ valid, error }`. (The
 `likeBoxes` array check died with the sidecar field — P2-D.)
 
-> ⚠ **AHEAD OF CODE — the three `SubBlock` domain pins.** Today this function
-> checks `subBlockId` and `producerId` for **truthiness** and `protocolVersion`
-> for `typeof === 'number'`. All three feed throwing fixed-width writers in the
-> `SUB_BLOCK` codec — `writeHexNOrThrow(subBlockId, 32)`,
-> `writeBytesNOrThrow(producerId, 32)`, `writeVlqU(protocolVersion)` — so the
-> declared wire domains are 64 lowercase hex, exactly 32 bytes, and `isU64Safe`.
-> **`subBlockId: 'x'` passes every check here today and throws in the writer**;
-> so does `protocolVersion: 1.5`.
+> ✅ **RESOLVED — the three `SubBlock` domain pins have LANDED. Verified 2026-08-11.** This read
+> `AHEAD OF CODE` until Phase 9, and the code has since caught up: `verifySubBlockStructure`
+> now checks `isHex32(sb.subBlockId)`, `isU64Safe(sb.protocolVersion)` and
+> `isBytesOfLength(sb.producerId, 32)` — exactly the three declared wire domains, in that order,
+> each with a comment naming the writer it feeds.
 >
-> Same rule Phase 1c established for the header and 1e for the ordering block,
-> applied to the struct **both phases skipped**. The LEDGER's Gate B recorded it:
-> the unpinned rows cluster in `CoinbaseOutput` and `SubBlock`, "the two structs
-> 1e and 1f never covered". The `CoinbaseOutput` four were closed by **#32**;
-> these three are the remainder.
+> **The record of what it was.** The function checked `subBlockId` and `producerId` for
+> **truthiness** and `protocolVersion` for `typeof === 'number'`, while all three fed throwing
+> fixed-width writers in the `SUB_BLOCK` codec — `writeHexNOrThrow(subBlockId, 32)`,
+> `writeBytesNOrThrow(producerId, 32)`, `writeVlqU(protocolVersion)`. So `subBlockId: 'x'`
+> passed every check and threw in the writer, and so did `protocolVersion: 1.5`.
+>
+> Same rule Phase 1c established for the header and 1e for the ordering block, applied to the
+> struct **both phases skipped**. The LEDGER's Gate B recorded the unpinned rows clustering in
+> `CoinbaseOutput` and `SubBlock`, "the two structs 1e and 1f never covered". The
+> `CoinbaseOutput` four were closed by **#32**; **these three are now closed too**, which
+> retires that Gate B cluster entirely and closes the `SubBlock` half of carried register #1.
 >
 > ⚠ **`Post.powNonce` and `Post.signature` are a different question and are NOT
 > part of this obligation.** Neither appears in `verifyPostFieldDomains`, yet
@@ -411,19 +414,25 @@ is `isU64Safe`**, **`producerId` is exactly 32 bytes**, and
 > These checks reject nothing on that path.
 >
 > **That relocates their teeth rather than removing them.** They are the stated
-> rejection for any path that builds a `SubBlock` *without* the decoder, and there
-> is one: `net/src/node.ts:951` and `:960` take `getSubBlock`'s return — typed
-> `unknown` (`node.ts:203`) — cast it `as SubBlock`, and hand it straight to
-> `encodeSubBlock` with no validation of any kind. Its fields are in domain today
-> only by **store-write discipline across a package boundary**, every writer of
-> those columns sitting behind `verifyPost` or `verifyPostForRelay`. These pins
-> turn that unchecked cross-package invariant into a check wherever this function
-> runs.
+> rejection for any path that builds a `SubBlock` *without* the decoder.
 >
-> **The general form: a reachability argument is a claim about the rest of the
-> tree, and this one expired when the tree moved under it** — the same lesson the
-> `readArray` "no callers" parenthetical taught, arriving from the opposite
-> direction. A check justified by a path can outlive the path.
+> ✅ **The unvalidated serve path this note named is CLOSED. Verified 2026-08-11.** It read:
+> *"`net/src/node.ts:951` and `:960` take `getSubBlock`'s return — typed `unknown` — cast it
+> `as SubBlock`, and hand it straight to `encodeSubBlock` with no validation of any kind."*
+> Both serve arms — the legacy text protocol and the framed `MSG_GET_SUB_BLOCK` — now call
+> **`encodeServableSubBlock(subBlock, this.validators, id)`**, which takes `unknown` and runs
+> the validator before encoding; a row we hold but cannot encode is answered exactly like a row
+> we do not hold. `getSubBlock` still returns `unknown`, and that is now harmless because the
+> cast no longer happens. **Carried register #22 is closed, including its rider** —
+> `encodeSubBlock` occurs 0 times in `net/src/sync.ts`, so the dead import is gone too.
+>
+> ⚠ **This note's own closing lesson fired on this note.** It ended: *"a reachability argument
+> is a claim about the rest of the tree, and this one expired when the tree moved under it… a
+> check justified by a path can outlive the path."* Written about the *gossip* justification,
+> it then applied verbatim to the **replacement** justification in the very next paragraph: the
+> serve path was hardened and the note went on citing it as unguarded. **The lesson was correct,
+> general, and not applied to the sentence sitting beside it.** All three line pins had rotted
+> as well — `:951` and `:960` now land on `stream.sink` and `code = framed.code`.
 
 > ⚠ **It does NOT yet close the node's two verifier functions or the content
 > sweep.** `verifyPost`, `verifyPostForRelay` and `content-sweep.ts:92` reach
@@ -521,13 +530,33 @@ reason rather than a boolean, and Phase 1e's teeth demonstration asserts those s
 block-level checks (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `coinbaseOutputs`,
 `validatorSignature`) stay here: they are not header fields and no header predicate can see them.
 
-> ⚠ **AHEAD OF CODE — this function shrinks to its semantic residue.** Under the positional wire
-> format (`docs/specs/2026-08-09-positional-wire-format.md`), *structure* is guaranteed by the
-> decoder: a block that decodes has every declared field, at its declared type and length, with no
-> unknown keys. Field-presence checks, `typeof` checks, 64-char hex checks, `isBytes` checks and the
-> `trigger` enum check all become dead code and are deleted with it.
+> ⚠ **FALSE — the shrink this marker predicted is REFUTED, not delivered. Verified 2026-08-11.**
+> It read `AHEAD OF CODE` until Phase 9. **It is not being retired as "done": its premise was
+> never true**, and recording it as completed would write a false history of why this function
+> looks the way it does.
 >
-> **What survives, because a codec cannot know it:**
+> **The premise was that the positional decoder makes field-presence and type checks dead code.
+> That holds for one of three production callers:**
+>
+> | Caller | Upstream | Codec guarantee? |
+> |---|---|---|
+> | `net/src/gossip.ts` | `decodeOrderingBlock(raw)` | yes |
+> | `net/src/serve-encode.ts` | **store read** — `encodeServable` does a bare `value as T` | **none** |
+> | `node/src/services/block-apply.ts` | gossip, sync, `fork-resolution`, **and `block-creator`'s locally-mined block built in-process** | none for our own block |
+>
+> `serve-encode.ts`'s own failure message is `stored row is out of domain`. **Those type checks
+> are the only gate on two of the three paths**, because store corruption can put any type in
+> any field — so deleting them as "subsumed by the codec" would remove the only check standing
+> between a corrupt row and a peer.
+>
+> **The shrink that was real already happened, incrementally and elsewhere.** Phase 1f moved
+> every header field check into `HEADER_DOMAIN` / `firstHeaderDomainFailure`; Phase 3b deleted
+> the `subBlockRefs` presence and alignment checks along with the field. What remains *is*
+> already "what the codec cannot guarantee" — it merely also coincides with what the store path
+> needs. Full argument: `docs/specs/2026-08-10-pow-nonce-split.md` §4.1.
+>
+> **The table below is kept, because it is correct about what this function must never lose.**
+> What survives, and a codec cannot know:
 >
 > | Check | Why the codec can't |
 > |---|---|
@@ -566,8 +595,9 @@ block-level checks (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `co
 
 ### verifyBlockChainLink
 
-> ⚠ **NEVER BUILT as described, and it has no production caller.** The function exists but
-> nothing in `packages/node/src` calls it — the chain-link check on the live path is done
+> ⚠ **NEVER BUILT as described, and it has no production caller. Verified 2026-08-11.** The
+> function exists — defined and exported from `@dagsocial/validation` — but
+> `packages/node/src` calls it **zero times**; the chain-link check on the live path is done
 > elsewhere. It also documents fields that **stopped existing on 2026-07-24**, and the same
 > refactor left a phantom `hash` check in the structure list below. Kept so it is not
 > re-adopted on the assumption that it is the sanctioned chain-link check; **verify what
@@ -620,6 +650,11 @@ External queries serve only up to `post_validated_height`.
 > `post_validated_height`" is false — every query serves the DAG tip.** The two
 > similarly-named values that do exist in `dag_meta` are **write-only `+1` counters**:
 > nothing reads them, nothing resets them on reorg, and they are not heights.
+>
+> **Re-verified 2026-08-11.** The two keys are `last_indexed_sequence` and
+> `last_validated_sequence`, and each occurs exactly **twice** in `node/src` — the
+> `advanceWatermark(...)` write in `post-service.ts` and the key's own type annotation on that
+> helper's signature. **No read site exists.**
 >
 > Kept rather than deleted so this is not re-added as an apparent oversight. The same
 > claim also appears in `NODE_INTERFACE.md → Service Layer Architecture` — **if this is

@@ -300,10 +300,11 @@ mempool-side mirror of the apply-time gate, not the only enforcement (see
 "Vouch transition rules"). The single-active-vouch and pending-vouch checks
 above remain service-layer policy.
 
-> ⚠ **NOT IMPLEMENTED (recorded 2026-08-08) — the demo UI's vouch controls do
-> not construct transactions.** Both mutating routes require a client-signed
-> `tx` (P2-B phase 2), but the UI's vouch button still POSTs
-> `{userId, targetId}` and the unvouch button DELETEs with `{userId}` — both
+> ⚠ **NOT IMPLEMENTED (recorded 2026-08-08, re-verified 2026-08-11) — the demo UI's vouch
+> controls do not construct transactions.** Both mutating routes require a client-signed
+> `tx` (P2-B phase 2), but the UI's vouch handler still sends
+> `JSON.stringify({ userId, targetId })` and unvouch sends `JSON.stringify({ userId })`
+> (`node/public/index.html`, the `vouchBtn` / `unvouchBtn` click handlers) — both
 > die at the routes' `tx required` 400 before `jsonToTx` runs. The UI was
 > never migrated when vouches became transactions; it has `signTxId` builders
 > for karma-lock, like, transfer, and invite commit/reveal, but none for
@@ -529,8 +530,13 @@ endpoint semantics in `MINING_INTERFACE.md`.
 |--------|------|----------|
 | `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, totalCredits, inviteProbationBlocks }` |
 
-> ⚠ **AHEAD OF CODE — `inviteProbationBlocks` (2026-08-10).** A plain `number`, not a decimal
-> string: unlike `totalKarma` / `totalCredits` it is not a `bigint` server-side.
+> ✅ **RESOLVED — `inviteProbationBlocks` is served. Verified 2026-08-11.** This read
+> `AHEAD OF CODE` until Phase 9. The node resolves it from the network profile in
+> `node/src/config.ts` and serves it from both `node/src/server.ts` and the status route in
+> `node/src/routes/blocks.ts`; the demo UI consumes it rather than holding a constant.
+> Confirmed against the running node as well — `notis.fun/testnet/api/status` returns
+> `inviteProbationBlocks`. A plain `number`, not a decimal string: unlike `totalKarma` /
+> `totalCredits` it is not a `bigint` server-side.
 >
 > **Why a per-network value has to be served rather than known.** The demo UI builds bond commits,
 > and `utxo-engine` requires the probation window to equal `config.inviteProbationBlocks`
@@ -1703,13 +1709,18 @@ Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
 If `treasuryPubKey` is configured, `CREDIT_TREASURY_PCT` (10%) goes to treasury.
 
 > ⚠ **VIOLATED — the lock has no spend-time enforcement, so it is decorative.**
-> Measured 2026-08-07. `lockedUntilBlock` is checked when a coinbase output is
-> *created* (`block-apply` rejects a block whose coinbase carries the wrong
-> lock) and used as a *selection* filter (`getUnlockedCreditBoxes`, for the UI
-> and faucet). No validation path reads it: `validateTx`, `checkTransitions`
-> and `checkGuards` never mention it, and `net.onTx` calls `validateTx` and
-> nothing else — so a gossiped transaction naming a locked coinbase box as an
-> input pools and applies today.
+> Measured 2026-08-07, **re-verified 2026-08-11 by reading every `lockedUntilBlock` occurrence
+> in `node/src`.** It is checked when a coinbase output is *created* (`block-apply` rejects a
+> block whose coinbase carries the wrong lock) and used as a *selection* filter
+> (`getUnlockedCreditBoxes` in `node/src/store/utxo.ts`, for the UI and faucet). No validation
+> path reads it: `validateTx`, `checkTransitions` and `checkGuards` never mention it, and
+> `net.onTx` calls `validateTx` and nothing else — so a gossiped transaction naming a locked
+> coinbase box as an input pools and applies today.
+>
+> ⚠ **Do not mistake the field-shape entry for enforcement.** `utxo-engine.ts` declares
+> `{ lockedUntilBlock: 'uint' }` in its box-shape table. That constrains the field's *type* on a
+> decoded box; it says nothing about whether the box may be spent, and it is the only mention of
+> the name anywhere near the validation path.
 >
 > **Enforcing it is not a one-line check**, and that is why it is recorded
 > rather than fixed. `mintCredits` consolidates *every* credit box an owner
@@ -2082,10 +2093,15 @@ Records are fed in the same canonical order as boxes (lexicographic by hex key).
 A bootstrapped tree and a live tree must agree once records exist, and that
 needs a test.
 
-> ⚠ **SUPERSEDED (2026-08-07) — rebuilding the tree from the UTXO set is being
-> removed, because it is both unreachable and unsound.** The requirement above
-> was the right fix for the tree it described; the mechanism itself does not
-> survive scrutiny.
+> ⚠ **SUPERSEDED (2026-08-07) — rebuilding the tree from the UTXO set is unreachable and
+> unsound, and the requirement above is retired. Re-verified 2026-08-11.** The requirement
+> was the right fix for the tree it described; the mechanism itself does not survive scrutiny.
+>
+> ⚠ **The code has NOT been deleted.** `bootstrapAvlProver` still exists in
+> `node/src/state/avl-prover.ts`, and `store/identity-records.ts` still carries a note naming
+> it as a caller. This marker read "is being removed" — a *decision*, stated in the future
+> tense, which then never got a follow-up. **Superseded describes the requirement; it does not
+> describe the tree.** Deleting the function is open work.
 >
 > - **Unreachable.** The trigger is `storage.version() === null`, and under
 >   `@ergots/avltree` 0.4.0 the `PersistentBatchAVLProver` constructor writes
@@ -2497,11 +2513,20 @@ Measured: identical length, different bytes (`…6d6f726967696e616c56616c7565…
 > legitimately move and every id-asserting test updates together, so folding it
 > in costs no extra churn; doing it earlier moves ids twice.
 
-> ✅ **LANDED — phase G3b, 2026-08-06. This hazard is CLOSED.** Both encoders now sort
-> keys (`canonicalBoxBytes` → `encodeForHash(sortKeys(rest))`; `serialize-box.ts` →
-> `cborEncode(sortKeys(fields))`), so a producer no longer chooses key order and cannot
-> get it wrong. **`post_lock`'s producer-vs-`rowToBox` divergence is fixed by the sort,
-> not by reordering that site.**
+> ✅ **RESOLVED — closed in phase G3b 2026-08-06, and closed *harder* since. Re-verified
+> 2026-08-11.** The hazard was that a producer chose CBOR map key order, making field order
+> consensus-visible. G3b fixed it with a `sortKeys` pass on both encoders.
+>
+> ⚠ **That description is now stale: `sortKeys` has ZERO call sites.** The positional migration
+> superseded it — a positional layout has fixed field order, so the whole class is retired **by
+> construction rather than by a sort**, and a stray extra key on a box object is unrepresentable
+> because the encoder reads only the fields it declares. `types/src/utxo.ts` states this at
+> `canonicalBoxBytes`. **`post_lock`'s producer-vs-`rowToBox` divergence is closed by the
+> layout, not by the sort and not by reordering that site.**
+>
+> This is the second marker in Phase 9 found describing a fix that a later phase replaced with a
+> stronger one (see `WIRE_INTERFACE` §VLQ). **A `RESOLVED` records that the hazard is gone; it
+> does not promise the named mechanism is still the one holding.**
 >
 > ⚠ **The paragraph above previously ended with an interim rule that is now actively
 > harmful and has been removed:** *"Until then, producers and `rowToBox` MUST agree on
@@ -2649,10 +2674,17 @@ The store layer is backend-agnostic. All storage access goes through the
 `PostStore` interface. The SQLite implementation (`SqlitePostStore`) is the
 default.
 
-> ⚠ **NEVER BUILT — NOT PLANNED, and this one is actively dangerous.**
+> ⚠ **NEVER BUILT — NOT PLANNED, and this one is actively dangerous. Verified 2026-08-11.**
 > **"All storage access goes through the `PostStore` interface" is false.** Nothing routes
 > through it. Every real write path is a module function in `store/*`, and the abstraction
 > is wired but never called.
+>
+> **The wiring is real and the calls are not, which is what makes this easy to misread.**
+> `node/src/index.ts` constructs `new SqlitePostStore()` and injects it into `DagService`,
+> and `DagService` is live throughout block application and reorg. But `dag-service.ts`
+> references `this.store` **zero times** — the constructor parameter is stored and never used —
+> and `putBatch` and `put` have **zero callers** anywhere in `node/src`. Injection is not a
+> route.
 >
 > **Its `put()` would corrupt `dag_posts` if used.** A future session that reads this
 > section, believes the abstraction is the sanctioned path, and writes through it will
@@ -2752,7 +2784,8 @@ A post failing Phase N is rejected before Phase N+1 runs.
 Invariant: `post_validated_height <= post_indexed_height <= dag_tip_height`.
 External queries serve only up to `post_validated_height`.
 
-> ⚠ **NEVER BUILT — NOT PLANNED.** Neither identifier exists in `packages/`. Queries serve
+> ⚠ **NEVER BUILT — NOT PLANNED. Verified 2026-08-11: `post_indexed_height` and
+> `post_validated_height` are both 0 occurrences across `packages/`.** Queries serve
 > the DAG tip, not a validated watermark. The `dag_meta` values with similar names are
 > write-only `+1` counters — not heights, never read, not reset on reorg. Duplicated in
 > `VALIDATION_INTERFACE.md → Phased Validation Pipeline`; **change both together or
@@ -2861,11 +2894,11 @@ All config via environment variables with defaults.
 convention exists because the absence of one is a live defect class: nothing marked which variables an
 operator may safely change, and four consensus parameters were environment-tunable.
 
-> ✅ **DONE — P2-A removed all ten from the environment** (PR #8, `4670ae5`). They did not
+> ✅ **RESOLVED — P2-A removed all ten from the environment** (PR #8, `4670ae5`). They did not
 > become better-documented environment variables; they stopped being configuration. **Five**
 > are now fields of the **network profile** and **five** are plain universal constants in
-> `@dagsocial/types`. Verified 2026-08-07: none of the ten is read anywhere in
-> `packages/node/src`. The rows below are struck through and kept as a record, so an
+> `@dagsocial/types`. Verified 2026-08-07, **re-verified 2026-08-11 by testing each of the
+> eleven names for a `process.env` read in `packages/node/src`: zero hits.** The rows below are struck through and kept as a record, so an
 > operator carrying an old env file can see what happened to each one — **all ten are now
 > silently ignored if set.** See `ARCHITECTURE §Network Identity` and
 > `TYPES_INTERFACE §Network profiles`.
@@ -3009,17 +3042,23 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 > decode to one block — whichever is not its own canonical encoding dies at step 3. The measured
 > artifact, 891 bytes against 932 both hashing to `161602de…`, is unreachable by construction.
 >
-> **All three named layers.** *Inbound:* every path decodes (`net/src/gossip.ts:97,212`,
-> `net/src/node.ts:266`, `net/src/sync-codec.ts:358`). *Persist:* `store/ordering.ts:85-87`
-> re-encodes from the decoded value into three BLOBs — peer bytes are never stored. *Re-propagate:*
-> `net/src/gossip.ts:279` re-encodes. The `AHEAD OF CODE` marker below records the mechanism and is
-> Phase 9's to retire.
+> **All three named layers, re-verified 2026-08-11.** *Inbound:* every path decodes —
+> `decodeOrderingBlock` in `net/src/gossip.ts` (both the topic validator and the `deliver` arm)
+> and the framed sync path. *Persist:* `node/src/store/ordering.ts` re-encodes from the decoded
+> value into three BLOBs — peer bytes are never stored. *Re-propagate:* `net/src/gossip.ts`
+> re-encodes through `encodeOrderingBlock`. **Phase 9 retired the `AHEAD OF CODE` marker below**;
+> its two factual corrections are kept there.
+>
+> ⚠ **One pin in this list had rotted:** `net/src/sync-codec.ts:358` now lands on a closing brace.
+> The sync arms are `lpItemsCodec('legacyBlocksResponse', …)` and `('legacyHeadersResponse', …)`.
+> Symbols replace the numbers throughout this paragraph.
 >
 > ---
 >
-> ⚠ **VIOLATED (historical — measured end-to-end on the production inbound path 2026-08-08, not
-> theorised). The ordering block had no closed key set at any layer, and unknown keys were
-> PERSISTED and RE-PROPAGATED.**
+> **The record — this was VIOLATED, measured end-to-end on the production inbound path
+> 2026-08-08, not theorised. The ordering block had no closed key set at any layer, and unknown
+> keys were PERSISTED and RE-PROPAGATED.** No `⚠`: it is closed by the `RESOLVED` above, and a
+> `⚠` here would read as open work in the middle of a resolution note.
 >
 > An ordering block carrying arbitrary extra keys (`stumpIds`, `attackerJunk`)
 > survives `decodeOrderingBlock`; `verifyOrderingBlockStructure` **accepts** it,
@@ -3063,10 +3102,15 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 > serializer-enforced rules explicitly non-soft-forkable. CBOR maps are open by
 > default, which is why this class keeps recurring here and cannot recur there.
 
-> ⚠ **AHEAD OF CODE — resolution of the marker above.** Being closed by
-> `docs/specs/2026-08-09-positional-wire-format.md`, which takes the lineage's answer literally:
-> the codecs become positional (see TYPES_INTERFACE → Serialization). Two corrections to the
-> marker, both measured 2026-08-09:
+> ✅ **RESOLVED — the resolution of the marker above has SHIPPED. Verified 2026-08-11.** This read
+> `AHEAD OF CODE` until Phase 9; the positional bundle
+> (`docs/specs/2026-08-09-positional-wire-format.md`) is merged, so the codecs **are** positional
+> (see TYPES_INTERFACE → Serialization) rather than becoming so. It takes the lineage's answer
+> literally: closed formats, no maps, parse-time strictness.
+>
+> **The two corrections below are the point of this note and are kept.** They are factual
+> findings about the defect, not predictions, and they outlive the migration that closed it. Both
+> measured 2026-08-09:
 >
 > 1. **Its header claim is wrong.** "Header-level junk *does* change the hash, and therefore fails
 >    PoW and signature checks" holds only for tampering in transit. A malicious validator mines and
@@ -3077,7 +3121,17 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 >    because the `subBlockRoot` leaf preimage is a three-field projection
 >    (`{postId, parentRefs, author}`), so committing the entry does not commit the entry object.
 
-**`subBlockRefs` is deleted from the block** (AHEAD OF CODE). It was never covered by any
+**`subBlockRefs` is deleted from the block — done in Phase 3b, verified 2026-08-11.**
+`OrderingBlock` in `types/src/block.ts` carries `header`, `subBlockTree`, `utxoTxTree` and
+`validatorSignature`, and no refs field. The name survives in `src` only in comments explaining the
+deletion and in the two JSON routes that **derive** it via `subBlockIdsOf`, so the HTTP response
+shape is unchanged as promised below.
+
+> ⚠ **This sentence read "(AHEAD OF CODE)" in a parenthetical rather than a marker**, so a sweep
+> keyed on the `> ⚠ **NAME**` shape could not see it — the second such hiding place found in
+> Phase 9, after a table cell in `ARCHITECTURE.md`. It was the only remaining one in `contracts/`.
+
+It was never covered by any
 commitment — `computeSubBlockRoot` builds leaves from `subBlockEntries` and `pruneEntries` only —
 and the verifier checked its *length* against `subBlockEntries` and nothing else. Measured: a block
 whose refs name entirely different post ids is accepted with an unchanged `subBlockRoot` and an
