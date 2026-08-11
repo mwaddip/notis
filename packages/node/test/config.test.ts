@@ -21,8 +21,8 @@ const TEST_KEYS = [
   'MINING_SECRET',
   'MINING_MODE',
   'NODE_ROLE',
-  // Dead since P2-A phase 2b — consensus values are selected by NETWORK_TYPE,
-  // never set individually. Section 7 sets these to prove they are ignored.
+  // Dead: consensus values are selected by NETWORK_TYPE, never set
+  // individually. Section 7 sets these to prove they are ignored.
   'POST_POW_TARGET_BITS',
   'ORDERING_BLOCK_POW_TARGET_BITS',
   'KARMA_DECAY_INTERVAL_BLOCKS',
@@ -188,7 +188,7 @@ describe('config', () => {
   });
 
   // NETWORK_TYPE selects the whole consensus parameter table at once
-  // (ARCHITECTURE §Network Identity). Two operators who agree on it cannot
+  // (ARCHITECTURE → Network Identity). Two operators who agree on it cannot
   // differ on anything it selects; one who sets an unknown value gets a dead
   // node, not a default network.
   describe('6. network profile selection (P2-A)', () => {
@@ -200,9 +200,8 @@ describe('config', () => {
       expect(cfg.profile).toEqual(NETWORK_PROFILES.testnet);
       expect(cfg.profile.magic).toBe(MAGIC_TESTNET);
       // Baked literals, so this fails if testnet ever stops inheriting these
-      // from mainnet. Both networks build them from the same constants the
-      // consumers used to read directly, which is what makes profile-sourcing
-      // them a devnet-only consensus change.
+      // from mainnet. Both networks build them from the same constants, which
+      // is what keeps profile-sourcing them a devnet-only consensus change.
       expect(cfg.vouchCooldownBlocks).toBe(60);
       expect(cfg.inviteProbationBlocks).toBe(1000);
       expect(cfg.creditMinerRewardDelay).toBe(720);
@@ -290,12 +289,15 @@ describe('config', () => {
     });
   });
 
-  // The nine variables below were readable per-process until P2-A phase 2b
-  // (NODE_INTERFACE §Configuration, the `⚠ VIOLATED` rows, plus the
-  // `advertised` POST_POW_TARGET_BITS). Setting them must change nothing:
-  // values come from the profile or the universal constants only. Expected
-  // values are baked literals, phase-2a style — a silent constant change
-  // fails here too.
+  // NODE_INTERFACE → Configuration removed all TEN of these from the
+  // environment: five became network-profile fields, five became universal
+  // constants in `@dagsocial/types`. Setting any of them must change nothing.
+  // Expected values are baked literals rather than reads of the same constants,
+  // so a silent constant change fails here too.
+  //
+  // ⚠ Ten are set below and nine are asserted — `CREDIT_INITIAL_REWARD` has no
+  // matching `expect`, so it is the one variable this section names without
+  // covering.
   describe('7. consensus env reads are dead (P2-A)', () => {
     it('ignores every formerly-readable consensus variable', async () => {
       process.env['NETWORK_TYPE'] = 'testnet';
@@ -326,7 +328,7 @@ describe('config', () => {
   });
 
   // AVL_KEY_LENGTH sets the shape of every stateRoot, so the authoritative
-  // definition lives in @dagsocial/types (TYPES_INTERFACE §State format) and
+  // definition lives in @dagsocial/types (TYPES_INTERFACE → State format) and
   // config only plumbs it. Comparing the plumbed field against the import goes
   // red if config.ts regrows a local definition that diverges — section 7's
   // baked 32 cannot catch the converse drift (types moves, a stale local pin

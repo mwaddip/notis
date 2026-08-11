@@ -5,11 +5,10 @@ import { seedInviteAndBond, uid } from './helpers.js';
 /**
  * Pins the fixture helpers themselves.
  *
- * `seedInviteAndBond` centralises a pattern that was written out by hand at 39
- * sites. Centralising is what makes its provenance rule load-bearing: a shared
- * helper that let two callers collide would produce the collision everywhere at
- * once, where the hand-written version produced it only when two sites happened
- * to match. These are the properties that make the consolidation safe.
+ * `seedInviteAndBond` is the single source of invite/bond fixtures across this
+ * suite, and centralising is what makes its provenance rule load-bearing: a
+ * shared helper that let two callers collide produces the collision at every
+ * site at once. These are the properties that make it safe to share.
  */
 describe('seedInviteAndBond — distinct provenance per call', () => {
   const inviterId = uid('alice');
@@ -41,9 +40,10 @@ describe('seedInviteAndBond — distinct provenance per call', () => {
 
   it('a difference confined to the BOND still separates the pairs', () => {
     // The sharp case. `seedAsOneTx` derives the shared txId from
-    // `candidates[0]` — the invite — alone, so before `label` two pairs whose
-    // invites matched shared a txId even when their bonds differed, leaving two
-    // bonds with different ids on one `(txId, index)`.
+    // `candidates[0]` — the invite — alone, so a difference confined to the
+    // BOND does not reach the txId at all. Without `label` these two pairs
+    // share one txId and put two differently-identified bonds on a single
+    // `(txId, index)`, which `UNIQUE(tx_id, output_index)` forbids.
     const a = seedInviteAndBond({ label: 'bond-a', inviterId, bondValue: 5n });
     const b = seedInviteAndBond({ label: 'bond-b', inviterId, bondValue: 99n });
 
