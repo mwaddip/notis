@@ -24,6 +24,8 @@ import {
   verifyOrderingBlockPoW,
   blockHash,
   computePowHash,
+  powTarget,
+  meetsPowTarget,
 } from '@dagsocial/validation';
 import type {
   OrderingBlock,
@@ -261,23 +263,33 @@ function encodeLE64(n: number): Buffer {
   return buf;
 }
 
+/**
+ * Search for a nonce whose ordering-block digest meets `targetBits`.
+ *
+ * The admission rule is `@dagsocial/validation`'s, so this solver and
+ * `verifyOrderingBlockPoW` cannot disagree about what wins — VALIDATION_INTERFACE
+ * → powTarget / meetsPowTarget. The expansion is hoisted because it depends only
+ * on `targetBits`, and deriving it per nonce would allocate once per hash.
+ *
+ * The tail is `encodeLE64`: MINING_INTERFACE → PoW Verification step 3. The post
+ * PoW appends `vlqU` instead — two PoW processes, two tails, neither shared.
+ *
+ * A `targetBits` no digest can satisfy throws rather than spinning: the value
+ * arrives from a network profile, and a solver that cannot succeed must say so.
+ */
 function solvePoW(powPreimage: Buffer, targetBits: number): number {
+  const target = powTarget(targetBits);
+  if (target === null) {
+    throw new Error(`solvePoW: unsatisfiable targetBits ${targetBits}`);
+  }
   let nonce = 0;
   while (true) {
-    const nonceBuf = encodeLE64(nonce);
     const hash = createHash('blake2b512')
       .update(powPreimage)
-      .update(nonceBuf)
+      .update(encodeLE64(nonce))
       .digest()
       .subarray(0, 32);
-    let bits = 0;
-    for (let i = 0; i < 32 && bits < targetBits; i++) {
-      if (hash[i] === 0) { bits += 8; continue; }
-      let mask = 0x80;
-      while ((hash[i]! & mask) === 0 && bits < targetBits) { bits++; mask >>= 1; }
-      break;
-    }
-    if (bits >= targetBits) return nonce;
+    if (meetsPowTarget(hash, target)) return nonce;
     nonce++;
   }
 }
