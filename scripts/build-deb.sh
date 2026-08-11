@@ -47,12 +47,18 @@ rsync -a \
   --exclude '*.db-shm' \
   --exclude '*.deb' \
   --exclude 'prompts' \
+  --exclude 'tmp' \
   --exclude 'CLAUDE.md' \
   --exclude 'SESSION_CONTEXT.md' \
   --exclude 'dagsocial.md' \
   --exclude 'HOW_IT_WORKS.md' \
-  --exclude 'docs/superpowers' \
+  --exclude 'AUDIT-*.md' \
   --exclude 'scripts/build-deb.sh' \
+  `# The daemon needs none of docs/, and rsync copies the WORKING TREE — so a` \
+  `# git-excluded file is not an excluded file here. docs/ holds the local-only` \
+  `# governance notes (.git/info/exclude) and docs/specs/ (.gitignore); both` \
+  `# would otherwise ship in a package headed for a public host.` \
+  --exclude 'docs' \
   "$REPO_ROOT/" "$APP_DIR/"
 
 # ---------------------------------------------------------------------------
@@ -94,8 +100,14 @@ PORT=3000
 ADMIN_PORT=3001
 ADMIN_BIND_ADDRESS=127.0.0.1
 DB_PATH=/var/lib/dagsocial/dagsocial.db
-NETWORK_MODE=testnet
+# NETWORK_TYPE is the name config.ts reads. This said NETWORK_MODE until
+# 2026-08-11, which nothing read — invisible only because the code default is
+# also testnet, so any other value was silently ignored.
+NETWORK_TYPE=testnet
 LISTEN_ADDRS=/ip4/0.0.0.0/tcp/9733
+# Set when serving behind an nginx path prefix, e.g. /testnet — the UI's API
+# base and canonical post URLs are derived from it.
+#PUBLIC_URL=/
 ENVEOF
 
 # ---------------------------------------------------------------------------
