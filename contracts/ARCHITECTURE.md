@@ -1690,8 +1690,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > 2026-08-11.** This marker said "FALSE on all three limbs"; two have since been fixed.
   > - *OOM — closed.* `readArray` bounds on `MAX_ARRAY_LENGTH` **and** on bytes remaining
   >   before allocating (`wire/src/reader.ts:3`, `:149`, `:153-157`), and `cumulativeWork`
-  >   skips any `powTargetBits` that is not a safe integer within
-  >   `[0, MAX_SATISFIABLE_TARGET_BITS]` (`types/src/block.ts:205`). Neither allocates on
+  >   skips any `powTargetBits` outside `powTarget`'s domain
+  >   (`VALIDATION_INTERFACE → blockWork / cumulativeWork`). Neither allocates on
   >   attacker-chosen input.
   > - *Casts — closed.* The sync decode boundary shape-checks every field and never throws;
   >   malformed CBOR collapses to `null` and the returned object is rebuilt from checked

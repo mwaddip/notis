@@ -83,6 +83,16 @@ remit; its former home next to `BlockHeader` was proximity, not ownership.
 headers and answers the second. They share only `blockWork`, and neither is a copy of the other — an
 enumeration of "what computes work" that greps this function's callers will not reach `net`.
 
+**Totality is arithmetic, not a validity rule.** Past 256 bits `powTarget` returns `null`, so no digest
+can satisfy such a target and no work can have been done on that header — zero *is* its expected-hash
+count. Nothing rejects a block for exceeding the bound; the consensus minimum is
+`ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
+
+**Totality is required, not convenient.** The headers reach fork choice from `net`'s `requestHeaders`
+as a decode plus a cast, and the encodable domain is `isU64Safe` — so `powTargetBits` arrives anywhere
+in `[0, 2^53)`. A header outside the domain is a routine input on that path, not an anomaly, and
+refusing the whole segment over one would hand a peer a way to void the comparison.
+
 **`blockWork`'s `null` is what bounds a claimed target, and the bound is consensus-visible.** The store
 walk publishes its total as `SyncInfo.tipCumulativeWork`, which peers compare. A header claiming more
 than 256 target bits is arithmetically shiftable — `1n << 257n` is an ordinary BigInt — so a sum that
