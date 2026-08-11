@@ -356,7 +356,7 @@ describe('mempool store', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Correctness gates (audit M-8)
+  // Correctness gates (MEMPOOL_INTERFACE → Correctness gates)
   // -------------------------------------------------------------------------
 
   describe('gate metadata and correctness gates', () => {
@@ -453,7 +453,7 @@ describe('mempool store', () => {
   });
 
   // -------------------------------------------------------------------------
-  // removeSubBlockEntries (audit M-8)
+  // removeSubBlockEntries
   // -------------------------------------------------------------------------
 
   // The pool row is the only copy of a queued prune between `POST
@@ -574,7 +574,7 @@ describe('mempool store', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Size cap — reject, never evict (audit M-8)
+  // Size cap — reject, never evict
   // -------------------------------------------------------------------------
 
   describe('size cap', () => {

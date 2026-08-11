@@ -86,7 +86,7 @@ const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   boxType: 'credit',
-  value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — the range P0 exists for
+  value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — why box values are bigint
   owner: GOLDEN_AUTHOR,
   guard: 'owner_signature',
   proofSource: 70000,             // > 65536 — a three-byte ZigZag VLQ
@@ -494,8 +494,9 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
 
   it('the totality split is mirrored: sentinel where types sentinels, throw where it throws', () => {
     // A mirror that threw where the node sentinels (or the reverse) would
-    // diverge on exactly the malformed input a light client is handed — audits
-    // M-5/M-6. Total writers absorb it into the unreachable all-ones u64.
+    // diverge on exactly the malformed input a light client is handed
+    // (TYPES_INTERFACE → Totality). Total writers absorb it into the
+    // unreachable all-ones u64.
     const SENTINEL = 'ffffffffffffffffff01';
     for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(hexOf(ui.vlqU(bad)), `vlqU(${bad})`).toBe(SENTINEL);

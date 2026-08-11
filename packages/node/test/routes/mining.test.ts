@@ -61,8 +61,8 @@ function makeApp(deps: MiningDeps): express.Express {
 }
 
 // ---------------------------------------------------------------------------
-// Auth (audit M-7) — every 401 case has a control differing only in the
-// Authorization header.
+// Auth (MINING_INTERFACE → Mining API) — every 401 case has a control
+// differing only in the Authorization header.
 // ---------------------------------------------------------------------------
 
 describe('mining routes — auth', () => {
@@ -219,7 +219,7 @@ describe('mining routes — template subBlockRefs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mount policy (audit M-7) — internal miners expose no mining surface at all.
+// Mount policy — internal miners expose no mining surface at all.
 // An unmounted path 404s; a mounted one 401s. That is the discriminator.
 // ---------------------------------------------------------------------------
 
