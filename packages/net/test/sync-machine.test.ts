@@ -839,11 +839,8 @@ describe('SyncMachine', () => {
       machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, body);
       machine.flush();
 
-      // Currently sends response only when modifiers are found.
-      // The implementation iterates heights to find matching IDs.
-      // Since getOrderingBlock returns an object, a modifier is produced.
-      // However the data field is empty Uint8Array in the current implementation.
-      // The response is only sent if modifiers.length > 0.
+      // A response goes out only when at least one modifier is found — the
+      // 'does not respond when no blocks match' case below is the control.
       expect(sent.length).toBe(1);
       expect(sent[0]!.peerId).toBe('peer1');
     });
