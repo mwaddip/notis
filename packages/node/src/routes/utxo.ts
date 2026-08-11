@@ -114,9 +114,9 @@ export function createRouter(deps: UtxoDeps): Router {
   });
 
   // POST /credits/transfer — pool a client-built, client-signed credit
-  // transfer (P2-B phase 3): jsonToTx → validateTx + insertUtxoTx in the
-  // service → broadcast → pending response, the path every other tx route
-  // takes. Credits move when the transaction is mined.
+  // transfer: jsonToTx → validateTx + insertUtxoTx in the service → broadcast
+  // → pending response, the path every other tx route takes. Credits move when
+  // the transaction is mined.
   router.post('/credits/transfer', (req, res) => {
     const body = req.body as { tx?: Record<string, unknown> };
 

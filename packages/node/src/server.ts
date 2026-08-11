@@ -159,9 +159,9 @@ export function createApp(config: Config): express.Express {
   // ---- Shared UTXO engine deps (curried into validateTx for routes) ----
 
   // Bond settlement's unlock predicate reads the invitee's summed unspent
-  // karma (P2-B phase 1). Every deps literal below references the store's
-  // getKarmaValue directly — the single implementation shared with block
-  // application and the relay path (phase 1b).
+  // karma (NODE_INTERFACE → "Bond transition rules"). Every deps literal below
+  // references the store's getKarmaValue directly — the single implementation
+  // shared with block application and the relay path.
   const utxoEngineDeps = {
     getBox: store.getBox,
       getBoxByProvenance: store.getBoxByProvenance,

@@ -225,9 +225,9 @@ export function createRouter(deps: InvitesDeps): Router {
         expiresAtHeight: result.expiresAtHeight,
       });
     } catch (err) {
-      // 403 for an inviter mismatch now rides on the typed error's statusCode;
-      // the 'already claimed' / 'already spent' branches were both 400, the
-      // same as the fallback (audit L-12).
+      // 403 for an inviter mismatch rides on the typed error's statusCode; the
+      // 'already claimed' / 'already spent' branches are 400, the same as the
+      // fallback (audit L-12).
       respondError(res, err, 'POST /invites/cancel', 'message');
     }
   });

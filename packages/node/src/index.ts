@@ -53,11 +53,11 @@ emitServerStarting('1.0.0', config.networkType);
 initDb(config.dbPath);
 
 // 1a. Schema version gate: stamp a fresh DB, refuse any stamped mismatch —
-// downgrade OR stale (P2-D N2a: the previous < branch stamped a stale DB as
-// current with zero migrations registered, which defeated the counter: the
-// tables kept their old shape and the node ran until the first read of a
-// missing column instead of failing here). Logic and any future migrations
-// live in ensureSchemaVersion, where tests can reach them.
+// downgrade OR stale. Stale must refuse too: with zero migrations registered,
+// stamping a stale DB as current defeats the counter, since the tables keep
+// their old shape and the node runs until the first read of a missing column
+// instead of failing here. Logic and any future migrations live in
+// ensureSchemaVersion, where tests can reach them.
 try {
   ensureSchemaVersion();
 } catch (err) {
@@ -85,15 +85,14 @@ if (isFaucetNetwork(config.networkType)) {
 // 1c. Initialize AVL prover
 //
 // There is deliberately no rebuild-from-UTXO-set path here (NODE_INTERFACE →
-// the SUPERSEDED note on `bootstrapAvlProver`, 2026-08-07). The branch that
-// guarded one was doubly dead: its trigger — `storage.version() === null`
-// after `createAvlProver()` — is statically false under @ergots/avltree
-// 0.4.0, whose PersistentBatchAVLProver constructor writes the empty-tree
-// version to empty storage and throws if `version()` is still null after;
-// and the rebuild it guarded was unsound anyway — AVL+ tree shape is
-// history-dependent, so a tree rebuilt by re-inserting a set forks against
-// one grown incrementally to the same content (measured: identical content
-// agreed on the digest in 6 of 10 rounds). The sound restart path is the
+// the SUPERSEDED note on `bootstrapAvlProver`, 2026-08-07). Such a rebuild is
+// unsound: AVL+ tree shape is history-dependent, so a tree rebuilt by
+// re-inserting a set forks against one grown incrementally to the same content
+// (measured: identical content agreed on the digest in 6 of 10 rounds). Nor
+// would a rebuild be reachable — under @ergots/avltree 0.4.0 the
+// PersistentBatchAVLProver constructor writes the empty-tree version to empty
+// storage and throws if `version()` is still null after, so an
+// empty-storage trigger is statically false. The sound restart path is the
 // persisted tree the constructor loads. Operational consequence: AVL storage
 // must never be wiped independently of the chain — wiping both together is
 // the only supported reset.
@@ -106,9 +105,9 @@ createAvlProver();
 const net = new NetNode(
   {
     // The profile's wire magic and post-PoW difficulty. Both are required in
-    // NetConfig since P2-A phase 3b deleted net's `?? MAGIC_MAINNET` fallbacks
-    // (NET_INTERFACE §Magic Bytes); net checks inbound gossip PoW against the
-    // same profile difficulty the verifier enforces.
+    // NetConfig — net has no fallback of its own (NET_INTERFACE → "Magic
+    // Bytes"); net checks inbound gossip PoW against the same profile
+    // difficulty the verifier enforces.
     magic: config.profile.magic,
     postPowTargetBits: config.postPowTargetBits,
     bootstrapPeers: config.bootstrapPeers,
@@ -212,11 +211,13 @@ net.onTx((tx) => {
     consumeBox: () => {},
     getKarmaBox,
     getKarmaBoxes,
-    // Bond settlement's unlock predicate (P2-B phase 1). Relay validation has
-    // to reach the same verdict the block path will — the store's getKarmaValue
-    // is the single implementation all three paths share (phase 1b).
+    // Bond settlement's unlock predicate (NODE_INTERFACE → "Bond transition
+    // rules"). Relay validation has to reach the same verdict the block path
+    // will — the store's getKarmaValue is the single implementation all three
+    // paths share.
     getKarmaValue,
-    // The vouch cast's cooldown gate (P2-B phase 2) — same rule.
+    // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
+    // rules") — same rule.
     hasActiveVouchCooldown,
     runInTransaction: (fn: () => void) => fn(),
     isSystemBox: (boxId: string) => {
