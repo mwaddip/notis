@@ -9,10 +9,14 @@ context — read it and the linked docs before touching code.
 2. `~/.claude/RTK.md` — RTK proxy rules (use `rtk proxy` for any search/diff whose completeness you act on).
 3. `../../CLAUDE.md` (repo root) — project overview + the Design-by-Contract dispatch workflow.
 4. `../../contracts/ARCHITECTURE.md` — system architecture + invariants.
-5. The interface contract(s) for your task — `../../contracts/NODE_INTERFACE.md` always, plus
+5. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. Internalize on session start.
+   ⚠ **This package is the one with per-subsystem profiles** — `services/utxo-engine.ts`,
+   `services/block-apply.ts`, `store/`, `state/`, `routes/` and `public/index.html` each override the
+   package default. Apply the profile of the component you are editing, not the package line.
+6. The interface contract(s) for your task — `../../contracts/NODE_INTERFACE.md` always, plus
    `VALIDATION_INTERFACE.md`, `MEMPOOL_INTERFACE.md`, `MINING_INTERFACE.md`, `SUBBLOCK_INTERFACE.md`,
    `JOURNAL_EVENTS.md` as relevant.
-6. Your task's spec in `../../docs/specs/` (e.g. `2026-08-01-node-value-integrity.md`).
+7. Your task's spec in `../../docs/specs/` (e.g. `2026-08-01-node-value-integrity.md`).
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
