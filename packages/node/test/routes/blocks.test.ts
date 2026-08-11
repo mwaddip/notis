@@ -31,11 +31,10 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       height,
       prevBlockHash: baseHash,
       // 32 bytes, so 64 hex characters — `'00'` repeated 32 times, not 64.
-      // These were double-width, and nothing noticed: this block is written
-      // straight through `createOrderingBlock` (the store), bypassing the apply
-      // gate that checks the header domain, and `blockHash` used to hash
-      // whatever it was handed. Since Phase 1f the route answers `hash: null`
-      // for a header it cannot encode, which is what surfaced them.
+      // ⚠ Nothing in THIS file rejects a double-width field: the block goes
+      // straight through `createOrderingBlock` into the store, bypassing the
+      // apply gate that checks the header domain. The only signal is the route
+      // answering `hash: null` for a header it cannot encode.
       subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
@@ -83,13 +82,12 @@ async function request(
             )
             .get() as { c: number }
         ).c,
-      // `.safeIntegers()` and the bigint row type, matching `server.ts:372-389`
-      // exactly. This mock was production's code with that one call removed, so
-      // it summed karma as a JS number and returned it where `BlocksDeps` says
-      // bigint — and the route renders it with `.toString()`, which is where a
-      // sum past 2^53 would start printing a different number than the node
-      // would. A mock that diverges from the interface it stands for is the
-      // hazard the Config fixtures had; this one was arithmetic, not shape.
+      // `.safeIntegers()` and the bigint row type, matching what `createApp`
+      // wires in `server.ts` exactly. Drop that one call and the mock sums
+      // karma as a JS number while `BlocksDeps` declares bigint — and the route
+      // renders it with `.toString()`, so a sum past 2^53 prints a different
+      // number here than the node would. A mock that diverges arithmetically
+      // from the interface it stands for is testing its own arithmetic.
       getTotalKarma: () => {
         const row = db
           .prepare(
@@ -152,19 +150,13 @@ describe('blocks routes', () => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
     initDb(TEST_DB);
 
-    // ⚠ **The poison half of this fixture is gone, because the field is
-    // (Phase 3b).** It used to set `subBlockRefs = [POISON_ID]` against
-    // entries naming `COMMITTED_ID`, and assert the route served the committed
-    // id — a disagreement the store carried because `subBlockRefs` sat outside
-    // `subBlockRoot` and the tree was persisted encoded.
-    //
-    // There is no carried field to disagree any more: the route derives
-    // `subBlockRefs` from `subBlockEntries` (Phase 3a) and the block has
-    // nowhere to hold a second opinion. The stronger statement is now
-    // structural, and it is pinned in `@dagsocial/types` —
-    // `serialization.test.ts` → "the field is unrepresentable, not merely
-    // unwritten". What survives here is the half this file owns: the route's
-    // JSON shape is unchanged, and its contents come from the committed list.
+    // ⚠ **There is no poison half to build.** `subBlockRefs` is not a stored
+    // field: the route derives it from `subBlockEntries`, so a block has
+    // nowhere to hold a second opinion about its own sub-block ids. That the
+    // field is unrepresentable rather than merely unwritten is pinned in
+    // `@dagsocial/types` (`serialization.test.ts`); what this file owns is the
+    // half below — the route's JSON shape, and that its contents come from the
+    // committed list.
     //
     // Carried by the height-1 block rather than a second one on purpose — a
     // block at height 2 would move the tip `/blocks/current` asserts on.
@@ -240,7 +232,7 @@ describe('blocks routes', () => {
     expect(typeof body.totalCredits).toBe('string');
     expect(body.networkType).toBe('testnet');
     // A number, not a decimal string — the two above are bigint server-side and
-    // this one is not (NODE_INTERFACE §Status).
+    // this one is not (NODE_INTERFACE → Status).
     expect(body.inviteProbationBlocks).toBe(1000);
     expect(typeof body.inviteProbationBlocks).toBe('number');
   });

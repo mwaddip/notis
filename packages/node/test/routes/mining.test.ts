@@ -197,14 +197,12 @@ describe('mining routes — template subBlockRefs', () => {
     const committedId = 'aa'.repeat(32);
     const poisonId = 'bb'.repeat(32);
 
-    // ⚠ **The poison half went with the field (Phase 3b).** This built a
-    // template whose refs disagreed with its entries and asserted the route
-    // served the committed list — a disagreement that was expressible because
-    // `subBlockRoot` covered the entries and not the refs. There is no second
-    // list to disagree now; the unrepresentability is pinned structurally in
-    // `@dagsocial/types`. What this file owns is the miner-facing JSON shape,
-    // which does not move: an external miner still reads `subBlockRefs`, and
-    // still gets the ids the template committed to.
+    // ⚠ **There is no poison half to build.** A template carries one list —
+    // `subBlockEntries`, which `subBlockRoot` covers — so there is no second
+    // list that could disagree with it; the unrepresentability is pinned
+    // structurally in `@dagsocial/types`. What this file owns is the
+    // miner-facing JSON shape: an external miner reads `subBlockRefs`, and must
+    // get the ids the template committed to.
     const tpl = makeTemplate();
     tpl.subBlockTree.subBlockEntries = [
       { postId: committedId, parentRefs: [], author: 'cc'.repeat(32) },
