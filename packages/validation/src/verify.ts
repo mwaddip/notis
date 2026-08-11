@@ -342,8 +342,10 @@ export function powTarget(targetBits: number): Uint8Array | null {
   const target = new Uint8Array(32).fill(0xff);
   const wholeBytes = targetBits >> 3;
   for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
+  // A non-zero remainder means `targetBits` is not a multiple of 8, so it is at
+  // most 255 and `wholeBytes` at most 31: the partial byte is always in range.
   const remainderBits = targetBits & 7;
-  if (remainderBits !== 0 && wholeBytes < 32) target[wholeBytes] = 0xff >> remainderBits;
+  if (remainderBits !== 0) target[wholeBytes] = 0xff >> remainderBits;
   return target;
 }
 
