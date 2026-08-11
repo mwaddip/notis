@@ -5,11 +5,14 @@ import type { UserId } from '@dagsocial/types';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
 
 /**
- * Spec G phase B — the identity record store (the per-identity decay clock).
+ * The identity record store — the per-identity activity and decay clock
+ * (NODE_INTERFACE → Identity Records).
  *
- * Phase B builds the entity and does not populate it: no producer calls
- * `putIdentityRecord` until phase D. These tests exercise the primitive
- * directly. Journal recording is wired in B2.
+ * These tests drive `putIdentityRecord` / `getIdentityRecord` /
+ * `deleteIdentityRecord` directly, with no journal open and no producer in the
+ * way, so what they pin is the row boundary itself. The producers that call
+ * these primitives in anger — `insertBox`, decay, genesis, fork rollback — and
+ * the journal recording that wraps them are covered in their own suites.
  */
 
 async function importDbFresh() {
@@ -165,7 +168,7 @@ describe('identity records store (Spec G phase B)', () => {
 });
 
 /**
- * Spec G phase D — the full-set read that feeds `bootstrapAvlProver`.
+ * The full-set read that feeds `bootstrapAvlProver`.
  *
  * A node rebuilding its tree from the store has to see every record, or it
  * computes a `stateRoot` a node that stayed up does not.
@@ -252,7 +255,7 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
 });
 
 /**
- * P2-D N2a — `likeCarry` at the row boundary: SQLite INTEGER in, bigint out.
+ * `likeCarry` at the row boundary: SQLite INTEGER in, bigint out.
  * Heights stay numbers; the carry stays bigint end-to-end so no `Number()`
  * coercion can appear in a consensus path.
  */
