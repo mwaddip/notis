@@ -24,10 +24,10 @@ import type { MintContext } from '../mint-provenance.js';
  * with the combined value + amount. Same pattern as mintKarma.
  *
  * `ctx` precedes `lockedUntilBlock` because it is required and that one is
- * optional — and because it belongs with the other identity inputs. It stopped
- * admitting `null` at phase G2b, for the reason spelled out on `mintKarma`: a
- * required parameter fails at compile time in `src`, where omitting provenance
- * breaks consensus, rather than leaving the store to catch it later.
+ * optional — and because it belongs with the other identity inputs. It does not
+ * admit `null`, for the reason spelled out on `mintKarma`: a required parameter
+ * fails at compile time in `src`, where omitting provenance breaks consensus,
+ * rather than leaving the store to catch it later.
  */
 export function mintCredits(
   owner: Uint8Array,
@@ -58,8 +58,8 @@ export function mintCredits(
 
   // The conditional field is spread rather than assigned afterwards: spreading
   // `{}` adds no key at all, so this cannot produce the explicit `undefined`
-  // that contract 1a rules out. Key *order* no longer matters as of phase G3b —
-  // both encoders sort — but present-vs-absent still does.
+  // that contract 1a rules out. Key *order* does not matter — the committed
+  // encodings are positional — but present-vs-absent still does.
   const newBox: CreditBox = {
     boxType: 'credit',
     value: newValue,
@@ -96,14 +96,14 @@ export interface CreditTransferResult {
  * at block application on every node, not when the HTTP call returns —
  * signature verification stays inside `validateTx`'s guard check.
  *
- * This replaced a builder that selected boxes server-side and applied the
- * result with `consumeBox`/`insertBox` directly — no block, no open journal.
- * That bypassed consensus entirely (audit F-consensus-7): the transfer
- * entered no block, produced no journal entries, never reached the AVL feed,
- * and the divergence detonated at the next restart-rebuild as a permanent
- * `stateRoot` fork. It also mirrored the client's transaction construction
- * byte-for-byte, which nothing tested; taking the client's own transaction
- * deletes the second implementation instead of documenting it.
+ * Building the transfer server-side and applying it with
+ * `consumeBox`/`insertBox` directly — no block, no open journal — bypasses
+ * consensus entirely (audit F-consensus-7): the transfer enters no block,
+ * produces no journal entries, never reaches the AVL feed, and the divergence
+ * detonates at the next restart-rebuild as a permanent `stateRoot` fork. A
+ * server-side builder also has to mirror the client's transaction construction
+ * byte-for-byte; taking the client's own transaction means there is no second
+ * implementation to keep in step.
  */
 export function sendCredits(
   deps: UtxoEngineDeps,

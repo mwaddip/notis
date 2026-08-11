@@ -90,10 +90,9 @@ export function createInvite(
   // ---- 4b. The bond must point at THIS transaction's InviteBox ----
   //
   // Checked at **create**, not only when the bond is dereferenced at commit
-  // (user decision, 2026-08-06). The old `inviteBoxId: BoxId` was validated
-  // nowhere here: a bond could name any box in the world, and a wrong value
-  // surfaced one transaction later as "InviteBox not found for bond commit" —
-  // a dangling reference rather than a rejected transaction.
+  // (user decision, 2026-08-06). Unchecked, a wrong pairing surfaces one
+  // transaction later as "InviteBox not found for bond commit" — a dangling
+  // reference rather than a rejected transaction.
   //
   // Pairing by output index makes the *scope* structural — a bond can only
   // address an output of its own transaction — and this check makes the
@@ -132,13 +131,11 @@ export function createInvite(
   // materializes them, and `tx` here is client-supplied decoded CBOR, so the
   // strip-before-append in `materializeOutput` is load-bearing.
   //
-  // What changed (user decision, 2026-08-06): the client no longer has to
-  // *predict* `inviteBox.id` in order to build the bond. It says which output
+  // They are informational (user decision, 2026-08-06): the client does not
+  // have to *predict* `inviteBox.id` to build the bond. It says which output
   // index the invite is at, and the node resolves the pair from
-  // `(txId, inviteOutputIndex)` at commit. These are now informational —
-  // an id the client can display or track, not one it has to get right for the
-  // flow to work. That is strictly stronger than the "exact prediction" Spec G
-  // aimed at: prediction became unnecessary rather than merely reliable.
+  // `(txId, inviteOutputIndex)` at commit. So these are ids the client can
+  // display or track, not ones it has to get right for the flow to work.
   return {
     status: 'pending',
     txId,

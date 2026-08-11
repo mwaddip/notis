@@ -124,9 +124,9 @@ export function findForkPoint(
   // ≥ 1, with nothing in between and nothing outside.
   //
   // Truncating silently errs toward "no common ancestor", which is the safe
-  // direction and is exactly why it survived §12's sweep — but a node that can
-  // never reorg sits on the wrong chain permanently without knowing, which is
-  // the same silence the apply funnel's forever-rejection was condemned for.
+  // direction — but a node that can never reorg sits on the wrong chain
+  // permanently without knowing, the same silence a forever-rejecting apply
+  // funnel produces.
   let depth = 0;
   while (depth < MAX_REORG_DEPTH) {
     ourHashes.set(ourChainHash(cursor.header, 'findForkPoint'), cursor.header.height);
@@ -220,7 +220,7 @@ export function revertBlock(height: number): PruneEntry[] {
   for (const subBlockId of journal.confirmedSubBlockIds) {
     unconfirmPost(subBlockId);
   }
-  // Like-record inverses (P2-D). Order between the two arrays is immaterial:
+  // Like-record inverses. Order between the two arrays is immaterial:
   // a record cannot be both inserted and prune-deleted in one block — the
   // same-block exclusion (prune settles before embedded txs, so a like on a
   // post the block also prunes finds a stump and the block is rejected) —
@@ -373,8 +373,8 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
  * The `net` surface fork resolution uses, structurally rather than as
  * `NetNode`. These three calls are the whole dependency, and naming them is
  * what lets a test drive `resolveFork` against a stub peer — `reorg` and
- * `revertBlock` are reachable from a test today, the decision that calls them
- * was not.
+ * `revertBlock` are reachable from a test on their own; the decision that calls
+ * them is not.
  */
 export interface ForkResolutionNet {
   peers(): Array<{ id: string }>;

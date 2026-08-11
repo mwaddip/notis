@@ -602,19 +602,18 @@ function checkTransitions(
 /**
  * The one canonical guard per boxType. A guard is a pure function of the
  * discriminant — it carries zero information of its own — so any other value
- * on an output is a lie about the bytes, not an alternative spend policy.
+ * on an output is a lie about the box, not an alternative spend policy.
+ *
+ * ⚠ **`guard` is NOT in the consensus bytes.** `canonicalBoxBytes` writes
+ * `boxType`, `value` and the per-type tail and never the guard, so this table
+ * decides nothing about the id preimage or the AVL leaf — it is an interface
+ * rule the schema enforces on candidates.
  *
  * `rowToBox` (store/utxo.ts) fabricates these same constants when it rebuilds
- * a box from its row. The two tables must never disagree: this one decides
- * what enters the committed bytes (id preimage, AVL leaf), that one decides
- * what every later read reconstructs, and the store invariant
- * `computeBoxId(rowToBox(row)) === row.id` holds only while they match.
- * Deliberately NOT imported from the store — the engine owns the consensus
- * rule, the store mirrors it.
- *
- * Scheduled retirement (NODE_INTERFACE → "Output shape"): when `guard` leaves
- * the consensus bytes entirely, this table retires with it and the key-set
- * half of the shape check below keeps the schema closed.
+ * a box from its row, so the two tables must still agree: an output the schema
+ * accepts and a row-rebuilt box of the same type have to present the same
+ * object. Deliberately NOT imported from the store — the engine owns the rule,
+ * the store mirrors it.
  */
 const CANONICAL_GUARD: Record<AnyBox['boxType'], BoxGuard> = {
   karma: 'owner_signature',
@@ -1089,22 +1088,17 @@ const OUTPUT_SHAPE: Record<
  * pin, NODE_INTERFACE → "Output shape").
  *
  * Outputs are attacker-controlled structure (HTTP JSON via `jsonToTx`, gossip
- * and block-embedded CBOR), and both bytes-level consumers hash whatever keys
- * the object carries: `canonicalBoxBytes` (the id preimage) strips only
- * `id`/`txId`/`index`, `serializeBox` (the AVL leaf, so the `stateRoot`)
- * strips only `id`/`boxType`. An accepted key the schema does not pin — or a
- * lying `guard`, or a mistyped field — becomes a committed byte that
- * `rowToBox`'s reconstruction (canonical guard, typed columns, no stray keys)
- * can never reproduce: the store and the tree then permanently disagree about
- * the box's bytes, the divergence surface under journal replay and any future
- * snapshot sync. A mistyped field can also poison the row itself — a string
+ * and block-embedded CBOR). The committed encoders are positional —
+ * `canonicalBoxBytes` (the id preimage) and `serializeBox` (the AVL leaf, so
+ * the `stateRoot`) each write the fields their layout declares and nothing
+ * else — so a stray key is unrepresentable in the bytes. It still reaches
+ * everything else: the object `insertBox` writes, the stored row, and every
+ * later read. A mistyped field poisons the row itself — a string
  * `originalValue` in a stored row makes every later `rowToBox` of that box
  * throw.
  *
  * Four rules per output:
- * - a key outside the closed set is a REJECT, never a silent strip — a
- *   stripped key would change the bytes the client signed, so their txId and
- *   signature would refer to an object the node never stored;
+ * - a key outside the closed set is a REJECT, never a silent strip;
  * - `guard` must equal the boxType's one canonical guard;
  * - every present field's runtime type matches its `FieldType` spec in
  *   OUTPUT_SHAPE (`TYPES_INTERFACE` box definitions are the authority);
@@ -1114,16 +1108,13 @@ const OUTPUT_SHAPE: Record<
  *   instead of retrieving `Object.prototype.constructor` and throwing.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
- * they are structurally outside every committed byte (`canonicalBoxBytes`
- * strips them from the txId and box-id preimages, `materializeOutput` strips
- * them before appending the real provenance), so the schema is compared in
- * candidate form.
+ * they are structurally outside every committed byte (no layout declares them;
+ * `materializeOutput` strips them before appending the real provenance), so the
+ * schema is compared in candidate form.
  *
- * A key that is present with the value `undefined` is a reject in both
- * positions: cbor-x encodes the key into the id preimage (`"decayBurn" f7`),
- * while `insertBox`/`rowToBox` treat `undefined` as absence and drop it — the
- * exact bytes-vs-store divergence this check closes. Presence means "own
- * enumerable key with a defined value".
+ * A key present with the value `undefined` is a reject rather than treated as
+ * absent: presence means "own enumerable key with a defined value", so no
+ * reader downstream has to decide which of the two an ambiguous shape meant.
  *
  * Exported for direct testing. Through `validateTx` this check runs at step 4
  * — the first consumer of `tx.outputs` — so it is the PRIMARY gate for every

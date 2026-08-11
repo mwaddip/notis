@@ -5,7 +5,7 @@ import { config } from '../config.js';
  *
  * On-chain time is block height, so the difficulty schedule is a pure function
  * of height: two honest nodes compute the same target for the same block, for
- * all time, with no reference to a wall clock. Phase 1 is a fixed target — a
+ * all time, with no reference to a wall clock. The target is fixed — a
  * hashrate-tracking retarget needs a deterministic on-chain time source (e.g.
  * median-of-header-timestamps with future bounds) and is deferred.
  *

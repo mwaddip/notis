@@ -9,9 +9,9 @@ export interface FeedServiceDeps {
   /**
    * The store's real signature (`store/posts.ts` → `getPost`), not `unknown`.
    *
-   * It was typed `unknown | null` — which collapses to `unknown`, so the
-   * stump arm below was invisible to the compiler and the raw `Stump` went out
-   * of `res.json` with its `authorId` serialized index-keyed
+   * An `unknown | null` here collapses to `unknown`, which makes the stump arm
+   * below invisible to the compiler and sends the raw `Stump` out of
+   * `res.json` with its `authorId` serialized index-keyed
    * (`{"0":…,"1":…}`). Naming the union makes the compiler the mutation
    * detector for this file: re-widening this type must not typecheck the
    * stump arm away, and a future variant added to the store's return breaks
@@ -57,8 +57,8 @@ export interface PostJson {
  * test for the field's presence, and `PostJson` carries none.
  *
  * `author` is hex, matching `PostJson.author`'s convention. That is the whole
- * defect this type closes: the raw `Stump` used to be returned as-is, and
- * `res.json` serialized its `authorId` — a `Uint8Array` — index-keyed.
+ * defect this type closes: returning a raw `Stump` hands `res.json` an
+ * `authorId` that is a `Uint8Array`, which it serializes index-keyed.
  */
 export interface StumpJson {
   kind: 'stump';

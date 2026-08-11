@@ -46,19 +46,16 @@ const NEVER_ACTIVE: IdentityRecord = {
  *
  *     stale = (height − lastActivityBlock) >= staleThresholdBlocks
  *
- * **`>=`, not `>`.** Spec G D10 makes this a representation swap that must be
- * behaviour-identical, and the predicate being replaced was "no unspent
- * non-decay karma box with `createdAtBlock > height − threshold`" — i.e. stale
- * iff `A <= height − threshold` iff `height − A >= threshold`. The contract's
- * prose stated `>`, which is off by one and would delay every identity's first
- * decay by exactly one block. The code is the authority on what the ledger did;
- * the contract has been corrected.
+ * **`>=`, not `>`.** An identity last active at `A` has gone `height − A`
+ * blocks without activity, so it is stale iff `A <= height − threshold`, i.e.
+ * `height − A >= threshold`. A `>` here delays every identity's first decay by
+ * exactly one block.
  *
- * The `currentHeight <= thresholdBlocks` guard is **not** subsumed by the new
- * formula. It was: with `A >= 1` the subtraction cannot reach the threshold
- * below it. But `lastActivityBlock` can be 0 for a never-active identity, and
- * `0 − 0 >= threshold` is true at exactly `height === threshold`, where the old
- * code returned false. The guard is what keeps that case identical.
+ * The `currentHeight <= thresholdBlocks` guard is **not** subsumed by that
+ * formula. With `A >= 1` the subtraction cannot reach the threshold below it,
+ * but `lastActivityBlock` is 0 for a never-active identity and `0 − 0 >=
+ * threshold` holds at exactly `height === threshold` — early by one interval
+ * for an identity that has never done anything. The guard is what excludes it.
  */
 export function isIdentityStale(
   record: IdentityRecord | null,
@@ -165,7 +162,7 @@ export function applyKarmaDecay(
     }
 
     // Create single consolidated replacement box
-    // Field order is free as of phase G3b — both encoders sort keys.
+    // Field order is free — the committed encodings are positional.
     //
     // `owner` alone is an injective subject here: `applyKarmaDecay` visits each
     // owner at most once per call (`getKarmaOwners` returns distinct owners) and
@@ -193,8 +190,8 @@ export function applyKarmaDecay(
     // `lastActivityBlock` is carried through unchanged: the decay-burn box the
     // line above inserted is deliberately *not* activity, and resetting the
     // activity half here would make an identity look freshly active every time
-    // it was charged. `likeCarry` likewise — it is settlement-owned (P2-D),
-    // and a decay that zeroed it would silently confiscate accrued likes.
+    // it was charged. `likeCarry` likewise — it is settlement-owned, and a
+    // decay that zeroed it would silently confiscate accrued likes.
     deps.putIdentityRecord(owner, {
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: currentHeight,
