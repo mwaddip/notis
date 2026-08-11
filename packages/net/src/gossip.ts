@@ -106,14 +106,11 @@ export function subscribeTopics(
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'unsupported protocol version');
         return TopicValidatorResult.Reject;
       }
-      // A `Number.isSafeInteger(block.header.height)` guard stood here until
-      // Phase 1f-3. It was added when structure's only height rule was `>= 1`,
-      // which admits NaN and floats (audit M-6). 1f-1 gave
-      // `verifyOrderingBlockStructure` the header's whole encodable domain, and
-      // its `height` rule is `isU64Safe` — a strict superset of what this guard
-      // rejected — running at `:98`, above. Every input that would have fired it
-      // is now rejected one gate earlier, so it was unreachable for all inputs,
-      // not merely for the NaN/1.5 cases the test below pins.
+      // No explicit height guard here, and adding one would be dead code:
+      // `verifyOrderingBlockStructure` above covers the header's whole
+      // encodable domain, and its `height` rule is `isU64Safe` (audit M-6), so
+      // NaN and floats are already rejected one gate earlier — for every input,
+      // not merely the NaN/1.5 cases the test below pins.
       if (!validators.verifyOrderingBlockPoW(block.header)) {
         // Bogus — a zero-work block must die at the first hop, not be
         // re-gossiped mesh-wide (audit M-9). Stage 1 checks the header's own
@@ -175,11 +172,8 @@ export function subscribeTopics(
     // Decode and dispatch are separated because they fail for different
     // reasons, and neither reason is the peer's.
     //
-    // The single `try` that used to span both reported neither: its comment
-    // promised "Log and move on" and there was no log, so the one condition it
-    // names — a validator bug — produced complete silence. It also swallowed
-    // every throw out of the app-layer handlers, which the comment never
-    // claimed to cover.
+    // A single `try` spanning both would report neither: it would collapse a
+    // validator bug and an app-layer handler throw into one silent span.
     //
     // Both stay contained rather than propagating: this is a gossipsub event
     // listener, and net's invariant is that one bad message degrades one

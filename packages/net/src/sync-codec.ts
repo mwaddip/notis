@@ -262,38 +262,31 @@ export function decodeLegacyHeadersRequest(body: Uint8Array): LegacyHeadersReque
 // ---------------------------------------------------------------------------
 // Legacy /dagsocial/headers/1 responses
 //
-// This protocol used to answer in a **second wire format**: `encode({ blocks })`
-// / `encode(headers)` out, `decode(raw) as { blocks: OrderingBlock[] }` and
-// `decode(response) as BlockHeader[]` back — bare `cbor-x` with a TypeScript
-// cast, while every other whole-block path in this package
-// (`gossip.ts`, `LazySyncStore.appendBlocks`) went through
-// `encodeOrderingBlock` / `decodeOrderingBlock`.
+// Both responses are `arr(item, lp)` over the same positional codec the rest of
+// this package speaks, and every element runs the four-part boundary check
+// (TYPES_INTERFACE → The boundary check) on its own byte span.
 //
-// A cast is not a check, and the gap was measured, not theorised
-// (`prompts/node-fail-stop-reachability-measure-REPORT.md`). The two sentinel
-// bytes a total writer emits for an out-of-domain field — `writeBool`'s `0xff`
-// for a non-boolean `isTreasury`, `writeLp`'s sentinel *length* for a
-// non-byte-view `utxoTxs` element — are refused by our own decoder, so gossip
-// dropped both at decode. This path handed them to the node undecoded, the
-// apply funnel accepted the block (`utxoTxRoot` honestly commits the malformed
-// leaf, and the validator signature covers only the header), and the store
-// wrote a row that our own reader then refuses:
+// Why a positional codec and not a shape check over `cbor-x`: a `decode(raw) as
+// T` cast is not a check, and the gap it leaves is measured rather than
+// theorised — without this codec this path is the sole delivery route for a
+// remote fail-stop. The two sentinel bytes a total writer emits for an
+// out-of-domain field — `writeBool`'s `0xff` for a non-boolean `isTreasury`,
+// `writeLp`'s sentinel *length* for a non-byte-view `utxoTxs` element — are
+// refused by our own decoder, so gossip drops both at decode. Handed to the
+// node undecoded they survive apply instead (`utxoTxRoot` honestly commits the
+// malformed leaf, and the validator signature covers only the header), and the
+// store writes a row our own reader then refuses:
 // `UnreadableStoredBlockError` → `failStopIfCorruptChain` → `process.exit(1)`,
-// triggered automatically by the next arriving gossip block and persistent
-// across restarts. The `utxoTxs` half costs no PoW at all — `utxoTxRoot` never
-// commits `utxoTxs`, so a *relaying* node swaps an honest block's payload.
+// re-triggered by the next arriving gossip block and persistent across
+// restarts. The `utxoTxs` half costs no PoW at all — `utxoTxRoot` never commits
+// `utxoTxs`, so a *relaying* node can swap an honest block's payload. Under a
+// positional codec those sentinels are unrepresentable at this boundary rather
+// than merely unlikely to be sent, which is what keeps the door shut for the
+// *next* unpinned field.
 //
-// Adding shape validation to the cbor path would have been the band-aid. The
-// root cause is the second dialect, so it is gone: both responses are
-// `arr(item, lp)` over the same positional codec the rest of the package
-// speaks, and every element runs the four-part boundary check (spec §2.1) on
-// its own byte span. The sentinels are now unrepresentable at this boundary
-// rather than merely unlikely to be sent, which is what makes the door stay
-// shut for the *next* unpinned field.
-//
-// ⚠ Wire-format break. Both sides live in this package and move in one commit
-// (rule 13): a producer on the new framing with a consumer on the old one is a
-// sync path that silently returns nothing.
+// ⚠ Both sides of this framing live in this package and must move in one commit
+// (rule 13): a producer on one framing with a consumer on the other is a sync
+// path that silently returns nothing.
 // ---------------------------------------------------------------------------
 
 /**
@@ -344,10 +337,10 @@ function lpItemsCodec<T>(
 /**
  * Decode a legacy response body, converting every `ReaderError` into `null`.
  *
- * Spec §2.1 step 4 — "every caller converts `ReaderError` into a verdict" —
- * discharged here in the shape the rest of this file uses: decoders at net's
- * boundary never throw, they return `null`, and the caller decides what a
- * `null` means for the peer that sent it.
+ * TYPES_INTERFACE → The boundary check, step 4 — "callers convert `ReaderError`
+ * into a verdict" — discharged in the shape the rest of this file uses:
+ * decoders at net's boundary never throw, they return `null`, and the caller
+ * decides what a `null` means for the peer that sent it.
  */
 function decodeLegacyResponse<T>(codec: StructCodec<T[]>, bytes: Uint8Array): T[] | null {
   try {
