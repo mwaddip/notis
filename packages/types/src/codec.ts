@@ -36,12 +36,12 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  * The all-ones u64 written in place of a `number` field outside the encodable
  * domain: `ff ff ff ff ff ff ff ff ff 01`, ten bytes.
  *
- * This ports the reasoning at `post.ts:41-57`, not a new scheme. Wire's
- * writers throw on non-integers, negatives, and anything past
- * `MAX_SAFE_INTEGER` (`wire/src/vlq.ts:3-9`), and `signingHash` is reached
- * with malformed posts — `@dagsocial/validation`'s `isSignablePost` admits
- * them — so a throwing writer turns a malformed post into a panic and breaks
- * the no-panic contract validation asserts (audits M-5/M-6).
+ * This ports the reasoning in `post.ts`'s Totality note above `postFieldBytes`,
+ * not a new scheme. Wire's writers throw on non-integers, negatives, and
+ * anything past `MAX_SAFE_INTEGER` (`wire/src/vlq.ts:3-9`), and `signingHash`
+ * is reached with malformed posts — `@dagsocial/validation`'s `isSignablePost`
+ * admits them — so a throwing writer turns a malformed post into a panic and
+ * breaks the no-panic contract validation asserts (audits M-5/M-6).
  *
  * The sentinel is unreachable from a well-formed field because the encodable
  * `number` domain is the non-negative safe integers, topping out at 2^53−1.
@@ -267,9 +267,11 @@ export function readVlqS(r: ByteReader): number {
  * Every call site must therefore establish the domain first. Named for that:
  * the exception is visible where it is used, not buried in this docstring.
  *
- * Known obligation, from spec §2.5: `block-apply.ts:867` reaches `computeTxId`
- * behind `checkTxEnvelope` only, while the `u64` pin lives later in
- * `checkOutputShape` — Phase 6 owes that site an explicit domain check.
+ * Spec §2.5 assigns that establishing to the call site, not to this writer.
+ * Node's embedded-tx admission (`applyMutationPhase`) is the worked example:
+ * `checkTxEnvelope` and `checkOutputShape` both run before it hashes, which is
+ * what makes the throw unreachable there — NODE_INTERFACE → "The output domain
+ * check".
  *
  * @throws {Error} if `value` is negative or above `2^64 - 1`
  */

@@ -78,19 +78,11 @@ export interface CoinbaseOutput {
  *   value and `readBool` refuses it). `writeU8OrThrow` would throw on every
  *   block.
  *
- * ## Domain — the least-covered struct in the block layout
+ * ## Domain
  *
- * `verifyOrderingBlockStructure` pins `owner` (`isBytes` + length 32) and the
- * *sign* of `value` (`>= 0n`). The other three pins are missing, reported to
- * main as Phase 3b's gate findings and none of them this package's to add — the
- * domain belongs upstream of the encoder (spec §2.5), in `@dagsocial/validation`:
- *
- * - `value` has **no `< 2^64` ceiling**, and this writer throws above it.
- * - `lockedUntilBlock` is checked `typeof === 'number' && >= header.height` —
- *   a lower bound only, so `1.5`, `Infinity` and `2^60` all pass and all
- *   **collide** on the sentinel. This is the `createdAt` failure Phase 1f
- *   closed, one struct over and still open.
- * - `isTreasury` is **checked nowhere at all**.
+ * All four fields have their domain established upstream of this encoder (spec
+ * §2.5), in `@dagsocial/validation` — VALIDATION_INTERFACE →
+ * `verifyOrderingBlockStructure`.
  *
  * Decode closes the reachable half of each: `readVlqU` throws past
  * `MAX_SAFE_INTEGER`, `readVlqU64` wraps into the u64 domain, `readBool` rejects
@@ -140,10 +132,12 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
 /**
  * The widest PoW target any block can satisfy: the bit length of the PoW hash.
  *
- * `hasLeadingZeroBits` (`@dagsocial/validation`, `verify.ts:103`) answers
- * `false` for any `targetBits` past the digest's own width, and the digest is
- * `blake2b512(...).subarray(0, 32)` — 32 bytes, 256 bits. A header claiming
- * more describes a block no nonce can ever produce.
+ * The admission rule is `powTarget` / `meetsPowTarget`
+ * (`@dagsocial/validation`): `powTarget` returns `null` for any `targetBits`
+ * outside `[0, 256]`, and the caller reads that as "no digest can satisfy
+ * this" and answers `false`. The digest is `blake2b512(...).subarray(0, 32)` —
+ * 32 bytes, 256 bits. A header claiming more describes a block no nonce can
+ * ever produce.
  *
  * This is a fact about the hash, **not a difficulty policy and not a validity
  * rule**: nothing rejects a block for exceeding it. The consensus minimum is
@@ -158,13 +152,13 @@ export const MAX_SATISFIABLE_TARGET_BITS = 32 * 8;
  * The fork-choice quantity: a node compares its own segment against a competing
  * one and reorgs only on strictly greater work.
  *
- * **Total, and it has to be.** `node/src/index.ts:261` calls this on
- * `theirChainHeaders`, which reaches it from `net`'s `requestHeaders` —
- * `decode(response) as BlockHeader[]`, a raw cbor decode plus a TypeScript
- * cast. Fork resolution refuses a peer batch holding a header outside the
- * *encodable* domain (`findForkPoint` → `blockHash`), but that domain is
- * `isU64Safe`, so `powTargetBits` still arrives anywhere in [0, 2⁵³).
- * Measured 2026-08-09, node v22.19.0:
+ * **Total, and it has to be.** `resolveFork` (`@dagsocial/node`) calls this on
+ * `ourHeaders` and on `theirChainHeaders`, and the second reaches it from
+ * `net`'s `requestHeaders` — `decode(response) as BlockHeader[]`, a raw cbor
+ * decode plus a TypeScript cast. Fork resolution refuses a peer batch holding a
+ * header outside the *encodable* domain (`findForkPoint` → `blockHash`), but
+ * that domain is `isU64Safe`, so `powTargetBits` still arrives anywhere in
+ * [0, 2⁵³). Measured 2026-08-09, node v22.19.0:
  *
  * - `powTargetBits = 2³⁰−1` → succeeds, allocating 128 MiB in 32 ms
  * - `powTargetBits = 2³⁰`   → `RangeError: Maximum BigInt size exceeded`

@@ -111,10 +111,10 @@ import {
  * `verifyPostFieldDomains` stops after `timestamp`, deliberately: it is the
  * *signable* post's domain, and a post being signed has no signature yet. So
  * `b64(signature)` — a throwing writer — has no width check anywhere in the
- * repo (`verify.ts:355` pins `isBytes` only, and says outright that a wrong
- * *length* is left to `crypto.verify`), and `powNonce` has none either, so it
- * collides on the sentinel instead. Reported to main as Phase 3b's gate finding:
- * this is the 1c situation one struct over, and closing it belongs in
+ * repo (`verifyPostSignature` pins `isBytes` only, and says outright that a
+ * wrong *length* is left to `crypto.verify`), and `powNonce` has none either,
+ * so it collides on the sentinel instead. Reported to main as Phase 3b's gate
+ * finding: this is the 1c situation one struct over, and closing it belongs in
  * `@dagsocial/validation`, upstream of the encoder (spec §2.5).
  */
 const POST: StructCodec<Post> = {

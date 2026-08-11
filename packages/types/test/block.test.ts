@@ -62,8 +62,8 @@ describe('cumulativeWork — the honest path is unchanged', () => {
 
 describe('cumulativeWork — the satisfiability ceiling', () => {
   it('is the PoW digest width, 256 bits', () => {
-    // blake2b512(...).subarray(0, 32) — validation's hasLeadingZeroBits answers
-    // false for any target past this, so a wider target is unmineable.
+    // blake2b512(...).subarray(0, 32) — validation's powTarget returns null for
+    // any target past this, so a wider target is unmineable.
     expect(MAX_SATISFIABLE_TARGET_BITS).toBe(256);
   });
 
