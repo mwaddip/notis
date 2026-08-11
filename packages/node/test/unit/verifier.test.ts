@@ -17,7 +17,9 @@ import type { VerifierDeps } from '../../src/services/verifier.js';
 
 interface MockStore {
   // Byte-keyed, because the store they stand in for compares BLOBs by
-  // value. `karmaBoxes` below already hex-keys; these two did not.
+  // value. A plain `Map` keyed on a `Uint8Array` compares by reference, so a
+  // lookup with an equal-but-distinct array misses. `karmaBoxes` reaches the
+  // same property by hex-keying.
   identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
   challenges: ByteKeyedMap<{ challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
   karmaBoxes: Map<string, { value: bigint }[]>;

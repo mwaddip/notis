@@ -1,6 +1,7 @@
 /**
  * TS ↔ JS mirror: the demo UI must encode posts, boxes and transactions
- * byte-identically to `@dagsocial/types` (audit M-1, Spec G, positional format).
+ * byte-identically to `@dagsocial/types` — TYPES_INTERFACE → Canonical field
+ * encoding, Layout — Post, Layout — Boxes, Layout — UtxoTransaction.
  *
  * The demo UI (`public/index.html`) mines PoW, signs, and computes post, box and
  * transaction ids in the browser; the node verifies all three. If the two
@@ -131,7 +132,7 @@ const GOLDEN_CREDIT_BOX: CreditBox =
   { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_UTXO_TX_ID, index: 1 };
 
 // ---------------------------------------------------------------------------
-// Spec G provenance vectors.
+// Provenance vectors (NODE_INTERFACE → Box Identity and Mint Provenance).
 //
 // The provenance is the real one for these boxes: GOLDEN_UTXO_TX creates the
 // karma box at index 0 and the credit box at index 1. Values measured from
@@ -139,9 +140,9 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // pinned to a constant rather than only to each other.
 //
 // `GOLDEN_KARMA_CANDIDATE_ID` equals `GOLDEN_KARMA_BOX_ID` above, and that is
-// phase G3b's whole point rather than a copy-paste slip: `computeBoxId` IS
-// `computeCandidateBoxId` applied to the box's own provenance, so the "legacy"
-// and "candidate" ids collapsed into one derivation on both sides.
+// the derivation rather than a copy-paste slip: `computeBoxId` IS
+// `computeCandidateBoxId` applied to the box's own provenance, one derivation
+// on both sides.
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
@@ -154,17 +155,14 @@ const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domai
   '555fa23925e32ddc4adb61422588088a410ea2196d05349d82b3034e197ad7f2';
 
 // ---------------------------------------------------------------------------
-// One fixture per box type (Spec G phase E3)
+// One fixture per box type
 //
-// Both mirror blocks encoded karma and credit only, which is how a missing
-// binary-field conversion survived on `VouchBox`: with no vouch box ever encoded
-// through both implementations, nothing could observe that the UI wrote
-// `voucherId` in the wrong form. Same shape as phase C §4.2 — B3 round-tripped
-// only a karma box, so an in-range tag at 0x03 could not collide with karma.
-//
-// Every type is now encoded through both implementations in both forms, so the
-// next omission fails here instead of needing review to catch. Distinct fill
-// bytes per field so a transposition is visible too.
+// A box type encoded through only ONE implementation is a type whose binary
+// fields nobody compares: a UI that wrote `VouchBox.voucherId` in the wrong form
+// would be observed by nothing. Every type in `ALL_BOX_TYPES` is encoded through
+// both implementations in both forms, so an omission fails here instead of
+// needing review to catch. Distinct fill bytes per field so a transposition is
+// visible too.
 // ---------------------------------------------------------------------------
 
 /**
@@ -211,11 +209,10 @@ const GOLDEN_VOUCH_BOX: VouchBox = {
 
 /**
  * The bond as invite creation emits it: `inviteePublicKey` **empty**, meaning
- * unclaimed. It is the only 0-or-32 field in any box, `opt(b32)` is the only
- * option-shaped field in the box arms, and until now no fixture anywhere
- * exercised the absent branch through both implementations — which is exactly
- * how a `b32` in that slot survived review and killed the whole invite path in
- * production. One fixture per branch, so the next one cannot.
+ * unclaimed. It is the only 0-or-32 field in any box and `opt(b32)` is the only
+ * option-shaped field in the box arms (TYPES_INTERFACE → Layout — Boxes), so
+ * without a fixture on the absent branch a plain `b32` in that slot encodes
+ * every unclaimed bond wrongly and nothing observes it. One fixture per branch.
  */
 const GOLDEN_BOND_BOX_UNCLAIMED: BondBox = {
   ...GOLDEN_BOND_BOX,
@@ -412,9 +409,9 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
   });
 
   it('both implementations agree across a spread of posts', () => {
-    // Every variant is in-domain on both sides: a `parentRefs` entry is `b32`
-    // now, so the old `['ab', 'cd']` / `['']` cases have no encoding at all —
-    // they moved to the domain test below rather than being dropped.
+    // Every variant is in-domain on both sides. A `parentRefs` entry is `b32`,
+    // so a short or empty ref has no encoding at all and belongs in the domain
+    // test below, where the throw is the assertion.
     const variants: Post[] = [
       { ...GOLDEN_POST, content: 'a', parentRefs: [] },
       { ...GOLDEN_POST, content: '', parentRefs: [] },
@@ -439,7 +436,8 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     // bytes for the ones that are. A UI that padded `'ab'` to 32 bytes where the
     // node throws would mint posts the node cannot verify — and the padding
     // would map a malformed ref onto a well-formed ref's encoding, which is the
-    // reason a fixed-width field carries no sentinel (spec §2.5).
+    // reason a fixed-width field throws instead of carrying a sentinel
+    // (TYPES_INTERFACE → Totality).
     // `GOLDEN_REF` is all digits, so uppercasing it is a no-op — the case leg
     // needs a ref that actually contains letters to be non-vacuous.
     const MIXED_CASE_REF = 'ab'.repeat(32).toUpperCase();
@@ -592,9 +590,9 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('a stray key is unrepresentable — the encoder reads only what it declares', () => {
-    // Under the CBOR form this needed an explicit strip of `id`/`txId`/`index`,
-    // and any *other* decoration a display path added still entered the hash.
-    // Positional has no branch that could write one.
+    // The positional encoder writes the fields its arm names and has no branch
+    // that could write another, so a decoration a display path attaches cannot
+    // enter the hash — no strip step stands between the box and its bytes.
     const decorated = {
       ...GOLDEN_KARMA_BOX, id: GOLDEN_KARMA_BOX_ID, createdAtBlock: 99, junk: 'x',
     };
@@ -604,9 +602,9 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('the lpUtf8 length ladder agrees across implementations at every VLQ width', () => {
-    // `proofSource` is the only variable-length field left in a box, so it is
-    // the only place a length prefix can change width. The old cbor-x ladder
-    // (0x18/0x19/0x1a rungs) is gone; VLQ steps at 2^7 and 2^14 instead.
+    // `proofSource` is the only variable-length field in a box, so it is the
+    // only place a length prefix can change width. `lpUtf8` is VLQ-prefixed, so
+    // the rungs sit at 2^7 and 2^14 (TYPES_INTERFACE → Primitives).
     const prefixAt = (b: Uint8Array): string => hexOf(b.subarray(34, 37));
     for (const [len, prefix] of [
       [127, '7f7878'], [128, '800178'], [16383, 'ff7f78'], [16384, '808001'],
@@ -674,8 +672,10 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('the txId counts its entries — two output lists cannot concatenate alike (C1)', () => {
-    // Pre-migration the inputs and outputs were concatenated with no count and
-    // no length prefix, and box bytes are variable-length. `arr()` closes it.
+    // Box bytes are variable-length, so a concatenation with no count and no
+    // length prefix lets two different output lists produce one byte string.
+    // `arr()` writes the count, which is what makes the preimage injective
+    // (TYPES_INTERFACE → Layout — UtxoTransaction).
     const one = { ...GOLDEN_UTXO_TX, outputs: [GOLDEN_KARMA_CANDIDATE] };
     const two = { ...GOLDEN_UTXO_TX, outputs: [GOLDEN_KARMA_CANDIDATE, GOLDEN_KARMA_CANDIDATE] };
     expect(ui.computeTxId(one as unknown as Record<string, unknown>))
@@ -696,8 +696,9 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     expect(ui.computeTxId(withPreimages as unknown as Record<string, unknown>))
       .toBe(computeTxId(withPreimages));
     expect(ui.computeTxId(empty as unknown as Record<string, unknown>)).toBe(computeTxId(empty));
-    // `opt()` tags presence, so `{}` is `01 00` and absence is `00`. Under the
-    // pre-migration form both appended nothing and the two hashed alike.
+    // `opt()` tags presence, so `{}` is `01 00` and absence is `00` — an empty
+    // map and a missing one are distinguishable rather than both appending
+    // nothing, which is what closes the malleability.
     expect(computeTxId(empty)).not.toBe(GOLDEN_UTXO_TX_ID);
   });
 });
@@ -705,13 +706,13 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
 // ---------------------------------------------------------------------------
 
 /**
- * Box-identity mirror (Spec G phase E). The derivation binds content *and* the
- * position that content was created at:
+ * Box-identity mirror. The derivation binds content *and* the position that
+ * content was created at (NODE_INTERFACE → Box Identity and Mint Provenance):
  *
  *   blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes ‖ b32(txId) ‖ vlqU(index) )
  *
- * Provenance is no longer *stripped* before hashing — it is structurally absent
- * from `canonicalBoxBytes` and appended afterwards, which is what keeps the
+ * Provenance is structurally absent from `canonicalBoxBytes` and appended
+ * afterwards rather than stripped before hashing, which is what keeps the
  * derivation non-circular without anyone having to remember a strip rule.
  */
 describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', () => {
@@ -755,10 +756,10 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
   });
 
   it('the derivation is not the legacy one — the tag and provenance both bind', () => {
-    // Inverted by phase G3b: there is no legacy derivation left to differ from.
-    // `computeBoxId` IS `computeCandidateBoxId` applied to the box's own
-    // provenance — on BOTH sides — so these must now be equal, and the mirror is
-    // what proves the client collapsed them the same way the node did.
+    // There is no second derivation to differ from: `computeBoxId` IS
+    // `computeCandidateBoxId` applied to the box's own provenance — on BOTH
+    // sides — so these must be EQUAL, and the mirror is what proves the client
+    // collapsed them the same way the node did.
     expect(GOLDEN_KARMA_CANDIDATE_ID).toBe(GOLDEN_KARMA_BOX_ID);
     expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_CANDIDATE), GOLDEN_UTXO_TX_ID, 0))
       .toBe(ui.computeBoxId(asUi(GOLDEN_KARMA_BOX)));
@@ -790,17 +791,16 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     // non-negative safe integers, so the all-ones u64 stays unreachable from a
     // valid index and a malformed one cannot impersonate a valid one.
     //
-    // Note 0xffffffff and 2^32 are NOT in this list any more, and that is the
-    // change rather than an omission: under the old `u32BE` the sentinel WAS
-    // 0xffffffff, so those two collided with malformed input. `vlqU` encodes
-    // both faithfully.
+    // 0xffffffff and 2^32 are deliberately absent from this list. Both are
+    // inside `vlqU`'s domain and encode faithfully, so they are valid indices
+    // rather than sentinel cases — the assertion below pins that.
     for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, bad), `index=${bad}`)
         .toBe(GOLDEN_KARMA_CANDIDATE_ID_SENTINEL);
       expect(computeCandidateBoxId(GOLDEN_KARMA_BOX, GOLDEN_UTXO_TX_ID, bad), `index=${bad}`)
         .toBe(GOLDEN_KARMA_CANDIDATE_ID_SENTINEL);
     }
-    // …and 2^32 is now a real index, distinct from the sentinel.
+    // …and 2^32 is a real index, distinct from the sentinel.
     expect(computeCandidateBoxId(GOLDEN_KARMA_BOX, GOLDEN_UTXO_TX_ID, 2 ** 32))
       .not.toBe(GOLDEN_KARMA_CANDIDATE_ID_SENTINEL);
     expect(ui.computeCandidateBoxId(asUi(GOLDEN_KARMA_BOX), GOLDEN_UTXO_TX_ID, 2 ** 32))
@@ -808,14 +808,13 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
   });
 
   it('txId enters as 32 RAW bytes — an out-of-domain txId has no encoding at all', () => {
-    // Was "txId enters as the UTF-8 bytes of its hex text, not as decoded
-    // bytes", and the case-sensitivity it proved is the reason the name had to
-    // change rather than the constant: `AB…` and `ab…` used to derive two
-    // distinct ids for one transaction, and the old form kept that collision
-    // *visible* instead of removing it. Under `b32` the uppercase spelling has
-    // no encoding, so the ambiguity is unconstructible rather than distinguished.
+    // `b32` decodes the hex text to 32 raw bytes, and its domain is 64
+    // LOWERCASE hex characters. `AB…` and `ab…` name one transaction, so an
+    // encoding that admitted both would give that transaction two ids; here the
+    // uppercase spelling has no encoding at all, and the ambiguity is
+    // unconstructible rather than merely distinguished.
     //
-    // The cost is stated where it is paid: derivation is no longer total on an
+    // The cost is stated where it is paid: derivation is NOT total on an
     // attacker-supplied txId, so every call site must establish the domain. Every
     // txId reaching here is a blake2b digest rendered lowercase, by construction.
     for (const weird of [GOLDEN_UTXO_TX_ID.toUpperCase(), '', 'abc', 'zz', 'ab'.repeat(31)]) {
@@ -846,8 +845,9 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
 // ---------------------------------------------------------------------------
 
 /**
- * likeTarget tail mirror (P2-D). The like transaction's target sits inside the
- * `computeTxId` preimage as `opt(b32)`, so the signature covers the target and a
+ * likeTarget tail mirror. The like transaction's target sits inside the
+ * `computeTxId` preimage as `opt(likeTarget, b32)` (TYPES_INTERFACE → Layout —
+ * UtxoTransaction), so the signature covers the target and a
  * relay cannot re-point a like. The UI signs what it builds, so a mirror that
  * dropped the tail (or gated it on truthiness) would sign ids the node never
  * computes, and every like from the demo UI would be rejected.
@@ -876,12 +876,10 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   });
 
   it('an empty-string target has no encoding — the truthiness trap is gone', () => {
-    // Was "presence is not truthiness — an empty-string target still appends the
-    // marker". Under the ASCII `like:` marker an empty target was *encodable*,
-    // so the pin had to be that presence is `!== undefined` rather than truthy.
-    // `opt(b32)` still distinguishes presence from absence by a tag byte, but
-    // `''` is out of the `b32` domain, so the case the old pin guarded is
-    // unconstructible rather than merely handled.
+    // `opt` distinguishes presence from absence by a tag byte, so presence is
+    // `!== undefined` and never truthiness — but `''` does not reach that
+    // question at all, because it is out of the `b32` domain and has no
+    // encoding. A truthiness trap is unconstructible here rather than handled.
     const emptyTarget: UtxoTransaction = { ...GOLDEN_UTXO_TX, likeTarget: '' };
     expect(() => computeTxId(emptyTarget)).toThrow();
     expect(() => ui.computeTxId(asUi(emptyTarget))).toThrow();
@@ -899,7 +897,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The post-PoW nonce tail, and the predicate the UI decides with it (Phase 8b)
+// The post-PoW nonce tail, and the predicate the UI decides with it
 // ---------------------------------------------------------------------------
 
 describe('demo UI ↔ @dagsocial/types post-PoW nonce tail', () => {
@@ -915,8 +913,8 @@ describe('demo UI ↔ @dagsocial/types post-PoW nonce tail', () => {
   });
 
   it('computePostId reaches the same tail writer, not a second copy of it', () => {
-    // The id's nonce row must move with `powNonceTail`, which is what stops the
-    // two UI call sites drifting apart the way the UI and validation once did.
+    // The id's nonce row must move with `powNonceTail`. Two UI call sites read
+    // the same writer, so neither can drift from the other or from validation.
     const tail = ui.powNonceTail(GOLDEN_POST.powNonce);
     expect(hexOf(tail)).toBe(hexOf(powNonceBytes(GOLDEN_POST.powNonce)));
     expect(ui.computePostId(GOLDEN_POST as unknown as Record<string, unknown>))
@@ -932,8 +930,9 @@ describe('demo UI PoW predicate ↔ @dagsocial/validation verifyPoW', () => {
   } satisfies Record<string, Uint8Array>;
 
   // Every row carries the zero-bit count its digest actually opens with, so
-  // `targetBits` is CHOSEN, never searched. A test that mines through the predicate
-  // it is testing cannot fail (carried #31, deleted from pow.test.ts in this phase).
+  // `targetBits` is CHOSEN, never searched. A test that mines a nonce through the
+  // predicate it is testing cannot fail — it asks the predicate for an input the
+  // predicate accepts.
   //
   // The hash column is regenerated rather than hand-derived: the LAYOUT is pinned
   // upstream by types' golden vectors, written from the layout table. What these rows
@@ -985,9 +984,10 @@ describe('demo UI PoW predicate ↔ @dagsocial/validation verifyPoW', () => {
  * Byte construction in `index.html` must sit inside something the mirror evaluates.
  *
  * Adding a name to `MIRRORED_OTHER` fixes one omission. This re-derives the list
- * instead, because the defect's shape is *a list nobody re-derives*: an omitted
- * function signals nothing, which is how `solvePoW` stayed unmirrored while the
- * suite was green.
+ * instead, because the defect's shape is *a list nobody re-derives*: a
+ * consensus-critical function the list does not name is unpinned, and its
+ * absence signals nothing — the whole suite stays green (WEB_INTERFACE, the
+ * mirror-coverage warning).
  *
  * ⚠ **This narrows the class; it does not close it.** The audit keys on a
  * VOCABULARY drawn from `BYTE_PRIMITIVES`. Byte assembly written without any of
@@ -1003,8 +1003,10 @@ const AUDIT_VOCABULARY: readonly string[] = [
 
 /**
  * Scopes that construct bytes and are deliberately not mirrored — one line of reason
- * each. Every entry here was surfaced by this audit, not anticipated; each is a
- * hashing site with no layout decision in it, and none is the post-PoW tail.
+ * each, and none of them the post-PoW tail. An entry is an admission, not a
+ * clearance: `signPost`'s own reason names a digest line this suite does not pin,
+ * so read each reason for what it concedes rather than treating the list as a
+ * second column of coverage.
  */
 const AUDIT_ALLOW: Record<string, string> = {
   signPost:

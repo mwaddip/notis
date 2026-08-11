@@ -19,9 +19,9 @@
  * containing `{`/`}` cannot truncate the slice.
  *
  * Throws when the declaration is absent. A mirror whose subject has been renamed
- * or deleted must fail loudly — a silently absent declaration is the omission
- * nothing else signals, and is how `solvePoW` stayed unmirrored while the suite
- * was green.
+ * or deleted must fail loudly — a silently absent declaration is an omission
+ * nothing else signals, and a mirror that skipped it would report coverage it
+ * does not have.
  */
 export function extractDeclaration(src: string, header: string, sourceLabel: string): string {
   const start = src.indexOf(header);
