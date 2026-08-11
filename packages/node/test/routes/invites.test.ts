@@ -273,7 +273,8 @@ describe('invites routes', () => {
     };
     signTransaction(tx, inviteePrivKeyObj, inviteePubKeyHex);
 
-    // P2-B phase 1 pins `probationStartBlock <= settle height`. This suite seeds
+    // NODE_INTERFACE → Bond transition rules pins
+    // `probationStartBlock <= settle height`. This suite seeds
     // boxes straight into the store and stores no ordering block, so the real
     // `getCurrentHeight` returns 0 and no window could satisfy both that bound
     // and `probationStartBlock > 0`. A bond box cannot exist on-chain at height
@@ -562,7 +563,7 @@ describe('invites routes', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Route error policy (audit L-12, M-8). These routes answer with the bare
+  // NODE_INTERFACE → Route error policy. These routes answer with the bare
   // `{ error: <message> }` shape, so the assertions below read `error`.
   // ---------------------------------------------------------------------------
 
