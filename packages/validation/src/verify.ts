@@ -142,8 +142,10 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
 
 /**
  * One past the largest value the u64 wire domain carries — the exclusive
- * ceiling of `writeVlqU64OrThrow`'s accepted set, which is `[0, 2^64 - 1]`
- * (`wire/src/vlq.ts:65-75`).
+ * ceiling of `writeVlqU64OrThrow`'s accepted set, which is `[0, 2^64 - 1]`.
+ * That writer is `@dagsocial/types`' (`codec.ts`), not `@dagsocial/wire`'s; it
+ * delegates through `ByteWriter.writeVlqBigInt` to `encodeVlqBigInt`, which is
+ * where the range is enforced (WIRE_INTERFACE → BigInt VLQ).
  *
  * `isU64Safe` is the `number` counterpart and cannot serve here: a `bigint`
  * field spans the whole u64, far past `MAX_SAFE_INTEGER`, so the two predicates
@@ -164,22 +166,21 @@ const U64_BOUND = 1n << 64n;
  * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
  * `protocolVersion` / `timestamp` throws in `TextEncoder.encode` / `String()`.
  *
- * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. The loose
- * check admitted `NaN` / `Infinity` / negative / fractional values, which the
+ * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. A loose
+ * check admits `NaN` / `Infinity` / negative / fractional values, which the
  * canonical encoder in `@dagsocial/types` has to absorb by writing an all-ones
  * sentinel to stay panic-free — and two such malformed posts then share an
- * encoding. Rejecting them here instead keeps that sentinel path out of reach
- * for anything that passes this guard.
+ * encoding. Rejecting them here keeps that sentinel path out of reach for
+ * anything that passes this guard.
  *
- * **Width checks** (positional wire format, spec §2.5 / §6.1): `author` and
- * `challenge` become `b32` and `parentRefs` becomes `arr(refs, b32)`. A
- * fixed-width writer has no unreachable sentinel — its wire domain *is* its
- * encodable domain — so padding or truncating a 31-byte `author` would map it
- * onto a well-formed post's encoding, a consensus-level collision strictly
- * worse than the panic it avoids. The writer therefore throws, and the domain
- * has to be established before the writer is reached. Establishing it here, one
- * phase ahead of `post.ts` moving, is what keeps that throw unreachable rather
- * than latent.
+ * **Width checks** (TYPES_INTERFACE → Layout — Post): `author` and `challenge`
+ * are `b32` and `parentRefs` is `arr(refs, b32)`. A fixed-width writer has no
+ * unreachable sentinel — its wire domain *is* its encodable domain — so padding
+ * or truncating a 31-byte `author` would map it onto a well-formed post's
+ * encoding, a consensus-level collision strictly worse than the panic it
+ * avoids. `post.ts` therefore throws (`writeBytesNOrThrow`,
+ * `writeHexNOrThrow`), and this guard is what establishes the domain before
+ * that writer is reached, keeping the throw unreachable rather than latent.
  *
  * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
  * 31-byte one cannot verify a signature), `challenge` is `randomBytes(32)` from
@@ -225,15 +226,14 @@ function isSignablePost(post: unknown): post is Post {
 }
 
 // ---------------------------------------------------------------------------
-// The block header's encodable domain (Phase 1f)
+// The block header's encodable domain
 // ---------------------------------------------------------------------------
 //
-// One statement of the domain, two callers. It replaced `isEncodableHeader`,
-// which stated the same domain as *types only* (`typeof prevBlockHash ===
-// 'string'`, with no width and no alphabet; a bare `isBytes(validatorId)`, with
-// no length) while `verifyOrderingBlockStructure` stated it again with widths
-// and alphabets. Two implementations of one domain drift — the class the
-// positional wire format exists to close — so both now consult this table.
+// One statement of the domain, every caller. `verifyHeaderFieldDomains`,
+// `verifyOrderingBlockStructure`, `blockHash` and `computePowHash` all consult
+// this table rather than restating widths and alphabets of their own: two
+// implementations of one domain drift, which is the class the positional wire
+// format exists to close.
 //
 // Each rule names the writer its field feeds under that format, because that is
 // what fixes the domain: `b32`/`b33` are fixed-width and have no unreachable
@@ -276,11 +276,10 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   // vlqU
   { field: 'powNonce', ok: isU64Safe, error: 'Block header powNonce must be a non-negative safe integer' },
   { field: 'powTargetBits', ok: isU64Safe, error: 'Block header powTargetBits must be a non-negative safe integer' },
-  // vlqU, and the field nothing checked anywhere in the repo before Phase 1f.
-  // A domain pin, not a clock policy: no monotonicity rule and no skew window —
-  // those are consensus rule additions, and "never add checks the reference
-  // lacks" applies. `createdAt` stays a producer-set record that no node
-  // validates against anything, as in every chain in the lineage.
+  // vlqU. A domain pin, not a clock policy: no monotonicity rule and no skew
+  // window — those are consensus rule additions, and "never add checks the
+  // reference lacks" applies. `createdAt` stays a producer-set record that no
+  // node validates against anything, as in every chain in the lineage.
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
 ];
 
@@ -310,9 +309,9 @@ function firstHeaderDomainFailure(h: unknown): HeaderDomainRule | null {
  * those); it can only be built in-process, which is trusted.
  *
  * Returns a **reason**, not a boolean, because a rejection's diagnosis is not
- * subsumed by the rejection (Phase 1c): `verifyOrderingBlockStructure` re-labels
- * the failure with its own long-standing per-field message rather than emitting
- * a bare "invalid header".
+ * subsumed by the rejection: `verifyOrderingBlockStructure` re-labels the
+ * failure with its own per-field message rather than emitting a bare
+ * "invalid header".
  */
 export function verifyHeaderFieldDomains(header: unknown): { valid: boolean; error?: string } {
   if (!isObject(header)) return { valid: false, error: 'Block header is not an object' };
@@ -333,9 +332,6 @@ export function verifyHeaderFieldDomains(header: unknown): { valid: boolean; err
  * (`2^(256−targetBits) − 1`) rather than the exclusive threshold, because the
  * exclusive form is `2^256` at `targetBits = 0` and does not fit the digest
  * width; the inclusive form makes both extremes ordinary values.
- *
- * Unit 2 replaces this derivation with a fractional-bits one. `meetsPowTarget`
- * is unaffected — see `docs/specs/2026-08-11-difficulty-retarget.md` §2.2.
  */
 export function powTarget(targetBits: number): Uint8Array | null {
   if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
@@ -490,7 +486,7 @@ const CONTENT_CHAR_ERROR =
 export function verifyContentCharacters(content: string): { valid: boolean; error?: string } {
   if (typeof content !== 'string') return { valid: false, error: CONTENT_CHAR_ERROR };
   // Iterating a string yields whole codepoints (and lone surrogates singly),
-  // matching the codepoint semantics the previous `u`-flag regex had.
+  // which is the granularity the table's ranges are stated at.
   for (const ch of content) {
     const cp = ch.codePointAt(0);
     if (cp !== undefined && isDisallowedContentCodepoint(cp)) {
@@ -522,8 +518,8 @@ export function verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?:
   // The struct's own three fields, each pinned to the domain of the writer it
   // feeds in the `SUB_BLOCK` codec. `b32` from hex and `b32` from bytes are
   // fixed-width and throw outside their domain; `vlqU` is total by sentinel and
-  // collides instead (TYPES_INTERFACE → Totality). Both need the domain
-  // established upstream of the encoder — spec §2.5.
+  // collides instead. Both need the domain established upstream of the encoder
+  // (TYPES_INTERFACE → Totality).
   if (!isHex32(sb.subBlockId)) {
     return { valid: false, error: 'Sub-block subBlockId must be 64 lowercase hex characters' };
   }
@@ -537,10 +533,11 @@ export function verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?:
     return { valid: false, error: 'Sub-block producerId must be exactly 32 bytes' };
   }
   // The post's field domains, checked here because this is the Stage-1 gate the
-  // relay path runs *before* it builds a PoW preimage from that post
-  // (`net/gossip.ts:201` gates `:222`). Under fixed-width writers a post outside
-  // the domain has no encoding and the writer throws — inside a topic validator
-  // whose catch arm bans the *forwarding* peer for a message it merely relayed.
+  // relay path runs *before* it builds a PoW preimage from that post: `net`'s
+  // `runStage1SubBlock` calls this function and only then `postPowPreimage`.
+  // Under fixed-width writers a post outside the domain has no encoding and the
+  // writer throws — inside a topic validator whose catch arm bans the
+  // *forwarding* peer for a message it merely relayed.
   // Rejecting it as invalid content is both the correct verdict and the correct
   // penalty class.
   const postDomains = verifyPostFieldDomains(sb.post);
@@ -579,7 +576,6 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
 /**
  * This function's own message for each header field, so the header domain can
  * be stated once (`HEADER_DOMAIN`) without moving any rejection's diagnosis.
- * Phase 1e's teeth demonstration asserts these strings exactly.
  */
 const BLOCK_HEADER_FIELD_ERROR: Record<HeaderField, string> = {
   protocolVersion: 'Ordering block header missing protocolVersion',
@@ -591,7 +587,6 @@ const BLOCK_HEADER_FIELD_ERROR: Record<HeaderField, string> = {
   validatorId: 'Ordering block header missing or invalid validatorId',
   powNonce: 'Ordering block missing or invalid powNonce',
   powTargetBits: 'Ordering block missing or invalid powTargetBits',
-  // New in Phase 1f — the field this function never touched.
   createdAt: 'Ordering block header missing or invalid createdAt',
 };
 
@@ -609,17 +604,11 @@ export function verifyOrderingBlockStructure(
   if (headerFailure) {
     return { valid: false, error: BLOCK_HEADER_FIELD_ERROR[headerFailure.field] };
   }
-  // The `subBlockRefs` presence and alignment checks stood here and went with
-  // the field (Phase 3b; spec §1.2, §4.1). They were the whole of that field's
-  // validation — `Array.isArray` plus a length equal to `subBlockEntries`' —
-  // and the values they admitted drove a mempool eviction and a mempool
-  // injection while `subBlockRoot` and `blockHash` stayed unchanged.
-  //
-  // What remains is `subBlockEntries`' own presence check, which the alignment
-  // check used to carry as its first clause. It keeps the `?.`, so a block with
-  // no `subBlockTree` at all is still rejected here rather than throwing in the
-  // loop below — that case was covered by the deleted `subBlockRefs` check, and
-  // dropping both would have moved it from a stated rejection to a TypeError.
+  // `subBlockEntries`' presence check. There is no companion `subBlockRefs`
+  // check because the struct carries no such field: the committed topology is
+  // `subBlockEntries` and `pruneEntries` alone (TYPES_INTERFACE → Layout —
+  // Block). The `?.` is load-bearing — it makes a block with no `subBlockTree`
+  // at all a stated rejection here rather than a TypeError in the loop below.
   // The message follows `pruneEntries`' below rather than inventing a phrasing.
   if (!Array.isArray(block.subBlockTree?.subBlockEntries)) {
     return { valid: false, error: 'Ordering block missing subBlockTree.subBlockEntries' };
@@ -630,12 +619,12 @@ export function verifyOrderingBlockStructure(
   // encoding under a fixed-width writer and no sentinel to fall back on, so the
   // writer throws (TYPES_INTERFACE → Totality).
   //
-  // The count check was never the whole rule here, and the reachable path runs
-  // through the store rather than the preimage: `block-apply.ts:579` takes
-  // `subBlockId = entry.postId` and `:584` writes `insertPostPlaceholder(
-  // subBlockId, entry.parentRefs)` for any confirmed sub-block whose content
-  // has not arrived. `insertPost` deliberately does not overwrite `parent_refs`
-  // when the real post lands later (`store/posts.ts:91-92` says so), so the
+  // The count check is not the whole rule here, and the reachable path runs
+  // through the store rather than the preimage: `block-apply`'s entry loop takes
+  // `subBlockId = entry.postId` and calls `insertPostPlaceholder(subBlockId,
+  // entry.parentRefs)` for any confirmed sub-block whose content has not
+  // arrived. `insertPost` deliberately does not overwrite `parent_refs` when the
+  // real post lands later — its placeholder-upgrade branch says so — so the
   // block's claim is what `rowToPost` → `computePostId` reads at feed-service
   // and stump-engine, forever. Pinning here is what keeps that column inside
   // the encodable domain.
@@ -646,13 +635,12 @@ export function verifyOrderingBlockStructure(
     if (!isHex32(entry.postId)) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid postId' };
     }
-    // `MAX_PARENT_REFS`, not a literal `8`. Every other enforcement site imports
-    // the constant (`verifier.ts:137`, `:239`, `verifyParentRefsCount` above);
-    // this one had
-    // drifted to a literal, which is a no-op only while the constant is 8. The
-    // moment it moves, a literal here would cap the post path at the new value
-    // while this path — the one that feeds `insertPostPlaceholder` — kept
-    // accepting the old one.
+    // `MAX_PARENT_REFS`, not a literal `8`. Every enforcement site imports the
+    // constant — node's `verifyPost` and `verifyPostForRelay`, and
+    // `verifyParentRefsCount` above. A literal here would be a no-op only while
+    // the constant is 8: the moment it moves, the literal would cap this path —
+    // the one that feeds `insertPostPlaceholder` — at the old value while the
+    // post path used the new one.
     if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > MAX_PARENT_REFS) {
       return { valid: false, error: 'Ordering block subBlockEntry has invalid parentRefs' };
     }
@@ -711,11 +699,12 @@ export function verifyOrderingBlockStructure(
     }
   }
   // `isBytes`, not a bare `.length` — the same rule the prune-entry block above
-  // states and these three fields (here, `validatorId`, `coinbaseOutput.owner`)
-  // did not follow. They are `b64`/`b32` *from a `Uint8Array`*, so the codec
-  // reaches `writeBytesNOrThrow`, which throws on anything that is not a byte
-  // view of that exact width; a 64-character string, `{length: 64}` and a
-  // 64-element `Array` all satisfy a length check and none of them encode.
+  // states, and it governs the three byte fields outside that block too
+  // (`validatorSignature` here, `validatorId`, `coinbaseOutput.owner`). They are
+  // `b64`/`b32` *from a `Uint8Array`*, so the codec reaches
+  // `writeBytesNOrThrow`, which throws on anything that is not a byte view of
+  // that exact width; a 64-character string, `{length: 64}` and a 64-element
+  // `Array` all satisfy a length check and none of them encode.
   if (!isBytes(block.validatorSignature) || block.validatorSignature.length !== 64) {
     return { valid: false, error: 'Ordering block missing or invalid validatorSignature' };
   }
@@ -732,15 +721,13 @@ export function verifyOrderingBlockStructure(
   if (!Array.isArray(block.utxoTxTree?.utxoTxIds)) {
     return { valid: false, error: 'Ordering block missing utxoTxTree.utxoTxIds' };
   }
-  // The only array in this struct that had no per-element check at all, so an
-  // element could be a number, an object or `null`. Those reach `hexToBuf(id)`
-  // inside `computeUtxoTxRoot`'s Merkle build (`block-creator.ts:79`, called
-  // from `block-apply.ts:270`), where a non-string throws *today* — inside the
-  // apply transaction, so the funnel's totality catch turns a malformed block
-  // into an "unexpected failure" log rather than the stated rejection the
-  // spec's boundary check requires (§2.1 step 4). Register row C3 records this
-  // as subsumed by the migration, which is true from Phase 3 onward — the ids
-  // decode as raw bytes then — and not true in the window this phase covers.
+  // Without this check an element could be a number, an object or `null`, and
+  // those reach `hexToBuf(id)` inside `computeUtxoTxRoot`'s Merkle build, which
+  // `block-apply` calls at its Merkle-root verification step. A non-string
+  // throws there — inside the apply transaction, so the funnel's totality catch
+  // would turn a malformed block into an "unexpected failure" log rather than
+  // the stated rejection the apply path requires (NODE_INTERFACE → Ordering
+  // block apply-time authorization).
   for (const id of block.utxoTxTree.utxoTxIds) {
     if (!isHex32(id)) {
       return {
@@ -762,11 +749,13 @@ export function verifyOrderingBlockStructure(
   // `failStopIfCorruptChain` → `process.exit(1)`, triggered automatically by
   // the next gossip block's `extendsOurTip` (measured on `672f5a5`).
   //
-  // This one costs an attacker nothing: `utxoTxRoot` commits `utxoTxIds` and
+  // No commitment makes that unreachable: `utxoTxRoot` commits `utxoTxIds` and
   // `coinbaseOutputs` and **never `utxoTxs`**, and the validator signature
-  // covers the header only — so a *relaying* node swaps the payload on an
-  // honest block with no re-mine and no re-sign. Gossip's decoder refuses it
-  // today; the undecoded `requestBlocks` path does not.
+  // covers the header only — so a *relaying* node can swap the payload on an
+  // honest block with no re-mine and no re-sign. Both peer paths decode through
+  // the positional codec (`decodeOrderingBlock` on gossip,
+  // `decodeLegacyBlocksResponse` under `requestBlocks`), so a swap is refused
+  // there; this pin is what keeps the store write safe independently of that.
   for (const tx of block.utxoTxTree.utxoTxs) {
     if (!isBytes(tx)) {
       return { valid: false, error: 'Ordering block utxoTx must be a byte view' };
@@ -784,22 +773,23 @@ export function verifyOrderingBlockStructure(
     }
     // `value` is `bigint`, so its writer is `writeVlqU64OrThrow` — the one
     // **throwing** writer in the codec, because a `bigint` spans the whole u64
-    // and has no unreachable sentinel to fall back on (spec §2.5). The sign
-    // check alone left the ceiling open, and the throw is reached: node's apply
-    // funnel computes `computeUtxoTxRoot` at **step 4**, ahead of the coinbase
-    // sum at step 5, so a value at or above 2^64 dies inside root computation
-    // and the funnel's totality catch logs it as an "unexpected failure"
-    // instead of the stated rejection §2.1 step 4 requires. Establishing the
-    // domain upstream of the encoder is what makes that throw unreachable.
+    // and has no unreachable sentinel to fall back on (TYPES_INTERFACE →
+    // Totality). A sign check alone would leave the ceiling open, and the throw
+    // is reached: node's apply funnel computes `computeUtxoTxRoot` at **step
+    // 4**, ahead of the coinbase sum at step 5, so a value at or above 2^64
+    // dies inside root computation and the funnel's totality catch logs it as
+    // an "unexpected failure" instead of a stated rejection (NODE_INTERFACE →
+    // Ordering block apply-time authorization). Establishing the domain
+    // upstream of the encoder is what makes that throw unreachable.
     if (typeof out.value !== 'bigint' || out.value < 0n || out.value >= U64_BOUND) {
       return { valid: false, error: 'Coinbase output invalid value' };
     }
-    // `isU64Safe`, not the bare `typeof === 'number'` this carried: the writer
-    // is `vlqU` over a `number`, which is total *by sentinel*, so an
-    // out-of-domain height does not throw — it **collides**. `2^60`, `Infinity`
-    // and `1e300` all clear the `>= h.height` floor and all three encode to
-    // `VLQ_SENTINEL`, giving distinct blocks one `utxoTxRoot`. This is exactly
-    // the `createdAt` defect Phase 1f closed on the header, one struct over.
+    // `isU64Safe`, not a bare `typeof === 'number'`: the writer is `vlqU` over a
+    // `number`, which is total *by sentinel*, so an out-of-domain height does
+    // not throw — it **collides**. `2^60`, `Infinity` and `1e300` all clear the
+    // `>= h.height` floor and all three encode to `VLQ_SENTINEL`, giving
+    // distinct blocks one `utxoTxRoot`. `HEADER_DOMAIN`'s `createdAt` rule is
+    // the same pin one struct over.
     //
     // Nothing here relies on the funnel: `lockedUntilBlock` is saved today only
     // by step 5b's exact-equality check, which is incidental protection — loosen
@@ -810,13 +800,13 @@ export function verifyOrderingBlockStructure(
     if (!isU64Safe(out.lockedUntilBlock) || out.lockedUntilBlock < h.height) {
       return { valid: false, error: 'Coinbase output invalid lockedUntilBlock' };
     }
-    // The field checked nowhere in the repo before this line — not by this
-    // function, not at apply, not by any consumer: `block-apply.ts:611-615`
-    // passes `owner`, `value` and `lockedUntilBlock` to `mintCredits` and never
-    // reads `isTreasury`, so it enters no box, no journal entry and no AVL
-    // value. It is written to the store and read by nothing until the decoder
-    // meets it. `writeBool` emits `0xff` for any non-boolean and `readBool`
-    // refuses `0xff`, so the same fail-stop chain as `utxoTxs` above — here at
+    // Nothing else in the repo checks this field — not this function's callers,
+    // not apply. `block-apply`'s coinbase loop passes `owner`, `value` and
+    // `lockedUntilBlock` to `mintCredits` and never reads `isTreasury`, so it
+    // enters no box, no journal entry and no AVL value; outside the store round
+    // trip the only readers are node's `blocks` and `mining` routes, copying it
+    // into a JSON response. `writeBool` emits `0xff` for any non-boolean and
+    // `readBool` refuses it, so the same fail-stop chain as `utxoTxs` above — at
     // the cost of one block's PoW, since `utxoTxRoot` *does* commit the
     // coinbase leaf and the malformed block honestly commits to its own byte.
     //
@@ -853,18 +843,16 @@ export function isValidVouchTarget(userId: Uint8Array): boolean {
 // ---------------------------------------------------------------------------
 //
 // These are the only two functions in this package that hand a header to
-// `encodeHeader`. That precondition used to be the *caller's* to remember, at
-// thirteen `src` lines — and the reachable path where nobody did is fork
-// resolution, which carries bare peer headers that `net` obtained from a raw
-// `cbor-x` decode with a TypeScript cast. `verifyOrderingBlockStructure` cannot
-// cover it: it takes an `OrderingBlock` and that path has only headers.
+// `encodeHeader`, and each establishes the header domain itself rather than
+// requiring it of its callers (VALIDATION_INTERFACE → blockHash). The caller
+// class that makes that necessary is node's fork resolution, which holds bare
+// peer `BlockHeader`s: `verifyOrderingBlockStructure` cannot cover it, because
+// it takes an `OrderingBlock` and that path has only headers.
 //
-// So the guard goes inside the encoder-backed functions rather than at their
-// callers. A consumer then absorbs an *absence* — it does not learn the header
+// A consumer therefore absorbs an *absence* — it does not learn the header
 // domain, call a predicate, or decide what well-formed means. This extends the
-// contract's no-panic rule (M-5) past the `verify*` naming convention that had
-// quietly exempted these two: a function with no `false` to return says so with
-// `null`.
+// contract's no-panic rule (M-5) to two functions the `verify*` naming
+// convention does not reach: one with no `false` to return says so with `null`.
 
 /**
  * The block hash IS the hash of the serialized header, with its precondition
