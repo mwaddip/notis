@@ -4,6 +4,11 @@
 // 3 real nodes (1 mining, 2 sync-only) with 11 role-based identities
 // across 11 sequential chapters (0-indexed).
 //
+// ⚠ PARKED and excluded from `pnpm test` — `./README.md` is the live record of
+// why, and of what this file's state was at parking. The limitations below are
+// part of that record; they describe the file as it stands, not a suite anyone
+// is maintaining.
+//
 // Known limitations:
 // - The current networking layer syncs ordering-block headers but NOT
 //   sub-block data (karma boxes, posts, likes). Cross-node sub-block
@@ -184,8 +189,9 @@ describe('E2E Harness', () => {
             } catch { console.log(`  N${i}: post not synced`); }
           }
 
-          // 10 like TXs were accepted. likeCount may be 0 if epoch hasn't tallied.
-          // The important assertion is the like TXs were accepted (all 10 status=pending).
+          // ⚠ Both branches below LOG. There is no assertion in this block, on
+          // `likeCount` or on the ten submissions, so the chapter passes at
+          // `likeCount = 0` — the headline claim of the chapter is unchecked.
           if (likeCount >= 10) {
             console.log(`  Like accumulation confirmed (>=10)`);
           } else {
