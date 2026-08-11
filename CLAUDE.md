@@ -121,6 +121,22 @@ unprefixed line does not identify itself as a reply:
 
 The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and **commit** their own work. **Pushing is main's, always** — a component session that pushes has published work nobody reviewed.
 
+## Comment style
+
+**Cite the CONTRACT, not the spec.** `docs/specs/` is gitignored and holds **zero tracked files**, so
+`(Phase 3b; spec §1.2)` in a committed comment points at a document nobody who clones this repo can
+open, and a bare `Phase N` resolves to nothing anywhere. A comment either states the rule as it stands
+now, or names the contract section that states it — `TYPES_INTERFACE → Layout — Stump`, never `Phase 2`.
+
+**Never narrate replaced code.** How a function used to behave is not a fact about the current tree.
+No reader has to reason about code that is gone, and a narrated history is a second claim that decays
+independently of the one beside it. This is the retroactive half of *comments point, don't narrate*.
+
+⚠ **This binds code comments. `contracts/` is deliberately exempt for now** — it carries 8
+`docs/specs/` citations and 110 lines with a `Phase N` tag, and some are load-bearing while the
+contract-vs-code reconciliation is unwritten (user, 2026-08-11). **Do not sweep `contracts/` under
+this rule.** The exemption ends with that reconciliation spec, not with this cleanup.
+
 ## Key invariants
 
 - Post content: 1–300 UTF-8 bytes (`MAX_CONTENT_BYTES`)
