@@ -108,9 +108,10 @@ describe('penalty attribution (using PeerManager)', () => {
   });
 
   it('rapid non-fatal penalties all accrue — none are discarded (fails pre-fix)', () => {
-    // Pre-fix the safe-interval cooldown swallowed the second penalty
-    // (penaltyCount 1); post-fix every penalty counts. Nonzero timestamp:
-    // the pre-fix cooldown skipped itself while lastPenaltyTime was 0.
+    // Every penalty counts: a safe-interval cooldown that swallowed the second
+    // one would leave penaltyCount at 1. The nonzero timestamp is what makes
+    // that check meaningful — such a cooldown skips itself while
+    // lastPenaltyTime is 0, so a t=0 flood would accrue either way.
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(1_000);
 

@@ -31,7 +31,8 @@ import { mergeUint8Arrays } from '../src/util.js';
  * construction.
  *
  * Every header this suite hashes is a `makeMockHeader` product or a round-trip
- * of one, so the Phase 1f guard can never fire here. A bare `!` would hide the
+ * of one, so `blockHash`'s domain guard can never fire here. A bare `!` would
+ * hide the
  * day that stops being true: it types `null` as `string`, and the `null` then
  * surfaces as a failed hash comparison several assertions later, blaming the
  * chain link rather than the fixture. Throwing at the fixture names the real
@@ -80,13 +81,10 @@ function makeMockOrderingBlock(
       utxoTxIds: [],
       utxoTxs: [],
       coinbaseOutputs: [
-        // Every field here was wrong, and an unchecked test tree let all three
-        // stand: `value` was a NUMBER (it became bigint with the P0 migration),
-        // `lockedUntilBlock` was `null` where the type says a block height, and
-        // `isTreasury` was missing outright. The coinbase is inert payload for
-        // this suite — every assertion is about heights, hashes and counts, and
-        // the block hash covers the header only — so correcting it changes what
-        // no test proves.
+        // The coinbase is inert payload for this suite — every assertion is
+        // about heights, hashes and counts, and the block hash covers the
+        // header only. Kept type-correct regardless: nothing here would fail if
+        // it were not, which is exactly how a fixture drifts out of its type.
         {
           value: 100n,
           owner: new Uint8Array(32),
@@ -114,13 +112,13 @@ function makeChain(n: number): Map<number, OrderingBlock> {
 /**
  * Serve one legacy request through the **production** serve path.
  *
- * This used to be `simulateHeadersHandler`, a re-implementation of the two
- * serve loops plus their own `cbor-x` calls. It is why the suite that exists to
- * police this protocol stayed green through a response wire-format change: the
- * copy and the assertions agreed with each other and neither one touched the
- * encoder production runs. `serveLegacyHeadersBody` is now exported for exactly
- * this, and the request goes through the real `decodeLegacyHeadersRequest` too,
- * so the boundary a peer actually hits is the boundary under test.
+ * `serveLegacyHeadersBody` is exported for exactly this, and the request goes
+ * through the real `decodeLegacyHeadersRequest` too, so the boundary a peer
+ * actually hits is the boundary under test. A local re-implementation of the
+ * two serve loops would agree with the assertions written beside it while
+ * neither one touched the encoder production runs — which is how the suite
+ * that exists to police this protocol stays green through a response
+ * wire-format change.
  */
 function serve(
   request: Record<string, unknown>,
@@ -288,13 +286,13 @@ describe('legacy response framing', () => {
 // ---------------------------------------------------------------------------
 // Tests — the poisoned payloads, refused AT THE SYNC BOUNDARY
 //
-// Measured in `prompts/node-fail-stop-reachability-measure-REPORT.md`: these
-// two fields reached `applyOrderingBlock` undecoded through this path, the
-// funnel accepted the block, and the ordering store wrote a row our own reader
-// then refuses — `UnreadableStoredBlockError` → `failStopIfCorruptChain` →
-// `process.exit(1)`, fired by the next arriving gossip block and persistent
-// across restarts. Gossip already refused both at decode; this path was the
-// only delivery.
+// Measured, not theorised. Without a decoder on this path these two fields
+// reach `applyOrderingBlock` undecoded, the funnel accepts the block, and the
+// ordering store writes a row our own reader then refuses —
+// `UnreadableStoredBlockError` → `failStopIfCorruptChain` → `process.exit(1)`,
+// fired by the next arriving gossip block and persistent across restarts.
+// Gossip refuses both at decode, which leaves this path as the only delivery
+// route.
 //
 // The assertion that matters is WHERE they die: `decodeLegacy*Response` returns
 // `null`, so `requestBlocks` throws and no object reaches the node. Refusal
@@ -318,11 +316,12 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
 
     // `writeBool` is total by sentinel: an out-of-domain value writes `0xff`,
     // which `readBool` refuses. That is the sentinel discipline working, not a
-    // bug in the writer — the defect was that these bytes never met a decoder.
+    // bug in the writer — the defect it exposes is a path where these bytes
+    // never meet a decoder.
     //
     // `isTreasury` is the last field of the last coinbase output, so it is the
-    // final byte of the `utxo_tx_tree` column — the exact artifact the fail-stop
-    // measurement pulled out of the store ("final byte 0xff, as predicted").
+    // final byte of the `utxo_tx_tree` column — the byte the fail-stop
+    // measurement recovers from the store, asserted directly below.
     const column = encodeUtxoTxTree(block.utxoTxTree);
     expect(column[column.length - 1]).toBe(0xff);
 
@@ -359,12 +358,12 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
   });
 
   it('refuses a header outside the encodable domain', () => {
-    // The headers arm carried the same raw-cbor-plus-a-cast shape. Its measured
-    // consequence differs — headers reach `findForkPoint`, not the store — but
-    // `createdAt: NaN` and friends collide onto one `blockHash` under a
-    // positional encoder, so serving or accepting them is advertising a
-    // colliding anchor. `blockHash` returning `null` (Phase 1f) is the guard
-    // one layer in; this is the same value refused at the wire.
+    // The headers arm reaches `findForkPoint` rather than the store, so its
+    // consequence differs from the blocks arm — but `createdAt: NaN` and
+    // friends collide onto one `blockHash` under a positional encoder, so
+    // serving or accepting them is advertising a colliding anchor. `blockHash`
+    // returning `null` is the guard one layer in; this is the same value
+    // refused at the wire.
     const header = makeMockHeader(1, '00'.repeat(32));
     (header as unknown as Record<string, unknown>)['createdAt'] = Number.NaN;
 

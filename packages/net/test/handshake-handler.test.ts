@@ -20,14 +20,12 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
-// The inbound handshake handler — the last of the four swallow candidates the
-// 1f-3b sweep recorded and did not audit.
+// The inbound handshake handler — every failure gets a line
 //
-// Its catch bound `err` and used it for nothing, so every failure of a 69-line
-// body — stream I/O, our own reply construction, node's store callback — left
-// the peer with an empty frame and the operator with no line at all. A peer
-// that never connects and never explains why is indistinguishable from a peer
-// that never dialled.
+// One silent catch over this body would cover stream I/O, our own reply
+// construction and node's store callback alike, leaving the peer with an empty
+// frame and the operator with nothing. A peer that never connects and never
+// explains why is indistinguishable from a peer that never dialled.
 //
 // The reply is unchanged in every case below. What these pin is that the class
 // is now nameable, and that the two classes are not named the same thing.
@@ -260,8 +258,8 @@ describe('inbound handshake handler — the outer span', () => {
 describe('inbound handshake handler — our own reply', () => {
   it('attributes a throwing store callback to the store, not to the handshake', async () => {
     // `buildOurHandshake` reads `chainHeight()`, which walks node's registered
-    // block callback. Folded into the outer catch this read as a handshake
-    // failure — the misattribution the 1f-3b sweep found three times.
+    // block callback. Folded into the outer catch it would read as a handshake
+    // failure, sending whoever read the log to the wrong subsystem.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { send } = makeHandshakeHarness({

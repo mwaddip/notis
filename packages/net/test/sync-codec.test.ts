@@ -212,18 +212,17 @@ describe('sync codec decode boundary', () => {
       expect(decodePosts(body({ entries: [{ postId: 'a', post: 'not-a-map' }] }))).toBeNull();
     });
 
-    // P2-D acceptance pin, two-sided: this exact entry — no likeBoxes — was
-    // rejected by the pre-P2-D decoder (reproduced on cffc202: decodePosts →
-    // null). The Posts envelope no longer carries the field; the same entry
-    // must decode.
+    // Acceptance pin, two-sided: the Posts envelope carries no likeBoxes field,
+    // so this exact entry — without one — must decode. A decoder that still
+    // required the field returns null here.
     it('accepts a well-formed envelope without likeBoxes (P2-D pin)', () => {
       const posts = { entries: [{ postId: 'a', post: { content: 'hi' } }] };
       expect(decodePosts(body(posts))).toEqual(posts);
     });
 
-    // The stated wire-compat posture (no shim): unknown keys are ignored, so a
-    // stale peer's old-style entry still decodes — and the retired field does
-    // not leak inward: the rebuilt entry carries no likeBoxes key.
+    // The stated wire-compat posture (no shim): unknown keys are ignored, so an
+    // entry carrying a retired field still decodes — and the field does not
+    // leak inward, because the rebuilt entry carries no likeBoxes key.
     it("ignores a stale peer's likeBoxes field", () => {
       const stale = { entries: [{ postId: 'a', post: { content: 'hi' }, likeBoxes: [] }] };
       expect(decodePosts(body(stale))).toEqual({ entries: [{ postId: 'a', post: { content: 'hi' } }] });
