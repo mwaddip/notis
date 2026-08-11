@@ -2,6 +2,7 @@ export {
   blake2b32,
   powTarget,
   meetsPowTarget,
+  blockWork,
   verifyPoW,
   verifyPostSignature,
   verifyValidatorSignature,
