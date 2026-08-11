@@ -79,9 +79,15 @@ dependency runs `validation → types`. Work accounting is a PoW question, which
 remit; its former home next to `BlockHeader` was proximity, not ownership.
 
 **A chain's work and a header sequence's work are different questions.** `net`'s
-`NetNode.cumulativeWork()` walks its own store and answers the first; this function is handed headers
-and answers the second. They share only `blockWork`, and neither is a copy of the other — an
+`LazySyncStore.cumulativeWork()` walks its own store and answers the first; this function is handed
+headers and answers the second. They share only `blockWork`, and neither is a copy of the other — an
 enumeration of "what computes work" that greps this function's callers will not reach `net`.
+
+**`blockWork`'s `null` is what bounds a claimed target, and the bound is consensus-visible.** The store
+walk publishes its total as `SyncInfo.tipCumulativeWork`, which peers compare. A header claiming more
+than 256 target bits is arithmetically shiftable — `1n << 257n` is an ordinary BigInt — so a sum that
+shifts without consulting this domain counts `2^257` from a single header and outweighs any honest
+chain. Refusing out of domain is the bound; there is no separate range check to keep in step with it.
 
 ### verifyPoW
 
