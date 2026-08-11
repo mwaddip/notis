@@ -35,7 +35,7 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
  * are printable ASCII ('stump', 'subblock', 'prune', 'utxotx', 'coinbase'),
  * so NUL can never start a leaf preimage — which makes 0x00 a safe reserved
  * tag for internal nodes. Any future leaf domain must likewise be a non-empty
- * printable string. Retired domains — strings reserved, never reuse (P2-D):
+ * printable string. Retired domains — strings reserved, never reuse:
  * 'likebox', 'epoch'.
  *
  * Without the tag, `nodeHash(left, right)` is a bare hash of 64 concatenated

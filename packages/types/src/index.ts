@@ -42,7 +42,7 @@ export {
   ED25519_SPKI_PREFIX,
 } from './constants.js';
 
-// Network profiles (P2-A)
+// Network profiles
 export {
   NETWORK_PROFILES,
   profileFor,
@@ -145,9 +145,8 @@ export type {
 // `types` is not the only package that writes one: node's `serialize-box.ts`
 // holds the AVL values, and an AVL box value **IS `boxRecordBytes` exactly** —
 // no wrapper, no second tag. Its first byte is already the `boxType` `enum8`
-// from the layout above, so a node-side box-type numbering would have been a
-// second numbering of one thing, which is the collision Phase 5 found and
-// removed. See `NODE_INTERFACE` → Two entity kinds.
+// from the layout above, so a node-side box-type numbering would be a second
+// numbering of one thing. See `NODE_INTERFACE` → Two entity kinds.
 //
 // `ByteReader` / `ByteWriter` / `ReaderError` come with it, re-exported from
 // `@dagsocial/wire`, which `@dagsocial/node` does not depend on. Two reasons,
@@ -160,12 +159,12 @@ export type {
 //     inferred type it cannot write down. A convenience.
 //  2. **`ReaderError` is required to USE the format correctly, not merely to
 //     describe it.** Step 4 of the four-part boundary check is "every caller
-//     converts `ReaderError` into a verdict" (spec §2.1) — the step that
-//     discharges the no-panic invariant at each boundary rather than inside the
-//     codec. A caller cannot write that `instanceof` without the class in
-//     scope, so withholding it would leave every consumer outside this package
-//     structurally unable to perform the one step the spec assigns to callers.
-//     Found by Phase 5, from the other direction.
+//     converts `ReaderError` into a verdict" (TYPES_INTERFACE → The boundary
+//     check) — the step that discharges the no-panic invariant at each boundary
+//     rather than inside the codec. A caller cannot write that `instanceof`
+//     without the class in scope, so withholding it would leave every consumer
+//     outside this package structurally unable to perform the one step the
+//     contract assigns to callers.
 //
 // One import path for the whole codec surface.
 export {

@@ -1,10 +1,11 @@
-// Denomination (P0 — Spec B): amount constants are bigint; count/block/threshold/
-// percentage/bits constants stay number. Credit amounts are integer base units of
-// 10^-8 credit (rescaled ×10^8); karma amounts are indivisible bigint literals.
+// Denomination (TYPES_INTERFACE → Denomination): amount constants are bigint;
+// count/block/threshold/percentage/bits constants stay number. Credit amounts are
+// integer base units of 10^-8 credit (rescaled ×10^8); karma amounts are
+// indivisible bigint literals.
 //
-// P2-A: constants marked "→ profile: <field>" are per-network and now live on
-// NetworkProfile (network.ts) as well. They stay exported from here until later
-// P2-A phases re-point every consumer; deleting them now would break consumers.
+// Constants marked "→ profile: <field>" are per-network and also live on
+// NetworkProfile (network.ts). They stay exported from here until every consumer
+// is re-pointed; deleting them now would break consumers.
 
 // Protocol
 export const PROTOCOL_VERSION = 1;
@@ -12,16 +13,15 @@ export const PROTOCOL_VERSION = 1;
 // Content limits
 export const MAX_CONTENT_BYTES = 300;
 /**
- * A post names at most **one** parent (user decision, 2026-08-09; was 8).
+ * A post names at most **one** parent (user decision, 2026-08-09).
  *
- * The 8 was never designed — it was inherited from a model's suggestion and
- * never questioned, and multi-parent has no use case here beyond spam. It also
- * carried a live authorization defect: `getSubtree` (node's `store/posts.ts`)
- * is a recursive CTE with `UNION`/`DISTINCT` *because* a post could belong to
- * several subtrees at once, so a reply naming parents A and B in different
- * threads was inside A's subtree by that query — and A's author could prune it,
- * deleting a reply that also hangs off B's thread. Capping at 1 makes subtrees
- * disjoint, so pruning is well-defined and author sovereignty stops overreaching.
+ * Multi-parent has no use case here beyond spam, and raising this cap reopens an
+ * authorization defect: `getSubtree` (node's `store/posts.ts`) is a recursive
+ * CTE with `UNION`/`DISTINCT` *because* a post could belong to several subtrees
+ * at once, so a reply naming parents A and B in different threads is inside A's
+ * subtree by that query — and A's author can prune it, deleting a reply that
+ * also hangs off B's thread. A cap of 1 keeps subtrees disjoint, so pruning is
+ * well-defined and author sovereignty stops at the author's own thread.
  *
  * The **type does not change**: `parentRefs` stays `PostId[]` and the wire
  * layout stays `arr(refs, b32)`, whose size is identical to `opt(b32)`. A
@@ -50,7 +50,7 @@ export const POST_LOCK_THREAD_COST = 5n;  // Karma locked for new threads
 export const POST_LOCK_REPLY_COST = 3n;   // Karma locked for replies
 export const POST_LOCK_UNLOCK_PER_LIKES = 10;  // Every N likes unlocks 1 karma
 
-// Likes (P2-D) — one-way burns settled per block
+// Likes — one-way burns settled per block (ARCHITECTURE → Per-block accrual and settlement)
 export const LIKE_KARMA_COST = 1n;        // Karma burned by the liker per like (bigint)
 export const LIKES_PER_KARMA_PAYOUT = 5;  // x: per x likes an author accrues x−1; 1 is burned
 

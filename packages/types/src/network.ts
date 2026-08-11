@@ -54,9 +54,9 @@ export interface NetworkProfile {
 }
 
 // The network magics live here, not in @dagsocial/wire: wire has zero runtime dependencies
-// and keeps them, so types cannot import from wire and wire must not import from types.
-// This is the sole definition — wire's duplicates were deleted in P2-A phase 5. The frame
-// codec takes `magic` as a parameter and is magic-agnostic by construction.
+// and keeps them, so it must not import from types. The frame codec takes `magic` as a
+// parameter and is magic-agnostic by construction. **This is the sole definition** — `net`
+// re-exports these from `frame.ts` rather than declaring its own.
 export const MAGIC_MAINNET = 0x4d444147; // "MDAG"
 export const MAGIC_TESTNET = 0x54444147; // "TDAG"
 export const MAGIC_DEVNET = 0x44444147; // "DDAG"
@@ -148,8 +148,8 @@ export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = O
 
 /**
  * Resolve a network profile. Throws on an unknown network — an unrecognised value is a
- * misconfigured node, not a mainnet one. Never falls back (see NET_INTERFACE §Magic Bytes
- * for the `?? MAGIC_MAINNET` defect this replaces).
+ * misconfigured node, not a mainnet one. **Never falls back**: a `?? MAGIC_MAINNET` default
+ * would silently put a misconfigured node on mainnet (NET_INTERFACE → Magic Bytes).
  */
 export function profileFor(network: NetworkType): NetworkProfile {
   if (!Object.hasOwn(NETWORK_PROFILES, network)) {
