@@ -75,11 +75,14 @@ export function extendsOurTip(block: OrderingBlock): boolean {
  * Returns fork height or null if deeper than MAX_REORG_DEPTH.
  *
  * `ourTip` is a header of ours; `theirHeaders` is not. It arrives from
- * `net.requestHeaders`, which is `decode(response) as BlockHeader[]` — a raw
- * cbor decode with a TypeScript cast and no runtime check of any kind — so
- * every field in it is peer-chosen, and `verifyOrderingBlockStructure` cannot
- * cover the path because it takes an `OrderingBlock` and this one carries bare
- * headers.
+ * `net.requestHeaders`, which parses the response through
+ * `decodeLegacyHeadersResponse` — a real codec, capped at the caller's own
+ * request size and carrying the whole boundary check (TYPES_INTERFACE → The
+ * boundary check), so the array is structurally well-formed and canonically
+ * encoded. That is not the same as trustworthy: every field is still
+ * peer-chosen within its domain, a well-formed header is not a header of a
+ * chain that exists, and `verifyOrderingBlockStructure` cannot cover the path
+ * because it takes an `OrderingBlock` and this one carries bare headers.
  *
  * **A batch with an unhashable header in it is refused whole.** A header we
  * cannot hash is not "a header that did not match": it is input we cannot
