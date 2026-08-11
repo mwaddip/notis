@@ -128,6 +128,11 @@ The main session owns contracts and prompts. It never edits component source cod
 open, and a bare `Phase N` resolves to nothing anywhere. A comment either states the rule as it stands
 now, or names the contract section that states it — `TYPES_INTERFACE → Layout — Stump`, never `Phase 2`.
 
+**Cite a contract section by its PROSE NAME, never by a phase-tagged parenthetical.** Several headings
+embed their own tags — `### Bond transition rules (P2-B phase 1)`, `### Per-block like settlement
+(P2-D — replaced the epoch tally)`. The prose name is what a reader greps and what survives; the
+parenthetical is the half the reconciliation will rewrite.
+
 **Never narrate replaced code.** How a function used to behave is not a fact about the current tree.
 No reader has to reason about code that is gone, and a narrated history is a second claim that decays
 independently of the one beside it. This is the retroactive half of *comments point, don't narrate*.
