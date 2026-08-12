@@ -724,52 +724,19 @@ CoinbaseOutput {
 — see `ARCHITECTURE §Likes` for the accrual arithmetic and `NODE_INTERFACE.md` for the
 apply-time algorithm. Nothing epoch-shaped may return to the block structure.
 
-### cumulativeWork
+### cumulativeWork — not this package's
 
-```
-cumulativeWork(headers: BlockHeader[]): bigint
-```
+`cumulativeWork` and `MAX_SATISFIABLE_TARGET_BITS` are **no longer exported here.** Work accounting is
+derived from `powTarget`, and the dependency runs `validation → types`, so it cannot be computed in
+this package at all.
 
-Sum of expected hashes over a chain segment: `Σ 2^powTargetBits`. The fork-choice quantity — a node
-compares its own segment against a competing one and reorgs only on strictly greater work.
+**`VALIDATION_INTERFACE → blockWork / cumulativeWork` is the rule.** This section deliberately states
+no property of it — not the formula, not the domain, not the totality guarantee. A restatement here
+would be a claim about another package's internals that `types` has no way to see change, which is the
+shape that decayed across six sites in PR #52.
 
-**Total.** A header whose `powTargetBits` falls outside `[0, MAX_SATISFIABLE_TARGET_BITS]`, or is not
-an integer, **contributes zero — per header, and the rest of the segment still counts.**
-
-**That is arithmetic, not a validity rule.** A target wider than the digest cannot be met by any
-nonce (`hasLeadingZeroBits` returns `false` past the hash width), so no work can have been done on
-such a header and zero *is* its expected-hash count. Nothing rejects a block for exceeding it; the
-consensus minimum is `ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
-
-```
-MAX_SATISFIABLE_TARGET_BITS = 32 * 8   // 256 — the digest width in bits
-```
-
-**Why it has to be total.** `node/src/index.ts:261` calls it on `theirChainHeaders`, which arrive
-from `net`'s `requestHeaders` as `decode(response) as BlockHeader[]` — a raw cbor decode plus a cast.
-Phase 1f-2's batch refusal removed the *non-encodable* headers from that path, but the encodable
-domain is `isU64Safe`, so `powTargetBits` still arrives anywhere in `[0, 2⁵³)`.
-
-Measured 2026-08-09 (node v22.19.0), and the numbers decide the bound:
-
-| Input | Result |
-|---|---|
-| `1n << BigInt(2³⁰ − 1)` | allocates **128 MiB** |
-| `1n << BigInt(2³⁰)` | throws `RangeError` |
-| `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
-
-The wall is exactly 2³⁰ and it is one integer wide. **A per-term bound is not sufficient on its
-own** — two terms each below the wall sum past it — which is why the bound is the digest width
-rather than anything near the arithmetic limit. A peer controls roughly **18,900** terms, not the
-`MAX_REORG_DEPTH * 2` the caller asks for: `requestHeaders`' `maxCount` is not enforced on the
-response, only `MAX_STREAM_BYTES` is.
-
-> ⚠ **This CONTAINS the defect; it does not close it.** A peer claiming `powTargetBits: 200` sits
-> inside the domain, allocates nothing and throws nothing, and still outweighs an honest 12-bit chain
-> by 2¹⁸⁸ — buying a reorg *attempt* on every comparison. The blocks are then rejected at apply,
-> which enforces `expectedTarget(height)`, so the chain does not move; the cost is wasted work, not a
-> consensus break. **The root of that is comparing *claimed* work rather than verified work, and it
-> belongs to `@dagsocial/node`'s fork choice, not here.** Recorded so it is not mistaken for closed.
+The BigInt arithmetic measurement that shaped the bound, and the claimed-versus-verified-work defect
+it contains, move with the function — `VALIDATION_INTERFACE → blockWork / cumulativeWork`.
 
 ---
 

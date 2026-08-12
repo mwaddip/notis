@@ -1,10 +1,9 @@
-import { blockHash } from '@dagsocial/validation';
+import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock, PruneEntry } from '@dagsocial/types';
 import {
   decodeTx,
   MEMPOOL_EXPIRY_BLOCKS,
   computePruneEntryId,
-  cumulativeWork,
 } from '@dagsocial/types';
 import {
   getOrderingBlock,

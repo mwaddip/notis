@@ -54,6 +54,81 @@ alone and runs on a machine that does not build the workspace). Each is held by 
 the declaration **by name** and cross-checks it against this package. A mirror that stops finding its
 declaration fails, which is the property it exists for.
 
+### blockWork / cumulativeWork
+
+```
+blockWork(targetBits: number): bigint | null
+cumulativeWork(headers: BlockHeader[]): bigint
+```
+
+How much work a header claims, and how much a sequence of them claims together. `blockWork` is
+**`2^256 / (target + 1)`**, where `target` is `powTarget`'s expansion of `targetBits`.
+
+**The identity is exact at every whole-bit target, and inclusivity is what makes it so.** `target + 1`
+is precisely `2^(256 − targetBits)`, so the quotient is `2^targetBits` with no remainder. An
+*exclusive* target would floor to one less at every integer target — which is detectable, and the
+regression that detects it is the agreement check against `1n << bits` across the whole domain.
+
+`blockWork` returns `null` for exactly the inputs `powTarget` refuses, so the domain is stated once
+rather than re-derived. `cumulativeWork` **skips** such a header rather than throwing: the array
+reaches it from the wire, where `powTargetBits` is any `number`, and refusing a whole comparison over
+one bad member would hand a peer a way to void a fork-choice decision.
+
+**This lives here and not in `@dagsocial/types` because it depends on `powTarget`**, and the
+dependency runs `validation → types`. Work accounting is a PoW question, which is this package's
+remit; its former home next to `BlockHeader` was proximity, not ownership.
+
+**The arithmetic wall that shaped the bound.** Measured 2026-08-09 (node v22.19.0):
+
+| Input | Result |
+|---|---|
+| `1n << BigInt(2³⁰ − 1)` | allocates **128 MiB** |
+| `1n << BigInt(2³⁰)` | throws `RangeError` |
+| `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
+
+The wall is exactly 2³⁰ and one integer wide. **A per-term bound is not sufficient on its own** — two
+terms each below the wall sum past it — which is why the bound is the digest width rather than anything
+near the arithmetic limit. A peer controls roughly **18,900** terms, not the `MAX_REORG_DEPTH * 2` the
+caller asks for: `requestHeaders`' `maxCount` is not enforced on the response, only `MAX_STREAM_BYTES` is.
+
+⚠ **No `src` shifts by a variable BigInt any more** — `blockWork` shifts by the constant `256n` and
+divides. The measurement therefore constrains future code rather than justifying present code, which is
+why it is stated with its date and its runtime.
+
+> ⚠ **The domain CONTAINS the claimed-work defect; it does not close it.** A peer claiming
+> `powTargetBits: 200` sits inside `[0, 256]`, allocates nothing and throws nothing, and still outweighs
+> an honest 12-bit chain by 2¹⁸⁸ — buying a reorg *attempt* on every comparison. Those blocks are
+> rejected at apply, which enforces `expectedTarget(height)`, so the chain does not move; the cost is
+> wasted work, not a consensus break. **The root is comparing *claimed* work rather than verified work,
+> and it belongs to `@dagsocial/node`'s fork choice.** Recorded so it is not mistaken for closed.
+>
+> ⚠ **A second instance was live outside that domain until 2026-08-12.** `net`'s store walk shifted
+> without consulting the domain at all, so a stored header claiming **257** bits contributed `2^257` and
+> was published to peers as `SyncInfo.tipCumulativeWork`. Summing `blockWork` closes that one. Whether
+> such a header can reach the store is a `node` question — `verifyHeaderFieldDomains` pins
+> `powTargetBits` as `isU64Safe` only, with no upper bound.
+
+**A chain's work and a header sequence's work are different questions.** `net`'s
+`LazySyncStore.cumulativeWork()` walks its own store and answers the first; this function is handed
+headers and answers the second. They share only `blockWork`, and neither is a copy of the other — an
+enumeration of "what computes work" that greps this function's callers will not reach `net`.
+
+**Totality is arithmetic, not a validity rule.** Past 256 bits `powTarget` returns `null`, so no digest
+can satisfy such a target and no work can have been done on that header — zero *is* its expected-hash
+count. Nothing rejects a block for exceeding the bound; the consensus minimum is
+`ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
+
+**Totality is required, not convenient.** The headers reach fork choice from `net`'s `requestHeaders`
+as a decode plus a cast, and the encodable domain is `isU64Safe` — so `powTargetBits` arrives anywhere
+in `[0, 2^53)`. A header outside the domain is a routine input on that path, not an anomaly, and
+refusing the whole segment over one would hand a peer a way to void the comparison.
+
+**`blockWork`'s `null` is what bounds a claimed target, and the bound is consensus-visible.** The store
+walk publishes its total as `SyncInfo.tipCumulativeWork`, which peers compare. A header claiming more
+than 256 target bits is arithmetically shiftable — `1n << 257n` is an ordinary BigInt — so a sum that
+shifts without consulting this domain counts `2^257` from a single header and outweighs any honest
+chain. Refusing out of domain is the bound; there is no separate range check to keep in step with it.
+
 ### verifyPoW
 
 ```

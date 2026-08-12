@@ -366,6 +366,43 @@ export function meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * The work a header claiming `targetBits` represents — the expected number of
+ * digests tried to meet it.
+ *
+ * `2^256 / (target + 1)`, where `target` is `powTarget`'s **inclusive** maximum.
+ * That inclusivity is load-bearing: `target + 1` is precisely `2^(256 −
+ * targetBits)`, so the quotient is `2^targetBits` with no remainder. An
+ * exclusive target would floor to one less at every integer target.
+ *
+ * `null` for exactly the inputs `powTarget` refuses, so the domain is stated
+ * once rather than re-derived here.
+ */
+export function blockWork(targetBits: number): bigint | null {
+  const target = powTarget(targetBits);
+  if (target === null) return null;
+  let t = 0n;
+  for (const byte of target) t = (t << 8n) | BigInt(byte);
+  return (1n << 256n) / (t + 1n);
+}
+
+/**
+ * The total work of a header sequence.
+ *
+ * A header outside `blockWork`'s domain contributes nothing rather than
+ * throwing: the array reaches here from the wire, where `powTargetBits` is any
+ * `number`, and refusing the whole comparison over one bad member would hand a
+ * peer a way to void a fork-choice decision.
+ */
+export function cumulativeWork(headers: BlockHeader[]): bigint {
+  let sum = 0n;
+  for (const h of headers) {
+    const work = blockWork(h.powTargetBits);
+    if (work !== null) sum += work;
+  }
+  return sum;
+}
+
 // ---------------------------------------------------------------------------
 // verifyPoW
 // ---------------------------------------------------------------------------

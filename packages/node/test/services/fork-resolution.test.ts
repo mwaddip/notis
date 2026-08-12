@@ -9,10 +9,9 @@ import {
 import {
   computePostId,
   PROTOCOL_VERSION,
-  cumulativeWork,
   ReaderError,
 } from '@dagsocial/types';
-import { blockHash } from '@dagsocial/validation';
+import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type {
   Post,
   KarmaBox,
