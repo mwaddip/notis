@@ -27,7 +27,6 @@ import {
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   PROTOCOL_VERSION,
-  INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -40,6 +39,7 @@ import type {
 import { createRouter } from '../../src/routes/invites.js';
 import type { InvitesDeps } from '../../src/routes/invites.js';
 import { ClientError } from '../../src/services/client-error.js';
+import { config } from '../../src/config.js';
 import { MempoolFullError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
 
@@ -260,7 +260,7 @@ describe('invites routes', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 5,
-      probationEndBlock: 5 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 5 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -355,7 +355,7 @@ describe('invites routes', () => {
         inviteOutputIndex: 1,
         inviteePublicKey: Array.from(inviteePubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBoxId,
     );
@@ -375,7 +375,7 @@ describe('invites routes', () => {
       inviteOutputIndex: 1,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 3,
-      probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 3 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 

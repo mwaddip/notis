@@ -6,7 +6,6 @@ import {
   decodeTx,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
-  VOUCH_COOLDOWN_BLOCKS,
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
@@ -33,6 +32,7 @@ import {
   getPendingEntries,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
+import { config } from '../../src/config.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
   fixtureProvenance,
@@ -588,7 +588,7 @@ describe('vouch service', () => {
       expect(result.txId).toBeDefined();
       expect(typeof result.txId).toBe('string');
       expect(result.expiresAtHeight).toBe(5 + MEMPOOL_EXPIRY_BLOCKS);
-      expect(result.karmaReturnsAtBlock).toBe(5 + VOUCH_COOLDOWN_BLOCKS);
+      expect(result.karmaReturnsAtBlock).toBe(5 + config.vouchCooldownBlocks);
 
       // Verify mempool has the entry
       const entries = getPendingEntries(100);

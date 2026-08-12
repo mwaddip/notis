@@ -9,7 +9,6 @@ import {
   computeBoxId,
   decodeTx,
   MAX_PENDING_INVITES,
-  INVITE_PROBATION_BLOCKS,
   PROTOCOL_VERSION,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
@@ -42,6 +41,7 @@ import {
 import { createInvite, claimInvite, cancelInvite, commitInvite } from '../../src/services/invites.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 import {
   fixtureProvenance,
   rawPublicKey,
@@ -279,7 +279,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 3,
-      probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 3 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -306,7 +306,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: Array.from(inviteePubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBox.id,
     );
@@ -328,7 +328,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 3,
-      probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 3 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -370,7 +370,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 5,
-      probationEndBlock: 5 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 5 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -420,7 +420,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 5,
-      probationEndBlock: 5 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 5 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -457,7 +457,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: Array.from(inviteePubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBox.id,
     );
@@ -469,7 +469,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 5,
-      probationEndBlock: 5 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 5 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -508,7 +508,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: Array.from(attackerPubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBox.id,
     );
@@ -527,7 +527,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: attackerPubKey,
       probationStartBlock: 3,
-      probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 3 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -569,7 +569,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: Array.from(inviteePubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBox.id,
     );
@@ -918,7 +918,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: Array.from(inviteePubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBox.id,
     );
@@ -938,7 +938,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 3,
-      probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 3 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -981,7 +981,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: Array.from(inviteePubKey),
         probationStartBlock: 3,
-        probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 3 + config.inviteProbationBlocks,
       }),
       bondBox.id,
     );
@@ -1000,7 +1000,7 @@ describe('invites service', () => {
       inviteOutputIndex: 0,
       inviteePublicKey: inviteePubKey,
       probationStartBlock: 3,
-      probationEndBlock: 3 + INVITE_PROBATION_BLOCKS,
+      probationEndBlock: 3 + config.inviteProbationBlocks,
       guard: 'bond_dual',
     };
 
@@ -1134,7 +1134,7 @@ describe('invites service', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: committedKey,
         probationStartBlock: 5,
-        probationEndBlock: 5 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 5 + config.inviteProbationBlocks,
         guard: 'bond_dual',
       };
       return {

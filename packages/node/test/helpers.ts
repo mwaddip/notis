@@ -10,7 +10,6 @@ import {
   hexToBuf,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
-  CREDIT_MINER_REWARD_DELAY,
   EMPTY_STATE_ROOT,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
@@ -568,7 +567,7 @@ export async function makeApplicableBlock(
     subBlockEntries,
     pruneEntries: opts.pruneEntries ?? [],
   };
-  const lockedUntilBlock = opts.lockedUntilBlock ?? height + CREDIT_MINER_REWARD_DELAY;
+  const lockedUntilBlock = opts.lockedUntilBlock ?? height + config.creditMinerRewardDelay;
   const embeddedTxs = opts.utxoTxs ?? [];
   const utxoTxTree = {
     utxoTxIds: embeddedTxs.map((tx) => computeTxId(tx)),

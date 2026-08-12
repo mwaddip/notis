@@ -21,7 +21,6 @@ import {
   VOUCH_KARMA_AMOUNT,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
-  INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
 import type { AnyBox, KarmaBox, CreditBox, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -46,6 +45,7 @@ import {
 } from '../../src/store/index.js';
 import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {
   const der = keyObj.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -388,12 +388,12 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
     };
 
     // The before-leg P4 shape: strings pass the arm's arithmetic by coercion
-    // ("1025" - "25" === INVITE_PROBATION_BLOCKS) and committed a wrong-typed
+    // (the string pair subtracts to exactly the profile's window) and committed a wrong-typed
     // bond whose id round-tripped CLEAN — an undetectable lie. Now the schema
     // rejects it before the arm can coerce.
     const lying = validateTx(
       deps,
-      commitTx(commitOut('25', String(25 + INVITE_PROBATION_BLOCKS))),
+      commitTx(commitOut('25', String(25 + config.inviteProbationBlocks))),
       100,
     );
     expect(lying.valid).toBe(false);
@@ -406,7 +406,7 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
 
     // The honest commit — same shape, typed numbers — validates, applies,
     // and its output satisfies the discriminator.
-    const honestOut = commitOut(25, 25 + INVITE_PROBATION_BLOCKS);
+    const honestOut = commitOut(25, 25 + config.inviteProbationBlocks);
     const honest = validateTx(deps, commitTx(honestOut), 100);
     expect(honest.valid, honest.error).toBe(true);
     applyTx(deps, commitTx(honestOut), honest.computedOutputs!, 100);

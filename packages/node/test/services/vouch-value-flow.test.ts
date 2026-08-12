@@ -22,7 +22,6 @@ import {
   computeTxId,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
-  VOUCH_COOLDOWN_BLOCKS,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -42,6 +41,7 @@ import {
 } from '../helpers.js';
 import type { TestIdentity } from '../helpers.js';
 import { materializeOutput } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
 
 // Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
@@ -196,14 +196,14 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     const rows = cooldowns.getVouchCooldowns(voucher.userId);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.karmaAmount).toBe(0n);
-    expect(rows[0]!.releaseAtBlock).toBe(1 + VOUCH_COOLDOWN_BLOCKS);
+    expect(rows[0]!.releaseAtBlock).toBe(1 + config.vouchCooldownBlocks);
 
     // Mine to maturity.
-    for (let h = 2; h <= 1 + VOUCH_COOLDOWN_BLOCKS; h++) {
+    for (let h = 2; h <= 1 + config.vouchCooldownBlocks; h++) {
       expect(bc.createOrderingBlock()).not.toBeNull();
     }
     const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(1 + VOUCH_COOLDOWN_BLOCKS);
+    expect(ordering.getCurrentHeight()).toBe(1 + config.vouchCooldownBlocks);
 
     // Nothing minted, escrow settled: the supply is exactly what was locked.
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
