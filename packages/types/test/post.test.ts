@@ -405,7 +405,7 @@ describe('constants', () => {
   });
 
   it('validator constants are defined', () => {
-    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(12);
+    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(3072);
     expect(CREDIT_INITIAL_REWARD).toBe(100n * 10n ** 8n);   // credits ×10^8 base units
     expect(CREDIT_FIXED_RATE_BLOCKS).toBe(1_051_200);
     expect(CREDIT_EPOCH_BLOCKS).toBe(129_600);
@@ -413,6 +413,6 @@ describe('constants', () => {
     expect(CREDIT_TAIL_REWARD).toBe(2n * 10n ** 8n);
     expect(CREDIT_MINER_REWARD_DELAY).toBe(720);
     expect(CREDIT_TREASURY_PCT).toBe(10);
-    expect(ORDERING_BLOCK_POW_TARGET_FLOOR).toBe(4);
+    expect(ORDERING_BLOCK_POW_TARGET_FLOOR).toBe(2304);
   });
 });

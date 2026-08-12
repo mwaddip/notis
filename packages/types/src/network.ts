@@ -110,18 +110,24 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
-// devnet: compressed timescale, same economics. The four values marked (harness) are the
-// ones the parked e2e harness ran on (packages/node/test/harness/node-manager.ts) — except
-// postPowTargetBits, which the harness could not override without desynchronising the
-// challenge endpoint from the verifier (the exact defect the profile removes) and which is
-// set to the value it wanted. The remaining durations are compressed roughly two orders of
-// magnitude, preserving mainnet's orderings (probation < bootstrap < stale threshold,
-// epoch < fixed-rate period).
+// devnet: compressed timescale, same economics. The two values marked (harness) are the
+// ones the parked e2e harness ran on (packages/node/test/harness/node-manager.ts).
+// postPowTargetBits is the value that harness wanted but could not override without
+// desynchronising the challenge endpoint from the verifier — the exact defect the profile
+// removes. The remaining durations are compressed roughly two orders of magnitude,
+// preserving mainnet's orderings (probation < bootstrap < stale threshold,
+// epoch < fixed-rate period). Difficulty is the one axis devnet does not compress; see
+// orderingBlockPowTargetBits below.
 const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'devnet',
   magic: MAGIC_DEVNET,
 
-  orderingBlockPowTargetBits: 4, // (harness)
+  // Devnet is where the retarget is exercised, so its seed may not sit below 2180, where
+  // a 1/256-bit step can buy zero work and difficulty moves while cumulativeWork does not.
+  // This is testnet's difficulty — 12 bits, ~4K hashes, microseconds of work — so it costs
+  // devnet no wall-clock; the compression lives in the durations below.
+  // VALIDATION_INTERFACE → blockWork / cumulativeWork.
+  orderingBlockPowTargetBits: 3072,
   postPowTargetBits: 4, // (harness intent — see above)
 
   karmaDecayIntervalBlocks: 3, // (harness)
