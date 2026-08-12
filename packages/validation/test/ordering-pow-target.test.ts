@@ -77,14 +77,17 @@ describe('orderingPowTarget', () => {
   });
 
   // Hand-derived from the predicate, not regenerated from this function.
-  // 3073 and 6000 are not multiples of 256 — the case integer bits cannot
-  // express, and the only place the fractional path is exercised.
+  // 3073, 5984 and 6000 are not multiples of 256 — the case integer bits
+  // cannot express, and the only place the fractional path is exercised.
+  // 5984 is ORDERING_BLOCK_POW_TARGET_BITS, mainnet's and testnet's live
+  // ordering target, so this row moves whenever that constant does —
+  // TYPES_INTERFACE → Ordering block PoW.
   it.each([
     [0, 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'],
     [1024, '0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'],
     [3072, '000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'],
     [3073, '000ff4ecb59511ec8a5301ba217ef18dd7c2f409857956d475fdb171474700cc'],
-    [5983, '0000018be05bad617787b2d7bf10d11b9e4ef1b4f47e604d7c5c134c44346778'],
+    [5984, '0000018ace5422aa0db5ba7c55a192c9bb3e6ed61f2733304a346d8ed0c00dc8'],
     [6000, '0000017a11473eb0186d7d51023f6cda1f5ef42b66977960531e821b3497c046'],
     [63358, '000000000000000000000000000000000000000000000000000000000000016b'],
     [65536, '0000000000000000000000000000000000000000000000000000000000000000'],
