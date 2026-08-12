@@ -24,7 +24,6 @@ import {
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   INVITE_KARMA_THRESHOLD,
-  INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -51,6 +50,7 @@ import {
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 import { computeTxId } from '@dagsocial/types';
 
 interface TestKeys {
@@ -535,7 +535,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     return tx;
   }
 
-  it('grief-commit: rejects a probation window longer than INVITE_PROBATION_BLOCKS', () => {
+  it('grief-commit: rejects a probation window longer than the pinned length', () => {
     // Accepted on HEAD — this exact tx returned { valid: true }, locking the
     // inviter's bond for 10**9 blocks at the committing invitee's discretion.
     const { bond } = seedInviteAndUncommittedBond();
@@ -547,7 +547,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
 
   // -------------------------------------------------------------------------
   // 4b. grief-commit, future-dated variant — window length is exactly
-  //     INVITE_PROBATION_BLOCKS, so only the start bound catches it.
+  //     the pinned length, so only the start bound catches it.
   // -------------------------------------------------------------------------
   it('grief-commit (future-dated): rejects a probation start above the settle height', () => {
     // Accepted on HEAD — this exact tx returned { valid: true }. The pinned
@@ -557,7 +557,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     const start = 10 + 10 ** 6;
     const result = validateTx(
       deps,
-      buildCommitTx(bond, start, start + INVITE_PROBATION_BLOCKS),
+      buildCommitTx(bond, start, start + config.inviteProbationBlocks),
       10,
     );
 
@@ -565,11 +565,11 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     expect(result.error).toContain('Invalid bond commit');
   });
 
-  it('commit non-vacuity: a window of exactly INVITE_PROBATION_BLOCKS at the settle height is accepted', () => {
+  it('commit non-vacuity: a window of exactly the pinned length at the settle height is accepted', () => {
     const { bond } = seedInviteAndUncommittedBond();
     const result = validateTx(
       deps,
-      buildCommitTx(bond, 10, 10 + INVITE_PROBATION_BLOCKS),
+      buildCommitTx(bond, 10, 10 + config.inviteProbationBlocks),
       10,
     );
 
@@ -585,7 +585,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     const { bond } = seedInviteAndUncommittedBond();
     const result = validateTx(
       deps,
-      buildCommitTx(bond, 4, 4 + INVITE_PROBATION_BLOCKS),
+      buildCommitTx(bond, 4, 4 + config.inviteProbationBlocks),
       10,
     );
 
@@ -593,7 +593,7 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('grief-commit: rejects a window shorter than INVITE_PROBATION_BLOCKS', () => {
+  it('grief-commit: rejects a window shorter than the pinned length', () => {
     // The length is pinned to equality, not to a lower bound — a one-block
     // probation would let the invitee unlock the bond immediately.
     const { bond } = seedInviteAndUncommittedBond();

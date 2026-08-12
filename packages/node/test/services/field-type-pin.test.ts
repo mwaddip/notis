@@ -34,7 +34,6 @@ import {
   encodeTx,
   decodeTx,
   POST_LOCK_THREAD_COST,
-  INVITE_PROBATION_BLOCKS,
 } from '@dagsocial/types';
 import type { AnyBox, AnyBoxCandidate, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -63,6 +62,7 @@ import {
 import { validateTx, checkOutputShape } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import { applyOrderingBlock } from '../../src/services/block-apply.js';
+import { config } from '../../src/config.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {
   const der = keyObj.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -427,7 +427,7 @@ describe('field-type pin', () => {
         inviteOutputIndex: 0,
         inviteePublicKey: invitee.userId,
         probationStartBlock: 25,
-        probationEndBlock: 25 + INVITE_PROBATION_BLOCKS,
+        probationEndBlock: 25 + config.inviteProbationBlocks,
         guard: 'bond_dual',
       };
       const tx: UtxoTransaction = {
