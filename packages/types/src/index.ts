@@ -122,9 +122,7 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger 
 // caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
 export {
   EMPTY_STATE_ROOT,
-  MAX_SATISFIABLE_TARGET_BITS,
   coinbaseOutputBytes,
-  cumulativeWork,
   subBlockEntryBytes,
   subBlockFromPost,
 } from './block.js';
