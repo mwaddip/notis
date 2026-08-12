@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { blockWork, cumulativeWork } from '../src/index.js';
-import { cumulativeWork as typesCumulativeWork } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
 
 function header(powTargetBits: number): BlockHeader {
@@ -57,11 +56,30 @@ describe('cumulativeWork', () => {
     expect(cumulativeWork([])).toBe(0n);
   });
 
-  // The move is faithful only if the two domains coincide. Asserted, not assumed.
-  it('agrees with the types implementation it replaces, across the domain edges', () => {
-    const cases = [0, 1, 10, 255, 256, 257, -1, 1.5, NaN, Infinity, 2 ** 31];
-    for (const bits of cases) {
-      expect(cumulativeWork([header(bits)])).toBe(typesCumulativeWork([header(bits)]));
+  // One header per edge of the domain. Every expectation is the closed form
+  // `2^bits`, which the sum reaches by dividing `2^256` by `powTarget`'s
+  // expansion — so it shares no arithmetic with the code it checks.
+  //
+  // `2 ** 31` carries past its own edge: a sum that shifted by a header's own
+  // `powTargetBits` instead of consulting the domain would allocate or throw
+  // on that row rather than skip it (VALIDATION_INTERFACE → blockWork /
+  // cumulativeWork).
+  it('totals a single header to 2^targetBits inside the domain and 0 outside, at every edge', () => {
+    const cases: [number, bigint][] = [
+      [0, 1n],
+      [1, 2n],
+      [10, 1024n],
+      [255, 1n << 255n],
+      [256, 1n << 256n],
+      [257, 0n],
+      [-1, 0n],
+      [1.5, 0n],
+      [NaN, 0n],
+      [Infinity, 0n],
+      [2 ** 31, 0n],
+    ];
+    for (const [bits, expected] of cases) {
+      expect(cumulativeWork([header(bits)]), `targetBits ${bits}`).toBe(expected);
     }
   });
 });
