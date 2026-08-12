@@ -1017,11 +1017,18 @@ has not created yet, the guard falls through, and every layer beneath keeps pass
 simply absent for the life of the process, which a peer sees as `protocol selection failed` and reads
 as the peer's fault rather than ours.
 
-**A node that has registered no headers provider serves an empty body** on `/dagsocial/headers/1`,
-rather than declining the protocol. An empty answer is already a first-class result on the requesting
-side: a peer may legitimately answer with no headers, and fork resolution treats that as "no reorg" like
-any other non-match. Declining instead would make "this node has no chain to serve" indistinguishable
-from "this node does not speak the protocol".
+**A node that has registered no headers provider answers zero bytes** on `/dagsocial/headers/1`, rather
+than declining the protocol. Zero bytes is this protocol's "I cannot answer", and it is distinct from an
+empty header *list* — one byte, `vlqU(0)` — which means "I consulted my chain and have nothing at that
+height". A node holding no provider has no chain to consult, so it cannot honestly send the second. Both
+reach the caller as an empty array, and fork resolution treats that as "no reorg" like any other
+non-match, so nothing downstream needs a new case.
+
+Declining the protocol is **not** equivalent to either. `requestHeaders` wraps its dial in `try`/`finally`
+with no `catch`, so an unregistered protocol reaches the caller as a **rejected promise** rather than an
+empty result. "This peer has nothing to serve" and "this peer does not speak the protocol" are therefore
+different events at the call site, and collapsing them costs the caller the only signal that distinguishes
+a peer's state from its capability.
 
 ---
 
