@@ -5,7 +5,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "dev": "node packages/node/scripts/dev.mjs"
   },
   "dependencies": {
     "better-sqlite3": "11.10.0"

@@ -94,7 +94,6 @@ cp "$REPO_ROOT/packages/node/scripts/dagsocial-node.service" \
 cat > "$STAGING/etc/dagsocial/node.env" <<'ENVEOF'
 # DAGsocial node environment — edit after install
 NODE_ROLE=server
-MINING_MODE=internal
 MINING_SECRET=
 PORT=3000
 ADMIN_PORT=3001
