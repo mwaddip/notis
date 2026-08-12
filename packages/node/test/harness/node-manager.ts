@@ -34,7 +34,6 @@ function buildEnv(config: NodeConfig): Record<string, string> {
     ADMIN_PORT: String(adminPort),
     DB_PATH: ':memory:',
     NODE_ROLE: config.mining ? 'miner' : 'server',
-    MINING_MODE: 'internal',
     LISTEN_ADDRS: `/ip4/0.0.0.0/tcp/${lpPort}`,
     ORDERING_BLOCK_INTERVAL_MS: '2000',
     KARMA_STALE_THRESHOLD_BLOCKS: '500',

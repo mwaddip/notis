@@ -222,7 +222,8 @@ describe('mining routes — template subBlockRefs', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mount policy — internal miners expose no mining surface at all.
+// Mount policy — `nodeRole` alone decides the surface: a miner is by definition
+// a node that serves templates, and a server node exposes no mining paths.
 // An unmounted path 404s; a mounted one 401s. That is the discriminator.
 // ---------------------------------------------------------------------------
 
@@ -239,7 +240,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     orderingBlockIntervalMs: 60000,
     orderingBlockMinSubBlocks: 1,
     maxSubBlocksPerBlock: 1000,
-    miningMode: 'internal',
     miningSecret: '',
     orderingBlockPowTargetBits: 3072,
     creditTreasuryPct: 10,
@@ -260,32 +260,16 @@ describe('mining routes — mount policy', () => {
     closeDb();
   });
 
-  describe('5. internal-mode miner', () => {
-    it('does not serve /mining/template (404, not 401)', async () => {
-      const app = createApp(makeConfig({ miningMode: 'internal' }));
-      const res = await request(app).get('/mining/template');
-      expect(res.status).toBe(404);
-    });
-
-    it('does not serve it even with a bearer header (the path is absent)', async () => {
-      const app = createApp(makeConfig({ miningMode: 'internal', miningSecret: SECRET }));
-      const res = await request(app)
-        .get('/mining/template')
-        .set('Authorization', `Bearer ${SECRET}`);
-      expect(res.status).toBe(404);
-    });
-  });
-
-  describe('5b. external-mode miner with a secret', () => {
-    it('control: serves /mining/template — 401 unauthenticated (mounted)', async () => {
-      const app = createApp(makeConfig({ miningMode: 'external', miningSecret: SECRET }));
+  describe('5. miner role', () => {
+    it('serves /mining/template — 401 unauthenticated (mounted)', async () => {
+      const app = createApp(makeConfig({ miningSecret: SECRET }));
       const res = await request(app).get('/mining/template');
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('Unauthorized');
     });
 
     it('passes auth with the correct bearer (404 = no template yet, not 401)', async () => {
-      const app = createApp(makeConfig({ miningMode: 'external', miningSecret: SECRET }));
+      const app = createApp(makeConfig({ miningSecret: SECRET }));
       const res = await request(app)
         .get('/mining/template')
         .set('Authorization', `Bearer ${SECRET}`);
@@ -294,12 +278,18 @@ describe('mining routes — mount policy', () => {
     });
   });
 
-  describe('5c. server role', () => {
-    it('never serves /mining even in external mode', async () => {
-      const app = createApp(
-        makeConfig({ nodeRole: 'server', miningMode: 'external', miningSecret: SECRET }),
-      );
+  describe('5b. server role', () => {
+    it('never serves /mining, secret or not (404, not 401)', async () => {
+      const app = createApp(makeConfig({ nodeRole: 'server', miningSecret: SECRET }));
       const res = await request(app).get('/mining/template');
+      expect(res.status).toBe(404);
+    });
+
+    it('does not serve it with a bearer header either (the path is absent)', async () => {
+      const app = createApp(makeConfig({ nodeRole: 'server', miningSecret: SECRET }));
+      const res = await request(app)
+        .get('/mining/template')
+        .set('Authorization', `Bearer ${SECRET}`);
       expect(res.status).toBe(404);
     });
   });

@@ -26,7 +26,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     orderingBlockIntervalMs: 60000,
     orderingBlockMinSubBlocks: 1,
     maxSubBlocksPerBlock: 1000,
-    miningMode: 'external',
     orderingBlockPowTargetBits: 3072,
     creditTreasuryPct: 10,
     treasuryPubKey: '',

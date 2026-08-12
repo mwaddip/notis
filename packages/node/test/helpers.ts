@@ -359,8 +359,8 @@ export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
  * A missing field also fails QUIETLY rather than at the type checker, because
  * `block-creator.ts` is the only consumer that reads config off its argument
  * (`startBlockCreator` assigns it to the module-level `config`), and it reads
- * exactly six: `orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`,
- * `maxSubBlocksPerBlock`, `miningMode`, `creditTreasuryPct`, `treasuryPubKey`.
+ * exactly five: `orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`,
+ * `maxSubBlocksPerBlock`, `creditTreasuryPct`, `treasuryPubKey`.
  * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
  * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
  * imports the `src/config.js` singleton, which no test mocks, so an incomplete
@@ -475,9 +475,9 @@ export async function mineNextBlock(bc: {
 
 /**
  * The validator signature a block creator produces: raw Ed25519 over the 32
- * bytes of `blockHash(header)`. `block-creator.ts` signs this way at both of
- * its block-finalizing sites, and apply verifies it (NODE_INTERFACE → Block
- * finalization).
+ * bytes of `blockHash(header)`. `block-creator.ts` signs this way in
+ * `submitMinedBlock`, its one block-finalizing site, and apply verifies it
+ * (NODE_INTERFACE → Block finalization).
  *
  * Hand-built blocks therefore have to carry a real signature — an all-zero
  * placeholder is rejected before any check behind it, which would make every

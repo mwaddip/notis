@@ -36,8 +36,7 @@ export interface Config {
   /** Hard mempool bound — inserts are rejected at the cap, never evicted (audit M-8). */
   maxMempoolEntries: number;
   // Mining
-  miningMode: 'internal' | 'external';
-  miningSecret: string;          // bearer token for mining API, required non-empty in external mode
+  miningSecret: string;          // bearer token for mining API, required non-empty on a miner
   orderingBlockPowTargetBits: number;
   creditTreasuryPct: number;
   treasuryPubKey: string;  // hex-encoded 32-byte key, empty = no treasury
@@ -105,7 +104,6 @@ export function loadConfig(): Readonly<Config> {
       10,
     ),
     // Mining
-    miningMode: parseMiningMode(process.env['MINING_MODE'] ?? 'internal'),
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
     creditTreasuryPct: CREDIT_TREASURY_PCT,
@@ -183,24 +181,19 @@ export function isFaucetNetwork(networkType: NetworkType): boolean {
 }
 
 /**
- * External mining serves the coinbase payout override (`?miner=`) over HTTP, so
- * the bearer secret is load-bearing — there is no unauthenticated mode. A miner
- * configured for external mining without a secret fails at startup rather than
- * opening the endpoints (MINING_INTERFACE invariant 8, audit M-7).
+ * A miner node serves the coinbase payout override (`?miner=`) over HTTP, so the
+ * bearer secret is load-bearing — there is no unauthenticated mode. A miner
+ * without a secret fails at startup rather than opening the endpoints
+ * (MINING_INTERFACE invariant 8, audit M-7).
  */
 function assertMiningAuthConfigured(cfg: Config): void {
-  if (cfg.nodeRole !== 'miner' || cfg.miningMode !== 'external') return;
+  if (cfg.nodeRole !== 'miner') return;
   if (cfg.miningSecret.trim().length === 0) {
     throw new Error(
-      'MINING_SECRET must be set and non-empty when NODE_ROLE=miner and ' +
-        'MINING_MODE=external — the mining API has no unauthenticated mode',
+      'MINING_SECRET must be set and non-empty when NODE_ROLE=miner — ' +
+        'the mining API has no unauthenticated mode',
     );
   }
-}
-
-function parseMiningMode(raw: string): 'internal' | 'external' {
-  if (raw === 'internal' || raw === 'external') return raw;
-  throw new Error(`Invalid MINING_MODE "${raw}" — must be "internal" or "external"`);
 }
 
 function parseBootstrapPeers(raw: string): string[] {

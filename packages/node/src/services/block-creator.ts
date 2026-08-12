@@ -1,5 +1,4 @@
 import {
-  createHash,
   generateKeyPairSync,
   sign as cryptoSign,
   type KeyObject,
@@ -23,9 +22,6 @@ import {
 import {
   verifyOrderingBlockPoW,
   blockHash,
-  computePowHash,
-  orderingPowTarget,
-  meetsPowTarget,
 } from '@dagsocial/validation';
 import type {
   OrderingBlock,
@@ -110,7 +106,7 @@ let validatorPrivKey: KeyObject;
 let validatorId: Uint8Array;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let pendingSubBlockCounter = 0;
-let currentTemplate: OrderingBlock | null = null;   // For external mining mode
+let currentTemplate: OrderingBlock | null = null;   // The block the miner solves
 let confirmedRowids: Set<number> = new Set();       // Mempool rowids included in current block
 let dagService: import('./dag-service.js').DagService | undefined;
 
@@ -154,14 +150,14 @@ export function onSubBlockReceived(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Miner pubkey override (external mining)
+// Miner pubkey override
 // ---------------------------------------------------------------------------
 
 let currentMinerPubkey: Uint8Array | null = null;
 
 /**
- * Set the pubkey that receives coinbase rewards. Called when an external
- * miner requests a template with their own wallet address.
+ * Set the pubkey that receives coinbase rewards. Called when a miner requests a
+ * template with their own wallet address.
  * Pass null to revert to the node's validator key.
  */
 export function setMinerPubkey(pubkey: Uint8Array | null): void {
@@ -169,9 +165,8 @@ export function setMinerPubkey(pubkey: Uint8Array | null): void {
 }
 
 /**
- * Return the current block template for external miners.
- * Returns null if no template has been built yet or the block creator
- * is in internal mode.
+ * Return the current block template for the miner.
+ * Returns null if no template has been built yet.
  */
 export function getCurrentTemplate(): OrderingBlock | null {
   return currentTemplate;
@@ -187,7 +182,7 @@ export function clearTemplate(): void {
 }
 
 /**
- * Submit a mined nonce from an external miner.
+ * Submit a mined nonce from the miner.
  * Verifies PoW, finalizes the block, stores it, and broadcasts.
  * Returns the finalized block hash on success, null on failure.
  */
@@ -250,50 +245,6 @@ export function computeBlockReward(height: number): bigint {
   ) + 1;
   const reward = CREDIT_INITIAL_REWARD - BigInt(epochs) * CREDIT_REWARD_REDUCTION;
   return reward > CREDIT_TAIL_REWARD ? reward : CREDIT_TAIL_REWARD;
-}
-
-// ---------------------------------------------------------------------------
-// PoW mining (internal mode)
-// ---------------------------------------------------------------------------
-
-function encodeLE64(n: number): Buffer {
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64LE(BigInt(n));
-  return buf;
-}
-
-/**
- * Search for a nonce whose ordering-block digest meets `scaledBits`.
- *
- * The admission rule is `@dagsocial/validation`'s, so this solver and
- * `verifyOrderingBlockPoW` cannot disagree about what wins — VALIDATION_INTERFACE
- * → orderingPowTarget. The expansion is hoisted because it depends only on
- * `scaledBits`, and deriving it per nonce would allocate once per hash.
- *
- * `scaledBits` is in units of 1/256 of a bit, over `[0, 65536]` — the header
- * denomination. Post PoW is whole bits and uses `powTarget`.
- *
- * The tail is `encodeLE64`: MINING_INTERFACE → PoW Verification step 3. The post
- * PoW appends `vlqU` instead — two PoW processes, two tails, neither shared.
- *
- * A `scaledBits` no digest can satisfy throws rather than spinning: the value
- * arrives from a network profile, and a solver that cannot succeed must say so.
- */
-function solvePoW(powPreimage: Buffer, scaledBits: number): number {
-  const target = orderingPowTarget(scaledBits);
-  if (target === null) {
-    throw new Error(`solvePoW: unsatisfiable targetBits ${scaledBits}`);
-  }
-  let nonce = 0;
-  while (true) {
-    const hash = createHash('blake2b512')
-      .update(powPreimage)
-      .update(encodeLE64(nonce))
-      .digest()
-      .subarray(0, 32);
-    if (meetsPowTarget(hash, target)) return nonce;
-    nonce++;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -509,81 +460,28 @@ export function createOrderingBlock(): OrderingBlock | null {
   headerTemplate.stateRoot =
     speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT;
 
-  // 21. Internal vs external mining
-  if (config.miningMode === 'external') {
-    // Store the full block template (header + bodies) for external miners.
-    // Its stateRoot is this height's post-block digest, so the template stops
-    // being submittable once a competing block moves the pre-state — which is
-    // exactly what clearTemplate() on apply guarantees.
-    currentTemplate = candidate;
-    return null; // Block not finalized yet
-  }
-
-  // 22. Internal: mine PoW against the header.
+  // 21. Store the full block template (header + bodies) for the miner. Its
+  // stateRoot is this height's post-block digest, so the template stops being
+  // submittable once a competing block moves the pre-state — which is exactly
+  // what clearTemplate() on apply guarantees.
   //
-  // `headerTemplate` is built field by field a few lines above, from constants,
-  // the height schedule and the AVL digest, with `prevBlockHash` already pinned
-  // at step 16 — so `null` here means this node's own creator emitted a header
-  // it cannot encode. Refuse rather than mine: the PoW would be spent on a block
-  // every peer rejects, and `solvePoW` would be handed a `null` preimage.
-  const powPreimage = computePowHash(headerTemplate);
-  if (powPreimage === null) {
-    console.error(
-      `Not producing block at height ${newHeight}: the header this node built ` +
-      `is outside the encodable domain`,
-    );
-    currentTemplate = null;
-    return null;
-  }
-  const powNonce = solvePoW(powPreimage, powTargetBits);
-
-  const header: BlockHeader = {
-    ...headerTemplate,
-    powNonce,
-  };
-
-  // 23. Sign the header hash. Only `powNonce` separates this header from the
-  // one just encoded, and `solvePoW` returns a counter — so this is the same
-  // refusal as above, one field later.
-  const hh = blockHash(header);
-  if (hh === null) {
-    console.error(
-      `Not producing block at height ${newHeight}: the mined header is ` +
-      `outside the encodable domain`,
-    );
-    currentTemplate = null;
-    return null;
-  }
-  const sig = cryptoSign(null, Buffer.from(hh, 'hex'), validatorPrivKey);
-
-  const block: OrderingBlock = {
-    header,
-    subBlockTree,
-    utxoTxTree,
-    validatorSignature: new Uint8Array(sig),
-  };
-
-  // 24. Finalize
-  finalizeBlock(block);
-
-  return block;
+  // This is where a produced block ends on this side: the nonce arrives from
+  // `POST /mining/submit`, and `submitMinedBlock` is what finalizes.
+  currentTemplate = candidate;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
-// Block finalization (shared between internal and external mining)
+// Block finalization
 // ---------------------------------------------------------------------------
 
 function finalizeBlock(block: OrderingBlock): void {
   // applyOrderingBlock handles validation, storage, coinbase, confirmations,
   // UTXO tx application, journal recording, and basic mempool cleanup
   //
-  // The boundary sits here rather than at this function's callers because there
-  // are three of them and each ends somewhere that swallows: the interval timer
-  // in `startBlockCreator` (an uncaught throw ends the process, but by Node's
-  // default rather than our decision), `POST /posts` via `onSubBlockReceived`,
-  // and `POST /mining/submit` via `submitMinedBlock` — both of those inside an
-  // Express handler, which turns a throw into a 500 and keeps the node running.
-  // One frame dominates all three, so the decision is made once.
+  // The boundary sits here rather than at the caller because the one path in —
+  // `POST /mining/submit` via `submitMinedBlock` — ends inside an Express
+  // handler, which turns a throw into a 500 and keeps the node running.
   let applied: boolean;
   try {
     applied = applyOrderingBlock(block, dagService);

@@ -331,9 +331,9 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Mining — /mining (external-mode miners only; internal mining is in-process
-  // and exposes no mining HTTP surface at all — audit M-7)
-  if (config.nodeRole === 'miner' && config.miningMode === 'external') {
+  // Mining — /mining. A miner node is by definition one that serves templates,
+  // so the role alone decides the surface (audit M-7).
+  if (config.nodeRole === 'miner') {
     app.use(
       '/mining',
       miningRoutes({

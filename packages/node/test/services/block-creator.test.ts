@@ -56,7 +56,6 @@ const testConfig = makeTestConfig({
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   // Mining
-  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
