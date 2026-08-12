@@ -87,7 +87,11 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
     powNonce: 100,
-    powTargetBits: 4,
+    // 1/256-bit units — VALIDATION_INTERFACE → orderingPowTarget. Nothing in
+    // this suite asserts work, and `encodeServableOrderingBlock` gates on
+    // structure rather than PoW, so the scale moves the encoded width and no
+    // verdict.
+    powTargetBits: 4 * 256,
     createdAt: 1_000_000,
     ...overrides,
   };

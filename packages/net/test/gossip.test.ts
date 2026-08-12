@@ -115,7 +115,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(9),
     powNonce: 0,
-    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR, // 4 — the structure floor
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR, // the structure floor
     createdAt: 1_722_470_400_000,
   };
 
@@ -133,7 +133,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
   let failingNonce = -1;
 
   beforeAll(() => {
-    // Mine the real nonce (~16 tries at 4 bits) and record a genuinely
+    // Mine the real nonce at the structure floor and record a genuinely
     // failing one, both via the same verifyOrderingBlockPoW that gates relay.
     for (let n = 0; minedNonce < 0 || failingNonce < 0; n++) {
       if (n > 1_000_000) throw new Error('ordering-block PoW search exhausted');

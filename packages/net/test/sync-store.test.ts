@@ -37,6 +37,10 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 // currently does.
 // ---------------------------------------------------------------------------
 
+// `powTargetBits` is in units of 1/256 of a bit (VALIDATION_INTERFACE →
+// orderingPowTarget), so every difficulty below is written `bits * 256`. The
+// work assertions stay in whole bits, which is what makes `blockWork(10 * 256)`
+// exactly `1n << 10n`.
 function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
   return {
     protocolVersion: PROTOCOL_VERSION,
@@ -47,7 +51,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
     powNonce: 100,
-    powTargetBits: 4,
+    powTargetBits: 4 * 256,
     createdAt: 1_000_000,
     ...overrides,
   };
@@ -239,15 +243,15 @@ describe('LazySyncStore.getAnchors', () => {
 // The out-of-domain cases fail against an inline `1n << BigInt(bits)` in two
 // distinct ways, and both are named below: the non-integers and the very large
 // integers throw, taking the whole total with them, while a satisfiable-looking
-// 257 returns 2^257 — more work than an honest chain will ever hold.
+// 65537 returns 2^65537 — more work than an honest chain will ever hold.
 // ---------------------------------------------------------------------------
 
 describe('LazySyncStore.cumulativeWork', () => {
   it('totals the work of every stored header', () => {
     const store = storeServing(
       new Map([
-        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 }))],
-        [2, makeBlock(makeHeader({ height: 2, powTargetBits: 10 }))],
+        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 * 256 }))],
+        [2, makeBlock(makeHeader({ height: 2, powTargetBits: 10 * 256 }))],
       ]),
     );
 
@@ -260,8 +264,8 @@ describe('LazySyncStore.cumulativeWork', () => {
     // method that iterated the handler's whole range would still pass above.
     const store = storeServing(
       new Map([
-        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 }))],
-        [3, makeBlock(makeHeader({ height: 3, powTargetBits: 10 }))],
+        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 * 256 }))],
+        [3, makeBlock(makeHeader({ height: 3, powTargetBits: 10 * 256 }))],
       ]),
     );
 
@@ -272,18 +276,23 @@ describe('LazySyncStore.cumulativeWork', () => {
     expect(new LazySyncStore(validators).cumulativeWork()).toBe(0n);
   });
 
+  // Refusal reasons rather than difficulties, so none of these is scaled.
+  // `1.5 * 256` is 384 — an ordinary in-domain difficulty — so scaling that row
+  // would delete the fractional case rather than restate it. 65537 is the first
+  // value above the domain, whose top of 65536 is 256 whole bits
+  // (VALIDATION_INTERFACE → orderingPowTarget).
   it.each([
     ['a fractional powTargetBits', 1.5],
     ['a NaN powTargetBits', Number.NaN],
     ['an infinite powTargetBits', Number.POSITIVE_INFINITY],
     ['a powTargetBits no BigInt shift can hold', Number.MAX_SAFE_INTEGER],
-    ['a powTargetBits past the 256-bit ceiling', 257],
+    ['a powTargetBits past the top of the domain', 65537],
   ])('skips %s and still totals the headers either side of it', (_label, bits) => {
     const store = storeServing(
       new Map([
-        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 }))],
+        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 * 256 }))],
         [2, makeBlock(makeHeader({ height: 2, powTargetBits: bits }))],
-        [3, makeBlock(makeHeader({ height: 3, powTargetBits: 10 }))],
+        [3, makeBlock(makeHeader({ height: 3, powTargetBits: 10 * 256 }))],
       ]),
     );
 
@@ -294,11 +303,12 @@ describe('LazySyncStore.cumulativeWork', () => {
   it('skips a header whose powTargetBits is not a number at all', () => {
     // The `typeof` guard, not `blockWork`'s domain: a string reaching `BigInt`
     // would convert rather than refuse, so this case is the guard's and stays
-    // ahead of the call.
+    // ahead of the call. It spells the same difficulty as its sibling, so what
+    // costs it its contribution is being a string and nothing else.
     const store = storeServing(
       new Map([
-        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 }))],
-        [2, makeBlock(makeHeader({ height: 2, powTargetBits: '10' as unknown as number }))],
+        [1, makeBlock(makeHeader({ height: 1, powTargetBits: 10 * 256 }))],
+        [2, makeBlock(makeHeader({ height: 2, powTargetBits: '2560' as unknown as number }))],
       ]),
     );
 
@@ -308,7 +318,7 @@ describe('LazySyncStore.cumulativeWork', () => {
   it('skips a negative powTargetBits, by refusal rather than by shift semantics', () => {
     // Green before and after, and named for that reason: `1n << BigInt(-1)` is
     // `0n`, so a negative already contributed nothing. What changes is why —
-    // `powTarget` refuses it, instead of an arithmetic-right-shift accident
+    // `blockWork` refuses it, instead of an arithmetic-right-shift accident
     // that happens to land on the same answer.
     const store = storeServing(
       new Map([[1, makeBlock(makeHeader({ height: 1, powTargetBits: -1 }))]]),

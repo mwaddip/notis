@@ -54,7 +54,10 @@ function mockBlockHash(header: BlockHeader): string {
 function makeMockHeader(
   height: number,
   prevBlockHash: string,
-  targetBits = 4,
+  // 1/256-bit units — VALIDATION_INTERFACE → orderingPowTarget. Nothing in this
+  // suite asserts work or verifies PoW, so what the scale buys here is the
+  // two-byte `writeVlqU` width a real header carries, not a different verdict.
+  targetBits = 4 * 256,
 ): BlockHeader {
   return {
     protocolVersion: PROTOCOL_VERSION,
