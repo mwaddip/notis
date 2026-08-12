@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { orderingPowTarget, powTarget, meetsPowTarget } from '../src/index.js';
+import {
+  orderingPowTarget,
+  powTarget,
+  meetsPowTarget,
+  blockWork,
+  cumulativeWork,
+} from '../src/index.js';
 
 /** The 32-byte big-endian target as an integer. */
 function asInt(t: Uint8Array): bigint {
@@ -97,4 +103,29 @@ describe('orderingPowTarget', () => {
       expect(orderingPowTarget(bad as number)).toBeNull();
     },
   );
+});
+
+describe('blockWork under scaled bits', () => {
+  it('is exactly 2^n at every whole bit', () => {
+    for (let n = 0; n <= 256; n++) {
+      expect(blockWork(256 * n)).toBe(1n << BigInt(n));
+    }
+  });
+
+  it('accepts the whole scaled domain and refuses outside it', () => {
+    expect(blockWork(65536)).not.toBeNull();
+    expect(blockWork(65537)).toBeNull();
+    expect(blockWork(-1)).toBeNull();
+  });
+
+  it('rises with difficulty between whole bits', () => {
+    expect(blockWork(3073)!).toBeGreaterThan(blockWork(3072)!);
+    expect(blockWork(3073)!).toBeLessThan(blockWork(3328)!);
+  });
+
+  // A header outside the domain contributes nothing rather than throwing.
+  it('skips an out-of-domain header in a sum', () => {
+    const hdr = (bits: number) => ({ powTargetBits: bits }) as never;
+    expect(cumulativeWork([hdr(3072), hdr(65537), hdr(3072)])).toBe(2n * (1n << 12n));
+  });
 });

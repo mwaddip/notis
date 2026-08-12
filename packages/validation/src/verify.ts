@@ -275,7 +275,14 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   { field: 'validatorId', ok: (v) => isBytesOfLength(v, 32), error: 'Block header validatorId must be exactly 32 bytes' },
   // vlqU
   { field: 'powNonce', ok: isU64Safe, error: 'Block header powNonce must be a non-negative safe integer' },
-  { field: 'powTargetBits', ok: isU64Safe, error: 'Block header powTargetBits must be a non-negative safe integer' },
+  // vlqU, in units of 1/256 of a bit — VALIDATION_INTERFACE → orderingPowTarget.
+  // The upper bound is the domain, not a new rule: a header above it already
+  // fails `verifyOrderingBlockPoW`, which refuses a target it cannot expand.
+  {
+    field: 'powTargetBits',
+    ok: (v) => isU64Safe(v) && (v as number) <= 65536,
+    error: 'Block header powTargetBits must be an integer in [0, 65536]',
+  },
   // vlqU. A domain pin, not a clock policy: no monotonicity rule and no skew
   // window — those are consensus rule additions, and "never add checks the
   // reference lacks" applies. `createdAt` stays a producer-set record that no
@@ -423,19 +430,25 @@ export function meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean {
 }
 
 /**
- * The work a header claiming `targetBits` represents — the expected number of
- * digests tried to meet it.
+ * The work a header claiming `scaledBits` represents — the expected number of
+ * digests tried to meet it. `scaledBits` is in units of 1/256 of a bit.
  *
- * `2^256 / (target + 1)`, where `target` is `powTarget`'s **inclusive** maximum.
- * That inclusivity is load-bearing: `target + 1` is precisely `2^(256 −
- * targetBits)`, so the quotient is `2^targetBits` with no remainder. An
- * exclusive target would floor to one less at every integer target.
+ * `2^256 / (target + 1)`, where `target` is `orderingPowTarget`'s **inclusive**
+ * maximum. That inclusivity is load-bearing: `target + 1` is precisely `R`,
+ * which at `scaledBits = 256n` is `2^(256 − n)`, so the quotient is `2^n` with
+ * no remainder. An exclusive target would floor to one less at every whole bit.
  *
- * `null` for exactly the inputs `powTarget` refuses, so the domain is stated
- * once rather than re-derived here.
+ * ⚠ Work resolves on the band `[2305, 63357]` and at neither end — 1816 steps
+ * below buy nothing, and above 63358 work stops because the target does. So
+ * `ORDERING_BLOCK_POW_TARGET_FLOOR` puts every *reachable* difficulty inside the
+ * band, not every admitted one. VALIDATION_INTERFACE → blockWork /
+ * cumulativeWork.
+ *
+ * `null` for exactly the inputs `orderingPowTarget` refuses, so the domain is
+ * stated once rather than re-derived here.
  */
-export function blockWork(targetBits: number): bigint | null {
-  const target = powTarget(targetBits);
+export function blockWork(scaledBits: number): bigint | null {
+  const target = orderingPowTarget(scaledBits);
   if (target === null) return null;
   let t = 0n;
   for (const byte of target) t = (t << 8n) | BigInt(byte);
@@ -985,7 +998,7 @@ export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
   // (M-6) — the bound that keeps `BigInt` / `writeBigUInt64LE` from throwing.
   const preimage = computePowHash(header);
   if (preimage === null) return false;
-  const target = powTarget(header.powTargetBits);
+  const target = orderingPowTarget(header.powTargetBits);
   if (target === null) return false;
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));
