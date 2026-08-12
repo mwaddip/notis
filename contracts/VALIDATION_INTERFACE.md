@@ -181,6 +181,17 @@ Neither is a consensus break, since every node floors identically. It is why
 `ORDERING_BLOCK_POW_TARGET_FLOOR` sits above the line and why devnet is not seeded beneath it: the
 profile built to exercise a retarget must be able to see one.
 
+⚠ **The floor is enforced on both sides of the boundary, and the producer half is the newer one.**
+`verifyHeaderFieldDomains` refuses an arriving header below the floor; `loadConfig` refuses to *start*
+on a profile below it. Without the second, a misconfigured node builds templates its own verifier
+rejects and sits there mining nothing — up, quiet, and producing no blocks, which is the silence this
+contract's fail-stop rules exist to prevent. **It is a refusal, not a clamp**: raising a below-floor
+value to the floor would mine a chain against a target nobody configured.
+
+⚠ **The producer check lives at config load, which is complete only while the target is constant in
+height.** A schedule that can *compute* a below-floor target needs the check where the target is
+produced — `expectedTarget` — and a load-time guard will look complete to whoever writes that schedule.
+
 `blockWork` returns `null` for exactly the inputs the expansion refuses, so the domain is stated once
 rather than re-derived. `cumulativeWork` **skips** such a header rather than throwing: the array
 reaches it from the wire, where `powTargetBits` is any `number`, and refusing a whole comparison over

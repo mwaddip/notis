@@ -606,9 +606,21 @@ BlockHeader {
   validatorId: UserId            // Block producer's 32-byte public key
   powNonce: number               // PoW solution
   powTargetBits: number          // Difficulty target for this block
-  createdAt: number              // Unix ms
+  createdAt: number              // Unix ms — stamped at TEMPLATE BUILD, not at solve
 }
 ```
+
+⚠ **`createdAt` records when mining on this block started, not when it was found.** The node stamps it
+while building the template, and a template is built when the previous block was applied — so
+`createdAt(N)` is the moment block `N−1` entered this node's chain. **It is node-set, never
+miner-supplied**: `POST /mining/submit` carries a nonce and a height and nothing else, which is what
+keeps attacker-chosen timestamps off the honest path entirely.
+
+**The consequence for anything reading it as a clock:** the difference between consecutive stamps is
+exactly the interarrival time of the block *between* them, one height out of phase. The **rate** is
+right; the **phase** lags by one block, and a schedule consuming this field must account for that
+offset rather than discover it. The field is domain-pinned as `isU64Safe` and validated against nothing
+— it is not a consensus input.
 
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
@@ -1513,7 +1525,7 @@ export const KARMA_MINIMUM = 10n;                    // consensus — floor, dec
 > are recomputed from a 2-minute basis. Phase 2 changes `constants.ts`.
 >
 > **This was a unit error, not a tuning question.** The constants were annotated "28 days"
-> and "24 hours" while `ORDERING_BLOCK_INTERVAL_MS` is `60000` and every other time-derived
+> and "24 hours" while the target block time is 60 seconds and every other time-derived
 > constant is 60s-based — `CREDIT_MINER_REWARD_DELAY` and `MEMPOOL_EXPIRY_BLOCKS` are both
 > `720` for "~12h" (720 minutes ✓), `CREDIT_EPOCH_BLOCKS` is `129_600` for "~90 days" ✓,
 > and `CREDIT_FIXED_RATE_BLOCKS` says "at 60s blocks" outright. **The karma pair were the

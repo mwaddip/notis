@@ -357,10 +357,15 @@ Classes are defined in `NODE_INTERFACE.md → Configuration`.
 > the code states the rule in place. *Historical:* all four were `process.env` reads, and none
 > appeared in `NODE_INTERFACE.md`'s Configuration table until 2026-08-06.
 >
-> ⚠ **All three line pins in this note had rotted, each by exactly 16 lines** — `config.ts:107-108`
-> now lands on `miningMode`/`miningSecret`, and `:109-110` on unrelated fields. One insertion above
-> them moved every pin at once and nothing signalled it. **Named symbols replace the numbers here**,
-> per the Phase 9 rule: a corrected number rots again on the next commit that touches the file.
+> ⚠ **All three line pins in this note had rotted, each by exactly 16 lines** — measured 2026-08-11,
+> when `config.ts:107-108` landed on `miningMode`/`miningSecret` and `:109-110` on unrelated fields.
+> One insertion above them moved every pin at once and nothing signalled it. **Named symbols replace
+> the numbers here**: a corrected number rots again on the next commit that touches the file.
+>
+> ⚠ **And the correction rotted too — `miningMode` no longer exists**, so even the description of
+> where the pins landed is now a claim about a deleted field. **That is the argument, not a footnote
+> to it:** a dated measurement stays true as a measurement, which is why this sentence carries its
+> date, and why the numbers themselves were replaced rather than refreshed.
 
 > ✅ **RESOLVED 2026-08-06 — the target block time is 60 seconds, and the two `*_BLOCKS`
 > values are recomputed above. Re-verified 2026-08-11.** `KARMA_STALE_THRESHOLD_BLOCKS` and
