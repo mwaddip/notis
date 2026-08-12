@@ -31,6 +31,7 @@ import {
   makePost,
   makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
   signHeader,
   solveHeaderPow,
 } from '../helpers.js';
@@ -53,7 +54,7 @@ const testConfig = makeTestConfig({
   orderingBlockIntervalMs: 60000,
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
+  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -77,6 +78,8 @@ type BlockCreatorModule = {
   stopBlockCreator: () => void;
   onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;
+  getCurrentTemplate: () => OrderingBlock | null;
+  submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
 };
 
 async function importDb(): Promise<DbModule> {
@@ -317,7 +320,7 @@ describe('extendsOurTip', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    const block1 = bc.createOrderingBlock();
+    const block1 = await mineNextBlock(bc);
     expect(block1).not.toBeNull();
 
     // Create a second block that chains from block 1
@@ -326,7 +329,7 @@ describe('extendsOurTip', () => {
     posts.insertPost(post2, encodePost(post2));
     mempool.insertSubBlock(postId2, 1000);
 
-    const block2 = bc.createOrderingBlock();
+    const block2 = await mineNextBlock(bc);
     expect(block2).not.toBeNull();
 
     // block2's prevBlockHash should match block1's hash
@@ -368,7 +371,7 @@ describe('extendsOurTip', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     // A candidate block with a random prevBlockHash
     const forkResolution = await importForkResolution();
@@ -453,7 +456,7 @@ describe('findForkPoint', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     const ordering = await importOrdering();
@@ -507,7 +510,7 @@ describe('findForkPoint', () => {
     const postId = computePostId(post);
     posts.insertPost(post, encodePost(post));
     mempool.insertSubBlock(postId, 1000);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     const ordering = await importOrdering();
     const ourTip = ordering.getOrderingBlock(1);
@@ -558,7 +561,7 @@ describe('findForkPoint', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     const ordering = await importOrdering();
@@ -620,7 +623,7 @@ describe('findForkPoint', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     const ordering = await importOrdering();
@@ -1103,7 +1106,7 @@ describe('revertBlock', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock(); // genesis with coinbase
+    await mineNextBlock(bc); // genesis with coinbase
 
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).not.toBeNull();
@@ -1136,7 +1139,7 @@ describe('revertBlock', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
 
     // Verify post was confirmed
@@ -1191,7 +1194,7 @@ describe('revertBlock', () => {
     mempool.insertUtxoTx(likeTx, null, 1000);
 
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     // Verify journal has the applied tx (mempool re-insertion record) and the
     // primitive mutation log the revert will replay
@@ -1237,7 +1240,7 @@ describe('revertBlock', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     const journalStore = await importJournalStore();
     const forkResolution = await importForkResolution();
@@ -1372,7 +1375,7 @@ describe('reorg', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     const ordering = await importOrdering();
@@ -1421,7 +1424,7 @@ describe('reorg', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     const ordering = await importOrdering();
@@ -1435,8 +1438,8 @@ describe('reorg', () => {
 
     // Rebuild: new chain from mempool entries (re-inserted by reorg)
     // The block creator will pick up re-inserted sub-blocks
-    bc.createOrderingBlock(); // height 1
-    bc.createOrderingBlock(); // height 2
+    await mineNextBlock(bc); // height 1
+    await mineNextBlock(bc); // height 2
 
     expect(ordering.getCurrentHeight()).toBe(2);
 
@@ -1469,7 +1472,7 @@ describe('reorg', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     const ordering = await importOrdering();
@@ -1539,7 +1542,7 @@ describe('reorg', () => {
         const postId = computePostId(post);
         posts.insertPost(post, encodePost(post));
         mempool.insertSubBlock(postId, 1000);
-        bc.createOrderingBlock();
+        await mineNextBlock(bc);
       }
 
       const ordering = await importOrdering();
@@ -1586,7 +1589,7 @@ describe('reorg', () => {
       const postId = computePostId(post);
       posts.insertPost(post, encodePost(post));
       mempool.insertSubBlock(postId, 1000);
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
     }
 
     mempool.insertSubBlock('occupier', 1000);
@@ -1637,10 +1640,10 @@ describe('reorg abort', () => {
     // what makes it applicable there.
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
     const goodB2 = await makeApplicableBlock({ height: 2 });
-    bc.createOrderingBlock();
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
 
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -1716,7 +1719,7 @@ async function buildForkScenario(): Promise<ForkScenario> {
   )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
 
   // Height 1 — the fork point, shared by both chains.
-  bc.createOrderingBlock();
+  await mineNextBlock(bc);
 
   const theirBlocks: OrderingBlock[] = [];
   for (const height of [2, 3, 4]) {
@@ -1732,8 +1735,8 @@ async function buildForkScenario(): Promise<ForkScenario> {
 
   // Our chain: two blocks the creator mines to its own validator id, so they
   // cannot collide with the hand-built ones above.
-  bc.createOrderingBlock();
-  bc.createOrderingBlock();
+  await mineNextBlock(bc);
+  await mineNextBlock(bc);
   expect(ordering.getCurrentHeight()).toBe(3);
 
   const ourHashes = [1, 2, 3].map(

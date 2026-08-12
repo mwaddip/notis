@@ -35,6 +35,7 @@ import {
   makeKarmaBox,
   makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
   seedProvenance,
   signTransaction,
   type Stored,
@@ -58,7 +59,7 @@ const testConfig = makeTestConfig({
   orderingBlockIntervalMs: 60000,
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
+  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -79,6 +80,8 @@ async function importBlockCreator() {
     startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
+    getCurrentTemplate: () => OrderingBlock | null;
+    submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   };
 }
 
@@ -187,7 +190,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    const block1 = bc.createOrderingBlock();
+    const block1 = await mineNextBlock(bc);
     expect(block1).not.toBeNull();
     expect(block1!.header.height).toBe(1);
     expect(utxo.getBox(zeroVouch.id!)).toBeNull(); // unvouch applied
@@ -200,7 +203,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     // Mine to maturity.
     for (let h = 2; h <= 1 + config.vouchCooldownBlocks; h++) {
-      expect(bc.createOrderingBlock()).not.toBeNull();
+      expect(await mineNextBlock(bc)).not.toBeNull();
     }
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(1 + config.vouchCooldownBlocks);
@@ -256,7 +259,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     // Nothing the block would have done survives: no block, the staker's box
     // unspent, no vouch box, and no escrow row for either identity — the

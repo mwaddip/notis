@@ -50,6 +50,7 @@ import {
   makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
   seedProvenance,
   signHeader,
   signTransaction,
@@ -74,7 +75,7 @@ const testConfig = makeTestConfig({
   orderingBlockIntervalMs: 60000,
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
+  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -98,6 +99,8 @@ type BlockCreatorModule = {
   stopBlockCreator: () => void;
   onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;
+  getCurrentTemplate: () => OrderingBlock | null;
+  submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
 };
 
 async function importDb(): Promise<DbModule> {
@@ -243,7 +246,7 @@ describe('block-apply journal recording', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
 
@@ -283,7 +286,7 @@ describe('block-apply journal recording', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     // Verify post was confirmed
     const confirmedPost = posts.getPost(postId);
@@ -330,7 +333,7 @@ describe('block-apply journal recording', () => {
     mempool.insertUtxoTx(likeTx, null, 1000);
 
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
 
     // Verify UTXO tx was decoded from block CBOR and applied
     const { decodeTx } = await import('@dagsocial/types');
@@ -594,7 +597,7 @@ describe('block-apply journal recording', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     const journal = await importJournalStore();
     expect(journal.isBlockJournalOpen()).toBe(false);
@@ -716,7 +719,7 @@ describe('block-apply journal recording', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     // H-7: the cooldown mint was journaled in NEITHER old representation —
     // the AVL never saw it, and revert neither reversed the mint nor
@@ -774,7 +777,7 @@ describe('block-apply embedded tx re-validation', () => {
   async function mineBlockOverMempool() {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    return bc.createOrderingBlock();
+    return mineNextBlock(bc);
   }
 
   it('rejects the whole block when an embedded tx spends a live box unsigned', async () => {
@@ -1240,12 +1243,12 @@ describe('block-apply mint provenance', () => {
 
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
-      bc.createOrderingBlock();
-      bc.createOrderingBlock();
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
 
       // Height 4 > threshold 3: decay fires, then the cooldown settles.
-      const block = bc.createOrderingBlock();
+      const block = await mineNextBlock(bc);
       expect(block).not.toBeNull();
 
       const journal = journalStore.getBlockJournal(4)!;
@@ -1331,10 +1334,10 @@ describe('block-apply mint provenance', () => {
 
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
-      for (let i = 0; i < 3; i++) bc.createOrderingBlock();
+      for (let i = 0; i < 3; i++) await mineNextBlock(bc);
 
       // Height 4: decay fires, then the cooldown settles for the same owner.
-      expect(bc.createOrderingBlock()).not.toBeNull();
+      expect(await mineNextBlock(bc)).not.toBeNull();
       expect(records.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 4,
@@ -1344,7 +1347,7 @@ describe('block-apply mint provenance', () => {
 
       // Height 5: within the threshold of the height-4 activity — quiet, and
       // the clock must not drift.
-      expect(bc.createOrderingBlock()).not.toBeNull();
+      expect(await mineNextBlock(bc)).not.toBeNull();
       expect(records.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 4,
@@ -1353,10 +1356,10 @@ describe('block-apply mint provenance', () => {
       expect(utxo.getKarmaBox(idle.userId)!.value).toBe(afterAdjacency);
 
       // Heights 6 then 7: (7 − 4) >= 3, so decay resumes at 7 and not before.
-      expect(bc.createOrderingBlock()).not.toBeNull();
+      expect(await mineNextBlock(bc)).not.toBeNull();
       expect(utxo.getKarmaBox(idle.userId)!.value).toBe(afterAdjacency);
 
-      expect(bc.createOrderingBlock()).not.toBeNull();
+      expect(await mineNextBlock(bc)).not.toBeNull();
       expect(utxo.getKarmaBox(idle.userId)!.value).toBeLessThan(afterAdjacency);
       expect(records.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,

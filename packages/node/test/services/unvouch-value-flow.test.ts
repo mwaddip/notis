@@ -38,6 +38,7 @@ import {
   hex,
   makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
   seedProvenance,
   signTransaction,
   type Stored,
@@ -59,7 +60,7 @@ const testConfig = makeTestConfig({
   orderingBlockIntervalMs: 60000,
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
+  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -80,6 +81,8 @@ async function importBlockCreator() {
     startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
+    getCurrentTemplate: () => OrderingBlock | null;
+    submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   };
 }
 
@@ -189,7 +192,7 @@ describe('P2-B phase 4 — multi-VouchBox unvouch money flow', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
 
     // Nothing the block would have done survives: no block, both stakes
     // still live in their boxes, and no escrow row — the destruction is

@@ -5,6 +5,7 @@ import type { Config } from '../../src/config.js';
 import {
   makeKarmaBox,
   makeTestConfig,
+  mineNextBlock,
   uid,
 } from '../helpers.js';
 
@@ -51,7 +52,7 @@ const testConfig = makeTestConfig({
   orderingBlockIntervalMs: 60000,
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
+  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -75,6 +76,8 @@ async function importBlockCreator() {
     startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
+    getCurrentTemplate: () => OrderingBlock | null;
+    submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   };
 }
 
@@ -157,9 +160,9 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
     const bcA = await importBlockCreator();
     bcA.startBlockCreator(testConfig);
 
-    const b1 = bcA.createOrderingBlock();
-    const b2 = bcA.createOrderingBlock();
-    const b3 = bcA.createOrderingBlock();
+    const b1 = await mineNextBlock(bcA);
+    const b2 = await mineNextBlock(bcA);
+    const b3 = await mineNextBlock(bcA);
     expect(b1).not.toBeNull();
     expect(b2).not.toBeNull();
     expect(b3).not.toBeNull();

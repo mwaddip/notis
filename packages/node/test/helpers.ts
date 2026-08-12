@@ -442,6 +442,38 @@ export function solveHeaderPow(header: BlockHeader): number {
 }
 
 /**
+ * The next ordering block, mined over the path a miner uses: the creator stores
+ * a template, this solves its header, and `submitMinedBlock` signs, finalizes
+ * and applies it (MINING_INTERFACE → Mining API).
+ *
+ * Returns the block **as the node stored it**, so its `validatorSignature` is
+ * the validator's and the block re-applies. The template's is a 64-byte zero
+ * placeholder — `submitMinedBlock` signs its own copy — and a block carrying
+ * that is refused at `verifyValidatorSignature` before any check behind it.
+ *
+ * `null` means no block reached the chain: either the creator declined to build
+ * a template (a body the speculative apply rejected) or apply refused the
+ * finalized block.
+ *
+ * The store is imported here rather than at module scope because a test that
+ * has called `vi.resetModules()` holds a newer instance than this file's own
+ * imports, and only the newer one shares a database with the caller's `bc`.
+ */
+export async function mineNextBlock(bc: {
+  createOrderingBlock: () => OrderingBlock | null;
+  getCurrentTemplate: () => OrderingBlock | null;
+  submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
+}): Promise<OrderingBlock | null> {
+  bc.createOrderingBlock();
+  const tpl = bc.getCurrentTemplate();
+  if (tpl === null) return null;
+  const nonce = solveHeaderPow(tpl.header);
+  if (bc.submitMinedBlock(nonce, tpl.header.height) === null) return null;
+  const { getOrderingBlock } = await import('../src/store/ordering.js');
+  return getOrderingBlock(tpl.header.height);
+}
+
+/**
  * The validator signature a block creator produces: raw Ed25519 over the 32
  * bytes of `blockHash(header)`. `block-creator.ts` signs this way at both of
  * its block-finalizing sites, and apply verifies it (NODE_INTERFACE → Block

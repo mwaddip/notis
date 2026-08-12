@@ -35,6 +35,7 @@ import {
   makePost,
   makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
   rawPublicKey,
   seedProvenance,
   type Stored,
@@ -53,7 +54,7 @@ const testConfig = makeTestConfig({
   orderingBlockIntervalMs: 60000,
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
+  miningMode: 'external' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -244,7 +245,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     posts.insertPost(post, encodePost(post));
     mempool.insertSubBlock(computePostId(post), 1000);
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     bc.stopBlockCreator();
     expect(block).not.toBeNull();
     expect(block!.utxoTxTree.utxoTxIds).toContain(pooled.txId);
@@ -343,7 +344,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     posts.insertPost(post, encodePost(post));
     mempool.insertSubBlock(computePostId(post), 1000);
     bc.startBlockCreator(testConfig);
-    const block3 = bc.createOrderingBlock();
+    const block3 = await mineNextBlock(bc);
     bc.stopBlockCreator();
     expect(block3).not.toBeNull();
     expect(block3!.utxoTxTree.utxoTxIds).toContain(pooled.txId);
