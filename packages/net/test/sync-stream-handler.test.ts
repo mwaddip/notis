@@ -99,7 +99,7 @@ function makeHandlerHarness(opts: {
     libp2p: unknown;
     peerMgr: PeerManager;
     syncMachine: unknown;
-    registerSyncStreamHandler(): void;
+    registerSyncStreamHandler(libp2p: unknown): void;
   };
   internals.libp2p = {
     handle: (_protocol: string, cb: StreamHandler) => {
@@ -121,7 +121,10 @@ function makeHandlerHarness(opts: {
   if (opts.syncHandler) net.setSyncHandler(opts.syncHandler);
   if (opts.syncMachine) internals.syncMachine = opts.syncMachine;
 
-  internals.registerSyncStreamHandler();
+  // The stub is passed in, not read off the instance: the registrars take the
+  // libp2p node as a parameter. It is also assigned above, for the paths that
+  // reach it through the instance at request time.
+  internals.registerSyncStreamHandler(internals.libp2p);
   if (!captured) throw new Error('registerSyncStreamHandler registered no handler');
 
   /** Drive the handler with an arbitrary source; returns what was written back. */

@@ -560,7 +560,7 @@ export class NetNode {
     // createLibp2p options cast to `any` works around @libp2p/interface version
     // mismatches in the dependency tree (v1.7, v2.11, v3.2 coexist).  The
     // runtime behaviour is correct; only the static types disagree.
-    this.libp2p = await createLibp2p({
+    const libp2p = await createLibp2p({
       addresses: {
         listen: [this.config.listenAddrs],
       },
@@ -591,6 +591,7 @@ export class NetNode {
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
+    this.libp2p = libp2p;
 
     // Create PeerDb with self-address filtering
     const listenAddrs = this.libp2p.getMultiaddrs();
@@ -623,13 +624,13 @@ export class NetNode {
     this.outboundMgr = new OutboundManager(this.config, this.peerDb);
 
     // Register handshake stream handler
-    this.registerHandshakeHandler();
+    this.registerHandshakeHandler(libp2p);
 
     // Register sync stream handler (framed protocol)
-    this.registerSyncStreamHandler();
+    this.registerSyncStreamHandler(libp2p);
 
     // Register headers stream handler (fork resolution's transport)
-    this.registerHeadersStreamHandler(this.libp2p);
+    this.registerHeadersStreamHandler(libp2p);
 
     // Track peers on connect/disconnect.
     // Listen for all four event types because the timing and payload differ:
@@ -826,9 +827,8 @@ export class NetNode {
   // Handshake — inbound handler registration
   // -----------------------------------------------------------------------
 
-  private registerHandshakeHandler(): void {
-    if (this.handshakeHandlerRegistered || !this.libp2p) return;
-    const libp2p = this.libp2p;
+  private registerHandshakeHandler(libp2p: Libp2p): void {
+    if (this.handshakeHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
@@ -927,9 +927,8 @@ export class NetNode {
   // Sync stream handler — framed protocol
   // -----------------------------------------------------------------------
 
-  private registerSyncStreamHandler(): void {
-    if (this.syncHandlerRegistered || !this.libp2p) return;
-    const libp2p = this.libp2p;
+  private registerSyncStreamHandler(libp2p: Libp2p): void {
+    if (this.syncHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle(SYNC_PROTOCOL, async ({ stream, connection }) => {
