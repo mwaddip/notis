@@ -26,7 +26,13 @@ import {
 } from './corrupt-state.js';
 import type { DecayDeps } from './decay.js';
 import { config } from '../config.js';
-import { computeBlockReward, computeSubBlockRoot, computeUtxoTxRoot, clearTemplate } from './block-creator.js';
+import {
+  computeBlockReward,
+  computeSubBlockRoot,
+  computeUtxoTxRoot,
+  clearTemplate,
+  rebuildTemplate,
+} from './block-creator.js';
 import { MAX_REORG_DEPTH } from './fork-resolution.js';
 import { subBlockIdsOf } from './sub-block-ids.js';
 import { expectedTarget } from './difficulty.js';
@@ -169,8 +175,9 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
     if (current && Buffer.from(current).equals(Buffer.from(preDigest))) return;
     avlHandle.prover.rollback(preDigest);
   };
+  let applied: boolean;
   try {
-    return getDb().transaction(() => {
+    applied = getDb().transaction(() => {
       if (!applyBlockBody(block, dagService)) throw new BlockRejected();
       return true;
     })();
@@ -208,6 +215,18 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
     restoreProver();
     return false;
   }
+
+  // The tip moved, so a miner node's template moved with it — one template per
+  // height, rebuilt on tip movement alone (MINING_INTERFACE → Template and
+  // submit). Outside the try: a throw from here is not a verdict on this block,
+  // which is committed, and the catch arms above would answer for it as though
+  // it were — rolling the prover back off state SQLite has already kept.
+  //
+  // Only once the write is committed. Nested inside `reorg`'s transaction this
+  // block is not the tip yet, and a template derived there describes a chain a
+  // failed reorg rolls back; `reorg` rebuilds once, after its own commit.
+  if (!getDb().inTransaction) rebuildTemplate();
+  return applied;
 }
 
 function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean {
@@ -356,7 +375,10 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // 6. Store the block
   storeCreateOrderingBlock(block);
 
-  // 6. Clear the local mining template (this height is taken)
+  // 6. Invalidate the local mining template (this height is taken). Only
+  // invalidation here: the replacement commits to the post-block stateRoot, and
+  // the mutation phase and AVL root update that produce it are still ahead. The
+  // rebuild is at the end of `applyOrderingBlock`, once the write is committed.
   clearTemplate();
 
   // 7–12b. Mutation phase — the block's state transition, run verbatim (at an

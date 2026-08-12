@@ -36,7 +36,6 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
         guard: 'owner_signature',
         proofSource: 'genesis',
       }) as AnyBox,
-    onSubBlockReceived: () => {},
     metaPut: () => {},
     metaGet: () => null,
     ...overrides,
@@ -192,20 +191,6 @@ describe('PostService', () => {
 
     expect(() => createPost(deps, post, tx)).toThrow(PostServiceError);
     expect(consumed).toBe(true);
-  });
-
-  it('onSubBlockReceived is called on success', () => {
-    let signaled = false;
-    const deps = mockDeps({
-      onSubBlockReceived: () => {
-        signaled = true;
-      },
-    });
-    const post = makePost();
-    const tx = makeKarmaLockTx();
-
-    createPost(deps, post, tx);
-    expect(signaled).toBe(true);
   });
 
   it('insertMempoolSubBlock and insertUtxoTx receive matching batchId', () => {

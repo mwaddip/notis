@@ -13,7 +13,7 @@ import * as store from './store/index.js';
 import { getSystemKeypair } from './store/system.js';
 import { generateChallenge } from './services/pow.js';
 import { verifyPost } from './services/verifier.js';
-import { onSubBlockReceived, getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services/block-creator.js';
+import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services/block-creator.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite, claimInvite, cancelInvite, commitInvite } from './services/invites.js';
@@ -218,7 +218,6 @@ export function createApp(config: Config): express.Express {
       getSubtree: store.getSubtree,
       insertMempoolSubBlock: store.insertMempoolSubBlock,
       insertUtxoTx: store.insertUtxoTx,
-      onSubBlockReceived,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
       getBox: store.getBox,
@@ -331,9 +330,9 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Mining — /mining (external-mode miners only; internal mining is in-process
-  // and exposes no mining HTTP surface at all — audit M-7)
-  if (config.nodeRole === 'miner' && config.miningMode === 'external') {
+  // Mining — /mining. A miner node is by definition one that serves templates,
+  // so the role alone decides the surface (audit M-7).
+  if (config.nodeRole === 'miner') {
     app.use(
       '/mining',
       miningRoutes({

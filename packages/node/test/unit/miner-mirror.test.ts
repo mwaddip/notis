@@ -67,9 +67,9 @@ describe('miner.mjs PoW predicate ↔ @dagsocial/validation', () => {
   const miner = loadMinerPredicate();
 
   it('declares each half exactly once', () => {
-    // The script has two solvers — `solvePoW` and `throttledSolvePoW` — and they
-    // share one copy of each half. A second declaration is a second walk this
-    // mirror does not extract, so the count is what keeps the pin exhaustive.
+    // The script solves in one place, `throttledSolvePoW`, over one copy of each
+    // half. A second declaration is a second walk this mirror does not extract,
+    // so the count is what keeps the pin exhaustive.
     const src = readFileSync(MINER, 'utf8');
     expect(src.split('function orderingPowTarget(').length - 1).toBe(1);
     expect(src.split('function meetsPowTarget(').length - 1).toBe(1);

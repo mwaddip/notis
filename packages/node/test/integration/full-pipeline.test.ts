@@ -9,6 +9,7 @@
 import {
   fixtureProvenance,
   makeTestConfig,
+  mineNextBlock,
   rawPublicKey,
   seedProvenance,
   signTransaction,
@@ -60,10 +61,7 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   postPowTargetBits: 20,
   challengeWindowBlocks: 10,
-  orderingBlockIntervalMs: 60000,
-  orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -295,7 +293,7 @@ describe('full-pipeline', () => {
     mempool.insertSubBlock(postId, 1000);
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    expect(bc.createOrderingBlock()).not.toBeNull();
+    expect(await mineNextBlock(bc)).not.toBeNull();
 
     // Build and sign the burn-shape like tx: one karma output at
     // −LIKE_KARMA_COST, likeTarget inside the signed bytes, no box output.
@@ -327,7 +325,7 @@ describe('full-pipeline', () => {
     expect(result.txId).toBeTruthy();
 
     // ---- Step 2: Mine block (mempool entry removed during finalizeBlock) ----
-    const block = bc.createOrderingBlock() as Record<string, unknown> | null;
+    const block = (await mineNextBlock(bc)) as Record<string, unknown> | null;
     expect(block).not.toBeNull();
     const blockHeight = (block!.header as Record<string, unknown>).height as number;
     expect(blockHeight).toBe(2);
@@ -414,7 +412,7 @@ describe('full-pipeline', () => {
     // ---- Mine block ----
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock() as Record<string, unknown> | null;
+    const block = (await mineNextBlock(bc)) as Record<string, unknown> | null;
     expect(block).not.toBeNull();
     const blockHeight = (block!.header as Record<string, unknown>).height as number;
 
@@ -509,7 +507,7 @@ describe('full-pipeline', () => {
     // ---- Step 2: Mine block ----
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock() as Record<string, unknown> | null;
+    const block = (await mineNextBlock(bc)) as Record<string, unknown> | null;
     expect(block).not.toBeNull();
     const blockHeight = (block!.header as Record<string, unknown>).height as number;
 
@@ -614,7 +612,7 @@ describe('full-pipeline', () => {
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
-    expect(bc.createOrderingBlock()).not.toBeNull();
+    expect(await mineNextBlock(bc)).not.toBeNull();
 
     // Applied: the karma is consumed and both boxes exist.
     expect(deps.getBox(karmaA.id!)).toBeNull();

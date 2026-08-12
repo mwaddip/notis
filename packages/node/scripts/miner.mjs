@@ -110,32 +110,22 @@ function requireTarget(scaledBits) {
   return target;
 }
 
-function solvePoW(powPreimage, targetBits) {
-  const target = requireTarget(targetBits);
-  let nonce = 0;
-  while (true) {
-    const hash = createHash('blake2b512')
-      .update(powPreimage)
-      .update(encodeLE64(nonce))
-      .digest()
-      .subarray(0, 32);
-    if (meetsPowTarget(hash, target)) return nonce;
-    nonce++;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Throttled mining — async so we can yield the event loop between work windows
 // ---------------------------------------------------------------------------
 
-async function throttledSolvePoW(powPreimage, targetBits) {
-  if (MINER_PCT === 0) {
-    // No throttling — run full tilt synchronously
-    return solvePoW(powPreimage, targetBits);
-  }
-
+/**
+ * Grind for `powPreimage` until a nonce meets the target, or until the node has
+ * moved past `height` — in which case the answer is `null` and the caller
+ * repolls.
+ *
+ * The duty window is the only path, at every `MINER_PCT`: it is where the
+ * staleness recheck lives, so a full-tilt miner has to yield too. At
+ * `MINER_PCT` 0 or 100 the window is all work and the sleep is zero.
+ */
+async function throttledSolvePoW(powPreimage, targetBits, height, isStale) {
   const target = requireTarget(targetBits);
-  const workMs = DUTY_WINDOW_MS * MINER_PCT / 100;
+  const workMs = MINER_PCT === 0 ? DUTY_WINDOW_MS : DUTY_WINDOW_MS * MINER_PCT / 100;
   const sleepMs = DUTY_WINDOW_MS - workMs;
   let nonce = 0;
 
@@ -153,8 +143,16 @@ async function throttledSolvePoW(powPreimage, targetBits) {
       nonce++;
     }
 
+    // The node reconstructs the submitted header from *its* current template,
+    // so a solution for a preimage it has discarded is worthless however long
+    // it took to find. Those hashes are not lost progress — they are trials
+    // whose winning answer buys nothing. Checking once per work window bounds
+    // the waste by detection latency rather than by solve time, so it holds at
+    // any difficulty.
+    if (await isStale(height)) return null;
+
     // Yield event loop — other processes get the CPU during sleepMs
-    await sleep(sleepMs);
+    if (sleepMs > 0) await sleep(sleepMs);
   }
 }
 
@@ -182,6 +180,26 @@ async function fetchTemplate() {
     throw new Error(`Template fetch failed: ${res.status} ${res.statusText}`);
   }
   return res.json();
+}
+
+/**
+ * True once the node's template has moved past `height`.
+ *
+ * `header.height` discriminates because the node holds one template per height,
+ * rebuilt on tip movement alone (MINING_INTERFACE → Template and submit). A
+ * design that reintroduced same-height rebuilds would void in-flight work
+ * without moving the height, and this probe would need a real template
+ * identity rather than the height.
+ */
+async function templateMovedPast(height) {
+  try {
+    const tpl = await fetchTemplate();
+    return tpl !== null && tpl.header.height !== height;
+  } catch {
+    // A transient fetch failure is not evidence the tip moved, and abandoning
+    // on it would turn a flaky link into a miner that never finishes a block.
+    return false;
+  }
 }
 
 async function submitNonce(powNonce, height) {
@@ -224,7 +242,13 @@ async function main() {
       log(`Mining block ${header.height} at ${powTargetBits / 256} bits...`);
       const start = Date.now();
 
-      const nonce = await throttledSolvePoW(preimageBuf, powTargetBits);
+      const nonce = await throttledSolvePoW(
+        preimageBuf, powTargetBits, header.height, templateMovedPast,
+      );
+      if (nonce === null) {
+        log(`Tip moved past height=${header.height}, abandoning and repolling`);
+        continue;
+      }
 
       const elapsed = ((Date.now() - start) / 1000).toFixed(1);
       log(`Found nonce=${nonce} for height=${header.height} in ${elapsed}s`);

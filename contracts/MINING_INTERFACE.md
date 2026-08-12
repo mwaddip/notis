@@ -144,14 +144,14 @@ check, not a sanity floor — the target is fixed by schedule, not miner-chosen.
 ## Mining API
 
 **Exposure (audit M-7):** the `/mining` routes are mounted **only** when
-`nodeRole === 'miner'` **and** `miningMode === 'external'`. Internal mining is
-in-process and exposes no mining HTTP surface at all. On any other
-configuration the paths simply do not exist (404 from the server).
+`nodeRole === 'miner'`. **A miner node is by definition one that serves
+templates** — the node holds no solver, so there is no configuration in which
+it mines without exposing this surface. On a server-role node the paths simply
+do not exist (404 from the server).
 
-**Authentication (audit M-7):** external mining REQUIRES a configured,
-non-empty `MINING_SECRET` — a miner node with `MINING_MODE=external` and an
-empty secret **fails at startup** with a configuration error; there is no
-unauthenticated passthrough mode. Every `/mining/*` request must carry
+**Authentication (audit M-7):** a miner node REQUIRES a configured, non-empty
+`MINING_SECRET` — `NODE_ROLE=miner` with an empty secret **fails at startup**
+with a configuration error; there is no unauthenticated passthrough mode. Every `/mining/*` request must carry
 `Authorization: Bearer <MINING_SECRET>`; the comparison is constant-time
 (`crypto.timingSafeEqual` over length-guarded buffers). Missing or wrong
 credentials → 401, before any handler logic (including `?miner=`).
@@ -193,7 +193,18 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
 
 `powPreimage` is `computePowHash(header)` (see "Block hash and PoW preimage") —
 the fixed 32-byte preimage the miner hashes with the nonce. The miner never
-touches CBOR. 404 when no template is available yet.
+touches CBOR.
+
+**A miner node always holds a template**, so 404 is no longer routine. The node builds one at startup
+and rebuilds it whenever the tip moves — its own block finalizing, a peer's block applying, or a reorg
+committing. **Sub-block arrival does not rebuild it**: what goes into a block and when one is produced
+are separate questions, and a rebuild mid-solve would void every miner's in-flight work.
+
+⚠ **The template is stable for a height, and that is a load-bearing property, not an implementation
+detail.** `POST /mining/submit` reconstructs the header from *the node's current template* plus the
+submitted nonce, so any rebuild — even one whose body is byte-identical, since `createdAt` is stamped
+at build — invalidates a nonce found against the previous preimage. Stability is what lets a miner
+treat `header.height` as the whole staleness key.
 
 **This endpoint also returns 500** (Phase 1f), with `{ error: 'Block template header is not
 encodable' }`. `computePowHash` returns `Buffer | null`, `null` for a header outside the encodable
@@ -256,8 +267,7 @@ validator key), stores it, broadcasts it, and applies coinbase mints.
 
 | Variable | Class | Default | Purpose |
 |----------|-------|---------|---------|
-| `MINING_MODE` | operational | `internal` | `internal` (mine in-process, no mining HTTP surface) or `external` (expose the authenticated template API) |
-| `MINING_SECRET` | operational | — | Bearer token for the mining API. **Required non-empty when `MINING_MODE=external` on a miner node — startup fails otherwise.** Ignored (routes unmounted) in internal mode. There is no unauthenticated mode. |
+| `MINING_SECRET` | operational | — | Bearer token for the mining API. **Required non-empty when `NODE_ROLE=miner` — startup fails otherwise.** Unused on a server-role node, whose `/mining` routes are unmounted. There is no unauthenticated mode. |
 | `NETWORK_TYPE` | network-identity | `testnet` | Selects the network profile — and with it every value in the table below. The **only** environment variable that may change a consensus parameter |
 
 Classes are defined in `NODE_INTERFACE.md → Configuration`. A `consensus` variable
@@ -373,6 +383,27 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 > Consequence 1 goes because the value is no longer per-operator; consequence 2 goes
 > because it is fixed for the life of the chain. **No height schedule is required or
 > wanted** — see the note under §Difficulty Schedule.
+
+⚠ **The block above holds both answers, and the reader has to be told which is current.**
+Consequence 2 is marked `STILL OPEN` in item 2 and `goes` in the Resolution paragraph four lines
+later. **Item 2 is the true one**, and the retarget track is now exercising it deliberately:
+
+- **`ORDERING_BLOCK_POW_TARGET_BITS` moves from 3072 to 5983**, so every block stored under the old
+  value fails `applyOrderingBlock`'s scheduled-target check on resync, reorg or
+  restart-and-revalidate. **The mitigation is a fresh chain, not a mechanism** — the value change and
+  the wipe are one operation. Consequence 2 is realised rather than resolved.
+- **"No height schedule is required or wanted" is superseded.** One is wanted: `expectedTarget` becomes
+  a real function of height under the ASERT unit, and that is what actually closes invariant 7. Until
+  then invariant 7's *"the same value on every node and for all time"* holds only within one chain's
+  life, which is what the wipe re-establishes.
+- **Devnet no longer follows the constant** — its `orderingBlockPowTargetBits` stays trivially solvable
+  because the node test suite mines real PoW against whatever profile it resolves, and
+  `expectedTarget` reads the config singleton where an injected `Config` cannot reach.
+  `TYPES_INTERFACE → Ordering block PoW`.
+
+⚠ **The reorg-guard expiry in the note above is NOT discharged here.** `expectedTarget` is still a
+constant in height after this unit, so the height-for-work proxy still coincides. **It breaks with
+ASERT**, and carried register #5 still owns it.
 8. The mining API is never served unauthenticated: external mode requires a
    configured `MINING_SECRET` (enforced at startup, not per-request), every
    request is bearer-authenticated with a constant-time comparison, and the
@@ -392,8 +423,20 @@ script; deployed via `scripts/dagsocial-miner.service`):
    the machine that mines is not required to build the workspace — so agreement with
    `@dagsocial/validation` is enforced by a mirror test that extracts both declarations by
    name, not by an import
-3. `POST /mining/submit` (Bearer) with `{ height, powNonce }`
-4. Repeat
+3. **At each duty-cycle yield, re-read the template and abandon the search if `header.height` has
+   moved.** This is a **requirement on the script**, not an optimisation: the solve time *is* the block
+   interval, so a miner that grinds on past a tip move spends a full expected solve on an answer the
+   node will reject. Checking once per work window caps that waste at one window per lost race, at any
+   difficulty. ⚠ **`header.height` suffices only because the template is stable** — see
+   *GET /mining/template*. If same-height rebuilds are ever reintroduced, height stops discriminating
+   and the miner needs a real template identity
+4. `POST /mining/submit` (Bearer) with `{ height, powNonce }`
+5. Repeat
+
+⚠ **The duty cycle sleeps *between* work windows, so `MINER_PCT` throttles hashing within a solve and
+does not pace the interval between blocks.** Where a solve finishes inside one window — devnet, at
+~4,096 expected hashes — the sleep never runs and block production is bounded by how fast the node
+rebuilds a template. **`MINER_PCT` is not a cadence control.**
 
 Config via env: `NODE_URL` (default `http://localhost:3000`), `MINING_SECRET`
 (required — the node refuses unauthenticated mining), `MINER_PUBKEY` (optional

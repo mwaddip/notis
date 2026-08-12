@@ -18,9 +18,13 @@ import {
 
 describe('PoW difficulty constants', () => {
   // VALIDATION_INTERFACE → orderingPowTarget: ordering-block difficulty is an
-  // integer in units of 1/256 of a bit, domain [0, 65536].
+  // integer in units of 1/256 of a bit, domain [0, 65536]. The seed is 23.375 bits
+  // — 23 + 3/8, a difficulty no whole bit count can express and one these units
+  // carry exactly, which is what they exist for.
   it('denominates ordering-block difficulty in 1/256 of a bit', () => {
-    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(12 * 256);
+    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(5984);
+    expect(ORDERING_BLOCK_POW_TARGET_BITS % 256).not.toBe(0);
+    expect(ORDERING_BLOCK_POW_TARGET_BITS / 256).toBe(23.375);
   });
 
   // Post PoW is fixed difficulty and is never retargeted, so it is not scaled.
@@ -59,5 +63,18 @@ describe('PoW difficulty constants', () => {
   it('seeds devnet above the work-resolution floor', () => {
     expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetBits).toBeGreaterThan(2180);
     expect(NETWORK_PROFILES.devnet.postPowTargetBits).toBe(4);
+  });
+
+  // TYPES_INTERFACE → Ordering block PoW: the constant is mainnet's and testnet's,
+  // and devnet sets its own, lower. Testnet reaches the value through a spread of
+  // mainnet rather than a literal, so this is what catches the spread being
+  // replaced by a copy that then fails to follow the constant.
+  it('carries a real difficulty on testnet, and devnet does not follow it', () => {
+    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(5984);
+    expect(NETWORK_PROFILES.testnet.orderingBlockPowTargetBits).toBe(5984);
+    expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetBits).toBe(3072);
+    expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetBits).toBeLessThan(
+      NETWORK_PROFILES.testnet.orderingBlockPowTargetBits,
+    );
   });
 });

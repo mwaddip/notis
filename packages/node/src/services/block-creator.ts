@@ -1,5 +1,4 @@
 import {
-  createHash,
   generateKeyPairSync,
   sign as cryptoSign,
   type KeyObject,
@@ -23,9 +22,6 @@ import {
 import {
   verifyOrderingBlockPoW,
   blockHash,
-  computePowHash,
-  orderingPowTarget,
-  meetsPowTarget,
 } from '@dagsocial/validation';
 import type {
   OrderingBlock,
@@ -108,9 +104,7 @@ let config: Config;
 let validatorPubKey: Uint8Array;
 let validatorPrivKey: KeyObject;
 let validatorId: Uint8Array;
-let intervalId: ReturnType<typeof setInterval> | null = null;
-let pendingSubBlockCounter = 0;
-let currentTemplate: OrderingBlock | null = null;   // For external mining mode
+let currentTemplate: OrderingBlock | null = null;   // The block the miner solves
 let confirmedRowids: Set<number> = new Set();       // Mempool rowids included in current block
 let dagService: import('./dag-service.js').DagService | undefined;
 
@@ -128,40 +122,50 @@ export function startBlockCreator(cfg: Config): void {
   validatorPrivKey = privateKey;
   validatorId = validatorPubKey;
 
-  // Start interval timer
-  intervalId = setInterval(() => {
-    createOrderingBlock();
-  }, config.orderingBlockIntervalMs);
+  // A miner node holds a template from the moment it starts, and one per height
+  // thereafter: production is regulated by difficulty, so a miner polling
+  // `GET /mining/template` is never told to come back later
+  // (MINING_INTERFACE → Template and submit).
+  createOrderingBlock();
 }
 
+/**
+ * Drop what the creator holds — its template and its claim on the mempool rows
+ * that template confirmed. The rebuild trigger is a block being applied, so
+ * this is the whole of stopping: there is nothing else running.
+ */
 export function stopBlockCreator(): void {
-  if (intervalId !== null) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
+  clearTemplate();
+  confirmedRowids = new Set();
 }
 
 export function setDagServiceForMiner(ds: import('./dag-service.js').DagService): void {
   dagService = ds;
 }
 
-export function onSubBlockReceived(): void {
+/**
+ * Build the template for the next height. `applyOrderingBlock` calls this once a
+ * block is committed — the tip moved, so the height this node mines moved with
+ * it (MINING_INTERFACE → Template and submit).
+ *
+ * `startBlockCreator` is the only assignment of `config` and `index.ts` calls it
+ * on a miner node alone, so an unassigned `config` *is* a server-role node: it
+ * applies blocks and builds no templates.
+ */
+export function rebuildTemplate(): void {
   if (!config) return;
-  pendingSubBlockCounter++;
-  if (pendingSubBlockCounter >= config.orderingBlockMinSubBlocks) {
-    createOrderingBlock();
-  }
+  createOrderingBlock();
 }
 
 // ---------------------------------------------------------------------------
-// Miner pubkey override (external mining)
+// Miner pubkey override
 // ---------------------------------------------------------------------------
 
 let currentMinerPubkey: Uint8Array | null = null;
 
 /**
- * Set the pubkey that receives coinbase rewards. Called when an external
- * miner requests a template with their own wallet address.
+ * Set the pubkey that receives coinbase rewards. Called when a miner requests a
+ * template with their own wallet address.
  * Pass null to revert to the node's validator key.
  */
 export function setMinerPubkey(pubkey: Uint8Array | null): void {
@@ -169,25 +173,25 @@ export function setMinerPubkey(pubkey: Uint8Array | null): void {
 }
 
 /**
- * Return the current block template for external miners.
- * Returns null if no template has been built yet or the block creator
- * is in internal mode.
+ * Return the current block template for the miner.
+ * Returns null if no template has been built yet.
  */
 export function getCurrentTemplate(): OrderingBlock | null {
   return currentTemplate;
 }
 
 /**
- * Clear the current template. Called when a relayed block arrives so the
- * block creator builds a fresh template for the next height.
+ * Invalidate the current template. Called mid-apply, where the block being
+ * applied has already taken this height: the template is void from that point
+ * on, and the replacement cannot be derived until the mutation phase and the
+ * AVL root update have run.
  */
 export function clearTemplate(): void {
   currentTemplate = null;
-  pendingSubBlockCounter = 0;
 }
 
 /**
- * Submit a mined nonce from an external miner.
+ * Submit a mined nonce from the miner.
  * Verifies PoW, finalizes the block, stores it, and broadcasts.
  * Returns the finalized block hash on success, null on failure.
  */
@@ -250,50 +254,6 @@ export function computeBlockReward(height: number): bigint {
   ) + 1;
   const reward = CREDIT_INITIAL_REWARD - BigInt(epochs) * CREDIT_REWARD_REDUCTION;
   return reward > CREDIT_TAIL_REWARD ? reward : CREDIT_TAIL_REWARD;
-}
-
-// ---------------------------------------------------------------------------
-// PoW mining (internal mode)
-// ---------------------------------------------------------------------------
-
-function encodeLE64(n: number): Buffer {
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64LE(BigInt(n));
-  return buf;
-}
-
-/**
- * Search for a nonce whose ordering-block digest meets `scaledBits`.
- *
- * The admission rule is `@dagsocial/validation`'s, so this solver and
- * `verifyOrderingBlockPoW` cannot disagree about what wins — VALIDATION_INTERFACE
- * → orderingPowTarget. The expansion is hoisted because it depends only on
- * `scaledBits`, and deriving it per nonce would allocate once per hash.
- *
- * `scaledBits` is in units of 1/256 of a bit, over `[0, 65536]` — the header
- * denomination. Post PoW is whole bits and uses `powTarget`.
- *
- * The tail is `encodeLE64`: MINING_INTERFACE → PoW Verification step 3. The post
- * PoW appends `vlqU` instead — two PoW processes, two tails, neither shared.
- *
- * A `scaledBits` no digest can satisfy throws rather than spinning: the value
- * arrives from a network profile, and a solver that cannot succeed must say so.
- */
-function solvePoW(powPreimage: Buffer, scaledBits: number): number {
-  const target = orderingPowTarget(scaledBits);
-  if (target === null) {
-    throw new Error(`solvePoW: unsatisfiable targetBits ${scaledBits}`);
-  }
-  let nonce = 0;
-  while (true) {
-    const hash = createHash('blake2b512')
-      .update(powPreimage)
-      .update(encodeLE64(nonce))
-      .digest()
-      .subarray(0, 32);
-    if (meetsPowTarget(hash, target)) return nonce;
-    nonce++;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,8 +345,9 @@ export function createOrderingBlock(): OrderingBlock | null {
   // Either failure means the store is no longer what this node wrote.
   //
   // Both go to the boundary rather than declining to produce. Declining is the
-  // producer's mirror of blaming an arriving block for our own store: the timer
-  // fires again, reads the same broken row, declines again, and a node that
+  // producer's mirror of blaming an arriving block for our own store — and the
+  // tip moving is the only rebuild trigger, so a node that declines here holds
+  // no template, produces nothing, and is handed no second attempt: a node that
   // never produces while staying up is indistinguishable from an idle miner —
   // the same silence, from the other end of the same fault.
   const prevBlock = currentHeight > 0 ? getOrderingBlock(currentHeight) : null;
@@ -486,9 +447,9 @@ export function createOrderingBlock(): OrderingBlock | null {
   // every peer's — rejects. Reachable with unmutated code: a pooled tx whose
   // validity reads third-party state (a bond settlement's threshold leg) goes
   // stale in the pool while its inputs stay live. Evict what the body included
-  // — the same cleanup a rejected finalize runs — or the next interval
-  // rebuilds this exact body: purgeExpired cannot break that loop, because it
-  // keys on a chain height that stops advancing.
+  // — the same cleanup a rejected finalize runs — or every later rebuild
+  // reassembles this exact body: purgeExpired cannot break that loop, because
+  // it keys on a chain height that stops advancing.
   if (speculation.kind === 'body-rejected') {
     // States the verdict, not the cause: `body-rejected` also carries the
     // speculation's unclaimed throws, which that arm logs itself. Naming the
@@ -500,7 +461,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     for (const rowid of confirmedRowids) {
       removeEntry(rowid);
     }
-    pendingSubBlockCounter = 0;
     currentTemplate = null;
     confirmedRowids = new Set();
     return null;
@@ -509,81 +469,33 @@ export function createOrderingBlock(): OrderingBlock | null {
   headerTemplate.stateRoot =
     speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT;
 
-  // 21. Internal vs external mining
-  if (config.miningMode === 'external') {
-    // Store the full block template (header + bodies) for external miners.
-    // Its stateRoot is this height's post-block digest, so the template stops
-    // being submittable once a competing block moves the pre-state — which is
-    // exactly what clearTemplate() on apply guarantees.
-    currentTemplate = candidate;
-    return null; // Block not finalized yet
-  }
-
-  // 22. Internal: mine PoW against the header.
+  // 21. Store the full block template (header + bodies) for the miner. Its
+  // stateRoot is this height's post-block digest, so the template stops being
+  // submittable once a competing block moves the pre-state — which is exactly
+  // what clearTemplate() on apply guarantees.
   //
-  // `headerTemplate` is built field by field a few lines above, from constants,
-  // the height schedule and the AVL digest, with `prevBlockHash` already pinned
-  // at step 16 — so `null` here means this node's own creator emitted a header
-  // it cannot encode. Refuse rather than mine: the PoW would be spent on a block
-  // every peer rejects, and `solvePoW` would be handed a `null` preimage.
-  const powPreimage = computePowHash(headerTemplate);
-  if (powPreimage === null) {
-    console.error(
-      `Not producing block at height ${newHeight}: the header this node built ` +
-      `is outside the encodable domain`,
-    );
-    currentTemplate = null;
-    return null;
-  }
-  const powNonce = solvePoW(powPreimage, powTargetBits);
-
-  const header: BlockHeader = {
-    ...headerTemplate,
-    powNonce,
-  };
-
-  // 23. Sign the header hash. Only `powNonce` separates this header from the
-  // one just encoded, and `solvePoW` returns a counter — so this is the same
-  // refusal as above, one field later.
-  const hh = blockHash(header);
-  if (hh === null) {
-    console.error(
-      `Not producing block at height ${newHeight}: the mined header is ` +
-      `outside the encodable domain`,
-    );
-    currentTemplate = null;
-    return null;
-  }
-  const sig = cryptoSign(null, Buffer.from(hh, 'hex'), validatorPrivKey);
-
-  const block: OrderingBlock = {
-    header,
-    subBlockTree,
-    utxoTxTree,
-    validatorSignature: new Uint8Array(sig),
-  };
-
-  // 24. Finalize
-  finalizeBlock(block);
-
-  return block;
+  // This is where a produced block ends on this side: the nonce arrives from
+  // `POST /mining/submit`, and `submitMinedBlock` is what finalizes.
+  currentTemplate = candidate;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
-// Block finalization (shared between internal and external mining)
+// Block finalization
 // ---------------------------------------------------------------------------
 
 function finalizeBlock(block: OrderingBlock): void {
   // applyOrderingBlock handles validation, storage, coinbase, confirmations,
   // UTXO tx application, journal recording, and basic mempool cleanup
   //
-  // The boundary sits here rather than at this function's callers because there
-  // are three of them and each ends somewhere that swallows: the interval timer
-  // in `startBlockCreator` (an uncaught throw ends the process, but by Node's
-  // default rather than our decision), `POST /posts` via `onSubBlockReceived`,
-  // and `POST /mining/submit` via `submitMinedBlock` — both of those inside an
-  // Express handler, which turns a throw into a 500 and keeps the node running.
-  // One frame dominates all three, so the decision is made once.
+  // The boundary sits here rather than at the caller because the one path in —
+  // `POST /mining/submit` via `submitMinedBlock` — ends inside an Express
+  // handler, which turns a throw into a 500 and keeps the node running.
+  //
+  // The rows this block confirmed are read off the module before the apply: an
+  // accepted block moves the tip, which rebuilds the template and re-points
+  // `confirmedRowids` at the rows of the *next* height.
+  const minedRowids = confirmedRowids;
   let applied: boolean;
   try {
     applied = applyOrderingBlock(block, dagService);
@@ -596,9 +508,9 @@ function finalizeBlock(block: OrderingBlock): void {
   // from utxoTxIds). Double-removal is harmless.
   //
   // This runs even when the block was rejected: whatever made it invalid came
-  // out of the mempool, so leaving those entries in place would rebuild the
-  // same rejected block every interval and stall the chain.
-  for (const rowid of confirmedRowids) {
+  // out of the mempool, so leaving those entries in place would reassemble the
+  // same rejected block at every rebuild and stall the chain.
+  for (const rowid of minedRowids) {
     removeEntry(rowid);
   }
 
@@ -612,10 +524,14 @@ function finalizeBlock(block: OrderingBlock): void {
     });
   }
 
-  // Reset state
-  pendingSubBlockCounter = 0;
-  currentTemplate = null;
-  confirmedRowids = new Set();
+  // An accepted block has already rebuilt the template for the next height on
+  // its way through the apply. A rejected one leaves the tip where it was, so
+  // nothing rebuilt — and the body it was built from has just had its entries
+  // dropped above, so rebuilding here is what stops the next solve being spent
+  // on a body this node has already refused.
+  if (!applied) {
+    rebuildTemplate();
+  }
 }
 
 // ---------------------------------------------------------------------------

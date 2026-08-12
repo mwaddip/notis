@@ -7,19 +7,17 @@ import {
   AVL_KEY_LENGTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 
 const TEST_KEYS = [
   'PORT',
   'DB_PATH',
   'CHALLENGE_WINDOW_BLOCKS',
-  'ORDERING_BLOCK_INTERVAL_MS',
-  'ORDERING_BLOCK_MIN_SUB_BLOCKS',
   'MAX_SUB_BLOCKS_PER_BLOCK',
   'MAX_MEMPOOL_ENTRIES',
   'NETWORK_TYPE',
   'MINING_SECRET',
-  'MINING_MODE',
   'NODE_ROLE',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
@@ -56,8 +54,6 @@ describe('config', () => {
       expect(cfg.dbPath).toBe('dagsocial.db');
       expect(cfg.postPowTargetBits).toBe(20);
       expect(cfg.challengeWindowBlocks).toBe(10);
-      expect(cfg.orderingBlockIntervalMs).toBe(60000);
-      expect(cfg.orderingBlockMinSubBlocks).toBe(1);
       expect(cfg.maxSubBlocksPerBlock).toBe(1000);
       expect(cfg.maxMempoolEntries).toBe(10000);
       expect(cfg.networkType).toBe('testnet');
@@ -74,8 +70,6 @@ describe('config', () => {
       process.env['PORT'] = '8080';
       process.env['DB_PATH'] = '/tmp/test.db';
       process.env['CHALLENGE_WINDOW_BLOCKS'] = '5';
-      process.env['ORDERING_BLOCK_INTERVAL_MS'] = '30000';
-      process.env['ORDERING_BLOCK_MIN_SUB_BLOCKS'] = '3';
       process.env['MAX_SUB_BLOCKS_PER_BLOCK'] = '500';
       process.env['MAX_MEMPOOL_ENTRIES'] = '25';
       process.env['NETWORK_TYPE'] = 'mainnet';
@@ -87,8 +81,6 @@ describe('config', () => {
       expect(cfg.port).toBe(8080);
       expect(cfg.dbPath).toBe('/tmp/test.db');
       expect(cfg.challengeWindowBlocks).toBe(5);
-      expect(cfg.orderingBlockIntervalMs).toBe(30000);
-      expect(cfg.orderingBlockMinSubBlocks).toBe(3);
       expect(cfg.maxSubBlocksPerBlock).toBe(500);
       expect(cfg.maxMempoolEntries).toBe(25);
       expect(cfg.networkType).toBe('mainnet');
@@ -99,7 +91,6 @@ describe('config', () => {
   describe('3. numeric parsing', () => {
     it('parses numeric strings correctly', async () => {
       process.env['PORT'] = '3001';
-      process.env['ORDERING_BLOCK_INTERVAL_MS'] = '120000';
       process.env['MAX_SUB_BLOCKS_PER_BLOCK'] = '2000';
 
       const { loadConfig } = await import('../src/config.js');
@@ -107,7 +98,6 @@ describe('config', () => {
 
       expect(typeof cfg.port).toBe('number');
       expect(cfg.port).toBe(3001);
-      expect(cfg.orderingBlockIntervalMs).toBe(120000);
       expect(cfg.maxSubBlocksPerBlock).toBe(2000);
     });
   });
@@ -125,12 +115,11 @@ describe('config', () => {
 
   // Each throwing case below has a control differing only in the guarded field.
   describe('5. mining auth fail-fast (audit M-7)', () => {
-    it('throws when an external-mode miner has no MINING_SECRET', async () => {
+    it('throws when a miner has no MINING_SECRET', async () => {
       // Import under a safe env so module-level `config` builds, then flip.
       const { loadConfig } = await import('../src/config.js');
 
       process.env['NODE_ROLE'] = 'miner';
-      process.env['MINING_MODE'] = 'external';
       delete process.env['MINING_SECRET'];
 
       expect(() => loadConfig()).toThrow(/MINING_SECRET/);
@@ -140,7 +129,6 @@ describe('config', () => {
       const { loadConfig } = await import('../src/config.js');
 
       process.env['NODE_ROLE'] = 'miner';
-      process.env['MINING_MODE'] = 'external';
       process.env['MINING_SECRET'] = '   ';
 
       expect(() => loadConfig()).toThrow(/MINING_SECRET/);
@@ -148,7 +136,6 @@ describe('config', () => {
 
     it('fails at startup: importing config with that env rejects', async () => {
       process.env['NODE_ROLE'] = 'miner';
-      process.env['MINING_MODE'] = 'external';
       delete process.env['MINING_SECRET'];
 
       await expect(import('../src/config.js')).rejects.toThrow(/MINING_SECRET/);
@@ -156,30 +143,16 @@ describe('config', () => {
 
     it('control: same env with a secret loads', async () => {
       process.env['NODE_ROLE'] = 'miner';
-      process.env['MINING_MODE'] = 'external';
       process.env['MINING_SECRET'] = 'sekret';
 
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
 
-      expect(cfg.miningMode).toBe('external');
       expect(cfg.miningSecret).toBe('sekret');
     });
 
-    it('control: internal-mode miner loads without a secret', async () => {
-      process.env['NODE_ROLE'] = 'miner';
-      process.env['MINING_MODE'] = 'internal';
-
-      const { loadConfig } = await import('../src/config.js');
-      const cfg = loadConfig();
-
-      expect(cfg.miningMode).toBe('internal');
-      expect(cfg.miningSecret).toBe('');
-    });
-
-    it('control: server role in external mode loads without a secret', async () => {
+    it('control: a server role loads without a secret', async () => {
       process.env['NODE_ROLE'] = 'server';
-      process.env['MINING_MODE'] = 'external';
 
       const { loadConfig } = await import('../src/config.js');
 
@@ -221,11 +194,10 @@ describe('config', () => {
       // The flat consensus fields are copies OF the profile, not parallel
       // reads: each must equal the devnet table entry, not testnet's.
       //
-      // ⚠ `orderingBlockPowTargetBits` is the one line here that does NOT
-      // discriminate: devnet holds testnet's difficulty (TYPES_INTERFACE →
-      // Network profiles, and the devnet table's own note), so a read sourced
-      // from the wrong profile passes it. The other eight still separate them.
-      // It is in units of 1/256 of a bit; `postPowTargetBits` is not.
+      // All nine discriminate, `orderingBlockPowTargetBits` included: devnet's
+      // 3072 is below testnet's 5984 (TYPES_INTERFACE → Network profiles), so a
+      // read sourced from the wrong profile fails here. It is in units of 1/256
+      // of a bit; `postPowTargetBits` is not.
       expect(cfg.postPowTargetBits).toBe(4);
       expect(cfg.orderingBlockPowTargetBits).toBe(3072);
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
@@ -322,9 +294,9 @@ describe('config', () => {
       const cfg = loadConfig();
 
       expect(cfg.postPowTargetBits).toBe(20);
-      // 1/256-bit units, so 12 whole bits (VALIDATION_INTERFACE →
+      // 1/256-bit units, so 23.375 bits (VALIDATION_INTERFACE →
       // orderingPowTarget). `postPowTargetBits` above is whole bits.
-      expect(cfg.orderingBlockPowTargetBits).toBe(3072);
+      expect(cfg.orderingBlockPowTargetBits).toBe(5984);
       expect(cfg.karmaDecayIntervalBlocks).toBe(1440);
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);
       expect(cfg.karmaDecayAmount).toBe(5n);
@@ -401,6 +373,48 @@ describe('config', () => {
     it('refuses a short hex key', async () => {
       await expect(importWithTreasuryKey('ab'.repeat(16))).rejects.toThrow(
         /treasuryPubKey/,
+      );
+    });
+  });
+
+  // The producer half of the ordering-block floor. `verifyOrderingBlockStructure`
+  // refuses an arriving header below it (VALIDATION_INTERFACE →
+  // orderingPowTarget); `expectedTarget()` returns the configured value
+  // unchecked, so a profile below the floor builds templates this node's own
+  // verifier — and every peer's — refuses: a node that stays up, mines, and
+  // never produces. The profile table is the only source, so the profile is
+  // what this mocks.
+  describe('10. ordering-block target floor', () => {
+    // Refusal, never clamping: silently raising a below-floor value mines the
+    // chain against a target nobody configured. `config.ts` ends in
+    // `export const config = loadConfig()`, so the refusal lands on the import.
+    function importWithOrderingTarget(orderingBlockPowTargetBits: number) {
+      vi.doMock('@dagsocial/types', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@dagsocial/types')>();
+        return {
+          ...actual,
+          profileFor: (networkType: string) => ({
+            ...actual.profileFor(networkType as never),
+            orderingBlockPowTargetBits,
+          }),
+        };
+      });
+      return import('../src/config.js');
+    }
+
+    it('refuses to start on a profile whose ordering target is below the floor', async () => {
+      await expect(
+        importWithOrderingTarget(ORDERING_BLOCK_POW_TARGET_FLOOR - 1),
+      ).rejects.toThrow(/below the ordering-block floor/i);
+    });
+
+    // The floor is admissible, so the comparison is `<` and not `<=`.
+    it('accepts a profile sitting exactly on the floor', async () => {
+      const { loadConfig } = await importWithOrderingTarget(
+        ORDERING_BLOCK_POW_TARGET_FLOOR,
+      );
+      expect(loadConfig().orderingBlockPowTargetBits).toBe(
+        ORDERING_BLOCK_POW_TARGET_FLOOR,
       );
     });
   });

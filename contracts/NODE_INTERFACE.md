@@ -175,8 +175,12 @@ Sub-block assembly, lifecycle, and ordering block integration are defined in
 The karma-lock UTXO transaction is built and signed **client-side** and sent as
 `karmaLockTx` in the request body. The server validates it, does NOT build it.
 10. Broadcast sub-block and UTXO tx to peers (fire-and-forget)
-11. Signal block creator via `onSubBlockReceived()`
-12. Return `{ postId, status: "pending", expiresAtHeight }`
+11. Return `{ postId, status: "pending", expiresAtHeight }`
+
+⚠ **A sub-block arriving does not signal the block creator.** What goes into a block and when one is
+produced are separate questions: production is difficulty-regulated, and a rebuild mid-solve would void
+every miner's in-flight work (`MINING_INTERFACE` → GET /mining/template). The post is stored and
+servable immediately; what waits for the next block is finalization, not visibility.
 
 Parent refs may point to live posts or stumps. Both are valid — the DAG
 traversal handles both transparently.
@@ -517,10 +521,10 @@ The same one-grant rule applies to `POST /credits/faucet`.
 | `GET` | `/mining/template` | `?miner=hex(32)` optional payout override | Template (nested header + body sections + `powPreimage`) — see `MINING_INTERFACE.md` | 400, 401, 404 |
 | `POST` | `/mining/submit` | `{ powNonce: number, height: number }` | `{ blockHash, height }` (201) | 400, 401, 422 |
 
-Mounted **only** when `NODE_ROLE=miner` **and** `MINING_MODE=external`
-(internal mining is in-process and exposes no mining HTTP surface). External
-mode requires a configured non-empty `MINING_SECRET` — startup fails
-otherwise; there is no unauthenticated passthrough. Every request needs
+Mounted **only** when `NODE_ROLE=miner`. A miner node is by definition one
+that serves templates — the node holds no solver of its own. That role requires
+a configured non-empty `MINING_SECRET` — startup fails otherwise; there is no
+unauthenticated passthrough. Every request needs
 `Authorization: Bearer <MINING_SECRET>` (constant-time comparison), and the
 `?miner=` coinbase payout override sits behind that auth (audit M-7). Full
 endpoint semantics in `MINING_INTERFACE.md`.
@@ -1552,14 +1556,27 @@ encoding added to the table above, and an argument at the call site that
 
 ## Ordering Block Creator Contract
 
-`startBlockCreator()` / `stopBlockCreator()` / `onSubBlockReceived()` /
-`createOrderingBlock()` / `submitMinedBlock(powNonce, height)`
+`startBlockCreator()` / `stopBlockCreator()` / `rebuildTemplate()` /
+`createOrderingBlock()` / `getCurrentTemplate()` / `clearTemplate()` /
+`submitMinedBlock(powNonce, height)`
 
 ### Triggers
 
-- **Timer-driven:** every `ORDERING_BLOCK_INTERVAL_MS` (default 60s)
-- **Sub-block-count-driven:** when pending sub-blocks ≥
-  `ORDERING_BLOCK_MIN_SUB_BLOCKS` (default 1)
+**Production is difficulty-regulated: a block appears when a miner solves one.** The creator holds a
+template rather than scheduling anything, and there is no timer.
+
+- **Startup** — `startBlockCreator()` builds the first template.
+- **The tip moved** — `rebuildTemplate()`, after this node's own block finalizes, after a peer's block
+  applies, and once after a reorg commits.
+
+⚠ **The rebuild stands down while nested in a transaction** (`!getDb().inTransaction`). `reorg` calls
+`applyOrderingBlock` inside its own transaction, where the applied block is not the tip yet and a
+template built from it would describe a chain a failed reorg rolls back; `reorg` rebuilds once, after
+committing.
+
+⚠ **`rebuildTemplate()` is miner-only, and the guard is `if (!config) return`.** `startBlockCreator` is
+the only assignment of the creator's module-level config and runs on a miner node alone, so an
+unassigned config *is* a server-role node: it applies blocks and builds no templates.
 
 ### Block creation (mempool-based)
 
@@ -2948,8 +2965,8 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`POST_POW_TARGET_BITS`~~ | **removed** | ~~`20`~~ | → profile field `postPowTargetBits`. The `advertised` class is retired with it: the challenge endpoint and the verifier now read the same field, so a node can no longer report a difficulty it does not enforce (A6) |
 | ~~`NETWORK_MODE`~~ | **renamed** | ~~`testnet`~~ | → `NETWORK_TYPE`. The name changes because the meaning does: it selected a faucet flag, it now selects the whole consensus parameter table |
 | `MAX_SUB_BLOCKS_PER_BLOCK` | `local` | `1000` | Sub-blocks this node puts in blocks **it produces**. ⚠ NO BOUND — CONSENSUS GAP: no maximum is enforced at apply, so this is local only because the consensus cap does not exist |
-| `ORDERING_BLOCK_MIN_SUB_BLOCKS` | `local` | `1` | Sub-blocks that trigger immediate block production |
-| `ORDERING_BLOCK_INTERVAL_MS` | `local` | `60000` | Producer cadence (wall clock — producer-side only, never a validity input) |
+| ~~`ORDERING_BLOCK_MIN_SUB_BLOCKS`~~ | **removed** | ~~`1`~~ | Sub-block arrival no longer triggers production |
+| ~~`ORDERING_BLOCK_INTERVAL_MS`~~ | **removed** | ~~`60000`~~ | There is no producer timer. Block cadence is set by the ordering-block PoW target |
 | `CHALLENGE_WINDOW_BLOCKS` | `local` | `10` | Expiry of challenges this node issues |
 | `MAX_MEMPOOL_ENTRIES` | `local` | `10000` | Mempool capacity |
 | `MAX_PEERS` | `local` | `50` | Max connected libp2p peers |
@@ -2959,8 +2976,8 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `ADMIN_BIND_ADDRESS` | `operational` | `127.0.0.1` | Admin listener bind address. ⚠ The admin listener is **unauthenticated**; binding it off loopback exposes it |
 | `DB_PATH` | `operational` | `dagsocial.db` | SQLite database path |
 | `NODE_ROLE` | `operational` | `server` | `server` (applies peer blocks) or `miner` (produces blocks) |
-| `MINING_MODE` | `operational` | `internal` | `internal` (node mines) or `external` (template endpoint) |
-| `MINING_SECRET` | `operational` | `""` | Mining auth secret — **required**; startup asserts it is set |
+| ~~`MINING_MODE`~~ | **removed** | ~~`internal`~~ | The node has no in-process solver. A miner node serves templates; that is the only production model |
+| `MINING_SECRET` | `operational` | `""` | Mining auth secret — **required when `NODE_ROLE=miner`**; startup asserts it is set |
 | `BOOTSTRAP_PEERS` | `operational` | `[]` | Comma-separated libp2p multiaddrs |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
@@ -2968,8 +2985,12 @@ operator may safely change, and four consensus parameters were environment-tunab
 
 > ⚠ **The karma decay constants are documented for a block time the node does not use.**
 > `constants.ts` annotates `KARMA_STALE_THRESHOLD_BLOCKS = 20160` as "28 days at 2m blocks" and
-> `KARMA_DECAY_INTERVAL_BLOCKS = 720` as "24 hours at 2m blocks", while `ORDERING_BLOCK_INTERVAL_MS`
-> defaults to **60000** and MINING_INTERFACE's emission schedule is computed "at 60-second blocks".
+> `KARMA_DECAY_INTERVAL_BLOCKS = 720` as "24 hours at 2m blocks", while the ordering-block PoW target is
+> set for a **60-second** solve and MINING_INTERFACE's emission schedule is computed "at 60-second blocks".
+> ⚠ **The 60s figure moved anchor:** it was `ORDERING_BLOCK_INTERVAL_MS`, a producer timer; it is now
+> `ORDERING_BLOCK_POW_TARGET_BITS`, a consensus parameter — so the block time is an *emergent* property
+> of difficulty and hashrate rather than a configured one, and the real interval drifts with the
+> participant set until a retarget tracks it.
 > At 60s the real durations are **14 days and 12 hours** — half the documented values. Either the
 > annotations are stale or the block interval is. These are consensus parameters and the discrepancy
 > must be resolved before launch, not after.

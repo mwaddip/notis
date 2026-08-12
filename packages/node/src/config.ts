@@ -4,6 +4,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
@@ -30,14 +31,11 @@ export interface Config {
   publicUrl: string;
   postPowTargetBits: number;
   challengeWindowBlocks: number;
-  orderingBlockIntervalMs: number;
-  orderingBlockMinSubBlocks: number;
   maxSubBlocksPerBlock: number;
   /** Hard mempool bound — inserts are rejected at the cap, never evicted (audit M-8). */
   maxMempoolEntries: number;
   // Mining
-  miningMode: 'internal' | 'external';
-  miningSecret: string;          // bearer token for mining API, required non-empty in external mode
+  miningSecret: string;          // bearer token for mining API, required non-empty on a miner
   orderingBlockPowTargetBits: number;
   creditTreasuryPct: number;
   treasuryPubKey: string;  // hex-encoded 32-byte key, empty = no treasury
@@ -88,14 +86,6 @@ export function loadConfig(): Readonly<Config> {
       process.env['CHALLENGE_WINDOW_BLOCKS'] ?? String(CHALLENGE_WINDOW_BLOCKS),
       10,
     ),
-    orderingBlockIntervalMs: parseInt(
-      process.env['ORDERING_BLOCK_INTERVAL_MS'] ?? '60000',
-      10,
-    ),
-    orderingBlockMinSubBlocks: parseInt(
-      process.env['ORDERING_BLOCK_MIN_SUB_BLOCKS'] ?? '1',
-      10,
-    ),
     maxSubBlocksPerBlock: parseInt(
       process.env['MAX_SUB_BLOCKS_PER_BLOCK'] ?? '1000',
       10,
@@ -105,7 +95,6 @@ export function loadConfig(): Readonly<Config> {
       10,
     ),
     // Mining
-    miningMode: parseMiningMode(process.env['MINING_MODE'] ?? 'internal'),
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
     creditTreasuryPct: CREDIT_TREASURY_PCT,
@@ -143,8 +132,33 @@ export function loadConfig(): Readonly<Config> {
 
   assertMiningAuthConfigured(cfg);
   assertTreasuryKeyEncodable(cfg);
+  assertOrderingTargetAboveFloor(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * The producer half of the ordering-block floor.
+ * `verifyOrderingBlockStructure` refuses an arriving header below
+ * `ORDERING_BLOCK_POW_TARGET_FLOOR` (VALIDATION_INTERFACE → orderingPowTarget),
+ * and `expectedTarget()` returns this field unchecked — so a profile below the
+ * floor builds templates this node's own verifier, and every peer's, refuses. A
+ * node that stays up, mines, and never produces: silence in the direction that
+ * costs the chain.
+ *
+ * Refusal, never clamping. Raising a below-floor value to the floor would mine
+ * the chain against a target nobody configured; failing at load puts the verdict
+ * where a human is reading it.
+ */
+function assertOrderingTargetAboveFloor(cfg: Config): void {
+  if (cfg.orderingBlockPowTargetBits < ORDERING_BLOCK_POW_TARGET_FLOOR) {
+    throw new Error(
+      `orderingBlockPowTargetBits ${cfg.orderingBlockPowTargetBits} for network ` +
+        `"${cfg.networkType}" is below the ordering-block floor ` +
+        `${ORDERING_BLOCK_POW_TARGET_FLOOR} — every header this node built ` +
+        'would be refused by its own verifier',
+    );
+  }
 }
 
 /**
@@ -183,24 +197,19 @@ export function isFaucetNetwork(networkType: NetworkType): boolean {
 }
 
 /**
- * External mining serves the coinbase payout override (`?miner=`) over HTTP, so
- * the bearer secret is load-bearing — there is no unauthenticated mode. A miner
- * configured for external mining without a secret fails at startup rather than
- * opening the endpoints (MINING_INTERFACE invariant 8, audit M-7).
+ * A miner node serves the coinbase payout override (`?miner=`) over HTTP, so the
+ * bearer secret is load-bearing — there is no unauthenticated mode. A miner
+ * without a secret fails at startup rather than opening the endpoints
+ * (MINING_INTERFACE invariant 8, audit M-7).
  */
 function assertMiningAuthConfigured(cfg: Config): void {
-  if (cfg.nodeRole !== 'miner' || cfg.miningMode !== 'external') return;
+  if (cfg.nodeRole !== 'miner') return;
   if (cfg.miningSecret.trim().length === 0) {
     throw new Error(
-      'MINING_SECRET must be set and non-empty when NODE_ROLE=miner and ' +
-        'MINING_MODE=external — the mining API has no unauthenticated mode',
+      'MINING_SECRET must be set and non-empty when NODE_ROLE=miner — ' +
+        'the mining API has no unauthenticated mode',
     );
   }
-}
-
-function parseMiningMode(raw: string): 'internal' | 'external' {
-  if (raw === 'internal' || raw === 'external') return raw;
-  throw new Error(`Invalid MINING_MODE "${raw}" — must be "internal" or "external"`);
 }
 
 function parseBootstrapPeers(raw: string): string[] {

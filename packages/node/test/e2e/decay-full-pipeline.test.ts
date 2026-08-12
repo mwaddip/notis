@@ -34,12 +34,10 @@ const A2 = `http://localhost:${P2}`;
 const AP1 = P1 + 200, AP2 = P2 + 200; // admin ports
 const ENV = {
   ...process.env,
-  ORDERING_BLOCK_INTERVAL_MS: '2000',
   KARMA_STALE_THRESHOLD_BLOCKS: '10',
   KARMA_DECAY_INTERVAL_BLOCKS: '3',
   KARMA_DECAY_AMOUNT: '5',
   KARMA_MINIMUM: '10',
-  MINING_MODE: 'internal',
   // Challenge validity is measured in blocks, and this config mines one every
   // 2s — the default 10-block window is ~20s, shorter than a single PoW solve
   // at the node's target bits, so a challenge expires mid-solve. Widen it so

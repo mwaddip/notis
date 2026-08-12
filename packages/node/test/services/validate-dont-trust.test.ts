@@ -66,7 +66,6 @@ function mockDeps(
         guard: 'owner_signature',
         proofSource: 'genesis',
       }) as AnyBox,
-    onSubBlockReceived: () => {},
     metaPut: (key: string, value: Uint8Array) => {
       store.watermarkValues.set(key, value);
     },

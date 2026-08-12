@@ -11,9 +11,11 @@ verifiable operation, not a favor from a moderation team.
 
 *Notis is the network; the code ships under the working scope `@dagsocial/*`.*
 
-**Status:** Phase 2 devnet — a single-binary node with HTTP API, libp2p
-networking, PoW consensus, and a demo UI. Pre-network: consensus formats still
-change freely between versions. Node.js ≥ 22, TypeScript, pnpm. MIT licensed.
+**Status:** a single-binary node with HTTP API, libp2p networking, PoW
+consensus, and a demo UI, running a public testnet. Pre-network: consensus
+formats still change freely between versions, and a change to any committed
+byte starts the chain again from genesis. Node.js ≥ 22, TypeScript, pnpm.
+MIT licensed.
 
 ---
 
@@ -192,27 +194,43 @@ pnpm build
 pnpm typecheck
 ```
 
-### Single node (local dev)
+### Local dev loop
 
 ```bash
-NETWORK_TYPE=testnet NODE_ROLE=miner node packages/node/dist/index.js
+pnpm dev                          # one devnet node + one miner
+pnpm dev -- --nodes 3             # three meshed nodes, a miner each
+pnpm dev -- --miners 3            # three miners racing on one node
 ```
 
-Starts a miner node on `http://localhost:3000` with the demo UI at the same
-address, producing ordering blocks every 60 seconds with in-process PoW.
+Generates a throwaway mining secret, spawns everything, and tears it all down
+on Ctrl-C. Databases go to a temporary directory and are not reused.
 
-### Split mining (external miner)
+### Running a node
 
-For running a node on a VPS without burning its CPU (or its ToS), the node
-can build block templates and let a separate machine solve them. External
-mining **requires** a configured secret — the node refuses to start an
-unauthenticated external-mining setup, and internal-mode nodes expose no
-mining API at all.
+```bash
+NETWORK_TYPE=testnet NODE_ROLE=miner MINING_SECRET=<secret> node packages/node/dist/index.js
+```
+
+Starts a node on `http://localhost:3000` with the demo UI at the same address.
+
+**A miner node serves templates and solves nothing itself.** There is no
+in-process solver, so `NODE_ROLE=miner` requires a `MINING_SECRET` — the node
+refuses to start without one, and the mining API has no unauthenticated mode.
+A node started as `server` applies blocks from peers and exposes no `/mining`
+routes at all.
+
+Blocks appear when a miner solves one. Difficulty sets the pace, so the
+interval is a property of the network's total hashrate rather than a setting.
+
+### Split mining (separate miner machine)
+
+The point of the split is running a node on a VPS without burning its CPU (or
+its ToS): the node builds templates, another machine solves them.
 
 **VPS node:**
 
 ```bash
-NODE_ROLE=miner MINING_MODE=external MINING_SECRET=<secret> node packages/node/dist/index.js
+NODE_ROLE=miner MINING_SECRET=<secret> node packages/node/dist/index.js
 ```
 
 **Miner machine:**
@@ -221,22 +239,14 @@ NODE_ROLE=miner MINING_MODE=external MINING_SECRET=<secret> node packages/node/d
 NODE_URL=https://your-node.example.com/testnet/api MINER_PCT=25 MINING_SECRET=<secret> node packages/node/scripts/miner.mjs
 ```
 
-`MINER_PCT` throttles CPU (0–100, default 25). The miner is a single
-zero-dependency script — no repo checkout needed, just Node.js ≥ 22. A
-reference systemd unit is at `packages/node/scripts/dagsocial-miner.service`.
+`MINER_PCT` throttles CPU within a solve (0–100, default 25); it does not
+pace the interval between blocks, since a solve that finishes inside one work
+window never reaches the sleep. The miner is a single zero-dependency script —
+no repo checkout needed, just Node.js ≥ 22. A reference systemd unit is at
+`packages/node/scripts/dagsocial-miner.service`.
 
-### Multi-node cluster
-
-```bash
-./scripts/cluster.sh                              # 3 nodes, fresh DBs, 60s blocks
-./scripts/cluster.sh 5 --interval-ms 30000        # 5 nodes, 30s blocks
-./scripts/cluster.sh 4 --persist                  # keep DBs between runs
-./scripts/cluster.sh 3 --base-http 4000 --base-p2p 5000
-```
-
-Node 1 is the bootstrap seed; the rest dial it and join the mesh. Logs land in
-`/tmp/dagsocial-cluster/node-*.log`; stop everything with
-`kill $(cat /tmp/dagsocial-cluster/pids)`.
+It re-reads the template as it works and abandons a solve once the tip moves,
+so a lost race costs one work window rather than a whole block.
 
 ### Environment variables
 
@@ -252,8 +262,6 @@ environment is not merely discouraged, it has no effect.
 | `PORT` | 3000 | HTTP API port |
 | `DB_PATH` | `dagsocial.db` | SQLite database path |
 | `NODE_ROLE` | `server` | `server` or `miner` |
-| `ORDERING_BLOCK_INTERVAL_MS` | 60000 | Block creation cooldown (ms) — local pacing, not consensus |
-| `ORDERING_BLOCK_MIN_SUB_BLOCKS` | — | Minimum sub-blocks before a block is produced |
 | `MAX_SUB_BLOCKS_PER_BLOCK` | — | Upper bound on sub-blocks per ordering block |
 | `BOOTSTRAP_PEERS` | (empty) | Comma-separated libp2p multiaddrs |
 | `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen address |
@@ -262,13 +270,15 @@ environment is not merely discouraged, it has no effect.
 | `MAX_MEMPOOL_ENTRIES` | — | Mempool capacity; submissions beyond it are refused |
 | `MAX_PROOF_HISTORY` | — | Retained AVL+ proof history depth |
 | `VERIFY_STATE_ROOT` | on | Verify each block's committed `stateRoot` at apply |
-| `MINING_MODE` | `internal` | `internal` (in-process PoW, no mining API) or `external` (authenticated template API) |
-| `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty in external mode — startup fails without it. Unused in internal mode. |
+| `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty when `NODE_ROLE=miner` — startup fails without it. Unused on a server node. |
 | `ADMIN_PORT` / `ADMIN_BIND_ADDRESS` | — | Separate bind for admin endpoints |
 | `PUBLIC_URL` | `/` | Base path for the demo UI (e.g. `/testnet/` behind nginx) |
 
 > **Removed, and silently ignored if set** — delete them from any existing env
-> file: `NETWORK_MODE` (renamed to `NETWORK_TYPE`), `POST_POW_TARGET_BITS`,
+> file: `NETWORK_MODE` (renamed to `NETWORK_TYPE`), `MINING_MODE` (the node has
+no in-process solver; a miner node serves templates),
+`ORDERING_BLOCK_INTERVAL_MS` and `ORDERING_BLOCK_MIN_SUB_BLOCKS` (there is no
+producer timer — difficulty sets the pace), `POST_POW_TARGET_BITS`,
 > `ORDERING_BLOCK_POW_TARGET_BITS`, `CREDIT_INITIAL_REWARD`,
 > `CREDIT_TREASURY_PCT`, `TREASURY_PUBKEY`, `KARMA_STALE_THRESHOLD_BLOCKS`,
 > `KARMA_DECAY_INTERVAL_BLOCKS`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
@@ -305,8 +315,8 @@ to duplicate it; the duplicate drifted, the contract doesn't.)
 
 ```bash
 pnpm build          # Build all 5 packages
-pnpm test           # Run the full suite
-pnpm typecheck      # Type-check all packages
+pnpm test           # Every package's suite (test/e2e/** is excluded — see its README)
+pnpm typecheck      # Type-check all packages, src and test trees
 ```
 
 **Five packages:**
@@ -340,17 +350,18 @@ for every interface, and contracts are updated **before** implementation code.
 | `contracts/SUBBLOCK_INTERFACE.md` | Sub-block lifecycle |
 | `contracts/WIRE_INTERFACE.md` | Frame and message codec |
 | `contracts/JOURNAL_EVENTS.md` | Block journal events |
-| `docs/CONSENSUS.md` | Consensus model |
-| `contracts/WEB_INTERFACE.md` | Web client (future, Phase 3) |
+| `contracts/HOUSE_STYLE.md` | Colour, type, the mark, motion, spacing, voice |
+| `contracts/SPECIAL.md` | Per-subsystem attention weights for review |
+| `contracts/WEB_INTERFACE.md` | Web client, ahead of the code |
 
 ---
 
 ## Roadmap
 
-Implemented (Phase 2): the dual ledger, sub-block + ordering-block consensus,
-verifiable pruning, likes as per-block karma burns, invites with bonds, vouches, karma decay,
-credit emission, AVL+ state root with light-client proofs, libp2p networking
-with header-first sync, split mining, demo UI.
+Built: the dual ledger, sub-block + ordering-block consensus, verifiable
+pruning, likes as per-block karma burns, invites with bonds, vouches, karma
+decay, credit emission, AVL+ state root with light-client proofs, libp2p
+networking with header-first sync, split mining, demo UI.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips), reply
 earning, karma-proportional PoW, storage pruning for lean nodes, view keys,

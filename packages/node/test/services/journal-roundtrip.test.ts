@@ -33,6 +33,7 @@ import {
   makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
+  mineNextBlock,
   seedProvenance,
   signTransaction,
   type TestIdentity,
@@ -73,10 +74,7 @@ const plainConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   postPowTargetBits: 20,
   challengeWindowBlocks: 10,
-  orderingBlockIntervalMs: 60000,
-  orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
-  miningMode: 'internal' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -104,6 +102,8 @@ async function importBlockCreator() {
     startBlockCreator: (cfg: Config) => void;
     stopBlockCreator: () => void;
     createOrderingBlock: () => OrderingBlock | null;
+    getCurrentTemplate: () => OrderingBlock | null;
+    submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   };
 }
 
@@ -395,7 +395,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(plainConfig);
 
-    bc.createOrderingBlock(); // height 1 baseline
+    await mineNextBlock(bc); // height 1 baseline
     const pre = takeSnapshot(db, handle, 1);
 
     // Signed, value-conserving credit transfer: 40 to the recipient, 60 change.
@@ -425,7 +425,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const mempool = await importMempool();
     mempool.insertUtxoTx(tx, null, 1000);
 
-    const classBlock = bc.createOrderingBlock(); // height 2 carries the tx
+    const classBlock = await mineNextBlock(bc); // height 2 carries the tx
     expect(classBlock).not.toBeNull();
     expect(classBlock!.utxoTxTree.utxoTxIds).toContain(computeTxId(tx));
 
@@ -606,15 +606,15 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       bc.startBlockCreator(plainConfig);
 
       // Heights 1–3: currentHeight ≤ threshold → staleness guard skips decay.
-      bc.createOrderingBlock();
-      bc.createOrderingBlock();
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
       expect(utxo.getBox(oldBox.id!)).not.toBeNull();
       const pre = takeSnapshot(db, handle, 3);
 
       // Height 4 > threshold 3: stale, owes 4 periods × 5 = 20, capped at
       // value − minimum = 40 → burn 20, one consolidated decay-burn box.
-      const classBlock = bc.createOrderingBlock();
+      const classBlock = await mineNextBlock(bc);
       expect(classBlock).not.toBeNull();
 
       expect(utxo.getBox(oldBox.id!)).toBeNull();
@@ -678,14 +678,14 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       const bc = await importBlockCreator();
       bc.startBlockCreator(plainConfig);
 
-      bc.createOrderingBlock();
-      bc.createOrderingBlock();
-      bc.createOrderingBlock();
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
       const pre = takeSnapshot(db, handle, 3);
       // Non-vacuity: no record exists yet, so the class block creates one.
       expect(recordStore.getIdentityRecord(idle.userId)).toBeNull();
 
-      const classBlock = bc.createOrderingBlock();
+      const classBlock = await mineNextBlock(bc);
       expect(classBlock).not.toBeNull();
 
       // Both writes happened, in that order.

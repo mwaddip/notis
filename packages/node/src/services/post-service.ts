@@ -89,9 +89,6 @@ export interface PostServiceDeps {
   ) => { valid: boolean; error?: string; computedOutputs?: AnyBox[]; txId?: string };
   getBox: (id: string) => AnyBox | null;
 
-  // Notification
-  onSubBlockReceived: () => void;
-
   // Watermark tracking (dag_meta)
   metaPut: (key: string, value: Uint8Array) => void;
   metaGet: (key: string) => Uint8Array | null;
@@ -250,9 +247,6 @@ export function createPost(
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   deps.insertMempoolSubBlock(postId, expiresAtHeight, batchId);
   deps.insertUtxoTx(karmaLockTx, batchId, expiresAtHeight);
-
-  // ---- Signal the block creator ----
-  deps.onSubBlockReceived();
 
   // ---- Phase 4 complete: advance validated watermark ----
   // All content checks passed; the post is safe for external queries.

@@ -1,8 +1,10 @@
 import {
   fixtureProvenance,
   makeTestConfig,
+  mineNextBlock,
   seedProvenance,
   signTransaction,
+  solveHeaderPow,
   uid,
 } from '../helpers.js';
 import {
@@ -50,11 +52,8 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   postPowTargetBits: 20,
   challengeWindowBlocks: 10,
-  orderingBlockIntervalMs: 60000,
-  orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   // Mining
-  miningMode: 'internal' as const,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -77,8 +76,9 @@ type DbModule = {
 type BlockCreatorModule = {
   startBlockCreator: (cfg: Config) => void;
   stopBlockCreator: () => void;
-  onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;
+  getCurrentTemplate: () => OrderingBlock | null;
+  submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   computeSubBlockRoot: (tree: OrderingBlock['subBlockTree']) => string;
 };
 
@@ -277,7 +277,7 @@ describe('block-creator', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     // Empty blocks are always mined — miners need coinbase rewards.
     // At genesis (height 0→1), this produces a block with coinbase outputs.
     expect(block).not.toBeNull();
@@ -315,7 +315,7 @@ describe('block-creator', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
     expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
@@ -357,7 +357,7 @@ describe('block-creator', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
     expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toEqual([postId]);
     expect(block!.header.validatorId).toBeTruthy();
@@ -391,7 +391,7 @@ describe('block-creator', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
 
     // Verify mempool is now empty (confirmed entries removed)
@@ -427,7 +427,7 @@ describe('block-creator', () => {
     mempool.insertUtxoTx(makeLikeTx(author, karmaBox, postId), null, 1000);
 
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock();
+    const block = await mineNextBlock(bc);
 
     expect(block).not.toBeNull();
     // The type carries exactly the live keys, so the produced tree does too.
@@ -455,7 +455,7 @@ describe('block-creator', () => {
     // currentHeight % 60 === 0 chain tip (height 61), so cover both readings
     // of "the boundary": 60 and 61.
     for (let i = 0; i < 61; i++) {
-      expect(bc.createOrderingBlock()).not.toBeNull();
+      expect(await mineNextBlock(bc)).not.toBeNull();
     }
     expect(ordering.getCurrentHeight()).toBe(61); // every block applied
 
@@ -496,7 +496,7 @@ describe('block-creator', () => {
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(0);
 
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Second block
@@ -505,7 +505,7 @@ describe('block-creator', () => {
     posts.insertPost(post2, encodePost(post2));
     mempool.insertSubBlock(postId2, 1000);
 
-    bc.createOrderingBlock();
+    await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(2);
   });
 
@@ -544,26 +544,33 @@ describe('block-creator', () => {
     const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
     mempool.insertUtxoTx(likeTx, null, 1000);
 
+    // The subject is the body the creator assembles, so the template is what
+    // this reads. The like names a post no block confirms, which apply rejects
+    // — a chain the block never joins still had a body, and that body is the
+    // claim here.
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock();
+    bc.createOrderingBlock();
+    const template = bc.getCurrentTemplate();
 
-    expect(block).not.toBeNull();
-    expect(block!.utxoTxTree.utxoTxIds.length).toBeGreaterThan(0);
+    expect(template).not.toBeNull();
+    expect(template!.utxoTxTree.utxoTxIds.length).toBeGreaterThan(0);
     // The standalone like should be in utxoTxIds
-    expect(block!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
+    expect(template!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
 
     // Verify inline CBOR UTXO tx fields
     const { decodeTx } = await import('@dagsocial/types');
-    expect(block!.utxoTxTree.utxoTxs).toBeDefined();
-    expect(block!.utxoTxTree.utxoTxs.length).toBe(
-      block!.utxoTxTree.utxoTxIds.length,
+    expect(template!.utxoTxTree.utxoTxs).toBeDefined();
+    expect(template!.utxoTxTree.utxoTxs.length).toBe(
+      template!.utxoTxTree.utxoTxIds.length,
     );
-    for (let i = 0; i < block!.utxoTxTree.utxoTxs.length; i++) {
-      const tx = decodeTx(block!.utxoTxTree.utxoTxs[i]!);
-      expect(computeTxId(tx)).toBe(block!.utxoTxTree.utxoTxIds[i]);
+    for (let i = 0; i < template!.utxoTxTree.utxoTxs.length; i++) {
+      const tx = decodeTx(template!.utxoTxTree.utxoTxs[i]!);
+      expect(computeTxId(tx)).toBe(template!.utxoTxTree.utxoTxIds[i]);
     }
 
-    // Confirmed entries removed from mempool
+    // Entries the body claimed leave the pool at finalize, accepted or not.
+    const nonce = solveHeaderPow(template!.header);
+    expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
     const remaining = mempool.getPendingEntries(100);
     expect(remaining).toHaveLength(0);
   });
@@ -600,15 +607,20 @@ describe('block-creator', () => {
     const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
     mempool.insertUtxoTx(likeTx, 'batch1', 1000);
 
+    // Assembly again, so again the template: the like names a post no block
+    // confirms and apply rejects the body it rides in.
     bc.startBlockCreator(testConfig);
-    const block = bc.createOrderingBlock();
+    bc.createOrderingBlock();
+    const template = bc.getCurrentTemplate();
 
-    expect(block).not.toBeNull();
+    expect(template).not.toBeNull();
     // The batch-linked UTXO tx ID should be in utxoTxIds
-    expect(block!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
+    expect(template!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
     // The sub-block should be referenced
-    expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
-    // Mempool should be empty (both confirmed)
+    expect(template!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
+    // Both entries leave the pool at finalize.
+    const nonce = solveHeaderPow(template!.header);
+    expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
     const remaining = mempool.getPendingEntries(100);
     expect(remaining).toHaveLength(0);
   });
@@ -635,5 +647,29 @@ describe('block-creator', () => {
     };
 
     expect(computeSubBlockRoot(flipped)).not.toBe(computeSubBlockRoot(tree));
+  });
+
+  // -----------------------------------------------------------------------
+  // Template lifecycle: one per height, rebuilt when the tip moves
+  // -----------------------------------------------------------------------
+
+  it('a miner node holds a template for the next height the moment a block is applied', async () => {
+    // Production is difficulty-regulated: there is no interval to wait out, so
+    // a miner polling GET /mining/template is never told to come back later.
+    // MINING_INTERFACE → Template and submit.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+
+    bc.startBlockCreator(testConfig);
+    expect(bc.getCurrentTemplate()?.header.height).toBe(1);
+
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+
+    const next = bc.getCurrentTemplate();
+    expect(next).not.toBeNull();
+    expect(next!.header.height).toBe(2);
+    expect(next!.header.prevBlockHash).toBe(blockHash(block!.header));
   });
 });
