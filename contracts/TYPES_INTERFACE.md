@@ -735,26 +735,8 @@ no property of it — not the formula, not the domain, not the totality guarante
 would be a claim about another package's internals that `types` has no way to see change, which is the
 shape that decayed across six sites in PR #52.
 
-Measured 2026-08-09 (node v22.19.0), and the numbers decide the bound:
-
-| Input | Result |
-|---|---|
-| `1n << BigInt(2³⁰ − 1)` | allocates **128 MiB** |
-| `1n << BigInt(2³⁰)` | throws `RangeError` |
-| `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
-
-The wall is exactly 2³⁰ and it is one integer wide. **A per-term bound is not sufficient on its
-own** — two terms each below the wall sum past it — which is why the bound is the digest width
-rather than anything near the arithmetic limit. A peer controls roughly **18,900** terms, not the
-`MAX_REORG_DEPTH * 2` the caller asks for: `requestHeaders`' `maxCount` is not enforced on the
-response, only `MAX_STREAM_BYTES` is.
-
-> ⚠ **This CONTAINS the defect; it does not close it.** A peer claiming `powTargetBits: 200` sits
-> inside the domain, allocates nothing and throws nothing, and still outweighs an honest 12-bit chain
-> by 2¹⁸⁸ — buying a reorg *attempt* on every comparison. The blocks are then rejected at apply,
-> which enforces `expectedTarget(height)`, so the chain does not move; the cost is wasted work, not a
-> consensus break. **The root of that is comparing *claimed* work rather than verified work, and it
-> belongs to `@dagsocial/node`'s fork choice, not here.** Recorded so it is not mistaken for closed.
+The BigInt arithmetic measurement that shaped the bound, and the claimed-versus-verified-work defect
+it contains, move with the function — `VALIDATION_INTERFACE → blockWork / cumulativeWork`.
 
 ---
 

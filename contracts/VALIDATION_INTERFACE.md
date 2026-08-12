@@ -78,6 +78,36 @@ one bad member would hand a peer a way to void a fork-choice decision.
 dependency runs `validation → types`. Work accounting is a PoW question, which is this package's
 remit; its former home next to `BlockHeader` was proximity, not ownership.
 
+**The arithmetic wall that shaped the bound.** Measured 2026-08-09 (node v22.19.0):
+
+| Input | Result |
+|---|---|
+| `1n << BigInt(2³⁰ − 1)` | allocates **128 MiB** |
+| `1n << BigInt(2³⁰)` | throws `RangeError` |
+| `(1n << BigInt(2³⁰−2)) + (1n << BigInt(2³⁰−2))` | throws — **the accumulator overflows independently of any single term** |
+
+The wall is exactly 2³⁰ and one integer wide. **A per-term bound is not sufficient on its own** — two
+terms each below the wall sum past it — which is why the bound is the digest width rather than anything
+near the arithmetic limit. A peer controls roughly **18,900** terms, not the `MAX_REORG_DEPTH * 2` the
+caller asks for: `requestHeaders`' `maxCount` is not enforced on the response, only `MAX_STREAM_BYTES` is.
+
+⚠ **No `src` shifts by a variable BigInt any more** — `blockWork` shifts by the constant `256n` and
+divides. The measurement therefore constrains future code rather than justifying present code, which is
+why it is stated with its date and its runtime.
+
+> ⚠ **The domain CONTAINS the claimed-work defect; it does not close it.** A peer claiming
+> `powTargetBits: 200` sits inside `[0, 256]`, allocates nothing and throws nothing, and still outweighs
+> an honest 12-bit chain by 2¹⁸⁸ — buying a reorg *attempt* on every comparison. Those blocks are
+> rejected at apply, which enforces `expectedTarget(height)`, so the chain does not move; the cost is
+> wasted work, not a consensus break. **The root is comparing *claimed* work rather than verified work,
+> and it belongs to `@dagsocial/node`'s fork choice.** Recorded so it is not mistaken for closed.
+>
+> ⚠ **A second instance was live outside that domain until 2026-08-12.** `net`'s store walk shifted
+> without consulting the domain at all, so a stored header claiming **257** bits contributed `2^257` and
+> was published to peers as `SyncInfo.tipCumulativeWork`. Summing `blockWork` closes that one. Whether
+> such a header can reach the store is a `node` question — `verifyHeaderFieldDomains` pins
+> `powTargetBits` as `isU64Safe` only, with no upper bound.
+
 **A chain's work and a header sequence's work are different questions.** `net`'s
 `LazySyncStore.cumulativeWork()` walks its own store and answers the first; this function is handed
 headers and answers the second. They share only `blockWork`, and neither is a copy of the other — an
