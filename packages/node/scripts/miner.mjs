@@ -20,7 +20,11 @@ const DUTY_WINDOW_MS = 1000;
 // that mines needs no build step (MINING_INTERFACE → Miner Script). It therefore
 // carries its own copy of the admission rule instead of importing it, and
 // `test/unit/miner-mirror.test.ts` is what holds that copy to
-// `@dagsocial/validation` — VALIDATION_INTERFACE → powTarget / meetsPowTarget.
+// `@dagsocial/validation` — VALIDATION_INTERFACE → orderingPowTarget → Mirrors.
+//
+// It expands a header target, so the half it mirrors is `orderingPowTarget`, in
+// units of 1/256 of a bit. `public/index.html` mirrors `powTarget` instead: that
+// page performs post PoW only, which is fixed difficulty in whole bits.
 // ---------------------------------------------------------------------------
 
 function encodeLE64(n) {
@@ -29,13 +33,53 @@ function encodeLE64(n) {
   return buf;
 }
 
-function powTarget(targetBits) {
-  if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
-  const target = new Uint8Array(32).fill(0xff);
-  const wholeBytes = targetBits >> 3;
-  for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
-  const remainderBits = targetBits & 7;
-  if (remainderBits !== 0) target[wholeBytes] = 0xff >> remainderBits;
+/**
+ * `2^(-f/256)` factored by the bits of `f`, as `floor(2^320 · 2^(-(2^j)/256))`.
+ * A square-root chain: `[7]` is `1/√2` and each lower index is the square root
+ * of the one above it.
+ *
+ * VALIDATION_INTERFACE → orderingPowTarget → What is not consensus: these are an
+ * implementation choice, not a consensus constant. The rule is the predicate;
+ * any factors reproducing it agree.
+ */
+const ORDERING_TARGET_FACTORS = [
+  0xff4ecb59511ec8a5301ba217ef18dd7c2f409857956d475fdb171474700cd72f09abbd9586cb942fn,
+  0xfe9e115c7b8f884badd25995e79d2f096934ec56be0d25443a7522ed803a527baa2398a03fbdc508n,
+  0xfd3e0c0cf486c174853f3a5931e0ee03061b7bb285a607919d2285b6754edd613ab745a256540c03n,
+  0xfa83b2db722a033a7c25bb14315d7fcc8006fe21a95d14dc4844b29bf4af18e84b0207166ee1375en,
+  0xf5257d152486cc2c7b9d0c7aed980fc36f510308677709f5bdd80329364aa29fd22dd036f1906094n,
+  0xeac0c6e7dd24392ed02d75b3706e54fac4faace043b7f91c17d8d1e8ca31880ab338fcd2ac2ffbc8n,
+  0xd744fccad69d6af439a68bb9902d3fde1d733af522058b16b5c13ada0e778299efb01fda334bca9an,
+  0xb504f333f9de6484597d89b3754abe9f1d6f60ba893ba84ced17ac85833399154afc83043ab8a2c3n,
+];
+
+/** The scale the factors above are written at. */
+const ORDERING_TARGET_PRECISION = 320n;
+
+/**
+ * The inclusive maximum acceptable ordering-block digest for `scaledBits`,
+ * big-endian, 32 bytes. `null` outside `[0, 65536]`.
+ *
+ * VALIDATION_INTERFACE → orderingPowTarget. `scaledBits` is in units of 1/256
+ * of a bit, so the target is `R - 1` for the unique `R` with
+ * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`.
+ */
+function orderingPowTarget(scaledBits) {
+  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > 65536) return null;
+  const whole = scaledBits >> 8;
+  const fraction = scaledBits & 255;
+  let mantissa = 1n << ORDERING_TARGET_PRECISION;
+  for (let j = 0; j < 8; j++) {
+    if ((fraction >> j) & 1) {
+      mantissa = (mantissa * ORDERING_TARGET_FACTORS[j]) >> ORDERING_TARGET_PRECISION;
+    }
+  }
+  let value = ((mantissa << BigInt(256 - whole)) >> ORDERING_TARGET_PRECISION) - 1n;
+  const target = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    target[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
   return target;
 }
 
@@ -52,16 +96,16 @@ function meetsPowTarget(hash, target) {
 
 /**
  * The target a solver iterates against, hoisted out of its loop — it depends
- * only on `targetBits`, and deriving it per nonce would allocate once per hash.
+ * only on `scaledBits`, and deriving it per nonce would allocate once per hash.
  *
- * `targetBits` arrives off a mining template, so a value no digest can satisfy
+ * `scaledBits` arrives off a mining template, so a value no digest can satisfy
  * is reachable. It raises rather than spinning: the caller's retry loop logs it
  * and repolls.
  */
-function requireTarget(targetBits) {
-  const target = powTarget(targetBits);
+function requireTarget(scaledBits) {
+  const target = orderingPowTarget(scaledBits);
   if (target === null) {
-    throw new Error(`Unsatisfiable powTargetBits from template: ${targetBits}`);
+    throw new Error(`Unsatisfiable powTargetBits from template: ${scaledBits}`);
   }
   return target;
 }
@@ -177,7 +221,7 @@ async function main() {
       const powTargetBits = header.powTargetBits;
       const preimageBuf = Buffer.from(powPreimage, 'hex');
 
-      log(`Mining block ${header.height} at ${powTargetBits} bits...`);
+      log(`Mining block ${header.height} at ${powTargetBits / 256} bits...`);
       const start = Date.now();
 
       const nonce = await throttledSolvePoW(preimageBuf, powTargetBits);

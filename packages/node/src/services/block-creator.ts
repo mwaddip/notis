@@ -24,7 +24,7 @@ import {
   verifyOrderingBlockPoW,
   blockHash,
   computePowHash,
-  powTarget,
+  orderingPowTarget,
   meetsPowTarget,
 } from '@dagsocial/validation';
 import type {
@@ -263,23 +263,26 @@ function encodeLE64(n: number): Buffer {
 }
 
 /**
- * Search for a nonce whose ordering-block digest meets `targetBits`.
+ * Search for a nonce whose ordering-block digest meets `scaledBits`.
  *
  * The admission rule is `@dagsocial/validation`'s, so this solver and
  * `verifyOrderingBlockPoW` cannot disagree about what wins — VALIDATION_INTERFACE
- * → powTarget / meetsPowTarget. The expansion is hoisted because it depends only
- * on `targetBits`, and deriving it per nonce would allocate once per hash.
+ * → orderingPowTarget. The expansion is hoisted because it depends only on
+ * `scaledBits`, and deriving it per nonce would allocate once per hash.
+ *
+ * `scaledBits` is in units of 1/256 of a bit, over `[0, 65536]` — the header
+ * denomination. Post PoW is whole bits and uses `powTarget`.
  *
  * The tail is `encodeLE64`: MINING_INTERFACE → PoW Verification step 3. The post
  * PoW appends `vlqU` instead — two PoW processes, two tails, neither shared.
  *
- * A `targetBits` no digest can satisfy throws rather than spinning: the value
+ * A `scaledBits` no digest can satisfy throws rather than spinning: the value
  * arrives from a network profile, and a solver that cannot succeed must say so.
  */
-function solvePoW(powPreimage: Buffer, targetBits: number): number {
-  const target = powTarget(targetBits);
+function solvePoW(powPreimage: Buffer, scaledBits: number): number {
+  const target = orderingPowTarget(scaledBits);
   if (target === null) {
-    throw new Error(`solvePoW: unsatisfiable targetBits ${targetBits}`);
+    throw new Error(`solvePoW: unsatisfiable targetBits ${scaledBits}`);
   }
   let nonce = 0;
   while (true) {
