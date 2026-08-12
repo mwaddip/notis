@@ -85,7 +85,16 @@ export const CREDIT_TREASURY_PCT = 10;                 // Percent of each reward
 
 // Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
 // (VALIDATION_INTERFACE → orderingPowTarget). Post PoW is not in these units.
-export const ORDERING_BLOCK_POW_TARGET_BITS = 3072;     // 12 bits = ~4K hashes → profile: orderingBlockPowTargetBits
+//
+// 5983/256 = 23.37 bits ≈ 10.8M hashes, a ~60s solve at one core's measured rate.
+// No whole bit expresses that interval — 23 is 46s and 24 is 93s — so the value
+// is not a multiple of 256, and the fractional units are what carry it.
+// ⚠ Provisional: one machine, one thread, standing in for a quantity the
+// network's total hashrate sets.
+//
+// Mainnet's and testnet's only. Devnet sets its own and deliberately lower —
+// TYPES_INTERFACE → Ordering block PoW, and the reason is in network.ts.
+export const ORDERING_BLOCK_POW_TARGET_BITS = 5983;     // → profile: orderingBlockPowTargetBits
 // 9 bits — the first whole bit above 2180, below which a 1/256-bit step can buy zero
 // work, so a chain beneath it retargets without moving the quantity fork choice selects
 // on. This bounds the reachable range rather than the whole admitted one: work stops

@@ -118,14 +118,16 @@ describe('NETWORK_PROFILES', () => {
     expect(devnet.postPowTargetBits).toBe(4);
   });
 
-  // Difficulty is the one axis devnet does not compress. Its seed carries mainnet's
-  // value because a seed below 2180 cannot exercise a retarget: a 1/256-bit step
-  // there can buy zero work, so difficulty moves while cumulativeWork does not.
-  // VALIDATION_INTERFACE → blockWork / cumulativeWork.
-  it('devnet seeds ordering difficulty where a retarget is observable', () => {
+  // Devnet's seed sits below mainnet's and above 2180. The floor is what makes a
+  // retarget observable — under 2180 a 1/256-bit step can buy zero work, so difficulty
+  // moves while cumulativeWork does not (VALIDATION_INTERFACE → blockWork /
+  // cumulativeWork). The gap below mainnet is what keeps the node suite's real-PoW
+  // mining affordable; `network.ts` carries the mechanism.
+  // TYPES_INTERFACE → Ordering block PoW.
+  it('devnet seeds ordering difficulty where a retarget is observable, but cheap', () => {
     const { mainnet, devnet } = NETWORK_PROFILES;
-    expect(devnet.orderingBlockPowTargetBits).toBe(mainnet.orderingBlockPowTargetBits);
     expect(devnet.orderingBlockPowTargetBits).toBeGreaterThan(2180);
+    expect(devnet.orderingBlockPowTargetBits).toBeLessThan(mainnet.orderingBlockPowTargetBits);
   });
 
   it('devnet compresses the remaining durations, preserving mainnet orderings', () => {

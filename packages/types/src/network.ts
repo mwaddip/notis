@@ -116,17 +116,23 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 // desynchronising the challenge endpoint from the verifier — the exact defect the profile
 // removes. The remaining durations are compressed roughly two orders of magnitude,
 // preserving mainnet's orderings (probation < bootstrap < stale threshold,
-// epoch < fixed-rate period). Difficulty is the one axis devnet does not compress; see
-// orderingBlockPowTargetBits below.
+// epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
+// that is not timescale; see orderingBlockPowTargetBits below.
 const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'devnet',
   magic: MAGIC_DEVNET,
 
   // Devnet is where the retarget is exercised, so its seed may not sit below 2180, where
   // a 1/256-bit step can buy zero work and difficulty moves while cumulativeWork does not.
-  // This is testnet's difficulty — 12 bits, ~4K hashes, microseconds of work — so it costs
-  // devnet no wall-clock; the compression lives in the durations below.
   // VALIDATION_INTERFACE → blockWork / cumulativeWork.
+  //
+  // Below testnet's, and that divergence is load-bearing rather than incidental. The node
+  // test suite mines real PoW, and `expectedTarget()` reads the process config singleton,
+  // which an injected `Config` cannot reach. Devnet is the profile that suite resolves
+  // (pinned in its `vitest.config.ts`), so this value is what every mining test solves
+  // against: at testnet's 5983 it costs the suite ~141 minutes of pure PoW per run, and at
+  // 3072 a solve is ~4K hashes. Devnet's block cadence comes from throttling a miner's
+  // hashrate, never from this number. TYPES_INTERFACE → Ordering block PoW.
   orderingBlockPowTargetBits: 3072,
   postPowTargetBits: 4, // (harness intent — see above)
 
