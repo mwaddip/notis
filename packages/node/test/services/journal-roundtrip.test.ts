@@ -77,7 +77,7 @@ const plainConfig = makeTestConfig({
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   miningMode: 'internal' as const,
-  orderingBlockPowTargetBits: 12,
+  orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
   bootstrapPeers: [] as string[],

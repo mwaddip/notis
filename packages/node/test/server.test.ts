@@ -27,7 +27,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     orderingBlockMinSubBlocks: 1,
     maxSubBlocksPerBlock: 1000,
     miningMode: 'internal',
-    orderingBlockPowTargetBits: 12,
+    orderingBlockPowTargetBits: 3072,
     creditTreasuryPct: 10,
     treasuryPubKey: '',
     bootstrapPeers: [],
