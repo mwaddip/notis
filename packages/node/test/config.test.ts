@@ -7,6 +7,7 @@ import {
   AVL_KEY_LENGTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 
 const TEST_KEYS = [
@@ -372,6 +373,48 @@ describe('config', () => {
     it('refuses a short hex key', async () => {
       await expect(importWithTreasuryKey('ab'.repeat(16))).rejects.toThrow(
         /treasuryPubKey/,
+      );
+    });
+  });
+
+  // The producer half of the ordering-block floor. `verifyOrderingBlockStructure`
+  // refuses an arriving header below it (VALIDATION_INTERFACE →
+  // orderingPowTarget); `expectedTarget()` returns the configured value
+  // unchecked, so a profile below the floor builds templates this node's own
+  // verifier — and every peer's — refuses: a node that stays up, mines, and
+  // never produces. The profile table is the only source, so the profile is
+  // what this mocks.
+  describe('10. ordering-block target floor', () => {
+    // Refusal, never clamping: silently raising a below-floor value mines the
+    // chain against a target nobody configured. `config.ts` ends in
+    // `export const config = loadConfig()`, so the refusal lands on the import.
+    function importWithOrderingTarget(orderingBlockPowTargetBits: number) {
+      vi.doMock('@dagsocial/types', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@dagsocial/types')>();
+        return {
+          ...actual,
+          profileFor: (networkType: string) => ({
+            ...actual.profileFor(networkType as never),
+            orderingBlockPowTargetBits,
+          }),
+        };
+      });
+      return import('../src/config.js');
+    }
+
+    it('refuses to start on a profile whose ordering target is below the floor', async () => {
+      await expect(
+        importWithOrderingTarget(ORDERING_BLOCK_POW_TARGET_FLOOR - 1),
+      ).rejects.toThrow(/below the ordering-block floor/i);
+    });
+
+    // The floor is admissible, so the comparison is `<` and not `<=`.
+    it('accepts a profile sitting exactly on the floor', async () => {
+      const { loadConfig } = await importWithOrderingTarget(
+        ORDERING_BLOCK_POW_TARGET_FLOOR,
+      );
+      expect(loadConfig().orderingBlockPowTargetBits).toBe(
+        ORDERING_BLOCK_POW_TARGET_FLOOR,
       );
     });
   });

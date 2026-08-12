@@ -4,6 +4,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
@@ -131,8 +132,33 @@ export function loadConfig(): Readonly<Config> {
 
   assertMiningAuthConfigured(cfg);
   assertTreasuryKeyEncodable(cfg);
+  assertOrderingTargetAboveFloor(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * The producer half of the ordering-block floor.
+ * `verifyOrderingBlockStructure` refuses an arriving header below
+ * `ORDERING_BLOCK_POW_TARGET_FLOOR` (VALIDATION_INTERFACE → orderingPowTarget),
+ * and `expectedTarget()` returns this field unchecked — so a profile below the
+ * floor builds templates this node's own verifier, and every peer's, refuses. A
+ * node that stays up, mines, and never produces: silence in the direction that
+ * costs the chain.
+ *
+ * Refusal, never clamping. Raising a below-floor value to the floor would mine
+ * the chain against a target nobody configured; failing at load puts the verdict
+ * where a human is reading it.
+ */
+function assertOrderingTargetAboveFloor(cfg: Config): void {
+  if (cfg.orderingBlockPowTargetBits < ORDERING_BLOCK_POW_TARGET_FLOOR) {
+    throw new Error(
+      `orderingBlockPowTargetBits ${cfg.orderingBlockPowTargetBits} for network ` +
+        `"${cfg.networkType}" is below the ordering-block floor ` +
+        `${ORDERING_BLOCK_POW_TARGET_FLOOR} — every header this node built ` +
+        'would be refused by its own verifier',
+    );
+  }
 }
 
 /**
