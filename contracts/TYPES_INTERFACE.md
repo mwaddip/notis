@@ -1611,9 +1611,16 @@ export const CREDIT_TREASURY_PCT = 10;                 // consensus — percent 
 ### Ordering block PoW
 
 ```typescript
-export const ORDERING_BLOCK_POW_TARGET_BITS = 3072;     // 12 whole bits (~4K hashes)
+export const ORDERING_BLOCK_POW_TARGET_BITS = 5983;     // 23.37 bits — a ~60s solve
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;    // 9 whole bits
 ```
+
+⚠ **`ORDERING_BLOCK_POW_TARGET_BITS` is mainnet's and testnet's. Devnet sets its own
+`orderingBlockPowTargetBits` and it is deliberately lower** — the node test suite mines real PoW, and
+`expectedTarget()` reads the process config singleton, so an injected `Config` cannot lower it. Devnet is
+the profile the suite resolves; a raised value there costs the suite hours. **This is the one parameter
+on which devnet does not follow the constant**, and the divergence is load-bearing rather than
+incidental.
 
 ⚠ **Both are in units of 1/256 of a bit** — `VALIDATION_INTERFACE → orderingPowTarget`. Divide by 256
 to read them as whole bits. **`POST_POW_TARGET_BITS` above is NOT in these units**: post PoW is fixed

@@ -373,6 +373,27 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 > Consequence 1 goes because the value is no longer per-operator; consequence 2 goes
 > because it is fixed for the life of the chain. **No height schedule is required or
 > wanted** — see the note under §Difficulty Schedule.
+
+⚠ **The block above holds both answers, and the reader has to be told which is current.**
+Consequence 2 is marked `STILL OPEN` in item 2 and `goes` in the Resolution paragraph four lines
+later. **Item 2 is the true one**, and the retarget track is now exercising it deliberately:
+
+- **`ORDERING_BLOCK_POW_TARGET_BITS` moves from 3072 to 5983**, so every block stored under the old
+  value fails `applyOrderingBlock`'s scheduled-target check on resync, reorg or
+  restart-and-revalidate. **The mitigation is a fresh chain, not a mechanism** — the value change and
+  the wipe are one operation. Consequence 2 is realised rather than resolved.
+- **"No height schedule is required or wanted" is superseded.** One is wanted: `expectedTarget` becomes
+  a real function of height under the ASERT unit, and that is what actually closes invariant 7. Until
+  then invariant 7's *"the same value on every node and for all time"* holds only within one chain's
+  life, which is what the wipe re-establishes.
+- **Devnet no longer follows the constant** — its `orderingBlockPowTargetBits` stays trivially solvable
+  because the node test suite mines real PoW against whatever profile it resolves, and
+  `expectedTarget` reads the config singleton where an injected `Config` cannot reach.
+  `TYPES_INTERFACE → Ordering block PoW`.
+
+⚠ **The reorg-guard expiry in the note above is NOT discharged here.** `expectedTarget` is still a
+constant in height after this unit, so the height-for-work proxy still coincides. **It breaks with
+ASERT**, and carried register #5 still owns it.
 8. The mining API is never served unauthenticated: external mode requires a
    configured `MINING_SECRET` (enforced at startup, not per-request), every
    request is bearer-authenticated with a constant-time comparison, and the
