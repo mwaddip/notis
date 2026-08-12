@@ -8,6 +8,7 @@ import {
 } from 'vitest';
 import {
   computePostId,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
   ReaderError,
 } from '@dagsocial/types';
@@ -53,7 +54,7 @@ const testConfig = makeTestConfig({
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   miningMode: 'internal' as const,
-  orderingBlockPowTargetBits: 12,
+  orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
   bootstrapPeers: [] as string[],
@@ -201,6 +202,10 @@ async function importCorruptState() {
 // Tests — cumulativeWork
 // ---------------------------------------------------------------------------
 
+// `powTargetBits` is in units of 1/256 of a bit — VALIDATION_INTERFACE →
+// orderingPowTarget — so a whole bit `n` is written `256 * n` and the work it
+// carries is `1n << BigInt(n)`. The expected totals below are stated in whole
+// bits because that is what the fixtures are chosen to express.
 describe('cumulativeWork', () => {
   it('returns 0 for empty headers array', () => {
     expect(cumulativeWork([])).toBe(0n);
@@ -216,14 +221,14 @@ describe('cumulativeWork', () => {
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
       powNonce: 0,
-      powTargetBits: 10,
+      powTargetBits: 256 * 10,
       createdAt: 1000,
     };
     const h2: BlockHeader = {
       ...h1,
       height: 2,
       prevBlockHash: 'ff'.repeat(32),
-      powTargetBits: 10,
+      powTargetBits: 256 * 10,
     };
     expect(cumulativeWork([h1, h2])).toBe(2n * (1n << 10n));
   });
@@ -238,14 +243,14 @@ describe('cumulativeWork', () => {
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
       powNonce: 0,
-      powTargetBits: 5,
+      powTargetBits: 256 * 5,
       createdAt: 1000,
     };
     const h2: BlockHeader = {
       ...h1,
       height: 2,
       prevBlockHash: 'ff'.repeat(32),
-      powTargetBits: 6, // 2^6 = 2 * 2^5
+      powTargetBits: 256 * 6, // 2^6 = 2 * 2^5
     };
     // Work(h1) = 2^5 = 32, Work(h2) = 2^6 = 64
     expect(cumulativeWork([h1])).toBe(32n);
@@ -258,12 +263,12 @@ describe('cumulativeWork', () => {
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
         subBlockRoot: '00'.repeat(32), utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 5, createdAt: 1000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000,
       },
       {
         protocolVersion: PROTOCOL_VERSION, height: 2, prevBlockHash: 'ff'.repeat(32),
         subBlockRoot: '00'.repeat(32), utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 5, createdAt: 2000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000,
       },
     ] as BlockHeader[];
 
@@ -272,7 +277,7 @@ describe('cumulativeWork', () => {
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
         subBlockRoot: '00'.repeat(32), utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 7, createdAt: 1000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000,
       },
     ] as BlockHeader[];
 
@@ -377,7 +382,7 @@ describe('extendsOurTip', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -403,7 +408,7 @@ describe('extendsOurTip', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -468,7 +473,7 @@ describe('findForkPoint', () => {
       stateRoot: 'ff'.repeat(33),
       validatorId: new Uint8Array(32),
       powNonce: 999,
-      powTargetBits: 4,
+      powTargetBits: 256 * 4,
       createdAt: Date.now(),
     };
 
@@ -519,7 +524,7 @@ describe('findForkPoint', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
     ];
@@ -575,7 +580,7 @@ describe('findForkPoint', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
       deepBlock!.header,
@@ -637,7 +642,7 @@ describe('findForkPoint', () => {
       stateRoot: 'ff'.repeat(33),
       validatorId: new Uint8Array(32),
       powNonce: 999,
-      powTargetBits: 4,
+      powTargetBits: 256 * 4,
       createdAt: Date.now(),
     };
 
@@ -709,7 +714,12 @@ describe('a stored header that cannot be hashed', () => {
     const ordering = await importOrdering();
 
     // Structurally valid in every respect `verifyOrderingBlockStructure`
-    // checks, so `createdAt` is the only thing wrong with it.
+    // checks, so `createdAt` is the only thing wrong with it. That is what
+    // makes `powTargetBits` the constant and not a number: the gate reads
+    // `ORDERING_BLOCK_POW_TARGET_FLOOR` (VALIDATION_INTERFACE →
+    // verifyOrderingBlockStructure), and a fixture spelling its present value
+    // stops being structurally valid the moment the floor moves — which turns
+    // these tests green on a rejection at the wrong gate.
     const buildBlock = (height: number, createdAt: number): OrderingBlock => ({
       header: {
         protocolVersion: PROTOCOL_VERSION,
@@ -720,7 +730,7 @@ describe('a stored header that cannot be hashed', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -804,11 +814,20 @@ describe('a stored header that cannot be hashed', () => {
     expect((caught as Error).message).toMatch(/exceeds safe integer range/);
   });
 
-  it('every stored header that decodes is inside the domain — so blockHash cannot be null', async () => {
-    // The claim the four typed-error tests used to rest on, inverted. It is not
-    // an assertion about these values: it is that the reader's *range* is a
-    // subset of the domain, so no round-trip can produce a header the domain
-    // rejects. Checked over the widest values each writer admits.
+  it('a stored header at the widest value each field admits is still hashable', async () => {
+    // Checked over the widest value each writer admits, `powTargetBits` included
+    // — 65536 is the top of its domain (VALIDATION_INTERFACE → orderingPowTarget
+    // clause 1) and three VLQ bytes, so this is also the widest that field gets.
+    //
+    // ⚠ **`powTargetBits` is the one header field whose domain is NARROWER than
+    // its reader's range**, and that breaks the general form of this claim.
+    // Every other field's `readVlqU` / `readHexN` / `readBytesN` range is a
+    // subset of `verifyHeaderFieldDomains`, so no round-trip could produce a
+    // header the domain rejects; `readVlqU` produces any safe integer, and the
+    // domain stops at 65536. A stored row above it decodes and then hashes to
+    // `null` — so `UnhashableStoredHeaderError` is reachable from the store
+    // again, by the same corrupt-database or downgrade route the fail-stop
+    // notes below describe.
     const db = await importDb();
     db.initDb(':memory:');
     const ordering = await importOrdering();
@@ -824,7 +843,7 @@ describe('a stored header that cannot be hashed', () => {
         stateRoot: 'ff'.repeat(33),
         validatorId: new Uint8Array(32).fill(0xff),
         powNonce: Number.MAX_SAFE_INTEGER,
-        powTargetBits: 0,
+        powTargetBits: 65536,
         createdAt: Number.MAX_SAFE_INTEGER,
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -836,6 +855,19 @@ describe('a stored header that cannot be hashed', () => {
     const readBack = ordering.getOrderingBlock(1)!;
     expect(verifyHeaderFieldDomains(readBack.header)).toEqual({ valid: true });
     expect(blockHash(readBack.header)).not.toBeNull();
+
+    // One step past the top of the domain: the row still round-trips, and the
+    // header it produces has no hash. This is what the general claim above
+    // would have ruled out.
+    ordering.deleteOrderingBlock(1);
+    ordering.createOrderingBlock({
+      ...extremes,
+      header: { ...extremes.header, powTargetBits: 65537 },
+    });
+    const past = ordering.getOrderingBlock(1)!;
+    expect(past.header.powTargetBits).toBe(65537);
+    expect(verifyHeaderFieldDomains(past.header).valid).toBe(false);
+    expect(blockHash(past.header)).toBeNull();
   });
 
   // **WHERE PHASE 3b MOVED THIS FAIL-STOP, AND WHERE IT NOW LIVES.**
@@ -897,7 +929,9 @@ describe('a stored header that cannot be hashed', () => {
     expect((caught as { height: number }).height).toBe(1);
   });
 
-  /** Three contiguous, well-formed stored blocks. */
+  /** Three contiguous, well-formed stored blocks — well-formed to the same
+   * gate `storeCorruptTip` above builds against, so `powTargetBits` is the
+   * floor constant here too. */
   async function storeThreeBlocks() {
     const db = await importDb();
     db.initDb(':memory:');
@@ -913,7 +947,7 @@ describe('a stored header that cannot be hashed', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },

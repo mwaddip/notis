@@ -42,7 +42,7 @@ function makeOrderingBlock(
       stateRoot: '00'.repeat(33),
       validatorId: uid('validator-1'),
       powNonce: 0,
-      powTargetBits: 12,
+      powTargetBits: 256 * 12,
       createdAt: Date.now(),
     },
     subBlockTree: {
@@ -98,7 +98,9 @@ describe('ordering store', () => {
         stateRoot: '00'.repeat(33),
         validatorId: uid('validator-alice'),
         powNonce: 42,
-        powTargetBits: 14,
+        // 3584 is two VLQ bytes, so the round-trip covers this field's
+        // multi-byte path rather than only its one-byte one.
+        powTargetBits: 256 * 14,
         createdAt: 1234567890,
       },
       subBlockTree: {
@@ -132,7 +134,7 @@ describe('ordering store', () => {
     expect(h.utxoTxRoot).toBe('cc'.repeat(32));
     expect(h.validatorId).toEqual(uid('validator-alice'));
     expect(h.powNonce).toBe(42);
-    expect(h.powTargetBits).toBe(14);
+    expect(h.powTargetBits).toBe(256 * 14);
     expect(h.createdAt).toBe(1234567890);
 
     expect(result!.validatorSignature).toEqual(

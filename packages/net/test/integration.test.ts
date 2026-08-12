@@ -197,7 +197,7 @@ describe('Two-node integration', () => {
       stateRoot: '00'.repeat(33),
       validatorId,
       powNonce: 0,
-      powTargetBits: 12,
+      powTargetBits: 12 * 256,
       createdAt: Date.now(),
     };
     let blockNonce = -1;

@@ -115,8 +115,17 @@ describe('NETWORK_PROFILES', () => {
     const devnet = NETWORK_PROFILES.devnet;
     expect(devnet.karmaDecayIntervalBlocks).toBe(3);
     expect(devnet.karmaStaleThresholdBlocks).toBe(500);
-    expect(devnet.orderingBlockPowTargetBits).toBe(4);
     expect(devnet.postPowTargetBits).toBe(4);
+  });
+
+  // Difficulty is the one axis devnet does not compress. Its seed carries mainnet's
+  // value because a seed below 2180 cannot exercise a retarget: a 1/256-bit step
+  // there can buy zero work, so difficulty moves while cumulativeWork does not.
+  // VALIDATION_INTERFACE → blockWork / cumulativeWork.
+  it('devnet seeds ordering difficulty where a retarget is observable', () => {
+    const { mainnet, devnet } = NETWORK_PROFILES;
+    expect(devnet.orderingBlockPowTargetBits).toBe(mainnet.orderingBlockPowTargetBits);
+    expect(devnet.orderingBlockPowTargetBits).toBeGreaterThan(2180);
   });
 
   it('devnet compresses the remaining durations, preserving mainnet orderings', () => {

@@ -105,7 +105,7 @@ function makeBlockHeader(): BlockHeader {
     stateRoot: '00'.repeat(33),
     validatorId: validatorKey,
     powNonce: 0,
-    powTargetBits: 12,
+    powTargetBits: 3072,
     createdAt: 1700000000000,
   };
 }
@@ -558,16 +558,16 @@ describe('positional serialization', () => {
 
     it('BlockHeader: the blockHash preimage moved, and shrank', () => {
       // 434 bytes of cbor-x — a `b9`-prefixed map header, ten key names, and
-      // every id as its 64-character hex TEXT — against 171 positional:
-      // five VLQ integers (1+1+1+1+6) plus 32+32+32+33+32 raw bytes.
+      // every id as its 64-character hex TEXT — against 172 positional:
+      // five VLQ integers (1+1+1+2+6) plus 32+32+32+33+32 raw bytes.
       const bytes = encodeHeader(makeBlockHeader());
-      expect(bytes.length).toBe(171);
-      expect(hash(bytes)).toBe('0baaecb1c71fedacc54e3fd49d4af38b3cb308485b71a1c54d17ed2254d06d38');
+      expect(bytes.length).toBe(172);
+      expect(hash(bytes)).toBe('7334d5610810d80804fe316876cdb9e5968b80301c6709b6c686d6cfc5b944ad');
       expect(hex(bytes)).not.toContain(Buffer.from('prevBlockHash', 'utf8').toString('hex'));
     });
 
     it('OrderingBlock: the whole frame moved', () => {
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('a7b253ee82ab085af9d3156c022afe768024de00fc82464d36126fc50624b538');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('91e57d42cc34321a0fe6b080ca19300c58947aa056de4b0b650cf19082c0f8eb');
     });
 
     it('Post: the wire codec is the id preimage plus a two-field tail', () => {

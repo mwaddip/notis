@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
   CREDIT_MINER_REWARD_DELAY,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   decodeOrderingBlock,
   decodeSubBlock,
   encodeOrderingBlock,
@@ -87,7 +88,13 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
     powNonce: 100,
-    powTargetBits: 4,
+    // 1/256-bit units — VALIDATION_INTERFACE → orderingPowTarget. This one is
+    // verdict-bearing: `encodeServableOrderingBlock` gates on structure, and
+    // the floor is a clause of that verdict (VALIDATION_INTERFACE →
+    // verifyOrderingBlockStructure), so a header this factory builds serves
+    // only at or above it. Dereferenced rather than spelled, so the fixture
+    // moves with the constant instead of having to be re-chosen beside it.
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000,
     ...overrides,
   };

@@ -19,6 +19,7 @@ import {
   INVITE_BOND_KARMA,
   INVITE_KARMA_THRESHOLD,
   INVITE_PROBATION_BLOCKS,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -74,7 +75,7 @@ const testConfig = makeTestConfig({
   orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   miningMode: 'internal' as const,
-  orderingBlockPowTargetBits: 12,
+  orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
   bootstrapPeers: [] as string[],
@@ -421,6 +422,7 @@ describe('block-apply journal recording', () => {
     db.initDb(':memory:');
 
     const blockApply = await importBlockApply();
+    const { expectedTarget } = await import('../../src/services/difficulty.js');
 
     const miner = makeTestIdentity();
     const block: OrderingBlock = {
@@ -432,8 +434,13 @@ describe('block-apply journal recording', () => {
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
+        // The scheduled target, not a number. Two gates read this field —
+        // `verifyOrderingBlockStructure`'s floor, which runs *before* the
+        // height check, and M-2's schedule equality after it — and either one
+        // rejects with `false` and no journal, exactly what this test asserts.
+        // A fixture that trips the floor therefore passes on the wrong gate.
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: expectedTarget(99),
         createdAt: Date.now(),
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -464,6 +471,7 @@ describe('block-apply journal recording', () => {
     db.initDb(':memory:');
 
     const blockApply = await importBlockApply();
+    const { expectedTarget } = await import('../../src/services/difficulty.js');
 
     const miner = makeTestIdentity();
     const block: OrderingBlock = {
@@ -475,8 +483,9 @@ describe('block-apply journal recording', () => {
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
+        // Same reason as the height case above.
         powNonce: 0,
-        powTargetBits: 4,
+        powTargetBits: expectedTarget(1),
         createdAt: Date.now(),
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -1389,12 +1398,15 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
 
     const { expectedTarget } = await import('../../src/services/difficulty.js');
-    const floorTarget = 4; // the gossip validator's sanity floor
+    // The constant, not its present value: the floor is a consensus parameter
+    // and this test is about the gap between it and the schedule, not about
+    // which number it currently holds.
+    const floorTarget = ORDERING_BLOCK_POW_TARGET_FLOOR;
     expect(floorTarget).toBeLessThan(expectedTarget(1));
 
     // The M-2 attack, in full: a self-declared floor target with a PoW solution
     // that genuinely satisfies it. Nothing here is malformed — the block is
-    // internally consistent and costs ~16 hashes to produce.
+    // internally consistent and costs whatever the floor costs to produce.
     const block = await makeApplicableBlock({ powTargetBits: floorTarget });
     expect(verifyOrderingBlockPoW(block.header)).toBe(true);
 

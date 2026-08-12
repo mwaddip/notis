@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 /**
@@ -224,7 +224,7 @@ describe('verifyValidatorSignature', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32),
     powNonce: 12345,
-    powTargetBits: 4,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
     ...over,
   });
@@ -655,7 +655,7 @@ describe('verifyOrderingBlockStructure', () => {
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: new Uint8Array(32).fill(1),
       powNonce: 0,
-      powTargetBits: 12,
+      powTargetBits: 3072,
       createdAt: Date.now(),
     },
     subBlockTree: {
@@ -1236,7 +1236,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: kp.publicKey,
       powNonce: 0,
-      powTargetBits: 4,
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt: 1_700_000_000_000,
       ...headerOver,
     });
@@ -1679,7 +1679,7 @@ describe('verifyBlockChainLink', () => {
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: new Uint8Array(32).fill(1),
       powNonce: 0,
-      powTargetBits: 12,
+      powTargetBits: 3072,
       createdAt: Date.now(),
     },
     subBlockTree: {
@@ -2011,7 +2011,7 @@ describe('no-panic on malformed input (M-5)', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(1),
     powNonce: 0,
-    powTargetBits: 4,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
     ...over,
   });
@@ -2999,7 +2999,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: kp.publicKey,
     powNonce: 0,
-    powTargetBits: 4,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
     ...over,
   });
@@ -3101,7 +3101,11 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       .update(nonceBuf)
       .digest()
       .subarray(0, 32);
-    return leadingZeroBits(hash, h.powTargetBits);
+    // `powTargetBits` is in units of 1/256 of a bit and this walk counts whole
+    // ones. The two coincide exactly at a whole bit, which is what every
+    // fixture here carries (VALIDATION_INTERFACE → orderingPowTarget), so the
+    // oracle stays independent of the code it pins.
+    return leadingZeroBits(hash, Math.floor(h.powTargetBits / 256));
   };
 
   /** Raw `crypto.verify` over the pre-change `blockHash` — a rejection can never be a broken fixture. */
@@ -3148,6 +3152,20 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     expect(verifyHeaderFieldDomains(header({ stateRoot: EMPTY_STATE_ROOT }))).toEqual({ valid: true });
     expect(verifyHeaderFieldDomains(header({ height: 1, powNonce: 0, powTargetBits: 0 }))).toEqual({ valid: true });
     expect(verifyHeaderFieldDomains(header({ height: Number.MAX_SAFE_INTEGER }))).toEqual({ valid: true });
+  });
+
+  // powTargetBits is the one numeric field with an upper bound, and it is
+  // `orderingPowTarget`'s domain rather than a rule of its own: a header above
+  // it already fails `verifyOrderingBlockPoW` (VALIDATION_INTERFACE →
+  // orderingPowTarget). Both edges, because the bound is inclusive.
+  it('bounds powTargetBits at the scaled domain, inclusive at both edges', () => {
+    expect(verifyHeaderFieldDomains(header({ powTargetBits: 0 }))).toEqual({ valid: true });
+    expect(verifyHeaderFieldDomains(header({ powTargetBits: 65536 }))).toEqual({ valid: true });
+    for (const over of [65537, 1_000_000, Number.MAX_SAFE_INTEGER]) {
+      const result = verifyHeaderFieldDomains(header({ powTargetBits: over }));
+      expect(result.valid, `powTargetBits ${over}`).toBe(false);
+      expect(result.error).toContain('powTargetBits');
+    }
   });
 
   const BAD_NUMBERS: Array<[string, unknown]> = [
@@ -3491,7 +3509,12 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       protocolVersion: (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0,
       height: (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0,
       powNonce: (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0,
-      powTargetBits: (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0,
+      // The one numeric field with an upper bound: it is `orderingPowTarget`'s
+      // domain, not a non-negative integer (VALIDATION_INTERFACE →
+      // orderingPowTarget). No MALFORMED entry is a safe integer above 65536,
+      // so the bound is mirrored here rather than exercised by the corpus.
+      powTargetBits: (v) =>
+        typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 65536,
       createdAt: (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0,
       prevBlockHash: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
       subBlockRoot: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),

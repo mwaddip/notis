@@ -35,7 +35,7 @@ export interface SyncStore {
   getOrderingBlockId(height: number): string | null;
   /** Current best-chain tip height. */
   chainHeight(): number;
-  /** Cumulative work (sum of 2^targetBits) of the best chain. */
+  /** Cumulative work of the best chain — VALIDATION_INTERFACE → blockWork / cumulativeWork. */
   cumulativeWork(): bigint;
   /** Anchors for sync (height + block ID pairs across the chain). */
   getAnchors(): { height: number; blockId: string }[];

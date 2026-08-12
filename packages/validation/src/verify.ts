@@ -275,7 +275,14 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   { field: 'validatorId', ok: (v) => isBytesOfLength(v, 32), error: 'Block header validatorId must be exactly 32 bytes' },
   // vlqU
   { field: 'powNonce', ok: isU64Safe, error: 'Block header powNonce must be a non-negative safe integer' },
-  { field: 'powTargetBits', ok: isU64Safe, error: 'Block header powTargetBits must be a non-negative safe integer' },
+  // vlqU, in units of 1/256 of a bit — VALIDATION_INTERFACE → orderingPowTarget.
+  // The upper bound is the domain, not a new rule: a header above it already
+  // fails `verifyOrderingBlockPoW`, which refuses a target it cannot expand.
+  {
+    field: 'powTargetBits',
+    ok: (v) => isU64Safe(v) && (v as number) <= 65536,
+    error: 'Block header powTargetBits must be an integer in [0, 65536]',
+  },
   // vlqU. A domain pin, not a clock policy: no monotonicity rule and no skew
   // window — those are consensus rule additions, and "never add checks the
   // reference lacks" applies. `createdAt` stays a producer-set record that no
@@ -346,6 +353,62 @@ export function powTarget(targetBits: number): Uint8Array | null {
 }
 
 /**
+ * `2^(-f/256)` factored by the bits of `f`, as `floor(2^320 · 2^(-(2^j)/256))`.
+ * `[7]` is `floor(2^320/√2)` and each lower index halves the exponent.
+ *
+ * ⚠ Re-deriving these as a chain of square roots needs guard bits. Taken at this
+ * precision alone, three of the eight land one ulp low — a set that renders the
+ * same target on every admitted input, but not these digits.
+ *
+ * VALIDATION_INTERFACE → orderingPowTarget: these are an implementation choice,
+ * not a consensus constant. The rule is the predicate; any factors reproducing
+ * it agree, and `ordering-pow-target.test.ts` checks every admitted input
+ * against that predicate rather than against these values.
+ */
+const ORDERING_TARGET_FACTORS: readonly bigint[] = [
+  0xff4ecb59511ec8a5301ba217ef18dd7c2f409857956d475fdb171474700cd72f09abbd9586cb942fn,
+  0xfe9e115c7b8f884badd25995e79d2f096934ec56be0d25443a7522ed803a527baa2398a03fbdc508n,
+  0xfd3e0c0cf486c174853f3a5931e0ee03061b7bb285a607919d2285b6754edd613ab745a256540c03n,
+  0xfa83b2db722a033a7c25bb14315d7fcc8006fe21a95d14dc4844b29bf4af18e84b0207166ee1375en,
+  0xf5257d152486cc2c7b9d0c7aed980fc36f510308677709f5bdd80329364aa29fd22dd036f1906094n,
+  0xeac0c6e7dd24392ed02d75b3706e54fac4faace043b7f91c17d8d1e8ca31880ab338fcd2ac2ffbc8n,
+  0xd744fccad69d6af439a68bb9902d3fde1d733af522058b16b5c13ada0e778299efb01fda334bca9an,
+  0xb504f333f9de6484597d89b3754abe9f1d6f60ba893ba84ced17ac85833399154afc83043ab8a2c3n,
+];
+
+/** The scale the factors above are written at. */
+const ORDERING_TARGET_PRECISION = 320n;
+
+/**
+ * The inclusive maximum acceptable ordering-block digest for `scaledBits`,
+ * big-endian, 32 bytes. `null` outside `[0, 65536]`, which a caller reads as
+ * "no digest can satisfy this" and answers `false`.
+ *
+ * VALIDATION_INTERFACE → orderingPowTarget. `scaledBits` is in units of 1/256
+ * of a bit, so the target is `R - 1` for the unique `R` with
+ * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`. Post PoW is not in these units
+ * and uses `powTarget`.
+ */
+export function orderingPowTarget(scaledBits: number): Uint8Array | null {
+  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > 65536) return null;
+  const whole = scaledBits >> 8;
+  const fraction = scaledBits & 255;
+  let mantissa = 1n << ORDERING_TARGET_PRECISION;
+  for (let j = 0; j < 8; j++) {
+    if ((fraction >> j) & 1) {
+      mantissa = (mantissa * ORDERING_TARGET_FACTORS[j]!) >> ORDERING_TARGET_PRECISION;
+    }
+  }
+  let value = ((mantissa << BigInt(256 - whole)) >> ORDERING_TARGET_PRECISION) - 1n;
+  const target = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    target[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  return target;
+}
+
+/**
  * True iff `hash` is at or below `target`, both read big-endian.
  *
  * VALIDATION_INTERFACE → powTarget / meetsPowTarget: the single PoW admission
@@ -367,19 +430,25 @@ export function meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean {
 }
 
 /**
- * The work a header claiming `targetBits` represents — the expected number of
- * digests tried to meet it.
+ * The work a header claiming `scaledBits` represents — the expected number of
+ * digests tried to meet it. `scaledBits` is in units of 1/256 of a bit.
  *
- * `2^256 / (target + 1)`, where `target` is `powTarget`'s **inclusive** maximum.
- * That inclusivity is load-bearing: `target + 1` is precisely `2^(256 −
- * targetBits)`, so the quotient is `2^targetBits` with no remainder. An
- * exclusive target would floor to one less at every integer target.
+ * `2^256 / (target + 1)`, where `target` is `orderingPowTarget`'s **inclusive**
+ * maximum. That inclusivity is load-bearing: `target + 1` is precisely `R`,
+ * which at `scaledBits = 256n` is `2^(256 − n)`, so the quotient is `2^n` with
+ * no remainder. An exclusive target would floor to one less at every whole bit.
  *
- * `null` for exactly the inputs `powTarget` refuses, so the domain is stated
- * once rather than re-derived here.
+ * ⚠ Work resolves on the band `[2305, 63357]` and at neither end — 1816 steps
+ * below buy nothing, and above 63358 work stops because the target does. So
+ * `ORDERING_BLOCK_POW_TARGET_FLOOR` puts every *reachable* difficulty inside the
+ * band, not every admitted one. VALIDATION_INTERFACE → blockWork /
+ * cumulativeWork.
+ *
+ * `null` for exactly the inputs `orderingPowTarget` refuses, so the domain is
+ * stated once rather than re-derived here.
  */
-export function blockWork(targetBits: number): bigint | null {
-  const target = powTarget(targetBits);
+export function blockWork(scaledBits: number): bigint | null {
+  const target = orderingPowTarget(scaledBits);
   if (target === null) return null;
   let t = 0n;
   for (const byte of target) t = (t << 8n) | BigInt(byte);
@@ -929,7 +998,7 @@ export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
   // (M-6) — the bound that keeps `BigInt` / `writeBigUInt64LE` from throwing.
   const preimage = computePowHash(header);
   if (preimage === null) return false;
-  const target = powTarget(header.powTargetBits);
+  const target = orderingPowTarget(header.powTargetBits);
   if (target === null) return false;
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));

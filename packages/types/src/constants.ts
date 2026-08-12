@@ -83,9 +83,14 @@ export const CREDIT_MINER_REWARD_DELAY = 720;          // Blocks before coinbase
 export const MEMPOOL_EXPIRY_BLOCKS = 720;               // Blocks before mempool entries expire (~12h)
 export const CREDIT_TREASURY_PCT = 10;                 // Percent of each reward to treasury
 
-// Ordering block PoW
-export const ORDERING_BLOCK_POW_TARGET_BITS = 12;       // Initial difficulty (12 bits = ~4K hashes) → profile: orderingBlockPowTargetBits
-export const ORDERING_BLOCK_POW_TARGET_FLOOR = 4;       // Sanity floor
+// Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
+// (VALIDATION_INTERFACE → orderingPowTarget). Post PoW is not in these units.
+export const ORDERING_BLOCK_POW_TARGET_BITS = 3072;     // 12 bits = ~4K hashes → profile: orderingBlockPowTargetBits
+// 9 bits — the first whole bit above 2180, below which a 1/256-bit step can buy zero
+// work, so a chain beneath it retargets without moving the quantity fork choice selects
+// on. This bounds the reachable range rather than the whole admitted one: work stops
+// resolving above 63358 as well. VALIDATION_INTERFACE → blockWork / cumulativeWork.
+export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;
 
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */

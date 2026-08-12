@@ -40,7 +40,7 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       stateRoot: '00'.repeat(33),
       validatorId: uid('validator-1'),
       powNonce: 0,
-      powTargetBits: 12,
+      powTargetBits: 256 * 12,
       createdAt: Date.now(),
     },
     subBlockTree: {

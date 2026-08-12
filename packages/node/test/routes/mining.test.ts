@@ -26,7 +26,10 @@ function makeTemplate(): OrderingBlock {
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32).fill(0x44),
       powNonce: 0,
-      powTargetBits: 12,
+      // The template's difficulty is what `scripts/miner.mjs` expands, so it is
+      // stated in the header denomination — 1/256 of a bit, VALIDATION_INTERFACE
+      // → orderingPowTarget.
+      powTargetBits: 256 * 12,
       createdAt: 1_700_000_000_000,
     },
     subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -238,7 +241,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     maxSubBlocksPerBlock: 1000,
     miningMode: 'internal',
     miningSecret: '',
-    orderingBlockPowTargetBits: 12,
+    orderingBlockPowTargetBits: 3072,
     creditTreasuryPct: 10,
     treasuryPubKey: '',
     bootstrapPeers: [],
