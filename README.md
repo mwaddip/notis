@@ -11,9 +11,11 @@ verifiable operation, not a favor from a moderation team.
 
 *Notis is the network; the code ships under the working scope `@dagsocial/*`.*
 
-**Status:** Phase 2 devnet — a single-binary node with HTTP API, libp2p
-networking, PoW consensus, and a demo UI. Pre-network: consensus formats still
-change freely between versions. Node.js ≥ 22, TypeScript, pnpm. MIT licensed.
+**Status:** a single-binary node with HTTP API, libp2p networking, PoW
+consensus, and a demo UI, running a public testnet. Pre-network: consensus
+formats still change freely between versions, and a change to any committed
+byte starts the chain again from genesis. Node.js ≥ 22, TypeScript, pnpm.
+MIT licensed.
 
 ---
 
@@ -305,8 +307,8 @@ to duplicate it; the duplicate drifted, the contract doesn't.)
 
 ```bash
 pnpm build          # Build all 5 packages
-pnpm test           # Run the full suite
-pnpm typecheck      # Type-check all packages
+pnpm test           # Every package's suite (test/e2e/** is excluded — see its README)
+pnpm typecheck      # Type-check all packages, src and test trees
 ```
 
 **Five packages:**
@@ -340,17 +342,18 @@ for every interface, and contracts are updated **before** implementation code.
 | `contracts/SUBBLOCK_INTERFACE.md` | Sub-block lifecycle |
 | `contracts/WIRE_INTERFACE.md` | Frame and message codec |
 | `contracts/JOURNAL_EVENTS.md` | Block journal events |
-| `docs/CONSENSUS.md` | Consensus model |
-| `contracts/WEB_INTERFACE.md` | Web client (future, Phase 3) |
+| `contracts/HOUSE_STYLE.md` | Colour, type, the mark, motion, spacing, voice |
+| `contracts/SPECIAL.md` | Per-subsystem attention weights for review |
+| `contracts/WEB_INTERFACE.md` | Web client, ahead of the code |
 
 ---
 
 ## Roadmap
 
-Implemented (Phase 2): the dual ledger, sub-block + ordering-block consensus,
-verifiable pruning, likes as per-block karma burns, invites with bonds, vouches, karma decay,
-credit emission, AVL+ state root with light-client proofs, libp2p networking
-with header-first sync, split mining, demo UI.
+Built: the dual ledger, sub-block + ordering-block consensus, verifiable
+pruning, likes as per-block karma burns, invites with bonds, vouches, karma
+decay, credit emission, AVL+ state root with light-client proofs, libp2p
+networking with header-first sync, split mining, demo UI.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips), reply
 earning, karma-proportional PoW, storage pruning for lean nodes, view keys,
