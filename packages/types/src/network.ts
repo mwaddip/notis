@@ -130,7 +130,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // test suite mines real PoW, and `expectedTarget()` reads the process config singleton,
   // which an injected `Config` cannot reach. Devnet is the profile that suite resolves
   // (pinned in its `vitest.config.ts`), so this value is what every mining test solves
-  // against: at testnet's 5983 it costs the suite ~141 minutes of pure PoW per run, and at
+  // against: at testnet's 5984 it costs the suite ~141 minutes of pure PoW per run, and at
   // 3072 a solve is ~4K hashes. Devnet's block cadence comes from throttling a miner's
   // hashrate, never from this number. TYPES_INTERFACE → Ordering block PoW.
   orderingBlockPowTargetBits: 3072,

@@ -405,7 +405,7 @@ describe('constants', () => {
   });
 
   it('validator constants are defined', () => {
-    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(5983);
+    expect(ORDERING_BLOCK_POW_TARGET_BITS).toBe(5984);
     expect(CREDIT_INITIAL_REWARD).toBe(100n * 10n ** 8n);   // credits ×10^8 base units
     expect(CREDIT_FIXED_RATE_BLOCKS).toBe(1_051_200);
     expect(CREDIT_EPOCH_BLOCKS).toBe(129_600);
