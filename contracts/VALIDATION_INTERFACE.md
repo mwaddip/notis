@@ -42,8 +42,15 @@ when asking how many places implement this rule.
 domain needs no special case.
 
 **Why a pair rather than one function.** The expansion is the half that changes when difficulty stops
-being a whole number of bits; the comparison never does. Splitting them is what lets a retarget
-replace the schedule without touching the admission rule — difficulty-retarget spec, Unit 2.
+being a whole number of bits; the comparison never does. Splitting them is what lets a retarget replace
+the schedule without touching the admission rule — difficulty-retarget spec, Unit 2. `meetsPowTarget`
+is unchanged by that retarget and is shared by both expansions; `orderingPowTarget` below is the
+half that moved.
+
+> ⚠ **AHEAD OF CODE.** Once `orderingPowTarget` lands, **this function serves post PoW alone** — fixed
+> difficulty, never retargeted (user, 2026-08-12) — and keeps whole bits over `[0, 256]`. Ordering-block
+> headers stop using it. The two are not interchangeable and share a type: passing a 1/256-bit value
+> here is refused only because it exceeds 256.
 
 **Solvers hoist the expansion.** `powTarget` depends only on `targetBits`, so a solver derives it once
 per template and calls `meetsPowTarget` per nonce. Deriving it inside the loop allocates once per hash.
@@ -54,6 +61,87 @@ alone and runs on a machine that does not build the workspace). Each is held by 
 the declaration **by name** and cross-checks it against this package. A mirror that stops finding its
 declaration fails, which is the property it exists for.
 
+### orderingPowTarget
+
+> ⚠ **AHEAD OF CODE.** This section states the rule; the function does not exist yet. It lands on this
+> branch. Until it does, `verifyOrderingBlockPoW` and `blockWork` read `powTargetBits` as whole bits.
+
+```
+orderingPowTarget(scaledBits: number): Uint8Array | null
+```
+
+Ordering-block difficulty in units of **1/256 of a bit**, so a target between two whole bits is
+expressible. Post PoW is **not** in these units and never retargets — it keeps `powTarget` above.
+
+**The rule is a triple, and all three clauses are consensus.** The predicate pins the target's *value*
+and pins neither its domain nor its width; an implementation can satisfy it exactly and still fork.
+
+1. **Domain.** `scaledBits` is an integer in `[0, 65536]`. Outside it the answer is `null`, and the
+   refusal is normative rather than input hygiene: at `65537` an implementation computing in rationals
+   finds `R = 0` and a target of `−1`, which renders as `0xff × 32` and admits every digest.
+2. **Predicate.** The target is `R − 1`, where `R` is the unique integer with
+   `R^256 ≤ 2^(65536 − scaledBits) < (R+1)^256`. Uniqueness holds because `x ↦ x^256` is strictly
+   increasing on the non-negative integers.
+3. **Rendering.** Exactly **32 bytes, big-endian, left-zero-padded.** `meetsPowTarget` iterates
+   `target.length`, so the width is part of the admission rule and **it cannot detect a wrong one**: at
+   `scaledBits = 63358` the target is 363, and a minimal-width rendering — what
+   `BigInt.prototype.toString(16)` produces — yields two bytes that admit a `2^248` digest the correct
+   target refuses.
+
+⚠ **The root is irrational** whenever `scaledBits` is not a multiple of 256. What is exact is its
+*floor*, and the predicate is what pins that. "The target is an exact integer root" is a paraphrase
+that misleads whoever implements this.
+
+**Inclusive, as `powTarget` is**, and for the same reason plus one more: `target + 1` is exactly `R`,
+which is what keeps the work quotient below exact at every whole bit.
+
+**At every whole bit the two functions agree byte for byte** — `orderingPowTarget(256n)` equals
+`powTarget(n)` for all `n` in `[0, 256]`, because `2^(65536 − 256n)` is a perfect 256th power and the
+fractional machinery contributes nothing. This is a theorem, and it is also the regression that detects
+a wrong scale before anything else is evaluated.
+
+**`R(256n + f) = R(f) >> n`.** The function is 256 base values and a shift, by
+`⌊⌊y⌋/m⌋ = ⌊y/m⌋`. This is what makes an exhaustive check affordable: verifying the 256 base values
+against the predicate settles all 65537 inputs.
+
+#### What is not consensus
+
+**The approximation.** Any implementation producing an `R` that satisfies clause 2 agrees with every
+other on every input, so the fixed-point factors and their precision are an implementation choice and
+may be replaced wholesale without a fork.
+
+⚠ **That is true only while clauses 1 and 3 are also stated.** Compress this rule back to the predicate
+alone and the sentence above becomes false — the domain and the rendering are where two conforming
+implementations would otherwise diverge.
+
+⚠ **A test that the implementation factors as base-and-shift is a precondition, not evidence.** For a
+fixed-point implementation both sides reduce to the same floor expression, so it passes with corrupted
+factors. It pins the factoring for an implementation that might lack it and says nothing about the
+constants; only the predicate does that.
+
+**Under-precision is safe, and one-sided.** Every step of a fixed-point expansion floors, so it
+under-estimates and never over-estimates. A node running too little precision computes a *smaller* —
+stricter — target: it rejects blocks a conforming node accepts and can never accept one a conforming
+node rejects, so the bug forks that node off by itself rather than admitting an invalid block.
+
+#### Both ends lose resolution, and only one end is reachable
+
+**The target stops resolving above `scaledBits = 63358`** (target 363): a 1/256-bit step no longer moves
+it. **Measured, not derived** — the closed-form bound `R ≤ 368` brackets it at 63353 and does not pin
+it. Far outside any reachable difficulty.
+
+**Work stops resolving below `scaledBits = 2180`**, and that end *is* reachable. See
+`blockWork / cumulativeWork`; it is why `ORDERING_BLOCK_POW_TARGET_FLOOR` is **2304** — nine whole bits,
+the first above that line — rather than the ×256 rescale of the old floor.
+
+#### Mirrors
+
+The split runs through callers, not packages. **`scripts/miner.mjs` mirrors this function**, since it
+expands `header.powTargetBits` off a mining template; **`public/index.html` keeps mirroring
+`powTarget`**, because the page performs post PoW only and no header PoW. After this lands the package
+exports two functions of type `(number) => Uint8Array | null` that mean different things, and
+`powTarget` refusing anything above 256 is the only place the denominations distinguish themselves.
+
 ### blockWork / cumulativeWork
 
 ```
@@ -62,14 +150,32 @@ cumulativeWork(headers: BlockHeader[]): bigint
 ```
 
 How much work a header claims, and how much a sequence of them claims together. `blockWork` is
-**`2^256 / (target + 1)`**, where `target` is `powTarget`'s expansion of `targetBits`.
+**`2^256 / (target + 1)`**, where `target` is the expansion of the header's `powTargetBits`.
+
+> ⚠ **AHEAD OF CODE.** `targetBits` here is `orderingPowTarget`'s **1/256-bit** unit and the domain is
+> `[0, 65536]`; the code still reads whole bits over `[0, 256]`. Both land on this branch.
 
 **The identity is exact at every whole-bit target, and inclusivity is what makes it so.** `target + 1`
-is precisely `2^(256 − targetBits)`, so the quotient is `2^targetBits` with no remainder. An
-*exclusive* target would floor to one less at every integer target — which is detectable, and the
-regression that detects it is the agreement check against `1n << bits` across the whole domain.
+is precisely `R`, which at `scaledBits = 256n` is `2^(256 − n)`, so the quotient is `2^n` with no
+remainder. An *exclusive* target would floor to one less at every integer target — which is detectable,
+and the regression that detects it is the agreement check against `1n << bits` across the whole domain.
 
-`blockWork` returns `null` for exactly the inputs `powTarget` refuses, so the domain is stated once
+⚠ **`blockWork` is the one part of this change that fails SILENTLY, and it is the opposite of every
+other part.** Its signature does not change and its domain *widens*, so every old-denomination value
+stays legal rather than becoming `null`: `blockWork(12)` goes from `4096` to `1`. No throw, no `null`,
+no type error — just a plausible number and a chain whose cumulative work is ~1 per block. Contrast
+`scripts/miner.mjs`, which throws on an unmigrated template because `powTarget` refuses anything above
+256. **Every caller must move in the same change**, and nothing in the type system will say otherwise.
+
+⚠ **Work stops resolving below `scaledBits = 2180`** (work 364). Beneath that line a 1/256-bit step can
+buy zero additional work — 1816 of the 2179 steps do — so a chain running there **retargets without
+moving the quantity fork choice selects on**. The flooring is also one-sided, so `cumulativeWork`
+under-counts; at `scaledBits = 255` the true expected-trial count is 1.9945 and `blockWork` answers 1.
+Neither is a consensus break, since every node floors identically. It is why
+`ORDERING_BLOCK_POW_TARGET_FLOOR` sits above the line and why devnet is not seeded beneath it: the
+profile built to exercise a retarget must be able to see one.
+
+`blockWork` returns `null` for exactly the inputs the expansion refuses, so the domain is stated once
 rather than re-derived. `cumulativeWork` **skips** such a header rather than throwing: the array
 reaches it from the wire, where `powTargetBits` is any `number`, and refusing a whole comparison over
 one bad member would hand a peer a way to void a fork-choice decision.
