@@ -8,6 +8,7 @@ import {
 } from 'vitest';
 import {
   computePostId,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
   ReaderError,
 } from '@dagsocial/types';
@@ -713,7 +714,12 @@ describe('a stored header that cannot be hashed', () => {
     const ordering = await importOrdering();
 
     // Structurally valid in every respect `verifyOrderingBlockStructure`
-    // checks, so `createdAt` is the only thing wrong with it.
+    // checks, so `createdAt` is the only thing wrong with it. That is what
+    // makes `powTargetBits` the constant and not a number: the gate reads
+    // `ORDERING_BLOCK_POW_TARGET_FLOOR` (VALIDATION_INTERFACE →
+    // verifyOrderingBlockStructure), and a fixture spelling its present value
+    // stops being structurally valid the moment the floor moves — which turns
+    // these tests green on a rejection at the wrong gate.
     const buildBlock = (height: number, createdAt: number): OrderingBlock => ({
       header: {
         protocolVersion: PROTOCOL_VERSION,
@@ -724,7 +730,7 @@ describe('a stored header that cannot be hashed', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 256 * 4,
+        powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },
@@ -923,7 +929,9 @@ describe('a stored header that cannot be hashed', () => {
     expect((caught as { height: number }).height).toBe(1);
   });
 
-  /** Three contiguous, well-formed stored blocks. */
+  /** Three contiguous, well-formed stored blocks — well-formed to the same
+   * gate `storeCorruptTip` above builds against, so `powTargetBits` is the
+   * floor constant here too. */
   async function storeThreeBlocks() {
     const db = await importDb();
     db.initDb(':memory:');
@@ -939,7 +947,7 @@ describe('a stored header that cannot be hashed', () => {
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
         powNonce: 0,
-        powTargetBits: 256 * 4,
+        powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
       },
       subBlockTree: { subBlockEntries: [], pruneEntries: [] },

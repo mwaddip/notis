@@ -220,8 +220,14 @@ describe('config', () => {
       expect(cfg.profile.magic).toBe(MAGIC_DEVNET);
       // The flat consensus fields are copies OF the profile, not parallel
       // reads: each must equal the devnet table entry, not testnet's.
+      //
+      // ⚠ `orderingBlockPowTargetBits` is the one line here that does NOT
+      // discriminate: devnet holds testnet's difficulty (TYPES_INTERFACE →
+      // Network profiles, and the devnet table's own note), so a read sourced
+      // from the wrong profile passes it. The other eight still separate them.
+      // It is in units of 1/256 of a bit; `postPowTargetBits` is not.
       expect(cfg.postPowTargetBits).toBe(4);
-      expect(cfg.orderingBlockPowTargetBits).toBe(4);
+      expect(cfg.orderingBlockPowTargetBits).toBe(3072);
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
       expect(cfg.karmaStaleThresholdBlocks).toBe(500);
       expect(cfg.vouchCooldownBlocks).toBe(3);
@@ -316,7 +322,9 @@ describe('config', () => {
       const cfg = loadConfig();
 
       expect(cfg.postPowTargetBits).toBe(20);
-      expect(cfg.orderingBlockPowTargetBits).toBe(12);
+      // 1/256-bit units, so 12 whole bits (VALIDATION_INTERFACE →
+      // orderingPowTarget). `postPowTargetBits` above is whole bits.
+      expect(cfg.orderingBlockPowTargetBits).toBe(3072);
       expect(cfg.karmaDecayIntervalBlocks).toBe(1440);
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);
       expect(cfg.karmaDecayAmount).toBe(5n);
