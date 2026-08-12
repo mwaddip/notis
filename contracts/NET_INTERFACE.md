@@ -1004,10 +1004,24 @@ structure, PoW, and signatures.
 |----------|-----------|-------------|
 | `setSyncHandler(cb)` | `((id: string) => SubBlock \| null) => void` | Provider for sub-block content (placeholder fill) |
 | `setBlocksHandler(cb)` | `((block: OrderingBlock) => void) => void` | Handler for blocks received during sync |
-| `setHeadersHandler(cb)` | `((height: number) => BlockHeader \| null) => void` | Provider for block headers |
+| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `/dagsocial/headers/1`. Returns the whole block, not the header: one provider serves both response modes — headers mode reads `.header`, blocks mode returns the block |
 | `setPostsHandler(cb)` | `((ids: string[]) => PostsEntry[]) => void` | Provider for posts by ID |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired when sync finishes |
 | `onPeerActive(cb)` | `((peerId: string) => void) => void` | Fired when a peer becomes active |
+
+**Handler setters are order-independent.** Every setter above stores a delegate and has no libp2p side
+effect, so it is valid before or after `start()`, and a later call replaces the delegate. Registering a
+libp2p protocol is `start()`'s responsibility alone. A setter that also registers makes its own call
+order load-bearing with nothing to signal it: the registration reads a libp2p instance that `start()`
+has not created yet, the guard falls through, and every layer beneath keeps passing — the protocol is
+simply absent for the life of the process, which a peer sees as `protocol selection failed` and reads
+as the peer's fault rather than ours.
+
+**A node that has registered no headers provider serves an empty body** on `/dagsocial/headers/1`,
+rather than declining the protocol. An empty answer is already a first-class result on the requesting
+side: a peer may legitimately answer with no headers, and fork resolution treats that as "no reorg" like
+any other non-match. Declining instead would make "this node has no chain to serve" indistinguishable
+from "this node does not speak the protocol".
 
 ---
 
