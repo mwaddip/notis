@@ -26,6 +26,13 @@ export default mergeConfig(
       testTimeout: 60_000,
       env: {
         POW_SLOT_TARGET_BITS: '4',
+        // The suite mines real PoW at `expectedTarget()`, which reads the
+        // process config singleton — a `Config` a test injects cannot reach
+        // it. Devnet is the profile whose ordering-block target stays
+        // trivially solvable, so the suite runs there and the testnet target
+        // is free to carry a real difficulty.
+        // TYPES_INTERFACE → Network profiles.
+        NETWORK_TYPE: 'devnet',
       },
     },
   }),
