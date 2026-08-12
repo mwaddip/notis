@@ -134,6 +134,11 @@ it. Far outside any reachable difficulty.
 `blockWork / cumulativeWork`; it is why `ORDERING_BLOCK_POW_TARGET_FLOOR` is **2304** — nine whole bits,
 the first above that line — rather than the ×256 rescale of the old floor.
 
+⚠ **Work resolves on a band, not a half-line.** Every step on `[2305, 63357]` moves it and no step at
+either end does: 1816 blind steps below, and 1816 above 63358 where work stops because the target does
+(`R(65535) = R(65536) = 1`). So the floor's justification is *every **reachable** difficulty resolves* —
+the unqualified form is false above 63358, which is 247 bits against a measured operating point of 23.
+
 #### Mirrors
 
 The split runs through callers, not packages. **`scripts/miner.mjs` mirrors this function**, since it
@@ -167,9 +172,10 @@ no type error — just a plausible number and a chain whose cumulative work is ~
 `scripts/miner.mjs`, which throws on an unmigrated template because `powTarget` refuses anything above
 256. **Every caller must move in the same change**, and nothing in the type system will say otherwise.
 
-⚠ **Work stops resolving below `scaledBits = 2180`** (work 364). Beneath that line a 1/256-bit step can
-buy zero additional work — 1816 of the 2179 steps do — so a chain running there **retargets without
-moving the quantity fork choice selects on**. The flooring is also one-sided, so `cumulativeWork`
+⚠ **Work resolves only on `[2305, 63357]`** — every step inside that band moves it, and 1816 steps at
+each end do not. Beneath 2180 a 1/256-bit step can buy zero additional work, so a chain running there
+**retargets without moving the quantity fork choice selects on**; above 63358 work stops because the
+target does, at a difficulty nothing reaches. The flooring is also one-sided, so `cumulativeWork`
 under-counts; at `scaledBits = 255` the true expected-trial count is 1.9945 and `blockWork` answers 1.
 Neither is a consensus break, since every node floors identically. It is why
 `ORDERING_BLOCK_POW_TARGET_FLOOR` sits above the line and why devnet is not seeded beneath it: the
