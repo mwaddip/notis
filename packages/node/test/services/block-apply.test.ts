@@ -14,7 +14,6 @@ import {
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   KARMA_STALE_THRESHOLD_BLOCKS,
-  CREDIT_MINER_REWARD_DELAY,
   EMPTY_STATE_ROOT,
   INVITE_BOND_KARMA,
   INVITE_KARMA_THRESHOLD,
@@ -37,6 +36,7 @@ import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type { AnyBox } from '@dagsocial/types';
 import type { DecayJournalEntry } from '../../src/services/decay.js';
 import type Database from 'better-sqlite3';
+import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
 import {
@@ -543,7 +543,7 @@ describe('block-apply journal recording', () => {
         {
           value: 0n,
           owner: new Uint8Array(32),
-          lockedUntilBlock: 1 + CREDIT_MINER_REWARD_DELAY,
+          lockedUntilBlock: 1 + config.creditMinerRewardDelay,
           isTreasury: false,
         },
       ],
@@ -1438,7 +1438,7 @@ describe('block-apply consensus schedules', () => {
   });
 
   // -----------------------------------------------------------------------
-  // M-3: every coinbase lock must equal height + CREDIT_MINER_REWARD_DELAY
+  // M-3: every coinbase lock must equal height + config.creditMinerRewardDelay
   // -----------------------------------------------------------------------
 
   it('rejects a block whose coinbase output is unlocked', async () => {
@@ -1446,8 +1446,8 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
 
     // lockedUntilBlock 0 — spendable the moment it is minted, bypassing the
-    // CREDIT_MINER_REWARD_DELAY maturity. The value is correct, so the
-    // emission check above waves it through.
+    // scheduled maturity. The value is correct, so the emission check above
+    // waves it through.
     const block = await makeApplicableBlock({ lockedUntilBlock: 0 });
 
     const blockApply = await importBlockApply();
@@ -1471,7 +1471,7 @@ describe('block-apply consensus schedules', () => {
     // Off by one, not obviously wrong, and still ahead of the block height the
     // gossip validator bounds against — so only an equality check catches it.
     const block = await makeApplicableBlock({
-      lockedUntilBlock: 1 + CREDIT_MINER_REWARD_DELAY - 1,
+      lockedUntilBlock: 1 + config.creditMinerRewardDelay - 1,
     });
 
     const blockApply = await importBlockApply();
@@ -1486,7 +1486,7 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
 
     const block = await makeApplicableBlock({
-      lockedUntilBlock: 1 + CREDIT_MINER_REWARD_DELAY,
+      lockedUntilBlock: 1 + config.creditMinerRewardDelay,
     });
 
     const blockApply = await importBlockApply();
@@ -1501,7 +1501,7 @@ describe('block-apply consensus schedules', () => {
     };
     const boxes = getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner);
     expect(boxes).toHaveLength(1);
-    expect(boxes[0]!.lockedUntilBlock).toBe(1 + CREDIT_MINER_REWARD_DELAY);
+    expect(boxes[0]!.lockedUntilBlock).toBe(1 + config.creditMinerRewardDelay);
   });
 
   // -----------------------------------------------------------------------
