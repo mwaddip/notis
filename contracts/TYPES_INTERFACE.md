@@ -1611,9 +1611,14 @@ export const CREDIT_TREASURY_PCT = 10;                 // consensus — percent 
 ### Ordering block PoW
 
 ```typescript
-export const ORDERING_BLOCK_POW_TARGET_BITS = 5983;     // 23.37 bits — a ~60s solve
+export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // 23.375 bits — a 60s solve
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;    // 9 whole bits
 ```
+
+**The derivation, so it reproduces:** 60 s × 181,262 H/s = 10,875,720 hashes; `log2` of that is
+**23.37461** bits; ×256 = **5983.90**, which rounds to **5984** — exactly 23.375 bits, or 23 + 3/8, a
+value the 1/256 representation carries without rounding. ⚠ **Provisional**: one machine, one thread,
+while the target is set by the network's total.
 
 ⚠ **`ORDERING_BLOCK_POW_TARGET_BITS` is mainnet's and testnet's. Devnet sets its own
 `orderingBlockPowTargetBits` and it is deliberately lower** — the node test suite mines real PoW, and
