@@ -347,9 +347,8 @@ const config: NetConfig = {
 describe('NetNode.setHeadersHandler wiring', () => {
   it('routes the public handler into the store the sync machine reads', () => {
     // Without this, every test above proves only that a class works — not that
-    // it is the class production drives. `setHeadersHandler` wires the store
-    // unconditionally (the libp2p guard covers only the legacy protocol
-    // registration), so no `start()` and no I/O is needed here.
+    // it is the class production drives. `setHeadersHandler` only stores
+    // delegates, so no `start()` and no I/O is needed here.
     //
     // The cast reaches a private field, deliberately and in one place: there is
     // no public reader for `getOrderingBlockId` on NetNode. It pins the field
