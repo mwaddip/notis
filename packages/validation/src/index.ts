@@ -1,6 +1,7 @@
 export {
   blake2b32,
   powTarget,
+  orderingPowTarget,
   meetsPowTarget,
   blockWork,
   cumulativeWork,

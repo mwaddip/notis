@@ -346,6 +346,62 @@ export function powTarget(targetBits: number): Uint8Array | null {
 }
 
 /**
+ * `2^(-f/256)` factored by the bits of `f`, as `floor(2^320 · 2^(-(2^j)/256))`.
+ * `[7]` is `floor(2^320/√2)` and each lower index halves the exponent.
+ *
+ * ⚠ Re-deriving these as a chain of square roots needs guard bits. Taken at this
+ * precision alone, three of the eight land one ulp low — a set that renders the
+ * same target on every admitted input, but not these digits.
+ *
+ * VALIDATION_INTERFACE → orderingPowTarget: these are an implementation choice,
+ * not a consensus constant. The rule is the predicate; any factors reproducing
+ * it agree, and `ordering-pow-target.test.ts` checks every admitted input
+ * against that predicate rather than against these values.
+ */
+const ORDERING_TARGET_FACTORS: readonly bigint[] = [
+  0xff4ecb59511ec8a5301ba217ef18dd7c2f409857956d475fdb171474700cd72f09abbd9586cb942fn,
+  0xfe9e115c7b8f884badd25995e79d2f096934ec56be0d25443a7522ed803a527baa2398a03fbdc508n,
+  0xfd3e0c0cf486c174853f3a5931e0ee03061b7bb285a607919d2285b6754edd613ab745a256540c03n,
+  0xfa83b2db722a033a7c25bb14315d7fcc8006fe21a95d14dc4844b29bf4af18e84b0207166ee1375en,
+  0xf5257d152486cc2c7b9d0c7aed980fc36f510308677709f5bdd80329364aa29fd22dd036f1906094n,
+  0xeac0c6e7dd24392ed02d75b3706e54fac4faace043b7f91c17d8d1e8ca31880ab338fcd2ac2ffbc8n,
+  0xd744fccad69d6af439a68bb9902d3fde1d733af522058b16b5c13ada0e778299efb01fda334bca9an,
+  0xb504f333f9de6484597d89b3754abe9f1d6f60ba893ba84ced17ac85833399154afc83043ab8a2c3n,
+];
+
+/** The scale the factors above are written at. */
+const ORDERING_TARGET_PRECISION = 320n;
+
+/**
+ * The inclusive maximum acceptable ordering-block digest for `scaledBits`,
+ * big-endian, 32 bytes. `null` outside `[0, 65536]`, which a caller reads as
+ * "no digest can satisfy this" and answers `false`.
+ *
+ * VALIDATION_INTERFACE → orderingPowTarget. `scaledBits` is in units of 1/256
+ * of a bit, so the target is `R - 1` for the unique `R` with
+ * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`. Post PoW is not in these units
+ * and uses `powTarget`.
+ */
+export function orderingPowTarget(scaledBits: number): Uint8Array | null {
+  if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > 65536) return null;
+  const whole = scaledBits >> 8;
+  const fraction = scaledBits & 255;
+  let mantissa = 1n << ORDERING_TARGET_PRECISION;
+  for (let j = 0; j < 8; j++) {
+    if ((fraction >> j) & 1) {
+      mantissa = (mantissa * ORDERING_TARGET_FACTORS[j]!) >> ORDERING_TARGET_PRECISION;
+    }
+  }
+  let value = ((mantissa << BigInt(256 - whole)) >> ORDERING_TARGET_PRECISION) - 1n;
+  const target = new Uint8Array(32);
+  for (let i = 31; i >= 0; i--) {
+    target[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  return target;
+}
+
+/**
  * True iff `hash` is at or below `target`, both read big-endian.
  *
  * VALIDATION_INTERFACE → powTarget / meetsPowTarget: the single PoW admission
