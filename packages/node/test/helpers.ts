@@ -359,8 +359,7 @@ export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
  * A missing field also fails QUIETLY rather than at the type checker, because
  * `block-creator.ts` is the only consumer that reads config off its argument
  * (`startBlockCreator` assigns it to the module-level `config`), and it reads
- * exactly five: `orderingBlockIntervalMs`, `orderingBlockMinSubBlocks`,
- * `maxSubBlocksPerBlock`, `creditTreasuryPct`, `treasuryPubKey`.
+ * exactly three: `maxSubBlocksPerBlock`, `creditTreasuryPct`, `treasuryPubKey`.
  * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
  * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
  * imports the `src/config.js` singleton, which no test mocks, so an incomplete

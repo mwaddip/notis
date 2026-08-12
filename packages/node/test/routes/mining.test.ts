@@ -237,8 +237,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     publicUrl: '/',
     postPowTargetBits: 20,
     challengeWindowBlocks: 10,
-    orderingBlockIntervalMs: 60000,
-    orderingBlockMinSubBlocks: 1,
     maxSubBlocksPerBlock: 1000,
     miningSecret: '',
     orderingBlockPowTargetBits: 3072,

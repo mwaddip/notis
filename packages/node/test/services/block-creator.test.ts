@@ -52,8 +52,6 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   postPowTargetBits: 20,
   challengeWindowBlocks: 10,
-  orderingBlockIntervalMs: 60000,
-  orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   // Mining
   orderingBlockPowTargetBits: 3072,
@@ -78,7 +76,6 @@ type DbModule = {
 type BlockCreatorModule = {
   startBlockCreator: (cfg: Config) => void;
   stopBlockCreator: () => void;
-  onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
@@ -650,5 +647,29 @@ describe('block-creator', () => {
     };
 
     expect(computeSubBlockRoot(flipped)).not.toBe(computeSubBlockRoot(tree));
+  });
+
+  // -----------------------------------------------------------------------
+  // Template lifecycle: one per height, rebuilt when the tip moves
+  // -----------------------------------------------------------------------
+
+  it('a miner node holds a template for the next height the moment a block is applied', async () => {
+    // Production is difficulty-regulated: there is no interval to wait out, so
+    // a miner polling GET /mining/template is never told to come back later.
+    // MINING_INTERFACE → Template and submit.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+
+    bc.startBlockCreator(testConfig);
+    expect(bc.getCurrentTemplate()?.header.height).toBe(1);
+
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+
+    const next = bc.getCurrentTemplate();
+    expect(next).not.toBeNull();
+    expect(next!.header.height).toBe(2);
+    expect(next!.header.prevBlockHash).toBe(blockHash(block!.header));
   });
 });

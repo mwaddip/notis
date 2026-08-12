@@ -104,8 +104,6 @@ let config: Config;
 let validatorPubKey: Uint8Array;
 let validatorPrivKey: KeyObject;
 let validatorId: Uint8Array;
-let intervalId: ReturnType<typeof setInterval> | null = null;
-let pendingSubBlockCounter = 0;
 let currentTemplate: OrderingBlock | null = null;   // The block the miner solves
 let confirmedRowids: Set<number> = new Set();       // Mempool rowids included in current block
 let dagService: import('./dag-service.js').DagService | undefined;
@@ -124,29 +122,39 @@ export function startBlockCreator(cfg: Config): void {
   validatorPrivKey = privateKey;
   validatorId = validatorPubKey;
 
-  // Start interval timer
-  intervalId = setInterval(() => {
-    createOrderingBlock();
-  }, config.orderingBlockIntervalMs);
+  // A miner node holds a template from the moment it starts, and one per height
+  // thereafter: production is regulated by difficulty, so a miner polling
+  // `GET /mining/template` is never told to come back later
+  // (MINING_INTERFACE → Template and submit).
+  createOrderingBlock();
 }
 
+/**
+ * Drop what the creator holds — its template and its claim on the mempool rows
+ * that template confirmed. The rebuild trigger is a block being applied, so
+ * this is the whole of stopping: there is nothing else running.
+ */
 export function stopBlockCreator(): void {
-  if (intervalId !== null) {
-    clearInterval(intervalId);
-    intervalId = null;
-  }
+  clearTemplate();
+  confirmedRowids = new Set();
 }
 
 export function setDagServiceForMiner(ds: import('./dag-service.js').DagService): void {
   dagService = ds;
 }
 
-export function onSubBlockReceived(): void {
+/**
+ * Build the template for the next height. `applyOrderingBlock` calls this once a
+ * block is committed — the tip moved, so the height this node mines moved with
+ * it (MINING_INTERFACE → Template and submit).
+ *
+ * `startBlockCreator` is the only assignment of `config` and `index.ts` calls it
+ * on a miner node alone, so an unassigned `config` *is* a server-role node: it
+ * applies blocks and builds no templates.
+ */
+export function rebuildTemplate(): void {
   if (!config) return;
-  pendingSubBlockCounter++;
-  if (pendingSubBlockCounter >= config.orderingBlockMinSubBlocks) {
-    createOrderingBlock();
-  }
+  createOrderingBlock();
 }
 
 // ---------------------------------------------------------------------------
@@ -173,12 +181,13 @@ export function getCurrentTemplate(): OrderingBlock | null {
 }
 
 /**
- * Clear the current template. Called when a relayed block arrives so the
- * block creator builds a fresh template for the next height.
+ * Invalidate the current template. Called mid-apply, where the block being
+ * applied has already taken this height: the template is void from that point
+ * on, and the replacement cannot be derived until the mutation phase and the
+ * AVL root update have run.
  */
 export function clearTemplate(): void {
   currentTemplate = null;
-  pendingSubBlockCounter = 0;
 }
 
 /**
@@ -336,8 +345,9 @@ export function createOrderingBlock(): OrderingBlock | null {
   // Either failure means the store is no longer what this node wrote.
   //
   // Both go to the boundary rather than declining to produce. Declining is the
-  // producer's mirror of blaming an arriving block for our own store: the timer
-  // fires again, reads the same broken row, declines again, and a node that
+  // producer's mirror of blaming an arriving block for our own store — and the
+  // tip moving is the only rebuild trigger, so a node that declines here holds
+  // no template, produces nothing, and is handed no second attempt: a node that
   // never produces while staying up is indistinguishable from an idle miner —
   // the same silence, from the other end of the same fault.
   const prevBlock = currentHeight > 0 ? getOrderingBlock(currentHeight) : null;
@@ -437,9 +447,9 @@ export function createOrderingBlock(): OrderingBlock | null {
   // every peer's — rejects. Reachable with unmutated code: a pooled tx whose
   // validity reads third-party state (a bond settlement's threshold leg) goes
   // stale in the pool while its inputs stay live. Evict what the body included
-  // — the same cleanup a rejected finalize runs — or the next interval
-  // rebuilds this exact body: purgeExpired cannot break that loop, because it
-  // keys on a chain height that stops advancing.
+  // — the same cleanup a rejected finalize runs — or every later rebuild
+  // reassembles this exact body: purgeExpired cannot break that loop, because
+  // it keys on a chain height that stops advancing.
   if (speculation.kind === 'body-rejected') {
     // States the verdict, not the cause: `body-rejected` also carries the
     // speculation's unclaimed throws, which that arm logs itself. Naming the
@@ -451,7 +461,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     for (const rowid of confirmedRowids) {
       removeEntry(rowid);
     }
-    pendingSubBlockCounter = 0;
     currentTemplate = null;
     confirmedRowids = new Set();
     return null;
@@ -482,6 +491,11 @@ function finalizeBlock(block: OrderingBlock): void {
   // The boundary sits here rather than at the caller because the one path in —
   // `POST /mining/submit` via `submitMinedBlock` — ends inside an Express
   // handler, which turns a throw into a 500 and keeps the node running.
+  //
+  // The rows this block confirmed are read off the module before the apply: an
+  // accepted block moves the tip, which rebuilds the template and re-points
+  // `confirmedRowids` at the rows of the *next* height.
+  const minedRowids = confirmedRowids;
   let applied: boolean;
   try {
     applied = applyOrderingBlock(block, dagService);
@@ -494,9 +508,9 @@ function finalizeBlock(block: OrderingBlock): void {
   // from utxoTxIds). Double-removal is harmless.
   //
   // This runs even when the block was rejected: whatever made it invalid came
-  // out of the mempool, so leaving those entries in place would rebuild the
-  // same rejected block every interval and stall the chain.
-  for (const rowid of confirmedRowids) {
+  // out of the mempool, so leaving those entries in place would reassemble the
+  // same rejected block at every rebuild and stall the chain.
+  for (const rowid of minedRowids) {
     removeEntry(rowid);
   }
 
@@ -510,10 +524,14 @@ function finalizeBlock(block: OrderingBlock): void {
     });
   }
 
-  // Reset state
-  pendingSubBlockCounter = 0;
-  currentTemplate = null;
-  confirmedRowids = new Set();
+  // An accepted block has already rebuilt the template for the next height on
+  // its way through the apply. A rejected one leaves the tip where it was, so
+  // nothing rebuilt — and the body it was built from has just had its entries
+  // dropped above, so rebuilding here is what stops the next solve being spent
+  // on a body this node has already refused.
+  if (!applied) {
+    rebuildTemplate();
+  }
 }
 
 // ---------------------------------------------------------------------------

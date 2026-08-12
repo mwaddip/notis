@@ -30,8 +30,6 @@ export interface Config {
   publicUrl: string;
   postPowTargetBits: number;
   challengeWindowBlocks: number;
-  orderingBlockIntervalMs: number;
-  orderingBlockMinSubBlocks: number;
   maxSubBlocksPerBlock: number;
   /** Hard mempool bound — inserts are rejected at the cap, never evicted (audit M-8). */
   maxMempoolEntries: number;
@@ -85,14 +83,6 @@ export function loadConfig(): Readonly<Config> {
     postPowTargetBits: profile.postPowTargetBits,
     challengeWindowBlocks: parseInt(
       process.env['CHALLENGE_WINDOW_BLOCKS'] ?? String(CHALLENGE_WINDOW_BLOCKS),
-      10,
-    ),
-    orderingBlockIntervalMs: parseInt(
-      process.env['ORDERING_BLOCK_INTERVAL_MS'] ?? '60000',
-      10,
-    ),
-    orderingBlockMinSubBlocks: parseInt(
-      process.env['ORDERING_BLOCK_MIN_SUB_BLOCKS'] ?? '1',
       10,
     ),
     maxSubBlocksPerBlock: parseInt(

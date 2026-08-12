@@ -55,8 +55,6 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   postPowTargetBits: 20,
   challengeWindowBlocks: 10,
-  orderingBlockIntervalMs: 60000,
-  orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -266,11 +264,14 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     const ordering = await importOrdering();
     const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    const block = await mineNextBlock(bc);
 
-    // No block: not mined, not stored, no PoW spent, prover untouched.
-    expect(block).toBeNull();
+    // Starting the creator builds the first template, and this body is one its
+    // own mutation phase rejects.
+    bc.startBlockCreator(testConfig);
+
+    // No template, so nothing to mine: not stored, no PoW spent, prover
+    // untouched.
+    expect(bc.getCurrentTemplate()).toBeNull();
     expect(ordering.getCurrentHeight()).toBe(0);
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
@@ -280,9 +281,9 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(utxo.getKarmaBox(inviter.userId)).toBeNull();
 
     // The poisoned body's entries are evicted — the same cleanup a rejected
-    // finalize runs. Without this the creator rebuilds the identical body
-    // every interval, and purgeExpired cannot break the loop because the
-    // chain height it keys on has stopped advancing.
+    // finalize runs. Without this every later rebuild reassembles the identical
+    // body, and purgeExpired cannot break the loop because the chain height it
+    // keys on has stopped advancing.
     expect(mempool.getPendingEntries(10)).toHaveLength(0);
 
     // Next attempt self-heals: a clean block, carrying a real digest, applied.

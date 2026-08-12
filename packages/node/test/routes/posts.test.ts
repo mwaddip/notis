@@ -80,7 +80,6 @@ async function request(
       getCurrentHeight,
       insertMempoolSubBlock,
       insertUtxoTx,
-      onSubBlockReceived: () => {},
       metaPut,
       metaGet,
       validateTx: (tx: UtxoTransaction, height: number) => {

@@ -72,8 +72,6 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   postPowTargetBits: 20,
   challengeWindowBlocks: 10,
-  orderingBlockIntervalMs: 60000,
-  orderingBlockMinSubBlocks: 1,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -96,7 +94,6 @@ type DbModule = {
 type BlockCreatorModule = {
   startBlockCreator: (cfg: Config) => void;
   stopBlockCreator: () => void;
-  onSubBlockReceived: () => void;
   createOrderingBlock: () => OrderingBlock | null;
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;

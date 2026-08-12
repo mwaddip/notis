@@ -29,6 +29,7 @@ import { deleteVouchCooldown, insertVouchCooldown } from '../store/vouch-cooldow
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { applyOrderingBlock } from './block-apply.js';
+import { rebuildTemplate } from './block-creator.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
@@ -369,6 +370,12 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
     restoreProver();
     throw err;
   }
+
+  // A reorg is one tip move, however many blocks it applies. The per-block
+  // rebuild inside `applyOrderingBlock` stands down while nested in the
+  // transaction above, so a miner node's template is built once, here, against
+  // the chain that committed (MINING_INTERFACE → Template and submit).
+  rebuildTemplate();
 }
 
 /**

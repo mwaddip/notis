@@ -34,7 +34,6 @@ const A2 = `http://localhost:${P2}`;
 const AP1 = P1 + 200, AP2 = P2 + 200; // admin ports
 const ENV = {
   ...process.env,
-  ORDERING_BLOCK_INTERVAL_MS: '2000',
   KARMA_STALE_THRESHOLD_BLOCKS: '10',
   KARMA_DECAY_INTERVAL_BLOCKS: '3',
   KARMA_DECAY_AMOUNT: '5',

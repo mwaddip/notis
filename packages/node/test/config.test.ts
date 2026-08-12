@@ -13,8 +13,6 @@ const TEST_KEYS = [
   'PORT',
   'DB_PATH',
   'CHALLENGE_WINDOW_BLOCKS',
-  'ORDERING_BLOCK_INTERVAL_MS',
-  'ORDERING_BLOCK_MIN_SUB_BLOCKS',
   'MAX_SUB_BLOCKS_PER_BLOCK',
   'MAX_MEMPOOL_ENTRIES',
   'NETWORK_TYPE',
@@ -55,8 +53,6 @@ describe('config', () => {
       expect(cfg.dbPath).toBe('dagsocial.db');
       expect(cfg.postPowTargetBits).toBe(20);
       expect(cfg.challengeWindowBlocks).toBe(10);
-      expect(cfg.orderingBlockIntervalMs).toBe(60000);
-      expect(cfg.orderingBlockMinSubBlocks).toBe(1);
       expect(cfg.maxSubBlocksPerBlock).toBe(1000);
       expect(cfg.maxMempoolEntries).toBe(10000);
       expect(cfg.networkType).toBe('testnet');
@@ -73,8 +69,6 @@ describe('config', () => {
       process.env['PORT'] = '8080';
       process.env['DB_PATH'] = '/tmp/test.db';
       process.env['CHALLENGE_WINDOW_BLOCKS'] = '5';
-      process.env['ORDERING_BLOCK_INTERVAL_MS'] = '30000';
-      process.env['ORDERING_BLOCK_MIN_SUB_BLOCKS'] = '3';
       process.env['MAX_SUB_BLOCKS_PER_BLOCK'] = '500';
       process.env['MAX_MEMPOOL_ENTRIES'] = '25';
       process.env['NETWORK_TYPE'] = 'mainnet';
@@ -86,8 +80,6 @@ describe('config', () => {
       expect(cfg.port).toBe(8080);
       expect(cfg.dbPath).toBe('/tmp/test.db');
       expect(cfg.challengeWindowBlocks).toBe(5);
-      expect(cfg.orderingBlockIntervalMs).toBe(30000);
-      expect(cfg.orderingBlockMinSubBlocks).toBe(3);
       expect(cfg.maxSubBlocksPerBlock).toBe(500);
       expect(cfg.maxMempoolEntries).toBe(25);
       expect(cfg.networkType).toBe('mainnet');
@@ -98,7 +90,6 @@ describe('config', () => {
   describe('3. numeric parsing', () => {
     it('parses numeric strings correctly', async () => {
       process.env['PORT'] = '3001';
-      process.env['ORDERING_BLOCK_INTERVAL_MS'] = '120000';
       process.env['MAX_SUB_BLOCKS_PER_BLOCK'] = '2000';
 
       const { loadConfig } = await import('../src/config.js');
@@ -106,7 +97,6 @@ describe('config', () => {
 
       expect(typeof cfg.port).toBe('number');
       expect(cfg.port).toBe(3001);
-      expect(cfg.orderingBlockIntervalMs).toBe(120000);
       expect(cfg.maxSubBlocksPerBlock).toBe(2000);
     });
   });
