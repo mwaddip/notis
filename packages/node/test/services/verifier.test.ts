@@ -16,6 +16,7 @@ import {
 } from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
 import { verifyPoW } from '../../src/services/pow.js';
+import { config } from '../../src/config.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
 
@@ -285,17 +286,18 @@ describe('verifyPost', () => {
       challenge: challengeBytes,
       expiresAtBlock: 100,
     });
-    // powNonce=0 with targetBits=20 is almost certainly invalid
-    const post = makePost({ content: 'test', powNonce: 0 });
     const deps = createMockDeps(store);
 
-    // Verify that powNonce=0 is actually invalid for this input
-    const powInput = buildPowInput(post);
-    const isValid = verifyPoW(powInput, 0, 20);
-    if (isValid) {
-      // Extremely unlikely — skip the test if 0 happens to be valid
-      return;
-    }
+    // The nonce has to be invalid at the target the verifier reads —
+    // `config.postPowTargetBits`, off the profile — and on a low-difficulty
+    // profile an arbitrary nonce is a coin flip rather than a certainty. Take
+    // the first one that fails instead of assuming one does; the fixture also
+    // carries an unsigned placeholder signature, so this pins that PoW is
+    // answered before the signature and not merely that something rejected.
+    const powInput = buildPowInput(makePost({ content: 'test', powNonce: 0 }));
+    let badNonce = 0;
+    while (verifyPoW(powInput, badNonce, config.postPowTargetBits)) badNonce++;
+    const post = makePost({ content: 'test', powNonce: badNonce });
 
     const result = verifyPost(deps, post, 50);
     expect(result.valid).toBe(false);
