@@ -84,7 +84,7 @@ function makeHandshakeHarness(opts: {
   const internals = net as unknown as {
     libp2p: unknown;
     peerMgr: PeerManager;
-    registerHandshakeHandler(): void;
+    registerHandshakeHandler(libp2p: unknown): void;
   };
   internals.libp2p = {
     handle: (protocol: string, cb: StreamHandler) => {
@@ -105,7 +105,10 @@ function makeHandshakeHarness(opts: {
   // and — the point of the option — wires `chainHeight()` to node's callback.
   if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
 
-  internals.registerHandshakeHandler();
+  // The stub is passed in, not read off the instance: the registrars take the
+  // libp2p node as a parameter. It is also assigned above, for the paths that
+  // reach it through the instance at request time (`buildOurHandshake`).
+  internals.registerHandshakeHandler(internals.libp2p);
   if (!captured) throw new Error('registerHandshakeHandler registered no handler');
 
   const drive = async (source: AsyncIterable<Uint8Array>): Promise<Uint8Array[]> => {

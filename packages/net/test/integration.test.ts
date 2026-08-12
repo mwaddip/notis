@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { generateKeyPair, computePostId, postPowPreimage, signingHash } from '@dagsocial/types';
+import {
+  generateKeyPair,
+  computePostId,
+  postPowPreimage,
+  signingHash,
+  PROTOCOL_VERSION,
+  CREDIT_MINER_REWARD_DELAY,
+} from '@dagsocial/types';
 import type { Post, SubBlock, OrderingBlock, BlockHeader } from '@dagsocial/types';
 import {
   verifyPoW,
@@ -64,6 +71,45 @@ function solvePoW(input: Uint8Array, targetBits: number): number {
     if (verifyPoW(input, nonce, targetBits)) return nonce;
   }
   throw new Error('PoW solution not found within nonce limit');
+}
+
+// Block fixtures for the headers exchange. Copies of `sync-store.test.ts`'s
+// file-local pair: the headers path needs whole blocks, and a shared fixture
+// module is a wider change than the one test that wants them.
+function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    height: 1,
+    prevBlockHash: '00'.repeat(32),
+    subBlockRoot: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32),
+    stateRoot: '00'.repeat(33),
+    validatorId: new Uint8Array(32),
+    powNonce: 100,
+    powTargetBits: 4 * 256,
+    createdAt: 1_000_000,
+    ...overrides,
+  };
+}
+
+function makeBlock(header: BlockHeader): OrderingBlock {
+  return {
+    header,
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
+    utxoTxTree: {
+      utxoTxIds: [],
+      utxoTxs: [],
+      coinbaseOutputs: [
+        {
+          value: 100n,
+          owner: new Uint8Array(32),
+          lockedUntilBlock: header.height + CREDIT_MINER_REWARD_DELAY,
+          isTreasury: false,
+        },
+      ],
+    },
+    validatorSignature: new Uint8Array(64),
+  };
 }
 
 describe('Two-node integration', () => {
@@ -273,5 +319,47 @@ describe('Two-node integration', () => {
     await new Promise((r) => setTimeout(r, 4000));
 
     expect(received).toBe(false);
+  }, TIMEOUT);
+
+  it('node B fetches headers from node A over /dagsocial/headers/1', async () => {
+    // The protocol is registered by start() and resolves its provider per
+    // request, so this passes with the provider set either side of start().
+    // Set before, deliberately: it is the order node/src/index.ts uses.
+    nodeA = new NetNode(makeConfig(), validators);
+    const chain = new Map<number, OrderingBlock>();
+    for (let h = 1; h <= 3; h++) {
+      chain.set(h, makeBlock(makeHeader({ height: h, createdAt: 1_000_000 + h })));
+    }
+    nodeA.setHeadersHandler((h) => chain.get(h) ?? null);
+    await nodeA.start();
+
+    const multiaddrs = nodeA.libp2pNode?.getMultiaddrs() ?? [];
+    expect(multiaddrs.length).toBeGreaterThan(0);
+
+    const configB = makeConfig([multiaddrs[0]!.toString()]);
+    nodeB = new NetNode(configB, validators);
+    await nodeB.start();
+
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Headers mode walks downward from startHeight, so this is newest-first —
+    // the order findForkPoint expects.
+    const headers = await nodeB.requestHeaders(3, 3, nodeA.peerId());
+
+    expect(headers.map((h) => h.height)).toEqual([3, 2, 1]);
+
+    // Late binding, over the wire and on a node that is already serving: the
+    // handler reads the provider per request, so replacing it takes effect
+    // without re-registering anything (NET_INTERFACE → Sync Handler
+    // Registration: "a later call replaces the delegate").
+    //
+    // The replacement still answers a contiguous chain from height 1. Serving
+    // only height 2 would report a chain height of 0 — chainHeight() walks up
+    // from 1 through this same provider and stops at the first gap — and the
+    // empty result would be measuring that clamp instead of the swap.
+    nodeA.setHeadersHandler((h) => (h <= 2 ? chain.get(h) ?? null : null));
+    const afterSwap = await nodeB.requestHeaders(3, 3, nodeA.peerId());
+
+    expect(afterSwap.map((h) => h.height)).toEqual([2, 1]);
   }, TIMEOUT);
 });

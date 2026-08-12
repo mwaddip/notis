@@ -520,6 +520,14 @@ export class NetNode {
   private handshakeHandlerRegistered = false;
   private syncHandlerRegistered = false;
   private headersHandlerRegistered = false;
+  /**
+   * The block provider for `/dagsocial/headers/1`, read at request time rather
+   * than closed over at registration. NET_INTERFACE → Sync Handler Registration:
+   * setters are order-independent, so the protocol is registered by start()
+   * whether or not a provider exists yet, and a request that arrives without one
+   * is answered with an empty body.
+   */
+  private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
   private postsHandler: ((postIds: string[]) => PostsEntry[]) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
   private peerActiveHandlers: Array<(peerId: string) => void> = [];
@@ -552,7 +560,7 @@ export class NetNode {
     // createLibp2p options cast to `any` works around @libp2p/interface version
     // mismatches in the dependency tree (v1.7, v2.11, v3.2 coexist).  The
     // runtime behaviour is correct; only the static types disagree.
-    this.libp2p = await createLibp2p({
+    const libp2p = await createLibp2p({
       addresses: {
         listen: [this.config.listenAddrs],
       },
@@ -583,6 +591,7 @@ export class NetNode {
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any);
+    this.libp2p = libp2p;
 
     // Create PeerDb with self-address filtering
     const listenAddrs = this.libp2p.getMultiaddrs();
@@ -615,10 +624,13 @@ export class NetNode {
     this.outboundMgr = new OutboundManager(this.config, this.peerDb);
 
     // Register handshake stream handler
-    this.registerHandshakeHandler();
+    this.registerHandshakeHandler(libp2p);
 
     // Register sync stream handler (framed protocol)
-    this.registerSyncStreamHandler();
+    this.registerSyncStreamHandler(libp2p);
+
+    // Register headers stream handler (fork resolution's transport)
+    this.registerHeadersStreamHandler(libp2p);
 
     // Track peers on connect/disconnect.
     // Listen for all four event types because the timing and payload differ:
@@ -815,9 +827,8 @@ export class NetNode {
   // Handshake — inbound handler registration
   // -----------------------------------------------------------------------
 
-  private registerHandshakeHandler(): void {
-    if (this.handshakeHandlerRegistered || !this.libp2p) return;
-    const libp2p = this.libp2p;
+  private registerHandshakeHandler(libp2p: Libp2p): void {
+    if (this.handshakeHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
@@ -916,9 +927,8 @@ export class NetNode {
   // Sync stream handler — framed protocol
   // -----------------------------------------------------------------------
 
-  private registerSyncStreamHandler(): void {
-    if (this.syncHandlerRegistered || !this.libp2p) return;
-    const libp2p = this.libp2p;
+  private registerSyncStreamHandler(libp2p: Libp2p): void {
+    if (this.syncHandlerRegistered) return;
     const magic = this.config.magic;
 
     libp2p.handle(SYNC_PROTOCOL, async ({ stream, connection }) => {
@@ -1076,6 +1086,57 @@ export class NetNode {
     });
 
     this.syncHandlerRegistered = true;
+  }
+
+  // -----------------------------------------------------------------------
+  // Headers stream handler — /dagsocial/headers/1
+  //
+  // That protocol is named "legacy" throughout this file but is not a
+  // compatibility shim: it is the live transport fork resolution uses, and the
+  // framed codes 2-5 carry none of that traffic (NET_INTERFACE →
+  // `/dagsocial/headers/1` responses — positional, `arr(item, lp)`).
+  // -----------------------------------------------------------------------
+
+  private registerHeadersStreamHandler(libp2p: Libp2p): void {
+    if (this.headersHandlerRegistered) return;
+
+    libp2p.handle(HEADERS_PROTOCOL, async ({ stream }) => {
+      try {
+        // The legacy protocol is ungated — no handshake, so no peer identity to
+        // penalize. An over-cap stream is simply dropped.
+        const data = await readStreamBounded(stream.source);
+        if (data === null || data.length === 0) {
+          await stream.sink([new Uint8Array(0)]);
+          return;
+        }
+
+        const request = decodeLegacyHeadersRequest(data);
+        if (!request) {
+          await stream.sink([new Uint8Array(0)]);
+          return;
+        }
+
+        // Resolved per request, so setter order does not matter. No provider is
+        // an empty answer, not an error: fork resolution already treats a peer
+        // that returns no headers as "no reorg".
+        const getBlock = this.headersProvider;
+        if (!getBlock) {
+          await stream.sink([new Uint8Array(0)]);
+          return;
+        }
+
+        const body = serveLegacyHeadersBody(
+          request,
+          this.syncStore.chainHeight(),
+          getBlock,
+        );
+        await stream.sink([body]);
+      } catch {
+        await stream.sink([new Uint8Array(0)]);
+      }
+    });
+
+    this.headersHandlerRegistered = true;
   }
 
   // -----------------------------------------------------------------------
@@ -1425,49 +1486,15 @@ export class NetNode {
   }
 
   /**
-   * Register a storage-backed headers handler. Wires into the sync machine's
-   * store adapter and also serves `/dagsocial/headers/1`.
-   *
-   * That protocol is named "legacy" throughout this file but is not a
-   * compatibility shim: it is the live transport fork resolution uses, and the
-   * framed codes 2-5 carry none of that traffic (NET_INTERFACE →
-   * `/dagsocial/headers/1` responses — positional, `arr(item, lp)`).
+   * Register the block provider for header-first sync. Wires the sync machine's
+   * store adapter and the `/dagsocial/headers/1` responder, both of which read
+   * the provider when they need it — so this is valid before or after `start()`,
+   * and a later call replaces the provider (NET_INTERFACE → Sync Handler
+   * Registration).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
-    // Wire into sync store bridge
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));
-
-    // Also serve the headers protocol
-    if (!this.headersHandlerRegistered && this.libp2p) {
-      const libp2p = this.libp2p;
-      libp2p.handle(HEADERS_PROTOCOL, async ({ stream }) => {
-        try {
-          // The legacy protocol is ungated — no handshake, so no peer identity to
-          // penalize. An over-cap stream is simply dropped.
-          const data = await readStreamBounded(stream.source);
-          if (data === null || data.length === 0) {
-            await stream.sink([new Uint8Array(0)]);
-            return;
-          }
-
-          const request = decodeLegacyHeadersRequest(data);
-          if (!request) {
-            await stream.sink([new Uint8Array(0)]);
-            return;
-          }
-
-          const body = serveLegacyHeadersBody(
-            request,
-            this.syncStore.chainHeight(),
-            getBlock,
-          );
-          await stream.sink([body]);
-        } catch {
-          await stream.sink([new Uint8Array(0)]);
-        }
-      });
-      this.headersHandlerRegistered = true;
-    }
+    this.headersProvider = getBlock;
   }
 
   // Expose for node to register storage-backed handler

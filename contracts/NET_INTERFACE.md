@@ -1004,10 +1004,31 @@ structure, PoW, and signatures.
 |----------|-----------|-------------|
 | `setSyncHandler(cb)` | `((id: string) => SubBlock \| null) => void` | Provider for sub-block content (placeholder fill) |
 | `setBlocksHandler(cb)` | `((block: OrderingBlock) => void) => void` | Handler for blocks received during sync |
-| `setHeadersHandler(cb)` | `((height: number) => BlockHeader \| null) => void` | Provider for block headers |
+| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `/dagsocial/headers/1`. Returns the whole block, not the header: one provider serves both response modes — headers mode reads `.header`, blocks mode returns the block |
 | `setPostsHandler(cb)` | `((ids: string[]) => PostsEntry[]) => void` | Provider for posts by ID |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired when sync finishes |
 | `onPeerActive(cb)` | `((peerId: string) => void) => void` | Fired when a peer becomes active |
+
+**Handler setters are order-independent.** Every setter above stores a delegate and has no libp2p side
+effect, so it is valid before or after `start()`, and a later call replaces the delegate. Registering a
+libp2p protocol is `start()`'s responsibility alone. A setter that also registers makes its own call
+order load-bearing with nothing to signal it: the registration reads a libp2p instance that `start()`
+has not created yet, the guard falls through, and every layer beneath keeps passing — the protocol is
+simply absent for the life of the process, which a peer sees as `protocol selection failed` and reads
+as the peer's fault rather than ours.
+
+**A node that has registered no headers provider answers zero bytes** on `/dagsocial/headers/1`, rather
+than declining the protocol. Zero bytes is this protocol's "I cannot answer", and it is distinct from an
+empty header *list* — one byte, `vlqU(0)` — which means "I consulted my chain and have nothing at that
+height". A node holding no provider has no chain to consult, so it cannot honestly send the second. Both
+reach the caller as an empty array, and fork resolution treats that as "no reorg" like any other
+non-match, so nothing downstream needs a new case.
+
+Declining the protocol is **not** equivalent to either. `requestHeaders` wraps its dial in `try`/`finally`
+with no `catch`, so an unregistered protocol reaches the caller as a **rejected promise** rather than an
+empty result. "This peer has nothing to serve" and "this peer does not speak the protocol" are therefore
+different events at the call site, and collapsing them costs the caller the only signal that distinguishes
+a peer's state from its capability.
 
 ---
 

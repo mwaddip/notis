@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { encode } from 'cbor-x';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
@@ -9,9 +9,21 @@ import {
   encodeOrderingBlock,
   encodeUtxoTxTree,
 } from '@dagsocial/types';
-import { blockHash } from '@dagsocial/validation';
+import {
+  blockHash,
+  verifyPoW,
+  verifyOrderingBlockPoW,
+  verifyPostSignature,
+  verifyProtocolVersion,
+  verifyContentLimits,
+  verifyParentRefsCount,
+  verifySubBlockStructure,
+  verifyTxStructure,
+  verifyOrderingBlockStructure,
+} from '@dagsocial/validation';
 import { HEADERS_PROTOCOL } from '../src/sync.js';
-import { serveLegacyHeadersBody } from '../src/node.js';
+import { NetNode, serveLegacyHeadersBody } from '../src/node.js';
+import type { NetConfig, NetValidators } from '../src/types.js';
 import {
   decodeLegacyHeadersRequest,
   decodeLegacyBlocksResponse,
@@ -635,4 +647,75 @@ describe('handler round-trip', () => {
     expect(body).toEqual(new Uint8Array([0]));
     expect(receiveHeaders(body, 5)).toEqual([]);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — the protocol is registered with libp2p
+//
+// Everything above this line exercises the codec and the serve loops directly.
+// None of it can see whether `/dagsocial/headers/1` is registered with libp2p
+// at all, which is the one property the whole protocol rests on: an unregistered
+// protocol answers `protocol selection failed` to every dial, and each layer
+// below keeps passing.
+//
+// NET_INTERFACE → Sync Handler Registration: setters are order-independent and
+// registration belongs to start(). Both orders are asserted because a
+// registration conditional on the provider already existing would satisfy the
+// first and fail the second.
+// ---------------------------------------------------------------------------
+
+const registrationConfig: NetConfig = {
+  magic: 0x54444147,
+  postPowTargetBits: 20,
+  bootstrapPeers: [],
+  listenAddrs: '/ip4/0.0.0.0/tcp/0',
+  maxPeers: 10,
+  penaltyScoreThreshold: 500,
+  temporalBanDurationMs: 3600000,
+  penaltySafeIntervalMs: 120000,
+  syncRequestTimeoutMs: 10000,
+};
+
+const registrationValidators: NetValidators = {
+  verifyPoW,
+  verifyOrderingBlockPoW,
+  verifyPostSignature,
+  verifyProtocolVersion,
+  verifyContentLimits,
+  verifyParentRefsCount,
+  verifySubBlockStructure,
+  verifyTxStructure,
+  verifyOrderingBlockStructure,
+};
+
+describe('HEADERS_PROTOCOL registration', () => {
+  let net: NetNode | undefined;
+
+  afterEach(async () => {
+    await net?.stop();
+    net = undefined;
+  });
+
+  it('is registered when the provider was set before start()', async () => {
+    net = new NetNode(registrationConfig, registrationValidators);
+    net.setHeadersHandler(() => null);
+    await net.start();
+
+    expect(net.libp2pNode?.getProtocols()).toContain(HEADERS_PROTOCOL);
+  }, 25000);
+
+  it('is registered when the provider is set after start()', async () => {
+    net = new NetNode(registrationConfig, registrationValidators);
+    await net.start();
+    net.setHeadersHandler(() => null);
+
+    expect(net.libp2pNode?.getProtocols()).toContain(HEADERS_PROTOCOL);
+  }, 25000);
+
+  it('is registered when no provider is ever set', async () => {
+    net = new NetNode(registrationConfig, registrationValidators);
+    await net.start();
+
+    expect(net.libp2pNode?.getProtocols()).toContain(HEADERS_PROTOCOL);
+  }, 25000);
 });
