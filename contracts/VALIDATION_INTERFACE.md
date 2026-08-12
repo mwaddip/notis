@@ -697,7 +697,7 @@ has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char st
 64-char `author` (the consensus-carried authorship claim, audit H-3),
 `validatorSignature` is 64 bytes, `height` ≥ 1, `protocolVersion` is a number,
 `powNonce` is a non-negative number,
-`powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (4), `coinbaseOutputs` is
+`powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (2304), `coinbaseOutputs` is
 an array with each output having a 32-byte `owner`, a `bigint` `value` in
 `[0, 2⁶⁴)`, a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
 and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view.
