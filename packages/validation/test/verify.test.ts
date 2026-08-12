@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
 
 /**
@@ -224,7 +224,7 @@ describe('verifyValidatorSignature', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32),
     powNonce: 12345,
-    powTargetBits: 1024,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
     ...over,
   });
@@ -1236,7 +1236,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: kp.publicKey,
       powNonce: 0,
-      powTargetBits: 1024,
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt: 1_700_000_000_000,
       ...headerOver,
     });
@@ -2011,7 +2011,7 @@ describe('no-panic on malformed input (M-5)', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(1),
     powNonce: 0,
-    powTargetBits: 1024,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
     ...over,
   });
@@ -2999,7 +2999,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: kp.publicKey,
     powNonce: 0,
-    powTargetBits: 1024,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
     ...over,
   });
