@@ -28,6 +28,7 @@ import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { deleteVouchCooldown, insertVouchCooldown } from '../store/vouch-cooldowns.js';
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
+import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlock } from './block-apply.js';
 import { rebuildTemplate } from './block-creator.js';
 import {
@@ -72,7 +73,14 @@ export function extendsOurTip(block: OrderingBlock): boolean {
 /**
  * Walk both chains back to find the common ancestor.
  * theirHeaders is newest-first (tip at index 0).
- * Returns fork height or null if deeper than MAX_REORG_DEPTH.
+ * Returns fork height, `GENESIS_HEIGHT` when the chains share only the genesis
+ * state, or null if the divergence is deeper than MAX_REORG_DEPTH.
+ *
+ * **Height 0 is a valid answer, not a dead end.** Heights still start at 1, so
+ * height 0 holds no block and no hash — but it holds the genesis *state*, which
+ * every node on a network shares byte for byte. Two chains that diverge at
+ * height 1 therefore have a common ancestor, and it is the only one they have.
+ * The rule and its bound are stated at the `reachedGenesis` return below.
  *
  * `ourTip` is a header of ours; `theirHeaders` is not. It arrives from
  * `net.requestHeaders`, which parses the response through
@@ -115,9 +123,9 @@ export function findForkPoint(
     return null; // ourTip is stale — a reorg happened since caller fetched it
   }
   // Walk our chain down from the tip. A missing block ends this loop, and the
-  // two reasons it can be missing are not the same thing: running off the
-  // bottom of the chain is how the walk terminates, while a height that should
-  // hold a block and does not is the contiguity invariant broken.
+  // two reasons it can be missing are not the same thing: running out of
+  // *blocks* is how the walk reaches the genesis state, while a height that
+  // should hold a block and does not is the contiguity invariant broken.
   //
   // The two are cleanly separable because heights start at 1 — genesis is
   // accepted only at height 1 (`block-apply.ts:224`) and every stored header
@@ -131,11 +139,17 @@ export function findForkPoint(
   // permanently without knowing, the same silence a forever-rejecting apply
   // funnel produces.
   let depth = 0;
+  let reachedGenesis = false;
   while (depth < MAX_REORG_DEPTH) {
     ourHashes.set(ourChainHash(cursor.header, 'findForkPoint'), cursor.header.height);
     depth++;
     const nextHeight = cursor.header.height - 1;
-    if (nextHeight < 1) break; // the bottom of the chain, not a gap
+    if (nextHeight < GENESIS_HEIGHT + 1) {
+      // Height 0 holds no block, so there is no hash to record — but the state
+      // it names is an ancestor both chains share (see the return below).
+      reachedGenesis = true;
+      break;
+    }
     const next = getOrderingBlock(nextHeight);
     if (!next) throw new MissingStoredBlockError('findForkPoint', nextHeight);
     cursor = next;
@@ -160,6 +174,28 @@ export function findForkPoint(
     const matchHeight = ourHashes.get(h);
     if (matchHeight !== undefined) return matchHeight;
   }
+
+  // No shared block, but the walk ran out of blocks rather than out of window:
+  // our whole chain is inside the reorg bound, so the two chains diverge above
+  // the genesis state and **that state is the common ancestor**, at depth =
+  // our height.
+  //
+  // There is no hash to compare and none is needed. Every node on a network
+  // holds a byte-identical height-0 state by construction — `seedGenesisState`
+  // refuses any other (`assertGenesisRoot`) — and a peer's height-1 block has
+  // its `prevBlockHash` checked as all-zeros before it can be stored. That
+  // check is on every path that reaches the ordering store: `ordering_blocks`
+  // has one writer, `applyBlockBody`'s `storeCreateOrderingBlock`, downstream
+  // of the chain-link gate in the same function, and all four callers of
+  // `applyOrderingBlock` — gossip, sync pull, the block creator and `reorg`
+  // below — go through it.
+  //
+  // ⚠ **This is reachable only below `MAX_REORG_DEPTH`, and the bound does not
+  // move.** Height 0 became a valid ancestor; how far back a reorg may go did
+  // not. A divergence deeper than the window still answers null, because
+  // journal retention is the real floor under revert depth — `revertBlock`
+  // throws without a journal (`block-apply.ts` → the `purgeOldJournals` call).
+  if (reachedGenesis) return GENESIS_HEIGHT;
 
   return null; // no common ancestor within MAX_REORG_DEPTH
 }

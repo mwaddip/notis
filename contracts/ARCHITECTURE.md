@@ -1344,6 +1344,21 @@ mainnet transaction replayed against testnet names inputs that **do not exist** 
 fails on the UTXO graph, without any network check. The magic is the early rejection; genesis
 is the one that cannot be circumvented.
 
+**The mechanism this row names is `genesisStateRoot`, and the node refuses to run without
+it.** Each profile pins the height-0 AVL+ root over its own genesis box set, cold-start
+seeding computes that root and compares, and a mismatch is fail-stop rather than a warning —
+`assertGenesisRoot` in `node/src/services/genesis-state.ts`, checked inside the seeding
+transaction so a divergent genesis is never committed. The per-network input is the
+`genesis_proof` box's payload: the system karma and faucet credit boxes are byte-identical on
+testnet and devnet, so the proof box is the whole of what separates those two roots.
+
+⚠ **Dated, because the row above read as a live mechanism before one existed.** Genesis was
+per-network in this contract from the start and was not per-network in the tree: until
+2026-08-13 the seeded boxes never reached the AVL+ tree at all, so all three networks shared
+the empty-tree digest and nothing pinned a root to compare against. The row is true as of that
+date; statements resting on it that predate it were aspirational, and the `networkType`
+rejection note below is the instance worth naming.
+
 > **Id derivation is deliberately NOT network-scoped.** An earlier draft of this section
 > scoped the five domain tags (`BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
 > `IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`) by network. **Dropped 2026-08-06**, for two
@@ -1376,6 +1391,19 @@ is the one that cannot be circumvented.
 > block, and an operator who flips `NETWORK_TYPE` against an existing store fails at the
 > chain link because the stored genesis is the old network's. That left the field's marginal
 > value as the wording of an error message, bought with a byte in every header forever.
+>
+> ⚠ **The `NETWORK_TYPE` half of that sentence was false when it was written and is true from
+> 2026-08-13.** Rejecting the field was argued partly on a chain link that did not exist: with
+> no per-network genesis, flipping `NETWORK_TYPE` against an existing store changed the
+> profile and nothing else, and the store carried on. The rejection stands on its other
+> grounds either way — an attacker fills the field in correctly, and the rule's stated
+> enforcement point was homeless in three contracts. What changed is that the argument now
+> holds: an operator who flips `NETWORK_TYPE` and starts against a store carrying the old
+> network's genesis is on a chain that forks from every peer at height 1, which is the failure
+> the sentence claims. ⚠ **It is not caught at boot, and the sentence does not claim it is.**
+> Seeding is keyed on the committed flag, so `assertGenesisRoot` does not re-run against a
+> store that already has a genesis; refusing there would need a stored network stamp, which
+> nothing writes.
 >
 > **Its stated enforcement point did not exist.** Both this section and `VALIDATION_INTERFACE`
 > put the profile match "at the structure gate" — but `verifyOrderingBlockStructure` lives in

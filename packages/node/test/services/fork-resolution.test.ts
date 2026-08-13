@@ -488,7 +488,17 @@ describe('findForkPoint', () => {
     expect(forkPoint).toBe(2);
   });
 
-  it('returns null when no common ancestor found', async () => {
+  it('two chains sharing no block fork at the genesis state', async () => {
+    // The rule this pins: reaching height 0 IS a common ancestor. Height 0
+    // holds no block and no hash, so nothing here matches — but every node on
+    // a network holds a byte-identical height-0 state (`assertGenesisRoot`
+    // makes a divergent one fail-stop), so two chains inside the reorg window
+    // that share no block still share genesis, and it is the only ancestor
+    // they have. Before this rule the pair below answered null and a mesh
+    // whose nodes each mined their own height 1 could never converge.
+    //
+    // The null case did not disappear with it: it moved to the depth bound,
+    // which the two tests below pin from either side.
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -530,7 +540,7 @@ describe('findForkPoint', () => {
 
     const forkResolution = await importForkResolution();
     const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
-    expect(forkPoint).toBeNull();
+    expect(forkPoint).toBe(0);
   });
 
   it('returns null when depth exceeds MAX_REORG_DEPTH', async () => {
@@ -588,6 +598,127 @@ describe('findForkPoint', () => {
     const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
     // The common ancestor (deepBlock) is beyond MAX_REORG_DEPTH from our tip
     expect(forkPoint).toBeNull();
+  });
+
+  it('height 0 is reachable up to MAX_REORG_DEPTH and not one block further', async () => {
+    // **The bound did not move.** Height 0 became a valid *answer*; how far
+    // back a reorg may go is unchanged, and it has to be: journal retention is
+    // the real floor under revert depth (`revertBlock` throws without a
+    // journal, and `purgeOldJournals` clears everything below
+    // `height − MAX_REORG_DEPTH`). Answering 0 from deeper than the window
+    // would name an ancestor the node cannot revert to.
+    //
+    // Both edges, on one chain, because a single-sided assertion cannot tell a
+    // correct bound from an absent one.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    const forkResolution = await importForkResolution();
+    const ordering = await importOrdering();
+    const MAX_DEPTH = forkResolution.MAX_REORG_DEPTH;
+
+    /** A peer tip that chains from nothing we hold — no block can ever match. */
+    const unrelated = (height: number): BlockHeader => ({
+      protocolVersion: PROTOCOL_VERSION,
+      height,
+      prevBlockHash: 'cd'.repeat(32),
+      subBlockRoot: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: '00'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 256 * 4,
+      createdAt: Date.now(),
+    });
+
+    for (let i = 0; i < MAX_DEPTH; i++) {
+      const post = makePost(author.userId, `bound ${i}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      await mineNextBlock(bc);
+    }
+
+    // At exactly MAX_REORG_DEPTH the walk covers heights MAX_DEPTH..1 and then
+    // runs out of blocks — genesis is inside the window.
+    const atBound = ordering.getOrderingBlock(MAX_DEPTH);
+    expect(forkResolution.findForkPoint(atBound!.header, [unrelated(MAX_DEPTH)])).toBe(0);
+
+    // One block further, the walk is truncated by the depth bound before it
+    // reaches the bottom, and the answer goes back to "no common ancestor".
+    const post = makePost(author.userId, 'one past the bound');
+    const postId = computePostId(post);
+    posts.insertPost(post, encodePost(post));
+    mempool.insertSubBlock(postId, 1000);
+    await mineNextBlock(bc);
+
+    const pastBound = ordering.getOrderingBlock(MAX_DEPTH + 1);
+    expect(pastBound).not.toBeNull();
+    expect(
+      forkResolution.findForkPoint(pastBound!.header, [unrelated(MAX_DEPTH + 1)]),
+    ).toBeNull();
+  });
+
+  it('a poisoned batch is still refused whole rather than falling through to genesis', async () => {
+    // The genesis fallback must sit behind the batch check, not in front of it.
+    // In front, a peer could turn "this batch is uninterpretable" into "we fork
+    // at genesis" by corrupting one entry — buying a full-chain reorg attempt
+    // with a single malformed header, on exactly the short chains where the
+    // whole walk is inside the window.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    for (let i = 0; i < 2; i++) {
+      const post = makePost(author.userId, `poison control ${i}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      await mineNextBlock(bc);
+    }
+
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const ourTip = ordering.getOrderingBlock(2)!;
+    const sane: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 2,
+      prevBlockHash: 'ef'.repeat(32),
+      subBlockRoot: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: '00'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 256 * 4,
+      createdAt: Date.now(),
+    };
+
+    // Control: this batch, unpoisoned, falls through to genesis.
+    expect(forkResolution.findForkPoint(ourTip.header, [sane])).toBe(0);
+
+    // The same batch with one entry outside the encodable domain is refused,
+    // and the refusal names the batch rather than answering a fork point.
+    expect(
+      forkResolution.findForkPoint(ourTip.header, [sane, { ...sane, createdAt: -1 }]),
+    ).toBeNull();
+    expect(
+      warn.mock.calls.some(([m]) => typeof m === 'string' && m.includes('refusing peer header batch')),
+    ).toBe(true);
+    warn.mockRestore();
   });
 
   // -------------------------------------------------------------------------
@@ -980,9 +1111,11 @@ describe('a stored header that cannot be hashed', () => {
     const { tip, forkResolution } = await storeThreeBlocks();
 
     // The control the throw below needs: with the chain intact, the walk runs
-    // off the bottom at height 0 and returns an ordinary answer. Terminating on
-    // a missing block is normal *there* and only there.
-    expect(forkResolution.findForkPoint(tip, [])).toBeNull();
+    // out of blocks at height 0 and returns an ordinary answer — the genesis
+    // state, which is the ancestor a three-block chain shares with anything.
+    // Running out of blocks is normal *there* and only there; a hole anywhere
+    // above it throws.
+    expect(forkResolution.findForkPoint(tip, [])).toBe(0);
   });
 
   it('findForkPoint stops the node on a hole rather than reorging without it', async () => {
@@ -1595,6 +1728,64 @@ describe('reorg', () => {
 
     // Default cap (10000): the reverted sub-blocks come back.
     expect(mempool.getPendingEntries(100).length).toBeGreaterThan(1);
+  });
+
+  it('a fork point of 0 rolls the AVL prover back to the pinned genesis root', async () => {
+    // What `findForkPoint`'s new answer costs downstream. `reorg` walks
+    // journals from the fork height and rolls the prover to
+    // `versionAtOrBeforeHeight(forkHeight)` — and at 0 that version is the
+    // genesis one only because `seedGenesisState` deletes the empty tree's
+    // height-0 version before writing its own. Every other suite here runs
+    // without a prover, so nothing else exercises this.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const proverMod = await import('../../src/state/avl-prover.js');
+    proverMod.createAvlProver();
+    const system = await import('../../src/store/system.js');
+    const genesis = await import('../../src/services/genesis-state.js');
+    genesis.seedGenesisState(system.initSystemKeypair().publicKey, 0);
+
+    const root = (): string =>
+      Buffer.from(proverMod.getAvlProver().prover.digest()!).toString('hex');
+    // Imported from the same module graph the seeder just ran in — after
+    // `vi.resetModules()` a statically imported `config` is a different
+    // instance from the one `genesis-state` read.
+    const { config } = await import('../../src/config.js');
+    const genesisRoot = root();
+    expect(genesisRoot).toBe(config.profile.genesisStateRoot);
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    for (let i = 0; i < 3; i++) {
+      const post = makePost(author.userId, `to genesis ${i}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      await mineNextBlock(bc);
+    }
+
+    const ordering = await importOrdering();
+    const chain = [1, 2, 3].map((h) => ordering.getOrderingBlock(h)!);
+    expect(root()).not.toBe(genesisRoot);
+
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(0, []);
+
+    // The whole chain is gone and the state is exactly what genesis seeded —
+    // not merely "some earlier root", which a rollback to the empty tree would
+    // also satisfy.
+    expect(ordering.getCurrentHeight()).toBe(0);
+    expect(root()).toBe(genesisRoot);
+
+    // And the fork point is re-appliable: apply from 0 takes the genesis branch
+    // of the chain-link check (`prevBlockHash` all zeros, height 1).
+    forkResolution.reorg(0, chain);
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) expect(ordering.getOrderingBlock(h)).not.toBeNull();
   });
 });
 

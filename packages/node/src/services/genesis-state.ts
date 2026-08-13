@@ -21,10 +21,47 @@ import type { AnyBox } from '@dagsocial/types';
  * which `ensureSystemKarmaBox` and its siblings clamp to `>= 1`: a synthetic
  * mint txId commits to a height, and 0 is not one a block ever settles at.
  */
-const GENESIS_HEIGHT = 0;
+export const GENESIS_HEIGHT = 0;
 
 /** `system_config` key recording that the genesis state has been committed. */
 const GENESIS_COMMITTED_KEY = 'genesis_committed';
+
+/**
+ * Refuse a genesis state that is not the one this network agreed on.
+ *
+ * The height-0 root the tree now holds must equal the profile's
+ * `genesisStateRoot` (ARCHITECTURE → "What varies per network"). A divergent
+ * root is not a local anomaly: it is a chain that forks from every honest peer
+ * at height 1, discovered later and somewhere else. Refusal rather than a
+ * warning follows `loadConfig`'s precedent for a below-floor ordering target —
+ * silently proceeding runs against a parameter nobody configured.
+ *
+ * **This is a seeding postcondition, not a boot invariant, and the difference
+ * is not stylistic.** `seedGenesisState` is keyed on the committed flag, so a
+ * node that has ever applied a block does not re-seed and its prover holds the
+ * root of whatever height it stopped at, which is not this one. A boot-time
+ * comparison against the genesis pin therefore fails on every node with a
+ * chain, and the only place the comparison means anything is the path that
+ * just built the state it is checking. `test/services/genesis-state.test.ts`
+ * pins that with a mined block rather than leaving it as an argument.
+ *
+ * Called inside the seeding transaction rather than after it, so a mismatched
+ * genesis is never committed: the throw rolls the boxes, the records, the tree
+ * rows and the committed flag back together. Asserting after the commit would
+ * fail exactly once — the next start would find the flag set, skip seeding, and
+ * run on the divergent genesis with nothing left to check it.
+ */
+export function assertGenesisRoot(): void {
+  const digest = getAvlProver().prover.digest();
+  const seeded = digest === null ? null : Buffer.from(digest).toString('hex');
+  if (seeded !== config.profile.genesisStateRoot) {
+    throw new Error(
+      `Genesis state root mismatch on network "${config.networkType}": seeded ` +
+      `${seeded ?? 'null'}, profile pins ${config.profile.genesisStateRoot}. ` +
+      'Refusing to start — this node would fork from every peer at height 1.',
+    );
+  }
+}
 
 /** Whether this store has already committed its genesis state. */
 export function isGenesisCommitted(): boolean {
@@ -138,6 +175,12 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
     // tree back over the genesis one.
     handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
     bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records);
+
+    // The postcondition of the two lines above: the genesis this node just
+    // built is the genesis its network pins. Inside the transaction, so a
+    // divergent one is refused *and* rolled back rather than committed and
+    // then complained about once.
+    assertGenesisRoot();
 
     markGenesisCommitted();
   })();

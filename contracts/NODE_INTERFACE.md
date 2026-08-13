@@ -2812,6 +2812,7 @@ the handler.
 | `stump-engine.ts` | Verifiable prune execution | DAG content |
 | `content-sweep.ts` | Placeholder resolution (missing post content pulled from peers) | Post creation |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
+| `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
 **Validation pipeline (phased, increasing cost):**
 1. Signature verification (cheap — Ed25519 verify)
@@ -2834,6 +2835,65 @@ External queries serve only up to `post_validated_height`.
 > write-only `+1` counters — not heights, never read, not reset on reorg. Duplicated in
 > `VALIDATION_INTERFACE.md → Phased Validation Pipeline`; **change both together or
 > neither.**
+
+### The genesis state root is checked fail-stop, once, where it is built
+
+`seedGenesisState` computes the height-0 AVL+ root over the boxes it seeded and compares it to
+the profile's `genesisStateRoot`. **A mismatch throws and the node does not start**
+(`assertGenesisRoot`, exported so it is reachable without a boot). Refusal rather than a
+warning follows `loadConfig`'s below-floor ordering target: proceeding silently means running a
+chain that forks from every honest peer at height 1, discovered later and somewhere else.
+
+**It is a seeding postcondition, not a boot invariant, and the two are not interchangeable.**
+Seeding is keyed on the `genesis_committed` flag, so a node that has ever applied a block does
+not re-seed and its prover holds the root of the height it stopped at — measured with a mined
+block, not argued. A boot-time comparison against the genesis pin would therefore refuse every
+node with a chain. The comparison means something only on the path that just built the state it
+checks. Ergo checks its `genesisStateDigestHex` in the same place, at initialisation rather
+than on every start.
+
+**Inside the seeding transaction, not after it.** The throw rolls back the boxes, the identity
+record, the tree rows and the flag together, so a divergent genesis is never committed.
+Checked after the commit it would fail exactly once: the next start finds the flag set, skips
+seeding, and runs on the divergent state with nothing left to check it.
+
+⚠ **Two things this does NOT cover.** A store whose genesis is already committed is never
+re-checked, so flipping `NETWORK_TYPE` against one is caught at the chain link when it meets
+peers, not at boot (ARCHITECTURE → "How the network is committed"). And the pin moves whenever
+the box bytes move — **C8 re-derives two of the three roots**, caught loudly here rather than
+silently.
+
+### Fork resolution bottoms out at the genesis state
+
+**Reaching height 0 in the ancestor walk IS a common ancestor**, at depth = our height.
+`findForkPoint` returns `GENESIS_HEIGHT` (`0`) where it previously returned `null` for chains
+that share no block. Heights still start at 1, so height 0 holds no block and no hash — what it
+holds is the genesis *state*, which every node on a network shares byte for byte because the
+section above makes any other one fail-stop. There is nothing for a peer to lie about: a
+height-1 block has its `prevBlockHash` checked as all-zeros before it can be stored, and that
+check is on every path into the store — `ordering_blocks` has one writer,
+`applyBlockBody`'s `storeCreateOrderingBlock`, downstream of the chain-link gate in the same
+function, and all four callers of `applyOrderingBlock` (gossip, sync pull, block creator,
+`reorg`) go through it.
+
+**`MAX_REORG_DEPTH` does not move.** Height 0 became a reachable *answer*; how far back a reorg
+may go is unchanged, and must be — journal retention is the real floor under revert depth, and
+`revertBlock` throws without a journal. The walk reaches 0 only when our height is at or below
+the bound, which is exactly when every journal down to height 1 is still retained. Deeper than
+that the answer is still `null`.
+
+**The genesis fallback sits behind the batch check, deliberately.** A header batch with an
+unhashable entry is refused whole and answers `null` — it does not fall through to genesis.
+In front, a peer could turn one malformed header into "we fork at genesis" and buy a
+full-chain reorg attempt with it, on precisely the short chains where the whole walk is inside
+the window.
+
+**Downstream of a `0`,** `reorg` reverts every block, rolls the prover to
+`versionAtOrBeforeHeight(0)` — the genesis version, and the genesis one only because seeding
+deletes the empty tree's height-0 version before writing its own — and re-applies from a
+`currentHeight` of 0, which is the chain-link check's genesis branch. Verified end to end
+rather than reasoned about; `test/services/fork-resolution.test.ts` pins the round trip against
+the pinned root.
 
 ---
 

@@ -3,8 +3,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { profileFor } from '@dagsocial/types';
+import { computePostId, encodePost, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
+import { makePost, makeTestConfig, makeTestIdentity, mineNextBlock } from '../helpers.js';
 
 /**
  * Genesis is **state, not a block**, and this suite pins the half of that claim
@@ -210,6 +211,19 @@ describe('seedGenesisState', () => {
     for (const root of roots) expect(root).toMatch(/^[0-9a-f]{66}$/);
   });
 
+  it('each profile seeds exactly the root it pins', async () => {
+    // ⚠ **This is what makes the three pinned constants facts rather than
+    // trusted values.** They were emitted by running the seeder once and pasted
+    // into `packages/types/src/network.ts` by hand; the tests around them assert
+    // only that the three are *distinct*, which a wrong-but-different value
+    // satisfies. A boot-time check catches a bad pin when someone starts a node.
+    // This catches it on every gate run, in the package that derives the root.
+    for (const network of ['mainnet', 'testnet', 'devnet']) {
+      const seeded = await underProfile(network);
+      expect(seeded.root, network).toBe(profileFor(network as NetworkType).genesisStateRoot);
+    }
+  });
+
   it('survives a restart — the reopened store loads the genesis tree, not the empty one', async () => {
     // The failure this catches is specific: the prover constructor writes the
     // EMPTY tree's version at height 0, and `version()` breaks a height tie
@@ -231,6 +245,105 @@ describe('seedGenesisState', () => {
       reopened.closeDb();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * The fail-stop on a divergent genesis (ARCHITECTURE → "How the network is
+ * committed"). What it guards is not a local anomaly: a node whose height-0
+ * state differs from its network's forks from every honest peer at height 1,
+ * and every symptom of that surfaces later and somewhere else.
+ */
+describe('assertGenesisRoot', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  it('passes on the state the seeder just built', async () => {
+    const { s } = await seededRoot(':memory:');
+    expect(() => s.genesis.assertGenesisRoot()).not.toThrow();
+    s.closeDb();
+  });
+
+  it('refuses an unseeded tree, naming both roots', async () => {
+    const s = await importFresh();
+    s.initDb(':memory:');
+    s.prover.createAvlProver();
+
+    // The empty tree, which is what every network's height-0 root was until the
+    // seeded boxes reached the tree. The message has to carry both values —
+    // "mismatch" alone leaves an operator with a refusing node and no way to
+    // tell a bad pin from a bad store.
+    let message = '';
+    try { s.genesis.assertGenesisRoot(); } catch (err) { message = String(err); }
+    expect(message).toMatch(/genesis state root mismatch/i);
+    expect(message).toContain(profileFor('devnet').genesisStateRoot);
+    expect(message).toContain(await emptyTreeRoot());
+    s.closeDb();
+  });
+
+  it('a tree that has moved past genesis fails it — which is why it is not a boot check', async () => {
+    // Measured, because the placement rests on it: `seedGenesisState` is keyed
+    // on the committed flag, so a restarted node does not re-seed and its
+    // prover loads the tree at whatever height it stopped at. Comparing *that*
+    // against the genesis pin at boot would refuse every node that has ever
+    // applied a block. The check belongs on the path that builds the state.
+    const { root: genesisRoot, s } = await seededRoot(':memory:');
+
+    const author = makeTestIdentity();
+    const posts = await import('../../src/store/posts.js');
+    const mempool = await import('../../src/store/mempool.js');
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
+    try {
+      const post = makePost(author.userId, 'past genesis');
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(computePostId(post), 1000);
+      expect(await mineNextBlock(bc)).not.toBeNull();
+
+      expect(rootOf(s)).not.toBe(genesisRoot);
+      expect(() => s.genesis.assertGenesisRoot()).toThrow(/genesis state root mismatch/i);
+    } finally {
+      bc.stopBlockCreator();
+      s.closeDb();
+    }
+  });
+
+  it('a divergent genesis is refused AND rolled back — never committed', async () => {
+    // The reason the assertion sits inside the seeding transaction. Committed
+    // first and checked after, the refusal would fire exactly once: the next
+    // start finds `genesis_committed` set, skips seeding, and runs on the
+    // divergent state with nothing left to check it.
+    vi.resetModules();
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: {
+          ...actual.config,
+          profile: { ...actual.config.profile, genesisStateRoot: 'ab'.repeat(33) },
+        },
+      };
+    });
+    try {
+      const s = await importFresh();
+      s.initDb(':memory:');
+      s.prover.createAvlProver();
+      const keypair = s.system.initSystemKeypair();
+
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 0))
+        .toThrow(/genesis state root mismatch/i);
+
+      // Nothing survived the throw: no flag, no boxes. A restart re-attempts
+      // and re-fails, rather than booting on a genesis nobody agreed to.
+      expect(s.genesis.isGenesisCommitted()).toBe(false);
+      expect(s.utxo.getUnspentBoxes()).toHaveLength(0);
+      s.closeDb();
+    } finally {
+      vi.doUnmock('../../src/config.js');
+      vi.resetModules();
     }
   });
 });
