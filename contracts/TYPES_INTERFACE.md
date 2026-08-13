@@ -1105,8 +1105,8 @@ from this table — a use that reads every cell as an instruction rather than as
 
 | Type | Trailing fields |
 |---|---|
-| `karma` | `b32(owner)` ‖ `lpUtf8(proofSource)` ‖ `opt(decayBurn, u8)` |
-| `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
+| `karma` | `b32(owner)` ‖ `opt(decayBurn, u8)` |
+| `credit` | `b32(owner)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
 | `genesis_proof` | `lp(payload)` |
 | `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
@@ -1126,12 +1126,15 @@ row and no other — a second implementation that took the bound from `lp` itsel
 `tx.preimages`, `utxoTxs` and the block's three sections, all of which use the same primitive
 unbounded. Every other refusal these rows make belongs to the primitive named in the cell.
 
-`credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
-(`heightOrTransfer`). A `vlqU` there would throw on every user-path credit box.
+**`karma` and `credit` are the two arms with no variable-length field**, so
+`genesis_proof.payload` above is the only place inside a box where a length prefix can change
+width. Both arms are a fixed 32-byte owner and one option, and the `enum8` tag is the whole of
+what separates them at equal `value`.
 
-`karma.proofSource` is `lpUtf8` because it is typed `string` (`PostId | StumpHash | InviteTxId`) with
-no pinned length. ⚠ **Grep the producers before narrowing this to `b32`** — a bullet drafted from the
-type is a hypothesis, which is how the credit `proofSource` range broke 13 honest-path tests.
+⚠ **The option tag is what keeps absence from being a value.** An absent `lockedUntilBlock`
+writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `vlqU` with `0`
+standing for "unlocked" would give an unlocked box and a box locked until block 0 one id. The
+same holds for `decayBurn`, which is the field the decay clock reads.
 
 **`bond.inviteePublicKey` is `opt(b32)`, not `b32` — corrected 2026-08-09, and the error was this
 table's.** The field is **0-or-32 bytes**: this contract says so at the BondBox definition above
