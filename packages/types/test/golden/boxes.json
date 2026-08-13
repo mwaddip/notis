@@ -12,7 +12,7 @@
         "proofSource": "genesis"
       },
       "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300",
-      "note": "43 bytes, down from 114. The CBOR form spent a two-byte map header, five key names and nine bytes on a value of 100; this spends one tag byte, one value byte and no key names at all. Trailing 00 is the absent decayBurn option."
+      "note": "43 bytes: one tag byte, one value byte, the 32-byte owner, and a seven-byte proofSource behind its length prefix. No key names — the field list is the layout table's, so it costs nothing in the bytes. Trailing 00 is the absent decayBurn option."
     },
     {
       "name": "box/karma-decay-burn",
@@ -62,7 +62,7 @@
         "lockedUntilBlock": 720
       },
       "bytes": "0180eae1eac58af715000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fe0c50801d005",
-      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. proofSource 70000 is above 65536 and carries the wide-int pin (it moved here from the deleted createdAtBlock). lockedUntilBlock present, so the option's other branch is covered on this type too."
+      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. proofSource 70000 is above 65536 and carries the wide-int pin: `credit.proofSource` is the box arms' only `vlqS`, and this is the vector that takes it past one byte. lockedUntilBlock present, so the option's other branch is covered on this type too."
     },
     {
       "name": "box/invite",
@@ -111,7 +111,7 @@
         "probationEndBlock": 1017
       },
       "bytes": "041956565656565656565656565656565656565656565656565656565656565656560201cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc11f907",
-      "note": "The widest layout: five fields after the prefix, alternating fixed-width and VLQ. The `01` before the invitee key is the option's PRESENT tag: this field is 0-or-32 bytes, so it is `opt(b32)` and not `b32`. 71 bytes, one more than the b32 form this replaced (2026-08-09)."
+      "note": "The widest layout: five fields after the prefix, alternating fixed-width and VLQ. The `01` before the invitee key is the option's PRESENT tag: this field is 0-or-32 bytes, so it is `opt(b32)` and not `b32`. 71 bytes."
     },
     {
       "name": "box/bond-unclaimed",
@@ -126,7 +126,7 @@
         "probationEndBlock": 1017
       },
       "bytes": "04195656565656565656565656565656565656565656565656565656565656565656020011f907",
-      "note": "The SAME bond before commit, and the shape production actually creates: node rejects an invite-create whose bond output carries a key, because a pre-committed bond would let the inviter reclaim immediately and make the network's only sybil cost free. Under the b32 row this vector had no encoding at all — `writeBytesNOrThrow` threw on the empty field, so `computeTxId` threw on every invite creation. Both halves of the injectivity claim sit in these two vectors: `00` versus `01 ‖ 32 bytes`, differing in the first byte after `inviteOutputIndex`, so an unclaimed bond can never share an encoding with a committed one. Decode direction earns its keep here — absent must come back as EMPTY bytes, not null, or the re-encode compare fails."
+      "note": "The SAME bond before commit, and the shape production actually creates: node rejects an invite-create whose bond output carries a key, because a pre-committed bond would let the inviter reclaim immediately and make the network's only sybil cost free. Both halves of the injectivity claim sit in these two vectors: `00` versus `01 ‖ 32 bytes`, differing in the first byte after `inviteOutputIndex`, so an unclaimed bond can never share an encoding with a committed one. Decode direction earns its keep here — absent must come back as EMPTY bytes, not null, or the re-encode compare fails."
     },
     {
       "name": "box/post-lock",
