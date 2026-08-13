@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
-import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
+import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from './constants.js';
 import {
   type StructCodec,
   decodeStruct,
@@ -181,6 +182,10 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       // validity rule inside an encoder that does not own one. The length
       // prefix is the whole of the field's injectivity — appended raw, an empty
       // payload would be indistinguishable from the end of the box.
+      //
+      // Unbounded here and bounded in the reader: `MAX_GENESIS_PROOF_PAYLOAD_BYTES`
+      // is a decode rule, so a payload over it encodes and has no decoding —
+      // the same one-way shape as the `0xff` tag sentinel below.
       writeLp(w, box.payload);
       return;
     case 'bond':
@@ -218,6 +223,11 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
  * reviewer reads them as one table. `BOX_TYPE.read` rejects the reserved `0xff`
  * and every unassigned tag, so the writer's total-by-sentinel arm has no
  * decoding at all — a malformed box cannot round-trip as if it were fine.
+ *
+ * **One per-type domain rule lives here**, and it is the only one:
+ * `genesis_proof.payload` is bounded at `MAX_GENESIS_PROOF_PAYLOAD_BYTES`. Every
+ * other refusal this reader makes belongs to a primitive in `codec.ts` and
+ * therefore to every field that uses it; this one binds a single arm.
  *
  * **`guard` is not returned**, because it is not in the bytes. It is a
  * pure function of `boxType` — each box interface types it as a single literal —
@@ -263,12 +273,32 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         secretHash: readBytesN(r, 32),
         inviterId: readBytesN(r, 32),
       };
-    case 'genesis_proof':
-      return {
-        boxType,
-        value: value as 0n,
-        payload: readLp(r),
-      };
+    case 'genesis_proof': {
+      const payload = readLp(r);
+      // The payload bound, and this arm is the whole of it — `readLp` is the
+      // shared primitive behind every `lp` field in the format, so a bound
+      // there would bind `tx.preimages`, `utxoTxs` and the block's three
+      // sections along with this one.
+      //
+      // One-way, like the unknown-tag sentinel above: `writeLp` stays total, so
+      // an over-bound payload still *encodes* and `computeBoxId` still answers
+      // for it — it simply has no decoding, which is the standing this reader
+      // already gives an unassigned tag.
+      //
+      // `invalid-tag` because `ReaderErrorCode` (owned by `@dagsocial/wire`) has
+      // no member for a domain refusal; it is the code `readLpUtf8` already
+      // uses for the same shape — a length-prefixed field whose *contents* are
+      // out of domain — and the one `CodecError` picks for "present and wrong,
+      // which is not truncation".
+      if (payload.length > MAX_GENESIS_PROOF_PAYLOAD_BYTES) {
+        throw new ReaderError(
+          `readBoxContentFields: genesis_proof payload is ${payload.length} bytes, over ` +
+            `MAX_GENESIS_PROOF_PAYLOAD_BYTES (${MAX_GENESIS_PROOF_PAYLOAD_BYTES})`,
+          'invalid-tag',
+        );
+      }
+      return { boxType, value: value as 0n, payload };
+    }
     case 'bond':
       return {
         boxType,

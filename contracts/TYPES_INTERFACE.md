@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/types`
 **Protocol version:** 1
-**Last updated:** 2026-07-29
+**Last updated:** 2026-08-13
 
 ## Scope
 
@@ -510,9 +510,16 @@ This is a domain rule and not a memory-safety one. `ByteReader.readBytes` alread
 `remaining < n` and throws before touching memory, so no length prefix can provoke an allocation —
 the bound exists to make the field's domain checkable, not to protect the reader.
 
-> **AHEAD OF CODE.** The constant belongs in §Protocol Constants (`constants.ts`) beside
-> `MAX_CONTENT_BYTES` and `MAX_PARENT_REFS`; it is not listed there yet and the decoder does not yet
-> enforce it. Both land together.
+**The refusal is one-way, and that is the same asymmetry the tag sentinel has.** `writeLp` stays
+total, so an over-bound payload still *encodes* and `computeBoxId` still answers for it; what it has
+is **no decoding**. Reading the bound as an encode rule as well would make `canonicalBoxBytes`
+partial in a new field, which §Totality permits only where a sentinel would collide with a
+well-formed value — and here it would not, because nothing decodes the bytes back.
+
+The rejection is a `ReaderError` with code `invalid-tag`. `ReaderErrorCode` is `@dagsocial/wire`'s
+and has no member for a domain refusal; `readLpUtf8` already uses `invalid-tag` for the same shape —
+a length-prefixed field whose *contents* are out of domain — and `CodecError` states the general
+argument for the choice.
 
 ### BoxGuard
 
@@ -1094,6 +1101,12 @@ empty payload would be indistinguishable from the end of the box. It is also the
 tail is one field, so `enum8(3) ‖ vlqU64(0) ‖ u8(0)` is the smallest legal box of any type at three
 bytes.
 
+⚠ **`genesis_proof.payload` carries the one per-type domain rule in this table**: the reader refuses
+a payload over `MAX_GENESIS_PROOF_PAYLOAD_BYTES` (§GenesisProofBox, §Content limits). It binds this
+row and no other — a second implementation that took the bound from `lp` itself would refuse
+`tx.preimages`, `utxoTxs` and the block's three sections, all of which use the same primitive
+unbounded. Every other refusal these rows make belongs to the primitive named in the cell.
+
 `credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
 (`heightOrTransfer`). A `vlqU` there would throw on every user-path credit box.
 
@@ -1447,6 +1460,7 @@ export interface NetworkProfile {
   readonly genesisKarmaPerMember: bigint;
   readonly genesisCreditsPerMember: bigint;
   readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
+  readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
   readonly treasuryPubKey: string;
 }
 
@@ -1487,6 +1501,27 @@ change on a network that has not launched, not a format change — and it is cau
 since the payload moves the genesis state root. This is a fourth entry in the per-network set, whose
 burden §Network Identity puts on the addition; it is discharged by genesis already being a declared
 per-network axis rather than a new one.
+
+**`genesisStateRoot` is 66 hex characters, not 64.** The AVL+ digest is a 32-byte root label followed
+by a one-byte tree height — Ergo's 33-byte `genesisStateDigestHex` shape, and the same width
+`EMPTY_STATE_ROOT` and the block header's `stateRoot` already carry. A 64-character pin fails on all
+three values, and truncating one to fit silently discards the height byte.
+
+**It is derived, not chosen.** The value is the digest a node computes after seeding its genesis box
+set, and `genesisProofPayload` is the only input to it that differs per network — the system karma
+and faucet credit boxes are byte-identical everywhere they are seeded at all. So the two fields are
+one fact stated twice, and a pin that disagrees with the seeding is a node running a chain that forks
+from every honest peer at height 1. `NODE_INTERFACE` owns the comparison; this package can only hold
+the constant, since neither the serializer nor the prover that produce it live here.
+
+⚠ **Re-pin whenever anything a genesis box id derives from moves.** These are digests over box ids,
+so a change to the box encoding moves them with nothing here changing — the mismatch surfaces at
+node's boot check rather than in this file.
+
+**Both fields belong to the two networks' spread, not to mainnet alone.** `TESTNET_PROFILE` is
+`{ ...MAINNET_PROFILE, … }`, so a value written only into mainnet is inherited silently by testnet
+with no type error, collapsing the one field whose whole job is keeping the networks apart. Each is
+overridden explicitly and `network.test.ts` asserts the override rather than the spread.
 
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
@@ -1564,7 +1599,18 @@ export const PROTOCOL_VERSION = 1;
 ```typescript
 export const MAX_CONTENT_BYTES = 300;
 export const MAX_PARENT_REFS = 1;
+export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 ```
+
+The third bounds a **box** field rather than a post one, and it sits here because this section groups
+bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
+which structure carries them. The `### Genesis` block below holds the genesis *economics*, none of
+which is a format bound.
+
+⚠ **512 is provisional and derived from no measurement** — roughly Ergo's five-register no-premine
+payload plus headroom. Its *home* is not provisional. The three profile payloads are ~35 bytes, so
+nothing approaches it; `network.test.ts` is what checks them, because they are compile-time constants
+and the seeder that writes one deliberately does not measure it.
 
 ### State format
 

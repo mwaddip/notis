@@ -30,6 +30,25 @@ export const MAX_CONTENT_BYTES = 300;
  * folded into the positional-format migration.
  */
 export const MAX_PARENT_REFS = 1;
+/**
+ * How long a `genesis_proof` box's `payload` may be.
+ *
+ * **A decode rule, and only there** — the `genesis_proof` arm of
+ * `readBoxContentFields` (`utxo.ts`) refuses a longer payload, so such bytes
+ * have no decoding at all, the standing an unassigned box tag has. It is
+ * per-type: `readLp` is shared by every length-prefixed field in the format
+ * (`tx.preimages`, `utxoTxs`, the block's three sections) and a bound there
+ * would bind all of them.
+ *
+ * It is a **domain** rule and not a memory-safety one. `ByteReader.readBytes`
+ * refuses `remaining < n` and throws before allocating, so no length prefix can
+ * provoke an allocation whatever this value is.
+ *
+ * ⚠ **Provisional.** 512 is roughly Ergo's five-register no-premine payload plus
+ * headroom, and is derived from no measurement. The three profile payloads are
+ * ~35 bytes, so nothing approaches it; `network.test.ts` is what checks them.
+ */
+export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot

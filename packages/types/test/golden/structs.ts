@@ -21,7 +21,8 @@
  * an independent implementation reads the `.json` and checks itself both ways.
  */
 
-import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
+import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from '../../src/constants.js';
 import {
   readArr,
   readBool,
@@ -299,8 +300,23 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         };
       case 'invite':
         return { boxType, value, secretHash: readBytesN(r, 32), inviterId: readBytesN(r, 32) };
-      case 'genesis_proof':
-        return { boxType, value, payload: readLp(r) };
+      case 'genesis_proof': {
+        const payload = readLp(r);
+        // The payload bound, read off the layout table like every other row in
+        // this reader. It belongs to this arm and not to `readLp`, so a reader
+        // that took the bound from the primitive would refuse fields production
+        // accepts — which is the kind of disagreement the two implementations
+        // exist to surface. The constant is imported rather than restated: one
+        // definition, two readers.
+        if (payload.length > MAX_GENESIS_PROOF_PAYLOAD_BYTES) {
+          throw new ReaderError(
+            `boxContent: genesis_proof payload is ${payload.length} bytes, over ` +
+              `MAX_GENESIS_PROOF_PAYLOAD_BYTES (${MAX_GENESIS_PROOF_PAYLOAD_BYTES})`,
+            'invalid-tag',
+          );
+        }
+        return { boxType, value, payload };
+      }
       case 'bond':
         return {
           boxType,

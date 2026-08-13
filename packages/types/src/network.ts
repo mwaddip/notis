@@ -1,8 +1,12 @@
 // Network profiles — TYPES_INTERFACE §Network profiles, ARCHITECTURE §Network Identity.
 //
-// A network is the pairing of a parameter profile with a genesis block, selected by the
+// A network is the pairing of a parameter profile with a genesis state, selected by the
 // single `NETWORK_TYPE` setting (class `network-identity`). Two operators who differ on it
 // are on different networks; two who agree cannot differ on anything below it.
+//
+// Genesis is state and not a block: there is no height-0 block anywhere in this protocol.
+// Cold start seeds a box set into the AVL+ tree and height 1 is the first mined block, so
+// what a network commits to is the height-0 root below — `genesisStateRoot`.
 //
 // The per-network set covers timescale, difficulty and genesis ONLY. Every other constant
 // — format limits and every karma/credit cost — is universal: compress time, never
@@ -62,6 +66,23 @@ export interface NetworkProfile {
    * `genesisCommitteeKeys` are hex for the same reason.
    */
   readonly genesisProofPayload: string;
+  /**
+   * The height-0 AVL+ root over this network's genesis box set — Ergo's
+   * `genesisStateDigestHex`. Hex, **66 characters**: the digest is a 32-byte
+   * root label followed by a one-byte tree height, the same 33-byte shape
+   * `EMPTY_STATE_ROOT` and the block header's `stateRoot` carry.
+   *
+   * Derived rather than chosen — it is the digest a node computes after seeding,
+   * and `genesisProofPayload` is the only input to it that differs per network.
+   * A node whose seeded state does not reproduce this value is on a chain that
+   * forks from every honest peer at height 1, so node compares the two at boot
+   * and refuses to start on a mismatch.
+   *
+   * ⚠ **Re-pin when anything a genesis box's id derives from moves.** These are
+   * digests over box ids, so a change to the box encoding moves them without
+   * anything here changing.
+   */
+  readonly genesisStateRoot: string;
   readonly treasuryPubKey: string;
 }
 
@@ -111,6 +132,12 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // no-premine evidence later is a value change on a network that has not
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
+  // Over ONE leaf. Mainnet's genesis state is the proof box alone: the system
+  // karma and faucet credit boxes sit behind `isFaucetNetwork`, and a faucet on
+  // mainnet would be a defect rather than a shortfall. The other two networks
+  // seed four leaves — those two boxes, this one, and the system identity
+  // record — which is why this root's trailing height byte differs from theirs.
+  genesisStateRoot: 'df46d498fbf94b68dd05a57ddee4486a72211ffa5b1ca961272b2ef4f09b8c6c01',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -129,6 +156,10 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // — the one field whose whole job is to keep them apart.
   // hex("dagsocial/testnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f6d6f636b',
+  // Overridden for the same reason as the payload above, and it is the same
+  // single failure: the spread would hand testnet mainnet's root, and a root is
+  // exactly what a node checks its own seeded state against.
+  genesisStateRoot: '5102c07d088b4c3ab219c66a9392cef6a0b19630088e006839e955fd23ccf79403',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -173,6 +204,10 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
+  // Testnet and devnet seed byte-identical karma and credit boxes — same system
+  // keypair, same values — so the proof box is the whole difference between
+  // these two roots.
+  genesisStateRoot: 'fc6df0a1293cfe0b16e18410c4821a9a506175befba787f326184ea53d499a4603',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 

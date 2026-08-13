@@ -19,8 +19,11 @@ import {
   INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
+  MAX_GENESIS_PROOF_PAYLOAD_BYTES,
   encodeTx,
   decodeTx,
+  encodeUtxoTxTree,
+  decodeUtxoTxTree,
 } from '../src/index.js';
 import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, UtxoTransaction, MintReason } from '../src/index.js';
 
@@ -647,6 +650,62 @@ describe('genesis_proof', () => {
       computeCandidateBoxId(makeProofCandidate(encode(s)), FIXTURE_TX_ID, 0),
     );
     expect(new Set(ids).size).toBe(3);
+  });
+
+  /**
+   * `MAX_GENESIS_PROOF_PAYLOAD_BYTES` is a **decode** rule on this arm, so the
+   * pair that pins it is the boundary — at the bound decodes, one byte past it
+   * does not.
+   *
+   * ⚠ **The boundary pair is the assertion, and a single over-bound case would
+   * not be one.** A payload of either length is well-formed `lp` and re-encodes
+   * identically, so nothing else in the pipeline has a threshold anywhere near
+   * 512: only this rule can separate the two. A test that asserted rejection
+   * alone would be green whether the bound existed or the reader had merely run
+   * out of some other rope.
+   */
+  const atBound = new Uint8Array(MAX_GENESIS_PROOF_PAYLOAD_BYTES).fill(0x5a);
+  const overBound = new Uint8Array(MAX_GENESIS_PROOF_PAYLOAD_BYTES + 1).fill(0x5a);
+
+  it('decodes a payload at the bound and refuses the next byte', () => {
+    const decoded = boxRecordFromBytes(boxRecordBytes(makeProofCandidate(atBound), FIXTURE_TX_ID, 0));
+    expect((decoded.candidate as CandidateOf<GenesisProofBox>).payload).toEqual(atBound);
+
+    // The `invalid-tag` code is the assertion, not `toThrow` alone — the same
+    // reason the unassigned-tag loop in `boxRecordFromBytes` asserts a code.
+    // `readLpUtf8` is the precedent for the choice: a domain refusal on the
+    // contents of a length-prefixed field, where `ReaderErrorCode` offers
+    // nothing narrower than "present and wrong, which is not truncation".
+    let thrown: unknown;
+    try {
+      boxRecordFromBytes(boxRecordBytes(makeProofCandidate(overBound), FIXTURE_TX_ID, 0));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReaderError);
+    expect(thrown).not.toBeInstanceOf(CodecError);
+    expect((thrown as ReaderError).code).toBe('invalid-tag');
+  });
+
+  it('still ENCODES an over-bound payload — the refusal is one-way', () => {
+    // The writers stay total (TYPES_INTERFACE → Totality). The bound gives an
+    // over-bound payload **no decoding**, which is the standing an unassigned
+    // tag has, and does not make it unencodable — so `computeBoxId` still
+    // answers for one and the encode/decode asymmetry stays the one this file
+    // already relies on rather than a new class.
+    const bytes = canonicalBoxBytes(makeProofCandidate(overBound));
+    expect(bytes[0]).toBe(3);
+    // tag ‖ vlqU64(0) ‖ vlqU(513) ‖ 513 bytes — the count needs two bytes past 127.
+    expect(bytes.length).toBe(1 + 1 + 2 + overBound.length);
+  });
+
+  it('binds this arm alone — another lp field reads a payload it would refuse', () => {
+    // Deliberately NOT in `readLp` (`src/codec.ts`), which every `lp` field
+    // shares. `utxoTxTree.utxoTxs` is `arr(lp)` and goes through the same
+    // primitive on the same positional reader, so it is what a bound placed in
+    // the primitive would have caught along with this box — and it must not be.
+    const tree = { utxoTxIds: [], utxoTxs: [overBound], coinbaseOutputs: [] };
+    expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
   });
 });
 

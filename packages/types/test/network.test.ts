@@ -8,6 +8,7 @@ import {
   KNOWN_FRAME_MAGICS,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
+  MAX_GENESIS_PROOF_PAYLOAD_BYTES,
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile } from '../src/index.js';
 
@@ -31,6 +32,7 @@ const PROFILE_FIELDS = [
   'genesisKarmaPerMember',
   'genesisCreditsPerMember',
   'genesisProofPayload',
+  'genesisStateRoot',
   'treasuryPubKey',
 ].sort();
 
@@ -102,6 +104,10 @@ describe('NETWORK_PROFILES', () => {
       'magic',
       'genesisCommitteeKeys',
       'genesisProofPayload',
+      // Exempt for the same reason as the payload, and inseparably: the root is
+      // the digest over a box set whose only per-network member is that
+      // payload, so the two differ across networks together or not at all.
+      'genesisStateRoot',
       'treasuryPubKey',
     ]);
     const { mainnet, testnet } = NETWORK_PROFILES;
@@ -167,6 +173,54 @@ describe('NETWORK_PROFILES', () => {
       expect(payload).toMatch(/^([0-9a-f]{2})+$/);
     }
     expect(new Set(payloads).size).toBe(3);
+  });
+
+  // Where a misconfigured payload gets caught. The three are compile-time
+  // constants, so this is the only place they can be checked at all — node's
+  // seeder writes whichever one its profile carries and deliberately does not
+  // measure it, because a writer that checks its own input is complete only
+  // until there is a second writer.
+  it('every profile payload is inside the decode bound', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      // Hex, so bytes are half the characters — the bound is on the bytes the
+      // box carries, not on the string that spells them.
+      expect(profile.genesisProofPayload.length / 2, profile.networkType)
+        .toBeLessThanOrEqual(MAX_GENESIS_PROOF_PAYLOAD_BYTES);
+    }
+  });
+
+  // The pinned height-0 AVL root — Ergo's `genesisStateDigestHex`. A network's
+  // whole commitment: a node whose seeded state does not reproduce its
+  // profile's value is on a chain that forks from every honest peer at height 1.
+  //
+  // ⚠ **These are TRUSTED, not proven.** They were derived by node booting a
+  // fresh store under each profile; this package holds neither the serializer
+  // nor the prover that produced them, so nothing here can re-derive one. The
+  // assertions below are the shape and the distinctness — the literal bytes are
+  // checked where they can be, by node comparing seeded against pinned.
+  it('every profile pins a genesis state root, and no two share one', () => {
+    const roots = Object.values(NETWORK_PROFILES).map((p) => p.genesisStateRoot);
+    for (const root of roots) {
+      // 66 hex characters, not 64: the AVL+ digest is a 32-byte root label
+      // followed by a one-byte tree height, which is Ergo's 33-byte shape and
+      // what `EMPTY_STATE_ROOT` and the block header's `b33` stateRoot already
+      // carry. A 64-char pin would fail on all three, and truncating one to fit
+      // would silently drop the height byte.
+      expect(root).toMatch(/^[0-9a-f]{66}$/);
+    }
+    expect(new Set(roots).size).toBe(3);
+  });
+
+  // The spread trap, named rather than caught sideways. `TESTNET_PROFILE` is
+  // `{ ...MAINNET_PROFILE, … }`, so a value written into mainnet alone hands
+  // testnet mainnet's with no type error — and the "identical except identity,
+  // genesis and treasury" test above exempts both fields precisely so it cannot
+  // object. The two distinctness assertions do fail on it, as a set of size 2;
+  // this one fails saying which pair collided and on which field.
+  it('testnet overrides both genesis fields rather than inheriting mainnet\'s', () => {
+    const { mainnet, testnet } = NETWORK_PROFILES;
+    expect(testnet.genesisProofPayload).not.toBe(mainnet.genesisProofPayload);
+    expect(testnet.genesisStateRoot).not.toBe(mainnet.genesisStateRoot);
   });
 });
 

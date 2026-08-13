@@ -1,7 +1,7 @@
 # DAGsocial Architecture
 
 **Protocol version:** 1
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-13
 
 ## Status markers — the convention for every contract in this directory
 
@@ -1262,7 +1262,7 @@ not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wir
 > have — so there are **two commitment layers by decision**, and this section is complete
 > rather than partial on that axis.
 
-A network is the pairing of a **parameter profile** with a **genesis block**. Three exist:
+A network is the pairing of a **parameter profile** with a **genesis state**. Three exist:
 
 | Network | Purpose | Wiped on |
 |---|---|---|
@@ -1273,6 +1273,16 @@ A network is the pairing of a **parameter profile** with a **genesis block**. Th
 The taxonomy and the purpose split are Ergo's (`ergo.networkType`, with testnet for
 non-breaking and devnet for protocol-breaking testing). The third network is **not** called
 `regtest` — that is Bitcoin's word for a different thing.
+
+> ✅ **"genesis state", not "genesis block" — resolved 2026-08-13 in favour of the code.** This
+> sentence said *block* while `node/src/store/system.ts` said *"genesis is not a block"*, and the
+> code is right: **there is no height-0 block anywhere in this protocol.** Ergo's shape, verified in
+> source — cold start seeds a box set into the AVL+ tree behind a committed flag, and height **1** is
+> the first *mined* block.
+>
+> What a network commits to is therefore a **33-byte digest**, not a header: `NetworkProfile
+> .genesisStateRoot`, the height-0 AVL+ root, pinned per network and checked against the seeded state
+> at boot. `types/src/network.ts` carried the same sentence in code and moves with it.
 
 ### Selection
 
@@ -1296,7 +1306,14 @@ not be independently readable.
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `BOOTSTRAP_PERIOD_BLOCKS` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`GENESIS_CREDITS_PER_MEMBER` · `TREASURY_PUBKEY`
+`GENESIS_CREDITS_PER_MEMBER` · `TREASURY_PUBKEY` · `genesisProofPayload` · `genesisStateRoot`
+
+The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
+other name in the list is either a `constants.ts` export or a retired environment variable, and these
+two are neither. They are one fact stated twice — `genesisProofPayload` is the sole per-network input
+to the genesis box set, and `genesisStateRoot` is the height-0 AVL+ root over it. Both belong to the
+genesis axis this section already declares, so they add fields to a declared axis rather than opening
+a fourth.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
