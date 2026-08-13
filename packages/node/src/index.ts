@@ -64,6 +64,7 @@ try {
   ensureSchemaVersion();
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
+  closeDb();
   process.exit(1);
 }
 
@@ -74,8 +75,8 @@ try {
 // There is deliberately no rebuild-from-UTXO-set path here (NODE_INTERFACE →
 // the SUPERSEDED note on `bootstrapAvlProver`, 2026-08-07). Such a rebuild is
 // unsound: AVL+ tree shape is history-dependent, so a tree rebuilt by
-// re-inserting a set forks against one grown incrementally to the same content
-// (measured: identical content agreed on the digest in 6 of 10 rounds). Nor
+// re-inserting a set forks against one grown incrementally to the same content;
+// the note carries the measurement behind that. Nor
 // would a rebuild be reachable — under @ergots/avltree 0.4.0 the
 // PersistentBatchAVLProver constructor writes the empty-tree version to empty
 // storage and throws if `version()` is still null after, so an
@@ -95,8 +96,19 @@ createAvlProver();
 //     the /faucet mount and the /credits/faucet handler, so the three move
 //     together (NODE_INTERFACE §Faucet): mounting without provisioning gives a
 //     faucet with nothing to mint from.
+//
+//     Fail-stop on the same shape as the schema gate above: the message, then
+//     the database handle, then a non-zero exit. Every refusal `seedGenesisState`
+//     raises is a node that must not run, and each one writes a sentence for the
+//     operator that a bare top-level throw would bury under a stack trace.
 const systemKeypair = initSystemKeypair();
-seedGenesisState(systemKeypair.publicKey, getCurrentHeight());
+try {
+  seedGenesisState(systemKeypair.publicKey);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  closeDb();
+  process.exit(1);
+}
 if (isFaucetNetwork(config.networkType)) {
   console.log(
     `System keypair: ${Buffer.from(systemKeypair.publicKey).toString('hex').slice(0, 12)}... ` +

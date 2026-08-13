@@ -25,6 +25,7 @@ export {
   getKarmaBox,
   getKarmaBoxes,
   getKarmaValue,
+  getGenesisProofBox,
   getCreditBox,
   getCreditBoxes,
   getUnlockedCreditBoxes,
@@ -101,6 +102,7 @@ export {
   initSystemKeypair,
   ensureSystemKarmaBox,
   ensureFaucetCreditBox,
+  ensureGenesisProofBox,
   signWithSystemKey,
 } from './system.js';
 export type { SystemKeypair } from './system.js';

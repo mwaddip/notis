@@ -36,14 +36,26 @@ function rootOf(s: Store): string {
   return Buffer.from(digest).toString('hex');
 }
 
-/** Boot a fresh store the way `index.ts` does, and return its height-0 root. */
+/**
+ * Boot a fresh store the way `index.ts` does, and return its height-0 root.
+ *
+ * The handle belongs to the caller on the way out and to this function on the
+ * way down: seeding is a path that refuses, and a helper that only closes when
+ * nothing went wrong leaks exactly the databases whose failures these tests are
+ * about.
+ */
 async function seededRoot(dbPath: string): Promise<{ root: string; s: Store }> {
   const s = await importFresh();
   s.initDb(dbPath);
-  s.prover.createAvlProver();
-  const keypair = s.system.initSystemKeypair();
-  s.genesis.seedGenesisState(keypair.publicKey, 0);
-  return { root: rootOf(s), s };
+  try {
+    s.prover.createAvlProver();
+    const keypair = s.system.initSystemKeypair();
+    s.genesis.seedGenesisState(keypair.publicKey);
+    return { root: rootOf(s), s };
+  } catch (err) {
+    s.closeDb();
+    throw err;
+  }
 }
 
 /**
@@ -62,15 +74,19 @@ async function underProfile(
   const previous = process.env['NETWORK_TYPE'];
   process.env['NETWORK_TYPE'] = network;
   vi.resetModules();
+  let store: Store | null = null;
   try {
     const { root, s } = await seededRoot(':memory:');
+    store = s;
     const boxTypes = s.utxo.getUnspentBoxes().map((b) => b.boxType).sort();
     const proof = s.utxo.getGenesisProofBox();
     if (!proof) throw new Error(`${network} seeded no genesis proof box`);
     const proofPayload = Buffer.from(proof.payload).toString('hex');
-    s.closeDb();
     return { root, boxTypes, proofPayload };
   } finally {
+    // Beside the env restore, and for the same reason: the missing-proof-box
+    // throw above is a path this helper is expected to take.
+    store?.closeDb();
     if (previous === undefined) delete process.env['NETWORK_TYPE'];
     else process.env['NETWORK_TYPE'] = previous;
     vi.resetModules();
@@ -82,10 +98,14 @@ async function emptyTreeRoot(): Promise<string> {
   vi.resetModules();
   const s = await importFresh();
   s.initDb(':memory:');
-  s.prover.createAvlProver();
-  const root = rootOf(s);
-  s.closeDb();
-  return root;
+  try {
+    s.prover.createAvlProver();
+    // `rootOf` throws on a null digest, which is a real outcome for a prover
+    // that failed to write its empty-tree version.
+    return rootOf(s);
+  } finally {
+    s.closeDb();
+  }
 }
 
 describe('seedGenesisState', () => {
@@ -174,7 +194,7 @@ describe('seedGenesisState', () => {
   it('is idempotent — a second call leaves the root untouched', async () => {
     const { root, s } = await seededRoot(':memory:');
     const keypair = s.system.getSystemKeypair()!;
-    s.genesis.seedGenesisState(keypair.publicKey, 0);
+    s.genesis.seedGenesisState(keypair.publicKey);
     expect(rootOf(s)).toBe(root);
     expect(s.genesis.isGenesisCommitted()).toBe(true);
     s.closeDb();
@@ -292,7 +312,7 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
     try {
       const keypair = s.system.getSystemKeypair()!;
       let message = '';
-      try { s.genesis.seedGenesisState(keypair.publicKey, 1); } catch (err) { message = String(err); }
+      try { s.genesis.seedGenesisState(keypair.publicKey); } catch (err) { message = String(err); }
 
       expect(message).toMatch(/no committed genesis state/i);
       expect(message).toMatch(/refusing to start/i);
@@ -315,11 +335,11 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
     const { s, bc } = await storeWithBlocksAndNoGenesisFlag();
     try {
       const keypair = s.system.getSystemKeypair()!;
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 1)).toThrow();
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey)).toThrow();
       expect(s.genesis.isGenesisCommitted()).toBe(false);
 
       // A restart re-refuses rather than proceeding on a genesis nobody holds.
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 1)).toThrow();
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey)).toThrow();
     } finally {
       bc.stopBlockCreator();
       s.closeDb();
@@ -343,7 +363,7 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
       expect(await mineNextBlock(bc)).not.toBeNull();
 
       const keypair = s.system.getSystemKeypair()!;
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 1)).not.toThrow();
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey)).not.toThrow();
     } finally {
       bc.stopBlockCreator();
       s.closeDb();
@@ -381,7 +401,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     expect(s.utxo.getCreditBoxes(keypair.publicKey).length).toBeGreaterThan(0);
 
     let message = '';
-    try { s.genesis.seedGenesisState(keypair.publicKey, 0); } catch (err) { message = String(err); }
+    try { s.genesis.seedGenesisState(keypair.publicKey); } catch (err) { message = String(err); }
 
     expect(message).toMatch(/already holds/i);
     expect(message).toMatch(/refusing to start/i);
@@ -407,7 +427,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     s.records.deleteIdentityRecord(keypair.publicKey);
     expect(s.records.getAllIdentityRecords()).toHaveLength(0);
 
-    expect(() => s.genesis.seedGenesisState(keypair.publicKey, 0))
+    expect(() => s.genesis.seedGenesisState(keypair.publicKey))
       .toThrow(/already holds/i);
     s.closeDb();
   });
@@ -528,7 +548,7 @@ describe('assertGenesisRoot', () => {
       s.prover.createAvlProver();
       const keypair = s.system.initSystemKeypair();
 
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 0))
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey))
         .toThrow(/genesis state root mismatch/i);
 
       // Nothing survived the throw: no flag, no boxes. A restart re-attempts

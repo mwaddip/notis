@@ -64,7 +64,14 @@ export function assertGenesisRoot(): void {
   }
 }
 
-/** Whether this store has already committed its genesis state. */
+/**
+ * Whether this store has already committed its genesis state.
+ *
+ * ⚠ **Only authoritative when read under the seeding transaction's write lock.**
+ * Called anywhere else it answers about a moment already past, which is why
+ * `seedGenesisState` reads it twice — once outside as a fast path, once inside
+ * `BEGIN IMMEDIATE` as the claim it acts on.
+ */
 export function isGenesisCommitted(): boolean {
   const row = getDb()
     .prepare('SELECT 1 AS present FROM system_config WHERE key = ?')
@@ -86,9 +93,8 @@ function markGenesisCommitted(): void {
  * makes this sound rather than a rediscovery of the unsound one. That note
  * refuses re-inserting *an arbitrary set recovered from SQL into a tree that
  * already had history*: AVL+ shape is history-dependent, the history is exactly
- * what the recovery lost, and the rebuilt tree forks against the grown one —
- * measured at the time as identical content agreeing on the digest in 6 of 10
- * rounds.
+ * what the recovery lost, and the rebuilt tree forks against the grown one. The
+ * note carries the measurement behind that.
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
  * **fixed, known set** — the proof box on every network, plus the system karma
@@ -118,8 +124,25 @@ function markGenesisCommitted(): void {
  *
  * Idempotent on the committed flag, Ergo's shape: cold start is keyed on
  * "has genesis been committed", never on a height.
+ *
+ * **`BEGIN IMMEDIATE`, and the committed flag is read inside it.** Two processes
+ * opening one database file both see an uncommitted flag if either reads it
+ * outside the write lock, and both proceed to seed; the loser's bare
+ * `INSERT INTO system_config` then fails on the primary key, so a plain
+ * concurrency collision surfaces as a constraint trace with nothing in it about
+ * genesis. Taking the write lock at `BEGIN` rather than at the first write
+ * serialises the two before either decides, and the second one finds the flag
+ * set and returns. The read outside the transaction is a fast path only — it
+ * keeps every start after the first from taking a write lock — and is not what
+ * the seeding decision rests on.
+ *
+ * **The mint height is `GENESIS_HEIGHT`, not the store's current height.** The
+ * refusal above establishes that the store is at height 0, so a passed-in
+ * height could only ever be that same 0; the seeders clamp it to the `>= 1`
+ * their synthetic mint txIds require. Deriving it here rather than accepting it
+ * removes a parameter whose only admissible value the function already knows.
  */
-export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number): void {
+export function seedGenesisState(systemPubKey: Uint8Array): void {
   if (isGenesisCommitted()) return;
 
   const handle = getAvlProver();
@@ -173,6 +196,11 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
 
   try {
     getDb().transaction(() => {
+      // The authoritative read, under the write lock the docblock describes. A
+      // second process that raced this far finds the flag set and leaves the
+      // store to the one that won.
+      if (isGenesisCommitted()) return;
+
       // Genesis is defined as an operation on an EMPTY store, and the digest
       // pinned in the profile is only reproducible if that holds. Asserting it
       // is what makes every failure below say what is actually wrong.
@@ -196,8 +224,8 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
       // §Faucet). Mainnet's genesis state is the proof box alone — a faucet there
       // would be a defect.
       if (isFaucetNetwork(config.networkType)) {
-        ensureSystemKarmaBox(systemPubKey, currentHeight);
-        ensureFaucetCreditBox(systemPubKey, currentHeight);
+        ensureSystemKarmaBox(systemPubKey, GENESIS_HEIGHT);
+        ensureFaucetCreditBox(systemPubKey, GENESIS_HEIGHT);
       }
 
       // Every network, mainnet included — this box IS the network axis. The two
@@ -207,7 +235,7 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
       // those two genesis roots.
       ensureGenesisProofBox(
         new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
-        currentHeight,
+        GENESIS_HEIGHT,
       );
 
       // **The feed is read back from the store, never assembled from what the
@@ -240,7 +268,7 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
       assertGenesisRoot();
 
       markGenesisCommitted();
-    })();
+    }).immediate();
   } catch (err) {
     // The rows are already back; put the tree back with them, so the store and
     // the prover fail together rather than the prover surviving the store.

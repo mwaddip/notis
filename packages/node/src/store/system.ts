@@ -83,6 +83,21 @@ export function initSystemKeypair(): SystemKeypair {
 const SYSTEM_KARMA_INITIAL = 50_000n;
 
 /**
+ * The height a genesis mint commits to.
+ *
+ * A synthetic mint txId commits to a height and 0 is not one a block ever
+ * settles at (`genesis-state.ts` → `GENESIS_HEIGHT`), so the genesis seeder's
+ * own height — always 0, since seeding requires an empty store — is raised to
+ * the first real one. Every seeder below takes its height through here: the
+ * value reaches `mintTxIdFor`, so it is inside the box id, and three sites
+ * spelling out the same clamp is three chances for one of them to stop
+ * agreeing.
+ */
+function genesisMintHeight(currentHeight: number): number {
+  return currentHeight > 0 ? currentHeight : 1;
+}
+
+/**
  * Ensure the system karma box exists with the initial balance.
  * Idempotent — if a system karma box already exists, returns it without creating.
  */
@@ -93,7 +108,7 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   // One height for both the recorded block and the mint txId. Derived once
   // rather than clamped twice, so the id cannot encode a height the box does
   // not carry.
-  const genesisHeight = currentHeight > 0 ? currentHeight : 1;
+  const genesisHeight = genesisMintHeight(currentHeight);
 
   const box: KarmaBox = {
     boxType: 'karma',
@@ -152,7 +167,7 @@ export function ensureFaucetCreditBox(
   const existing = getCreditBoxes(systemPubKey);
   if (existing.length > 0) return existing[0]!;
 
-  const genesisHeight = currentHeight > 0 ? currentHeight : 1;
+  const genesisHeight = genesisMintHeight(currentHeight);
 
   // A `u32BE` selector separates the two genesis boxes, not the ASCII tags Spec
   // G §3.2 sketched: those are variable-length and merely prefix-free, which
@@ -196,7 +211,7 @@ export function ensureGenesisProofBox(
   const existing = getGenesisProofBox();
   if (existing) return existing;
 
-  const genesisHeight = currentHeight > 0 ? currentHeight : 1;
+  const genesisHeight = genesisMintHeight(currentHeight);
 
   // `GENESIS_PROOF` is the third `u32BE` selector, which is the whole cost of a
   // third genesis box — `genesisContext` was built fixed-width for exactly this
