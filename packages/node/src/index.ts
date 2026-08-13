@@ -117,7 +117,7 @@ if (isFaucetNetwork(config.networkType)) {
 }
 
 // 2. Create NetNode
-// The four discovery knobs are passed explicitly: NET_INTERFACE.md documents
+// The three discovery knobs are passed explicitly: NET_INTERFACE.md documents
 // their defaults as binding only when node supplies them — unset, net's
 // internal fallbacks silently govern instead.
 const net = new NetNode(
@@ -133,7 +133,6 @@ const net = new NetNode(
     maxPeers: config.maxPeers,
     minPeers: parseInt(process.env['MIN_PEERS'] ?? '3', 10),
     peerDbCap: parseInt(process.env['PEER_DB_CAP'] ?? '1000', 10),
-    outboundFillIntervalMs: parseInt(process.env['OUTBOUND_FILL_INTERVAL_MS'] ?? '30000', 10),
     outboundRedialCooldownMs: parseInt(process.env['OUTBOUND_REDIAL_COOLDOWN_MS'] ?? '60000', 10),
     penaltyScoreThreshold: parseInt(process.env['PENALTY_SCORE_THRESHOLD'] ?? '500', 10),
     temporalBanDurationMs: parseInt(process.env['TEMPORAL_BAN_DURATION_MS'] ?? '3600000', 10),
