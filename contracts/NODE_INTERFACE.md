@@ -1764,7 +1764,16 @@ If `treasuryPubKey` is configured, `CREDIT_TREASURY_PCT` (10%) goes to treasury.
 > mining again would extend it — an active miner could never spend. The rule
 > and the consolidation have to be designed together (a coinbase mint keeping
 > its own box is the obvious shape, and is how Bitcoin and Ergo do it), which
-> makes this an emission-model decision the karma-economics track owns.
+> makes this a **credit emission** decision — the coinbase mint shape and its
+> interaction with credit-box consolidation.
+>
+> ⚠ **It is not a karma decision, and this clause used to say it was — corrected 2026-08-13.**
+> It read *"an emission-model decision the karma-economics track owns"*, which reads as karma
+> design being unsettled. It is not: karma's rules are decided, and likes, decay, consolidation
+> and per-block settlement all shipped with P2-D. **Both ledgers share one design document**,
+> which is what made the misrouting easy to miss — and it was the only one of ten `karma-econ`
+> references in `contracts/` pointing at a credit subject. The other nine (invite emission,
+> vesting, forfeiture, bond burns, decay triggers) are genuinely karma and stay.
 
 ### Difficulty schedule
 
