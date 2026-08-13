@@ -58,11 +58,6 @@ describe('PostStore', () => {
     expect(store.has(1, entries[1]!.id)).toBe(true);
   });
 
-  it('schemaVersion returns the current version after init', () => {
-    const v = store.schemaVersion();
-    expect(v).toBeGreaterThanOrEqual(0);
-  });
-
   it('metaGet and metaPut roundtrip', () => {
     store.metaPut('test', new Uint8Array([7, 8, 9]));
     expect(store.metaGet('test')!).toEqual(new Uint8Array([7, 8, 9]));

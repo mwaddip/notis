@@ -77,10 +77,6 @@ export interface PostStore {
   /** Oldest sequence number present for a given type. */
   minSequencePresent(typeId: number): number;
 
-  // ---- Versioning ----
-
-  schemaVersion(): number;
-
   // ---- Lifecycle ----
 
   close(): void;

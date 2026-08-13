@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import { metaGet, metaPut, schemaVersion } from './meta.js';
+import { metaGet, metaPut } from './meta.js';
 import type { PostStore, StoreEntry } from './post-store.js';
 
 export class SqlitePostStore implements PostStore {
@@ -96,10 +96,6 @@ export class SqlitePostStore implements PostStore {
       'SELECT MIN(block_height) as min_h FROM dag_posts WHERE block_height IS NOT NULL'
     ).get() as { min_h: number | null } | undefined;
     return row?.min_h ?? 0;
-  }
-
-  schemaVersion(): number {
-    return schemaVersion();
   }
 
   close(): void {

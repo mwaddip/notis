@@ -116,8 +116,9 @@ const MIGRATIONS = [
   )`,
 
   // Mempool (unified sub-block + UTXO transaction pool). Sub-blocks are held by
-  // id, not CBOR. A database predating a schema change fails at the version
-  // gate rather than migrating — pre-stable, DB reset acceptable.
+  // id, not CBOR. A database predating a schema change is the operator's to
+  // wipe: the node neither versions its store nor refuses to start against an
+  // old one (NODE_INTERFACE → No store schema version, and none is owed).
   //
   // The like_/invite_/vouch_ columns are gate metadata (audit M-8): populated by
   // insertUtxoTx from the tx outputs so the correctness gates are plain SQL over
