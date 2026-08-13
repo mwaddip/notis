@@ -162,6 +162,14 @@ export function enterDiscovery(bootstrapPeerCount: number): void {
  * runs down once, and it mines alone as before.
  */
 export function isPeerReady(): boolean {
+  // `unavailable` answers before anything is asked of net. It is a statement
+  // about configuration — this node dials nobody — so no peer count can change
+  // it, and the clauses below have nothing to contribute: the re-arm is gated on
+  // `searching`, and `sawPeer` is read only there. Every other verdict here
+  // depends on the peer scan, including `discovery === null`, where a connected
+  // peer must still win; this is the one clause that can precede it.
+  if (discovery?.kind === 'unavailable') return true;
+
   // The peer clause answers on its own and does not consult the timer: a node
   // that has met a peer is ready whenever that happened.
   //
@@ -189,7 +197,6 @@ export function isPeerReady(): boolean {
   }
 
   if (discovery === null) return false;
-  if (discovery.kind === 'unavailable') return true;
   return now() - discovery.startedAtMs >= DISCOVERY_WINDOW_MS;
 }
 
