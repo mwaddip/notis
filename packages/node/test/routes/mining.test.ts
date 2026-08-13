@@ -275,9 +275,10 @@ describe('mining routes — the peer-readiness gate', () => {
   });
 
   it('still holds a template internally while withholding it', () => {
-    // The gate is at serve, not at creation. #58's invariant — a miner node
-    // always *holds* a template — has to stay literally true, so the route is
-    // asked for its answer and the creator is asked for its state separately.
+    // The gate is at serve, not at creation (`MINING_INTERFACE` → "The
+    // peer-readiness gate"). A miner node always *holds* a template, and that
+    // has to stay literally true, so the route is asked for its answer and the
+    // creator is asked for its state separately.
     const getCurrentTemplate = vi.fn(() => makeTemplate());
     const deps = makeDeps({ peerReady: () => false, getCurrentTemplate });
 

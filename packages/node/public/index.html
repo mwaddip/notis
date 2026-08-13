@@ -623,9 +623,9 @@ function boolByte(value) {
  * A closed u8 tag table. Total: a value outside the table writes the reserved
  * 0xff, which no valid member may claim.
  *
- * **Tags reserve retired values and are never renumbered** — TYPES_INTERFACE →
- * Primitives. A renumber moves every id carrying the tag with no signal, and
- * here that is inside the id preimage itself.
+ * **A tag is never renumbered** — TYPES_INTERFACE → Primitives. A renumber moves
+ * every id carrying the tag with no signal, and here that is inside the id
+ * preimage itself.
  */
 function enum8Tag(table, value) {
   const has = typeof value === 'string' && Object.prototype.hasOwnProperty.call(table, value);

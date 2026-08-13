@@ -369,13 +369,12 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
   });
 
-  // Carried #26 recorded the `!txCbor` arm as "kept for totality, deliberately
-  // left untested". It is testable, and cheaply: the arm is unreachable through
-  // `applyOrderingBlock` — `verifyOrderingBlockStructure` refuses a body whose
-  // `utxoTxs` does not align with `utxoTxIds` before the funnel reads either —
-  // but `computePostBlockStateRoot` runs no structure check at all, so the
-  // speculation entry point is where a misaligned body is expressible. That the
-  // arm needed this entry point to be reached is itself the unit's finding.
+  // The `!txCbor` arm is unreachable through `applyOrderingBlock` —
+  // `verifyOrderingBlockStructure` refuses a body whose `utxoTxs` does not align
+  // with `utxoTxIds` before the funnel reads either — but
+  // `computePostBlockStateRoot` runs no structure check at all, so the
+  // speculation entry point is where a misaligned body is expressible. That is
+  // the entry point this test uses to cover an arm kept for totality.
   it('a body whose utxoTxs do not align with utxoTxIds is rejected, not thrown on', async () => {
     const db = await importDb();
     db.initDb(':memory:');
