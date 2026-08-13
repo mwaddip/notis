@@ -487,9 +487,32 @@ height 0** — it is what makes the three genesis state roots differ, and `Netwo
 `value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
 so the literal makes any other unrepresentable rather than merely invalid.
 
-`payload` is bounded and the type is barred from both transaction positions — `VALIDATION_INTERFACE`
-owns both rules. Neither is a property of this package: the encoder has no cap and never has (§Totality
-— a field's domain is established upstream of the encoder, never inside it).
+The type is barred from both transaction positions, and **the two halves have different owners
+because only one of them can be checked without state**:
+
+| Half | Owner | Why it can only go there |
+|---|---|---|
+| not a transaction **output** | `VALIDATION_INTERFACE` | A candidate output is a whole box; typing it reads nothing |
+| not a transaction **input** | `NODE_INTERFACE` | `tx.inputs` are box **id strings**; typing one requires the UTXO set |
+
+⚠ **This corrects a line that routed both halves to `VALIDATION_INTERFACE`.** That package holds no
+box-type machinery at all until the output rule lands, and it structurally cannot type an input —
+so half the rule was routed to a package that could never run it. `VALIDATION_INTERFACE`
+§`verifyHeaderFieldDomains` already names this failure: *"A rule routed to a package that
+structurally cannot run it reads as scheduled work and is actually a dead end."*
+
+`payload` is bounded at `MAX_GENESIS_PROOF_PAYLOAD_BYTES`, and **the bound is a decode rule**: the
+`genesis_proof` arm of `readBoxContentFields` refuses an oversized payload, so such bytes have **no
+decoding** — the same standing the corpus gives an unassigned tag. It is per-type and binds no other
+`lp` field; in particular it is **not** in `readLp`, which every length-prefixed field shares.
+
+This is a domain rule and not a memory-safety one. `ByteReader.readBytes` already refuses
+`remaining < n` and throws before touching memory, so no length prefix can provoke an allocation —
+the bound exists to make the field's domain checkable, not to protect the reader.
+
+> **AHEAD OF CODE.** The constant belongs in §Protocol Constants (`constants.ts`) beside
+> `MAX_CONTENT_BYTES` and `MAX_PARENT_REFS`; it is not listed there yet and the decoder does not yet
+> enforce it. Both land together.
 
 ### BoxGuard
 
