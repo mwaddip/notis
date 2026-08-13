@@ -23,7 +23,7 @@ import {
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
 import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
-import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput } from '@dagsocial/types';
+import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -637,6 +637,112 @@ describe('verifyTxStructure', () => {
       signatures: {},
     } as unknown as UtxoTransaction;
     expect(verifyTxStructure(tx).valid).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyTxStructure — a genesis_proof box may never be a transaction output
+// ---------------------------------------------------------------------------
+//
+// The rule's other half — never an *input* — is node's, because `tx.inputs` are
+// box id strings and typing one needs the UTXO set
+// (VALIDATION_INTERFACE → verifyTxStructure).
+
+describe('verifyTxStructure — genesis_proof outputs', () => {
+  const REASON = 'Transaction may not output a genesis_proof box';
+
+  const proofOut = (payload: Uint8Array): AnyBoxCandidate => ({
+    boxType: 'genesis_proof',
+    value: 0n,
+    guard: 'unspendable',
+    payload,
+  });
+
+  const txWith = (outputs: AnyBoxCandidate[]): UtxoTransaction => ({
+    inputs: ['input1'],
+    outputs,
+    signatures: {},
+    protocolVersion: 1,
+  });
+
+  const karmaOut: AnyBoxCandidate = {
+    boxType: 'karma', value: 5n, owner: new Uint8Array(32),
+    guard: 'owner_signature', proofSource: 'abc',
+  };
+
+  /**
+   * One candidate per box type the rule must not touch. Named for what the list
+   * is rather than how long it is, so a new box type does not make the name
+   * false.
+   */
+  const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
+    ['karma', karmaOut],
+    ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature', proofSource: 1 }],
+    ['invite', { boxType: 'invite', value: 5n, secretHash: new Uint8Array(32), inviterId: new Uint8Array(32), guard: 'hash_preimage_with_bond' }],
+    ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteOutputIndex: 1, inviteePublicKey: new Uint8Array(0), probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }],
+    ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32), targetPostId: '00'.repeat(32), guard: 'block_apply' }],
+    ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32), guard: 'owner_signature' }],
+  ];
+
+  it('rejects a transaction that outputs a genesis_proof box', () => {
+    expect(verifyTxStructure(txWith([proofOut(new Uint8Array([1]))]))).toEqual({
+      valid: false,
+      error: REASON,
+    });
+  });
+
+  it('rejects it in any output position, not only the first', () => {
+    expect(verifyTxStructure(txWith([karmaOut, proofOut(new Uint8Array([1])), karmaOut]))).toEqual({
+      valid: false,
+      error: REASON,
+    });
+  });
+
+  // The box type is the whole rule, so the verdict and the reason are constant
+  // in payload size — this package states no payload bound and none can be
+  // credited for a rejection here (VALIDATION_INTERFACE → verifyTxStructure).
+  // The assertion is on the *reason*: a rejection test that asserts only
+  // `valid: false` cannot tell which rule rejected.
+  it.each([0, 1, 512, 513, 65536])('rejects a %i-byte payload for the same reason', (n) => {
+    expect(verifyTxStructure(txWith([proofOut(new Uint8Array(n))]))).toEqual({
+      valid: false,
+      error: REASON,
+    });
+  });
+
+  // The tag alone decides, so a proof box carrying no payload at all is refused
+  // without the scan reading a field that is not there.
+  it('rejects a genesis_proof output with no other field set', () => {
+    const tx = {
+      inputs: ['input1'],
+      outputs: [{ boxType: 'genesis_proof' }],
+      signatures: {},
+      protocolVersion: 1,
+    } as unknown as UtxoTransaction;
+    expect(verifyTxStructure(tx)).toEqual({ valid: false, error: REASON });
+  });
+
+  it.each(NON_PROOF_OUTPUTS)('leaves a %s output alone', (_label, out) => {
+    expect(verifyTxStructure(txWith([out]))).toEqual({ valid: true });
+  });
+
+  // Totality (M-5). The scan reads `boxType` off a peer-supplied object, so a
+  // non-object output yields a verdict rather than a TypeError. The verdict is
+  // unchanged: "an output is an object" is not a rule this package states.
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a number', 42],
+    ['a string', 'genesis_proof'],
+    ['an array', []],
+  ])('does not panic on %s in outputs', (_label, out) => {
+    const tx = {
+      inputs: ['input1'],
+      outputs: [out],
+      signatures: {},
+      protocolVersion: 1,
+    } as unknown as UtxoTransaction;
+    expect(verifyTxStructure(tx)).toEqual({ valid: true });
   });
 });
 
