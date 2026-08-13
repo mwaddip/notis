@@ -198,17 +198,27 @@ function assertTreasuryKeyEncodable(cfg: Config): void {
  * and forks from every honest peer at height 1. Refusal at load is #58's
  * precedent: put the verdict where a human is reading it.
  *
+ * **Non-empty, and that half is not pedantry.** The proof box is the whole of
+ * the difference between testnet's and devnet's genesis states — they share the
+ * system keypair and both box values, so their karma and credit boxes are
+ * byte-identical and carry the same ids. An empty payload still encodes cleanly,
+ * to the same `030000` on both, and collapses two networks onto one genesis
+ * root. `network.test.ts` requires one or more pairs of the same profile
+ * strings; the two guards state one rule between them, so the fail-stop must not
+ * be the permissive one.
+ *
  * ⚠ **This is not the payload BOUND.** How long a payload may be is a decode
  * rule and belongs beside the encoder in `@dagsocial/types`; this asserts only
- * that the configured string denotes the bytes it appears to.
+ * that the configured string denotes bytes, and denotes the ones it appears to.
  */
 function assertGenesisProofPayloadEncodable(cfg: Config): void {
   const hex = cfg.profile.genesisProofPayload;
-  if (!/^([0-9a-fA-F]{2})*$/.test(hex)) {
+  if (!/^([0-9a-fA-F]{2})+$/.test(hex)) {
     throw new Error(
-      `Invalid genesisProofPayload for network "${cfg.networkType}" — must be an ` +
-        'even number of hex characters; a truncated decode silently moves the ' +
-        'genesis state root',
+      `Invalid genesisProofPayload for network "${cfg.networkType}" — must be a ` +
+        'non-empty, even number of hex characters; a truncated decode silently ' +
+        'moves the genesis state root, and an empty payload collapses two ' +
+        "networks' genesis states onto one",
     );
   }
 }

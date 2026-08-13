@@ -418,4 +418,65 @@ describe('config', () => {
       );
     });
   });
+
+  // The genesis proof payload's domain. `Buffer.from(s, 'hex')` stops at the
+  // first character pair outside the alphabet instead of failing, and `writeLp`
+  // is total by sentinel rather than throwing, so a malformed payload moves the
+  // genesis state root with nothing raised anywhere.
+  describe('11. genesis proof payload fail-fast', () => {
+    function importWithProofPayload(genesisProofPayload: string) {
+      vi.doMock('@dagsocial/types', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@dagsocial/types')>();
+        return {
+          ...actual,
+          profileFor: (networkType: string) => ({
+            ...actual.profileFor(networkType as never),
+            genesisProofPayload,
+          }),
+        };
+      });
+      return import('../src/config.js');
+    }
+
+    it('accepts an even-length hex payload', async () => {
+      const { loadConfig } = await importWithProofPayload('deadbeef');
+      expect(loadConfig().profile.genesisProofPayload).toBe('deadbeef');
+    });
+
+    it('refuses an odd-length payload', async () => {
+      await expect(importWithProofPayload('abc')).rejects.toThrow(/genesisProofPayload/);
+    });
+
+    it('refuses a non-hex payload', async () => {
+      await expect(importWithProofPayload('zzzz')).rejects.toThrow(/genesisProofPayload/);
+    });
+
+    // ⚠ **The empty payload is the one that collapses two networks, and it is
+    // the case a `*` quantifier admits.** testnet and devnet share the system
+    // keypair and both box values, so their karma and credit boxes are
+    // byte-identical and carry the same ids — the proof box is the entire
+    // difference between their genesis states. An empty payload still encodes
+    // cleanly, to the same bytes on both, so the two roots collide silently and
+    // nothing downstream has anything left to tell them apart.
+    it('refuses an empty payload', async () => {
+      await expect(importWithProofPayload('')).rejects.toThrow(/genesisProofPayload/);
+    });
+
+    it('says why an empty payload is refused, not just that it is malformed', async () => {
+      let message = '';
+      try { await importWithProofPayload(''); } catch (err) { message = String(err); }
+      expect(message).toMatch(/non-empty/i);
+      expect(message).toMatch(/collapses/i);
+    });
+
+    // `network.test.ts` requires one or more hex pairs of the same profile
+    // strings. Two guards on one rule must not disagree, and the fail-stop is
+    // the one that must not be the permissive half.
+    it('agrees with the profile table\'s own shape check', async () => {
+      for (const profile of Object.values(NETWORK_PROFILES)) {
+        expect(profile.genesisProofPayload, profile.networkType)
+          .toMatch(/^([0-9a-f]{2})+$/);
+      }
+    });
+  });
 });

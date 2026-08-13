@@ -250,6 +250,201 @@ describe('seedGenesisState', () => {
 });
 
 /**
+ * A store that holds blocks and has never committed a genesis state.
+ *
+ * That combination is what an upgrade leaves behind: blocks on disk, no
+ * `genesis_committed` row, and a tree that grew past genesis without ever
+ * holding the genesis leaves. It cannot be seeded — a height-0 version written
+ * into a grown tree makes `versionAtOrBeforeHeight` resolve state that never
+ * existed — and it cannot be run, because its state root differs from its
+ * network's at every height.
+ */
+describe('seedGenesisState — a store that predates the genesis state', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  async function storeWithBlocksAndNoGenesisFlag(): Promise<{
+    s: Store;
+    bc: typeof import('../../src/services/block-creator.js');
+  }> {
+    const { s } = await seededRoot(':memory:');
+    const author = makeTestIdentity();
+    const posts = await import('../../src/store/posts.js');
+    const mempool = await import('../../src/store/mempool.js');
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
+
+    const post = makePost(author.userId, 'past genesis');
+    posts.insertPost(post, encodePost(post));
+    mempool.insertSubBlock(computePostId(post), 1000);
+    expect(await mineNextBlock(bc)).not.toBeNull();
+
+    // Erase the flag, which leaves exactly the store an upgrade produces: the
+    // seeder never ran here, and the boxes it would have written are absent from
+    // both the UTXO set and the tree.
+    s.getDb().prepare('DELETE FROM system_config WHERE key = ?').run('genesis_committed');
+    expect(s.genesis.isGenesisCommitted()).toBe(false);
+    return { s, bc };
+  }
+
+  it('refuses to start, naming the cause and the remedy rather than two digests', async () => {
+    const { s, bc } = await storeWithBlocksAndNoGenesisFlag();
+    try {
+      const keypair = s.system.getSystemKeypair()!;
+      let message = '';
+      try { s.genesis.seedGenesisState(keypair.publicKey, 1); } catch (err) { message = String(err); }
+
+      expect(message).toMatch(/no committed genesis state/i);
+      expect(message).toMatch(/refusing to start/i);
+      // The operator has exactly one remedy and the message has to carry it —
+      // the chain and the AVL store share a SQLite file and go together.
+      expect(message).toMatch(/resync/i);
+    } finally {
+      bc.stopBlockCreator();
+      s.closeDb();
+    }
+  });
+
+  it('does not record the flag on the way out', async () => {
+    // ⚠ **The half that made the silence permanent.** Marking committed and
+    // returning is not "skip seeding this once": the flag is what
+    // `seedGenesisState` keys on, so every later start skips too — and skipping
+    // is also what bypasses `assertGenesisRoot`, the one comparison that could
+    // name the fault. A node in this state answers every inbound block with a
+    // root mismatch and has nothing left that mentions genesis.
+    const { s, bc } = await storeWithBlocksAndNoGenesisFlag();
+    try {
+      const keypair = s.system.getSystemKeypair()!;
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 1)).toThrow();
+      expect(s.genesis.isGenesisCommitted()).toBe(false);
+
+      // A restart re-refuses rather than proceeding on a genesis nobody holds.
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 1)).toThrow();
+    } finally {
+      bc.stopBlockCreator();
+      s.closeDb();
+    }
+  });
+
+  it('control: a store with blocks AND the flag is left alone', async () => {
+    // The ordinary restart, and the reason the refusal keys on the flag rather
+    // than on the height: a node that has ever applied a block does not re-seed,
+    // and must not be refused for it.
+    const { s } = await seededRoot(':memory:');
+    const bc = await import('../../src/services/block-creator.js');
+    bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
+    try {
+      const author = makeTestIdentity();
+      const posts = await import('../../src/store/posts.js');
+      const mempool = await import('../../src/store/mempool.js');
+      const post = makePost(author.userId, 'past genesis');
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(computePostId(post), 1000);
+      expect(await mineNextBlock(bc)).not.toBeNull();
+
+      const keypair = s.system.getSystemKeypair()!;
+      expect(() => s.genesis.seedGenesisState(keypair.publicKey, 1)).not.toThrow();
+    } finally {
+      bc.stopBlockCreator();
+      s.closeDb();
+    }
+  });
+});
+
+/**
+ * Genesis is the state of an EMPTY store, and the precondition is asserted
+ * rather than discovered.
+ *
+ * A store holding boxes before genesis runs cannot reproduce its network's
+ * pinned root, so it is refused either way — but the two refusals do not say
+ * the same thing. Left to `assertGenesisRoot`, the message names the profile
+ * pin, which reads as a bad pin or a wrong network; and because the rollback
+ * restores exactly the state that caused it, every subsequent start repeats the
+ * same wrong diagnosis on an unbootable node.
+ */
+describe('seedGenesisState — a store that is not empty', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  it('refuses a pre-existing credit box, naming the store rather than the pin', async () => {
+    const s = await importFresh();
+    s.initDb(':memory:');
+    s.prover.createAvlProver();
+    const keypair = s.system.initSystemKeypair();
+
+    // The shape `/credits/faucet` produces on a server-role node that serves
+    // before syncing a block: the mint writes change back to the system key, so
+    // the system's credit holding is SPLIT. `ensureFaucetCreditBox` returns
+    // `existing[0]` of a `value DESC` read, so a feed built from its return
+    // value is a strict subset of the UTXO set.
+    s.system.ensureFaucetCreditBox(keypair.publicKey, 1);
+    expect(s.utxo.getCreditBoxes(keypair.publicKey).length).toBeGreaterThan(0);
+
+    let message = '';
+    try { s.genesis.seedGenesisState(keypair.publicKey, 0); } catch (err) { message = String(err); }
+
+    expect(message).toMatch(/already holds/i);
+    expect(message).toMatch(/refusing to start/i);
+    expect(message).toMatch(/resync/i);
+    // ⚠ The diagnosis this replaces. Naming the pinned root here would send an
+    // operator to `network.ts` for a store problem.
+    expect(message).not.toContain(profileFor('devnet').genesisStateRoot);
+    s.closeDb();
+  });
+
+  it('refuses a karma box whose identity record is missing', async () => {
+    // `ensureSystemKarmaBox` writes the identity record only on its CREATE
+    // path, so the branch that hands back a pre-existing box is exactly the one
+    // that cannot promise the record the tree needs. Two boxes and zero records
+    // is a 3-leaf tree measured against a 4-leaf pin — an assertable
+    // precondition, not a root mismatch to puzzle over.
+    const s = await importFresh();
+    s.initDb(':memory:');
+    s.prover.createAvlProver();
+    const keypair = s.system.initSystemKeypair();
+
+    s.system.ensureSystemKarmaBox(keypair.publicKey, 1);
+    s.records.deleteIdentityRecord(keypair.publicKey);
+    expect(s.records.getAllIdentityRecords()).toHaveLength(0);
+
+    expect(() => s.genesis.seedGenesisState(keypair.publicKey, 0))
+      .toThrow(/already holds/i);
+    s.closeDb();
+  });
+
+  it('the tree covers the whole UTXO set, not what the seeders returned', async () => {
+    // The property the store-derived feed buys. A mirror fed from the store
+    // reaches the same root, so nothing the store holds is outside the tree —
+    // which a per-helper feed can only achieve by each helper returning
+    // everything it wrote.
+    const { root, s } = await seededRoot(':memory:');
+    const boxes = s.utxo.getUnspentBoxes();
+    const records = s.records.getAllIdentityRecords().map((r) => ({
+      key: s.records.identityRecordKey(r.identityId),
+      record: r.record,
+    }));
+    expect(boxes.length).toBe(3);
+    expect(records.length).toBe(1);
+
+    const mirrorDb = new Database(':memory:');
+    mirrorDb.exec(`
+      CREATE TABLE avl_tree_versions (
+        version BLOB PRIMARY KEY, height INTEGER NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()));
+      CREATE TABLE avl_tree_nodes (
+        version BLOB NOT NULL REFERENCES avl_tree_versions(version),
+        label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
+    `);
+    const mirror = s.prover.createAvlProver(mirrorDb);
+    s.prover.bootstrapAvlProver(mirror, boxes, 0, records);
+    expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
+
+    mirrorDb.close();
+    s.closeDb();
+  });
+});
+
+/**
  * The fail-stop on a divergent genesis (ARCHITECTURE → "How the network is
  * committed"). What it guards is not a local anomaly: a node whose height-0
  * state differs from its network's forks from every honest peer at height 1,
@@ -340,6 +535,14 @@ describe('assertGenesisRoot', () => {
       // and re-fails, rather than booting on a genesis nobody agreed to.
       expect(s.genesis.isGenesisCommitted()).toBe(false);
       expect(s.utxo.getUnspentBoxes()).toHaveLength(0);
+
+      // ⚠ **And the tree went back with them.** `bootstrapAvlProver` ran a
+      // `performOneOperation` per leaf against the module-global prover's
+      // in-memory tree, and SQLite's rollback reaches every row but none of that
+      // memory. Left mutated, the prover would hold the genesis tree over a
+      // store holding no genesis — and since the flag is unset, the next attempt
+      // would seed into a tree that is no longer empty.
+      expect(rootOf(s)).toBe(await emptyTreeRoot());
       s.closeDb();
     } finally {
       vi.doUnmock('../../src/config.js');

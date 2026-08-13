@@ -4,8 +4,9 @@ import {
   ensureFaucetCreditBox,
   ensureGenesisProofBox,
 } from '../store/system.js';
-import { getIdentityRecord, identityRecordKey } from '../store/identity-records.js';
+import { getAllIdentityRecords, identityRecordKey } from '../store/identity-records.js';
 import { getCurrentHeight } from '../store/ordering.js';
+import { getUnspentBoxes } from '../store/utxo.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
 import type { RecordPut } from '../state/avl-prover.js';
 import { config, isFaucetNetwork } from '../config.js';
@@ -123,65 +124,149 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
 
   const handle = getAvlProver();
 
-  getDb().transaction(() => {
-    // A store that already holds blocks has a tree grown past genesis. Writing
-    // a height-0 version into it would make `versionAtOrBeforeHeight` resolve
-    // state that never existed, so record the fact and touch nothing.
-    if (getCurrentHeight() > 0) {
-      markGenesisCommitted();
-      return;
-    }
+  // A store that holds blocks but has never committed a genesis state cannot be
+  // made correct in place, and must not be run.
+  //
+  // Seeding it is not available: its tree has grown past genesis, and writing a
+  // height-0 version into one would make `versionAtOrBeforeHeight` resolve state
+  // that never existed. Neither is proceeding. Such a tree lacks the genesis
+  // leaves that every node started against this seeder holds, so its state root
+  // differs from its network's at every height — `block-apply` answers every
+  // inbound block with a root mismatch and every block it mines is rejected
+  // elsewhere, while the message names two truncated digests and nothing about
+  // genesis.
+  //
+  // ⚠ **Recording the flag and carrying on is the worst of the three**, which is
+  // why this is a refusal and not a warning: the flag is what `seedGenesisState`
+  // keys on, so setting it means no later start re-seeds *and* none reaches
+  // `assertGenesisRoot`. The one comparison that could name the fault is
+  // disabled by the act of skipping it, permanently and on every subsequent run.
+  //
+  // Refusal follows `loadConfig`'s precedent for a below-floor ordering target
+  // (`config.ts` → the ordering-floor assertion): put the verdict where a human
+  // is reading it, rather than running against a state nobody configured. The
+  // remedy is in the message because the operator has exactly one — the chain
+  // and the AVL store share a SQLite file and must be wiped together.
+  if (getCurrentHeight() > 0) {
+    throw new Error(
+      `Store at height ${getCurrentHeight()} has no committed genesis state. Its ` +
+      'AVL+ tree is missing the genesis leaves every peer holds, so its state root ' +
+      `diverges from network "${config.networkType}" at every height. Refusing to ` +
+      'start — delete the database and resync; the chain and the AVL store share one ' +
+      'file and must go together.',
+    );
+  }
 
-    const boxes: AnyBox[] = [];
-    const records: RecordPut[] = [];
+  // The prover is not covered by the transaction below, so its pre-seed digest
+  // is captured here and restored if anything in the seeding throws.
+  //
+  // `bootstrapAvlProver` runs a `performOneOperation` per leaf against the
+  // module-global prover's **in-memory** tree. SQLite's rollback reaches
+  // `utxo_boxes`, `identity_records`, `avl_tree_versions` and `avl_tree_nodes`
+  // — every row — and reaches none of that memory. Without this, a refused
+  // genesis leaves a prover holding the genesis tree over a store that holds no
+  // genesis, which is the one combination no later run can detect: the flag is
+  // unset so seeding re-runs, and it re-runs against a tree that is no longer
+  // empty. `reorg` and the apply funnel both carry this snapshot; this path is
+  // the third that mutates the prover outside a block.
+  const preDigest = handle.prover.digest();
 
-    // The faucet-bearing networks alone hold the system karma and faucet credit
-    // boxes; the gate is `isFaucetNetwork`, shared with the /faucet mount and
-    // the /credits/faucet handler so the three cannot drift (NODE_INTERFACE
-    // §Faucet). Mainnet's genesis state is the proof box alone — a faucet there
-    // would be a defect.
-    if (isFaucetNetwork(config.networkType)) {
-      const karma = ensureSystemKarmaBox(systemPubKey, currentHeight);
-      boxes.push(karma);
-      boxes.push(ensureFaucetCreditBox(systemPubKey, currentHeight));
+  try {
+    getDb().transaction(() => {
+      // Genesis is defined as an operation on an EMPTY store, and the digest
+      // pinned in the profile is only reproducible if that holds. Asserting it
+      // is what makes every failure below say what is actually wrong.
+      //
+      // Left unasserted, a pre-existing box does not produce a clear refusal —
+      // it produces a wrong one. The `ensure*` helpers each return a *single*
+      // representative (`ensureFaucetCreditBox` returns `existing[0]` of a
+      // `value DESC` read, so a split credit box hands back the largest), the
+      // feed built from those returns is then a strict subset of what the store
+      // holds, and `assertGenesisRoot` reports the profile pin — which reads as
+      // a bad pin or a wrong network rather than as a store that was never
+      // empty. ⚠ **And the rollback restores exactly the state that caused it**,
+      // so every subsequent start fails the same way with the same wrong
+      // diagnosis, and the node is unbootable with nothing pointing at the
+      // cause.
+      assertEmptyBeforeGenesis();
 
-      // The system identity's decay clock, written by `ensureSystemKarmaBox`
-      // because genesis runs outside block application and `insertBox`'s choke
-      // point has no open journal to read a settled height from. It is
-      // committed state like any box, so it belongs in the same feed — read
-      // back rather than reconstructed, so the tree carries the row the store
-      // holds and not a second derivation of it.
-      const record = getIdentityRecord(karma.owner);
-      if (record) {
-        records.push({ key: identityRecordKey(karma.owner), record });
+      // The faucet-bearing networks alone hold the system karma and faucet credit
+      // boxes; the gate is `isFaucetNetwork`, shared with the /faucet mount and
+      // the /credits/faucet handler so the three cannot drift (NODE_INTERFACE
+      // §Faucet). Mainnet's genesis state is the proof box alone — a faucet there
+      // would be a defect.
+      if (isFaucetNetwork(config.networkType)) {
+        ensureSystemKarmaBox(systemPubKey, currentHeight);
+        ensureFaucetCreditBox(systemPubKey, currentHeight);
       }
-    }
 
-    // Every network, mainnet included — this box IS the network axis. The two
-    // boxes above are byte-identical on testnet and devnet (one hardcoded system
-    // identity, one pair of values), so their ids and their AVL entries match
-    // exactly; the proof box's per-network payload is the only thing separating
-    // those two genesis roots.
-    boxes.push(
+      // Every network, mainnet included — this box IS the network axis. The two
+      // boxes above are byte-identical on testnet and devnet (one hardcoded system
+      // identity, one pair of values), so their ids and their AVL entries match
+      // exactly; the proof box's per-network payload is the only thing separating
+      // those two genesis roots.
       ensureGenesisProofBox(
         new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
         currentHeight,
-      ),
-    );
+      );
 
-    // Exactly one height-0 version may exist. The `PersistentBatchAVLProver`
-    // constructor already wrote the empty tree's, and `version()` resolves ties
-    // on height arbitrarily — leaving both would let a restart load the empty
-    // tree back over the genesis one.
-    handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
-    bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records);
+      // **The feed is read back from the store, never assembled from what the
+      // seeders returned.** What the state root must cover is the UTXO set, so
+      // reading the set is what makes the tree cover it *by construction*
+      // rather than by each helper happening to hand back everything it wrote.
+      // The two differ in both directions: a helper returns one box where the
+      // store may hold several, and `ensureSystemKarmaBox` writes the system
+      // identity record only on its create path, so the branch that returns a
+      // pre-existing box is exactly the one that cannot promise the record the
+      // tree needs. `bootstrapAvlProver` sorts the feed (M-12), so reading in
+      // store order is not a second ordering rule.
+      const boxes: AnyBox[] = getUnspentBoxes();
+      const records: RecordPut[] = getAllIdentityRecords().map((r) => ({
+        key: identityRecordKey(r.identityId),
+        record: r.record,
+      }));
 
-    // The postcondition of the two lines above: the genesis this node just
-    // built is the genesis its network pins. Inside the transaction, so a
-    // divergent one is refused *and* rolled back rather than committed and
-    // then complained about once.
-    assertGenesisRoot();
+      // Exactly one height-0 version may exist. The `PersistentBatchAVLProver`
+      // constructor already wrote the empty tree's, and `version()` resolves ties
+      // on height arbitrarily — leaving both would let a restart load the empty
+      // tree back over the genesis one.
+      handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
+      bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records);
 
-    markGenesisCommitted();
-  })();
+      // The postcondition of the two lines above: the genesis this node just
+      // built is the genesis its network pins. Inside the transaction, so a
+      // divergent one is refused *and* rolled back rather than committed and
+      // then complained about once.
+      assertGenesisRoot();
+
+      markGenesisCommitted();
+    })();
+  } catch (err) {
+    // The rows are already back; put the tree back with them, so the store and
+    // the prover fail together rather than the prover surviving the store.
+    if (preDigest) handle.prover.rollback(preDigest);
+    throw err;
+  }
+}
+
+/**
+ * Genesis seeding requires a store holding nothing yet.
+ *
+ * Stated as its own precondition rather than left to `assertGenesisRoot` to
+ * discover, because the two failures need different messages: a root mismatch
+ * says "this is not your network's genesis", which is the right thing to say
+ * about a divergent *payload* and the wrong thing to say about a store that had
+ * boxes in it before genesis ever ran.
+ */
+function assertEmptyBeforeGenesis(): void {
+  const boxes = getUnspentBoxes().length;
+  const records = getAllIdentityRecords().length;
+  if (boxes === 0 && records === 0) return;
+  throw new Error(
+    `Genesis has not been committed, but the store already holds ${boxes} unspent ` +
+    `box(es) and ${records} identity record(s). Genesis is the state of an empty ` +
+    'store, so this node cannot reproduce the root network ' +
+    `"${config.networkType}" pins. Refusing to start — delete the database and ` +
+    'resync; the chain and the AVL store share one file and must go together.',
+  );
 }
