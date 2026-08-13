@@ -18,7 +18,7 @@ import { verifyPostForRelay, type VerifierDeps } from './services/verifier.js';
 import { sweepPlaceholders, hasPlaceholders } from './services/content-sweep.js';
 import { validateTx } from './services/utxo-engine.js';
 import { setNet } from './services/net-instance.js';
-import { markDiscoveryStarted, markDiscoveryUnavailable } from './services/peer-readiness.js';
+import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
@@ -280,59 +280,59 @@ net.onTx((tx) => {
   net.setHeadersHandler(getOrderingBlock);
 
 // 4. Start net
+//
+// The try covers `net.start()` and nothing else, because "net startup failed" is
+// the only verdict the catch below has. Everything that used to sit inside it —
+// the discovery decision and the two handler registrations — either states
+// something about this node's configuration rather than about net, or is a bug
+// of ours if it throws. Under a try wide enough to hold them, anything failing
+// after the discovery mark reached the catch and overwrote `searching` with
+// `unavailable`, which opens the mining gate unconditionally.
 try {
   await net.start();
   console.log(`Net node started, peer ID: ${net.peerId()}`);
-
-  // The discovery window opens here, and this is the only place it can.
-  //
-  // `net.start()` awaits every bootstrap dial and its handshake in sequence, so
-  // its return already IS the bootstrap-completion signal — a peer reached is
-  // Active before this line runs. What the window covers is the case that
-  // completion leaves unfinished: a dial that failed, whose next attempt is on
-  // net's 30s outbound tick (`services/peer-readiness.ts` sizes the window from
-  // that cadence).
-  //
-  // With no bootstrap address there is no dial to wait for and never will be, so
-  // such a node is ready at once rather than waiting out a window that stands
-  // for nothing.
-  if (config.bootstrapPeers.length > 0) {
-    markDiscoveryStarted();
-  } else {
-    console.log('No bootstrap peers configured — mining without waiting for a mesh');
-    markDiscoveryUnavailable();
-  }
-
-  // Register storage-backed sync handler (replaces the null placeholder
-  // registered during NetNode.start())
-  net.setSyncHandler((subBlockId: string) => {
-    const post = getPost(subBlockId);
-    if (!post || !('content' in post) || !post.content) return null;
-    return subBlockFromPost(post, subBlockId);
-  });
-
-  // Register posts handler for GetPosts requests — skip missing and placeholder posts.
-  // Validate IDs are 64-char hex before querying (reject malformed).
-  net.setPostsHandler((postIds: string[]) => {
-    const HEX64 = /^[0-9a-f]{64}$/;
-    const entries: PostsEntry[] = [];
-    for (const postId of postIds) {
-      if (!HEX64.test(postId)) continue;
-      const post = getPost(postId);
-      if (!post || !('content' in post) || !post.content) continue;
-      entries.push({ postId, post });
-    }
-    return entries;
-  });
-
-
 } catch (err) {
   console.warn(`Net startup failed (continuing without networking): ${String(err)}`);
-  // No networking means no dial can be attempted, so there is nothing for the
-  // window to measure. Withholding templates until it elapsed would delay a node
-  // that cannot meet a peer at all, rather than protect one that might.
-  markDiscoveryUnavailable();
 }
+
+// Discovery opens here on both paths, and this is the only place it can.
+// `net.start()` awaits every bootstrap dial and its handshake in sequence, so
+// its return already IS the bootstrap-completion signal — a peer reached is
+// Active by now. What the window covers is what completion leaves unfinished: a
+// dial that failed, whose next attempt is on net's 30s outbound tick
+// (`services/peer-readiness.ts` sizes the window from that cadence). Marking
+// from here rather than from process start is what keeps the window bounding
+// dial time and not store opening, AVL bootstrap or genesis seeding.
+enterDiscovery(config.bootstrapPeers.length);
+
+// The arrival half of "readiness is not latched" (`MINING_INTERFACE` → "The
+// peer-readiness gate"). Readiness notices a peer *leaving* by looking, because
+// net publishes no disconnect callback — but it must not depend on looking to
+// know one ever arrived, or a peer that came and went between two template
+// polls would leave the node believing it had never met anybody.
+net.onPeerActive((_peerId: string) => notePeerMet());
+
+// Register storage-backed sync handler (replaces the null placeholder
+// registered during NetNode.start())
+net.setSyncHandler((subBlockId: string) => {
+  const post = getPost(subBlockId);
+  if (!post || !('content' in post) || !post.content) return null;
+  return subBlockFromPost(post, subBlockId);
+});
+
+// Register posts handler for GetPosts requests — skip missing and placeholder posts.
+// Validate IDs are 64-char hex before querying (reject malformed).
+net.setPostsHandler((postIds: string[]) => {
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const entries: PostsEntry[] = [];
+  for (const postId of postIds) {
+    if (!HEX64.test(postId)) continue;
+    const post = getPost(postId);
+    if (!post || !('content' in post) || !post.content) continue;
+    entries.push({ postId, post });
+  }
+  return entries;
+});
 
 function runContentSweep(net: NetNode, deps: VerifierDeps): void {
   if (hasPlaceholders()) {
