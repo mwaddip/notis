@@ -2870,6 +2870,28 @@ peers, not at boot (ARCHITECTURE → "How the network is committed"). And the pi
 the box bytes move — **C8 re-derives two of the three roots**, caught loudly here rather than
 silently.
 
+**`seedGenesisState` claims the committed flag under `BEGIN IMMEDIATE`.** The `genesis_committed`
+read that decides whether to seed happens inside the write lock, never outside it. Two processes
+opening one database file both observe an unset flag if either reads it before taking the lock, and
+both proceed to seed a store only one of them can commit. The read outside the transaction is a
+fast path — it keeps every start after the first from taking a write lock — and **no decision may
+rest on it**.
+
+**The genesis mint height is `GENESIS_HEIGHT`.** Seeding requires a store at height 0, so there is
+no other height a genesis box could commit to; the seeders raise it to 1 for the mint txId, because
+0 is not a height a block ever settles at. That clamp is one function (`store/system.ts` →
+`genesisMintHeight`) and is shared with the non-genesis callers of `ensureSystemKarmaBox` and
+`ensureFaucetCreditBox`, which pass real heights.
+
+**A refused genesis exits like a refused schema version**: the message, then `closeDb()`, then a
+non-zero exit. Both gates in `index.ts` have this shape.
+
+**`getGenesisProofBox` orders its `LIMIT 1`.** Exactly one proof box is reachable — `OUTPUT_SHAPE`
+excludes `genesis_proof` so no transaction mints one, and `assertEmptyBeforeGenesis` refuses to seed
+over an existing one — but that is an argument about the rest of the tree, and an unordered
+`LIMIT 1` names no row if it ever expires. **No index on `box_type`**: the function has two callers
+and runs once per process, and an index there would tax every `insertBox` on the apply path.
+
 ### Fork resolution bottoms out at the genesis state
 
 **Reaching height 0 in the ancestor walk IS a common ancestor**, at depth = our height.
@@ -2987,6 +3009,13 @@ Always returns 200. Response shape:
 ---
 
 ## Configuration
+
+**`MAX_PROOF_HISTORY` may not sit below `MAX_REORG_DEPTH`, and `loadConfig` refuses at load rather
+than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while the
+fork walk reaches back a fixed `MAX_REORG_DEPTH` and can answer height 0, so a smaller retention
+window prunes inside the window the walk still answers within: `reorg` finds no version at its fork
+height and aborts with the node still on its own chain. The check is a negated `>=`, so `NaN` —
+what `parseInt` answers for a non-numeric env value — is refused rather than admitted.
 
 All config via environment variables with defaults.
 
