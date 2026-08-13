@@ -121,6 +121,33 @@ export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // → profile: ordering
 // resolving above 63358 as well. VALIDATION_INTERFACE → blockWork / cumulativeWork.
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;
 
+// Chain reorganisation
+/**
+ * How far back a reorg reaches.
+ *
+ * **One number doing three jobs in `@dagsocial/node`, with nothing requiring
+ * them to stay equal.** It bounds the fork walk (`findForkPoint` searches at
+ * most this many blocks back from our own tip), it sizes the header request
+ * fork resolution makes of the competing peer (`MAX_REORG_DEPTH * 2`), and it
+ * sets the block-journal retention window
+ * (`purgeOldJournals(height - MAX_REORG_DEPTH)`). **Journal retention is the
+ * hard bound on how deep a reorg can physically go; the fork walk is policy** —
+ * past the retention window the journals are gone and no fork-walk bound
+ * reaches them.
+ *
+ * It is universal rather than per-network for the reason every other constant
+ * outside `NetworkProfile` is (TYPES_INTERFACE → Network profiles): a network
+ * that compressed it would be a place devnet behaves unlike mainnet.
+ *
+ * **It lives in this package rather than in node because node's `config.ts`
+ * cannot reach a constant declared in `services/fork-resolution.ts`** — that
+ * module imports `config` itself, so the edge would close a cycle and drag the
+ * store, state and apply graph into config load. A load-time rule keyed on this
+ * value, such as refusing a `MAX_PROOF_HISTORY` beneath it, is only expressible
+ * with the constant here.
+ */
+export const MAX_REORG_DEPTH = 20;
+
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';

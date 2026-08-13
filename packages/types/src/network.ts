@@ -75,8 +75,15 @@ export interface NetworkProfile {
    * Derived rather than chosen — it is the digest a node computes after seeding,
    * and `genesisProofPayload` is the only input to it that differs per network.
    * A node whose seeded state does not reproduce this value is on a chain that
-   * forks from every honest peer at height 1, so node compares the two at boot
-   * and refuses to start on a mismatch.
+   * forks from every honest peer at height 1, so node compares the two inside
+   * the seeding transaction and throws, rolling the whole genesis back.
+   *
+   * ⚠ **A seeding postcondition, not a boot invariant** (`NODE_INTERFACE` → The
+   * genesis state root is checked fail-stop, once, where it is built). Seeding
+   * returns early on the `genesis_committed` flag, so a node that has ever
+   * applied a block never reaches the comparison — repointing an existing store
+   * at another network boots clean on the old network's height-0 state. The two
+   * are not interchangeable and this pin only covers the first.
    *
    * ⚠ **Re-pin when anything a genesis box's id derives from moves.** These are
    * digests over box ids, so a change to the box encoding moves them without

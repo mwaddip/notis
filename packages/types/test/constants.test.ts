@@ -1,5 +1,6 @@
 /**
- * The PoW difficulty constants and the units they are denominated in.
+ * Protocol constants whose value is a relationship rather than a number: the PoW
+ * difficulties and the units they are denominated in, and the reorg bound.
  *
  * TYPES_INTERFACE → Protocol Constants states what these are; the units and the
  * resolution band are VALIDATION_INTERFACE → orderingPowTarget and
@@ -13,6 +14,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   POST_POW_TARGET_BITS,
+  MAX_REORG_DEPTH,
   NETWORK_PROFILES,
 } from '../src/index.js';
 
@@ -76,5 +78,34 @@ describe('PoW difficulty constants', () => {
     expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetBits).toBeLessThan(
       NETWORK_PROFILES.testnet.orderingBlockPowTargetBits,
     );
+  });
+});
+
+/**
+ * The reorg bound.
+ *
+ * It lives in this package so that `@dagsocial/node`'s `config.ts` can reach it:
+ * the constant's node-side home imports `config` itself, so the edge back would
+ * close a cycle. Nothing here reads it — every consumer is in node — which is
+ * exactly why its domain and its universality are pinned at the source.
+ */
+describe('MAX_REORG_DEPTH', () => {
+  it('is a positive count of blocks', () => {
+    expect(MAX_REORG_DEPTH).toBe(20);
+    // It is subtracted from a height and compared against a walk depth, so a
+    // non-integer or a zero is not a smaller window — it is a retention cutoff
+    // above the tip and a fork walk that never runs.
+    expect(Number.isSafeInteger(MAX_REORG_DEPTH)).toBe(true);
+    expect(MAX_REORG_DEPTH).toBeGreaterThan(0);
+  });
+
+  // TYPES_INTERFACE → Network profiles: every constant outside `NetworkProfile`
+  // is universal, and a constant moved into it is a place devnet may behave
+  // unlike mainnet. Making this one per-network is a live proposal, so the
+  // absence is asserted rather than assumed.
+  it('is universal, not a per-network profile field', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(Object.hasOwn(profile, 'maxReorgDepth')).toBe(false);
+    }
   });
 });

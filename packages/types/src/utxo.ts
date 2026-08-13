@@ -54,7 +54,7 @@ export const MINT_ID_DOMAIN = encoder.encode('dagsocial/mint-tx-id/1');
 export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
 
 /**
- * The `boxType` tag table.
+ * The `boxType` tag table — **the single source of the box-type numbering.**
  *
  * **A tag is never renumbered.** `boxType` is the first byte of every box's
  * identity preimage, so moving a number silently moves every box id and every
@@ -65,8 +65,18 @@ export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
  * Giving a retired type's *number* to a new type is a different operation with
  * its own conditions, which TYPES_INTERFACE → Primitives states. A retired
  * **string** is reserved regardless; see `BoxCandidate.boxType`.
+ *
+ * Exported because a second numbering of one thing is exactly what the
+ * never-renumber rule cannot survive. **The demo UI's `BOX_TYPE_TAGS` is the one
+ * copy that cannot import this** — it is browser JS served to a page with no
+ * module graph, and stays a mirror by construction.
+ *
+ * The golden corpus's reverse table (`test/golden/structs.ts`) restates the
+ * numbering deliberately and is **not** a copy to collapse into this one: it
+ * feeds the independent reader those vectors are checked against, and a reader
+ * importing the writer's own table would check nothing.
  */
-const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
+export const BOX_TYPE_TAGS = Object.freeze({
   karma: 0,
   credit: 1,
   invite: 2,
@@ -74,7 +84,10 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
   bond: 4,
   post_lock: 5,
   vouch: 6,
-});
+} as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
+
+/** The `enum8` codec over that table — one table, both directions. */
+const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
 
 /**
  * The single canonical identity encoding for a box — `boxContentBytes` in
@@ -857,6 +870,41 @@ export type AnyBoxCandidate =
   | CandidateOf<BondBox>
   | CandidateOf<PostLockBox>
   | CandidateOf<VouchBox>;
+
+// ---------------------------------------------------------------------------
+// Guard table
+// ---------------------------------------------------------------------------
+
+/**
+ * The one guard each box type fixes — **the single source of that mapping.**
+ *
+ * `guard` is a pure function of `boxType` (TYPES_INTERFACE → Layout — Boxes),
+ * and every interface above declares it as a single string literal rather than
+ * a union, so the discriminator determines it completely. This table is that
+ * function written out, and it belongs to this package because the property it
+ * states is this package's: the box types are declared here.
+ *
+ * **A copy of it cannot be caught by anything the chain computes.** `guard` is
+ * absent from `canonicalBoxBytes`, so two consumers that disagree still produce
+ * identical box ids and an identical `stateRoot` — the disagreement surfaces
+ * only as one path accepting a candidate another rebuilt differently.
+ *
+ * The `satisfies` clause is what makes the table checked rather than asserted:
+ * a value that disagrees with the interface declaring it, a box type with no
+ * row, or a row for a type that no longer exists is a compile error in this
+ * file. `as const` keeps each entry's literal type, so a consumer building a
+ * typed `KarmaBox` can write `BOX_GUARDS.karma` into a field whose type is the
+ * literal `'owner_signature'`.
+ */
+export const BOX_GUARDS = Object.freeze({
+  karma: 'owner_signature',
+  credit: 'owner_signature',
+  invite: 'hash_preimage_with_bond',
+  genesis_proof: 'unspendable',
+  bond: 'bond_dual',
+  post_lock: 'block_apply',
+  vouch: 'owner_signature',
+} as const satisfies { [T in AnyBox['boxType']]: Extract<AnyBox, { boxType: T }>['guard'] });
 
 // ---------------------------------------------------------------------------
 // UTXO transaction

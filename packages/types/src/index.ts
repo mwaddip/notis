@@ -40,6 +40,7 @@ export {
   CREDIT_TREASURY_PCT,
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  MAX_REORG_DEPTH,
   ED25519_SPKI_PREFIX,
 } from './constants.js';
 
@@ -73,6 +74,13 @@ export { signingHash, computePostId, verifyPostId, getPostDiscriminator, buildPr
 export type { Post, PostId } from './post.js';
 
 // UTXO
+//
+// `BOX_TYPE_TAGS` and `BOX_GUARDS` are the two box-type mappings, exported for
+// the reason `powNonceBytes` above is: other packages need them and a second
+// statement of either is free to drift. `BOX_TYPE_TAGS` is the numbering inside
+// every box's id preimage, which the demo UI mirrors and cannot import;
+// `BOX_GUARDS` is the guard each type fixes, which is *not* in the bytes and so
+// has nothing to catch a copy of it. See TYPES_INTERFACE → Layout — Boxes.
 export {
   computeBoxId,
   computeCandidateBoxId,
@@ -87,6 +95,8 @@ export {
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
+  BOX_TYPE_TAGS,
+  BOX_GUARDS,
 } from './utxo.js';
 export type {
   BoxId,

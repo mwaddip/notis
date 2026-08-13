@@ -15,6 +15,8 @@ import {
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
+  BOX_TYPE_TAGS,
+  BOX_GUARDS,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
@@ -1675,5 +1677,109 @@ describe('selectBoxes', () => {
     const { selectBoxes } = await import('../src/index.js');
     const result = selectBoxes([], 0n);
     expect(result).toEqual([]);
+  });
+});
+
+/**
+ * The two box-type mappings this package is the single source of.
+ *
+ * `BOX_TYPE_TAGS` is the numbering inside every box's id preimage; `BOX_GUARDS`
+ * is the guard each type fixes. Both are exported because other packages hold
+ * the same two mappings, and **their failure modes are opposite**: a wrong tag
+ * moves every box id and every `stateRoot` covering it, loudly and everywhere,
+ * while a wrong guard moves nothing at all — it is absent from the consensus
+ * bytes, so no hash disagreement can surface a copy that has drifted.
+ */
+describe('the box-type tables', () => {
+  const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
+    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature', proofSource: 'genesis' },
+    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature', proofSource: 42 },
+    invite: {
+      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
+      inviterId: inviter, guard: 'hash_preimage_with_bond',
+    },
+    genesis_proof: {
+      boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([1, 2, 3]),
+      guard: 'unspendable',
+    },
+    bond: {
+      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 1,
+      inviteePublicKey: new Uint8Array(0), probationStartBlock: 5,
+      probationEndBlock: 1005, guard: 'bond_dual',
+    },
+    post_lock: {
+      boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
+      targetPostId: 'ab'.repeat(32), guard: 'block_apply',
+    },
+    vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+  };
+
+  // The table IS the numbering the encoder writes rather than a restatement of
+  // it — the first byte of a box's identity preimage is its tag. A table
+  // agreeing with the contract but not with `canonicalBoxBytes` would be exactly
+  // the second copy this export exists to remove.
+  it('is the numbering canonicalBoxBytes actually writes', () => {
+    for (const [boxType, tag] of Object.entries(BOX_TYPE_TAGS)) {
+      const candidate = CANDIDATE_BY_TYPE[boxType as BoxCandidate['boxType']];
+      expect(canonicalBoxBytes(candidate)[0]).toBe(tag);
+    }
+  });
+
+  // `enum8`'s domain: `0xff` is the reserved out-of-domain sentinel, so a table
+  // claiming it would let a malformed box encode as a well-formed one. A
+  // duplicate tag is an `enum8` construction throw and not a type error, which
+  // is why injectivity is checked here rather than left to the compiler.
+  it('assigns each type a distinct tag inside enum8s domain', () => {
+    const tags = Object.values(BOX_TYPE_TAGS);
+    expect(new Set(tags).size).toBe(tags.length);
+    for (const tag of tags) {
+      expect(Number.isInteger(tag)).toBe(true);
+      expect(tag).toBeGreaterThanOrEqual(0);
+      expect(tag).toBeLessThanOrEqual(0xfe);
+    }
+  });
+
+  // Both tables pinned whole. A renumber moves every id covering the tag and a
+  // guard change moves nothing, so neither may happen quietly — and the guard
+  // half is the only tripwire that side has, since the compiler checks the
+  // table against the interfaces and both would be edited together.
+  it('pins both tables', () => {
+    expect({ ...BOX_TYPE_TAGS }).toEqual({
+      karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
+    });
+    expect({ ...BOX_GUARDS }).toEqual({
+      karma: 'owner_signature',
+      credit: 'owner_signature',
+      invite: 'hash_preimage_with_bond',
+      genesis_proof: 'unspendable',
+      bond: 'bond_dual',
+      post_lock: 'block_apply',
+      vouch: 'owner_signature',
+    });
+  });
+
+  // Total over the same seven types. A consumer synthesising `guard` from the
+  // discriminator meets a table short of one type as an `undefined` guard at
+  // runtime, not as a rejection.
+  it('covers exactly the same box types', () => {
+    expect(Object.keys(BOX_GUARDS).sort()).toEqual(Object.keys(BOX_TYPE_TAGS).sort());
+  });
+
+  // A single source a consumer can write to is not one. `Object.freeze` is the
+  // runtime half of what `as const` states in the type.
+  it('exports both frozen', () => {
+    expect(Object.isFrozen(BOX_TYPE_TAGS)).toBe(true);
+    expect(Object.isFrozen(BOX_GUARDS)).toBe(true);
+  });
+
+  // The karma pin above ('guard has left the consensus bytes') generalised to
+  // every type. This is *why* a drifted guard copy has nothing to catch it, and
+  // therefore why the mapping needs one home rather than a test per consumer.
+  it('keeps every guard string out of the consensus bytes', () => {
+    for (const [boxType, guard] of Object.entries(BOX_GUARDS)) {
+      const candidate = CANDIDATE_BY_TYPE[boxType as BoxCandidate['boxType']];
+      const hex = Buffer.from(canonicalBoxBytes(candidate)).toString('hex');
+      expect(hex).not.toContain(Buffer.from(guard, 'utf8').toString('hex'));
+    }
   });
 });
