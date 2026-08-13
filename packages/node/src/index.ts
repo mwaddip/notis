@@ -1,6 +1,5 @@
 import { loadConfig, isFaucetNetwork } from './config.js';
 import { initDb, closeDb } from './store/db.js';
-import { ensureSchemaVersion } from './store/meta.js';
 import { getSystemKeypair, initSystemKeypair } from './store/system.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
@@ -54,21 +53,7 @@ emitServerStarting('1.0.0', config.networkType);
 // 1. Init DB
 initDb(config.dbPath);
 
-// 1a. Schema version gate: stamp a fresh DB, refuse any stamped mismatch —
-// downgrade OR stale. Stale must refuse too: with zero migrations registered,
-// stamping a stale DB as current defeats the counter, since the tables keep
-// their old shape and the node runs until the first read of a missing column
-// instead of failing here. Logic and any future migrations live in
-// ensureSchemaVersion, where tests can reach them.
-try {
-  ensureSchemaVersion();
-} catch (err) {
-  console.error(err instanceof Error ? err.message : String(err));
-  closeDb();
-  process.exit(1);
-}
-
-// 1b. Initialize AVL prover
+// 1a. Initialize AVL prover
 //
 // Ahead of genesis seeding, which commits its boxes to this tree.
 //
@@ -86,7 +71,7 @@ try {
 // the only supported reset.
 createAvlProver();
 
-// 1c. Init system keypair, then seed the genesis state. Must happen after DB
+// 1b. Init system keypair, then seed the genesis state. Must happen after DB
 //     init, before any route that might need the system box.
 //
 //     `seedGenesisState` owns which boxes a network's genesis holds and the
@@ -97,8 +82,10 @@ createAvlProver();
 //     together (NODE_INTERFACE §Faucet): mounting without provisioning gives a
 //     faucet with nothing to mint from.
 //
-//     Fail-stop on the same shape as the schema gate above: the message, then
-//     the database handle, then a non-zero exit. Every refusal `seedGenesisState`
+//     Fail-stop in three steps: the message, then `closeDb()`, then a non-zero
+//     exit — the only startup gate in this file with that shape. Closing the
+//     handle before exiting is what keeps a refusal from leaving a `-wal` beside
+//     a store the operator is about to inspect. Every refusal `seedGenesisState`
 //     raises is a node that must not run, and each one writes a sentence for the
 //     operator that a bare top-level throw would bury under a stack trace.
 const systemKeypair = initSystemKeypair();

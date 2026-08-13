@@ -1494,8 +1494,8 @@ kept here as the record of what closed, and where the reasoning lives.
    *wrong* id rather than throwing — invisible in the one phase where every
    golden legitimately moves. `box-provenance.test.ts`'s nullable-pinning cases
    were deleted, not repaired.
-4b. ✅ `CURRENT_SCHEMA_VERSION` 0 → 1 — the first time the counter has moved, and
-   the first time it could act.
+4b. ✅ The store schema counter moved 0 → 1. **The counter no longer exists** —
+   see § No store schema version, and none is owed.
 
 **Correctness debts that only became enforceable here**
 
@@ -1879,8 +1879,7 @@ applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Wri
 `dag_likes` rows were route-written, which is what made the old epoch mint a DAG-index
 read inside consensus). Content-layer consensus state, the `block_topology` tier:
 deterministic by replay, journalled with exact inverses, not in the `stateRoot`. The
-`dag_likes` table is **dropped** — schema version bumps (`CURRENT_SCHEMA_VERSION` 1 → 2),
-so a node started against an old DB fails loudly at startup.
+`dag_likes` table is **dropped**.
 
 | Function | Signature |
 |----------|-----------|
@@ -2699,16 +2698,44 @@ CREATE TABLE dag_meta (
 
 | Key | Value encoding | Invariant |
 |-----|---------------|-----------|
-| `schema_version` | u32 LE | Must equal the version compiled into the binary at startup. Higher = refuse with diagnostic. Lower = run idempotent migrations. |
 | `dag_tip_hash` | 32 bytes | Updated atomically with every canonical DAG advance. |
 | `last_validated_sequence` | u32 LE | Must never exceed the DAG tip. Reset to fork point on reorg. |
 | `last_indexed_sequence` | u32 LE | `last_validated_sequence <= last_indexed_sequence <= dag_tip_height`. External queries serve only up to `last_validated_sequence`. |
+| `reorg_floor` | u32 LE | Height below which no reorg is accepted. |
 
-**Startup contract:**
-1. Read `schema_version`. If missing, write current version.
-2. If stored > expected: exit with diagnostic `"Database schema version is X but this build expects Y. Downgrade is not supported."`
-3. If stored < expected: run idempotent migrations in order, each guarded by a sentinel key in dag_meta.
-4. Read `dag_tip_hash` and watermarks to rebuild in-memory DAG view.
+**Startup contract:** read `dag_tip_hash` and the watermarks to rebuild the in-memory DAG view.
+
+### No store schema version, and none is owed
+
+**A node does not version its own database and does not refuse to start against an old one.**
+There is no `schema_version` key, no counter compiled into the binary, and nothing reads a
+store's age to decide whether to run.
+
+⚠ **`store/db.ts` does hold five functions named `migrate*`, and they are not what this section
+denies.** They run unconditionally on every `initDb`, in a fixed order, each deciding for itself
+whether it has work by inspecting the shape it would change — no version, no sentinel keys, no
+ordering contract, nothing to skip and nothing to resume. What does not exist is a **versioned**
+migration path: a stored number that selects which passes to run. That is the thing a launched
+chain will need and the thing there is no point building before one exists.
+
+The mechanism has no regime in which it is both correct and useful (user, 2026-08-13):
+
+- **Before launch**, a store is wiped whenever a committed encoding moves, which is often. A
+  gate that fires only when the wipe was skipped is redundant with a wipe that is happening
+  anyway.
+- **After launch**, the chain cannot be nuked at all. A node returning from an outage across an
+  upgrade needs its store *migrated*, and a version gate would refuse to start it while
+  prescribing the one remedy that is unavailable. The gate is not merely useless there — it
+  turns a recoverable node into a dead one.
+
+⚠ **This is not a statement that store shape never changes.** It changes freely. What is stated
+is that the *node* does not adjudicate it: before launch the operator wipes, and after launch a
+migration path is a design problem to be solved when there is a chain worth migrating, not a
+counter to be incremented in advance of one.
+
+⚠ **Nothing else stands in for it, deliberately.** A store carrying data an encoding has moved
+under produces a `stateRoot` mismatch at the first inbound block — late, and naming two digests
+rather than the store. That is the accepted cost of the ruling above, not an oversight.
 
 ### PostStore Interface
 
@@ -2756,7 +2783,6 @@ interface PostStore {
   deletePeer(peerId: string): void;
   pruneBelowHorizon(horizon: number, typeIds: number[]): void;
   minSequencePresent(typeId: number): number;
-  schemaVersion(): number;
   close(): void;
 }
 
@@ -2874,8 +2900,9 @@ no other height a genesis box could commit to; the seeders raise it to 1 for the
 `genesisMintHeight`) and is shared with the non-genesis callers of `ensureSystemKarmaBox` and
 `ensureFaucetCreditBox`, which pass real heights.
 
-**A refused genesis exits like a refused schema version**: the message, then `closeDb()`, then a
-non-zero exit. Both gates in `index.ts` have this shape.
+**A refused genesis exits in three steps**: the message, then `closeDb()`, then a non-zero exit.
+It is the only startup gate in `index.ts` with this shape, and closing the handle before exiting
+is what keeps a refusal from leaving a `-wal` beside a store the operator is about to inspect.
 
 **`getGenesisProofBox` orders its `LIMIT 1`.** Exactly one proof box is reachable — `OUTPUT_SHAPE`
 excludes `genesis_proof` so no transaction mints one, and `assertEmptyBeforeGenesis` refuses to seed

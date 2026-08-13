@@ -86,8 +86,12 @@ Event-specific fields are additional top-level keys.
 
 ### db_open_complete
 **Level:** INFO
-**Fields:** `schema_version` (number), `duration_ms` (number)
-**Emitted:** After schema version check passes.
+**Fields:** `duration_ms` (number)
+**Emitted:** After the SQLite database is open and its migrations have run.
+
+> ⚠ **NOT IMPLEMENTED.** Neither `db_open_started` nor `db_open_complete` is emitted anywhere in
+> `packages/node/src` — measured 2026-08-13, and the gap predates this note. The field list above
+> is what an implementation should carry, not a description of output anyone can observe.
 
 ### dag_load_started
 **Level:** INFO
