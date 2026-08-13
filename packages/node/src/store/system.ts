@@ -138,14 +138,18 @@ const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n;  // 100k credits in base un
 /**
  * Ensure the system keypair has a credit box with FAUCET_CREDITS_INITIAL
  * credits for the testnet faucet. Idempotent — if the system already has
- * unspent credit boxes, does nothing.
+ * unspent credit boxes, returns the first without creating.
+ *
+ * Returns the box for the same reason `ensureSystemKarmaBox` does: the cold-start
+ * caller has to hand what it seeded to the AVL feed, and re-reading it from the
+ * store afterwards would be a second derivation of the same fact.
  */
 export function ensureFaucetCreditBox(
   systemPubKey: Uint8Array,
   currentHeight: number,
-): void {
+): CreditBox {
   const existing = getCreditBoxes(systemPubKey);
-  if (existing.length > 0) return;
+  if (existing.length > 0) return existing[0]!;
 
   const genesisHeight = currentHeight > 0 ? currentHeight : 1;
 
@@ -163,6 +167,7 @@ export function ensureFaucetCreditBox(
   };
   box.id = computeBoxId(box);
   insertBox(box);
+  return box;
 }
 
 /**

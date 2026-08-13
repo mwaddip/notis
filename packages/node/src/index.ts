@@ -1,7 +1,8 @@
 import { loadConfig, isFaucetNetwork } from './config.js';
 import { initDb, closeDb } from './store/db.js';
 import { ensureSchemaVersion } from './store/meta.js';
-import { getSystemKeypair, initSystemKeypair, ensureSystemKarmaBox, ensureFaucetCreditBox } from './store/system.js';
+import { getSystemKeypair, initSystemKeypair } from './store/system.js';
+import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
 import {
@@ -65,24 +66,9 @@ try {
   process.exit(1);
 }
 
-// 1b. Init system keypair (faucet source on the faucet-bearing networks). Must
-//     happen after DB init, before any route that might need the system box.
-//     The gate shares isFaucetNetwork with the /faucet mount and the
-//     /credits/faucet handler — the three move together (NODE_INTERFACE
-//     §Faucet): mounting without provisioning gives a faucet with nothing to
-//     mint from.
-const systemKeypair = initSystemKeypair();
-if (isFaucetNetwork(config.networkType)) {
-  const height = getCurrentHeight();
-  ensureSystemKarmaBox(systemKeypair.publicKey, height);
-  ensureFaucetCreditBox(systemKeypair.publicKey, height);
-  console.log(
-    `System keypair: ${Buffer.from(systemKeypair.publicKey).toString('hex').slice(0, 12)}... ` +
-    `(faucet source)`,
-  );
-}
-
-// 1c. Initialize AVL prover
+// 1b. Initialize AVL prover
+//
+// Ahead of genesis seeding, which commits its boxes to this tree.
 //
 // There is deliberately no rebuild-from-UTXO-set path here (NODE_INTERFACE →
 // the SUPERSEDED note on `bootstrapAvlProver`, 2026-08-07). Such a rebuild is
@@ -97,6 +83,25 @@ if (isFaucetNetwork(config.networkType)) {
 // must never be wiped independently of the chain — wiping both together is
 // the only supported reset.
 createAvlProver();
+
+// 1c. Init system keypair, then seed the genesis state. Must happen after DB
+//     init, before any route that might need the system box.
+//
+//     `seedGenesisState` owns which boxes a network's genesis holds and the
+//     order they reach the tree in; both are consensus-visible, so neither is
+//     an artefact of this file. The faucet-bearing networks alone carry the
+//     system karma and faucet credit boxes — the gate it applies is shared with
+//     the /faucet mount and the /credits/faucet handler, so the three move
+//     together (NODE_INTERFACE §Faucet): mounting without provisioning gives a
+//     faucet with nothing to mint from.
+const systemKeypair = initSystemKeypair();
+seedGenesisState(systemKeypair.publicKey, getCurrentHeight());
+if (isFaucetNetwork(config.networkType)) {
+  console.log(
+    `System keypair: ${Buffer.from(systemKeypair.publicKey).toString('hex').slice(0, 12)}... ` +
+    `(faucet source)`,
+  );
+}
 
 // 2. Create NetNode
 // The four discovery knobs are passed explicitly: NET_INTERFACE.md documents

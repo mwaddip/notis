@@ -67,13 +67,18 @@ export interface RecordPut {
 /**
  * Build a prover's tree from a full set of committed state.
  *
- * ⚠ **No production caller, and there must not be one.** AVL+ tree shape is
- * history-dependent, so a tree rebuilt from a full state set forks against one
- * grown incrementally to the same content (NODE_INTERFACE → the SUPERSEDED
- * note, 2026-08-07) — which is why **AVL storage must never be wiped
- * independently of the chain**, and why a startup rebuild is not a recovery
- * path. This remains tree-construction tooling for the test suites
- * (order-independence, restart-comparison, journal round-trip scaffolding).
+ * ⚠ **Exactly one production caller — `seedGenesisState` — and there must not
+ * be a second.** AVL+ tree shape is history-dependent, so a tree rebuilt from a
+ * full state set forks against one grown incrementally to the same content
+ * (NODE_INTERFACE → the SUPERSEDED note, 2026-08-07) — which is why **AVL
+ * storage must never be wiped independently of the chain**, and why a startup
+ * rebuild is not a recovery path.
+ *
+ * Genesis is not that operation: the tree is empty, so there is no history for a
+ * rebuild to lose, and the input is a fixed known set rather than one recovered
+ * from SQL. `seedGenesisState` states the distinction in full. Every other
+ * caller is test tooling (order-independence, restart-comparison, journal
+ * round-trip scaffolding).
  *
  * **`records` is required, and deliberately not defaulted.** The tree holds two
  * committed entity kinds; a feed of only boxes produces a tree missing every
