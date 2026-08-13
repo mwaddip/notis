@@ -1,9 +1,45 @@
 import type { PeerRecord } from './types.js';
+import {
+  isRecord,
+  isBoundedInt,
+  isBoundedIntArray,
+  MAX_CAPABILITY_CODE,
+} from './msg-guards.js';
 
 export interface PeerStorage {
   loadAll(): PeerRecord[];
   put(record: PeerRecord): void;
   delete(address: string): void;
+}
+
+/**
+ * True for a row PeerDb may hold.
+ *
+ * `recent()` feeds a `Peers` body verbatim, and the receiver bounds every entry
+ * it decodes: one out-of-domain field rejects the whole body and permanently
+ * bans the sender (NET_INTERFACE → Peers). A row is therefore admitted only if
+ * we can serve it — the guarantee that response rests on is a property of
+ * PeerDb's contents, not of any one way in.
+ *
+ * The five wire fields carry the bounds `decodePeers` and `validateHandshake`
+ * apply to the same names, through the same predicates; a second spelling of a
+ * bound is a second rule to keep in step. `lastSeenMs` is not a wire field —
+ * it orders `recent()` and picks the eviction victim — so its bound is the
+ * non-negative integer both writers produce by stamping a clock.
+ *
+ * `loadAll()` declares `PeerRecord[]`; that is the storage implementation's
+ * claim, and this is where it is checked.
+ */
+function isServableRecord(rec: unknown): rec is PeerRecord {
+  return (
+    isRecord(rec) &&
+    typeof rec.address === 'string' &&
+    isBoundedInt(rec.lastSeenMs, Number.MAX_SAFE_INTEGER) &&
+    typeof rec.agentName === 'string' &&
+    typeof rec.nodeName === 'string' &&
+    isBoundedInt(rec.protocolVersion, MAX_CAPABILITY_CODE) &&
+    isBoundedIntArray(rec.capabilities, MAX_CAPABILITY_CODE)
+  );
 }
 
 export class PeerDb {
@@ -17,9 +53,18 @@ export class PeerDb {
     selfAddresses: string[],
   ) {
     this.selfAddrs = new Set(selfAddresses);
-    // Load persisted entries on construction
+    // Load persisted entries on construction. An unservable row is dropped, not
+    // repaired: a capability code is an identity rather than a magnitude, so a
+    // clamped one advertises a capability the peer never declared. The row
+    // stays in storage — the peer re-enters PeerDb through a handshake or a
+    // Peers intake, with bounded fields, the next time we meet it.
     if (storage) {
-      for (const rec of storage.loadAll()) {
+      for (const rec of storage.loadAll() as unknown[]) {
+        if (!isServableRecord(rec)) {
+          const addr = isRecord(rec) ? String(rec.address) : String(rec);
+          console.warn(`[net] not loading peer row ${addr}: out of domain for a Peers body`);
+          continue;
+        }
         if (!this.selfAddrs.has(rec.address)) {
           this.entries.set(rec.address, rec);
         }

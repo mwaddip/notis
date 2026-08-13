@@ -614,29 +614,40 @@ otherwise feed any type.
 
 A single invalid entry rejects the **whole** body, banning the sender.
 That is not collateral damage: a node serves `Peers` from its own PeerDb,
-and every PeerDb entry has already passed this same validation on the way
-in (from a handshake or from intake), so a well-behaved node cannot
-produce an invalid entry.
+and **every PeerDb entry is bounded before it is admitted, by whichever route
+it arrived** — the guarantee is a property of PeerDb's contents rather than of
+any one way in. A well-behaved node cannot produce an invalid entry.
 
-> ⚠ **VIOLATED — that justification enumerates two intakes and there are three.
-> Recorded 2026-08-10, re-verified 2026-08-11.** `PeerDb`'s constructor loads persisted rows
-> straight from `PeerStorage.loadAll()` into `entries`, filtered only for our own address —
-> the `for (const rec of storage.loadAll())` loop in `net/src/peerdb.ts`. It is the third
-> intake and the one that validates nothing. (`loadAll` resolves to `loadAllPeers` in
-> `node/src/store/peers.ts`.) **This note's line pin was one of the few in this file that
-> still resolved correctly.**
-> Node's `loadAllPeers` skips a row whose capabilities JSON is *corrupt*, but does
-> not bound the values and never inspects `protocol_version`.
+> ✅ **RESOLVED — the third intake now validates. `PeerDb`'s constructor holds every row
+> `PeerStorage.loadAll()` returns to the same bounds, through the same predicates the wire
+> intakes use (`isBoundedInt` / `isBoundedIntArray` against `MAX_CAPABILITY_CODE`), and drops
+> what it cannot serve.**
 >
-> **The consequence runs the wrong way: it bans us, not them.** CBOR is total, so
-> nothing throws locally. A persisted row carrying a capability above
-> `MAX_CAPABILITY_CODE` is served through `recent()` → `servePeersBody` →
-> `encodePeers`, and **every peer we answer permanently bans us** by the rule
-> stated directly above. The row is on disk, so it survives restarts.
+> **The sentence above was reworded rather than corrected to "three".** It enumerated the
+> intakes, and an enumeration is what a fourth intake would falsify again; it now states the
+> property, which no new route can make false without also breaking it.
 >
-> In domain today only by write discipline — both writers (`validateHandshake`,
-> `decodePeers`) bound capabilities. **That is precisely the unchecked
-> cross-boundary invariant this bundle exists to convert into a check.**
+> **Kept because the reasoning is the record.** The defect was that the constructor loaded
+> persisted rows straight into `entries`, filtered only for our own address, while `recent()`
+> serves those entries verbatim into a `Peers` body. **The consequence ran the wrong way — it
+> banned US, not them:** CBOR is total, so nothing threw locally, and a row out of domain was
+> served through `recent()` → `servePeersBody` → `encodePeers`, where every peer we answered
+> banned us permanently. The row was on disk, so it survived restarts. It was in domain only by
+> write discipline, both writers happening to bound what they wrote.
+>
+> ⚠ **It was FIVE wire fields, not the two this note named.** `address`, `agentName` and
+> `nodeName` reach `decodePeers` the same way and ban us the same way, and node's `loadAllPeers`
+> casts SQLite rows with no runtime check — so a `NULL agent_name` arrives as `null`, encodes
+> fine, and trips `typeof !== 'string'` at the receiver. **The two-field version came from this
+> note and was carried into the dispatch brief; the executor derived the set from the type
+> instead and refuted it.** A sixth field, `lastSeenMs`, is not a wire field and cannot ban
+> anyone — it is bounded because it orders `recent()` and merges through `Math.max` in
+> `record()`, and it arrives through the same unchecked load.
+>
+> **Dropped rather than clamped:** a capability code is an identity, not a magnitude, so a
+> clamped one advertises a capability the peer never declared — and three of the five fields are
+> strings, which have no clamp. The row stays in storage and the peer re-enters PeerDb through a
+> handshake or a `Peers` intake the next time we meet it.
 >
 > **Ruling (2026-08-10): the check belongs in `PeerDb`'s constructor, not in
 > node's `loadAllPeers`.** The guarantee this contract states is about *PeerDb
