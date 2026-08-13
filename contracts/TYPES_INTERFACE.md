@@ -1022,8 +1022,9 @@ runtime strip somebody must remember:
 > `state/serialize-box.ts` separately carried its own one-byte box-type tag from an earlier design,
 > and composing the two — `avlTag ‖ boxRecordBytes` — writes the box type **twice, in two
 > disagreeing numberings, in adjacent bytes**. The two numberings put the retired-`like` reservation
-> in *different positions* (`enum8` reserves `3` between `invite` and `bond`; the AVL tag reserved
-> `0x03` between `credit` and `invite`), so they do not even differ by a constant. **`enum8`'s
+> in *different positions* (`enum8` held `3` between `invite` and `bond` — since reassigned to
+> `genesis_proof`; the AVL tag reserved `0x03` between `credit` and `invite`), so they did not even
+> differ by a constant. **`enum8`'s
 > numbering wins**; see `NODE_INTERFACE` → "Two entity kinds" for the full record and why renumbering
 > is safe exactly once.
 >

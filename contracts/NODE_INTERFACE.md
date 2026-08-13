@@ -2466,7 +2466,7 @@ versus "not a box" is still a single bit test and the box-type space stays open.
 
 | | Discriminator space |
 |---|---|
-| Box | `enum8(boxType)`: `0` karma, `1` credit, `2` invite, **`3` reserved — retired `like`**, `4` bond, `5` post_lock, `6` vouch |
+| Box | `enum8(boxType)`: `0` karma, `1` credit, `2` invite, **`3` genesis_proof**, `4` bond, `5` post_lock, `6` vouch |
 | Identity record | `0x80` |
 
 **This replaces a second, disagreeing numbering that this package used to
@@ -2489,8 +2489,15 @@ artifact of two encoders written months apart.
 Safe to renumber because this phase moves the `stateRoot` regardless and the
 standing deploy gate mandates a wiped AVL store with a fresh chain — there is no
 history whose bytes must still parse. **That is a one-time window, not a
-standing licence.** After this lands, `enum8`'s numbering is the committed one
-and `3` stays reserved forever.
+standing licence.** `enum8`'s numbering is the committed one.
+
+⚠ **Tag `3` carries `genesis_proof` and is no longer reserved.** The reassignment
+is governed by the three conditions in `TYPES_INTERFACE` → Primitives — no
+surviving history carries the tag, every other tag keeps its number, and the
+retired *name* `like` stays reserved — not by precedent from this paragraph.
+**Renumbering an assigned tag remains forbidden**; reassigning a reserved number
+and renumbering an assigned one are different operations, and only the first is
+available.
 
 **1a. The AVL value carries provenance, and an absent key is not an
 `undefined` key.** `serializeBox` strips only `id` and `boxType` — `txId` and
