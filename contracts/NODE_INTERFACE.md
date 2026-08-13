@@ -2708,8 +2708,15 @@ CREATE TABLE dag_meta (
 ### No store schema version, and none is owed
 
 **A node does not version its own database and does not refuse to start against an old one.**
-There is no `schema_version` key, no counter compiled into the binary, and no migration
-framework.
+There is no `schema_version` key, no counter compiled into the binary, and nothing reads a
+store's age to decide whether to run.
+
+⚠ **`store/db.ts` does hold five functions named `migrate*`, and they are not what this section
+denies.** They run unconditionally on every `initDb`, in a fixed order, each deciding for itself
+whether it has work by inspecting the shape it would change — no version, no sentinel keys, no
+ordering contract, nothing to skip and nothing to resume. What does not exist is a **versioned**
+migration path: a stored number that selects which passes to run. That is the thing a launched
+chain will need and the thing there is no point building before one exists.
 
 The mechanism has no regime in which it is both correct and useful (user, 2026-08-13):
 
@@ -2776,7 +2783,6 @@ interface PostStore {
   deletePeer(peerId: string): void;
   pruneBelowHorizon(horizon: number, typeIds: number[]): void;
   minSequencePresent(typeId: number): number;
-  schemaVersion(): number;
   close(): void;
 }
 
