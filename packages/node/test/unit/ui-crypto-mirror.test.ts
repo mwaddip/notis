@@ -100,11 +100,11 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '4ac16757cfa8adb833a281bd48b917478457a93e21cc7b90cc7bb93cc03f423c';
+  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
 const GOLDEN_CREDIT_BOX_ID =
-  '38d81346e5a47c6043f51e1e15aee5c6048aec92b5eb07c14003ccbcd4bb2bc5';
+  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
 const GOLDEN_UTXO_TX_ID =
-  '09b0c0e3fb832cd886114f0d099ec751537cef8377d7bc5a935f1ddf9c8eef62';
+  '1377c556cc3dd835e4a51c9f0186afa749cf0904a415bcea2c08a7f6fcc4c893';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -115,14 +115,12 @@ const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
   '64' +                                                               // vlqU value 100
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  '07' + '67656e65736973' +                                            // lpUtf8 'genesis'
   '00';                                                                // opt decayBurn absent
 
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
   '80eae1eac58af715' +                                                 // vlqU value
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  'e0c508' +                                                           // vlqS 70000
   '00';                                                                // opt lockedUntilBlock absent
 
 /** The candidates as block application materializes them out of GOLDEN_UTXO_TX. */
@@ -146,13 +144,13 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '4ac16757cfa8adb833a281bd48b917478457a93e21cc7b90cc7bb93cc03f423c';
+  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  '38d81346e5a47c6043f51e1e15aee5c6048aec92b5eb07c14003ccbcd4bb2bc5';
+  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  'ca5af4ec56635f8b1731eec592e59bda4a8f0332ee7f75a8a13e44769b9a1fd0';
+  '43bd05c2fe285b1dc96359c27735ebfded27681136f6f91cc2d9d30822fe14f1';
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '555fa23925e32ddc4adb61422588088a410ea2196d05349d82b3034e197ad7f2';
+  '368406eeb2cd989ed05a763707b6b6132ffaaa738f890f8ed4cb4bb2dc29b89e';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -609,16 +607,24 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     expect(hexOf(canonicalBoxBytes(decorated as never))).toBe(GOLDEN_KARMA_BOX_BYTES);
   });
 
-  it('the lpUtf8 length ladder agrees across implementations at every VLQ width', () => {
-    // `proofSource` is the only variable-length field in a box, so it is the
-    // only place a length prefix can change width. `lpUtf8` is VLQ-prefixed, so
-    // the rungs sit at 2^7 and 2^14 (TYPES_INTERFACE → Primitives).
-    const prefixAt = (b: Uint8Array): string => hexOf(b.subarray(34, 37));
+  it('the lp length ladder agrees across implementations at every VLQ width', () => {
+    // `genesis_proof`'s `payload` is the one variable-length field any box arm
+    // carries, so it is the only place inside a box where a length prefix can
+    // change width. `lp` is VLQ-prefixed, so the rungs sit at 2^7 and 2^14
+    // (TYPES_INTERFACE → Primitives). A width the two implementations disagreed
+    // on shifts every following byte and moves the id.
+    //
+    // The arm is `enum8(3) ‖ vlqU64(0) ‖ lp(payload)`, so the prefix starts at
+    // offset 2 and the three bytes read below are it plus the payload's first.
+    const prefixAt = (b: Uint8Array): string => hexOf(b.subarray(2, 5));
     for (const [len, prefix] of [
       [127, '7f7878'], [128, '800178'], [16383, 'ff7f78'], [16384, '808001'],
     ] as Array<[number, string]>) {
-      const box: CandidateOf<KarmaBox> = {
-        ...GOLDEN_KARMA_CANDIDATE, proofSource: 'x'.repeat(len),
+      const box: CandidateOf<GenesisProofBox> = {
+        boxType: 'genesis_proof',
+        value: 0n,
+        payload: new Uint8Array(len).fill(0x78),
+        guard: 'unspendable',
       };
       const fromUi = ui.canonicalBoxBytes(box as unknown as Record<string, unknown>);
       const fromTypes = canonicalBoxBytes(box);
@@ -897,7 +903,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    '724fcce0c711683d05f6f099584d30704f99ca2f41251d9a69757119f2ae84ee';
+    '67f0a61ddcda29f83200fbc241f90631498c3635a1fc7f6d903f686d29ee7ed7';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,

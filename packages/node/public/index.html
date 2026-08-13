@@ -715,22 +715,13 @@ function canonicalBoxBytes(box) {
 function boxTypeFields(box) {
   switch (box.boxType) {
     case 'karma':
-      // `lpUtf8`, not `b32`: the field is free-form and both sides stamp it.
-      // The node writes `mint-<height>`, `decay-<height>`, `faucet:system`,
-      // `faucet` and `genesis:system`; this page writes `invite-create`,
-      // `invite-cancel`, and post and invite ids. A `b32` would throw on all
-      // but the ids.
       return concatUint8Arrays([
         b32Either(box.owner, 32),
-        lpUtf8(box.proofSource),
         opt(box.decayBurn, boolByte),
       ]);
     case 'credit':
-      // `vlqS`, not `vlqU`: this carries −1, the transfer sentinel stamped on
-      // every user-path credit box. A `vlqU` would sentinel every one of them.
       return concatUint8Arrays([
         b32Either(box.owner, 32),
-        vlqS(box.proofSource),
         opt(box.lockedUntilBlock, vlqU),
       ]);
     case 'invite':

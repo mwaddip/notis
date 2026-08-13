@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { computeBoxId, computeMintTxId } from '@dagsocial/types';
-import type { AnyBox } from '@dagsocial/types';
+import type { AnyBox, KarmaBox } from '@dagsocial/types';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
+import { labelNonce, seedProvenance } from '../helpers.js';
 
 /**
  * Spec G phase C1 — the mint producers attach provenance.
@@ -438,5 +439,85 @@ describe('direct mint producers attach provenance (Spec G phase C2)', () => {
         Buffer.from(serializeBox(box)).toString('hex'),
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Consolidation order does not reach the minted identity
+// ---------------------------------------------------------------------------
+
+describe('mintKarma consolidates order-independently', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  const OWNER = user(0x61);
+  const B5_HEIGHT = 900;
+  /**
+   * Equal values, which is the whole shape under test: `getKarmaBoxes` is
+   * `ORDER BY value DESC` with **no tie-break**, so which of an equal-valued
+   * pair lands at `existingBoxes[0]` is physical row order. Two nodes holding
+   * the same box set can order it differently, and anything of that first box
+   * that reaches the minted id is a chain split rather than a preference.
+   */
+  const EQUAL_VALUE = 500n;
+
+  /**
+   * Seed the pair in `tags` order, consolidate, and report the minted id
+   * alongside the order `getKarmaBoxes` actually handed `mintKarma`.
+   *
+   * The two boxes are identical but for their tag, so their provenance nonces
+   * are what separate them — `canonicalBoxBytes` no longer distinguishes them
+   * and they would otherwise derive one txId and trip
+   * `UNIQUE(tx_id, output_index)`.
+   */
+  async function consolidate(tags: [string, string]) {
+    vi.resetModules();
+    const { initDb } = await importDbFresh();
+    const { insertBox } = await import('../../src/store/utxo.js');
+    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
+    const { mintKarma } = await import('../../src/services/karma.js');
+    const { coinbaseContext } = await import('../../src/mint-provenance.js');
+    initDb(':memory:');
+
+    for (const tag of tags) {
+      insertBox(
+        seedProvenance<KarmaBox>(
+          {
+            boxType: 'karma' as const,
+            value: EQUAL_VALUE,
+            owner: OWNER,
+            guard: 'owner_signature' as const,
+            proofSource: tag,
+          },
+          1,
+          labelNonce(tag),
+        ),
+      );
+    }
+
+    beginBlockJournal(B5_HEIGHT);
+    const id = mintKarma(OWNER, 100n, B5_HEIGHT, coinbaseContext(0));
+    const consumed = finishBlockJournal()
+      .mutations.filter((m): m is BoxMutation => m.kind === 'box' && m.op === 'remove')
+      .map((m) => m.boxId);
+    return { id, consumed };
+  }
+
+  it('an equal-valued pair reaches one id whichever row order the store returns', async () => {
+    const first = await consolidate(['faucet', 'mint-1']);
+    const second = await consolidate(['mint-1', 'faucet']);
+
+    // The premise, asserted rather than assumed. `mintKarma` consumes in
+    // `existingBoxes` order, so the journal's remove sequence IS the order the
+    // store returned. If the two runs saw the same order, the equality below
+    // would hold for a store that ignored row order entirely and this test
+    // would pin nothing.
+    expect(first.consumed).toHaveLength(2);
+    expect(second.consumed).toEqual([...first.consumed].reverse());
+
+    // The two tags differ, so under a preimage carrying one the two runs would
+    // mint different ids from the same box set — different AVL keys, different
+    // `stateRoot`, a fork between nodes that agree on every transaction.
+    expect(first.id).toBe(second.id);
   });
 });

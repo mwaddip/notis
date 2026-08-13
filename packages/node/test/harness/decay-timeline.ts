@@ -4,6 +4,7 @@ import { computeBoxId } from '@dagsocial/types';
 import type { KarmaBox } from '@dagsocial/types';
 import {
   fixtureProvenance,
+  labelNonce,
   seedProvenance,
 } from '../helpers.js';
 
@@ -213,13 +214,19 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
           }
           case 'seed': {
             const owner = ownerBytes(step.owner);
+            // A seed step is identified by all four of `at`, `owner`, `amount`
+            // and `tag`. The middle two reach `canonicalBoxBytes`; the other two
+            // reach the synthetic provenance, so any two distinguishable steps
+            // produce distinguishable boxes. Collapsing either onto a constant
+            // would make two steps derive one txId and trip
+            // `UNIQUE(tx_id, output_index)` at the second insert.
             const box = seedProvenance<KarmaBox>({
               boxType: 'karma',
               value: step.amount,
               owner,
               guard: 'owner_signature',
               proofSource: step.tag,
-            }, 1);
+            }, step.at, labelNonce(step.tag));
             m.utxo.insertBox(box);
             break;
           }

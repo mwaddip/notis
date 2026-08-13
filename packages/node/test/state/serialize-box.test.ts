@@ -17,10 +17,17 @@ import type { AnyBox, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, 
  */
 
 /**
- * Helper: strip `id` from a box for comparison against deserializeBox output.
+ * A box reduced to what its AVL value carries, for comparison against a decode.
+ *
+ * `id` is the hash OF the value, handed to the reader rather than read out of
+ * it. `proofSource` is in no arm of the box layout (TYPES_INTERFACE → Layout —
+ * Boxes), so no decode can return one. Both leave the *expectation* rather than
+ * the assertion, which keeps "absent by design" distinct from "not compared".
  */
-function withoutId(box: AnyBox) {
-  const { id: _id, ...rest } = box;
+function decodedFields(box: AnyBox) {
+  const { id: _id, proofSource: _proofSource, ...rest } = box as AnyBox & {
+    proofSource?: unknown;
+  };
   return rest;
 }
 
@@ -35,7 +42,7 @@ describe('serializeBox', () => {
     });
     const serialized = serializeBox(box);
     const deserialized = deserializeBoxWithId(box.id, serialized);
-    expect(deserialized).toEqual(box);
+    expect(deserialized).toEqual({ ...decodedFields(box), id: box.id });
   });
 
   it('roundtrips a CreditBox', () => {
@@ -47,7 +54,8 @@ describe('serializeBox', () => {
       proofSource: 10,
       lockedUntilBlock: 20,
     });
-    expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
+    expect(deserializeBoxWithId(box.id, serializeBox(box)))
+      .toEqual({ ...decodedFields(box), id: box.id });
   });
 
   it('an unassigned box tag has no decoding — the AVL value reader refuses it', () => {
@@ -207,7 +215,7 @@ describe('serializeBox', () => {
     });
     const fields = deserializeBox(serializeBox(box));
     expect(fields).not.toHaveProperty('id');
-    expect(fields).toEqual(withoutId(box));
+    expect(fields).toEqual(decodedFields(box));
   });
 
   it('deserializeBox throws on truncated bytes', () => {
@@ -270,13 +278,12 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
       '00' +            // enum8(karma) = 0
       '64' +            // vlqU64(100)
       'aa'.repeat(32) + // b32(owner)
-      '06' + '6d696e742d31' + // lpUtf8('mint-1') — vlqU(6) then utf8
       '00' +            // opt(decayBurn) absent
       PROV,
     );
   });
 
-  it('credit — proofSource -1 is the transfer sentinel, and vlqS is why', () => {
+  it('credit — the lock is an option, and absence is not a value', () => {
     const box: CreditBox = {
       boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
       guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 20,
@@ -286,14 +293,20 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
       '01' +            // enum8(credit) = 1
       '32' +            // vlqU64(50)
       'bb'.repeat(32) + // b32(owner)
-      '01' +            // vlqS(-1) → zigzag 1
       '01' + '14' +     // opt(lockedUntilBlock) present ‖ vlqU(20)
       PROV,
     );
-    // The sentinel and block height 1 must not collide: zigzag maps -1→1 and
-    // 1→2. A `vlqU` here would have thrown on every user-path credit box.
-    const atHeightOne: CreditBox = { ...box, proofSource: 1 };
-    expect(hexOf(serializeBox(atHeightOne))).toContain('bb'.repeat(32) + '02');
+    // The distinguishing assertion: an unlocked box writes the bare `00` tag
+    // and a box locked until block 0 writes `01 00`, so the two cannot collide.
+    // A raw `vlqU` with 0 standing for "unlocked" would give them one id.
+    const unlocked: CreditBox = { ...box, lockedUntilBlock: undefined };
+    const lockedAtZero: CreditBox = { ...box, lockedUntilBlock: 0 };
+    expect(hexOf(serializeBox(unlocked))).toBe(
+      '01' + '32' + 'bb'.repeat(32) + '00' + PROV,
+    );
+    expect(hexOf(serializeBox(lockedAtZero))).toBe(
+      '01' + '32' + 'bb'.repeat(32) + '01' + '00' + PROV,
+    );
   });
 
   it('invite', () => {
