@@ -593,7 +593,7 @@ describe('verifyTxStructure', () => {
   it('accepts a valid transaction', () => {
     const tx: UtxoTransaction = {
       inputs: ['input1'],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature', proofSource: 'abc' }],
+      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -603,7 +603,7 @@ describe('verifyTxStructure', () => {
   it('rejects transaction with no inputs', () => {
     const tx: UtxoTransaction = {
       inputs: [],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature', proofSource: 'abc' }],
+      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -623,7 +623,7 @@ describe('verifyTxStructure', () => {
   it('rejects transaction with duplicate inputs', () => {
     const tx: UtxoTransaction = {
       inputs: ['input1', 'input1'],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature', proofSource: 'abc' }],
+      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -667,7 +667,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
 
   const karmaOut: AnyBoxCandidate = {
     boxType: 'karma', value: 5n, owner: new Uint8Array(32),
-    guard: 'owner_signature', proofSource: 'abc',
+    guard: 'owner_signature',
   };
 
   /**
@@ -677,7 +677,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
    */
   const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
     ['karma', karmaOut],
-    ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature', proofSource: 1 }],
+    ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
     ['invite', { boxType: 'invite', value: 5n, secretHash: new Uint8Array(32), inviterId: new Uint8Array(32), guard: 'hash_preimage_with_bond' }],
     ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteOutputIndex: 1, inviteePublicKey: new Uint8Array(0), probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }],
     ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32), targetPostId: '00'.repeat(32), guard: 'block_apply' }],
