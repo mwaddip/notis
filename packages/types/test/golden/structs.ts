@@ -31,7 +31,6 @@ import {
   readLp,
   readLpUtf8,
   readOpt,
-  readVlqS,
   readVlqU,
   readVlqU64,
 } from '../../src/codec.js';
@@ -181,8 +180,8 @@ const powPreimageCodec: ValueCodec<PowPreimage> = {
  * Provenance (`id`/`txId`/`index`) is absent for the same reason.
  */
 export type BoxContent =
-  | { boxType: 'karma'; value: bigint; owner: Uint8Array; proofSource: string; decayBurn: boolean | null }
-  | { boxType: 'credit'; value: bigint; owner: Uint8Array; proofSource: number; lockedUntilBlock: number | null }
+  | { boxType: 'karma'; value: bigint; owner: Uint8Array; decayBurn: boolean | null }
+  | { boxType: 'credit'; value: bigint; owner: Uint8Array; lockedUntilBlock: number | null }
   | { boxType: 'invite'; value: bigint; secretHash: Uint8Array; inviterId: Uint8Array }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
   | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
@@ -220,7 +219,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           boxType: 'karma',
           value,
           owner: hex(j.owner as string),
-          proofSource: j.proofSource as string,
           decayBurn: (j.decayBurn ?? null) as boolean | null,
         };
       case 'credit':
@@ -228,7 +226,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           boxType: 'credit',
           value,
           owner: hex(j.owner as string),
-          proofSource: j.proofSource as number,
           lockedUntilBlock: (j.lockedUntilBlock ?? null) as number | null,
         };
       case 'invite':
@@ -287,7 +284,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           boxType,
           value,
           owner: readBytesN(r, 32),
-          proofSource: readLpUtf8(r),
           decayBurn: readOpt(r, readBool),
         };
       case 'credit':
@@ -295,7 +291,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           boxType,
           value,
           owner: readBytesN(r, 32),
-          proofSource: readVlqS(r),
           lockedUntilBlock: readOpt(r, readVlqU),
         };
       case 'invite':

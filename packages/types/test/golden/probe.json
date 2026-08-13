@@ -38,7 +38,7 @@
         "flag": true
       },
       "bytes": "01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff02c3a904deadbeefffffffffffffffffff0101000001",
-      "note": "88 bytes. `amount` is u64-max — the ten bytes that are the sentinel elsewhere and a legal value here. `offset` is -1, the credit.proofSource transfer sentinel."
+      "note": "88 bytes. `amount` is u64-max — the ten bytes that are the sentinel elsewhere and a legal value here. `offset` is -1, the value ZigZag maps to a single byte."
     },
     {
       "name": "probe/populated",
