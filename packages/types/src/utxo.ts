@@ -731,7 +731,8 @@ export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   guard: 'owner_signature';
-  proofSource: string;        // Free-form tag or hex id — the stamped set is in writeBoxTypeFields
+  // Removal in progress: absent from `canonicalBoxBytes`; optional until producers stop setting it.
+  proofSource?: string;       // Free-form tag or hex id
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
   decayBurn?: boolean;
@@ -743,7 +744,8 @@ export interface CreditBox extends BoxBase {
   boxType: 'credit';
   owner: Uint8Array;          // 32 raw bytes
   guard: 'owner_signature';
-  proofSource: number;        // Minting block height, OR -1: the transfer sentinel (heightOrTransfer)
+  // Removal in progress: absent from `canonicalBoxBytes`; optional until producers stop setting it.
+  proofSource?: number;       // Minting block height, OR -1: the transfer sentinel (heightOrTransfer)
   lockedUntilBlock?: number;  // Block height before which credits cannot be spent
 }
 
