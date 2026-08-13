@@ -30,6 +30,7 @@ const PROFILE_FIELDS = [
   'genesisCommitteeKeys',
   'genesisKarmaPerMember',
   'genesisCreditsPerMember',
+  'genesisProofPayload',
   'treasuryPubKey',
 ].sort();
 
@@ -100,6 +101,7 @@ describe('NETWORK_PROFILES', () => {
       'networkType',
       'magic',
       'genesisCommitteeKeys',
+      'genesisProofPayload',
       'treasuryPubKey',
     ]);
     const { mainnet, testnet } = NETWORK_PROFILES;
@@ -148,6 +150,23 @@ describe('NETWORK_PROFILES', () => {
     const { mainnet, devnet } = NETWORK_PROFILES;
     expect(devnet.genesisKarmaPerMember).toBe(mainnet.genesisKarmaPerMember);
     expect(devnet.genesisCreditsPerMember).toBe(mainnet.genesisCreditsPerMember);
+  });
+
+  // The `genesis_proof` box's payload — the only field that differs across the
+  // three genesis box sets, and therefore the only reason their state roots
+  // differ. `genesisKarmaPerMember` and `genesisCreditsPerMember` are shared by
+  // all three (the test above pins that), so distinctness here is not one
+  // property among several: it is the whole of network identity at genesis.
+  it('every profile carries a genesis proof payload, and no two share one', () => {
+    const payloads = Object.values(NETWORK_PROFILES).map((p) => p.genesisProofPayload);
+    for (const payload of payloads) {
+      // Hex of raw bytes: even length, lowercase, non-empty. The field is a
+      // string rather than a `Uint8Array` because `Object.freeze` does not
+      // reach a typed array's contents, so a profile holding one would be
+      // mutable in exactly the field that defines the network.
+      expect(payload).toMatch(/^([0-9a-f]{2})+$/);
+    }
+    expect(new Set(payloads).size).toBe(3);
   });
 });
 

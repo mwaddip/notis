@@ -20,7 +20,7 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
 | `post.json` | `postFieldBytes` — the post id and PoW preimage — plus `powNonceBytes` and the two composed |
-| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type, and both states of `bond.inviteePublicKey` |
+| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type, both states of `bond.inviteePublicKey`, and both states of `genesis_proof.payload` |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage |
 | `block.json` | The six block structs and the ordering-block framing, plus the two element preimages |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |

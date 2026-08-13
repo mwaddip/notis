@@ -22,7 +22,7 @@ import {
   encodeTx,
   decodeTx,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -325,8 +325,9 @@ describe('golden vectors (positional box encoding)', () => {
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
     // `enum8` stays total: its tag set is narrower than a byte, so `0xff` is
     // unreachable from any real box type and a malformed box can never encode
-    // as a well-formed one. Tag 3 is permanently burnt for the retired `like`
-    // — a renumber would silently move every box id covering the tag.
+    // as a well-formed one. `'like'` is the fixture because it is a retired box
+    // type — the string is reserved and holds no tag, so it is exactly the
+    // "outside the table" case this arm exists for.
     const bogus = { ...GOLDEN_KARMA_CANDIDATE, boxType: 'like' as never };
     const bytes = canonicalBoxBytes(bogus);
     expect(bytes[0]).toBe(0xff);
@@ -567,6 +568,85 @@ describe('bond.inviteePublicKey is opt(b32), not b32', () => {
     // invite / post_lock / vouch have no inline golden here; theirs are the
     // untouched vectors in `test/golden/boxes.json`, asserted by the corpus
     // suite in both directions.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// genesis_proof — the box whose payload is a network's identity
+// ---------------------------------------------------------------------------
+
+/**
+ * Tag 3, `value` fixed at `0n`, and one variable-width field.
+ *
+ * **The payload is `lp`, not `lpUtf8`** (TYPES_INTERFACE → Layout — Boxes). It
+ * is opaque to consensus; whether it decodes as text is a client's question,
+ * and a UTF-8 writer would put a validity rule inside an encoder that has no
+ * business holding one. That makes the length prefix the whole of the field's
+ * injectivity, which is what the empty-payload test below pins.
+ *
+ * **A different payload is a different box id, and that is the mechanism the
+ * unit rests on** — it is the only divergence between the three networks'
+ * genesis box sets, so it is what makes their state roots differ.
+ *
+ * `value` is `0n`: the box carries neither karma nor credits and never enters
+ * supply accounting. It still takes the shared prefix's `vlqU64` like every
+ * other box type, which is the `00` in these vectors.
+ */
+const PROOF_PAYLOAD = new TextEncoder().encode('mock-headline');
+
+/**
+ * Hand-assembled from the layout table, not copied from the encoder's output —
+ * the same idiom as `BOND_PREFIX` above, and the only form that makes a vector
+ * an independent check rather than a screenshot.
+ *
+ *   03 | 00 | 0d | 6d6f636b2d686561646c696e65
+ *   ^tag ^vlqU64(0)  ^vlqU(13)   ^payload
+ */
+const PROOF_BYTES = '03' + '00' + '0d' + '6d6f636b2d686561646c696e65';
+
+function makeProofCandidate(payload: Uint8Array): CandidateOf<GenesisProofBox> {
+  return { boxType: 'genesis_proof', value: 0n, guard: 'unspendable', payload };
+}
+
+describe('genesis_proof', () => {
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+  it('takes tag 3, and encodes as enum8 ‖ vlqU64(value) ‖ lp(payload)', () => {
+    const bytes = canonicalBoxBytes(makeProofCandidate(PROOF_PAYLOAD));
+    expect(bytes[0]).toBe(3);
+    expect(hexOf(bytes)).toBe(PROOF_BYTES);
+    expect(bytes.length).toBe(16);
+  });
+
+  it('an empty payload has an encoding, and the length prefix keeps it distinct', () => {
+    // `lp` and not raw bytes appended: without the count an empty payload is
+    // indistinguishable from the end of the box, and a one-byte payload of
+    // `00` would share its encoding with an empty one. Three bytes is the
+    // smallest legal box of any type.
+    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array(0))))).toBe('030000');
+    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('03000100');
+  });
+
+  it('round-trips through the box record, with guard absent from the bytes', () => {
+    // `guard` is `'unspendable'` on the candidate and is not in the encoding —
+    // it is a pure function of `boxType` like every other box's, so the reader
+    // does not invent it and the expectation does not carry it.
+    const record = boxRecordFromBytes(
+      boxRecordBytes(makeProofCandidate(PROOF_PAYLOAD), FIXTURE_TX_ID, 0),
+    );
+    expect(record).toEqual({
+      candidate: { boxType: 'genesis_proof', value: 0n, payload: PROOF_PAYLOAD },
+      txId: FIXTURE_TX_ID,
+      index: 0,
+    });
+  });
+
+  it('a different payload is a different box id — the whole per-network mechanism', () => {
+    const encode = (s: string) => new TextEncoder().encode(s);
+    const ids = ['mainnet-proof', 'testnet-proof', 'devnet-proof'].map((s) =>
+      computeCandidateBoxId(makeProofCandidate(encode(s)), FIXTURE_TX_ID, 0),
+    );
+    expect(new Set(ids).size).toBe(3);
   });
 });
 
@@ -853,8 +933,14 @@ describe('boxRecordBytes', () => {
  * skip, and this cannot.
  */
 describe('boxRecordFromBytes', () => {
-  /** One candidate per box type, each exercising a field the others do not. */
-  const ALL_SIX: [string, AnyBoxCandidate][] = [
+  /**
+   * One candidate per box type, each exercising a field the others do not.
+   *
+   * Named for what the list IS rather than for how long it is — a count in the
+   * name is false the first time a box type is added, and the name is not what
+   * the compiler checks.
+   */
+  const ALL_BOX_TYPES: [string, AnyBoxCandidate][] = [
     ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
     ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, decayBurn: true }],
     ['credit (transfer sentinel)', { ...GOLDEN_CREDIT_CANDIDATE, proofSource: -1 }],
@@ -878,9 +964,11 @@ describe('boxRecordFromBytes', () => {
       targetPostId: 'ab'.repeat(32), guard: 'block_apply',
     }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
+    ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
+    ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
   ];
 
-  for (const [label, candidate] of ALL_SIX) {
+  for (const [label, candidate] of ALL_BOX_TYPES) {
     it(`round-trips ${label}`, () => {
       // `guard` is not in the bytes (C10) and the reader does not invent it, so
       // it is dropped from the expectation rather than from the assertion — the
@@ -896,7 +984,7 @@ describe('boxRecordFromBytes', () => {
     // The other direction of the same claim, at byte level. `toEqual` on the
     // value could pass while a field the reader ignores rides along in the
     // bytes; this cannot.
-    for (const [, candidate] of ALL_SIX) {
+    for (const [, candidate] of ALL_BOX_TYPES) {
       const bytes = boxRecordBytes(candidate, GOLDEN_TX_ID, 3);
       const back = boxRecordFromBytes(bytes);
       expect(Buffer.from(boxRecordBytes(back.candidate as BoxCandidate, back.txId, back.index)))
@@ -929,11 +1017,25 @@ describe('boxRecordFromBytes', () => {
     expect(() => boxRecordFromBytes(bytes.subarray(0, bytes.length - 5))).toThrow(ReaderError);
 
     // 1 — the reserved sentinel tag and every unassigned boxType have no
-    // decoding at all. Tag 3 is the retired `like`: burnt, never reused.
-    for (const tag of [0x03, 0x07, 0xff]) {
+    // decoding at all: the tag reader refuses them, so nothing after the tag is
+    // read. 7 is the first number `BOX_TYPE` does not assign.
+    //
+    // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
+    // *assigned* tag swapped in here throws too — on the fields it then
+    // misreads, as `trailing-bytes` — so a bare `toThrow` cannot tell "this tag
+    // has no decoding" from "this tag decodes, into something else". That is
+    // the difference this loop exists to pin, and only the code shows it.
+    for (const tag of [0x07, 0xff]) {
       const badTag = bytes.slice();
       badTag[0] = tag;
-      expect(() => boxRecordFromBytes(badTag)).toThrow(ReaderError);
+      let thrown: unknown;
+      try {
+        boxRecordFromBytes(badTag);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, `tag ${tag}`).toBeInstanceOf(ReaderError);
+      expect((thrown as ReaderError).code, `tag ${tag}`).toBe('invalid-tag');
     }
   });
 });

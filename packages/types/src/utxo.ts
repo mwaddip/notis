@@ -8,6 +8,7 @@ import {
   readBool,
   readBytesN,
   readHexN,
+  readLp,
   readLpUtf8,
   readOpt,
   readVlqS,
@@ -54,20 +55,21 @@ export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
 /**
  * The `boxType` tag table.
  *
- * **Tag 3 is permanently burnt** for the retired `like` box type. Reserving a
- * retired tag rather than renumbering is not tidiness: `boxType` is the first
- * byte of every box's identity preimage, so a renumber silently moves every box
- * id and every `stateRoot` covering them, with no compiler signal. That is
- * TYPES_INTERFACE → Primitives' rule that enum tags reserve retired values and
- * are never renumbered, applying inside the id preimage itself — and node's AVL
- * value (`state/serialize-box.ts`) reads this same table. Reserve by leaving
- * the number out of this table; never reuse it.
+ * **A tag is never renumbered.** `boxType` is the first byte of every box's
+ * identity preimage, so moving a number silently moves every box id and every
+ * `stateRoot` covering it, with no compiler signal — TYPES_INTERFACE →
+ * Primitives, applying inside the id preimage itself. Node's AVL value
+ * (`state/serialize-box.ts`) reads this same table.
+ *
+ * Giving a retired type's *number* to a new type is a different operation with
+ * its own conditions, which TYPES_INTERFACE → Primitives states. A retired
+ * **string** is reserved regardless; see `BoxCandidate.boxType`.
  */
 const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
   karma: 0,
   credit: 1,
   invite: 2,
-  // 3 — reserved, retired `like`. Never reuse.
+  genesis_proof: 3,
   bond: 4,
   post_lock: 5,
   vouch: 6,
@@ -86,14 +88,15 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *
  *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
  *
- *   | karma     | b32(owner) ‖ lpUtf8(proofSource) ‖ opt(decayBurn)          |
- *   | credit    | b32(owner) ‖ vlqS(proofSource) ‖ opt(lockedUntilBlock)     |
- *   | invite    | b32(secretHash) ‖ b32(inviterId)                          |
- *   | bond      | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
- *   |           |   ‖ opt(b32(inviteePublicKey)) ‖ vlqU(probationStartBlock) |
- *   |           |   ‖ vlqU(probationEndBlock)                               |
- *   | post_lock | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
- *   | vouch     | b32(voucherId) ‖ b32(targetId)                            |
+ *   | karma         | b32(owner) ‖ lpUtf8(proofSource) ‖ opt(decayBurn)          |
+ *   | credit        | b32(owner) ‖ vlqS(proofSource) ‖ opt(lockedUntilBlock)     |
+ *   | invite        | b32(secretHash) ‖ b32(inviterId)                          |
+ *   | genesis_proof | lp(payload)                                               |
+ *   | bond          | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
+ *   |               |   ‖ opt(b32(inviteePublicKey)) ‖ vlqU(probationStartBlock) |
+ *   |               |   ‖ vlqU(probationEndBlock)                               |
+ *   | post_lock     | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
+ *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
  *
  * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
  * Boxes). It is a pure function of `boxType` — one guard string per type, with
@@ -171,6 +174,14 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'invite':
       writeBytesNOrThrow(w, box.secretHash, 32);
       writeBytesNOrThrow(w, box.inviterId, 32);
+      return;
+    case 'genesis_proof':
+      // `lp`, not `lpUtf8`: the payload is opaque to consensus. Whether it
+      // decodes as text is a client's question, and a UTF-8 writer would put a
+      // validity rule inside an encoder that does not own one. The length
+      // prefix is the whole of the field's injectivity — appended raw, an empty
+      // payload would be indistinguishable from the end of the box.
+      writeLp(w, box.payload);
       return;
     case 'bond':
       writeBytesNOrThrow(w, box.inviterId, 32);
@@ -251,6 +262,12 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         value,
         secretHash: readBytesN(r, 32),
         inviterId: readBytesN(r, 32),
+      };
+    case 'genesis_proof':
+      return {
+        boxType,
+        value: value as 0n,
+        payload: readLp(r),
       };
     case 'bond':
       return {
@@ -451,6 +468,7 @@ export type DecodedBoxCandidate =
   | Omit<CandidateOf<KarmaBox>, 'guard'>
   | Omit<CandidateOf<CreditBox>, 'guard'>
   | Omit<CandidateOf<InviteBox>, 'guard'>
+  | Omit<CandidateOf<GenesisProofBox>, 'guard'>
   | Omit<CandidateOf<BondBox>, 'guard'>
   | Omit<CandidateOf<PostLockBox>, 'guard'>
   | Omit<CandidateOf<VouchBox>, 'guard'>;
@@ -622,17 +640,20 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
 // that is invalid today valid. Guard is *not* in the id preimage (see
 // `canonicalBoxBytes`), so this reservation is a validation-rule one, not an
 // identity one.
-export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'inviter_signature' | 'bond_dual' | 'hash_preimage_with_bond';
+//
+// `'unspendable'` names no spender at all, which no other member does —
+// `'block_apply'` is still consumable, by block application.
+export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'inviter_signature' | 'bond_dual' | 'hash_preimage_with_bond' | 'unspendable';
 
 /**
  * The creator-chosen fields — what a client builds and what `computeTxId`
  * hashes. No `id`, no provenance.
  */
 export interface BoxCandidate {
-  // `'like'` is a retired box type — string reserved, never reuse. `boxType` is
-  // box content and the first byte of every id preimage; `BOX_TYPE` above burns
-  // tag 3 for it.
-  boxType: 'karma' | 'credit' | 'invite' | 'bond' | 'post_lock' | 'vouch';
+  // `'like'` is a retired box type — string reserved, never reuse. A new box
+  // type wearing the name would make old-vs-new greps and historical debugging
+  // ambiguous forever.
+  boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
@@ -704,6 +725,30 @@ export interface InviteBox extends BoxBase {
   guard: 'hash_preimage_with_bond'; // Unlocked by preimage + committed BondBox
 }
 
+// --- Genesis proof ---
+
+/**
+ * The box that makes one network's genesis state differ from another's.
+ *
+ * `guard: 'unspendable'` names no spender at all. Nothing in this package
+ * enforces a guard — it is not in the id preimage (see `canonicalBoxBytes`),
+ * and the rules that read it belong to validation and to node's output-shape
+ * check.
+ *
+ * `value` is `0n`: the box holds neither karma nor credits, so it never enters
+ * supply accounting.
+ */
+export interface GenesisProofBox extends BoxBase {
+  boxType: 'genesis_proof';
+  value: 0n;
+  /**
+   * Opaque bytes — `lp` on the wire, and consensus reads nothing inside them.
+   * `NetworkProfile.genesisProofPayload` carries the per-network value as hex.
+   */
+  payload: Uint8Array;
+  guard: 'unspendable';
+}
+
 // --- Bond ---
 
 export interface BondBox extends BoxBase {
@@ -771,13 +816,14 @@ export interface VouchBox extends BoxBase {
 // Union type
 // ---------------------------------------------------------------------------
 
-export type AnyBox = KarmaBox | CreditBox | InviteBox | BondBox | PostLockBox | VouchBox;
+export type AnyBox = KarmaBox | CreditBox | InviteBox | GenesisProofBox | BondBox | PostLockBox | VouchBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
   | CandidateOf<KarmaBox>
   | CandidateOf<CreditBox>
   | CandidateOf<InviteBox>
+  | CandidateOf<GenesisProofBox>
   | CandidateOf<BondBox>
   | CandidateOf<PostLockBox>
   | CandidateOf<VouchBox>;

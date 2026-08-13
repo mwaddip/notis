@@ -183,6 +183,8 @@ export type BoxContent =
   | { boxType: 'karma'; value: bigint; owner: Uint8Array; proofSource: string; decayBurn: boolean | null }
   | { boxType: 'credit'; value: bigint; owner: Uint8Array; proofSource: number; lockedUntilBlock: number | null }
   | { boxType: 'invite'; value: bigint; secretHash: Uint8Array; inviterId: Uint8Array }
+  /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
+  | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
   | {
       boxType: 'bond';
       value: bigint;
@@ -201,7 +203,7 @@ const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
   0: 'karma',
   1: 'credit',
   2: 'invite',
-  // 3 — reserved, retired `like`. Never reuse.
+  3: 'genesis_proof',
   4: 'bond',
   5: 'post_lock',
   6: 'vouch',
@@ -235,6 +237,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           secretHash: hex(j.secretHash as string),
           inviterId: hex(j.inviterId as string),
         };
+      case 'genesis_proof':
+        return { boxType: 'genesis_proof', value, payload: hex(j.payload as string) };
       case 'bond':
         return {
           boxType: 'bond',
@@ -295,6 +299,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         };
       case 'invite':
         return { boxType, value, secretHash: readBytesN(r, 32), inviterId: readBytesN(r, 32) };
+      case 'genesis_proof':
+        return { boxType, value, payload: readLp(r) };
       case 'bond':
         return {
           boxType,

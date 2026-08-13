@@ -50,6 +50,18 @@ export interface NetworkProfile {
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
   readonly genesisCreditsPerMember: bigint;
+  /**
+   * The `genesis_proof` box's payload, hex of raw bytes. **Differs on all three
+   * networks, and nothing else in the genesis box set does** — the system karma
+   * and faucet credit boxes are byte-identical everywhere, so this field is the
+   * whole of network identity at height 0.
+   *
+   * Hex `string`, not `Uint8Array`, and the reason is immutability rather than
+   * style: every profile is an `Object.freeze`d literal, and freezing a typed
+   * array does not prevent writes to its contents. `treasuryPubKey` and
+   * `genesisCommitteeKeys` are hex for the same reason.
+   */
+  readonly genesisProofPayload: string;
   readonly treasuryPubKey: string;
 }
 
@@ -94,6 +106,11 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
+  // ⚠ MOCK CONTENT (user, 2026-08-13). What has to hold is that the three
+  // payloads DIFFER; what is inside them does not. Substituting real
+  // no-premine evidence later is a value change on a network that has not
+  // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
+  genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -107,6 +124,11 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   magic: MAGIC_TESTNET,
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
+  // Overridden explicitly, and it must be: the spread above would otherwise
+  // hand testnet mainnet's payload, making the two genesis states byte-identical
+  // — the one field whose whole job is to keep them apart.
+  // hex("dagsocial/testnet/genesis-proof/mock")
+  genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f6d6f636b',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -149,6 +171,8 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
+  // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
+  genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 

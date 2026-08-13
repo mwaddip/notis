@@ -100,6 +100,7 @@ export type {
   KarmaBox,
   CreditBox,
   InviteBox,
+  GenesisProofBox,
   BondBox,
   PostLockBox,
   VouchBox,

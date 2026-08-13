@@ -468,10 +468,35 @@ VouchBox extends BoxBase {
 }
 ```
 
+### GenesisProofBox
+
+```
+GenesisProofBox extends BoxBase {
+  boxType: "genesis_proof"
+  value: 0n                    // Neither karma nor credits — never enters supply accounting
+  payload: Uint8Array          // Opaque bytes; lp on the wire, hex in the profile
+  guard: "unspendable"         // No spender exists
+}
+```
+
+The third box seeded at cold start, beside system karma and faucet credits. Those two are
+byte-identical on every network, so **this box's `payload` is the whole of network identity at
+height 0** — it is what makes the three genesis state roots differ, and `NetworkProfile
+.genesisProofPayload` carries the per-network value as hex (§Network profiles).
+
+`value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
+so the literal makes any other unrepresentable rather than merely invalid.
+
+`payload` is bounded and the type is barred from both transaction positions — `VALIDATION_INTERFACE`
+owns both rules. Neither is a property of this package: the encoder has no cap and never has (§Totality
+— a field's domain is established upstream of the encoder, never inside it).
+
 ### BoxGuard
 
 ```
-type BoxGuard = "owner_signature" | "block_apply" | "hash_preimage" | "inviter_signature" | "bond_dual" | "hash_preimage_with_bond"
+type BoxGuard = "owner_signature" | "block_apply" | "hash_preimage" | "inviter_signature" | "bond_dual" | "hash_preimage_with_bond" | "unspendable"
+// "unspendable" names no spender at all, which no other member does — "block_apply" is still
+//   consumable, by block application. Carried only by GenesisProofBox.
 // "block_apply" replaced "epoch_tally" in P2-D — there is no epoch, and the meaning was
 //   always "consumable only by block application". The string 'epoch_tally' is RESERVED,
 //   never to be reused; guard strings are box content, inside the box-id preimage.
@@ -824,8 +849,20 @@ callers must remember to invoke is the shape that produced this defect class in 
   signal.
 - **Ids are `b32` on the wire, hex `string` in memory.** The conversion lives in the codec layer and
   nowhere else — a conversion at any other site is a double-hexing defect.
-- **Enum tags reserve retired values and are never renumbered.** A renumber silently moves every id
-  and `stateRoot` that covers the tag (the T2b `0x03` lesson, now applying inside the id preimage).
+- **Enum tags are never renumbered.** A renumber silently moves every id and `stateRoot` that covers
+  the tag (the T2b `0x03` lesson, now applying inside the id preimage).
+- **A retired tag's *number* may be reassigned to a new type — under all three of the following, and
+  otherwise not at all.** Reassignment is not a renumber and the argument above does not reach it: a
+  renumber moves ids that exist, while this one assigns a meaning to a number nothing has used. It is
+  admissible only when
+  1. **no surviving history carries the tag** — nothing has ever been encoded under it, or the same
+     unit forces a fresh chain, so there is no id for the new meaning to collide with;
+  2. **every other tag keeps its number**, which is what makes "no existing id moves" checkable
+     rather than asserted — the ids that move are exactly the ones that do not exist; and
+  3. **the retired *name* stays reserved.** The number is reusable; the string is not, because a new
+     type wearing it makes old-vs-new greps and historical debugging ambiguous forever.
+
+  Fail any one of them and the number stays reserved — left out of the table, never reused.
 - **Maps encode as arrays sorted by raw key bytes ascending.** A positional format has no maps, and
   without a normative sort one transaction has two encodings — reopening the malleability being closed.
 - **Encoders are total** (sentinel discipline, per audits M-5/M-6), with one stated exception: see
@@ -969,7 +1006,7 @@ runtime strip somebody must remember:
 > consume) and omitted `boxType` (which it does).
 >
 > **`guard` is therefore dropped from the AVL value, and that is lossless** — it is a pure function
-> of `boxType` (C10), each of the six box types declares exactly one literal, and a decoder
+> of `boxType` (C10), each of the seven box types declares exactly one literal, and a decoder
 > synthesises it from the discriminator. Verified field-by-field by the Phase 5 executor, 2026-08-10.
 
 > ⚠ **`boxRecordBytes` is paired with `boxRecordFromBytes(bytes) → { candidate, txId, index }`, and
@@ -988,7 +1025,7 @@ runtime strip somebody must remember:
 >
 > `boxRecordFromBytes` carries the four-part boundary check like every other decoder. It does **not**
 > return `guard` — that is not in the bytes; `node` synthesises it. **The proof obligation is a
-> round-trip over all six box types**, which is strictly stronger than a frozen vector: a frozen
+> round-trip over all seven box types**, which is strictly stronger than a frozen vector: a frozen
 > vector can pass while writer and reader disagree, a round-trip cannot.
 >
 > Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
@@ -1012,7 +1049,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 0 | `karma` |
 | 1 | `credit` |
 | 2 | `invite` |
-| 3 | **reserved — retired `like`, never reuse** |
+| 3 | `genesis_proof` |
 | 4 | `bond` |
 | 5 | `post_lock` |
 | 6 | `vouch` |
@@ -1022,9 +1059,17 @@ from this table — a use that reads every cell as an instruction rather than as
 | `karma` | `b32(owner)` ‖ `lpUtf8(proofSource)` ‖ `opt(decayBurn, u8)` |
 | `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
+| `genesis_proof` | `lp(payload)` |
 | `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
 | `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` ‖ `b32(targetPostId)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
+
+`genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
+decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder
+that does not own one. The length prefix is the whole of the field's injectivity — appended raw, an
+empty payload would be indistinguishable from the end of the box. It is also the only arm whose entire
+tail is one field, so `enum8(3) ‖ vlqU64(0) ‖ u8(0)` is the smallest legal box of any type at three
+bytes.
 
 `credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
 (`heightOrTransfer`). A `vlqU` there would throw on every user-path credit box.
@@ -1378,6 +1423,7 @@ export interface NetworkProfile {
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
   readonly genesisCreditsPerMember: bigint;
+  readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
   readonly treasuryPubKey: string;
 }
 
@@ -1405,6 +1451,19 @@ falls through to the legacy raw-CBOR path, decodes as malformed, and **permanent
 peer** — so a stale copy turns a routine cross-network misconnection into a ban. Note the set
 is consulted *only* for frames that fail the own-magic compare, so a stale copy does not
 break same-network peering; the damage is entirely cross-network.
+
+**`genesisProofPayload` is hex `string`, not `Uint8Array`, and the reason is immutability rather
+than style.** Every profile is an `Object.freeze`d literal, and freezing does not reach a typed
+array's contents — a profile holding one would be mutable in exactly the field that defines the
+network. `treasuryPubKey` and `genesisCommitteeKeys` are hex for the same reason, so this follows
+the file rather than adding a convention.
+
+**What must hold is that the three payloads DIFFER; what is inside them need not be anything.**
+They are mock content (user, 2026-08-13). Substituting real no-premine evidence later is a value
+change on a network that has not launched, not a format change — and it is caught loudly either way,
+since the payload moves the genesis state root. This is a fourth entry in the per-network set, whose
+burden §Network Identity puts on the addition; it is discharged by genesis already being a declared
+per-network axis rather than a new one.
 
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
