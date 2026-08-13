@@ -52,7 +52,6 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
     value: 100n,
     owner,
     guard: 'owner_signature',
-    proofSource: 'genesis',
     txId: FIXTURE_TX_ID,
     index: 0,
     ...overrides,
@@ -65,7 +64,6 @@ function makeCreditBox(): CreditBox {
     value: 500n,
     owner,
     guard: 'owner_signature',
-    proofSource: 42,
     txId: FIXTURE_TX_ID,
     index: 1,
   };
@@ -216,7 +214,6 @@ const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   value: 100n,
   owner: GOLDEN_OWNER,
   guard: 'owner_signature',
-  proofSource: 'genesis',
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
@@ -224,7 +221,6 @@ const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — the range P0 exists for
   owner: GOLDEN_OWNER,
   guard: 'owner_signature',
-  proofSource: 70000,
 };
 
 const GOLDEN_TX: UtxoTransaction = {
@@ -312,28 +308,6 @@ describe('golden vectors (positional box encoding)', () => {
       Buffer.from(canonicalBoxBytes(wrongGuard)),
       Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE)),
     )).toBe(0);
-  });
-
-  it('canonicalBoxBytes is invariant to proofSource — karma', () => {
-    // The karma arm writes `b32(owner) ‖ opt(decayBurn)`, so a mint tag carries
-    // no information into the id preimage. Two tags, one encoding: which box a
-    // consolidating mint inherits its tag from cannot move the minted id, and
-    // an untie-broken sort over equal-valued boxes stops being a consensus
-    // question (TYPES_INTERFACE → Layout — Boxes).
-    const a: CandidateOf<KarmaBox> = { ...GOLDEN_KARMA_CANDIDATE, proofSource: 'genesis' };
-    const b: CandidateOf<KarmaBox> = { ...GOLDEN_KARMA_CANDIDATE, proofSource: 'decay-70000' };
-    expect(Buffer.from(canonicalBoxBytes(a)).toString('hex'))
-      .toBe(Buffer.from(canonicalBoxBytes(b)).toString('hex'));
-  });
-
-  it('canonicalBoxBytes is invariant to proofSource — credit', () => {
-    // Same rule on the credit arm, whose tail is `b32(owner) ‖
-    // opt(lockedUntilBlock)`. Both a height and the transfer sentinel are
-    // fixtures here, because they are the two shapes the field takes.
-    const a: CandidateOf<CreditBox> = { ...GOLDEN_CREDIT_CANDIDATE, proofSource: 70000 };
-    const b: CandidateOf<CreditBox> = { ...GOLDEN_CREDIT_CANDIDATE, proofSource: -1 };
-    expect(Buffer.from(canonicalBoxBytes(a)).toString('hex'))
-      .toBe(Buffer.from(canonicalBoxBytes(b)).toString('hex'));
   });
 
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
@@ -1040,12 +1014,12 @@ describe('boxRecordFromBytes', () => {
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
     it(`round-trips ${label}`, () => {
-      // `guard` and `proofSource` are not in the bytes and the reader does not
-      // invent them, so they are dropped from the expectation rather than from
-      // the assertion — the difference between "this field is absent by design"
-      // and "this field is not compared". Every other field is compared.
-      const { guard: _guard, proofSource: _proofSource, ...expected } =
-        candidate as AnyBoxCandidate & { guard: string; proofSource?: unknown };
+      // `guard` is not in the bytes and the reader does not invent it, so it is
+      // dropped from the expectation rather than from the assertion — the
+      // difference between "this field is absent by design" and "this field is
+      // not compared". Every other field is compared.
+      const { guard: _guard, ...expected } =
+        candidate as AnyBoxCandidate & { guard: string };
       const decoded = boxRecordFromBytes(boxRecordBytes(candidate, GOLDEN_TX_ID, 3));
       expect(decoded).toEqual({ candidate: expected, txId: GOLDEN_TX_ID, index: 3 });
     });
@@ -1702,8 +1676,8 @@ describe('selectBoxes', () => {
  */
 describe('the box-type tables', () => {
   const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
-    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature', proofSource: 'genesis' },
-    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature', proofSource: 42 },
+    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature' },
+    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature' },
     invite: {
       boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
       inviterId: inviter, guard: 'hash_preimage_with_bond',

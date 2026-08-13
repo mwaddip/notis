@@ -483,12 +483,11 @@ export interface BoxRecord {
 
 /**
  * A box candidate as the **bytes** carry it — every per-type field except the
- * ones that have no encoding.
+ * one that has no encoding.
  *
- * Two fields are omitted rather than one, and for the same reason: `guard` is a
- * pure function of `boxType`, and `proofSource` is not in the layout table's
- * karma or credit row. A reader cannot return either without inventing it, and a
- * type that promised them would make every consumer's `undefined` check
+ * `guard` is omitted because it is a pure function of `boxType` and is absent
+ * from the layout table. A reader cannot return it without inventing it, and a
+ * type that promised it would make every consumer's `undefined` check
  * unreachable while the value was missing at runtime anyway.
  *
  * The omission is applied per union member, not to the union: `Omit` on a union
@@ -497,8 +496,8 @@ export interface BoxRecord {
  * reason `CandidateOf` is written the way it is.
  */
 export type DecodedBoxCandidate =
-  | Omit<CandidateOf<KarmaBox>, 'guard' | 'proofSource'>
-  | Omit<CandidateOf<CreditBox>, 'guard' | 'proofSource'>
+  | Omit<CandidateOf<KarmaBox>, 'guard'>
+  | Omit<CandidateOf<CreditBox>, 'guard'>
   | Omit<CandidateOf<InviteBox>, 'guard'>
   | Omit<CandidateOf<GenesisProofBox>, 'guard'>
   | Omit<CandidateOf<BondBox>, 'guard'>
@@ -731,8 +730,6 @@ export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   guard: 'owner_signature';
-  // Removal in progress: absent from `canonicalBoxBytes`; optional until producers stop setting it.
-  proofSource?: string;       // Free-form tag or hex id
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
   decayBurn?: boolean;
@@ -744,8 +741,6 @@ export interface CreditBox extends BoxBase {
   boxType: 'credit';
   owner: Uint8Array;          // 32 raw bytes
   guard: 'owner_signature';
-  // Removal in progress: absent from `canonicalBoxBytes`; optional until producers stop setting it.
-  proofSource?: number;       // Minting block height, OR -1: the transfer sentinel (heightOrTransfer)
   lockedUntilBlock?: number;  // Block height before which credits cannot be spent
 }
 
