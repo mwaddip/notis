@@ -123,7 +123,7 @@ export function postLockTx(
     outputs: [
       {
         boxType: 'karma', value: t - lockAmount, 
-        owner: author, guard: 'owner_signature', proofSource: targetPostId, 
+        owner: author, guard: 'owner_signature',
       },
       {
         boxType: 'post_lock', value: lockAmount, originalValue: lockAmount,
@@ -151,7 +151,7 @@ export function likeTx(
     outputs: [
       {
         boxType: 'karma', value: t - LIKE_KARMA_COST,
-        owner: liker, guard: 'owner_signature', proofSource: targetPostId,
+        owner: liker, guard: 'owner_signature',
       },
     ],
     signatures: {},

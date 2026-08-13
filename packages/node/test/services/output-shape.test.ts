@@ -72,7 +72,6 @@ function honestCandidate(
         value: 10n,
         owner,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
     case 'credit':
       return {
@@ -80,7 +79,6 @@ function honestCandidate(
         value: 10n,
         owner,
         guard: 'owner_signature',
-        proofSource: 7,
       };
     case 'invite':
       return {
@@ -181,10 +179,18 @@ describe('checkOutputShape (direct)', () => {
     }
   });
 
+  it("rejects 'proofSource' on karma and credit — neither shape declares it", () => {
+    for (const t of ['karma', 'credit'] as const) {
+      const r = shapeOf([{ ...honestCandidate(t, owner), proofSource: t === 'karma' ? 'faucet' : -1 }]);
+      expect(r.valid, t).toBe(false);
+      expect(r.error, t).toMatch(/unexpected key 'proofSource'/);
+    }
+  });
+
   it('rejects a missing required key on every boxType (last non-guard key dropped)', () => {
     const dropped: Record<string, string> = {
-      karma: 'proofSource',
-      credit: 'proofSource',
+      karma: 'owner',
+      credit: 'owner',
       invite: 'secretHash',
       bond: 'probationEndBlock',
       post_lock: 'targetPostId',
@@ -284,7 +290,6 @@ describe('validateTx output shape (integration)', () => {
         value,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       },
       1,
     );
@@ -299,7 +304,6 @@ describe('validateTx output shape (integration)', () => {
         value,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 1,
       },
       1,
     );
@@ -327,7 +331,6 @@ describe('validateTx output shape (integration)', () => {
       value,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
   }
 
@@ -355,7 +358,7 @@ describe('validateTx output shape (integration)', () => {
       deps,
       signedTx(
         [c1.id!],
-        [{ boxType: 'credit', value: 40n, owner: ownerPubKey, guard: 'owner_signature', proofSource: 1 }],
+        [{ boxType: 'credit', value: 40n, owner: ownerPubKey, guard: 'owner_signature' }],
       ),
       10,
     );
@@ -371,7 +374,6 @@ describe('validateTx output shape (integration)', () => {
             value: 40n,
             owner: ownerPubKey,
             guard: 'owner_signature',
-            proofSource: 1,
             lockedUntilBlock: 500,
           },
         ],
@@ -465,7 +467,6 @@ describe('validateTx output shape (integration)', () => {
             value: 40n,
             owner: ownerPubKey,
             guard: 'block_apply',
-            proofSource: 1,
           },
         ],
       ),

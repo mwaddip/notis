@@ -839,7 +839,6 @@ describe('block-apply embedded tx re-validation', () => {
           value: 100n,
           owner: attacker.userId,
           guard: 'owner_signature',
-          proofSource: 'lock_op',
         } as KarmaBox,
         {
           boxType: 'post_lock',
@@ -1027,7 +1026,6 @@ describe('block-apply embedded tx re-validation', () => {
           value: INVITE_BOND_KARMA,
           owner: bond.inviterId,
           guard: 'owner_signature',
-          proofSource: 'bond-settle',
         } as KarmaBox,
       ],
       signatures: {},

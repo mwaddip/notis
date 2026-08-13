@@ -45,18 +45,16 @@ export function mintKarma(
     if (box.id) consumeBox(box.id, blockHeight);
   }
 
-  const proofSource = existingBoxes.length > 0
-    ? (existingBoxes[0]!.proofSource ?? `mint-${blockHeight}`)
-    : `mint-${blockHeight}`;
-
   // Field order here is free: the committed encodings are positional, so a
   // producer cannot disagree with `rowToBox` about it.
+  //
+  // The consolidation reads nothing off `existingBoxes` but their values, so the
+  // order `getKarmaBoxes` returns them in cannot reach the minted box's id.
   const newBox: KarmaBox = {
     boxType: 'karma',
     value: newValue,
     owner: userId,
     guard: 'owner_signature',
-    proofSource,
     txId: mintTxIdFor(ctx, blockHeight),
     index: MINT_OUTPUT_INDEX,
   };

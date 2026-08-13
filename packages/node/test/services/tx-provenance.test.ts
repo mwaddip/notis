@@ -45,7 +45,6 @@ function creditCandidate(value: bigint, owner: Uint8Array): CandidateOf<CreditBo
     value,
     owner,
     guard: 'owner_signature',
-    proofSource: -1,
   };
 }
 
@@ -121,7 +120,6 @@ describe('transaction output provenance (Spec G phase C3)', () => {
       value: 100n,
       owner: user(0xd1),
       guard: 'owner_signature',
-      proofSource: -1,
     } as unknown as CreditBox;
 
     const produced = materializeOutput(hostile, TX_ID, 0);
@@ -153,12 +151,12 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const candidates: AnyBoxCandidate[] = [
       {
         boxType: 'karma', value: 5n, owner: user(0xe1),
-        guard: 'owner_signature', proofSource: 'p', 
+        guard: 'owner_signature',
       } satisfies CandidateOf<KarmaBox>,
       creditCandidate(7n, user(0xe2)),
       {
         boxType: 'credit', value: 8n, owner: user(0xe3),
-        guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 900,
+        guard: 'owner_signature', lockedUntilBlock: 900,
       } satisfies CandidateOf<CreditBox>,
       {
         boxType: 'invite', value: 1n, secretHash: user(0xe5),

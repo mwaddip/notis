@@ -46,7 +46,6 @@ function makeKarmaBox(id: string, value: bigint, block: number, seed: number): S
     value,
     owner,
     guard: 'owner_signature' as const,
-    proofSource: `mint-${block}-${seed}`,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }
@@ -59,7 +58,6 @@ function makeCreditBox(id: string, value: bigint, block: number, seed: number): 
     value,
     owner,
     guard: 'owner_signature' as const,
-    proofSource: block,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }

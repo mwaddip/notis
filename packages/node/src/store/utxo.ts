@@ -44,12 +44,10 @@ interface UtxoRow {
 // ---------------------------------------------------------------------------
 
 interface KarmaExtra {
-  proofSource: string;
   decayBurn?: boolean;
 }
 
 interface CreditExtra {
-  proofSource: number;
   lockedUntilBlock?: number;
 }
 
@@ -157,7 +155,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         owner: new Uint8Array(row.owner!),
         guard: BOX_GUARDS.karma,
-        proofSource: e.proofSource,
         ...prov,
       };
       if (e.decayBurn !== undefined) {
@@ -174,7 +171,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         owner: new Uint8Array(row.owner!),
         guard: BOX_GUARDS.credit,
-        proofSource: e.proofSource,
         ...prov,
       };
       if (e.lockedUntilBlock !== undefined) {
@@ -393,27 +389,6 @@ export function getKarmaValue(owner: Uint8Array): bigint {
 }
 
 /**
- * True if a faucet-origin karma box has ever existed for this owner.
- *
- * Deliberately ignores `spent_at_block` — a grant that has since been spent
- * still counts, otherwise an identity could spend its grant and draw again.
- * `'faucet'` enters the ledger only through `faucetGrant`; the system change
- * box carries `'faucet:system'` and does not match. This covers identities
- * funded before the faucet grant ledger existed.
- */
-export function hasFaucetOriginKarmaBox(owner: Uint8Array): boolean {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT 1 AS present FROM utxo_boxes
-       WHERE owner = ? AND box_type = 'karma' AND proof_source = 'faucet'
-       LIMIT 1`,
-    )
-    .get(Buffer.from(owner)) as { present: number } | undefined;
-  return row !== undefined;
-}
-
-/**
  * Return the single unspent credit box for the given owner, or null if none.
  */
 export function getCreditBox(owner: Uint8Array): CreditBox | null {
@@ -623,7 +598,6 @@ export function insertBox(box: AnyBox): void {
   // Build extra_data and column values per box type
   let extraData: unknown;
   let owner: Buffer | null = null;
-  let proofSource: string | null = null;
   // Set below iff this box is a non-decay karma box — the identity whose
   // activity clock this insertion advances. Carried out of the
   // switch rather than bumped inside it so the record is written *after* the
@@ -634,15 +608,12 @@ export function insertBox(box: AnyBox): void {
   switch (box.boxType) {
     case 'karma': {
       const k = box as KarmaBox;
-      const ke: KarmaExtra = {
-        proofSource: k.proofSource,
-      };
+      const ke: KarmaExtra = {};
       if (k.decayBurn !== undefined) {
         ke.decayBurn = k.decayBurn;
       }
       extraData = ke satisfies KarmaExtra;
       owner = Buffer.from(k.owner);
-      proofSource = k.proofSource;
       // `!== true`, not `=== undefined`: a decay-burn box is the one karma box
       // that must NOT reset the clock, and `decayBurn: false` is normal
       // activity. This is the same test `isIdentityStale` applied to boxes.
@@ -651,13 +622,12 @@ export function insertBox(box: AnyBox): void {
     }
     case 'credit': {
       const c = box as CreditBox;
-      const ce: CreditExtra = { proofSource: c.proofSource };
+      const ce: CreditExtra = {};
       if (c.lockedUntilBlock !== undefined) {
         ce.lockedUntilBlock = c.lockedUntilBlock;
       }
       extraData = ce satisfies CreditExtra;
       owner = Buffer.from(c.owner);
-      proofSource = String(c.proofSource);
       break;
     }
     case 'invite': {
@@ -670,9 +640,8 @@ export function insertBox(box: AnyBox): void {
     }
     case 'genesis_proof': {
       const g = box as GenesisProofBox;
-      // No `owner` and no `proofSource`: the box has no holder and no mint
-      // reason to record. Both columns stay NULL, which is what the schema's
-      // per-type notes describe.
+      // No `owner`: the box has no holder, so the column stays NULL, which is
+      // what the schema's per-type note describes.
       extraData = { payload: Array.from(g.payload) } satisfies GenesisProofExtra;
       break;
     }
@@ -724,9 +693,9 @@ export function insertBox(box: AnyBox): void {
   db.prepare(
     `INSERT INTO utxo_boxes
        (id, box_type, value, created_at_block, spent_at_block,
-        owner, guard, proof_source, extra_data,
+        owner, guard, extra_data,
         tx_id, output_index)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
   ).run(
     box.id,
     box.boxType,
@@ -734,7 +703,6 @@ export function insertBox(box: AnyBox): void {
     settledHeight(),
     owner,
     box.guard,
-    proofSource,
     JSON.stringify(extraData),
     box.txId,
     box.index,

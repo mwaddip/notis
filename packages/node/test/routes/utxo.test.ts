@@ -136,7 +136,6 @@ describe('UTXO routes', () => {
       value: 42n,
       owner: kp1.publicKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     }, 1);
     insertBox(karmaBox);
 
@@ -146,7 +145,6 @@ describe('UTXO routes', () => {
       value: 58n,
       owner: kp1.publicKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     }, 1);
     insertBox(karmaBox2);
 
@@ -159,7 +157,6 @@ describe('UTXO routes', () => {
       value: 99n,
       owner: kp2.publicKey,
       guard: 'owner_signature',
-      proofSource: 1,
     }, 1);
     insertBox(creditBox);
 
@@ -268,7 +265,6 @@ describe('UTXO routes', () => {
         value: 200n,
         owner: senderPubKey,
         guard: 'owner_signature',
-        proofSource: 10,
       }, 1);
       seededBoxId = box.id;
       insertBox(box);
@@ -286,7 +282,6 @@ describe('UTXO routes', () => {
         value: amount,
         owner: receiverPubKey,
         guard: 'owner_signature',
-        proofSource: -1,
       }];
       if (change > 0n) {
         outputs.push({
@@ -294,7 +289,6 @@ describe('UTXO routes', () => {
           value: change,
           owner: senderPubKey,
           guard: 'owner_signature',
-          proofSource: -1,
         });
       }
 
@@ -345,7 +339,6 @@ describe('UTXO routes', () => {
       value: '10',
       owner: 'ab'.repeat(32),
       guard: 'owner_signature',
-      proofSource: -1,
     };
 
     it('backstops a non-array inputs with a 400, not the pre-gate 500', async () => {

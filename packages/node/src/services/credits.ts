@@ -65,7 +65,6 @@ export function mintCredits(
     value: newValue,
     owner,
     guard: 'owner_signature',
-    proofSource: blockHeight,
     ...(mergedLockedUntilBlock !== undefined ? { lockedUntilBlock: mergedLockedUntilBlock } : {}),
     txId: mintTxIdFor(ctx, blockHeight),
     index: MINT_OUTPUT_INDEX,

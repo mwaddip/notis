@@ -21,7 +21,6 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
           value,
           owner: ownerHex,
           guard: 'owner_signature',
-          proofSource: 'test',
         },
       ],
       signatures: {},
@@ -87,7 +86,6 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
       value: -2n,
       owner: ownerHex,
       guard: 'owner_signature',
-      proofSource: 'x',
     });
 
     expect(() => jsonToTx(raw)).toThrow(/box value must be a non-negative/);

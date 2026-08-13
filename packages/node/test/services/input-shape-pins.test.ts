@@ -115,7 +115,6 @@ describe('P2-B phase 4 — input-shape pins', () => {
       value,
       owner,
       guard: 'owner_signature' as const,
-      proofSource: 'test',
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -156,7 +155,6 @@ describe('P2-B phase 4 — input-shape pins', () => {
           value: total,
           owner,
           guard: 'owner_signature',
-          proofSource: 'test',
         } as KarmaBox,
       ],
       signatures: {},

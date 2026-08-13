@@ -172,7 +172,6 @@ export function applyKarmaDecay(
       value: newValue,
       owner,
       guard: 'owner_signature',
-      proofSource: `decay-${currentHeight}`,
       decayBurn: true,
       txId: mintTxIdFor(decayContext(owner), currentHeight),
       index: MINT_OUTPUT_INDEX,

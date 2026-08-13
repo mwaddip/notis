@@ -7,6 +7,7 @@ import {
 } from 'crypto';
 import {
   computeBoxId,
+  computeTxId,
   decodeTx,
   MAX_PENDING_INVITES,
   PROTOCOL_VERSION,
@@ -61,7 +62,6 @@ function createKarmaBox(
   owner: Uint8Array,
   value: bigint,
   seed: number,
-  proofSource = 'test',
 ): Stored<KarmaBox> {
   const box = seedProvenance<KarmaBox>(
     {
@@ -69,7 +69,6 @@ function createKarmaBox(
       value,
       owner,
       guard: 'owner_signature',
-      proofSource,
     },
     seed,
   );
@@ -195,7 +194,6 @@ describe('invites service', () => {
       value: 50n,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const secret = new Uint8Array(32).fill(0x01);
@@ -317,7 +315,6 @@ describe('invites service', () => {
       value: INVITE_KARMA_AMOUNT,
       owner: inviteePubKey,
       guard: 'owner_signature',
-      proofSource: `invite-claim:${inviteBox.id}`,
     };
 
     // BondOut preserves commitment fields
@@ -518,7 +515,6 @@ describe('invites service', () => {
       value: INVITE_KARMA_AMOUNT,
       owner: inviteePubKey,
       guard: 'owner_signature',
-      proofSource: `invite-claim:${inviteBox.id}`,
     };
     const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
@@ -580,7 +576,6 @@ describe('invites service', () => {
       value: totalValue,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: `invite-cancel:${inviteBox.id}`,
     };
 
     const tx: UtxoTransaction = {
@@ -617,7 +612,6 @@ describe('invites service', () => {
       value: totalValue,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: `invite-cancel:${inviteBox.id}`,
     };
 
     const tx: UtxoTransaction = {
@@ -646,16 +640,12 @@ describe('invites service', () => {
     // so the original karma should still be there
     expect(inviterKarma!.id).toBe(karmaIn.id);
 
-    // Verify mempool has the cancel entry
+    // Verify mempool has the cancel entry, identified by the id `cancelInvite`
+    // returned — the transaction itself, not a shape another tx could share.
     const entries = getPendingEntries(100);
     const matching = entries.filter((e) => {
       if (e.entryType !== 'utxo_tx' || !e.utxoTxCbor) return false;
-      const storedTx = decodeTx(e.utxoTxCbor);
-      return storedTx.outputs.some(
-        (o) =>
-          o.boxType === 'karma' &&
-          (o as KarmaBox).proofSource.startsWith('invite-cancel'),
-      );
+      return computeTxId(decodeTx(e.utxoTxCbor)) === result.txId;
     });
     expect(matching.length).toBe(1);
   });
@@ -676,7 +666,6 @@ describe('invites service', () => {
         value: 50n,
         owner: inviterPubKey,
         guard: 'owner_signature',
-        proofSource: `test-${i}`,
       };
       const secret = new Uint8Array(32).fill(i + 1);
       const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
@@ -714,13 +703,12 @@ describe('invites service', () => {
     }
 
     // One more should fail
-    const karma = createKarmaBox(inviterPubKey, 100n, 99, 'overflow-test');
+    const karma = createKarmaBox(inviterPubKey, 100n, 99);
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 50n,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: 'overflow-test',
     };
     const secret = new Uint8Array(32).fill(0xff);
     const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
@@ -770,13 +758,12 @@ describe('invites service', () => {
       privKey: KeyObject,
       seed: number,
     ): UtxoTransaction {
-      const karma = createKarmaBox(owner, 100n, seed, `seed-${ownerHex}-${seed}`);
+      const karma = createKarmaBox(owner, 100n, seed);
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 50n,
         owner,
         guard: 'owner_signature',
-        proofSource: `seed-${ownerHex}-${seed}`,
       };
       const secret = new Uint8Array(32).fill(seed);
       const secretHash = createHash('blake2b512')
@@ -860,7 +847,6 @@ describe('invites service', () => {
       value: 0n,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
     const secret = new Uint8Array(32).fill(0x01);
     const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
@@ -929,7 +915,6 @@ describe('invites service', () => {
       value: INVITE_KARMA_AMOUNT,
       owner: inviteePubKey,
       guard: 'owner_signature',
-      proofSource: `invite-claim:${inviteBox.id}`,
     };
     const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
@@ -991,7 +976,6 @@ describe('invites service', () => {
       value: INVITE_KARMA_AMOUNT,
       owner: inviteePubKey,
       guard: 'owner_signature',
-      proofSource: `invite-claim:${inviteBox.id}`,
     };
     const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
@@ -1043,7 +1027,6 @@ describe('invites service', () => {
       value: totalValue,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: `invite-cancel:${inviteBox.id}`,
     };
 
     const tx: UtxoTransaction = {
@@ -1076,7 +1059,6 @@ describe('invites service', () => {
       value: totalValue,
       owner: inviterPubKey,
       guard: 'owner_signature',
-      proofSource: `invite-cancel:${inviteBox.id}`,
     };
 
     const tx: UtxoTransaction = {

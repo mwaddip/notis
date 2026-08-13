@@ -180,7 +180,6 @@ function makeSettlementTx(bond: BondBox, invitee: TestIdentity): UtxoTransaction
         value: INVITE_BOND_KARMA,
         owner: bond.inviterId,
         guard: 'owner_signature',
-        proofSource: 'bond-settle',
       } as KarmaBox,
     ],
     signatures: {},

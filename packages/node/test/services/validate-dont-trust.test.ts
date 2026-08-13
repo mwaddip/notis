@@ -64,7 +64,6 @@ function mockDeps(
         value: 100n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'genesis',
       }) as AnyBox,
     metaPut: (key: string, value: Uint8Array) => {
       store.watermarkValues.set(key, value);
@@ -125,7 +124,6 @@ function makeKarmaLockTx(): UtxoTransaction {
         value: 75n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'post-lock',
       } as KarmaBox,
       {
         boxType: 'post_lock',

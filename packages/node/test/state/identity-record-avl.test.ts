@@ -48,7 +48,6 @@ function makeKarmaBox(id: string, value = 10n): KarmaBox {
     value,
     owner: new Uint8Array(randomBytes(32)),
     guard: 'owner_signature' as const,
-    proofSource: 'tx-1',
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, 1, hashSeed(id)) };
 }
@@ -92,7 +91,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const boxes: AnyBox[] = [
       makeKarmaBox('01'.repeat(32)),
       withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n,
-        owner, guard: 'owner_signature', proofSource: 1 }),
+        owner, guard: 'owner_signature' }),
       // No 0x03 row: that tag is the reserved `like` gap, and no box emits it.
       withProvenance('04'.repeat(32), { boxType: 'invite', value: 50n,
         secretHash: new Uint8Array(randomBytes(32)), inviterId: owner,

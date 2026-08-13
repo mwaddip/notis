@@ -81,7 +81,6 @@ const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   value: 100n,
   owner: GOLDEN_AUTHOR,
   guard: 'owner_signature',
-  proofSource: 'genesis',
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
@@ -89,7 +88,6 @@ const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — why box values are bigint
   owner: GOLDEN_AUTHOR,
   guard: 'owner_signature',
-  proofSource: 70000,             // > 65536 — a three-byte ZigZag VLQ
 };
 
 const GOLDEN_UTXO_TX: UtxoTransaction = {

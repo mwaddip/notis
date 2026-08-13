@@ -238,7 +238,6 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
           value: 99n,
           owner: staker.userId,
           guard: 'owner_signature',
-          proofSource: 'vouch_op',
         } as KarmaBox,
         {
           boxType: 'vouch',

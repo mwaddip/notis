@@ -1001,7 +1001,6 @@ function buildKarmaLockTx(karmaBox, lockAmount, targetPostId, pubKeyHex) {
     value: newKarmaValue,
     owner: pubKeyHex,
     guard: 'owner_signature',
-    proofSource: targetPostId,
   };
 
   const postLockOutput = {
@@ -1038,7 +1037,6 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
     value: newKarmaValue,
     owner: pubKeyHex,
     guard: 'owner_signature',
-    proofSource: targetPostId,
   };
 
   return {
@@ -1063,7 +1061,6 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex) {
     value: newKarmaValue,
     owner: pubKeyHex,
     guard: 'owner_signature',
-    proofSource: 'invite-create',
   };
 
   const inviteOutput = {
@@ -1126,7 +1123,6 @@ function buildClaimInviteTx(inviteBox, bondBox, inviteePubKeyHex, secretHex) {
     value: inviteBox.value,
     owner: inviteePubKeyHex,
     guard: 'owner_signature',
-    proofSource: inviteBox.id,
   };
 
   const bondOutput = {
@@ -1200,7 +1196,6 @@ function buildCancelInviteTx(karmaBox, inviteBox, bondBox, pubKeyHex) {
     value: totalRefund,
     owner: pubKeyHex,
     guard: 'owner_signature',
-    proofSource: 'invite-cancel',
   };
 
   return {
@@ -2249,7 +2244,6 @@ function buildCreditTransferTx(creditBoxes, recipientHex, amount) {
     value: amount,
     owner: recipientHex,
     guard: 'owner_signature',
-    proofSource: -1,
   }];
   if (change > 0n) {
     outputs.push({
@@ -2257,7 +2251,6 @@ function buildCreditTransferTx(creditBoxes, recipientHex, amount) {
       value: change,
       owner: buf2hex(pubKeyRaw),
       guard: 'owner_signature',
-      proofSource: -1,
     });
   }
 

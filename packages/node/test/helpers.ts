@@ -286,7 +286,6 @@ export function makeKarmaBox(
     value,
     owner,
     guard: 'owner_signature' as const,
-    proofSource: 'genesis',
   };
   const box: KarmaBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
   box.id = computeBoxId(box);
@@ -317,7 +316,6 @@ export function makeLikeTx(
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: liker.userId,
         guard: 'owner_signature',
-        proofSource: 'like_op',
       },
     ],
     signatures: {},

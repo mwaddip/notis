@@ -49,7 +49,6 @@ function makeKarmaBox(id: string, overrides: Partial<KarmaBox> = {}): KarmaBox {
     value: 100n,
     owner: OWNER,
     guard: 'owner_signature' as const,
-    proofSource: 'tx-genesis-001',
   };
   return {
     id,
@@ -175,12 +174,12 @@ describe('box provenance columns (Spec G phase B)', () => {
       makeKarmaBox('22'.repeat(32), { decayBurn: true }),
       {
         id: '33'.repeat(32), boxType: 'credit', value: 5000n,
-        owner: OWNER, guard: 'owner_signature', proofSource: 2,
+        owner: OWNER, guard: 'owner_signature',
         txId: '33'.repeat(32), index: 0,
       } satisfies CreditBox,
       {
         id: '44'.repeat(32), boxType: 'credit', value: 10n,
-        owner: OWNER, guard: 'owner_signature', proofSource: 2, lockedUntilBlock: 900,
+        owner: OWNER, guard: 'owner_signature', lockedUntilBlock: 900,
         txId: '44'.repeat(32), index: 0,
       } satisfies CreditBox,
     ];

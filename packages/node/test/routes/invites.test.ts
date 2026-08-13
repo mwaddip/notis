@@ -140,7 +140,6 @@ describe('invites routes', () => {
       value: 100n,
       owner: inviterId,
       guard: 'owner_signature',
-      proofSource: 'test-create',
     }, 1);
     const karmaId = karma.id;
     storeInsertBox(karma);
@@ -150,7 +149,6 @@ describe('invites routes', () => {
       value: 50n,
       owner: inviterId,
       guard: 'owner_signature',
-      proofSource: 'create-invite',
     };
 
     const secretHash = new Uint8Array(32).fill(0x99);
@@ -365,7 +363,6 @@ describe('invites routes', () => {
       value: INVITE_KARMA_AMOUNT,
       owner: inviteePubKey,
       guard: 'owner_signature',
-      proofSource: `invite-claim:${inviteBoxId}`,
     };
 
     const bondOut: CandidateOf<BondBox> = {
@@ -448,7 +445,6 @@ describe('invites routes', () => {
       value: 200n,
       owner: inviterId,
       guard: 'owner_signature',
-      proofSource: 'test-cancel',
     }, 1);
     const karmaInId = karmaIn.id;
     storeInsertBox(karmaIn);
@@ -459,7 +455,6 @@ describe('invites routes', () => {
       value: totalValue,
       owner: inviterId,
       guard: 'owner_signature',
-      proofSource: `invite-cancel:${inviteBoxId}`,
     };
 
     const tx: UtxoTransaction = {
@@ -535,7 +530,6 @@ describe('invites routes', () => {
       value: 200n,
       owner: wrongPubKey,
       guard: 'owner_signature',
-      proofSource: 'test-wrong',
     }, 1);
     const wrongKarmaId = wrongKarma.id;
     storeInsertBox(wrongKarma);
@@ -546,7 +540,6 @@ describe('invites routes', () => {
       value: totalValue,
       owner: wrongPubKey,
       guard: 'owner_signature',
-      proofSource: `invite-cancel:${inviteBoxId}`,
     };
 
     const tx: UtxoTransaction = {

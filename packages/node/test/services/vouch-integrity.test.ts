@@ -131,7 +131,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       value,
       owner,
       guard: 'owner_signature' as const,
-      proofSource: 'test',
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -165,7 +164,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       value: karmaBox.value - stake,
       owner: karmaBox.owner,
       guard: 'owner_signature',
-      proofSource: 'vouch_op',
     };
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
@@ -319,7 +317,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       value: karmaBox.value - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
       owner: inviter.pub,
       guard: 'owner_signature',
-      proofSource: 'invite_op',
     };
     const inviteOut = {
       boxType: 'invite' as const,

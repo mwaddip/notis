@@ -157,7 +157,6 @@ function makeKarmaBox(
     value,
     owner,
     guard: 'owner_signature' as const,
-    proofSource: 'genesis',
   }, seed);
 }
 

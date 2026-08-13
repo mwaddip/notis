@@ -115,7 +115,6 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
     value: SYSTEM_KARMA_INITIAL,
     owner: systemPubKey,
     guard: 'owner_signature',
-    proofSource: 'genesis:system',
     txId: mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
@@ -177,7 +176,6 @@ export function ensureFaucetCreditBox(
     value: FAUCET_CREDITS_INITIAL,
     owner: systemPubKey,
     guard: 'owner_signature',
-    proofSource: genesisHeight,
     txId: mintTxIdFor(genesisContext(GENESIS_FAUCET_CREDITS), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };

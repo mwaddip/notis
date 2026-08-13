@@ -85,7 +85,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       value,
       owner: alicePubKey,
       guard: 'owner_signature',
-      proofSource: HEIGHT - 10,
     };
     if (lockedUntilBlock !== undefined) {
       candidate.lockedUntilBlock = lockedUntilBlock;
@@ -111,7 +110,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       value: amount,
       owner: bobPubKey,
       guard: 'owner_signature',
-      proofSource: -1,
     }];
     if (change > 0n) {
       outputs.push({
@@ -119,7 +117,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
         value: change,
         owner: alicePubKey,
         guard: 'owner_signature',
-        proofSource: -1,
       });
     }
 
@@ -228,7 +225,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       value: 500n,
       owner: bobPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
     const tx: UtxoTransaction = {
       inputs: [seeded.id!],
@@ -289,7 +285,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       value: 42n,
       owner: bobPubKey,
       guard: 'owner_signature',
-      proofSource: -1,
     };
     const tx: UtxoTransaction = {
       inputs: ['ab'.repeat(32)],

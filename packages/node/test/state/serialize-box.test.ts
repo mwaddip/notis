@@ -20,14 +20,11 @@ import type { AnyBox, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, 
  * A box reduced to what its AVL value carries, for comparison against a decode.
  *
  * `id` is the hash OF the value, handed to the reader rather than read out of
- * it. `proofSource` is in no arm of the box layout (TYPES_INTERFACE → Layout —
- * Boxes), so no decode can return one. Both leave the *expectation* rather than
- * the assertion, which keeps "absent by design" distinct from "not compared".
+ * it, so it leaves the *expectation* rather than the assertion — which keeps
+ * "absent by design" distinct from "not compared".
  */
 function decodedFields(box: AnyBox) {
-  const { id: _id, proofSource: _proofSource, ...rest } = box as AnyBox & {
-    proofSource?: unknown;
-  };
+  const { id: _id, ...rest } = box;
   return rest;
 }
 
@@ -38,7 +35,6 @@ describe('serializeBox', () => {
       value: 100n,
       owner: new Uint8Array(32).fill(0xaa),
       guard: 'owner_signature' as const,
-      proofSource: 'mint-1',
     });
     const serialized = serializeBox(box);
     const deserialized = deserializeBoxWithId(box.id, serialized);
@@ -51,7 +47,6 @@ describe('serializeBox', () => {
       value: 50n,
       owner: new Uint8Array(32).fill(0xbb),
       guard: 'owner_signature' as const,
-      proofSource: 10,
       lockedUntilBlock: 20,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box)))
@@ -198,7 +193,6 @@ describe('serializeBox', () => {
       value: 42n,
       owner: new Uint8Array(32).fill(0x55),
       guard: 'owner_signature' as const,
-      proofSource: 'mint-0',
     });
     const a = serializeBox(box);
     const b = serializeBox({ ...box });
@@ -211,7 +205,6 @@ describe('serializeBox', () => {
       value: 1n,
       owner: new Uint8Array(32),
       guard: 'owner_signature' as const,
-      proofSource: '',
     });
     const fields = deserializeBox(serializeBox(box));
     expect(fields).not.toHaveProperty('id');
@@ -224,7 +217,6 @@ describe('serializeBox', () => {
       value: 1n,
       owner: new Uint8Array(32),
       guard: 'owner_signature' as const,
-      proofSource: '',
     });
     const bytes = serializeBox(box);
     expect(() => deserializeBox(bytes.slice(0, 3))).toThrow();
@@ -272,7 +264,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('karma', () => {
     const box: KarmaBox = {
       boxType: 'karma', value: 100n, owner: new Uint8Array(32).fill(0xaa),
-      guard: 'owner_signature', proofSource: 'mint-1', txId: TXID, index: INDEX,
+      guard: 'owner_signature', txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
       '00' +            // enum8(karma) = 0
@@ -286,7 +278,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('credit — the lock is an option, and absence is not a value', () => {
     const box: CreditBox = {
       boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
-      guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 20,
+      guard: 'owner_signature', lockedUntilBlock: 20,
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
@@ -412,11 +404,11 @@ describe('boxId is a total function of the AVL value', () => {
   const cases: Array<[string, AnyBox]> = [
     ['karma', seedProvenance<KarmaBox>({
       boxType: 'karma', value: 100n, owner: new Uint8Array(32).fill(0xaa),
-      guard: 'owner_signature', proofSource: 'mint-1',
+      guard: 'owner_signature',
     })],
     ['credit', seedProvenance<CreditBox>({
       boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
-      guard: 'owner_signature', proofSource: -1, lockedUntilBlock: 20,
+      guard: 'owner_signature', lockedUntilBlock: 20,
     })],
     ['invite', seedProvenance<InviteBox>({
       boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0x22),

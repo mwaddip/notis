@@ -225,7 +225,6 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               value: step.amount,
               owner,
               guard: 'owner_signature',
-              proofSource: step.tag,
             }, step.at, labelNonce(step.tag));
             m.utxo.insertBox(box);
             break;

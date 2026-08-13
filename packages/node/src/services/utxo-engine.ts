@@ -612,7 +612,6 @@ type FieldType =
   | 'bytes32'
   | 'bytes0or32'
   | 'hex32'
-  | 'heightOrTransfer'
   | 'uint'
   | 'u32'
   | 'string'
@@ -659,19 +658,6 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
   hex32: {
     ok: (v) => typeof v === 'string' && HEX64.test(v),
     expected: '64 lowercase hex characters',
-  },
-  // Exactly one field: credit `proofSource` — a block height, or -1, the
-  // "transfer" sentinel every user-path credit transfer and faucet grant
-  // stamps (routes/utxo.ts). The value set is closed — {-1} ∪ heights — so a
-  // -5 is a lie, not a type; `v >= 0` admits -0, hence the Object.is guard.
-  // Scheduled retirement with the field itself (TYPES_INTERFACE → "CreditBox").
-  heightOrTransfer: {
-    ok: (v) =>
-      typeof v === 'number' &&
-      Number.isSafeInteger(v) &&
-      !Object.is(v, -0) &&
-      (v === -1 || v >= 0),
-    expected: 'a block height (non-negative safe integer) or -1 (the transfer sentinel)',
   },
   // Never -0: it is JSON- and CBOR-reachable and breaks byte round-trips —
   // cbor-x encodes -0 as a float where the store's JSON round-trip returns
@@ -1022,19 +1008,11 @@ const OUTPUT_SHAPE: Record<
   });
   return {
     karma: shape(
-      { boxType: null, value: 'u64', owner: 'bytes32', guard: null, proofSource: 'string' },
+      { boxType: null, value: 'u64', owner: 'bytes32', guard: null },
       { decayBurn: 'boolean' },
     ),
     credit: shape(
-      // `proofSource` is height-or-sentinel, not 'uint': production stamps -1
-      // on every user-path transfer/faucet credit box — see the note above.
-      {
-        boxType: null,
-        value: 'u64',
-        owner: 'bytes32',
-        guard: null,
-        proofSource: 'heightOrTransfer',
-      },
+      { boxType: null, value: 'u64', owner: 'bytes32', guard: null },
       { lockedUntilBlock: 'uint' },
     ),
     invite: shape({

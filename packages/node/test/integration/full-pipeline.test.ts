@@ -194,7 +194,6 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
     value,
     owner,
     guard: 'owner_signature',
-    proofSource: 'genesis',
   }, seed);
   return box;
 }
@@ -306,7 +305,6 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: liker.userId,
           guard: 'owner_signature',
-          proofSource: 'like_op',
         } as KarmaBox,
       ],
       signatures: {},
@@ -394,7 +392,6 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: liker.userId,
           guard: 'owner_signature',
-          proofSource: 'like_op',
         } as KarmaBox,
       ],
       signatures: {},
@@ -469,7 +466,6 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: inviter.userId,
           guard: 'owner_signature',
-          proofSource: 'invite_create',
         } as KarmaBox,
         {
           boxType: 'invite',
@@ -567,7 +563,7 @@ describe('full-pipeline', () => {
         outputs: [
           {
             boxType: 'karma', value: karmaIn.value - total, owner: inviter.userId,
-            guard: 'owner_signature', proofSource: 'invite-create',
+            guard: 'owner_signature',
           },
           {
             boxType: 'invite', value: INVITE_KARMA_AMOUNT, secretHash,

@@ -34,7 +34,6 @@ function makeKarmaBox(id: string, value = 100n): KarmaBox {
     value,
     owner: OWNER,
     guard: 'owner_signature' as const,
-    proofSource: `tx-test-${id}`,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, 1, hashSeed(id)) };
 }
