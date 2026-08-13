@@ -75,9 +75,9 @@ Two rules keep that from teaching the layout wrong:
 - **A vector named `typical` is protocol-typical.** Out-of-domain and boundary cases get names that
   say so — `minimal`, `wide-numerics`, `u64-max`.
 
-`subBlockEntry/typical` broke both when the block vectors were written (two `parentRefs`, note
-silent about the cap); corrected 2026-08-10, and `subBlock/with-parents` — same defect, plural name
-— with it.
+`subBlockEntry/typical` and `subBlock/with-parent` are where both rules bite at once: each carries
+one `parentRef` and says why in its note, because `MAX_PARENT_REFS` is 1 and a vector named
+`typical` is where a reader goes looking for the bound.
 
 ## Adding a vector
 
@@ -134,7 +134,7 @@ A bare string names a leaf codec; the object forms compose, so `{"arr": {"opt": 
 `{"$special": "NaN" \| "Infinity" \| "-Infinity" \| "undefined"}` expresses the values JSON has no
 literal for. For a wrong *type*, write the raw JSON value and set `"raw": true`.
 
-### Adding a struct codec (Phases 2–5)
+### Adding a struct codec
 
 Build a `StructCodec` from `src/codec.ts`'s primitives in the order of its table in
 `TYPES_INTERFACE.md`, wrap it as a `ValueCodec` with a `parse` for the JSON form, and call

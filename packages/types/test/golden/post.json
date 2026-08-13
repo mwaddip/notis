@@ -42,7 +42,7 @@
         "timestamp": 1767225600000
       },
       "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b733",
-      "note": "post/golden with the ref removed: exactly 32 bytes shorter. That delta is the dialect change with the largest byte impact — a ref used to cost u32LE(64) + the 64 characters of its hex TEXT, 68 bytes, and now costs the 32 raw bytes it names."
+      "note": "post/golden with the ref removed: exactly 32 bytes shorter. A ref costs the 32 raw bytes it names and nothing else — no length prefix, no second hexing — so the delta is the ref itself."
     },
     {
       "name": "post/wide-numerics",
@@ -81,7 +81,7 @@
       "codec": "powNonceTail",
       "value": 0,
       "bytes": "00",
-      "note": "ONE byte. A fixed-width u64 tail spends eight here, so the two dialects differ at nonce 0 as much as anywhere — and 0 is where a test asserting only 'the id moved when the nonce moved' still passes under either. That is the shape of the split this vector exists to close."
+      "note": "ONE byte: the tail is minimal-width, so nonce 0 costs a single 00. This is the case an assertion of the form 'the id moves when the nonce moves' cannot see — that holds at any tail width — so the byte itself is what has to be pinned here."
     },
     {
       "name": "powNonceTail/127-last-single-byte",
@@ -94,7 +94,7 @@
       "codec": "powNonceTail",
       "value": 128,
       "bytes": "8001",
-      "note": "The width boundary: the tail grows with the nonce instead of being eight bytes always, so a mined post's id depends on how long mining took."
+      "note": "The width boundary: the tail grows with the nonce, so a mined post's id depends on how long mining took."
     },
     {
       "name": "powNonceTail/typical-mined",
@@ -162,7 +162,7 @@
         "powNonce": 9007199254740991
       },
       "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f011111111111111111111111111111111111111111111111111111111111111111202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0180d0eab6b733ffffffffffffff0f",
-      "note": "140 bytes — the widest a well-formed preimage gets. Eight tail bytes, so the encoding coincides with the fixed-width one in LENGTH exactly once, at the top of the domain, and in VALUE not even there."
+      "note": "140 bytes — the widest a well-formed preimage gets: post/golden's 132 plus an eight-byte tail, which is what `vlqU` costs at the top of the `number` domain."
     }
   ],
   "rejects": [

@@ -8,9 +8,10 @@
  * also a consensus preimage — a production struct would tie the harness's
  * coverage to whatever fields that struct happens to have.
  *
- * Phases 2–5 replace this as the primary subject: they register their real
- * struct codecs the same way (`registerStruct`) and add `<struct>.json` beside
- * `probe.json`. The probe stays as the harness's own regression test.
+ * The production structs are the corpus's primary subject: `structs.ts`
+ * registers their codecs the same way (`registerStruct`), and their vectors
+ * live in the `.json` files beside `probe.json`. The probe stays as the
+ * harness's own regression test.
  */
 
 import { ByteReader, ByteWriter } from '@dagsocial/wire';

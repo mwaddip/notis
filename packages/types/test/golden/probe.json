@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for the probe struct (test/golden/probe.ts) — every row of the Primitives table composed into one layout, so the boundary check is exercised where it will actually run. Phases 2–5 add post.json / boxes.json / block.json beside this file, in this same shape.",
+  "$description": "Struct-level golden vectors for the probe struct (test/golden/probe.ts) — every row of the Primitives table composed into one layout, so the boundary check is exercised where it will actually run. post.json, boxes.json and block.json sit beside this file in the same shape.",
   "vectors": [
     {
       "name": "probe/minimal",
