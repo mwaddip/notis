@@ -748,8 +748,12 @@ function whose argument reaches a box candidate at all — established by readin
 every export's signature, 2026-08-13, rather than by grepping for `outputs`. A
 bound stated here would be a dead export.
 
-Its live subjects are the seeder that writes the box and the decode path that
-reads one from a peer during sync, both `@dagsocial/node`'s. The value belongs
+Its live subject is the seeder that writes the box, plus the single readback path
+that decodes one (`node`'s `avl-endpoint.ts`, serving `GET /api/v1/proof/:boxId`).
+⚠ **There is no peer-sync decode path**: `packages/net/src` decodes no boxes at
+all, measured 2026-08-13. An earlier form of this sentence named one, which is
+the failure this contract warns about two sections up — a rule justified by a
+path that does not exist. The value belongs
 beside the other protocol bounds in `@dagsocial/types` (`src/constants.ts`),
 where `MAX_CONTENT_BYTES` and `MAX_PARENT_REFS` already sit and from which this
 package imports every constant it enforces. **This package defines no protocol
