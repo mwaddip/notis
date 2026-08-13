@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node`
 **Protocol version:** 1
-**Last updated:** 2026-08-01
+**Last updated:** 2026-08-13
 
 ## Scope
 
@@ -670,6 +670,33 @@ deterministic transaction ID.
 **Used at pool entry** for ideal validation (though currently gated by signing
 mismatch — see Known Gaps in SESSION_CONTEXT.md).
 
+### Genesis proof boxes are never in a transaction
+
+**A `genesis_proof` box may never appear as a transaction input or an output.**
+It is written by genesis seeding and readable forever. Without the output half,
+any user sprays unbounded opaque blobs into the UTXO set through an ordinary
+transaction; without the input half, the one box that defines a network can be
+spent away.
+
+**The rule has two halves and they cannot share a home.**
+
+| Half | Home | Keyed on | Why it can only go there |
+|---|---|---|---|
+| not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. A candidate's own `guard` field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
+| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a second unspendable type is covered without an edit. |
+
+`OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
+exclusion is a type error to undo rather than an omitted entry indistinguishable
+from a forgotten one — while a *new* box type still fails to compile until it is
+given a shape. `checkOutputShape` names `genesis_proof` in its own reject arm
+ahead of the table lookup: the verdict would be identical either way, but an
+assigned tag refused by protocol rule is not an *unknown* one, and a test
+asserting rejection must be able to assert which rule rejected.
+
+`CANONICAL_GUARD` keeps all seven types even though the output schema carries
+six: its other obligation is agreement with `rowToBox`, and a genesis-seeded
+proof box is rebuilt from its row like any other.
+
 ### Output shape — the closed per-boxType schema (guard-shape pin + field-type pin)
 
 Transaction outputs are attacker-controlled structure (HTTP JSON through
@@ -691,9 +718,9 @@ schema for its `boxType`**:
   reject, not a strip: a stripped key would change the bytes the client signed.
 - **`guard` equals the boxType's canonical guard.** `karma`/`credit`/`vouch` →
   `owner_signature`, `invite` → `hash_preimage_with_bond`, `bond` →
-  `bond_dual`, `post_lock` → `block_apply` — the same constants `rowToBox`
-  fabricates on read. One table, engine-owned; `rowToBox` and the check must
-  never disagree.
+  `bond_dual`, `post_lock` → `block_apply`, `genesis_proof` → `unspendable` —
+  the same constants `rowToBox` fabricates on read. One table, engine-owned;
+  `rowToBox` and the check must never disagree.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
   - `bigint`, `0 ≤ v < 2⁶⁴`: `value` (every boxType) **and `originalValue`
@@ -1289,7 +1316,7 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting → `mintKarma(post.author, toUnlock)` |
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
-| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo`, author leg |
 
 **Retired by P2-D — names reserved, never reuse:** `author-reward` and `liker-refund`

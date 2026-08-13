@@ -11,6 +11,7 @@ import type {
   KarmaBox,
   CreditBox,
   InviteBox,
+  GenesisProofBox,
   BondBox,
   PostLockBox,
   VouchBox,
@@ -54,6 +55,13 @@ interface CreditExtra {
 interface InviteExtra {
   secretHash: number[];
   inviterId: string;     // hex-encoded pubkey in JSON (Uint8Array in code)
+}
+
+interface GenesisProofExtra {
+  // Raw bytes as a number array, like `secretHash` and `post_lock.owner`. The
+  // hex form above is for pubkeys; this payload is opaque to consensus and is
+  // not one.
+  payload: number[];
 }
 
 interface BondExtra {
@@ -184,6 +192,19 @@ function rowToBox(row: UtxoRow): AnyBox {
         ...prov,
       };
 
+    case 'genesis_proof':
+      return {
+        id: row.id,
+        boxType: 'genesis_proof',
+        // `as 0n`: the row's real value, never a fabricated literal — same rule
+        // as `vouch` below. The cast bridges the interface's literal type,
+        // which documents the pinned constant rather than a storage guarantee.
+        value: row.value as GenesisProofBox['value'],
+        payload: new Uint8Array((extra as GenesisProofExtra).payload),
+        guard: 'unspendable',
+        ...prov,
+      };
+
     case 'bond': {
       const e = extra as BondExtra;
       return {
@@ -281,6 +302,28 @@ export function getBoxByProvenance(txId: string, index: number): AnyBox | null {
     .safeIntegers()
     .get(txId, index) as UtxoRow | undefined;
   return row ? rowToBox(row) : null;
+}
+
+/**
+ * Return the genesis proof box, or null if this store has not seeded one.
+ *
+ * No owner argument, unlike every other typed lookup here: the box has no
+ * owner, and a network's genesis state holds exactly one of them.
+ *
+ * `spent_at_block IS NULL` is carried for uniformity with its siblings, not
+ * because the column can move — the box's `unspendable` guard is refused by
+ * `checkGuards`, so no transaction can consume it.
+ */
+export function getGenesisProofBox(): GenesisProofBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'genesis_proof' AND spent_at_block IS NULL
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get() as UtxoRow | undefined;
+  return row ? (rowToBox(row) as GenesisProofBox) : null;
 }
 
 /**
@@ -611,6 +654,14 @@ export function insertBox(box: AnyBox): void {
         secretHash: Array.from(i.secretHash),
         inviterId: pubkeyToHex(i.inviterId),
       } satisfies InviteExtra;
+      break;
+    }
+    case 'genesis_proof': {
+      const g = box as GenesisProofBox;
+      // No `owner` and no `proofSource`: the box has no holder and no mint
+      // reason to record. Both columns stay NULL, which is what the schema's
+      // per-type notes describe.
+      extraData = { payload: Array.from(g.payload) } satisfies GenesisProofExtra;
       break;
     }
     case 'bond': {

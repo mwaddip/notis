@@ -132,6 +132,7 @@ export function loadConfig(): Readonly<Config> {
 
   assertMiningAuthConfigured(cfg);
   assertTreasuryKeyEncodable(cfg);
+  assertGenesisProofPayloadEncodable(cfg);
   assertOrderingTargetAboveFloor(cfg);
 
   return Object.freeze(cfg);
@@ -181,6 +182,33 @@ function assertTreasuryKeyEncodable(cfg: Config): void {
     throw new Error(
       `Invalid treasuryPubKey for network "${cfg.networkType}" — must be 64 ` +
         'hex characters (32 bytes) or empty for no treasury',
+    );
+  }
+}
+
+/**
+ * The genesis proof payload's domain, established where it enters this node's
+ * config surface — the same job `assertTreasuryKeyEncodable` does one function
+ * up, and for the sharper half of the same hazard.
+ *
+ * `Buffer.from(s, 'hex')` stops at the first character pair outside the
+ * alphabet instead of failing, and `writeLp` is total by sentinel rather than
+ * throwing, so a malformed payload produces a **shorter payload and a different
+ * genesis state root** with nothing raised anywhere. The node then runs, mines,
+ * and forks from every honest peer at height 1. Refusal at load is #58's
+ * precedent: put the verdict where a human is reading it.
+ *
+ * ⚠ **This is not the payload BOUND.** How long a payload may be is a decode
+ * rule and belongs beside the encoder in `@dagsocial/types`; this asserts only
+ * that the configured string denotes the bytes it appears to.
+ */
+function assertGenesisProofPayloadEncodable(cfg: Config): void {
+  const hex = cfg.profile.genesisProofPayload;
+  if (!/^([0-9a-fA-F]{2})*$/.test(hex)) {
+    throw new Error(
+      `Invalid genesisProofPayload for network "${cfg.networkType}" — must be an ` +
+        'even number of hex characters; a truncated decode silently moves the ' +
+        'genesis state root',
     );
   }
 }

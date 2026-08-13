@@ -663,16 +663,23 @@ function postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protoc
 // ===========================================================================
 
 /**
- * The `boxType` tag table. **Tag 3 is permanently burnt** for the retired
- * `like` box type — reserve by leaving the number out, never by reusing it.
+ * The `boxType` tag table — the mirror of `enum8(boxType)` in
+ * @dagsocial/types. **A tag is never renumbered:** it is the first byte of
+ * every box's identity preimage, so moving a number silently moves every box id
+ * and every `stateRoot` covering it.
+ *
+ * Complete rather than only what this page builds. `enum8Tag` falls back to the
+ * reserved `0xff` for a type it does not know, and `boxTypeFields` then writes
+ * no tail — so a missing entry does not throw, it derives a **wrong id that
+ * looks well-formed**.
  */
-const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, bond: 4, post_lock: 5, vouch: 6 };
+const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6 };
 
 /**
  * Byte-identical mirror of `canonicalBoxBytes` in @dagsocial/types
  * (src/utxo.ts) — TYPES_INTERFACE → Layout — Boxes.
  *
- *   enum8(boxType) ‖ vlqU(value) ‖ <per-type>
+ *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
  *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
@@ -731,6 +738,12 @@ function boxTypeFields(box) {
         b32Either(box.secretHash, 32),
         b32Either(box.inviterId, 32),
       ]);
+    case 'genesis_proof':
+      // `lp`, not `b32Either`: the payload is variable-length and opaque to
+      // consensus. No builder on this page carries one — the box is written by
+      // genesis seeding alone — so there is no hex form to widen for, and `lp`
+      // stays the byte-only primitive it is in @dagsocial/types.
+      return lp(box.payload);
     case 'bond':
       return concatUint8Arrays([
         b32Either(box.inviterId, 32),

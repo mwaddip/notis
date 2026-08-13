@@ -614,12 +614,17 @@ function checkTransitions(
  * accepts and a row-rebuilt box of the same type have to present the same
  * object. Deliberately NOT imported from the store — the engine owns the rule,
  * the store mirrors it.
+ *
+ * Keyed on every box type, including the one `OUTPUT_SHAPE` excludes: the
+ * agreement with `rowToBox` is over all seven, and a genesis-seeded
+ * `genesis_proof` box is rebuilt from its row like any other.
  */
 const CANONICAL_GUARD: Record<AnyBox['boxType'], BoxGuard> = {
   karma: 'owner_signature',
   credit: 'owner_signature',
   vouch: 'owner_signature',
   invite: 'hash_preimage_with_bond',
+  genesis_proof: 'unspendable',
   bond: 'bond_dual',
   post_lock: 'block_apply',
 };
@@ -997,6 +1002,21 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
 }
 
 /**
+ * The box types a transaction may create.
+ *
+ * `genesis_proof` is excluded **in the type**, not by an omitted entry: the box
+ * is written by genesis seeding alone, so a transaction may never create one.
+ * This is the node-side twin of the rule `validation` enforces at the gossip
+ * gate (`VALIDATION_INTERFACE` → "A transaction may not create a genesis_proof
+ * box"); node owns the input half of the same rule, in `checkGuards`.
+ *
+ * Written as an `Exclude` so the exclusion is deliberate and a *new* box type
+ * still fails to compile until it is given a shape — an omitted key would be
+ * indistinguishable from a forgotten one.
+ */
+type OutputBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
+
+/**
  * Closed key set and per-field runtime types per boxType, in candidate form —
  * the `@dagsocial/types` box interfaces with `id`/`txId`/`index` removed
  * (`TYPES_INTERFACE` box definitions are authoritative). `required` keys must
@@ -1008,7 +1028,7 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
  * equality — both stricter than any type check.
  */
 const OUTPUT_SHAPE: Record<
-  AnyBox['boxType'],
+  OutputBoxType,
   {
     required: readonly string[];
     optional: readonly string[];
@@ -1105,7 +1125,12 @@ const OUTPUT_SHAPE: Record<
  * - an unknown `boxType` — or a `null`/non-object entry — is a reject here,
  *   not a late throw downstream, and the table lookup is an OWN-PROPERTY
  *   lookup (`Object.hasOwn`): `boxType: 'constructor'` lands in this reject
- *   instead of retrieving `Object.prototype.constructor` and throwing.
+ *   instead of retrieving `Object.prototype.constructor` and throwing;
+ * - `genesis_proof` is a reject under its own name, ahead of that lookup. The
+ *   `OutputBoxType` exclusion already makes it unrepresentable in the table, so
+ *   the verdict would be the same either way — the named arm is what keeps the
+ *   *diagnosis* true, since an assigned tag refused by protocol rule is not an
+ *   unknown one.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
  * they are structurally outside every committed byte (no layout declares them;
@@ -1131,6 +1156,14 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
     // (its boxType read is undefined), never a throw.
     const box = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
     const boxTypeValue = box.boxType;
+    if (boxTypeValue === 'genesis_proof') {
+      return {
+        valid: false,
+        error:
+          `Invalid output shape at index ${i}: a genesis_proof box may not be a ` +
+          `transaction output`,
+      };
+    }
     if (typeof boxTypeValue !== 'string' || !Object.hasOwn(OUTPUT_SHAPE, boxTypeValue)) {
       return {
         valid: false,
@@ -1139,7 +1172,7 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
         }`,
       };
     }
-    const boxType = boxTypeValue as AnyBox['boxType'];
+    const boxType = boxTypeValue as OutputBoxType;
     const shape = OUTPUT_SHAPE[boxType];
     for (const key of Object.keys(box)) {
       if (key === 'id' || key === 'txId' || key === 'index') continue;
@@ -1304,6 +1337,29 @@ function checkGuards(
         return {
           valid: false,
           error: `Box with ${box.guard} guard can only be consumed by block application`,
+        };
+      }
+
+      case 'unspendable': {
+        // The INPUT half of "a `genesis_proof` box may never appear in a
+        // transaction" (spec: `NODE_INTERFACE` → "Genesis proof boxes are never
+        // in a transaction"). `validation` owns the output half and cannot own
+        // this one — `tx.inputs` are box **id** strings, so typing one requires
+        // the UTXO set.
+        //
+        // Keyed on the GUARD rather than on `boxType`, which is the strongest
+        // property available at this site and the one that generalises: an
+        // input box always comes out of the store, where `rowToBox` fabricates
+        // `guard` from the row discriminant, so guard and type agree by
+        // construction — while a second unspendable type added later is covered
+        // here without an edit. The output half must key on `boxType` instead,
+        // because a candidate's own `guard` field is attacker-supplied and is
+        // not checked until after the type is known.
+        return {
+          valid: false,
+          error:
+            `Box with ${box.guard} guard can never be consumed: ` +
+            `box ${box.id} is a ${box.boxType} box`,
         };
       }
 

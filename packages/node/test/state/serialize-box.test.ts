@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'crypto';
 import { serializeBox, deserializeBox, deserializeBoxWithId } from '../../src/state/serialize-box.js';
 import { seedProvenance } from '../helpers.js';
-import { BOX_ID_DOMAIN, computeBoxId } from '@dagsocial/types';
-import type { AnyBox, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
+import { BOX_ID_DOMAIN, ReaderError, computeBoxId } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
 
 /**
  * Every fixture below is a GENUINE box: `seedProvenance` gives it real
@@ -50,14 +50,27 @@ describe('serializeBox', () => {
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
 
-  it('the retired like tag 3 stays reserved — decode rejects it', () => {
-    // The 'like' box type is deleted and `enum8` reserves 3 between `invite`
-    // and `bond` rather than closing the gap (TYPES_INTERFACE → Layout —
-    // Boxes), so bytes carrying it must fail loudly rather than decode as some
-    // other type. The reservation is what makes the rejection a property of the
+  it('an unassigned box tag has no decoding — the AVL value reader refuses it', () => {
+    // 7 is the first number `BOX_TYPE` does not assign (TYPES_INTERFACE →
+    // Layout — Boxes). Bytes carrying it must fail at the tag rather than parse
+    // as some other type, which is what makes the rejection a property of the
     // tag table instead of a special case somebody has to remember.
-    const bytes = new Uint8Array([0x03, 0x00]); // reserved tag + a value byte
-    expect(() => deserializeBox(bytes)).toThrow(/unknown tag 3/);
+    //
+    // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
+    // *assigned* tag put here throws too — on the fields it then misreads — so a
+    // bare `toThrow` cannot tell "this tag has no decoding" from "this tag
+    // decodes, into something else". `packages/types` pins the same property the
+    // same way, at `boxRecordFromBytes` and in the golden corpus; three sites
+    // agreeing on one property is the point.
+    const bytes = new Uint8Array([0x07, 0x00]); // unassigned tag + a value byte
+    let thrown: unknown;
+    try {
+      deserializeBox(bytes);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReaderError);
+    expect((thrown as ReaderError).code).toBe('invalid-tag');
   });
 
   it('roundtrips an InviteBox', () => {
@@ -69,6 +82,42 @@ describe('serializeBox', () => {
       guard: 'hash_preimage_with_bond' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
+  });
+
+  // Two arms, because `payload` is `lp` and the length prefix is the whole of
+  // the field's injectivity: appended raw, an empty payload would be
+  // indistinguishable from the end of the box. The empty case is also the
+  // smallest legal box of any type, so it is the one that would decode as
+  // something else if the prefix went missing.
+  //
+  // `guard` is reattached from `GUARD_FOR` on the way back, and `'unspendable'`
+  // is the first guard naming no spender at all — so a wrong arm in that table
+  // shows up here rather than at the first attempt to spend one.
+  it('roundtrips a GenesisProofBox', () => {
+    const box = seedProvenance<GenesisProofBox>({
+      boxType: 'genesis_proof' as const,
+      value: 0n,
+      payload: new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
+      guard: 'unspendable' as const,
+    });
+    expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
+  });
+
+  it('roundtrips a GenesisProofBox — empty payload, the lp zero-length arm', () => {
+    const box = seedProvenance<GenesisProofBox>({
+      boxType: 'genesis_proof' as const,
+      value: 0n,
+      payload: new Uint8Array(0),
+      guard: 'unspendable' as const,
+    });
+    const back = deserializeBoxWithId(box.id, serializeBox(box));
+    expect(back).toEqual(box);
+    expect((back as GenesisProofBox).payload.length).toBe(0);
+    // The distinguishing assertion: a written zero length, not an absent field.
+    // A one-byte payload must not serialize to the same value bytes, which is
+    // what a dropped length prefix would produce.
+    const oneByte = { ...box, payload: new Uint8Array([0x00]) };
+    expect(Buffer.from(serializeBox(box)).equals(Buffer.from(serializeBox(oneByte)))).toBe(false);
   });
 
   // Two arms, because `inviteePublicKey` is `opt(b32)` and they encode

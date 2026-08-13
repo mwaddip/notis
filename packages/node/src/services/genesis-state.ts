@@ -1,10 +1,15 @@
 import { getDb } from '../store/db.js';
-import { ensureSystemKarmaBox, ensureFaucetCreditBox } from '../store/system.js';
+import {
+  ensureSystemKarmaBox,
+  ensureFaucetCreditBox,
+  ensureGenesisProofBox,
+} from '../store/system.js';
 import { getIdentityRecord, identityRecordKey } from '../store/identity-records.js';
 import { getCurrentHeight } from '../store/ordering.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
 import type { RecordPut } from '../state/avl-prover.js';
 import { config, isFaucetNetwork } from '../config.js';
+import { hexToBuf } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 
 /**
@@ -48,10 +53,11 @@ function markGenesisCommitted(): void {
  * rounds.
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
- * **fixed, known set** of at most three boxes derived from the profile and the
- * system identity, and the order is specified rather than whatever a set read
- * produced. Every node on a network performs the identical operation on an
- * identical empty tree, so the resulting root is reproducible by construction.
+ * **fixed, known set** — the proof box on every network, plus the system karma
+ * and faucet credit boxes on the faucet-bearing ones — and the order is
+ * specified rather than whatever a set read produced. Every node on a network
+ * performs the identical operation on an identical empty tree, so the resulting
+ * root is reproducible by construction.
  *
  * **The insertion order is normative and is NOT this function's to choose.**
  * AVL+ shape is order-dependent, so "the genesis set is these boxes" does not
@@ -114,17 +120,24 @@ export function seedGenesisState(systemPubKey: Uint8Array, currentHeight: number
       }
     }
 
-    // Empty only if a network seeds nothing at all, which no profile does. The
-    // guard is here so the branch above cannot silently write a height-0
-    // version over an untouched tree.
-    if (boxes.length > 0) {
-      // Exactly one height-0 version may exist. The `PersistentBatchAVLProver`
-      // constructor already wrote the empty tree's, and `version()` resolves
-      // ties on height arbitrarily — leaving both would let a restart load the
-      // empty tree back over the genesis one.
-      handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
-      bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records);
-    }
+    // Every network, mainnet included — this box IS the network axis. The two
+    // boxes above are byte-identical on testnet and devnet (one hardcoded system
+    // identity, one pair of values), so their ids and their AVL entries match
+    // exactly; the proof box's per-network payload is the only thing separating
+    // those two genesis roots.
+    boxes.push(
+      ensureGenesisProofBox(
+        new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
+        currentHeight,
+      ),
+    );
+
+    // Exactly one height-0 version may exist. The `PersistentBatchAVLProver`
+    // constructor already wrote the empty tree's, and `version()` resolves ties
+    // on height arbitrarily — leaving both would let a restart load the empty
+    // tree back over the genesis one.
+    handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
+    bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records);
 
     markGenesisCommitted();
   })();

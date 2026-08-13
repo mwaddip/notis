@@ -1,11 +1,12 @@
 import { createPrivateKey, sign } from 'crypto';
 import { computeBoxId } from '@dagsocial/types';
-import type { KarmaBox, CreditBox } from '@dagsocial/types';
+import type { KarmaBox, CreditBox, GenesisProofBox } from '@dagsocial/types';
 import { getDb } from './db.js';
-import { insertBox, getKarmaBox, getCreditBoxes } from './utxo.js';
+import { insertBox, getKarmaBox, getCreditBoxes, getGenesisProofBox } from './utxo.js';
 import { putIdentityRecord } from './identity-records.js';
 import {
   GENESIS_FAUCET_CREDITS,
+  GENESIS_PROOF,
   GENESIS_SYSTEM_KARMA,
   MINT_OUTPUT_INDEX,
   genesisContext,
@@ -163,6 +164,49 @@ export function ensureFaucetCreditBox(
     guard: 'owner_signature',
     proofSource: genesisHeight,
     txId: mintTxIdFor(genesisContext(GENESIS_FAUCET_CREDITS), genesisHeight),
+    index: MINT_OUTPUT_INDEX,
+  };
+  box.id = computeBoxId(box);
+  insertBox(box);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
+// Genesis proof box
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the genesis proof box exists, carrying this network's payload.
+ * Idempotent — if one is already seeded, returns it without creating.
+ *
+ * The payload is a parameter rather than a config read, following the two
+ * seeders above: the caller supplies what distinguishes the box, so this
+ * function is testable under a payload without a module reset, and `store/`
+ * gains no edge into config.
+ *
+ * ⚠ **No identity record.** `ensureSystemKarmaBox` writes one because the
+ * system identity holds karma and decay would otherwise read "never active".
+ * A proof box has no owner and no karma, so there is no activity clock for a
+ * record to hold — the block above is not a template.
+ */
+export function ensureGenesisProofBox(
+  payload: Uint8Array,
+  currentHeight: number,
+): GenesisProofBox {
+  const existing = getGenesisProofBox();
+  if (existing) return existing;
+
+  const genesisHeight = currentHeight > 0 ? currentHeight : 1;
+
+  // `GENESIS_PROOF` is the third `u32BE` selector, which is the whole cost of a
+  // third genesis box — `genesisContext` was built fixed-width for exactly this
+  // (NODE_INTERFACE → "Box Identity and Mint Provenance").
+  const box: GenesisProofBox = {
+    boxType: 'genesis_proof',
+    value: 0n,
+    payload,
+    guard: 'unspendable',
+    txId: mintTxIdFor(genesisContext(GENESIS_PROOF), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);

@@ -29,6 +29,7 @@ export const MINT_OUTPUT_INDEX = 0;
 /** `genesis` subject selectors. See `genesisContext`. */
 export const GENESIS_SYSTEM_KARMA = 0;
 export const GENESIS_FAUCET_CREDITS = 1;
+export const GENESIS_PROOF = 2;
 
 const utf8 = new TextEncoder();
 

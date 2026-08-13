@@ -30,6 +30,7 @@ const GUARD_FOR: Record<AnyBox['boxType'], BoxGuard> = {
   karma: 'owner_signature',
   credit: 'owner_signature',
   invite: 'hash_preimage_with_bond',
+  genesis_proof: 'unspendable',
   bond: 'bond_dual',
   post_lock: 'block_apply',
   vouch: 'owner_signature',
@@ -43,13 +44,15 @@ const GUARD_FOR: Record<AnyBox['boxType'], BoxGuard> = {
  * stays open for future box kinds without ever colliding with an entity
  * discriminator.
  *
- * ⚠ **`enum8(boxType)` — `0` karma … `6` vouch, `3` reserved — is the box
- * numbering, and this package must never carry a second one.** Composing a
- * local tag with the record's own, `tag ‖ boxRecordBytes`, writes the box type
- * twice in adjacent bytes under two schemes nothing forces to agree, and they
- * need not differ by a constant: a reservation placed at a different position
- * shifts one type and not its neighbours. The rule the numbering protects — a
- * retired type's tag is never reused — is why `enum8` reserves `3`.
+ * ⚠ **`enum8(boxType)` — `0` karma … `6` vouch — is the box numbering, and this
+ * package must never carry a second one.** Composing a local tag with the
+ * record's own, `tag ‖ boxRecordBytes`, writes the box type twice in adjacent
+ * bytes under two schemes nothing forces to agree, and they need not differ by
+ * a constant: a number assigned at a different position shifts one type and not
+ * its neighbours. The rule the numbering protects — a tag is never *renumbered*,
+ * because `boxType` is the first byte of every box's identity preimage
+ * (`TYPES_INTERFACE` → Primitives) — is exactly what a second table would
+ * silently break.
  */
 export const IDENTITY_RECORD_TAG = 0x80;
 
