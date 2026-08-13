@@ -33,7 +33,6 @@ import {
   clearTemplate,
   rebuildTemplate,
 } from './block-creator.js';
-import { MAX_REORG_DEPTH } from './fork-resolution.js';
 import { subBlockIdsOf } from './sub-block-ids.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
@@ -90,6 +89,7 @@ import type { RecordPut } from '../state/avl-prover.js';
 import {
   encodeTx,
   decodeTx,
+  MAX_REORG_DEPTH,
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_UNLOCK_PER_LIKES,

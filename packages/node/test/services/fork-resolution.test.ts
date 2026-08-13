@@ -8,6 +8,7 @@ import {
 } from 'vitest';
 import {
   computePostId,
+  MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
   ReaderError,
@@ -181,7 +182,6 @@ async function importForkResolution() {
       net: ForkResolutionNet,
       dagService?: unknown,
     ) => Promise<void>;
-    MAX_REORG_DEPTH: number;
   };
 }
 
@@ -488,7 +488,17 @@ describe('findForkPoint', () => {
     expect(forkPoint).toBe(2);
   });
 
-  it('returns null when no common ancestor found', async () => {
+  it('two chains sharing no block fork at the genesis state', async () => {
+    // The rule this pins: reaching height 0 IS a common ancestor. Height 0
+    // holds no block and no hash, so nothing here matches — but every node on
+    // a network holds a byte-identical height-0 state (`assertGenesisRoot`
+    // makes a divergent one fail-stop), so two chains inside the reorg window
+    // that share no block still share genesis, and it is the only ancestor
+    // they have. Before this rule the pair below answered null and a mesh
+    // whose nodes each mined their own height 1 could never converge.
+    //
+    // The null case did not disappear with it: it moved to the depth bound,
+    // which the two tests below pin from either side.
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -530,7 +540,7 @@ describe('findForkPoint', () => {
 
     const forkResolution = await importForkResolution();
     const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
-    expect(forkPoint).toBeNull();
+    expect(forkPoint).toBe(0);
   });
 
   it('returns null when depth exceeds MAX_REORG_DEPTH', async () => {
@@ -549,8 +559,7 @@ describe('findForkPoint', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
-    const MAX_DEPTH = forkResolution.MAX_REORG_DEPTH;
-    const chainLength = MAX_DEPTH + 5;
+    const chainLength = MAX_REORG_DEPTH + 5;
 
     for (let i = 0; i < chainLength; i++) {
       const post = makePost(author.userId, `deep ${i}`);
@@ -564,15 +573,15 @@ describe('findForkPoint', () => {
     const ourTip = ordering.getOrderingBlock(chainLength);
     expect(ourTip).not.toBeNull();
 
-    // Their headers reference a block at height chainLength - MAX_DEPTH - 1
+    // Their headers reference a block at height chainLength - MAX_REORG_DEPTH - 1
     // which is beyond MAX_REORG_DEPTH from our tip
-    const deepBlock = ordering.getOrderingBlock(chainLength - MAX_DEPTH - 1);
+    const deepBlock = ordering.getOrderingBlock(chainLength - MAX_REORG_DEPTH - 1);
     expect(deepBlock).not.toBeNull();
 
     const theirHeaders: BlockHeader[] = [
       {
         protocolVersion: PROTOCOL_VERSION,
-        height: chainLength - MAX_DEPTH - 1 + 3,
+        height: chainLength - MAX_REORG_DEPTH - 1 + 3,
         prevBlockHash: blockHash(deepBlock!.header)!,
         subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
@@ -590,15 +599,135 @@ describe('findForkPoint', () => {
     expect(forkPoint).toBeNull();
   });
 
+  it('height 0 is reachable up to MAX_REORG_DEPTH and not one block further', async () => {
+    // **The bound did not move.** Height 0 became a valid *answer*; how far
+    // back a reorg may go is unchanged, and it has to be: journal retention is
+    // the real floor under revert depth (`revertBlock` throws without a
+    // journal, and `purgeOldJournals` clears everything below
+    // `height − MAX_REORG_DEPTH`). Answering 0 from deeper than the window
+    // would name an ancestor the node cannot revert to.
+    //
+    // Both edges, on one chain, because a single-sided assertion cannot tell a
+    // correct bound from an absent one.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    const forkResolution = await importForkResolution();
+    const ordering = await importOrdering();
+
+    /** A peer tip that chains from nothing we hold — no block can ever match. */
+    const unrelated = (height: number): BlockHeader => ({
+      protocolVersion: PROTOCOL_VERSION,
+      height,
+      prevBlockHash: 'cd'.repeat(32),
+      subBlockRoot: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: '00'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 256 * 4,
+      createdAt: Date.now(),
+    });
+
+    for (let i = 0; i < MAX_REORG_DEPTH; i++) {
+      const post = makePost(author.userId, `bound ${i}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      await mineNextBlock(bc);
+    }
+
+    // At exactly MAX_REORG_DEPTH the walk covers heights MAX_REORG_DEPTH..1 and then
+    // runs out of blocks — genesis is inside the window.
+    const atBound = ordering.getOrderingBlock(MAX_REORG_DEPTH);
+    expect(forkResolution.findForkPoint(atBound!.header, [unrelated(MAX_REORG_DEPTH)])).toBe(0);
+
+    // One block further, the walk is truncated by the depth bound before it
+    // reaches the bottom, and the answer goes back to "no common ancestor".
+    const post = makePost(author.userId, 'one past the bound');
+    const postId = computePostId(post);
+    posts.insertPost(post, encodePost(post));
+    mempool.insertSubBlock(postId, 1000);
+    await mineNextBlock(bc);
+
+    const pastBound = ordering.getOrderingBlock(MAX_REORG_DEPTH + 1);
+    expect(pastBound).not.toBeNull();
+    expect(
+      forkResolution.findForkPoint(pastBound!.header, [unrelated(MAX_REORG_DEPTH + 1)]),
+    ).toBeNull();
+  });
+
+  it('a poisoned batch is still refused whole rather than falling through to genesis', async () => {
+    // The genesis fallback must sit behind the batch check, not in front of it.
+    // In front, a peer could turn "this batch is uninterpretable" into "we fork
+    // at genesis" by corrupting one entry — buying a full-chain reorg attempt
+    // with a single malformed header, on exactly the short chains where the
+    // whole walk is inside the window.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    for (let i = 0; i < 2; i++) {
+      const post = makePost(author.userId, `poison control ${i}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      await mineNextBlock(bc);
+    }
+
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const ourTip = ordering.getOrderingBlock(2)!;
+    const sane: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 2,
+      prevBlockHash: 'ef'.repeat(32),
+      subBlockRoot: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: '00'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: 256 * 4,
+      createdAt: Date.now(),
+    };
+
+    // Control: this batch, unpoisoned, falls through to genesis.
+    expect(forkResolution.findForkPoint(ourTip.header, [sane])).toBe(0);
+
+    // The same batch with one entry outside the encodable domain is refused,
+    // and the refusal names the batch rather than answering a fork point.
+    expect(
+      forkResolution.findForkPoint(ourTip.header, [sane, { ...sane, createdAt: -1 }]),
+    ).toBeNull();
+    expect(
+      warn.mock.calls.some(([m]) => typeof m === 'string' && m.includes('refusing peer header batch')),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
   // -------------------------------------------------------------------------
   // Phase 1f-2 — a peer header batch is accepted or refused whole.
   //
   // `theirHeaders` reaches this function as `decode(response) as BlockHeader[]`
   // (net's `requestHeaders`): a raw cbor decode with a TypeScript cast and no
   // runtime check, so every field in it is the peer's to choose. These two pin
-  // the answer to the question `blockHash` now forces — what an
-  // unhashable entry means — because the plausible alternative, skipping it and
-  // carrying on, hands the peer the fork depth.
+  // the answer to the question `blockHash` forces — what an unhashable entry
+  // means — because the plausible alternative, skipping it and carrying on,
+  // hands the peer the fork depth.
   // -------------------------------------------------------------------------
 
   /** A three-block chain and the pieces every batch below is built from. */
@@ -752,13 +881,14 @@ describe('a stored header that cannot be hashed', () => {
     // `readHexN` and `readBytesN` can produce is already inside
     // `verifyHeaderFieldDomains` — safe non-negative integers, lowercase hex of
     // the exact width, exactly 32 bytes — so **a stored header that decodes is
-    // always hashable**, and `blockHash` can no longer answer `null` on this
-    // path at all. The decode boundary subsumes the domain check, which is the
-    // "serializer is the validator" property arriving for the header.
+    // always hashable**, and `blockHash` cannot answer `null` on this path. The
+    // decode boundary subsumes the domain check, which is the "serializer is the
+    // validator" property holding for the header.
     //
-    // Reported to main: that makes `UnhashableStoredHeaderError` unreachable
-    // from the store, i.e. dead in `src`. Removing it is node's call and needs
-    // its own enumeration, so it stays and these tests pin what happens now.
+    // That leaves `UnhashableStoredHeaderError` unreachable from the store. It
+    // stays because the argument above is a claim about the rest of the tree
+    // rather than a property of this function, and these tests pin the behaviour
+    // the claim would have to survive.
     const block = buildBlock(1, -1);
     ordering.createOrderingBlock(block);
     expect(ordering.getCurrentHeight()).toBe(1);
@@ -878,13 +1008,13 @@ describe('a stored header that cannot be hashed', () => {
   // corruption could not be filed as a network problem.
   //
   // Under the positional format the header does not decode at all, so the store
-  // read throws before `blockHash` is ever reached. For one commit that arrived
-  // as a bare `ReaderError`, which is **not** in the funnel's re-throw
-  // allowlist: the totality catch absorbed it into `return false`, `reorg`
-  // reported its generic "block at height N rejected", and `index.ts` logged
-  // that as `Fork resolution error` and carried on. The two cases below pinned
-  // that, deliberately asserting the wrong behaviour so it stayed visible; they
-  // are inverted now that the door is watched again.
+  // read throws before `blockHash` is ever reached. What it must NOT throw is a
+  // bare `ReaderError`, which is **not** in the funnel's re-throw allowlist: the
+  // totality catch would absorb it into `return false`, `reorg` would report its
+  // generic "block at height N rejected", and `index.ts` would log that as
+  // `Fork resolution error` and carry on. The two cases below assert the wrapped
+  // error, which is the difference between a corrupt store announcing itself and
+  // a corrupt store reading as an ordinary rejection.
   //
   // **The fix is in the store, not in the catch.** At the catch, `err
   // instanceof ReaderError` is equally true for `decodeTx` over the block's own
@@ -980,9 +1110,11 @@ describe('a stored header that cannot be hashed', () => {
     const { tip, forkResolution } = await storeThreeBlocks();
 
     // The control the throw below needs: with the chain intact, the walk runs
-    // off the bottom at height 0 and returns an ordinary answer. Terminating on
-    // a missing block is normal *there* and only there.
-    expect(forkResolution.findForkPoint(tip, [])).toBeNull();
+    // out of blocks at height 0 and returns an ordinary answer — the genesis
+    // state, which is the ancestor a three-block chain shares with anything.
+    // Running out of blocks is normal *there* and only there; a hole anywhere
+    // above it throws.
+    expect(forkResolution.findForkPoint(tip, [])).toBe(0);
   });
 
   it('findForkPoint stops the node on a hole rather than reorging without it', async () => {
@@ -1596,6 +1728,64 @@ describe('reorg', () => {
     // Default cap (10000): the reverted sub-blocks come back.
     expect(mempool.getPendingEntries(100).length).toBeGreaterThan(1);
   });
+
+  it('a fork point of 0 rolls the AVL prover back to the pinned genesis root', async () => {
+    // What `findForkPoint`'s new answer costs downstream. `reorg` walks
+    // journals from the fork height and rolls the prover to
+    // `versionAtOrBeforeHeight(forkHeight)` — and at 0 that version is the
+    // genesis one only because `seedGenesisState` deletes the empty tree's
+    // height-0 version before writing its own. Every other suite here runs
+    // without a prover, so nothing else exercises this.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const proverMod = await import('../../src/state/avl-prover.js');
+    proverMod.createAvlProver();
+    const system = await import('../../src/store/system.js');
+    const genesis = await import('../../src/services/genesis-state.js');
+    genesis.seedGenesisState(system.initSystemKeypair().publicKey);
+
+    const root = (): string =>
+      Buffer.from(proverMod.getAvlProver().prover.digest()!).toString('hex');
+    // Imported from the same module graph the seeder just ran in — after
+    // `vi.resetModules()` a statically imported `config` is a different
+    // instance from the one `genesis-state` read.
+    const { config } = await import('../../src/config.js');
+    const genesisRoot = root();
+    expect(genesisRoot).toBe(config.profile.genesisStateRoot);
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    for (let i = 0; i < 3; i++) {
+      const post = makePost(author.userId, `to genesis ${i}`);
+      const postId = computePostId(post);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      await mineNextBlock(bc);
+    }
+
+    const ordering = await importOrdering();
+    const chain = [1, 2, 3].map((h) => ordering.getOrderingBlock(h)!);
+    expect(root()).not.toBe(genesisRoot);
+
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(0, []);
+
+    // The whole chain is gone and the state is exactly what genesis seeded —
+    // not merely "some earlier root", which a rollback to the empty tree would
+    // also satisfy.
+    expect(ordering.getCurrentHeight()).toBe(0);
+    expect(root()).toBe(genesisRoot);
+
+    // And the fork point is re-appliable: apply from 0 takes the genesis branch
+    // of the chain-link check (`prevBlockHash` all zeros, height 1).
+    forkResolution.reorg(0, chain);
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) expect(ordering.getOrderingBlock(h)).not.toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1758,7 +1948,7 @@ function stubNet(theirHeaders: BlockHeader[], answer: OrderingBlock[]): ForkReso
   const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
   return {
     blockRequests,
-    peers: () => [{ id: 'peer-withholding' }],
+    getConnectedPeers: () => ['peer-withholding'],
     requestHeaders: async () => theirHeaders,
     requestBlocks: async (startHeight: number, endHeight: number) => {
       blockRequests.push({ startHeight, endHeight });
@@ -1847,5 +2037,173 @@ describe('resolveFork — never reorg to a shorter chain', () => {
     for (const [i, block] of scenario.theirBlocks.entries()) {
       expect(blockHash(ordering.getOrderingBlock(i + 2)!.header)).toBe(blockHash(block.header));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The reorg counterparty comes off the Active list.
+//
+// `peers()` returns every *known* peer, wrong-network ones included: `addPeer`
+// runs on `peer:connect` and starts them at Connecting, so a peer that failed
+// the DAGsocial handshake is on that list. Choosing a counterparty from it lets
+// a stranger's chain be adopted — and because the fork walk bottoms out at the
+// genesis state, a node below MAX_REORG_DEPTH can have its whole chain replaced
+// rather than a suffix of it.
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — the counterparty is an Active peer', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('refuses to reorg to a peer that never completed the handshake', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Known but not Active — the shape of a peer on another network. Its chain
+    // is the genuinely-heavier one that the control below does adopt, so the
+    // only thing refusing this reorg is which list the counterparty came from.
+    let headersRequested = 0;
+    const strangerOnly = {
+      peers: () => [{ id: 'wrong-network-peer' }],
+      getConnectedPeers: () => [],
+      requestHeaders: async () => { headersRequested++; return scenario.theirHeaders; },
+      requestBlocks: async () => scenario.theirBlocks,
+    } as unknown as ForkResolutionNet;
+
+    await forkResolution.resolveFork(scenario.competingBlock, strangerOnly);
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+    // Refused before any request went out, not after weighing the answer.
+    expect(headersRequested).toBe(0);
+    expect(
+      warn.mock.calls.some(([msg]) => typeof msg === 'string' && msg.includes('no connected peers')),
+    ).toBe(true);
+  });
+
+  it('control: the same chain from an Active peer is adopted', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+
+    await forkResolution.resolveFork(
+      scenario.competingBlock,
+      stubNet(scenario.theirHeaders, scenario.theirBlocks),
+    );
+
+    expect(ordering.getCurrentHeight()).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A reorg that cannot roll the prover back refuses, rather than skipping.
+//
+// Phase 1b resolves the fork point's AVL version so phase 3 applies the peer's
+// chain onto the tree that height actually had. With the version gone there is
+// nothing to roll back to, and applying anyway leaves a state root that no
+// longer covers the UTXO set — which surfaces later, on some other node, as a
+// mismatch blamed on whoever sent the next block.
+//
+// `MAX_PROOF_HISTORY` is env-tunable and prunes below `height - maxProofHistory`
+// while `MAX_REORG_DEPTH` is fixed at 20, so this is reachable by configuration
+// and not only by corruption.
+// ---------------------------------------------------------------------------
+
+describe('reorg — a missing AVL version at the fork height', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  /** A seeded genesis and three mined blocks, with a live prover. */
+  async function chainOnAProver() {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const proverMod = await import('../../src/state/avl-prover.js');
+    proverMod.createAvlProver();
+    const system = await import('../../src/store/system.js');
+    const genesis = await import('../../src/services/genesis-state.js');
+    genesis.seedGenesisState(system.initSystemKeypair().publicKey);
+
+    const author = makeTestIdentity();
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    for (let i = 0; i < 3; i++) {
+      const post = makePost(author.userId, `pruned version ${i}`);
+      posts.insertPost(post, encodePost(post));
+      mempool.insertSubBlock(computePostId(post), 1000);
+      await mineNextBlock(bc);
+    }
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+    return {
+      ordering,
+      handle: proverMod.getAvlProver(),
+      forkResolution: await importForkResolution(),
+      root: (): string =>
+        Buffer.from(proverMod.getAvlProver().prover.digest()!).toString('hex'),
+    };
+  }
+
+  it('refuses the reorg and leaves our chain and our prover where they were', async () => {
+    const { ordering, handle, forkResolution, root } = await chainOnAProver();
+    const before = root();
+    const hashes = [1, 2, 3].map((h) => blockHash(ordering.getOrderingBlock(h)!.header));
+
+    // What `checkpointProver`'s pruning leaves behind when MAX_PROOF_HISTORY is
+    // below MAX_REORG_DEPTH: the fork point is still an answer the walk can
+    // give, and its version is gone.
+    handle.storage.deleteVersionAtHeight(0);
+
+    expect(() => forkResolution.reorg(0, []))
+      .toThrow(/no AVL version at or before it/i);
+
+    // The transaction rolled back and the in-memory prover went back with it,
+    // so the node still holds a chain whose root it can compute.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(hashes[h - 1]);
+    }
+    expect(root()).toBe(before);
+  });
+
+  it('names both numbers, because their relationship is the fault', async () => {
+    const { handle, forkResolution } = await chainOnAProver();
+    handle.storage.deleteVersionAtHeight(0);
+
+    let message = '';
+    try { forkResolution.reorg(0, []); } catch (err) { message = String(err); }
+    expect(message).toMatch(/MAX_PROOF_HISTORY/);
+    expect(message).toMatch(/MAX_REORG_DEPTH/);
+  });
+
+  it('control: the same reorg runs with the version in place', async () => {
+    const { ordering, forkResolution } = await chainOnAProver();
+    expect(() => forkResolution.reorg(0, [])).not.toThrow();
+    expect(ordering.getCurrentHeight()).toBe(0);
   });
 });

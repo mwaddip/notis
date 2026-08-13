@@ -30,6 +30,25 @@ export const MAX_CONTENT_BYTES = 300;
  * folded into the positional-format migration.
  */
 export const MAX_PARENT_REFS = 1;
+/**
+ * How long a `genesis_proof` box's `payload` may be.
+ *
+ * **A decode rule, and only there** — the `genesis_proof` arm of
+ * `readBoxContentFields` (`utxo.ts`) refuses a longer payload, so such bytes
+ * have no decoding at all, the standing an unassigned box tag has. It is
+ * per-type: `readLp` is shared by every length-prefixed field in the format
+ * (`tx.preimages`, `utxoTxs`, the block's three sections) and a bound there
+ * would bind all of them.
+ *
+ * It is a **domain** rule and not a memory-safety one. `ByteReader.readBytes`
+ * refuses `remaining < n` and throws before allocating, so no length prefix can
+ * provoke an allocation whatever this value is.
+ *
+ * ⚠ **Provisional.** 512 is roughly Ergo's five-register no-premine payload plus
+ * headroom, and is derived from no measurement. The three profile payloads are
+ * ~35 bytes, so nothing approaches it; `network.test.ts` is what checks them.
+ */
+export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
@@ -101,6 +120,33 @@ export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // → profile: ordering
 // on. This bounds the reachable range rather than the whole admitted one: work stops
 // resolving above 63358 as well. VALIDATION_INTERFACE → blockWork / cumulativeWork.
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;
+
+// Chain reorganisation
+/**
+ * How far back a reorg reaches.
+ *
+ * **One number doing three jobs in `@dagsocial/node`, with nothing requiring
+ * them to stay equal.** It bounds the fork walk (`findForkPoint` searches at
+ * most this many blocks back from our own tip), it sizes the header request
+ * fork resolution makes of the competing peer (`MAX_REORG_DEPTH * 2`), and it
+ * sets the block-journal retention window
+ * (`purgeOldJournals(height - MAX_REORG_DEPTH)`). **Journal retention is the
+ * hard bound on how deep a reorg can physically go; the fork walk is policy** —
+ * past the retention window the journals are gone and no fork-walk bound
+ * reaches them.
+ *
+ * It is universal rather than per-network for the reason every other constant
+ * outside `NetworkProfile` is (TYPES_INTERFACE → Network profiles): a network
+ * that compressed it would be a place devnet behaves unlike mainnet.
+ *
+ * **It lives in this package rather than in node because node's `config.ts`
+ * cannot reach a constant declared in `services/fork-resolution.ts`** — that
+ * module imports `config` itself, so the edge would close a cycle and drag the
+ * store, state and apply graph into config load. A load-time rule keyed on this
+ * value, such as refusing a `MAX_PROOF_HISTORY` beneath it, is only expressible
+ * with the constant here.
+ */
+export const MAX_REORG_DEPTH = 20;
 
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */

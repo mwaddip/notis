@@ -1,7 +1,7 @@
 # DAGsocial Architecture
 
 **Protocol version:** 1
-**Last updated:** 2026-08-11
+**Last updated:** 2026-08-13
 
 ## Status markers — the convention for every contract in this directory
 
@@ -1262,7 +1262,7 @@ not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wir
 > have — so there are **two commitment layers by decision**, and this section is complete
 > rather than partial on that axis.
 
-A network is the pairing of a **parameter profile** with a **genesis block**. Three exist:
+A network is the pairing of a **parameter profile** with a **genesis state**. Three exist:
 
 | Network | Purpose | Wiped on |
 |---|---|---|
@@ -1273,6 +1273,16 @@ A network is the pairing of a **parameter profile** with a **genesis block**. Th
 The taxonomy and the purpose split are Ergo's (`ergo.networkType`, with testnet for
 non-breaking and devnet for protocol-breaking testing). The third network is **not** called
 `regtest` — that is Bitcoin's word for a different thing.
+
+> ✅ **"genesis state", not "genesis block" — resolved 2026-08-13 in favour of the code.** This
+> sentence said *block* while `node/src/store/system.ts` said *"genesis is not a block"*, and the
+> code is right: **there is no height-0 block anywhere in this protocol.** Ergo's shape, verified in
+> source — cold start seeds a box set into the AVL+ tree behind a committed flag, and height **1** is
+> the first *mined* block.
+>
+> What a network commits to is therefore a **33-byte digest**, not a header: `NetworkProfile
+> .genesisStateRoot`, the height-0 AVL+ root, pinned per network and checked against the seeded state
+> at boot. `types/src/network.ts` carried the same sentence in code and moves with it.
 
 ### Selection
 
@@ -1296,7 +1306,14 @@ not be independently readable.
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `BOOTSTRAP_PERIOD_BLOCKS` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`GENESIS_CREDITS_PER_MEMBER` · `TREASURY_PUBKEY`
+`GENESIS_CREDITS_PER_MEMBER` · `TREASURY_PUBKEY` · `genesisProofPayload` · `genesisStateRoot`
+
+The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
+other name in the list is either a `constants.ts` export or a retired environment variable, and these
+two are neither. They are one fact stated twice — `genesisProofPayload` is the sole per-network input
+to the genesis box set, and `genesisStateRoot` is the height-0 AVL+ root over it. Both belong to the
+genesis axis this section already declares, so they add fields to a declared axis rather than opening
+a fourth.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
@@ -1326,6 +1343,21 @@ than it appears to. A transaction's inputs are boxes whose id chains root at gen
 mainnet transaction replayed against testnet names inputs that **do not exist** — replay
 fails on the UTXO graph, without any network check. The magic is the early rejection; genesis
 is the one that cannot be circumvented.
+
+**The mechanism this row names is `genesisStateRoot`, and the node refuses to run without
+it.** Each profile pins the height-0 AVL+ root over its own genesis box set, cold-start
+seeding computes that root and compares, and a mismatch is fail-stop rather than a warning —
+`assertGenesisRoot` in `node/src/services/genesis-state.ts`, checked inside the seeding
+transaction so a divergent genesis is never committed. The per-network input is the
+`genesis_proof` box's payload: the system karma and faucet credit boxes are byte-identical on
+testnet and devnet, so the proof box is the whole of what separates those two roots.
+
+⚠ **Dated, because the row above read as a live mechanism before one existed.** Genesis was
+per-network in this contract from the start and was not per-network in the tree: until
+2026-08-13 the seeded boxes never reached the AVL+ tree at all, so all three networks shared
+the empty-tree digest and nothing pinned a root to compare against. The row is true as of that
+date; statements resting on it that predate it were aspirational, and the `networkType`
+rejection note below is the instance worth naming.
 
 > **Id derivation is deliberately NOT network-scoped.** An earlier draft of this section
 > scoped the five domain tags (`BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
@@ -1359,6 +1391,19 @@ is the one that cannot be circumvented.
 > block, and an operator who flips `NETWORK_TYPE` against an existing store fails at the
 > chain link because the stored genesis is the old network's. That left the field's marginal
 > value as the wording of an error message, bought with a byte in every header forever.
+>
+> ⚠ **The `NETWORK_TYPE` half of that sentence was false when it was written and is true from
+> 2026-08-13.** Rejecting the field was argued partly on a chain link that did not exist: with
+> no per-network genesis, flipping `NETWORK_TYPE` against an existing store changed the
+> profile and nothing else, and the store carried on. The rejection stands on its other
+> grounds either way — an attacker fills the field in correctly, and the rule's stated
+> enforcement point was homeless in three contracts. What changed is that the argument now
+> holds: an operator who flips `NETWORK_TYPE` and starts against a store carrying the old
+> network's genesis is on a chain that forks from every peer at height 1, which is the failure
+> the sentence claims. ⚠ **It is not caught at boot, and the sentence does not claim it is.**
+> Seeding is keyed on the committed flag, so `assertGenesisRoot` does not re-run against a
+> store that already has a genesis; refusing there would need a stored network stamp, which
+> nothing writes.
 >
 > **Its stated enforcement point did not exist.** Both this section and `VALIDATION_INTERFACE`
 > put the profile match "at the structure gate" — but `verifyOrderingBlockStructure` lives in

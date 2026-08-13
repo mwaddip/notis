@@ -56,7 +56,6 @@ const testConfig: NetConfig = {
   maxPeers: 10,
   minPeers: 3,
   peerDbCap: 100,
-  outboundFillIntervalMs: 30000,
   outboundRedialCooldownMs: 60000,
   penaltyScoreThreshold: 500,
   temporalBanDurationMs: 3600000,

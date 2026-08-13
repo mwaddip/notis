@@ -138,7 +138,6 @@ export interface NetConfig {
   maxPeers: number;
   minPeers?: number;
   peerDbCap?: number;
-  outboundFillIntervalMs?: number;
   outboundRedialCooldownMs?: number;
   penaltyScoreThreshold: number;
   temporalBanDurationMs: number;

@@ -137,9 +137,9 @@ export function toHex(bytes: Uint8Array): string {
  * Assert two byte strings are identical, and on failure say exactly where.
  *
  * A bare `toEqual` on a 200-byte `Uint8Array` prints two walls of decimal and
- * leaves the reader to find the difference. Phases 2–5 will trip this
- * assertion many times on purpose, so it has to make "which field moved"
- * answerable at a glance.
+ * leaves the reader to find the difference. Every vector in the corpus runs
+ * through this assertion, so it has to make "which field moved" answerable at
+ * a glance.
  */
 export function assertBytes(actual: Uint8Array, expected: Uint8Array, label: string): void {
   const at = firstDifference(actual, expected);
@@ -251,7 +251,7 @@ function fixedBytes(n: number): ValueCodec<never> {
   );
 }
 
-/** Register a struct codec so vectors can name it. Phases 2–5 call this. */
+/** Register a struct codec so vectors can name it. `structs.ts` and `probe.ts` call this. */
 export function registerStruct<T>(name: string, value: ValueCodec<T>): void {
   LEAF_CODECS[name] = value as unknown as ValueCodec<never>;
 }

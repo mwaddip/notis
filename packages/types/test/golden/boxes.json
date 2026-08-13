@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes — the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are six separate layouts sharing a two-field prefix — plus a second bond vector, because `bond.inviteePublicKey` is the one 0-or-32-byte field in the box arms and its two states are two encodings, not one.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes — the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are seven separate layouts sharing a two-field prefix — plus a second bond vector, because `bond.inviteePublicKey` is the one 0-or-32-byte field in the box arms and its two states are two encodings, not one, and a second genesis_proof vector, because an empty payload is what its length prefix exists for.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -12,7 +12,7 @@
         "proofSource": "genesis"
       },
       "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300",
-      "note": "43 bytes, down from 114. The CBOR form spent a two-byte map header, five key names and nine bytes on a value of 100; this spends one tag byte, one value byte and no key names at all. Trailing 00 is the absent decayBurn option."
+      "note": "43 bytes: one tag byte, one value byte, the 32-byte owner, and a seven-byte proofSource behind its length prefix. No key names — the field list is the layout table's, so it costs nothing in the bytes. Trailing 00 is the absent decayBurn option."
     },
     {
       "name": "box/karma-decay-burn",
@@ -62,7 +62,7 @@
         "lockedUntilBlock": 720
       },
       "bytes": "0180eae1eac58af715000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fe0c50801d005",
-      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. proofSource 70000 is above 65536 and carries the wide-int pin (it moved here from the deleted createdAtBlock). lockedUntilBlock present, so the option's other branch is covered on this type too."
+      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. proofSource 70000 is above 65536 and carries the wide-int pin: `credit.proofSource` is the box arms' only `vlqS`, and this is the vector that takes it past one byte. lockedUntilBlock present, so the option's other branch is covered on this type too."
     },
     {
       "name": "box/invite",
@@ -77,6 +77,28 @@
       "note": "Two adjacent b32 fields with distinct values, so a swap of secretHash and inviterId shows up here rather than as a moved id much later."
     },
     {
+      "name": "box/genesis-proof-typical",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "genesis_proof",
+        "value": "0",
+        "payload": "6d6f636b2d686561646c696e65"
+      },
+      "bytes": "03000d6d6f636b2d686561646c696e65",
+      "note": "The only arm whose whole tail is one lp field, and the only type whose value is fixed at 0 — the box holds neither karma nor credits, so it never enters supply accounting. `0d` is the payload's length prefix: the field is lp and not lpUtf8 because the bytes are opaque to consensus, so a conformance reader must not attempt UTF-8 on them. Production content is the per-network NetworkProfile.genesisProofPayload; this vector's is its own."
+    },
+    {
+      "name": "box/genesis-proof-empty-payload",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "genesis_proof",
+        "value": "0",
+        "payload": ""
+      },
+      "bytes": "030000",
+      "note": "Three bytes — the smallest legal box of any type, and the case that pins why the payload is length-prefixed. Appended raw, an empty payload would be indistinguishable from the end of the box, and a one-byte payload of 00 would encode as 030000 too. Here the trailing 00 is the count, and a one-byte payload of 00 is 03000100."
+    },
+    {
       "name": "box/bond-committed",
       "codec": "boxContent",
       "value": {
@@ -89,7 +111,7 @@
         "probationEndBlock": 1017
       },
       "bytes": "041956565656565656565656565656565656565656565656565656565656565656560201cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc11f907",
-      "note": "The widest layout: five fields after the prefix, alternating fixed-width and VLQ. Tag 4, not 3 — tag 3 is permanently burnt for the retired `like` type, and renumbering past a retired tag would silently move every box id covering it. The `01` before the invitee key is the option's PRESENT tag: this field is 0-or-32 bytes, so it is `opt(b32)` and not `b32`. 71 bytes, one more than the b32 form this replaced (2026-08-09)."
+      "note": "The widest layout: five fields after the prefix, alternating fixed-width and VLQ. The `01` before the invitee key is the option's PRESENT tag: this field is 0-or-32 bytes, so it is `opt(b32)` and not `b32`. 71 bytes."
     },
     {
       "name": "box/bond-unclaimed",
@@ -104,7 +126,7 @@
         "probationEndBlock": 1017
       },
       "bytes": "04195656565656565656565656565656565656565656565656565656565656565656020011f907",
-      "note": "The SAME bond before commit, and the shape production actually creates: node rejects an invite-create whose bond output carries a key, because a pre-committed bond would let the inviter reclaim immediately and make the network's only sybil cost free. Under the b32 row this vector had no encoding at all — `writeBytesNOrThrow` threw on the empty field, so `computeTxId` threw on every invite creation. Both halves of the injectivity claim sit in these two vectors: `00` versus `01 ‖ 32 bytes`, differing in the first byte after `inviteOutputIndex`, so an unclaimed bond can never share an encoding with a committed one. Decode direction earns its keep here — absent must come back as EMPTY bytes, not null, or the re-encode compare fails."
+      "note": "The SAME bond before commit, and the shape production actually creates: node rejects an invite-create whose bond output carries a key, because a pre-committed bond would let the inviter reclaim immediately and make the network's only sybil cost free. Both halves of the injectivity claim sit in these two vectors: `00` versus `01 ‖ 32 bytes`, differing in the first byte after `inviteOutputIndex`, so an unclaimed bond can never share an encoding with a committed one. Decode direction earns its keep here — absent must come back as EMPTY bytes, not null, or the re-encode compare fails."
     },
     {
       "name": "box/post-lock",
@@ -134,11 +156,18 @@
   ],
   "rejects": [
     {
-      "name": "box/reserved-tag-3",
+      "name": "box/genesis-proof-payload-over-bound",
       "codec": "boxContent",
-      "bytes": "0301",
+      "bytes": "030081045a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "code": "invalid-tag",
+      "note": "A 513-byte payload, one past MAX_GENESIS_PROOF_PAYLOAD_BYTES. Every byte of it is present and the lp field is well formed, so nothing here is truncated and nothing re-encodes differently - the bound is the only rule that can refuse these bytes, and 8104 is the count that makes them 513 rather than 512. The bound is per-type and lives in the genesis_proof arm of the reader, never in readLp, which every lp field shares; box/genesis-proof-typical is the same layout inside the bound. An over-bound payload still ENCODES, exactly as an unknown boxType does - the writers are total and the refusal is one-way."
+    },
+    {
+      "name": "box/unassigned-tag-7",
+      "codec": "boxContent",
+      "bytes": "0701",
       "failure": "reader-fault",
-      "note": "Tag 3 is the retired `like` box type, reserved forever. A future member added at 3 would silently take on every id the retired world computed — this vector is what makes reusing it fail loudly."
+      "note": "7 is the first tag the table does not assign, and an unassigned tag has no decoding at all — the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way."
     },
     {
       "name": "box/unknown-tag-255",

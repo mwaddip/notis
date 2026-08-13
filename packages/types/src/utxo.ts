@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
-import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
+import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from './constants.js';
 import {
   type StructCodec,
   decodeStruct,
@@ -8,6 +9,7 @@ import {
   readBool,
   readBytesN,
   readHexN,
+  readLp,
   readLpUtf8,
   readOpt,
   readVlqS,
@@ -52,26 +54,40 @@ export const MINT_ID_DOMAIN = encoder.encode('dagsocial/mint-tx-id/1');
 export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
 
 /**
- * The `boxType` tag table.
+ * The `boxType` tag table — **the single source of the box-type numbering.**
  *
- * **Tag 3 is permanently burnt** for the retired `like` box type. Reserving a
- * retired tag rather than renumbering is not tidiness: `boxType` is the first
- * byte of every box's identity preimage, so a renumber silently moves every box
- * id and every `stateRoot` covering them, with no compiler signal. That is
- * TYPES_INTERFACE → Primitives' rule that enum tags reserve retired values and
- * are never renumbered, applying inside the id preimage itself — and node's AVL
- * value (`state/serialize-box.ts`) reads this same table. Reserve by leaving
- * the number out of this table; never reuse it.
+ * **A tag is never renumbered.** `boxType` is the first byte of every box's
+ * identity preimage, so moving a number silently moves every box id and every
+ * `stateRoot` covering it, with no compiler signal — TYPES_INTERFACE →
+ * Primitives, applying inside the id preimage itself. Node's AVL value
+ * (`state/serialize-box.ts`) reads this same table.
+ *
+ * Giving a retired type's *number* to a new type is a different operation with
+ * its own conditions, which TYPES_INTERFACE → Primitives states. A retired
+ * **string** is reserved regardless; see `BoxCandidate.boxType`.
+ *
+ * Exported because a second numbering of one thing is exactly what the
+ * never-renumber rule cannot survive. **The demo UI's `BOX_TYPE_TAGS` is the one
+ * copy that cannot import this** — it is browser JS served to a page with no
+ * module graph, and stays a mirror by construction.
+ *
+ * The golden corpus's reverse table (`test/golden/structs.ts`) restates the
+ * numbering deliberately and is **not** a copy to collapse into this one: it
+ * feeds the independent reader those vectors are checked against, and a reader
+ * importing the writer's own table would check nothing.
  */
-const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
+export const BOX_TYPE_TAGS = Object.freeze({
   karma: 0,
   credit: 1,
   invite: 2,
-  // 3 — reserved, retired `like`. Never reuse.
+  genesis_proof: 3,
   bond: 4,
   post_lock: 5,
   vouch: 6,
-});
+} as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
+
+/** The `enum8` codec over that table — one table, both directions. */
+const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
 
 /**
  * The single canonical identity encoding for a box — `boxContentBytes` in
@@ -86,14 +102,15 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', {
  *
  *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
  *
- *   | karma     | b32(owner) ‖ lpUtf8(proofSource) ‖ opt(decayBurn)          |
- *   | credit    | b32(owner) ‖ vlqS(proofSource) ‖ opt(lockedUntilBlock)     |
- *   | invite    | b32(secretHash) ‖ b32(inviterId)                          |
- *   | bond      | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
- *   |           |   ‖ opt(b32(inviteePublicKey)) ‖ vlqU(probationStartBlock) |
- *   |           |   ‖ vlqU(probationEndBlock)                               |
- *   | post_lock | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
- *   | vouch     | b32(voucherId) ‖ b32(targetId)                            |
+ *   | karma         | b32(owner) ‖ lpUtf8(proofSource) ‖ opt(decayBurn)          |
+ *   | credit        | b32(owner) ‖ vlqS(proofSource) ‖ opt(lockedUntilBlock)     |
+ *   | invite        | b32(secretHash) ‖ b32(inviterId)                          |
+ *   | genesis_proof | lp(payload)                                               |
+ *   | bond          | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
+ *   |               |   ‖ opt(b32(inviteePublicKey)) ‖ vlqU(probationStartBlock) |
+ *   |               |   ‖ vlqU(probationEndBlock)                               |
+ *   | post_lock     | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
+ *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
  *
  * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
  * Boxes). It is a pure function of `boxType` — one guard string per type, with
@@ -172,6 +189,18 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       writeBytesNOrThrow(w, box.secretHash, 32);
       writeBytesNOrThrow(w, box.inviterId, 32);
       return;
+    case 'genesis_proof':
+      // `lp`, not `lpUtf8`: the payload is opaque to consensus. Whether it
+      // decodes as text is a client's question, and a UTF-8 writer would put a
+      // validity rule inside an encoder that does not own one. The length
+      // prefix is the whole of the field's injectivity — appended raw, an empty
+      // payload would be indistinguishable from the end of the box.
+      //
+      // Unbounded here and bounded in the reader: `MAX_GENESIS_PROOF_PAYLOAD_BYTES`
+      // is a decode rule, so a payload over it encodes and has no decoding —
+      // the same one-way shape as the `0xff` tag sentinel below.
+      writeLp(w, box.payload);
+      return;
     case 'bond':
       writeBytesNOrThrow(w, box.inviterId, 32);
       writeVlqU(w, box.inviteOutputIndex);
@@ -207,6 +236,11 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
  * reviewer reads them as one table. `BOX_TYPE.read` rejects the reserved `0xff`
  * and every unassigned tag, so the writer's total-by-sentinel arm has no
  * decoding at all — a malformed box cannot round-trip as if it were fine.
+ *
+ * **One per-type domain rule lives here**, and it is the only one:
+ * `genesis_proof.payload` is bounded at `MAX_GENESIS_PROOF_PAYLOAD_BYTES`. Every
+ * other refusal this reader makes belongs to a primitive in `codec.ts` and
+ * therefore to every field that uses it; this one binds a single arm.
  *
  * **`guard` is not returned**, because it is not in the bytes. It is a
  * pure function of `boxType` — each box interface types it as a single literal —
@@ -252,6 +286,32 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         secretHash: readBytesN(r, 32),
         inviterId: readBytesN(r, 32),
       };
+    case 'genesis_proof': {
+      const payload = readLp(r);
+      // The payload bound, and this arm is the whole of it — `readLp` is the
+      // shared primitive behind every `lp` field in the format, so a bound
+      // there would bind `tx.preimages`, `utxoTxs` and the block's three
+      // sections along with this one.
+      //
+      // One-way, like the unknown-tag sentinel above: `writeLp` stays total, so
+      // an over-bound payload still *encodes* and `computeBoxId` still answers
+      // for it — it simply has no decoding, which is the standing this reader
+      // already gives an unassigned tag.
+      //
+      // `invalid-tag` because `ReaderErrorCode` (owned by `@dagsocial/wire`) has
+      // no member for a domain refusal; it is the code `readLpUtf8` already
+      // uses for the same shape — a length-prefixed field whose *contents* are
+      // out of domain — and the one `CodecError` picks for "present and wrong,
+      // which is not truncation".
+      if (payload.length > MAX_GENESIS_PROOF_PAYLOAD_BYTES) {
+        throw new ReaderError(
+          `readBoxContentFields: genesis_proof payload is ${payload.length} bytes, over ` +
+            `MAX_GENESIS_PROOF_PAYLOAD_BYTES (${MAX_GENESIS_PROOF_PAYLOAD_BYTES})`,
+          'invalid-tag',
+        );
+      }
+      return { boxType, value: value as 0n, payload };
+    }
     case 'bond':
       return {
         boxType,
@@ -451,6 +511,7 @@ export type DecodedBoxCandidate =
   | Omit<CandidateOf<KarmaBox>, 'guard'>
   | Omit<CandidateOf<CreditBox>, 'guard'>
   | Omit<CandidateOf<InviteBox>, 'guard'>
+  | Omit<CandidateOf<GenesisProofBox>, 'guard'>
   | Omit<CandidateOf<BondBox>, 'guard'>
   | Omit<CandidateOf<PostLockBox>, 'guard'>
   | Omit<CandidateOf<VouchBox>, 'guard'>;
@@ -622,17 +683,20 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
 // that is invalid today valid. Guard is *not* in the id preimage (see
 // `canonicalBoxBytes`), so this reservation is a validation-rule one, not an
 // identity one.
-export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'inviter_signature' | 'bond_dual' | 'hash_preimage_with_bond';
+//
+// `'unspendable'` names no spender at all, which no other member does —
+// `'block_apply'` is still consumable, by block application.
+export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'inviter_signature' | 'bond_dual' | 'hash_preimage_with_bond' | 'unspendable';
 
 /**
  * The creator-chosen fields — what a client builds and what `computeTxId`
  * hashes. No `id`, no provenance.
  */
 export interface BoxCandidate {
-  // `'like'` is a retired box type — string reserved, never reuse. `boxType` is
-  // box content and the first byte of every id preimage; `BOX_TYPE` above burns
-  // tag 3 for it.
-  boxType: 'karma' | 'credit' | 'invite' | 'bond' | 'post_lock' | 'vouch';
+  // `'like'` is a retired box type — string reserved, never reuse. A new box
+  // type wearing the name would make old-vs-new greps and historical debugging
+  // ambiguous forever.
+  boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
@@ -704,6 +768,30 @@ export interface InviteBox extends BoxBase {
   guard: 'hash_preimage_with_bond'; // Unlocked by preimage + committed BondBox
 }
 
+// --- Genesis proof ---
+
+/**
+ * The box that makes one network's genesis state differ from another's.
+ *
+ * `guard: 'unspendable'` names no spender at all. Nothing in this package
+ * enforces a guard — it is not in the id preimage (see `canonicalBoxBytes`),
+ * and the rules that read it belong to validation and to node's output-shape
+ * check.
+ *
+ * `value` is `0n`: the box holds neither karma nor credits, so it never enters
+ * supply accounting.
+ */
+export interface GenesisProofBox extends BoxBase {
+  boxType: 'genesis_proof';
+  value: 0n;
+  /**
+   * Opaque bytes — `lp` on the wire, and consensus reads nothing inside them.
+   * `NetworkProfile.genesisProofPayload` carries the per-network value as hex.
+   */
+  payload: Uint8Array;
+  guard: 'unspendable';
+}
+
 // --- Bond ---
 
 export interface BondBox extends BoxBase {
@@ -771,16 +859,52 @@ export interface VouchBox extends BoxBase {
 // Union type
 // ---------------------------------------------------------------------------
 
-export type AnyBox = KarmaBox | CreditBox | InviteBox | BondBox | PostLockBox | VouchBox;
+export type AnyBox = KarmaBox | CreditBox | InviteBox | GenesisProofBox | BondBox | PostLockBox | VouchBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
   | CandidateOf<KarmaBox>
   | CandidateOf<CreditBox>
   | CandidateOf<InviteBox>
+  | CandidateOf<GenesisProofBox>
   | CandidateOf<BondBox>
   | CandidateOf<PostLockBox>
   | CandidateOf<VouchBox>;
+
+// ---------------------------------------------------------------------------
+// Guard table
+// ---------------------------------------------------------------------------
+
+/**
+ * The one guard each box type fixes — **the single source of that mapping.**
+ *
+ * `guard` is a pure function of `boxType` (TYPES_INTERFACE → Layout — Boxes),
+ * and every interface above declares it as a single string literal rather than
+ * a union, so the discriminator determines it completely. This table is that
+ * function written out, and it belongs to this package because the property it
+ * states is this package's: the box types are declared here.
+ *
+ * **A copy of it cannot be caught by anything the chain computes.** `guard` is
+ * absent from `canonicalBoxBytes`, so two consumers that disagree still produce
+ * identical box ids and an identical `stateRoot` — the disagreement surfaces
+ * only as one path accepting a candidate another rebuilt differently.
+ *
+ * The `satisfies` clause is what makes the table checked rather than asserted:
+ * a value that disagrees with the interface declaring it, a box type with no
+ * row, or a row for a type that no longer exists is a compile error in this
+ * file. `as const` keeps each entry's literal type, so a consumer building a
+ * typed `KarmaBox` can write `BOX_GUARDS.karma` into a field whose type is the
+ * literal `'owner_signature'`.
+ */
+export const BOX_GUARDS = Object.freeze({
+  karma: 'owner_signature',
+  credit: 'owner_signature',
+  invite: 'hash_preimage_with_bond',
+  genesis_proof: 'unspendable',
+  bond: 'bond_dual',
+  post_lock: 'block_apply',
+  vouch: 'owner_signature',
+} as const satisfies { [T in AnyBox['boxType']]: Extract<AnyBox, { boxType: T }>['guard'] });
 
 // ---------------------------------------------------------------------------
 // UTXO transaction

@@ -663,6 +663,22 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   if (!Array.isArray(tx.outputs) || tx.outputs.length === 0) {
     return { valid: false, error: 'Transaction must have at least one output' };
   }
+  // A `genesis_proof` box is written by genesis seeding alone, so a transaction
+  // that creates one is refused here — the package's only box-type-aware rule
+  // (VALIDATION_INTERFACE → verifyTxStructure). The rule's other half, that such
+  // a box may never be *spent*, cannot live here: `tx.inputs` are box id strings
+  // and typing one requires the UTXO set, so node owns it.
+  //
+  // The tag alone decides. No payload bound stands beside this line, because a
+  // bound behind an outright refusal rejects nothing.
+  //
+  // `isObject` first: this function is reached straight off gossip with a
+  // peer-supplied object, and no exported function here panics on one.
+  for (const out of tx.outputs) {
+    if (isObject(out) && out.boxType === 'genesis_proof') {
+      return { valid: false, error: 'Transaction may not output a genesis_proof box' };
+    }
+  }
   // Check for duplicate inputs
   const seen = new Set<string>();
   for (const input of tx.inputs) {

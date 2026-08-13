@@ -12,6 +12,13 @@ export interface MiningDeps {
   getCurrentTemplate(): OrderingBlock | null;
   submitMinedBlock(powNonce: number, height: number): string | null;
   setMinerPubkey(pubkey: Uint8Array | null): void;
+  /**
+   * Whether the node has met its peers, or has finished looking
+   * (`services/peer-readiness.ts`). A decision rather than a side effect, so it
+   * arrives as a dependency — the gate is part of this route's contract and is
+   * testable without a net instance.
+   */
+  peerReady(): boolean;
   miningSecret: string;
 }
 
@@ -61,13 +68,42 @@ export function createRouter(deps: MiningDeps): Router {
 
   // GET /mining/template — return current block template
   router.get('/template', (req, res) => {
-    // Optional miner pubkey override for coinbase reward destination
+    // Optional miner pubkey override for coinbase reward destination. Validated
+    // here and applied below the gate: the 400 is a verdict on the request,
+    // which readiness has no bearing on, while the assignment is a mutation this
+    // node commits to and a refused request must not make one.
     const minerHex = typeof req.query.miner === 'string' ? req.query.miner : null;
-    if (minerHex) {
-      if (minerHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(minerHex)) {
-        res.status(400).json({ error: 'Invalid miner pubkey — must be 64 hex chars' });
-        return;
-      }
+    if (minerHex !== null && (minerHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(minerHex))) {
+      res.status(400).json({ error: 'Invalid miner pubkey — must be 64 hex chars' });
+      return;
+    }
+
+    // The peer-readiness gate (MINING_INTERFACE → "The peer-readiness gate").
+    //
+    // Withheld with the *same* 404 the absent-template case answers with, which
+    // is what lets `scripts/miner.mjs` treat them identically — it retries on
+    // that response and has no give-up count, so an unmet node polls until the
+    // gate opens.
+    //
+    // Behind the `?miner=` validation on purpose: a malformed payout key is a
+    // client bug and must earn its 400 whatever this node's readiness is.
+    // Answering 404 there would tell a miner to retry a request that can never
+    // succeed.
+    //
+    // **Above `setMinerPubkey`, and that ordering is the point.** The gate
+    // guarantees a window in which every poll is refused, and `miner.mjs` polls
+    // through it with no give-up count — so a refusal that still wrote the
+    // payout key would let a request answering nothing mutate the coinbase
+    // destination of every block this node later mines.
+    //
+    // Gate at serve, never at creation — `startBlockCreator` keeps building
+    // templates, so "a miner node always holds a template" stays literally true.
+    if (!deps.peerReady()) {
+      res.status(404).json({ error: 'No block template available' });
+      return;
+    }
+
+    if (minerHex !== null) {
       deps.setMinerPubkey(new Uint8Array(Buffer.from(minerHex, 'hex')));
     }
 

@@ -688,7 +688,7 @@ is how a node gets eclipsed. Inbound connections are counted toward
 - PeerDb not consulted — seeds are the bootstrap source
 
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
-- Every `outboundFillIntervalMs` (30s), query
+- Every `OUTBOUND_TICK_INTERVAL_MS` (30s, fixed — see below), query
   `PeerDb.recent(N, exclude)` where `N = maxPeers - connectedOutbound`
 - `exclude` is the union of **currently-connected addresses** and
   addresses in redial cooldown. Excluding connected addresses is
@@ -699,11 +699,33 @@ is how a node gets eclipsed. Inbound connections are counted toward
 - If PeerDb exhausted, idle until new gossip arrives
 
 The discovery-related knobs (`minPeers`, `peerDbCap`,
-`outboundFillIntervalMs`, `outboundRedialCooldownMs`) are optional in
+`outboundRedialCooldownMs`) are optional in
 `NetConfig` and fall back to net-internal defaults. A node that leaves
 them unset inherits those defaults rather than the values in this
 document — `@dagsocial/node` MUST pass them for the documented behavior
 to hold.
+
+#### The tick is fixed, and two cadences are sized against it
+
+`OUTBOUND_TICK_INTERVAL_MS` (30s, `net/src/node.ts`) is a constant rather than a `NetConfig`
+field, because two other cadences derive from it and neither can observe a change to it:
+
+- **`GET_PEERS_INTERVAL_MS` (120s) is a deadline this tick samples**, not a timer of its own. The
+  realised peer-exchange cadence is `ceil(120s / tick) * tick`, so a tick above 120s replaces the
+  documented interval with itself.
+- **`DISCOVERY_WINDOW_MS` (45s) in `@dagsocial/node`'s peer-readiness service spans one tick with
+  margin**, so a failed bootstrap dial gets a second attempt before the node concludes it is alone.
+  A tick above 45s expires that window first and strands a node that had a peer available.
+
+Making the tick configurable would put both failures behind a documented knob. If it is ever made
+configurable, `DISCOVERY_WINDOW_MS` must derive from it rather than hardcode a value, and the
+`GET_PEERS_INTERVAL_MS` sampling must be moved off this tick.
+
+> ⚠ **NEVER BUILT — NOT PLANNED (2026-08-13).** `outboundFillIntervalMs` was a `NetConfig` field,
+> an `OUTBOUND_FILL_INTERVAL_MS` environment read, and three sentences here. **No `net/src` code
+> ever read it** — verified across its full git history, not just the current tree. Setting it
+> changed nothing. It is deleted from all three rather than wired up, because the tick it named
+> must stay fixed (above). Recorded so it is not re-added as an oversight.
 
 ### Bootstrap Flow (New Node)
 
@@ -1049,7 +1071,6 @@ interface NetConfig {
   // Peer discovery
   minPeers: number                 // floor for fill phase (default 3)
   peerDbCap: number                // soft cap on PeerDb entries (default 1000)
-  outboundFillIntervalMs: number   // fill phase tick (default 30000)
   outboundRedialCooldownMs: number // redial cooldown (default 60000)
 
   // Syncing

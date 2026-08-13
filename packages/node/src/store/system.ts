@@ -1,11 +1,12 @@
 import { createPrivateKey, sign } from 'crypto';
 import { computeBoxId } from '@dagsocial/types';
-import type { KarmaBox, CreditBox } from '@dagsocial/types';
+import type { KarmaBox, CreditBox, GenesisProofBox } from '@dagsocial/types';
 import { getDb } from './db.js';
-import { insertBox, getKarmaBox, getCreditBoxes } from './utxo.js';
+import { insertBox, getKarmaBox, getCreditBoxes, getGenesisProofBox } from './utxo.js';
 import { putIdentityRecord } from './identity-records.js';
 import {
   GENESIS_FAUCET_CREDITS,
+  GENESIS_PROOF,
   GENESIS_SYSTEM_KARMA,
   MINT_OUTPUT_INDEX,
   genesisContext,
@@ -82,6 +83,21 @@ export function initSystemKeypair(): SystemKeypair {
 const SYSTEM_KARMA_INITIAL = 50_000n;
 
 /**
+ * The height a genesis mint commits to.
+ *
+ * A synthetic mint txId commits to a height and 0 is not one a block ever
+ * settles at (`genesis-state.ts` → `GENESIS_HEIGHT`), so the genesis seeder's
+ * own height — always 0, since seeding requires an empty store — is raised to
+ * the first real one. Every seeder below takes its height through here: the
+ * value reaches `mintTxIdFor`, so it is inside the box id, and three sites
+ * spelling out the same clamp is three chances for one of them to stop
+ * agreeing.
+ */
+function genesisMintHeight(currentHeight: number): number {
+  return currentHeight > 0 ? currentHeight : 1;
+}
+
+/**
  * Ensure the system karma box exists with the initial balance.
  * Idempotent — if a system karma box already exists, returns it without creating.
  */
@@ -92,7 +108,7 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   // One height for both the recorded block and the mint txId. Derived once
   // rather than clamped twice, so the id cannot encode a height the box does
   // not carry.
-  const genesisHeight = currentHeight > 0 ? currentHeight : 1;
+  const genesisHeight = genesisMintHeight(currentHeight);
 
   const box: KarmaBox = {
     boxType: 'karma',
@@ -138,16 +154,20 @@ const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n;  // 100k credits in base un
 /**
  * Ensure the system keypair has a credit box with FAUCET_CREDITS_INITIAL
  * credits for the testnet faucet. Idempotent — if the system already has
- * unspent credit boxes, does nothing.
+ * unspent credit boxes, returns the first without creating.
+ *
+ * Returns the box for the same reason `ensureSystemKarmaBox` does: the cold-start
+ * caller has to hand what it seeded to the AVL feed, and re-reading it from the
+ * store afterwards would be a second derivation of the same fact.
  */
 export function ensureFaucetCreditBox(
   systemPubKey: Uint8Array,
   currentHeight: number,
-): void {
+): CreditBox {
   const existing = getCreditBoxes(systemPubKey);
-  if (existing.length > 0) return;
+  if (existing.length > 0) return existing[0]!;
 
-  const genesisHeight = currentHeight > 0 ? currentHeight : 1;
+  const genesisHeight = genesisMintHeight(currentHeight);
 
   // A `u32BE` selector separates the two genesis boxes, not the ASCII tags Spec
   // G §3.2 sketched: those are variable-length and merely prefix-free, which
@@ -163,6 +183,50 @@ export function ensureFaucetCreditBox(
   };
   box.id = computeBoxId(box);
   insertBox(box);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
+// Genesis proof box
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the genesis proof box exists, carrying this network's payload.
+ * Idempotent — if one is already seeded, returns it without creating.
+ *
+ * The payload is a parameter rather than a config read, following the two
+ * seeders above: the caller supplies what distinguishes the box, so this
+ * function is testable under a payload without a module reset, and `store/`
+ * gains no edge into config.
+ *
+ * ⚠ **No identity record.** `ensureSystemKarmaBox` writes one because the
+ * system identity holds karma and decay would otherwise read "never active".
+ * A proof box has no owner and no karma, so there is no activity clock for a
+ * record to hold — the block above is not a template.
+ */
+export function ensureGenesisProofBox(
+  payload: Uint8Array,
+  currentHeight: number,
+): GenesisProofBox {
+  const existing = getGenesisProofBox();
+  if (existing) return existing;
+
+  const genesisHeight = genesisMintHeight(currentHeight);
+
+  // `GENESIS_PROOF` is the third `u32BE` selector, which is the whole cost of a
+  // third genesis box — `genesisContext` was built fixed-width for exactly this
+  // (NODE_INTERFACE → "Box Identity and Mint Provenance").
+  const box: GenesisProofBox = {
+    boxType: 'genesis_proof',
+    value: 0n,
+    payload,
+    guard: 'unspendable',
+    txId: mintTxIdFor(genesisContext(GENESIS_PROOF), genesisHeight),
+    index: MINT_OUTPUT_INDEX,
+  };
+  box.id = computeBoxId(box);
+  insertBox(box);
+  return box;
 }
 
 /**

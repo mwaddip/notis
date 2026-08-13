@@ -21,7 +21,8 @@
  * an independent implementation reads the `.json` and checks itself both ways.
  */
 
-import { ByteReader, ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
+import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from '../../src/constants.js';
 import {
   readArr,
   readBool,
@@ -183,6 +184,8 @@ export type BoxContent =
   | { boxType: 'karma'; value: bigint; owner: Uint8Array; proofSource: string; decayBurn: boolean | null }
   | { boxType: 'credit'; value: bigint; owner: Uint8Array; proofSource: number; lockedUntilBlock: number | null }
   | { boxType: 'invite'; value: bigint; secretHash: Uint8Array; inviterId: Uint8Array }
+  /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
+  | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
   | {
       boxType: 'bond';
       value: bigint;
@@ -201,7 +204,7 @@ const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
   0: 'karma',
   1: 'credit',
   2: 'invite',
-  // 3 — reserved, retired `like`. Never reuse.
+  3: 'genesis_proof',
   4: 'bond',
   5: 'post_lock',
   6: 'vouch',
@@ -235,6 +238,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           secretHash: hex(j.secretHash as string),
           inviterId: hex(j.inviterId as string),
         };
+      case 'genesis_proof':
+        return { boxType: 'genesis_proof', value, payload: hex(j.payload as string) };
       case 'bond':
         return {
           boxType: 'bond',
@@ -295,6 +300,23 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         };
       case 'invite':
         return { boxType, value, secretHash: readBytesN(r, 32), inviterId: readBytesN(r, 32) };
+      case 'genesis_proof': {
+        const payload = readLp(r);
+        // The payload bound, read off the layout table like every other row in
+        // this reader. It belongs to this arm and not to `readLp`, so a reader
+        // that took the bound from the primitive would refuse fields production
+        // accepts — which is the kind of disagreement the two implementations
+        // exist to surface. The constant is imported rather than restated: one
+        // definition, two readers.
+        if (payload.length > MAX_GENESIS_PROOF_PAYLOAD_BYTES) {
+          throw new ReaderError(
+            `boxContent: genesis_proof payload is ${payload.length} bytes, over ` +
+              `MAX_GENESIS_PROOF_PAYLOAD_BYTES (${MAX_GENESIS_PROOF_PAYLOAD_BYTES})`,
+            'invalid-tag',
+          );
+        }
+        return { boxType, value, payload };
+      }
       case 'bond':
         return {
           boxType,

@@ -7,6 +7,7 @@ import {
   AVL_KEY_LENGTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
+  MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 
@@ -31,6 +32,7 @@ const TEST_KEYS = [
   'CREDIT_INITIAL_REWARD',
   'TREASURY_PUBKEY',
   'AVL_KEY_LENGTH',
+  'MAX_PROOF_HISTORY',
 ];
 
 function clearTestEnv() {
@@ -42,6 +44,11 @@ function clearTestEnv() {
 describe('config', () => {
   beforeEach(() => {
     vi.resetModules();
+    // `resetModules` drops the module registry but not the mock registry, so a
+    // `vi.doMock('@dagsocial/types', …)` registered by one section is still
+    // installed for every test after it. Each section that wants a mocked
+    // profile registers its own inside the test body, after this runs.
+    vi.doUnmock('@dagsocial/types');
     clearTestEnv();
   });
 
@@ -327,7 +334,7 @@ describe('config', () => {
   // first pair outside the alphabet instead of failing. The profile table is
   // its only source, so the profile is what these mock — a value no env var
   // can set is still a value a chain's genesis data can carry.
-  describe('9. treasury key fail-fast (carried #14)', () => {
+  describe('9. treasury key fail-fast', () => {
     // `config.ts` ends in `export const config = loadConfig()`, so the refusal
     // lands on the import — the same shape section 5 asserts for MINING_SECRET,
     // and the reason this is a startup failure rather than a mining-time one.
@@ -416,6 +423,115 @@ describe('config', () => {
       expect(loadConfig().orderingBlockPowTargetBits).toBe(
         ORDERING_BLOCK_POW_TARGET_FLOOR,
       );
+    });
+  });
+
+  // The genesis proof payload's domain. `Buffer.from(s, 'hex')` stops at the
+  // first character pair outside the alphabet instead of failing, and `writeLp`
+  // is total by sentinel rather than throwing, so a malformed payload moves the
+  // genesis state root with nothing raised anywhere.
+  describe('11. genesis proof payload fail-fast', () => {
+    function importWithProofPayload(genesisProofPayload: string) {
+      vi.doMock('@dagsocial/types', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@dagsocial/types')>();
+        return {
+          ...actual,
+          profileFor: (networkType: string) => ({
+            ...actual.profileFor(networkType as never),
+            genesisProofPayload,
+          }),
+        };
+      });
+      return import('../src/config.js');
+    }
+
+    it('accepts an even-length hex payload', async () => {
+      const { loadConfig } = await importWithProofPayload('deadbeef');
+      expect(loadConfig().profile.genesisProofPayload).toBe('deadbeef');
+    });
+
+    it('refuses an odd-length payload', async () => {
+      await expect(importWithProofPayload('abc')).rejects.toThrow(/genesisProofPayload/);
+    });
+
+    it('refuses a non-hex payload', async () => {
+      await expect(importWithProofPayload('zzzz')).rejects.toThrow(/genesisProofPayload/);
+    });
+
+    // ⚠ **The empty payload is the one that collapses two networks, and it is
+    // the case a `*` quantifier admits.** testnet and devnet share the system
+    // keypair and both box values, so their karma and credit boxes are
+    // byte-identical and carry the same ids — the proof box is the entire
+    // difference between their genesis states. An empty payload still encodes
+    // cleanly, to the same bytes on both, so the two roots collide silently and
+    // nothing downstream has anything left to tell them apart.
+    it('refuses an empty payload', async () => {
+      await expect(importWithProofPayload('')).rejects.toThrow(/genesisProofPayload/);
+    });
+
+    it('says why an empty payload is refused, not just that it is malformed', async () => {
+      let message = '';
+      try { await importWithProofPayload(''); } catch (err) { message = String(err); }
+      expect(message).toMatch(/non-empty/i);
+      expect(message).toMatch(/collapses/i);
+    });
+
+    // `network.test.ts` requires one or more hex pairs of the same profile
+    // strings. Two guards on one rule must not disagree, and the fail-stop is
+    // the one that must not be the permissive half.
+    it('agrees with the profile table\'s own shape check', async () => {
+      for (const profile of Object.values(NETWORK_PROFILES)) {
+        expect(profile.genesisProofPayload, profile.networkType)
+          .toMatch(/^([0-9a-f]{2})+$/);
+      }
+    });
+  });
+
+  // `checkpointProver` prunes AVL versions below `height - maxProofHistory`;
+  // `findForkPoint` walks back a fixed `MAX_REORG_DEPTH` and can answer height
+  // 0. A `MAX_PROOF_HISTORY` under that depth prunes inside the window the walk
+  // still answers within, so `reorg` finds no version at its fork height and
+  // aborts with the node still on its own chain. Refusal at load is what makes
+  // that unreachable rather than merely loud.
+  describe('12. proof history covers the reorg depth', () => {
+    function importWithProofHistory(value: string) {
+      process.env['MAX_PROOF_HISTORY'] = value;
+      return import('../src/config.js');
+    }
+
+    it('refuses a MAX_PROOF_HISTORY below MAX_REORG_DEPTH', async () => {
+      await expect(
+        importWithProofHistory(String(MAX_REORG_DEPTH - 1)),
+      ).rejects.toThrow(/below MAX_REORG_DEPTH/);
+    });
+
+    // The depth itself is admissible — the walk's deepest answer is exactly the
+    // oldest version retained — so the comparison is `<` and not `<=`.
+    it('accepts a MAX_PROOF_HISTORY sitting exactly on MAX_REORG_DEPTH', async () => {
+      const { loadConfig } = await importWithProofHistory(String(MAX_REORG_DEPTH));
+      expect(loadConfig().maxProofHistory).toBe(MAX_REORG_DEPTH);
+    });
+
+    // `parseInt` answers `NaN`, and `NaN < MAX_REORG_DEPTH` is false — a `<`
+    // would admit the one value that makes every pruning height `NaN`.
+    it('refuses a non-numeric MAX_PROOF_HISTORY', async () => {
+      await expect(importWithProofHistory('later')).rejects.toThrow(
+        /below MAX_REORG_DEPTH/,
+      );
+    });
+
+    it('says which two numbers are out of order', async () => {
+      let message = '';
+      try { await importWithProofHistory('0'); } catch (err) { message = String(err); }
+      expect(message).toMatch(/MAX_PROOF_HISTORY/);
+      expect(message).toMatch(/MAX_REORG_DEPTH/);
+    });
+
+    // The shipped default must not be one env var away from the refusal.
+    it('the default clears the depth', async () => {
+      delete process.env['MAX_PROOF_HISTORY'];
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().maxProofHistory).toBeGreaterThanOrEqual(MAX_REORG_DEPTH);
     });
   });
 });

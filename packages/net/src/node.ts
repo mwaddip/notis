@@ -386,6 +386,24 @@ export function serveLegacyHeadersBody(
 // copy. The stream plumbing around them is exercised by the integration suite.
 // ---------------------------------------------------------------------------
 
+/**
+ * Cadence of the outbound manager's tick — the floor phase's bootstrap re-dial
+ * and the fill phase's one dial per tick (NET_INTERFACE → Outbound Manager).
+ *
+ * **Fixed, not configurable, because two other cadences are sized against it.**
+ * A knob here would let an operator move a number that other components treat
+ * as a constant, and neither of them can see the change:
+ *
+ * - `GET_PEERS_INTERVAL_MS` below is a deadline this tick samples, so the
+ *   realised peer-exchange cadence is a multiple of this value. Above 120s,
+ *   this interval — not that one — is what governs discovery.
+ * - `DISCOVERY_WINDOW_MS` in `@dagsocial/node`'s peer-readiness service spans
+ *   one tick with margin, so a bootstrap dial that fails gets a second attempt
+ *   before the node concludes it is alone. Above 45s, that window expires
+ *   first and a node that had a peer available strands itself.
+ */
+export const OUTBOUND_TICK_INTERVAL_MS = 30_000;
+
 /** Cadence for sending GetPeers to each Active peer. */
 export const GET_PEERS_INTERVAL_MS = 120_000;
 
@@ -747,7 +765,7 @@ export class NetNode {
           this.requestPeers(peerId);
         }
       }
-    }, 30_000);
+    }, OUTBOUND_TICK_INTERVAL_MS);
 
     this.started = true;
   }

@@ -11,6 +11,11 @@
  *    every boxType's honest shape still validates through a legal transition
  *    (including the two declared optionals present and absent), and each of
  *    the six boxTypes rejects a wrong-but-known-elsewhere guard.
+ *
+ * `BOX_TYPES` below is the six types a transaction may CREATE, which is what
+ * this file is about — not every box type. `genesis_proof` is excluded from
+ * `OUTPUT_SHAPE` by protocol rule and is covered in
+ * `genesis-proof-not-in-tx.test.ts`.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';

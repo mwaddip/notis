@@ -90,7 +90,7 @@
       "value": { "$special": "NaN" },
       "bytes": "ffffffffffffffffff01",
       "decode": false,
-      "note": "The all-ones u64 sentinel. Ported from post.ts's Totality note — it is unreachable from a valid `number` field, so a malformed value never collides with a well-formed one."
+      "note": "The all-ones u64 sentinel — unreachable from a valid `number` field, so a malformed value never collides with a well-formed one (TYPES_INTERFACE -> Totality)."
     },
     {
       "name": "vlqU/sentinel-infinity",
@@ -262,7 +262,7 @@
       "codec": "b32hex",
       "value": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "bytes": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      "note": "The whole point of b32: an id's in-memory hex becomes 32 RAW bytes — no length prefix, and no second hexing. Under the old dialect this field cost 64 UTF-8 bytes."
+      "note": "The whole point of b32: an id's in-memory hex becomes 32 RAW bytes — no length prefix, and no second hexing."
     },
     {
       "name": "b32hex/all-ones",
@@ -393,7 +393,7 @@
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
       ],
       "bytes": "020000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-      "note": "The count is what makes concatenated variable-length elements injective — audit M-1's fix, in the new dialect."
+      "note": "The count is what makes concatenated variable-length elements injective — the defect audit M-1 closed."
     },
     {
       "name": "arr/of-vlqU",

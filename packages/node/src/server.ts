@@ -14,6 +14,7 @@ import { getSystemKeypair } from './store/system.js';
 import { generateChallenge } from './services/pow.js';
 import { verifyPost } from './services/verifier.js';
 import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services/block-creator.js';
+import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite, claimInvite, cancelInvite, commitInvite } from './services/invites.js';
@@ -339,6 +340,10 @@ export function createApp(config: Config): express.Express {
         getCurrentTemplate,
         submitMinedBlock,
         setMinerPubkey,
+        // Only template serving is gated. `POST /mining/submit` is not: by the
+        // time a miner submits, the hashes are already spent, and the node it
+        // solved against had met its peers when it handed out the preimage.
+        peerReady: isPeerReady,
         miningSecret: config.miningSecret,
       }),
     );

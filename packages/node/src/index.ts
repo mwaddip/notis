@@ -1,7 +1,8 @@
 import { loadConfig, isFaucetNetwork } from './config.js';
 import { initDb, closeDb } from './store/db.js';
 import { ensureSchemaVersion } from './store/meta.js';
-import { getSystemKeypair, initSystemKeypair, ensureSystemKarmaBox, ensureFaucetCreditBox } from './store/system.js';
+import { getSystemKeypair, initSystemKeypair } from './store/system.js';
+import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
 import {
@@ -17,6 +18,7 @@ import { verifyPostForRelay, type VerifierDeps } from './services/verifier.js';
 import { sweepPlaceholders, hasPlaceholders } from './services/content-sweep.js';
 import { validateTx } from './services/utxo-engine.js';
 import { setNet } from './services/net-instance.js';
+import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
@@ -62,33 +64,19 @@ try {
   ensureSchemaVersion();
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
+  closeDb();
   process.exit(1);
 }
 
-// 1b. Init system keypair (faucet source on the faucet-bearing networks). Must
-//     happen after DB init, before any route that might need the system box.
-//     The gate shares isFaucetNetwork with the /faucet mount and the
-//     /credits/faucet handler — the three move together (NODE_INTERFACE
-//     §Faucet): mounting without provisioning gives a faucet with nothing to
-//     mint from.
-const systemKeypair = initSystemKeypair();
-if (isFaucetNetwork(config.networkType)) {
-  const height = getCurrentHeight();
-  ensureSystemKarmaBox(systemKeypair.publicKey, height);
-  ensureFaucetCreditBox(systemKeypair.publicKey, height);
-  console.log(
-    `System keypair: ${Buffer.from(systemKeypair.publicKey).toString('hex').slice(0, 12)}... ` +
-    `(faucet source)`,
-  );
-}
-
-// 1c. Initialize AVL prover
+// 1b. Initialize AVL prover
+//
+// Ahead of genesis seeding, which commits its boxes to this tree.
 //
 // There is deliberately no rebuild-from-UTXO-set path here (NODE_INTERFACE →
 // the SUPERSEDED note on `bootstrapAvlProver`, 2026-08-07). Such a rebuild is
 // unsound: AVL+ tree shape is history-dependent, so a tree rebuilt by
-// re-inserting a set forks against one grown incrementally to the same content
-// (measured: identical content agreed on the digest in 6 of 10 rounds). Nor
+// re-inserting a set forks against one grown incrementally to the same content;
+// the note carries the measurement behind that. Nor
 // would a rebuild be reachable — under @ergots/avltree 0.4.0 the
 // PersistentBatchAVLProver constructor writes the empty-tree version to empty
 // storage and throws if `version()` is still null after, so an
@@ -98,8 +86,38 @@ if (isFaucetNetwork(config.networkType)) {
 // the only supported reset.
 createAvlProver();
 
+// 1c. Init system keypair, then seed the genesis state. Must happen after DB
+//     init, before any route that might need the system box.
+//
+//     `seedGenesisState` owns which boxes a network's genesis holds and the
+//     order they reach the tree in; both are consensus-visible, so neither is
+//     an artefact of this file. The faucet-bearing networks alone carry the
+//     system karma and faucet credit boxes — the gate it applies is shared with
+//     the /faucet mount and the /credits/faucet handler, so the three move
+//     together (NODE_INTERFACE §Faucet): mounting without provisioning gives a
+//     faucet with nothing to mint from.
+//
+//     Fail-stop on the same shape as the schema gate above: the message, then
+//     the database handle, then a non-zero exit. Every refusal `seedGenesisState`
+//     raises is a node that must not run, and each one writes a sentence for the
+//     operator that a bare top-level throw would bury under a stack trace.
+const systemKeypair = initSystemKeypair();
+try {
+  seedGenesisState(systemKeypair.publicKey);
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  closeDb();
+  process.exit(1);
+}
+if (isFaucetNetwork(config.networkType)) {
+  console.log(
+    `System keypair: ${Buffer.from(systemKeypair.publicKey).toString('hex').slice(0, 12)}... ` +
+    `(faucet source)`,
+  );
+}
+
 // 2. Create NetNode
-// The four discovery knobs are passed explicitly: NET_INTERFACE.md documents
+// The three discovery knobs are passed explicitly: NET_INTERFACE.md documents
 // their defaults as binding only when node supplies them — unset, net's
 // internal fallbacks silently govern instead.
 const net = new NetNode(
@@ -115,7 +133,6 @@ const net = new NetNode(
     maxPeers: config.maxPeers,
     minPeers: parseInt(process.env['MIN_PEERS'] ?? '3', 10),
     peerDbCap: parseInt(process.env['PEER_DB_CAP'] ?? '1000', 10),
-    outboundFillIntervalMs: parseInt(process.env['OUTBOUND_FILL_INTERVAL_MS'] ?? '30000', 10),
     outboundRedialCooldownMs: parseInt(process.env['OUTBOUND_REDIAL_COOLDOWN_MS'] ?? '60000', 10),
     penaltyScoreThreshold: parseInt(process.env['PENALTY_SCORE_THRESHOLD'] ?? '500', 10),
     temporalBanDurationMs: parseInt(process.env['TEMPORAL_BAN_DURATION_MS'] ?? '3600000', 10),
@@ -274,36 +291,59 @@ net.onTx((tx) => {
   net.setHeadersHandler(getOrderingBlock);
 
 // 4. Start net
+//
+// The try covers `net.start()` and nothing else, because "net startup failed" is
+// the only verdict the catch below has. Everything that used to sit inside it —
+// the discovery decision and the two handler registrations — either states
+// something about this node's configuration rather than about net, or is a bug
+// of ours if it throws. Under a try wide enough to hold them, anything failing
+// after the discovery mark reached the catch and overwrote `searching` with
+// `unavailable`, which opens the mining gate unconditionally.
 try {
   await net.start();
   console.log(`Net node started, peer ID: ${net.peerId()}`);
-
-  // Register storage-backed sync handler (replaces the null placeholder
-  // registered during NetNode.start())
-  net.setSyncHandler((subBlockId: string) => {
-    const post = getPost(subBlockId);
-    if (!post || !('content' in post) || !post.content) return null;
-    return subBlockFromPost(post, subBlockId);
-  });
-
-  // Register posts handler for GetPosts requests — skip missing and placeholder posts.
-  // Validate IDs are 64-char hex before querying (reject malformed).
-  net.setPostsHandler((postIds: string[]) => {
-    const HEX64 = /^[0-9a-f]{64}$/;
-    const entries: PostsEntry[] = [];
-    for (const postId of postIds) {
-      if (!HEX64.test(postId)) continue;
-      const post = getPost(postId);
-      if (!post || !('content' in post) || !post.content) continue;
-      entries.push({ postId, post });
-    }
-    return entries;
-  });
-
-
 } catch (err) {
   console.warn(`Net startup failed (continuing without networking): ${String(err)}`);
 }
+
+// Discovery opens here on both paths, and this is the only place it can.
+// `net.start()` awaits every bootstrap dial and its handshake in sequence, so
+// its return already IS the bootstrap-completion signal — a peer reached is
+// Active by now. What the window covers is what completion leaves unfinished: a
+// dial that failed, whose next attempt is on net's 30s outbound tick
+// (`services/peer-readiness.ts` sizes the window from that cadence). Marking
+// from here rather than from process start is what keeps the window bounding
+// dial time and not store opening, AVL bootstrap or genesis seeding.
+enterDiscovery(config.bootstrapPeers.length);
+
+// The arrival half of "readiness is not latched" (`MINING_INTERFACE` → "The
+// peer-readiness gate"). Readiness notices a peer *leaving* by looking, because
+// net publishes no disconnect callback — but it must not depend on looking to
+// know one ever arrived, or a peer that came and went between two template
+// polls would leave the node believing it had never met anybody.
+net.onPeerActive((_peerId: string) => notePeerMet());
+
+// Register storage-backed sync handler (replaces the null placeholder
+// registered during NetNode.start())
+net.setSyncHandler((subBlockId: string) => {
+  const post = getPost(subBlockId);
+  if (!post || !('content' in post) || !post.content) return null;
+  return subBlockFromPost(post, subBlockId);
+});
+
+// Register posts handler for GetPosts requests — skip missing and placeholder posts.
+// Validate IDs are 64-char hex before querying (reject malformed).
+net.setPostsHandler((postIds: string[]) => {
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const entries: PostsEntry[] = [];
+  for (const postId of postIds) {
+    if (!HEX64.test(postId)) continue;
+    const post = getPost(postId);
+    if (!post || !('content' in post) || !post.content) continue;
+    entries.push({ postId, post });
+  }
+  return entries;
+});
 
 function runContentSweep(net: NetNode, deps: VerifierDeps): void {
   if (hasPlaceholders()) {

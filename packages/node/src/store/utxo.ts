@@ -6,11 +6,13 @@ import {
   recordBoxRemove,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
+import { BOX_GUARDS } from '@dagsocial/types';
 import type {
   AnyBox,
   KarmaBox,
   CreditBox,
   InviteBox,
+  GenesisProofBox,
   BondBox,
   PostLockBox,
   VouchBox,
@@ -54,6 +56,13 @@ interface CreditExtra {
 interface InviteExtra {
   secretHash: number[];
   inviterId: string;     // hex-encoded pubkey in JSON (Uint8Array in code)
+}
+
+interface GenesisProofExtra {
+  // Raw bytes as a number array, like `secretHash` and `post_lock.owner`. The
+  // hex form above is for pubkeys; this payload is opaque to consensus and is
+  // not one.
+  payload: number[];
 }
 
 interface BondExtra {
@@ -124,9 +133,10 @@ function settledHeight(): number {
 /**
  * Reconstruct a typed box from a utxo_boxes row.
  *
- * Columns id, box_type, value and owner are read directly; `guard` is a
- * per-boxType constant reconstructed from the discriminant. Everything else is
- * parsed from the extra_data JSON column.
+ * Columns id, box_type, value and owner are read directly; `guard` comes from
+ * `BOX_GUARDS`, which `@dagsocial/types` owns as the one mapping from
+ * discriminant to guard. Everything else is parsed from the extra_data JSON
+ * column.
  *
  * `created_at_block` is deliberately NOT read: it is a store column and never a
  * box field (Spec G D3), and putting it back on the object would change every
@@ -146,7 +156,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'karma',
         value: row.value,
         owner: new Uint8Array(row.owner!),
-        guard: 'owner_signature',
+        guard: BOX_GUARDS.karma,
         proofSource: e.proofSource,
         ...prov,
       };
@@ -163,7 +173,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'credit',
         value: row.value,
         owner: new Uint8Array(row.owner!),
-        guard: 'owner_signature',
+        guard: BOX_GUARDS.credit,
         proofSource: e.proofSource,
         ...prov,
       };
@@ -180,7 +190,20 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         secretHash: new Uint8Array((extra as InviteExtra).secretHash),
         inviterId: hexToPubkey((extra as InviteExtra).inviterId),
-        guard: 'hash_preimage_with_bond',
+        guard: BOX_GUARDS.invite,
+        ...prov,
+      };
+
+    case 'genesis_proof':
+      return {
+        id: row.id,
+        boxType: 'genesis_proof',
+        // `as 0n`: the row's real value, never a fabricated literal — same rule
+        // as `vouch` below. The cast bridges the interface's literal type,
+        // which documents the pinned constant rather than a storage guarantee.
+        value: row.value as GenesisProofBox['value'],
+        payload: new Uint8Array((extra as GenesisProofExtra).payload),
+        guard: BOX_GUARDS.genesis_proof,
         ...prov,
       };
 
@@ -197,7 +220,7 @@ function rowToBox(row: UtxoRow): AnyBox {
           : new Uint8Array(0),
         probationStartBlock: e.probationStartBlock ?? 0,
         probationEndBlock: e.probationEndBlock ?? 0,
-        guard: 'bond_dual',
+        guard: BOX_GUARDS.bond,
         ...prov,
       };
     }
@@ -211,7 +234,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         originalValue: BigInt(e.originalValue),
         owner: new Uint8Array(e.owner),
         targetPostId: e.targetPostId,
-        guard: 'block_apply',
+        guard: BOX_GUARDS.post_lock,
         ...prov,
       };
     }
@@ -235,7 +258,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value as VouchBox['value'],
         voucherId: hexToPubkey(e.voucherId),
         targetId: hexToPubkey(e.targetId),
-        guard: 'owner_signature',
+        guard: BOX_GUARDS.vouch,
         ...prov,
       };
     }
@@ -281,6 +304,38 @@ export function getBoxByProvenance(txId: string, index: number): AnyBox | null {
     .safeIntegers()
     .get(txId, index) as UtxoRow | undefined;
   return row ? rowToBox(row) : null;
+}
+
+/**
+ * Return the genesis proof box, or null if this store has not seeded one.
+ *
+ * No owner argument, unlike every other typed lookup here: the box has no
+ * owner, and a network's genesis state holds exactly one of them.
+ *
+ * `spent_at_block IS NULL` is carried for uniformity with its siblings, not
+ * because the column can move — the box's `unspendable` guard is refused by
+ * `checkGuards`, so no transaction can consume it.
+ *
+ * `ORDER BY id` because `LIMIT 1` alone names no row: SQLite is free to return
+ * any of the matches, so a store holding two proof boxes would answer this
+ * lookup differently between reads and `ensureGenesisProofBox` would report a
+ * different box each time it declined to create one. Two is unreachable —
+ * `OUTPUT_SHAPE` excludes `genesis_proof`, so no transaction can mint a second,
+ * and `assertEmptyBeforeGenesis` refuses to seed over a first — which is an
+ * argument about the rest of the tree, and the ordering costs nothing if it
+ * expires.
+ */
+export function getGenesisProofBox(): GenesisProofBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'genesis_proof' AND spent_at_block IS NULL
+       ORDER BY id
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get() as UtxoRow | undefined;
+  return row ? (rowToBox(row) as GenesisProofBox) : null;
 }
 
 /**
@@ -611,6 +666,14 @@ export function insertBox(box: AnyBox): void {
         secretHash: Array.from(i.secretHash),
         inviterId: pubkeyToHex(i.inviterId),
       } satisfies InviteExtra;
+      break;
+    }
+    case 'genesis_proof': {
+      const g = box as GenesisProofBox;
+      // No `owner` and no `proofSource`: the box has no holder and no mint
+      // reason to record. Both columns stay NULL, which is what the schema's
+      // per-type notes describe.
+      extraData = { payload: Array.from(g.payload) } satisfies GenesisProofExtra;
       break;
     }
     case 'bond': {

@@ -37,7 +37,7 @@ import { verifyPoW } from '../../src/services/pow.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
-  Post, KarmaBox, CreditBox, InviteBox, BondBox, PostLockBox, VouchBox,
+  Post, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
 
@@ -163,6 +163,13 @@ const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domai
 // both implementations in both forms, so an omission fails here instead of
 // needing review to catch. Distinct fill bytes per field so a transposition is
 // visible too.
+//
+// ⚠ **`genesis_proof` is covered separately, in the byte form only.**
+// `toUiForm` renders every `Uint8Array` as hex because that is how the UI's tx
+// builders carry keys — and no builder carries a `payload`, because the box is
+// written by genesis seeding and a transaction may never create one. `lp` is
+// byte-only on both sides, so a hex-form assertion would be asserting agreement
+// on a shape neither implementation has a producer for.
 // ---------------------------------------------------------------------------
 
 /**
@@ -656,6 +663,37 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     delete missing.inviteePublicKey;
     expect(() => canonicalBoxBytes(missing as never)).toThrow();
     expect(() => ui.canonicalBoxBytes(missing as unknown as Record<string, unknown>)).toThrow();
+  });
+
+  it('genesis_proof: the byte form encodes identically on both implementations', () => {
+    // The page never builds one, and that is exactly why this is here: without
+    // the tag and the arm, `enum8Tag` falls back to `0xff` and `boxTypeFields`
+    // writes no tail, so the UI derives a **wrong id that looks well-formed**
+    // rather than throwing. Two arms, because the length prefix is the whole of
+    // `lp`'s injectivity and the empty payload is the smallest legal box.
+    for (const payload of [new Uint8Array([0xde, 0xad, 0xbe, 0xef]), new Uint8Array(0)]) {
+      const box: GenesisProofBox = {
+        boxType: 'genesis_proof', value: 0n, payload, guard: 'unspendable',
+        txId: COVERAGE_TX_ID, index: 5,
+      };
+      const label = `payload=${payload.length}`;
+      expect(hexOf(ui.canonicalBoxBytes(box as unknown as Record<string, unknown>)), label)
+        .toBe(hexOf(canonicalBoxBytes(box)));
+      expect(ui.computeBoxId(box as unknown as Record<string, unknown>), label)
+        .toBe(computeBoxId(box));
+    }
+  });
+
+  it('genesis_proof takes tag 3, on both implementations', () => {
+    // The tag is the first byte of the id preimage, so a table that disagrees
+    // with @dagsocial/types moves every id derived here.
+    const box: GenesisProofBox = {
+      boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([0x01]),
+      guard: 'unspendable', txId: COVERAGE_TX_ID, index: 5,
+    };
+    expect(hexOf(canonicalBoxBytes(box)).slice(0, 2)).toBe('03');
+    expect(hexOf(ui.canonicalBoxBytes(box as unknown as Record<string, unknown>)).slice(0, 2))
+      .toBe('03');
   });
 
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {

@@ -34,7 +34,9 @@
 //
 // PLACEMENT: the corpus below runs UNSIGNED. The gate is step 0, so every
 // rejection must be envelope-worded; a signature-worded error (or a throw)
-// would mean the gate had drifted behind step 6, the #16 pattern.
+// would mean the gate now sits behind step 6, which is what this placement
+// exists to detect — a shape check reached only after the checks that assume
+// the shape is not a shape check.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

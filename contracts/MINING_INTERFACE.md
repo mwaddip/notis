@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node` (mining subsystem)
 **Protocol version:** 2
-**Last updated:** 2026-07-23
+**Last updated:** 2026-08-13
 
 ## Scope
 
@@ -195,16 +195,66 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
 the fixed 32-byte preimage the miner hashes with the nonce. The miner never
 touches CBOR.
 
-**A miner node always holds a template**, so 404 is no longer routine. The node builds one at startup
-and rebuilds it whenever the tip moves — its own block finalizing, a peer's block applying, or a reorg
-committing. **Sub-block arrival does not rebuild it**: what goes into a block and when one is produced
-are separate questions, and a rebuild mid-solve would void every miner's in-flight work.
+**A miner node always holds a template.** It builds one at startup and rebuilds it whenever the tip
+moves — its own block finalizing, a peer's block applying, or a reorg committing. **Sub-block arrival
+does not rebuild it**: what goes into a block and when one is produced are separate questions, and a
+rebuild mid-solve would void every miner's in-flight work.
+
+**Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
+not yet met its peers withholds the template it holds. See *The peer-readiness gate* below — that is
+the only condition under which a 404 from a miner node is expected, and any other 404 is a defect.
 
 ⚠ **The template is stable for a height, and that is a load-bearing property, not an implementation
 detail.** `POST /mining/submit` reconstructs the header from *the node's current template* plus the
 submitted nonce, so any rebuild — even one whose body is byte-identical, since `createdAt` is stamped
 at build — invalidates a nonce found against the previous preimage. Stability is what lets a miner
 treat `header.height` as the whole staleness key.
+
+#### The peer-readiness gate
+
+**A miner node withholds the template until it has met its peers.** The condition is:
+
+> at least one **Active** peer, **or** the discovery window has elapsed, **or** the node has no
+> bootstrap address to dial.
+
+The answer is `404 { error: 'No block template available' }` — **the same response the absent-template
+case gives, deliberately.** `scripts/miner.mjs` keys its retry on that status alone and has no give-up
+count, so a node that has not met its peers is polled until the gate opens. The gate sits behind the
+`?miner=` validation: a malformed payout key earns its 400 whatever the node's readiness is.
+
+**What the gate protects.** Journal retention is the floor under revert depth — `block-apply.ts`
+purges journals below `height - MAX_REORG_DEPTH`, so a node that mines past that depth alone has no
+journal to revert with and can never rejoin a mesh it later meets. Fork resolution bottoming out at
+the genesis state (`NODE_INTERFACE` → "Fork resolution bottoms out at the genesis state") makes height
+0 a valid ancestor; this keeps a node inside the window where that ancestor is still reachable. It
+works **within** `MAX_REORG_DEPTH` and does not widen it.
+
+**Active peers, not known ones.** `net`'s `getConnectedPeers()` filters on peer state; `peers()` lists
+every peer holding an open libp2p connection, including ones that have not completed — or have
+failed — the DAGsocial handshake. A peer that failed it is on another network, and must not answer
+"have I met peers on mine".
+
+**The window is a timer and is named as one.** It stands for *"I have finished looking"*, not for
+*"something is ready"*. Its duration is **derived from `net`'s bootstrap re-dial cadence, not chosen**:
+a failed initial dial gets its next attempt on net's 30 s outbound tick, so a shorter window gives up
+before making a second attempt. It is a **node-local constant**, not a profile field — `ARCHITECTURE.md`
+scopes profiles to the timescale, difficulty and genesis axes, and on a live network the window never
+fires at all, because peers exist and the peer clause answers first.
+
+⚠ **`net.start()`'s return is already a bootstrap-completion signal** — it awaits every bootstrap dial
+and handshake in sequence, so a reachable peer is Active before it returns. That signal is **not
+sufficient as the gate**: it fires with zero peers both for a node whose dial failed and for a node
+with no bootstrap address, and those two need opposite answers. The window covers the first; the
+third clause answers the second.
+
+**No bootstrap address means ready at once.** Such a node never dials: the floor phase iterates an
+empty list, and the fill phase requires outbound connections at or above `minPeers`, which it
+permanently is below — inbound connections do not count toward that floor. It is the origin of its
+network by configuration. Waiting out a window would stand in for an event that cannot occur.
+
+**`POST /mining/submit` is NOT gated.** By the time a nonce arrives the hashes are spent, and the node
+handed out the preimage while it was ready. Readiness is also **not latched** — a node whose only peer
+drops before the window elapses withholds again, which is correct: it is alone again.
 
 **This endpoint also returns 500** (Phase 1f), with `{ error: 'Block template header is not
 encodable' }`. `computePowHash` returns `Buffer | null`, `null` for a header outside the encodable
@@ -409,6 +459,9 @@ ASERT**, and carried register #5 still owns it.
    request is bearer-authenticated with a constant-time comparison, and the
    coinbase payout override (`?miner=`) is reachable only behind that auth.
    Internal mode mounts no mining routes. (audit M-7)
+9. A miner node **serves no template before it is peer-ready**, and gating happens at
+   serve rather than at creation — the node holds a template throughout, so invariant
+   9 never weakens "a miner node always holds a template". See *The peer-readiness gate*.
 
 ## Miner Script
 
@@ -416,7 +469,10 @@ ASERT**, and carried register #5 still owns it.
 script; deployed via `scripts/dagsocial-miner.service`):
 
 1. `GET /mining/template` (Bearer `MINING_SECRET`; `?miner=MINER_PUBKEY` when
-   set) → reads `powPreimage`, `header.powTargetBits`, `header.height`
+   set) → reads `powPreimage`, `header.powTargetBits`, `header.height`.
+   **A 404 logs `No template available, waiting 5s...` and retries, with no give-up
+   count** — that unboundedness is what lets the node withhold for as long as *The
+   peer-readiness gate* requires without any miner-side change
 2. Loop: `nonce++`, `hash = blake2b512(hex2buf(powPreimage) || encodeLE64(nonce))`,
    test with its **own mirrored copy** of `meetsPowTarget` against a `powTarget` hoisted
    out of the loop. The script stays standalone — `node:crypto` only, no build step, because

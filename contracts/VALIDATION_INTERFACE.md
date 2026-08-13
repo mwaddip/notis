@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/validation`
 **Protocol version:** 1
-**Last updated:** 2026-07-24
+**Last updated:** 2026-08-13
 
 ## Scope
 
@@ -682,8 +682,8 @@ verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?: string }
 ```
 
 Checks: `tx` is an object, `inputs` is a non-empty array, `outputs` is a
-non-empty array, no duplicate inputs, and `protocolVersion` is a number. That is
-the whole list.
+non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs, and
+`protocolVersion` is a number. That is the whole list.
 
 **It does not check `likeTarget`**, and this contract wrongly said it did until
 2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
@@ -695,6 +695,69 @@ layer is how a later reader deletes the real check as redundant.
 
 Also does NOT check UTXO conservation, guard satisfaction, or the like
 biconditional (`likeTarget` ⟺ deficit) — those are Stage 2 (stateful) checks.
+
+#### `genesis_proof` may not be a transaction output
+
+A `genesis_proof` box (`TYPES_INTERFACE` → GenesisProofBox) is written by genesis
+seeding alone, so a transaction carrying one among its `outputs` is rejected with
+`Transaction may not output a genesis_proof box`. The tag alone decides: the scan
+reads `boxType` and no other field, so a proof box with nothing else set is
+refused on the same line as a complete one.
+
+**This is the package's first box-type-aware rule, and the widening is a
+decision rather than a side effect** — `boxType` occurred zero times in
+`src/verify.ts` before it. Neither adjacent prohibition bars it. *"Never add
+checks the reference lacks"* does not reach it, because "a `genesis_proof` box
+may never be created by a transaction" is a protocol rule and not an extra one;
+the stateless rule does not reach it either, because inspecting a candidate
+output reads nothing.
+
+**The rule has two halves and they cannot share a home.**
+
+| Half | Home | Why it can only go there |
+|---|---|---|
+| never an **output** | here | a candidate output is a whole box, and typing it needs no state |
+| never an **input** | `@dagsocial/node` | `tx.inputs` are box **id** strings; typing one requires the UTXO set |
+
+⚠ **`TYPES_INTERFACE` → GenesisProofBox routes *both* halves to this contract.**
+This package cannot run the input half: `verifyTxStructure` receives `tx.inputs`
+as strings and holds no UTXO set. That sentence therefore describes a dead end
+rather than scheduled work — the same shape as the `networkType` profile match
+under `verifyHeaderFieldDomains`, and it reads identically to a rule that has
+simply not landed yet.
+
+**The output half earns its place here on peer scoring rather than on tidiness,
+and that argument is a claim about the rest of the tree.** Stated with the search
+that produced it: `verifyTxStructure` across `packages/`, `scripts/` and
+`contracts/`, 2026-08-13 — **one** production caller outside this package,
+`net/src/gossip.ts`'s `tx` topic validator, reached through the `validators`
+interface object (`net/src/types.ts`). `packages/node` calls it **zero** times,
+its two `import * as validation` namespaces included. A structural rejection in
+that validator costs the sending peer the same 100-point `misbehavior` penalty as
+a PoW rejection; enforced in node alone, such a transaction relays mesh-wide for
+free and dies at mempool with nobody scored. Neither placement is a consensus
+difference — the difference is amplification. The search is keyed on the name and
+would miss a caller reaching this function under another one.
+
+#### This package states no `genesis_proof` payload bound
+
+**`MAX_GENESIS_PROOF_PAYLOAD_BYTES` is deliberately not defined or exported
+here.** The rule above refuses a `genesis_proof` output outright, so a bound
+standing behind it rejects nothing, and `verifyTxStructure` is the only exported
+function whose argument reaches a box candidate at all — established by reading
+every export's signature, 2026-08-13, rather than by grepping for `outputs`. A
+bound stated here would be a dead export.
+
+Its live subject is the seeder that writes the box, plus the single readback path
+that decodes one (`node`'s `avl-endpoint.ts`, serving `GET /api/v1/proof/:boxId`).
+⚠ **There is no peer-sync decode path**: `packages/net/src` decodes no boxes at
+all, measured 2026-08-13. An earlier form of this sentence named one, which is
+the failure this contract warns about two sections up — a rule justified by a
+path that does not exist. The value belongs
+beside the other protocol bounds in `@dagsocial/types` (`src/constants.ts`),
+where `MAX_CONTENT_BYTES` and `MAX_PARENT_REFS` already sit and from which this
+package imports every constant it enforces. **This package defines no protocol
+constant of its own**, and a bound with no subject here would be the first.
 
 ### verifyOrderingBlockStructure
 

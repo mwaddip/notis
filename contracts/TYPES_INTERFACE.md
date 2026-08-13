@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/types`
 **Protocol version:** 1
-**Last updated:** 2026-07-29
+**Last updated:** 2026-08-13
 
 ## Scope
 
@@ -468,10 +468,65 @@ VouchBox extends BoxBase {
 }
 ```
 
+### GenesisProofBox
+
+```
+GenesisProofBox extends BoxBase {
+  boxType: "genesis_proof"
+  value: 0n                    // Neither karma nor credits — never enters supply accounting
+  payload: Uint8Array          // Opaque bytes; lp on the wire, hex in the profile
+  guard: "unspendable"         // No spender exists
+}
+```
+
+The third box seeded at cold start, beside system karma and faucet credits. Those two are
+byte-identical on every network, so **this box's `payload` is the whole of network identity at
+height 0** — it is what makes the three genesis state roots differ, and `NetworkProfile
+.genesisProofPayload` carries the per-network value as hex (§Network profiles).
+
+`value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
+so the literal makes any other unrepresentable rather than merely invalid.
+
+The type is barred from both transaction positions, and **the two halves have different owners
+because only one of them can be checked without state**:
+
+| Half | Owner | Why it can only go there |
+|---|---|---|
+| not a transaction **output** | `VALIDATION_INTERFACE` | A candidate output is a whole box; typing it reads nothing |
+| not a transaction **input** | `NODE_INTERFACE` | `tx.inputs` are box **id strings**; typing one requires the UTXO set |
+
+⚠ **This corrects a line that routed both halves to `VALIDATION_INTERFACE`.** That package holds no
+box-type machinery at all until the output rule lands, and it structurally cannot type an input —
+so half the rule was routed to a package that could never run it. `VALIDATION_INTERFACE`
+§`verifyHeaderFieldDomains` already names this failure: *"A rule routed to a package that
+structurally cannot run it reads as scheduled work and is actually a dead end."*
+
+`payload` is bounded at `MAX_GENESIS_PROOF_PAYLOAD_BYTES`, and **the bound is a decode rule**: the
+`genesis_proof` arm of `readBoxContentFields` refuses an oversized payload, so such bytes have **no
+decoding** — the same standing the corpus gives an unassigned tag. It is per-type and binds no other
+`lp` field; in particular it is **not** in `readLp`, which every length-prefixed field shares.
+
+This is a domain rule and not a memory-safety one. `ByteReader.readBytes` already refuses
+`remaining < n` and throws before touching memory, so no length prefix can provoke an allocation —
+the bound exists to make the field's domain checkable, not to protect the reader.
+
+**The refusal is one-way, and that is the same asymmetry the tag sentinel has.** `writeLp` stays
+total, so an over-bound payload still *encodes* and `computeBoxId` still answers for it; what it has
+is **no decoding**. Reading the bound as an encode rule as well would make `canonicalBoxBytes`
+partial in a new field, which §Totality permits only where a sentinel would collide with a
+well-formed value — and here it would not, because nothing decodes the bytes back.
+
+The rejection is a `ReaderError` with code `invalid-tag`. `ReaderErrorCode` is `@dagsocial/wire`'s
+and has no member for a domain refusal; `readLpUtf8` already uses `invalid-tag` for the same shape —
+a length-prefixed field whose *contents* are out of domain — and `CodecError` states the general
+argument for the choice.
+
 ### BoxGuard
 
 ```
-type BoxGuard = "owner_signature" | "block_apply" | "hash_preimage" | "inviter_signature" | "bond_dual" | "hash_preimage_with_bond"
+type BoxGuard = "owner_signature" | "block_apply" | "hash_preimage" | "inviter_signature" | "bond_dual" | "hash_preimage_with_bond" | "unspendable"
+// "unspendable" names no spender at all, which no other member does — "block_apply" is still
+//   consumable, by block application. Carried only by GenesisProofBox.
 // "block_apply" replaced "epoch_tally" in P2-D — there is no epoch, and the meaning was
 //   always "consumable only by block application". The string 'epoch_tally' is RESERVED,
 //   never to be reused; guard strings are box content, inside the box-id preimage.
@@ -824,8 +879,20 @@ callers must remember to invoke is the shape that produced this defect class in 
   signal.
 - **Ids are `b32` on the wire, hex `string` in memory.** The conversion lives in the codec layer and
   nowhere else — a conversion at any other site is a double-hexing defect.
-- **Enum tags reserve retired values and are never renumbered.** A renumber silently moves every id
-  and `stateRoot` that covers the tag (the T2b `0x03` lesson, now applying inside the id preimage).
+- **Enum tags are never renumbered.** A renumber silently moves every id and `stateRoot` that covers
+  the tag (the T2b `0x03` lesson, now applying inside the id preimage).
+- **A retired tag's *number* may be reassigned to a new type — under all three of the following, and
+  otherwise not at all.** Reassignment is not a renumber and the argument above does not reach it: a
+  renumber moves ids that exist, while this one assigns a meaning to a number nothing has used. It is
+  admissible only when
+  1. **no surviving history carries the tag** — nothing has ever been encoded under it, or the same
+     unit forces a fresh chain, so there is no id for the new meaning to collide with;
+  2. **every other tag keeps its number**, which is what makes "no existing id moves" checkable
+     rather than asserted — the ids that move are exactly the ones that do not exist; and
+  3. **the retired *name* stays reserved.** The number is reusable; the string is not, because a new
+     type wearing it makes old-vs-new greps and historical debugging ambiguous forever.
+
+  Fail any one of them and the number stays reserved — left out of the table, never reused.
 - **Maps encode as arrays sorted by raw key bytes ascending.** A positional format has no maps, and
   without a normative sort one transaction has two encodings — reopening the malleability being closed.
 - **Encoders are total** (sentinel discipline, per audits M-5/M-6), with one stated exception: see
@@ -948,6 +1015,24 @@ runtime strip somebody must remember:
 - **`boxRecordBytes`** — `boxContentBytes ‖ b32(txId) ‖ vlqU(index)`. What the AVL value and the
   store hold. The `id` is never encoded: it *is* the hash.
 
+**`BOX_TYPE_TAGS` is the single source of the box-type numbering, and `BOX_GUARDS` is the single
+source of the guard mapping.** Both are exported from `@dagsocial/types`, and no other package may
+declare either — node's `utxo-engine.ts`, `state/serialize-box.ts` and `store/utxo.ts` import them.
+**The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
+construction; the golden corpus's reverse tag table is a deliberate independent restatement rather
+than a copy.
+
+**The two mappings fail in opposite ways, which is why one needed this more than the other.** A
+wrong **tag** moves every box id and every `stateRoot` covering it — loudly, and everywhere. A wrong
+**guard** moves nothing at all: `guard` is absent from `canonicalBoxBytes`, so two consumers that
+disagree still compute identical ids, and the drift surfaces only as one path accepting a candidate
+another rebuilt differently.
+
+`BOX_GUARDS` is `as const satisfies` the box interfaces' own `guard` literals, so a value
+disagreeing with its interface, a missing box type, or a row for a retired one is a compile error.
+`BOX_TYPE_TAGS` gets no equivalent check for **uniqueness** — a duplicate tag is an `enum8`
+construction throw, not a type error.
+
 > ⚠ **"What the AVL value holds" means the AVL value IS `boxRecordBytes` — no wrapper, no extra
 > discriminator byte. Stated explicitly 2026-08-10 because the implicit reading cost a phase.**
 >
@@ -955,8 +1040,9 @@ runtime strip somebody must remember:
 > `state/serialize-box.ts` separately carried its own one-byte box-type tag from an earlier design,
 > and composing the two — `avlTag ‖ boxRecordBytes` — writes the box type **twice, in two
 > disagreeing numberings, in adjacent bytes**. The two numberings put the retired-`like` reservation
-> in *different positions* (`enum8` reserves `3` between `invite` and `bond`; the AVL tag reserved
-> `0x03` between `credit` and `invite`), so they do not even differ by a constant. **`enum8`'s
+> in *different positions* (`enum8` held `3` between `invite` and `bond` — since reassigned to
+> `genesis_proof`; the AVL tag reserved `0x03` between `credit` and `invite`), so they did not even
+> differ by a constant. **`enum8`'s
 > numbering wins**; see `NODE_INTERFACE` → "Two entity kinds" for the full record and why renumbering
 > is safe exactly once.
 >
@@ -969,7 +1055,7 @@ runtime strip somebody must remember:
 > consume) and omitted `boxType` (which it does).
 >
 > **`guard` is therefore dropped from the AVL value, and that is lossless** — it is a pure function
-> of `boxType` (C10), each of the six box types declares exactly one literal, and a decoder
+> of `boxType` (C10), each of the seven box types declares exactly one literal, and a decoder
 > synthesises it from the discriminator. Verified field-by-field by the Phase 5 executor, 2026-08-10.
 
 > ⚠ **`boxRecordBytes` is paired with `boxRecordFromBytes(bytes) → { candidate, txId, index }`, and
@@ -988,7 +1074,7 @@ runtime strip somebody must remember:
 >
 > `boxRecordFromBytes` carries the four-part boundary check like every other decoder. It does **not**
 > return `guard` — that is not in the bytes; `node` synthesises it. **The proof obligation is a
-> round-trip over all six box types**, which is strictly stronger than a frozen vector: a frozen
+> round-trip over all seven box types**, which is strictly stronger than a frozen vector: a frozen
 > vector can pass while writer and reader disagree, a round-trip cannot.
 >
 > Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
@@ -1012,7 +1098,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 0 | `karma` |
 | 1 | `credit` |
 | 2 | `invite` |
-| 3 | **reserved — retired `like`, never reuse** |
+| 3 | `genesis_proof` |
 | 4 | `bond` |
 | 5 | `post_lock` |
 | 6 | `vouch` |
@@ -1022,9 +1108,23 @@ from this table — a use that reads every cell as an instruction rather than as
 | `karma` | `b32(owner)` ‖ `lpUtf8(proofSource)` ‖ `opt(decayBurn, u8)` |
 | `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
+| `genesis_proof` | `lp(payload)` |
 | `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
 | `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` ‖ `b32(targetPostId)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
+
+`genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
+decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder
+that does not own one. The length prefix is the whole of the field's injectivity — appended raw, an
+empty payload would be indistinguishable from the end of the box. It is also the only arm whose entire
+tail is one field, so `enum8(3) ‖ vlqU64(0) ‖ u8(0)` is the smallest legal box of any type at three
+bytes.
+
+⚠ **`genesis_proof.payload` carries the one per-type domain rule in this table**: the reader refuses
+a payload over `MAX_GENESIS_PROOF_PAYLOAD_BYTES` (§GenesisProofBox, §Content limits). It binds this
+row and no other — a second implementation that took the bound from `lp` itself would refuse
+`tx.preimages`, `utxoTxs` and the block's three sections, all of which use the same primitive
+unbounded. Every other refusal these rows make belongs to the primitive named in the cell.
 
 `credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
 (`heightOrTransfer`). A `vlqU` there would throw on every user-path credit box.
@@ -1333,6 +1433,27 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 
 ## Protocol Constants (`constants.ts`)
 
+### Chain reorganisation
+
+```typescript
+export const MAX_REORG_DEPTH = 20;
+```
+
+How far back a reorg reaches. Universal, not per-network. Its consumers are all in
+`@dagsocial/node`: the fork-walk bound, the block-journal retention window, and the load-time
+refusal of a `MAX_PROOF_HISTORY` beneath it. **Journal retention is the hard bound on how deep a
+reorg can physically go; the fork walk is policy**, and nothing requires the two to stay equal.
+
+⚠ **`net`'s `msg-guards.ts` is not a consumer**, though it reads like one. It mentions
+`MAX_REORG_DEPTH * 2` as *what fork resolution asks for*; the cap it actually enforces is
+`MAX_LEGACY_RESPONSE_ITEMS = 400`. The two differ by 10×, and reading the prose as the limit
+conflates a caller's request size with the bound applied to it.
+
+**It lives here because node's `config.ts` cannot reach it anywhere else.**
+`services/fork-resolution.ts` imports `config` itself, so a constant declared there is unreachable
+from config load without a cycle. A load-time rule keyed on this value is only expressible with the
+constant in this package.
+
 ### Network profiles
 
 > ✅ **RESOLVED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10,
@@ -1378,6 +1499,8 @@ export interface NetworkProfile {
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
   readonly genesisCreditsPerMember: bigint;
+  readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
+  readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
   readonly treasuryPubKey: string;
 }
 
@@ -1405,6 +1528,40 @@ falls through to the legacy raw-CBOR path, decodes as malformed, and **permanent
 peer** — so a stale copy turns a routine cross-network misconnection into a ban. Note the set
 is consulted *only* for frames that fail the own-magic compare, so a stale copy does not
 break same-network peering; the damage is entirely cross-network.
+
+**`genesisProofPayload` is hex `string`, not `Uint8Array`, and the reason is immutability rather
+than style.** Every profile is an `Object.freeze`d literal, and freezing does not reach a typed
+array's contents — a profile holding one would be mutable in exactly the field that defines the
+network. `treasuryPubKey` and `genesisCommitteeKeys` are hex for the same reason, so this follows
+the file rather than adding a convention.
+
+**What must hold is that the three payloads DIFFER; what is inside them need not be anything.**
+They are mock content (user, 2026-08-13). Substituting real no-premine evidence later is a value
+change on a network that has not launched, not a format change — and it is caught loudly either way,
+since the payload moves the genesis state root. This is a fourth entry in the per-network set, whose
+burden §Network Identity puts on the addition; it is discharged by genesis already being a declared
+per-network axis rather than a new one.
+
+**`genesisStateRoot` is 66 hex characters, not 64.** The AVL+ digest is a 32-byte root label followed
+by a one-byte tree height — Ergo's 33-byte `genesisStateDigestHex` shape, and the same width
+`EMPTY_STATE_ROOT` and the block header's `stateRoot` already carry. A 64-character pin fails on all
+three values, and truncating one to fit silently discards the height byte.
+
+**It is derived, not chosen.** The value is the digest a node computes after seeding its genesis box
+set, and `genesisProofPayload` is the only input to it that differs per network — the system karma
+and faucet credit boxes are byte-identical everywhere they are seeded at all. So the two fields are
+one fact stated twice, and a pin that disagrees with the seeding is a node running a chain that forks
+from every honest peer at height 1. `NODE_INTERFACE` owns the comparison; this package can only hold
+the constant, since neither the serializer nor the prover that produce it live here.
+
+⚠ **Re-pin whenever anything a genesis box id derives from moves.** These are digests over box ids,
+so a change to the box encoding moves them with nothing here changing — the mismatch surfaces at
+node's boot check rather than in this file.
+
+**Both fields belong to the two networks' spread, not to mainnet alone.** `TESTNET_PROFILE` is
+`{ ...MAINNET_PROFILE, … }`, so a value written only into mainnet is inherited silently by testnet
+with no type error, collapsing the one field whose whole job is keeping the networks apart. Each is
+overridden explicitly and `network.test.ts` asserts the override rather than the spread.
 
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
@@ -1482,7 +1639,18 @@ export const PROTOCOL_VERSION = 1;
 ```typescript
 export const MAX_CONTENT_BYTES = 300;
 export const MAX_PARENT_REFS = 1;
+export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 ```
+
+The third bounds a **box** field rather than a post one, and it sits here because this section groups
+bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
+which structure carries them. The `### Genesis` block below holds the genesis *economics*, none of
+which is a format bound.
+
+⚠ **512 is provisional and derived from no measurement** — roughly Ergo's five-register no-premine
+payload plus headroom. Its *home* is not provisional. The three profile payloads are ~35 bytes, so
+nothing approaches it; `network.test.ts` is what checks them, because they are compile-time constants
+and the seeder that writes one deliberately does not measure it.
 
 ### State format
 

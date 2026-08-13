@@ -4,6 +4,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
+  MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
@@ -132,9 +133,42 @@ export function loadConfig(): Readonly<Config> {
 
   assertMiningAuthConfigured(cfg);
   assertTreasuryKeyEncodable(cfg);
+  assertGenesisProofPayloadEncodable(cfg);
   assertOrderingTargetAboveFloor(cfg);
+  assertProofHistoryCoversReorgDepth(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * `MAX_PROOF_HISTORY` must cover every height a reorg can walk back to.
+ *
+ * `checkpointProver` prunes AVL versions below `height - maxProofHistory`, while
+ * `findForkPoint` walks back a fixed `MAX_REORG_DEPTH` and can answer height 0.
+ * A `maxProofHistory` under that depth prunes inside the window the walk still
+ * answers within: `reorg` then finds no version at or before its fork height and
+ * throws, and the node keeps a chain it should have switched away from. The two
+ * numbers must be ordered, and nothing but this check orders them.
+ *
+ * Refusal, never clamping — the same rule `assertOrderingTargetAboveFloor`
+ * follows: raising a too-small value to `MAX_REORG_DEPTH` would retain history
+ * against a bound nobody configured, and failing at load puts the verdict where
+ * a human is reading it.
+ *
+ * Written as a negated `>=` rather than a `<` so the check is total on the
+ * parse: `parseInt` yields `NaN` for a non-numeric `MAX_PROOF_HISTORY`, and
+ * `NaN < MAX_REORG_DEPTH` is false — a `<` would pass the one value that makes
+ * every pruning height `NaN`.
+ */
+function assertProofHistoryCoversReorgDepth(cfg: Config): void {
+  if (!(cfg.maxProofHistory >= MAX_REORG_DEPTH)) {
+    throw new Error(
+      `MAX_PROOF_HISTORY ${cfg.maxProofHistory} is below MAX_REORG_DEPTH ` +
+        `${MAX_REORG_DEPTH} — AVL versions inside the reorg window would be ` +
+        'pruned, and a reorg reaching one of them would abort with the node ' +
+        'still on its own chain',
+    );
+  }
 }
 
 /**
@@ -181,6 +215,43 @@ function assertTreasuryKeyEncodable(cfg: Config): void {
     throw new Error(
       `Invalid treasuryPubKey for network "${cfg.networkType}" — must be 64 ` +
         'hex characters (32 bytes) or empty for no treasury',
+    );
+  }
+}
+
+/**
+ * The genesis proof payload's domain, established where it enters this node's
+ * config surface — the same job `assertTreasuryKeyEncodable` does one function
+ * up, and for the sharper half of the same hazard.
+ *
+ * `Buffer.from(s, 'hex')` stops at the first character pair outside the
+ * alphabet instead of failing, and `writeLp` is total by sentinel rather than
+ * throwing, so a malformed payload produces a **shorter payload and a different
+ * genesis state root** with nothing raised anywhere. The node then runs, mines,
+ * and forks from every honest peer at height 1. Refuse at load rather than
+ * clamp or default: put the verdict where a human is reading it.
+ *
+ * **Non-empty, and that half is not pedantry.** The proof box is the whole of
+ * the difference between testnet's and devnet's genesis states — they share the
+ * system keypair and both box values, so their karma and credit boxes are
+ * byte-identical and carry the same ids. An empty payload still encodes cleanly,
+ * to the same `030000` on both, and collapses two networks onto one genesis
+ * root. `network.test.ts` requires one or more pairs of the same profile
+ * strings; the two guards state one rule between them, so the fail-stop must not
+ * be the permissive one.
+ *
+ * ⚠ **This is not the payload BOUND.** How long a payload may be is a decode
+ * rule and belongs beside the encoder in `@dagsocial/types`; this asserts only
+ * that the configured string denotes bytes, and denotes the ones it appears to.
+ */
+function assertGenesisProofPayloadEncodable(cfg: Config): void {
+  const hex = cfg.profile.genesisProofPayload;
+  if (!/^([0-9a-fA-F]{2})+$/.test(hex)) {
+    throw new Error(
+      `Invalid genesisProofPayload for network "${cfg.networkType}" — must be a ` +
+        'non-empty, even number of hex characters; a truncated decode silently ' +
+        'moves the genesis state root, and an empty payload collapses two ' +
+        "networks' genesis states onto one",
     );
   }
 }

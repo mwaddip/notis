@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node`
 **Protocol version:** 1
-**Last updated:** 2026-08-01
+**Last updated:** 2026-08-13
 
 ## Scope
 
@@ -670,6 +670,33 @@ deterministic transaction ID.
 **Used at pool entry** for ideal validation (though currently gated by signing
 mismatch — see Known Gaps in SESSION_CONTEXT.md).
 
+### Genesis proof boxes are never in a transaction
+
+**A `genesis_proof` box may never appear as a transaction input or an output.**
+It is written by genesis seeding and readable forever. Without the output half,
+any user sprays unbounded opaque blobs into the UTXO set through an ordinary
+transaction; without the input half, the one box that defines a network can be
+spent away.
+
+**The rule has two halves and they cannot share a home.**
+
+| Half | Home | Keyed on | Why it can only go there |
+|---|---|---|---|
+| not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. A candidate's own `guard` field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
+| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a second unspendable type is covered without an edit. |
+
+`OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
+exclusion is a type error to undo rather than an omitted entry indistinguishable
+from a forgotten one — while a *new* box type still fails to compile until it is
+given a shape. `checkOutputShape` names `genesis_proof` in its own reject arm
+ahead of the table lookup: the verdict would be identical either way, but an
+assigned tag refused by protocol rule is not an *unknown* one, and a test
+asserting rejection must be able to assert which rule rejected.
+
+`CANONICAL_GUARD` keeps all seven types even though the output schema carries
+six: its other obligation is agreement with `rowToBox`, and a genesis-seeded
+proof box is rebuilt from its row like any other.
+
 ### Output shape — the closed per-boxType schema (guard-shape pin + field-type pin)
 
 Transaction outputs are attacker-controlled structure (HTTP JSON through
@@ -691,9 +718,9 @@ schema for its `boxType`**:
   reject, not a strip: a stripped key would change the bytes the client signed.
 - **`guard` equals the boxType's canonical guard.** `karma`/`credit`/`vouch` →
   `owner_signature`, `invite` → `hash_preimage_with_bond`, `bond` →
-  `bond_dual`, `post_lock` → `block_apply` — the same constants `rowToBox`
-  fabricates on read. One table, engine-owned; `rowToBox` and the check must
-  never disagree.
+  `bond_dual`, `post_lock` → `block_apply`, `genesis_proof` → `unspendable` —
+  the same constants `rowToBox` fabricates on read. One table, engine-owned;
+  `rowToBox` and the check must never disagree.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
   - `bigint`, `0 ≤ v < 2⁶⁴`: `value` (every boxType) **and `originalValue`
@@ -1289,7 +1316,7 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting → `mintKarma(post.author, toUnlock)` |
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
-| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo`, author leg |
 
 **Retired by P2-D — names reserved, never reuse:** `author-reward` and `liker-refund`
@@ -2439,7 +2466,7 @@ versus "not a box" is still a single bit test and the box-type space stays open.
 
 | | Discriminator space |
 |---|---|
-| Box | `enum8(boxType)`: `0` karma, `1` credit, `2` invite, **`3` reserved — retired `like`**, `4` bond, `5` post_lock, `6` vouch |
+| Box | `enum8(boxType)`: `0` karma, `1` credit, `2` invite, **`3` genesis_proof**, `4` bond, `5` post_lock, `6` vouch |
 | Identity record | `0x80` |
 
 **This replaces a second, disagreeing numbering that this package used to
@@ -2462,8 +2489,15 @@ artifact of two encoders written months apart.
 Safe to renumber because this phase moves the `stateRoot` regardless and the
 standing deploy gate mandates a wiped AVL store with a fresh chain — there is no
 history whose bytes must still parse. **That is a one-time window, not a
-standing licence.** After this lands, `enum8`'s numbering is the committed one
-and `3` stays reserved forever.
+standing licence.** `enum8`'s numbering is the committed one.
+
+⚠ **Tag `3` carries `genesis_proof` and is no longer reserved.** The reassignment
+is governed by the three conditions in `TYPES_INTERFACE` → Primitives — no
+surviving history carries the tag, every other tag keeps its number, and the
+retired *name* `like` stays reserved — not by precedent from this paragraph.
+**Renumbering an assigned tag remains forbidden**; reassigning a reserved number
+and renumbering an assigned one are different operations, and only the first is
+available.
 
 **1a. The AVL value carries provenance, and an absent key is not an
 `undefined` key.** `serializeBox` strips only `id` and `boxType` — `txId` and
@@ -2785,6 +2819,7 @@ the handler.
 | `stump-engine.ts` | Verifiable prune execution | DAG content |
 | `content-sweep.ts` | Placeholder resolution (missing post content pulled from peers) | Post creation |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
+| `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
 **Validation pipeline (phased, increasing cost):**
 1. Signature verification (cheap — Ed25519 verify)
@@ -2807,6 +2842,87 @@ External queries serve only up to `post_validated_height`.
 > write-only `+1` counters — not heights, never read, not reset on reorg. Duplicated in
 > `VALIDATION_INTERFACE.md → Phased Validation Pipeline`; **change both together or
 > neither.**
+
+### The genesis state root is checked fail-stop, once, where it is built
+
+`seedGenesisState` computes the height-0 AVL+ root over the boxes it seeded and compares it to
+the profile's `genesisStateRoot`. **A mismatch throws and the node does not start**
+(`assertGenesisRoot`, exported so it is reachable without a boot). Refusal rather than a
+warning follows `loadConfig`'s below-floor ordering target: proceeding silently means running a
+chain that forks from every honest peer at height 1, discovered later and somewhere else.
+
+**It is a seeding postcondition, not a boot invariant, and the two are not interchangeable.**
+Seeding is keyed on the `genesis_committed` flag, so a node that has ever applied a block does
+not re-seed and its prover holds the root of the height it stopped at — measured with a mined
+block, not argued. A boot-time comparison against the genesis pin would therefore refuse every
+node with a chain. The comparison means something only on the path that just built the state it
+checks. Ergo checks its `genesisStateDigestHex` in the same place, at initialisation rather
+than on every start.
+
+**Inside the seeding transaction, not after it.** The throw rolls back the boxes, the identity
+record, the tree rows and the flag together, so a divergent genesis is never committed.
+Checked after the commit it would fail exactly once: the next start finds the flag set, skips
+seeding, and runs on the divergent state with nothing left to check it.
+
+⚠ **Two things this does NOT cover.** A store whose genesis is already committed is never
+re-checked, so flipping `NETWORK_TYPE` against one is caught at the chain link when it meets
+peers, not at boot (ARCHITECTURE → "How the network is committed"). And the pin moves whenever
+the box bytes move — **C8 re-derives two of the three roots**, caught loudly here rather than
+silently.
+
+**`seedGenesisState` claims the committed flag under `BEGIN IMMEDIATE`.** The `genesis_committed`
+read that decides whether to seed happens inside the write lock, never outside it. Two processes
+opening one database file both observe an unset flag if either reads it before taking the lock, and
+both proceed to seed a store only one of them can commit. The read outside the transaction is a
+fast path — it keeps every start after the first from taking a write lock — and **no decision may
+rest on it**.
+
+**The genesis mint height is `GENESIS_HEIGHT`.** Seeding requires a store at height 0, so there is
+no other height a genesis box could commit to; the seeders raise it to 1 for the mint txId, because
+0 is not a height a block ever settles at. That clamp is one function (`store/system.ts` →
+`genesisMintHeight`) and is shared with the non-genesis callers of `ensureSystemKarmaBox` and
+`ensureFaucetCreditBox`, which pass real heights.
+
+**A refused genesis exits like a refused schema version**: the message, then `closeDb()`, then a
+non-zero exit. Both gates in `index.ts` have this shape.
+
+**`getGenesisProofBox` orders its `LIMIT 1`.** Exactly one proof box is reachable — `OUTPUT_SHAPE`
+excludes `genesis_proof` so no transaction mints one, and `assertEmptyBeforeGenesis` refuses to seed
+over an existing one — but that is an argument about the rest of the tree, and an unordered
+`LIMIT 1` names no row if it ever expires. **No index on `box_type`**: the function has two callers
+and runs once per process, and an index there would tax every `insertBox` on the apply path.
+
+### Fork resolution bottoms out at the genesis state
+
+**Reaching height 0 in the ancestor walk IS a common ancestor**, at depth = our height.
+`findForkPoint` returns `GENESIS_HEIGHT` (`0`) where it previously returned `null` for chains
+that share no block. Heights still start at 1, so height 0 holds no block and no hash — what it
+holds is the genesis *state*, which every node on a network shares byte for byte because the
+section above makes any other one fail-stop. There is nothing for a peer to lie about: a
+height-1 block has its `prevBlockHash` checked as all-zeros before it can be stored, and that
+check is on every path into the store — `ordering_blocks` has one writer,
+`applyBlockBody`'s `storeCreateOrderingBlock`, downstream of the chain-link gate in the same
+function, and all four callers of `applyOrderingBlock` (gossip, sync pull, block creator,
+`reorg`) go through it.
+
+**`MAX_REORG_DEPTH` does not move.** Height 0 became a reachable *answer*; how far back a reorg
+may go is unchanged, and must be — journal retention is the real floor under revert depth, and
+`revertBlock` throws without a journal. The walk reaches 0 only when our height is at or below
+the bound, which is exactly when every journal down to height 1 is still retained. Deeper than
+that the answer is still `null`.
+
+**The genesis fallback sits behind the batch check, deliberately.** A header batch with an
+unhashable entry is refused whole and answers `null` — it does not fall through to genesis.
+In front, a peer could turn one malformed header into "we fork at genesis" and buy a
+full-chain reorg attempt with it, on precisely the short chains where the whole walk is inside
+the window.
+
+**Downstream of a `0`,** `reorg` reverts every block, rolls the prover to
+`versionAtOrBeforeHeight(0)` — the genesis version, and the genesis one only because seeding
+deletes the empty tree's height-0 version before writing its own — and re-applies from a
+`currentHeight` of 0, which is the chain-link check's genesis branch. Verified end to end
+rather than reasoned about; `test/services/fork-resolution.test.ts` pins the round trip against
+the pinned root.
 
 ---
 
@@ -2893,6 +3009,13 @@ Always returns 200. Response shape:
 ---
 
 ## Configuration
+
+**`MAX_PROOF_HISTORY` may not sit below `MAX_REORG_DEPTH`, and `loadConfig` refuses at load rather
+than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while the
+fork walk reaches back a fixed `MAX_REORG_DEPTH` and can answer height 0, so a smaller retention
+window prunes inside the window the walk still answers within: `reorg` finds no version at its fork
+height and aborts with the node still on its own chain. The check is a negated `>=`, so `NaN` —
+what `parseInt` answers for a non-numeric env value — is refused rather than admitted.
 
 All config via environment variables with defaults.
 

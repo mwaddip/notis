@@ -16,7 +16,7 @@
         "createdAt": 1754600000000
       },
       "bytes": "01b9601111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222233333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb28833",
-      "note": "Ten fields. validatorId is b32 from BYTES; the three roots above it are b32 from HEX. powTargetBits is 12 whole bits in units of 1/256 of a bit, so it occupies two VLQ bytes where a whole-bit count occupied one."
+      "note": "Ten fields. validatorId is b32 from BYTES; the three roots above it are b32 from HEX. powTargetBits is 12 whole bits in units of 1/256 of a bit — 3072, past the one-byte VLQ boundary, so it occupies two."
     },
     {
       "name": "blockHeader/genesis-zeros",
@@ -68,7 +68,7 @@
         "pruneEntries": []
       },
       "bytes": "0000",
-      "note": "Two zero counts, two bytes total. subBlockRefs is deleted — a third array would show here."
+      "note": "Two zero counts, two bytes total — subBlockEntries and pruneEntries are the tree's only arrays, and a third would show here as a third count byte."
     },
     {
       "name": "subBlockTree/entries-and-prune",

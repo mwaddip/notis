@@ -2,6 +2,7 @@ import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock, PruneEntry } from '@dagsocial/types';
 import {
   decodeTx,
+  MAX_REORG_DEPTH,
   MEMPOOL_EXPIRY_BLOCKS,
   computePruneEntryId,
 } from '@dagsocial/types';
@@ -24,10 +25,12 @@ import {
   MempoolFullError,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
+import { config } from '../config.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { deleteVouchCooldown, insertVouchCooldown } from '../store/vouch-cooldowns.js';
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
+import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlock } from './block-apply.js';
 import { rebuildTemplate } from './block-creator.js';
 import {
@@ -36,8 +39,6 @@ import {
   UnhashableStoredHeaderError,
 } from './corrupt-state.js';
 import type { DagService } from './dag-service.js';
-
-export const MAX_REORG_DEPTH = 20;
 
 /**
  * The hash of a header from our own chain.
@@ -72,7 +73,14 @@ export function extendsOurTip(block: OrderingBlock): boolean {
 /**
  * Walk both chains back to find the common ancestor.
  * theirHeaders is newest-first (tip at index 0).
- * Returns fork height or null if deeper than MAX_REORG_DEPTH.
+ * Returns fork height, `GENESIS_HEIGHT` when the chains share only the genesis
+ * state, or null if the divergence is deeper than MAX_REORG_DEPTH.
+ *
+ * **Height 0 is a valid answer, not a dead end.** Heights still start at 1, so
+ * height 0 holds no block and no hash — but it holds the genesis *state*, which
+ * every node on a network shares byte for byte. Two chains that diverge at
+ * height 1 therefore have a common ancestor, and it is the only one they have.
+ * The rule and its bound are stated at the `reachedGenesis` return below.
  *
  * `ourTip` is a header of ours; `theirHeaders` is not. It arrives from
  * `net.requestHeaders`, which parses the response through
@@ -115,13 +123,13 @@ export function findForkPoint(
     return null; // ourTip is stale — a reorg happened since caller fetched it
   }
   // Walk our chain down from the tip. A missing block ends this loop, and the
-  // two reasons it can be missing are not the same thing: running off the
-  // bottom of the chain is how the walk terminates, while a height that should
-  // hold a block and does not is the contiguity invariant broken.
+  // two reasons it can be missing are not the same thing: running out of
+  // *blocks* is how the walk reaches the genesis state, while a height that
+  // should hold a block and does not is the contiguity invariant broken.
   //
-  // The two are cleanly separable because heights start at 1 — genesis is
-  // accepted only at height 1 (`block-apply.ts:224`) and every stored header
-  // cleared `height >= 1` (`validation/verify.ts:643`) — so height 0 is the
+  // The two are cleanly separable because heights start at 1 — `applyBlockBody`
+  // accepts a first block only at height 1, and every stored header cleared
+  // `verifyOrderingBlockStructure`'s `height >= 1` — so height 0 is the
   // boundary and every height at or above 1 must be there. Those are the only
   // two cases: stored heights are integers ≥ 1, so `height - 1` is either 0 or
   // ≥ 1, with nothing in between and nothing outside.
@@ -131,11 +139,17 @@ export function findForkPoint(
   // permanently without knowing, the same silence a forever-rejecting apply
   // funnel produces.
   let depth = 0;
+  let reachedGenesis = false;
   while (depth < MAX_REORG_DEPTH) {
     ourHashes.set(ourChainHash(cursor.header, 'findForkPoint'), cursor.header.height);
     depth++;
     const nextHeight = cursor.header.height - 1;
-    if (nextHeight < 1) break; // the bottom of the chain, not a gap
+    if (nextHeight < GENESIS_HEIGHT + 1) {
+      // Height 0 holds no block, so there is no hash to record — but the state
+      // it names is an ancestor both chains share (see the return below).
+      reachedGenesis = true;
+      break;
+    }
     const next = getOrderingBlock(nextHeight);
     if (!next) throw new MissingStoredBlockError('findForkPoint', nextHeight);
     cursor = next;
@@ -160,6 +174,28 @@ export function findForkPoint(
     const matchHeight = ourHashes.get(h);
     if (matchHeight !== undefined) return matchHeight;
   }
+
+  // No shared block, but the walk ran out of blocks rather than out of window:
+  // our whole chain is inside the reorg bound, so the two chains diverge above
+  // the genesis state and **that state is the common ancestor**, at depth =
+  // our height.
+  //
+  // There is no hash to compare and none is needed. Every node on a network
+  // holds a byte-identical height-0 state by construction — `seedGenesisState`
+  // refuses any other (`assertGenesisRoot`) — and a peer's height-1 block has
+  // its `prevBlockHash` checked as all-zeros before it can be stored. That
+  // check is on every path that reaches the ordering store: `ordering_blocks`
+  // has one writer, `applyBlockBody`'s `storeCreateOrderingBlock`, downstream
+  // of the chain-link gate in the same function, and all four callers of
+  // `applyOrderingBlock` — gossip, sync pull, the block creator and `reorg`
+  // below — go through it.
+  //
+  // ⚠ **This is reachable only below `MAX_REORG_DEPTH`, and the bound does not
+  // move.** Height 0 became a valid ancestor; how far back a reorg may go did
+  // not. A divergence deeper than the window still answers null, because
+  // journal retention is the real floor under revert depth — `revertBlock`
+  // throws without a journal (`block-apply.ts` → the `purgeOldJournals` call).
+  if (reachedGenesis) return GENESIS_HEIGHT;
 
   return null; // no common ancestor within MAX_REORG_DEPTH
 }
@@ -323,12 +359,35 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
     revertedPruneEntries.push(...revertBlock(h));
   }
 
-  // Phase 1b: roll back AVL prover to fork point
+  // Phase 1b: roll back AVL prover to fork point.
+  //
+  // A missing version here is not a case to skip past. Phase 3 would apply the
+  // peer's chain onto a prover still holding our reverted tip's tree, so the
+  // state root would stop covering the UTXO set — and that surfaces later, on
+  // some other node, as a mismatch blamed on whoever sent the next block.
+  // Refusing the reorg costs one chain switch; proceeding costs the invariant.
+  //
+  // The throw lands inside the transaction, so better-sqlite3 rolls the revert
+  // back and the catch below restores the in-memory digest: the node keeps the
+  // chain it had, which is a chain whose root it can still compute.
+  //
+  // ⚠ **Reachable by configuration, not only by corruption.** `MAX_PROOF_HISTORY`
+  // is env-tunable and `checkpointProver` prunes versions below
+  // `height - maxProofHistory`, while `MAX_REORG_DEPTH` is fixed — so a value
+  // under 20 prunes inside the window the fork walk still answers within, and
+  // `findForkPoint` reaching the genesis state makes height 0 one of the answers
+  // it can give. The message names the two numbers because their relationship is
+  // the fault.
   if (avlHandle) {
     const version = avlHandle.storage.versionAtOrBeforeHeight(forkHeight);
-    if (version) {
-      avlHandle.prover.rollback(version);
+    if (!version) {
+      throw new Error(
+        `reorg to fork height ${forkHeight}: no AVL version at or before it. ` +
+        `MAX_PROOF_HISTORY=${config.maxProofHistory} prunes versions this reorg ` +
+        `needs — it must not be below MAX_REORG_DEPTH=${MAX_REORG_DEPTH}.`,
+      );
     }
+    avlHandle.prover.rollback(version);
   }
 
   // Phase 2: re-insert reverted txs and sub-blocks to mempool
@@ -384,9 +443,17 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
  * what lets a test drive `resolveFork` against a stub peer — `reorg` and
  * `revertBlock` are reachable from a test on their own; the decision that calls
  * them is not.
+ *
+ * **`getConnectedPeers`, not `peers`, and the distinction decides a reorg.**
+ * `peers()` lists every *known* peer, including ones that have not completed —
+ * or have failed — the DAGsocial handshake; only `getConnectedPeers()` filters
+ * on Active. A peer that failed the handshake is on another network, and a
+ * counterparty chosen off the wrong list can revert this node's entire chain:
+ * below `MAX_REORG_DEPTH` the fork walk reaches the genesis state, so a stranger
+ * with more work wins at height 0.
  */
 export interface ForkResolutionNet {
-  peers(): Array<{ id: string }>;
+  getConnectedPeers(): string[];
   requestHeaders(startHeight: number, maxCount: number, peerId: string): Promise<BlockHeader[]>;
   requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]>;
 }
@@ -411,12 +478,15 @@ export async function resolveFork(
     `competing block height=${block.header.height}`,
   );
 
-  const peers = net.peers();
+  // Active peers only — the same list the readiness gate reads, for the same
+  // reason (see `ForkResolutionNet`). A handshake-failed peer must not be picked
+  // as the counterparty whose chain this node might adopt.
+  const peers = net.getConnectedPeers();
   if (peers.length === 0) {
     console.warn('Fork resolution failed: no connected peers');
     return;
   }
-  const peerId = peers[0]!.id;
+  const peerId = peers[0]!;
 
   try {
     // Request headers from competing tip going backward (newest-first)
@@ -446,11 +516,14 @@ export async function resolveFork(
 
     // Build our chain headers from fork+1 to current tip.
     //
-    // Every height in this range must hold a block. `forkHeight` is a height of
-    // *ours* (findForkPoint only returns heights out of our own hash map), the
-    // block at `currentHeight` was just read above, and the store is contiguous
-    // between them — and nothing awaits between that read and this loop, so it
-    // cannot move underneath us.
+    // Every height in this range must hold a block. `findForkPoint` answers
+    // either a height out of our own hash map or `GENESIS_HEIGHT`, which is
+    // **not** in that map — height 0 holds no block, so the walk records no hash
+    // for it. Both answers leave this range inside our chain: a mapped height is
+    // one we hold, and 0 starts the range at 1, our first block. The block at
+    // `currentHeight` was just read above, the store is contiguous between them,
+    // and nothing awaits between that read and this loop, so it cannot move
+    // underneath us.
     //
     // Skipping a missing one is the worst available handling, because of which
     // way it errs: `ourHeaders` feeds `cumulativeWork(ourHeaders)`, so a skipped

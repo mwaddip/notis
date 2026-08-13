@@ -15,14 +15,19 @@ import {
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
+  BOX_TYPE_TAGS,
+  BOX_GUARDS,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
+  MAX_GENESIS_PROOF_PAYLOAD_BYTES,
   encodeTx,
   decodeTx,
+  encodeUtxoTxTree,
+  decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -325,8 +330,9 @@ describe('golden vectors (positional box encoding)', () => {
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
     // `enum8` stays total: its tag set is narrower than a byte, so `0xff` is
     // unreachable from any real box type and a malformed box can never encode
-    // as a well-formed one. Tag 3 is permanently burnt for the retired `like`
-    // — a renumber would silently move every box id covering the tag.
+    // as a well-formed one. `'like'` is the fixture because it is a retired box
+    // type — the string is reserved and holds no tag, so it is exactly the
+    // "outside the table" case this arm exists for.
     const bogus = { ...GOLDEN_KARMA_CANDIDATE, boxType: 'like' as never };
     const bytes = canonicalBoxBytes(bogus);
     expect(bytes[0]).toBe(0xff);
@@ -567,6 +573,141 @@ describe('bond.inviteePublicKey is opt(b32), not b32', () => {
     // invite / post_lock / vouch have no inline golden here; theirs are the
     // untouched vectors in `test/golden/boxes.json`, asserted by the corpus
     // suite in both directions.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// genesis_proof — the box whose payload is a network's identity
+// ---------------------------------------------------------------------------
+
+/**
+ * Tag 3, `value` fixed at `0n`, and one variable-width field.
+ *
+ * **The payload is `lp`, not `lpUtf8`** (TYPES_INTERFACE → Layout — Boxes). It
+ * is opaque to consensus; whether it decodes as text is a client's question,
+ * and a UTF-8 writer would put a validity rule inside an encoder that has no
+ * business holding one. That makes the length prefix the whole of the field's
+ * injectivity, which is what the empty-payload test below pins.
+ *
+ * **A different payload is a different box id, and that is the mechanism the
+ * unit rests on** — it is the only divergence between the three networks'
+ * genesis box sets, so it is what makes their state roots differ.
+ *
+ * `value` is `0n`: the box carries neither karma nor credits and never enters
+ * supply accounting. It still takes the shared prefix's `vlqU64` like every
+ * other box type, which is the `00` in these vectors.
+ */
+const PROOF_PAYLOAD = new TextEncoder().encode('mock-headline');
+
+/**
+ * Hand-assembled from the layout table, not copied from the encoder's output —
+ * the same idiom as `BOND_PREFIX` above, and the only form that makes a vector
+ * an independent check rather than a screenshot.
+ *
+ *   03 | 00 | 0d | 6d6f636b2d686561646c696e65
+ *   ^tag ^vlqU64(0)  ^vlqU(13)   ^payload
+ */
+const PROOF_BYTES = '03' + '00' + '0d' + '6d6f636b2d686561646c696e65';
+
+function makeProofCandidate(payload: Uint8Array): CandidateOf<GenesisProofBox> {
+  return { boxType: 'genesis_proof', value: 0n, guard: 'unspendable', payload };
+}
+
+describe('genesis_proof', () => {
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+  it('takes tag 3, and encodes as enum8 ‖ vlqU64(value) ‖ lp(payload)', () => {
+    const bytes = canonicalBoxBytes(makeProofCandidate(PROOF_PAYLOAD));
+    expect(bytes[0]).toBe(3);
+    expect(hexOf(bytes)).toBe(PROOF_BYTES);
+    expect(bytes.length).toBe(16);
+  });
+
+  it('an empty payload has an encoding, and the length prefix keeps it distinct', () => {
+    // `lp` and not raw bytes appended: without the count an empty payload is
+    // indistinguishable from the end of the box, and a one-byte payload of
+    // `00` would share its encoding with an empty one. Three bytes is the
+    // smallest legal box of any type.
+    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array(0))))).toBe('030000');
+    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('03000100');
+  });
+
+  it('round-trips through the box record, with guard absent from the bytes', () => {
+    // `guard` is `'unspendable'` on the candidate and is not in the encoding —
+    // it is a pure function of `boxType` like every other box's, so the reader
+    // does not invent it and the expectation does not carry it.
+    const record = boxRecordFromBytes(
+      boxRecordBytes(makeProofCandidate(PROOF_PAYLOAD), FIXTURE_TX_ID, 0),
+    );
+    expect(record).toEqual({
+      candidate: { boxType: 'genesis_proof', value: 0n, payload: PROOF_PAYLOAD },
+      txId: FIXTURE_TX_ID,
+      index: 0,
+    });
+  });
+
+  it('a different payload is a different box id — the whole per-network mechanism', () => {
+    const encode = (s: string) => new TextEncoder().encode(s);
+    const ids = ['mainnet-proof', 'testnet-proof', 'devnet-proof'].map((s) =>
+      computeCandidateBoxId(makeProofCandidate(encode(s)), FIXTURE_TX_ID, 0),
+    );
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  /**
+   * `MAX_GENESIS_PROOF_PAYLOAD_BYTES` is a **decode** rule on this arm, so the
+   * pair that pins it is the boundary — at the bound decodes, one byte past it
+   * does not.
+   *
+   * ⚠ **The boundary pair is the assertion, and a single over-bound case would
+   * not be one.** A payload of either length is well-formed `lp` and re-encodes
+   * identically, so nothing else in the pipeline has a threshold anywhere near
+   * 512: only this rule can separate the two. A test that asserted rejection
+   * alone would be green whether the bound existed or the reader had merely run
+   * out of some other rope.
+   */
+  const atBound = new Uint8Array(MAX_GENESIS_PROOF_PAYLOAD_BYTES).fill(0x5a);
+  const overBound = new Uint8Array(MAX_GENESIS_PROOF_PAYLOAD_BYTES + 1).fill(0x5a);
+
+  it('decodes a payload at the bound and refuses the next byte', () => {
+    const decoded = boxRecordFromBytes(boxRecordBytes(makeProofCandidate(atBound), FIXTURE_TX_ID, 0));
+    expect((decoded.candidate as CandidateOf<GenesisProofBox>).payload).toEqual(atBound);
+
+    // The `invalid-tag` code is the assertion, not `toThrow` alone — the same
+    // reason the unassigned-tag loop in `boxRecordFromBytes` asserts a code.
+    // `readLpUtf8` is the precedent for the choice: a domain refusal on the
+    // contents of a length-prefixed field, where `ReaderErrorCode` offers
+    // nothing narrower than "present and wrong, which is not truncation".
+    let thrown: unknown;
+    try {
+      boxRecordFromBytes(boxRecordBytes(makeProofCandidate(overBound), FIXTURE_TX_ID, 0));
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReaderError);
+    expect(thrown).not.toBeInstanceOf(CodecError);
+    expect((thrown as ReaderError).code).toBe('invalid-tag');
+  });
+
+  it('still ENCODES an over-bound payload — the refusal is one-way', () => {
+    // The writers stay total (TYPES_INTERFACE → Totality). The bound gives an
+    // over-bound payload **no decoding**, which is the standing an unassigned
+    // tag has, and does not make it unencodable — so `computeBoxId` still
+    // answers for one and the encode/decode asymmetry stays the one this file
+    // already relies on rather than a new class.
+    const bytes = canonicalBoxBytes(makeProofCandidate(overBound));
+    expect(bytes[0]).toBe(3);
+    // tag ‖ vlqU64(0) ‖ vlqU(513) ‖ 513 bytes — the count needs two bytes past 127.
+    expect(bytes.length).toBe(1 + 1 + 2 + overBound.length);
+  });
+
+  it('binds this arm alone — another lp field reads a payload it would refuse', () => {
+    // Deliberately NOT in `readLp` (`src/codec.ts`), which every `lp` field
+    // shares. `utxoTxTree.utxoTxs` is `arr(lp)` and goes through the same
+    // primitive on the same positional reader, so it is what a bound placed in
+    // the primitive would have caught along with this box — and it must not be.
+    const tree = { utxoTxIds: [], utxoTxs: [overBound], coinbaseOutputs: [] };
+    expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
   });
 });
 
@@ -853,8 +994,14 @@ describe('boxRecordBytes', () => {
  * skip, and this cannot.
  */
 describe('boxRecordFromBytes', () => {
-  /** One candidate per box type, each exercising a field the others do not. */
-  const ALL_SIX: [string, AnyBoxCandidate][] = [
+  /**
+   * One candidate per box type, each exercising a field the others do not.
+   *
+   * Named for what the list IS rather than for how long it is — a count in the
+   * name is false the first time a box type is added, and the name is not what
+   * the compiler checks.
+   */
+  const ALL_BOX_TYPES: [string, AnyBoxCandidate][] = [
     ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
     ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, decayBurn: true }],
     ['credit (transfer sentinel)', { ...GOLDEN_CREDIT_CANDIDATE, proofSource: -1 }],
@@ -878,9 +1025,11 @@ describe('boxRecordFromBytes', () => {
       targetPostId: 'ab'.repeat(32), guard: 'block_apply',
     }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
+    ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
+    ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
   ];
 
-  for (const [label, candidate] of ALL_SIX) {
+  for (const [label, candidate] of ALL_BOX_TYPES) {
     it(`round-trips ${label}`, () => {
       // `guard` is not in the bytes (C10) and the reader does not invent it, so
       // it is dropped from the expectation rather than from the assertion — the
@@ -896,7 +1045,7 @@ describe('boxRecordFromBytes', () => {
     // The other direction of the same claim, at byte level. `toEqual` on the
     // value could pass while a field the reader ignores rides along in the
     // bytes; this cannot.
-    for (const [, candidate] of ALL_SIX) {
+    for (const [, candidate] of ALL_BOX_TYPES) {
       const bytes = boxRecordBytes(candidate, GOLDEN_TX_ID, 3);
       const back = boxRecordFromBytes(bytes);
       expect(Buffer.from(boxRecordBytes(back.candidate as BoxCandidate, back.txId, back.index)))
@@ -929,11 +1078,25 @@ describe('boxRecordFromBytes', () => {
     expect(() => boxRecordFromBytes(bytes.subarray(0, bytes.length - 5))).toThrow(ReaderError);
 
     // 1 — the reserved sentinel tag and every unassigned boxType have no
-    // decoding at all. Tag 3 is the retired `like`: burnt, never reused.
-    for (const tag of [0x03, 0x07, 0xff]) {
+    // decoding at all: the tag reader refuses them, so nothing after the tag is
+    // read. 7 is the first number `BOX_TYPE` does not assign.
+    //
+    // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
+    // *assigned* tag swapped in here throws too — on the fields it then
+    // misreads, as `trailing-bytes` — so a bare `toThrow` cannot tell "this tag
+    // has no decoding" from "this tag decodes, into something else". That is
+    // the difference this loop exists to pin, and only the code shows it.
+    for (const tag of [0x07, 0xff]) {
       const badTag = bytes.slice();
       badTag[0] = tag;
-      expect(() => boxRecordFromBytes(badTag)).toThrow(ReaderError);
+      let thrown: unknown;
+      try {
+        boxRecordFromBytes(badTag);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, `tag ${tag}`).toBeInstanceOf(ReaderError);
+      expect((thrown as ReaderError).code, `tag ${tag}`).toBe('invalid-tag');
     }
   });
 });
@@ -1514,5 +1677,109 @@ describe('selectBoxes', () => {
     const { selectBoxes } = await import('../src/index.js');
     const result = selectBoxes([], 0n);
     expect(result).toEqual([]);
+  });
+});
+
+/**
+ * The two box-type mappings this package is the single source of.
+ *
+ * `BOX_TYPE_TAGS` is the numbering inside every box's id preimage; `BOX_GUARDS`
+ * is the guard each type fixes. Both are exported because other packages hold
+ * the same two mappings, and **their failure modes are opposite**: a wrong tag
+ * moves every box id and every `stateRoot` covering it, loudly and everywhere,
+ * while a wrong guard moves nothing at all — it is absent from the consensus
+ * bytes, so no hash disagreement can surface a copy that has drifted.
+ */
+describe('the box-type tables', () => {
+  const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
+    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature', proofSource: 'genesis' },
+    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature', proofSource: 42 },
+    invite: {
+      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
+      inviterId: inviter, guard: 'hash_preimage_with_bond',
+    },
+    genesis_proof: {
+      boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([1, 2, 3]),
+      guard: 'unspendable',
+    },
+    bond: {
+      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 1,
+      inviteePublicKey: new Uint8Array(0), probationStartBlock: 5,
+      probationEndBlock: 1005, guard: 'bond_dual',
+    },
+    post_lock: {
+      boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
+      targetPostId: 'ab'.repeat(32), guard: 'block_apply',
+    },
+    vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+  };
+
+  // The table IS the numbering the encoder writes rather than a restatement of
+  // it — the first byte of a box's identity preimage is its tag. A table
+  // agreeing with the contract but not with `canonicalBoxBytes` would be exactly
+  // the second copy this export exists to remove.
+  it('is the numbering canonicalBoxBytes actually writes', () => {
+    for (const [boxType, tag] of Object.entries(BOX_TYPE_TAGS)) {
+      const candidate = CANDIDATE_BY_TYPE[boxType as BoxCandidate['boxType']];
+      expect(canonicalBoxBytes(candidate)[0]).toBe(tag);
+    }
+  });
+
+  // `enum8`'s domain: `0xff` is the reserved out-of-domain sentinel, so a table
+  // claiming it would let a malformed box encode as a well-formed one. A
+  // duplicate tag is an `enum8` construction throw and not a type error, which
+  // is why injectivity is checked here rather than left to the compiler.
+  it('assigns each type a distinct tag inside enum8s domain', () => {
+    const tags = Object.values(BOX_TYPE_TAGS);
+    expect(new Set(tags).size).toBe(tags.length);
+    for (const tag of tags) {
+      expect(Number.isInteger(tag)).toBe(true);
+      expect(tag).toBeGreaterThanOrEqual(0);
+      expect(tag).toBeLessThanOrEqual(0xfe);
+    }
+  });
+
+  // Both tables pinned whole. A renumber moves every id covering the tag and a
+  // guard change moves nothing, so neither may happen quietly — and the guard
+  // half is the only tripwire that side has, since the compiler checks the
+  // table against the interfaces and both would be edited together.
+  it('pins both tables', () => {
+    expect({ ...BOX_TYPE_TAGS }).toEqual({
+      karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
+    });
+    expect({ ...BOX_GUARDS }).toEqual({
+      karma: 'owner_signature',
+      credit: 'owner_signature',
+      invite: 'hash_preimage_with_bond',
+      genesis_proof: 'unspendable',
+      bond: 'bond_dual',
+      post_lock: 'block_apply',
+      vouch: 'owner_signature',
+    });
+  });
+
+  // Total over the same seven types. A consumer synthesising `guard` from the
+  // discriminator meets a table short of one type as an `undefined` guard at
+  // runtime, not as a rejection.
+  it('covers exactly the same box types', () => {
+    expect(Object.keys(BOX_GUARDS).sort()).toEqual(Object.keys(BOX_TYPE_TAGS).sort());
+  });
+
+  // A single source a consumer can write to is not one. `Object.freeze` is the
+  // runtime half of what `as const` states in the type.
+  it('exports both frozen', () => {
+    expect(Object.isFrozen(BOX_TYPE_TAGS)).toBe(true);
+    expect(Object.isFrozen(BOX_GUARDS)).toBe(true);
+  });
+
+  // The karma pin above ('guard has left the consensus bytes') generalised to
+  // every type. This is *why* a drifted guard copy has nothing to catch it, and
+  // therefore why the mapping needs one home rather than a test per consumer.
+  it('keeps every guard string out of the consensus bytes', () => {
+    for (const [boxType, guard] of Object.entries(BOX_GUARDS)) {
+      const candidate = CANDIDATE_BY_TYPE[boxType as BoxCandidate['boxType']];
+      const hex = Buffer.from(canonicalBoxBytes(candidate)).toString('hex');
+      expect(hex).not.toContain(Buffer.from(guard, 'utf8').toString('hex'));
+    }
   });
 });
