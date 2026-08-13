@@ -311,6 +311,53 @@ describe('mining routes — the peer-readiness gate', () => {
     expect(res.status).toBe(400);
   });
 
+  it('does not rewrite the payout key on a refused poll', async () => {
+    // The refusal has to be side-effect free. `miner.mjs` polls every 5s while
+    // withheld and has no give-up count, so the gate guarantees a window of
+    // refused requests — and a refusal that still assigned would let a request
+    // answering nothing choose the coinbase destination of every block this
+    // node later mines.
+    const setMinerPubkey = vi.fn();
+    const res = await request(makeApp(makeDeps({ peerReady: () => false, setMinerPubkey })))
+      .get('/template')
+      .query({ miner: MINER_HEX })
+      .set(bearer);
+
+    expect(res.status).toBe(404);
+    expect(setMinerPubkey).not.toHaveBeenCalled();
+  });
+
+  it('control: the same request sets the payout key once peer-ready', async () => {
+    const setMinerPubkey = vi.fn();
+    const res = await request(makeApp(makeDeps({ peerReady: () => true, setMinerPubkey })))
+      .get('/template')
+      .query({ miner: MINER_HEX })
+      .set(bearer);
+
+    expect(res.status).toBe(200);
+    expect(setMinerPubkey).toHaveBeenCalledTimes(1);
+    expect(Buffer.from(setMinerPubkey.mock.calls[0]![0] as Uint8Array).toString('hex'))
+      .toBe(MINER_HEX);
+  });
+
+  it('a withheld poll leaves the key the last served request set', async () => {
+    // The consequence stated end to end: an established payout survives a node
+    // dropping out of readiness, rather than being replaced by whatever the next
+    // refused poll happened to carry.
+    const applied: string[] = [];
+    let ready = true;
+    const app = makeApp(makeDeps({
+      peerReady: () => ready,
+      setMinerPubkey: (k) => { applied.push(Buffer.from(k!).toString('hex')); },
+    }));
+
+    await request(app).get('/template').query({ miner: MINER_HEX }).set(bearer);
+    ready = false;
+    await request(app).get('/template').query({ miner: 'bb'.repeat(32) }).set(bearer);
+
+    expect(applied).toEqual([MINER_HEX]);
+  });
+
   it('accepts a solved nonce while withholding — submit is not gated', async () => {
     // By the time a miner submits, the hashes are spent. Refusing the block
     // would discard work the node itself handed out a preimage for.
@@ -416,6 +463,59 @@ describe('mining routes — mount policy', () => {
       // No block creator runs in this suite, so the template is genuinely absent
       // and the *second* 404 answers. The gate is no longer the reason.
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('5a. the production gate is wired, not just the injectable one', () => {
+    // ⚠ **Every other gate case in this file injects `peerReady` through
+    // `makeDeps`, and the `createApp` cases above assert 404 in a suite with no
+    // block creator — where the template is absent whether the gate fires or
+    // not.** Measured: replacing `server.ts`'s `peerReady: isPeerReady` with
+    // `() => true` left all 1340 tests in this package green. Nothing observed
+    // the production wiring at all.
+    //
+    // A template has to EXIST for the gate to be the thing under test. Then the
+    // two answers separate: 404 is the gate, 200 is the wiring gone.
+    afterEach(async () => {
+      const bc = await import('../../src/services/block-creator.js');
+      bc.stopBlockCreator();
+    });
+
+    it('withholds a template that exists while readiness says no', async () => {
+      const bc = await import('../../src/services/block-creator.js');
+      const cfg = makeConfig({ miningSecret: SECRET });
+      bc.startBlockCreator(cfg);
+      bc.createOrderingBlock();
+      expect(bc.getCurrentTemplate()).not.toBeNull();
+
+      markDiscoveryStarted(); // bootstrap addresses configured, no peer yet
+      expect(isPeerReady()).toBe(false);
+
+      const res = await request(createApp(cfg))
+        .get('/mining/template')
+        .set('Authorization', `Bearer ${SECRET}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('No block template available');
+    });
+
+    it('control: the same app serves that template once readiness says yes', async () => {
+      const bc = await import('../../src/services/block-creator.js');
+      const cfg = makeConfig({ miningSecret: SECRET });
+      bc.startBlockCreator(cfg);
+      bc.createOrderingBlock();
+      const tpl = bc.getCurrentTemplate();
+      expect(tpl).not.toBeNull();
+
+      markDiscoveryUnavailable();
+      expect(isPeerReady()).toBe(true);
+
+      const res = await request(createApp(cfg))
+        .get('/mining/template')
+        .set('Authorization', `Bearer ${SECRET}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.header.height).toBe(tpl!.header.height);
     });
   });
 
