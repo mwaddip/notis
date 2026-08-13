@@ -24,6 +24,7 @@ import {
   MempoolFullError,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
+import { config } from '../config.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { deleteVouchCooldown, insertVouchCooldown } from '../store/vouch-cooldowns.js';
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
@@ -359,12 +360,35 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
     revertedPruneEntries.push(...revertBlock(h));
   }
 
-  // Phase 1b: roll back AVL prover to fork point
+  // Phase 1b: roll back AVL prover to fork point.
+  //
+  // A missing version here is not a case to skip past. Phase 3 would apply the
+  // peer's chain onto a prover still holding our reverted tip's tree, so the
+  // state root would stop covering the UTXO set — and that surfaces later, on
+  // some other node, as a mismatch blamed on whoever sent the next block.
+  // Refusing the reorg costs one chain switch; proceeding costs the invariant.
+  //
+  // The throw lands inside the transaction, so better-sqlite3 rolls the revert
+  // back and the catch below restores the in-memory digest: the node keeps the
+  // chain it had, which is a chain whose root it can still compute.
+  //
+  // ⚠ **Reachable by configuration, not only by corruption.** `MAX_PROOF_HISTORY`
+  // is env-tunable and `checkpointProver` prunes versions below
+  // `height - maxProofHistory`, while `MAX_REORG_DEPTH` is fixed — so a value
+  // under 20 prunes inside the window the fork walk still answers within, and
+  // `findForkPoint` reaching the genesis state makes height 0 one of the answers
+  // it can give. The message names the two numbers because their relationship is
+  // the fault.
   if (avlHandle) {
     const version = avlHandle.storage.versionAtOrBeforeHeight(forkHeight);
-    if (version) {
-      avlHandle.prover.rollback(version);
+    if (!version) {
+      throw new Error(
+        `reorg to fork height ${forkHeight}: no AVL version at or before it. ` +
+        `MAX_PROOF_HISTORY=${config.maxProofHistory} prunes versions this reorg ` +
+        `needs — it must not be below MAX_REORG_DEPTH=${MAX_REORG_DEPTH}.`,
+      );
     }
+    avlHandle.prover.rollback(version);
   }
 
   // Phase 2: re-insert reverted txs and sub-blocks to mempool
@@ -420,9 +444,17 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
  * what lets a test drive `resolveFork` against a stub peer — `reorg` and
  * `revertBlock` are reachable from a test on their own; the decision that calls
  * them is not.
+ *
+ * **`getConnectedPeers`, not `peers`, and the distinction decides a reorg.**
+ * `peers()` lists every *known* peer, including ones that have not completed —
+ * or have failed — the DAGsocial handshake; only `getConnectedPeers()` filters
+ * on Active. A peer that failed the handshake is on another network, and a
+ * counterparty chosen off the wrong list can revert this node's entire chain:
+ * below `MAX_REORG_DEPTH` the fork walk reaches the genesis state, so a stranger
+ * with more work wins at height 0.
  */
 export interface ForkResolutionNet {
-  peers(): Array<{ id: string }>;
+  getConnectedPeers(): string[];
   requestHeaders(startHeight: number, maxCount: number, peerId: string): Promise<BlockHeader[]>;
   requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]>;
 }
@@ -447,12 +479,15 @@ export async function resolveFork(
     `competing block height=${block.header.height}`,
   );
 
-  const peers = net.peers();
+  // Active peers only — the same list the readiness gate reads, for the same
+  // reason (see `ForkResolutionNet`). A handshake-failed peer must not be picked
+  // as the counterparty whose chain this node might adopt.
+  const peers = net.getConnectedPeers();
   if (peers.length === 0) {
     console.warn('Fork resolution failed: no connected peers');
     return;
   }
-  const peerId = peers[0]!.id;
+  const peerId = peers[0]!;
 
   try {
     // Request headers from competing tip going backward (newest-first)
