@@ -1015,6 +1015,24 @@ runtime strip somebody must remember:
 - **`boxRecordBytes`** — `boxContentBytes ‖ b32(txId) ‖ vlqU(index)`. What the AVL value and the
   store hold. The `id` is never encoded: it *is* the hash.
 
+**`BOX_TYPE_TAGS` is the single source of the box-type numbering, and `BOX_GUARDS` is the single
+source of the guard mapping.** Both are exported from `@dagsocial/types`, and no other package may
+declare either — node's `utxo-engine.ts`, `state/serialize-box.ts` and `store/utxo.ts` import them.
+**The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
+construction; the golden corpus's reverse tag table is a deliberate independent restatement rather
+than a copy.
+
+**The two mappings fail in opposite ways, which is why one needed this more than the other.** A
+wrong **tag** moves every box id and every `stateRoot` covering it — loudly, and everywhere. A wrong
+**guard** moves nothing at all: `guard` is absent from `canonicalBoxBytes`, so two consumers that
+disagree still compute identical ids, and the drift surfaces only as one path accepting a candidate
+another rebuilt differently.
+
+`BOX_GUARDS` is `as const satisfies` the box interfaces' own `guard` literals, so a value
+disagreeing with its interface, a missing box type, or a row for a retired one is a compile error.
+`BOX_TYPE_TAGS` gets no equivalent check for **uniqueness** — a duplicate tag is an `enum8`
+construction throw, not a type error.
+
 > ⚠ **"What the AVL value holds" means the AVL value IS `boxRecordBytes` — no wrapper, no extra
 > discriminator byte. Stated explicitly 2026-08-10 because the implicit reading cost a phase.**
 >
@@ -1414,6 +1432,27 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 ---
 
 ## Protocol Constants (`constants.ts`)
+
+### Chain reorganisation
+
+```typescript
+export const MAX_REORG_DEPTH = 20;
+```
+
+How far back a reorg reaches. Universal, not per-network. Its consumers are all in
+`@dagsocial/node`: the fork-walk bound, the block-journal retention window, and the load-time
+refusal of a `MAX_PROOF_HISTORY` beneath it. **Journal retention is the hard bound on how deep a
+reorg can physically go; the fork walk is policy**, and nothing requires the two to stay equal.
+
+⚠ **`net`'s `msg-guards.ts` is not a consumer**, though it reads like one. It mentions
+`MAX_REORG_DEPTH * 2` as *what fork resolution asks for*; the cap it actually enforces is
+`MAX_LEGACY_RESPONSE_ITEMS = 400`. The two differ by 10×, and reading the prose as the limit
+conflates a caller's request size with the bound applied to it.
+
+**It lives here because node's `config.ts` cannot reach it anywhere else.**
+`services/fork-resolution.ts` imports `config` itself, so a constant declared there is unreachable
+from config load without a cycle. A load-time rule keyed on this value is only expressible with the
+constant in this package.
 
 ### Network profiles
 
