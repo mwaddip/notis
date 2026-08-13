@@ -2,6 +2,7 @@ import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock, PruneEntry } from '@dagsocial/types';
 import {
   decodeTx,
+  MAX_REORG_DEPTH,
   MEMPOOL_EXPIRY_BLOCKS,
   computePruneEntryId,
 } from '@dagsocial/types';
@@ -38,8 +39,6 @@ import {
   UnhashableStoredHeaderError,
 } from './corrupt-state.js';
 import type { DagService } from './dag-service.js';
-
-export const MAX_REORG_DEPTH = 20;
 
 /**
  * The hash of a header from our own chain.
@@ -128,9 +127,9 @@ export function findForkPoint(
   // *blocks* is how the walk reaches the genesis state, while a height that
   // should hold a block and does not is the contiguity invariant broken.
   //
-  // The two are cleanly separable because heights start at 1 — genesis is
-  // accepted only at height 1 (`block-apply.ts:224`) and every stored header
-  // cleared `height >= 1` (`validation/verify.ts:643`) — so height 0 is the
+  // The two are cleanly separable because heights start at 1 — `applyBlockBody`
+  // accepts a first block only at height 1, and every stored header cleared
+  // `verifyOrderingBlockStructure`'s `height >= 1` — so height 0 is the
   // boundary and every height at or above 1 must be there. Those are the only
   // two cases: stored heights are integers ≥ 1, so `height - 1` is either 0 or
   // ≥ 1, with nothing in between and nothing outside.
@@ -517,11 +516,14 @@ export async function resolveFork(
 
     // Build our chain headers from fork+1 to current tip.
     //
-    // Every height in this range must hold a block. `forkHeight` is a height of
-    // *ours* (findForkPoint only returns heights out of our own hash map), the
-    // block at `currentHeight` was just read above, and the store is contiguous
-    // between them — and nothing awaits between that read and this loop, so it
-    // cannot move underneath us.
+    // Every height in this range must hold a block. `findForkPoint` answers
+    // either a height out of our own hash map or `GENESIS_HEIGHT`, which is
+    // **not** in that map — height 0 holds no block, so the walk records no hash
+    // for it. Both answers leave this range inside our chain: a mapped height is
+    // one we hold, and 0 starts the range at 1, our first block. The block at
+    // `currentHeight` was just read above, the store is contiguous between them,
+    // and nothing awaits between that read and this loop, so it cannot move
+    // underneath us.
     //
     // Skipping a missing one is the worst available handling, because of which
     // way it errs: `ourHeaders` feeds `cumulativeWork(ourHeaders)`, so a skipped

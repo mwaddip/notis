@@ -1,5 +1,6 @@
 import { createHash, verify as cryptoVerify } from 'crypto';
 import {
+  BOX_GUARDS,
   computeBoxId,
   computeTxId,
   INVITE_KARMA_THRESHOLD,
@@ -7,7 +8,7 @@ import {
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
 } from '@dagsocial/types';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, BoxGuard, KarmaBox, BondBox, InviteBox, VouchBox } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, InviteBox, VouchBox } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash `checkGuards`
@@ -600,36 +601,6 @@ function checkTransitions(
 // twin, not the consensus gate.
 
 /**
- * The one canonical guard per boxType. A guard is a pure function of the
- * discriminant — it carries zero information of its own — so any other value
- * on an output is a lie about the box, not an alternative spend policy.
- *
- * ⚠ **`guard` is NOT in the consensus bytes.** `canonicalBoxBytes` writes
- * `boxType`, `value` and the per-type tail and never the guard, so this table
- * decides nothing about the id preimage or the AVL leaf — it is an interface
- * rule the schema enforces on candidates.
- *
- * `rowToBox` (store/utxo.ts) fabricates these same constants when it rebuilds
- * a box from its row, so the two tables must still agree: an output the schema
- * accepts and a row-rebuilt box of the same type have to present the same
- * object. Deliberately NOT imported from the store — the engine owns the rule,
- * the store mirrors it.
- *
- * Keyed on every box type, including the one `OUTPUT_SHAPE` excludes: the
- * agreement with `rowToBox` is over all seven, and a genesis-seeded
- * `genesis_proof` box is rebuilt from its row like any other.
- */
-const CANONICAL_GUARD: Record<AnyBox['boxType'], BoxGuard> = {
-  karma: 'owner_signature',
-  credit: 'owner_signature',
-  vouch: 'owner_signature',
-  invite: 'hash_preimage_with_bond',
-  genesis_proof: 'unspendable',
-  bond: 'bond_dual',
-  post_lock: 'block_apply',
-};
-
-/**
  * Runtime type vocabulary for output fields (field-type pin). Every `ok`
  * predicate is total on any JS value — `validateTx`'s totality claim rides on
  * that. The schema owns every field-content rule that is a TYPE; which VALUES
@@ -1024,8 +995,8 @@ type OutputBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
  * appear; every present field must satisfy its `FieldType`.
  *
  * `boxType` and `guard` carry `null` specs: the discriminant is pinned by the
- * own-property table lookup itself, and `guard` by the CANONICAL_GUARD
- * equality — both stricter than any type check.
+ * own-property table lookup itself, and `guard` by the `BOX_GUARDS` equality
+ * below — both stricter than any type check.
  */
 const OUTPUT_SHAPE: Record<
   OutputBoxType,
@@ -1199,12 +1170,20 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
         };
       }
     }
-    if (box.guard !== CANONICAL_GUARD[boxType]) {
+    // A guard is a pure function of the discriminant — it carries zero
+    // information of its own — so any other value on an output is a lie about
+    // the box, not an alternative spend policy. `BOX_GUARDS` is that function
+    // (`TYPES_INTERFACE` → Layout — Boxes). ⚠ **`guard` is NOT in the consensus
+    // bytes**: `canonicalBoxBytes` writes `boxType`, `value` and the per-type
+    // tail and never the guard, so this decides nothing about the id preimage
+    // or the AVL leaf — it is an interface rule the schema enforces on
+    // candidates.
+    if (box.guard !== BOX_GUARDS[boxType]) {
       return {
         valid: false,
         error:
           `Invalid output shape at index ${i} (${boxType}): guard must be ` +
-          `'${CANONICAL_GUARD[boxType]}', got ${describeValue(box.guard)}`,
+          `'${BOX_GUARDS[boxType]}', got ${describeValue(box.guard)}`,
       };
     }
     for (const [key, fieldType] of Object.entries(shape.types)) {

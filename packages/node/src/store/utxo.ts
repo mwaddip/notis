@@ -6,6 +6,7 @@ import {
   recordBoxRemove,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
+import { BOX_GUARDS } from '@dagsocial/types';
 import type {
   AnyBox,
   KarmaBox,
@@ -132,9 +133,10 @@ function settledHeight(): number {
 /**
  * Reconstruct a typed box from a utxo_boxes row.
  *
- * Columns id, box_type, value and owner are read directly; `guard` is a
- * per-boxType constant reconstructed from the discriminant. Everything else is
- * parsed from the extra_data JSON column.
+ * Columns id, box_type, value and owner are read directly; `guard` comes from
+ * `BOX_GUARDS`, which `@dagsocial/types` owns as the one mapping from
+ * discriminant to guard. Everything else is parsed from the extra_data JSON
+ * column.
  *
  * `created_at_block` is deliberately NOT read: it is a store column and never a
  * box field (Spec G D3), and putting it back on the object would change every
@@ -154,7 +156,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'karma',
         value: row.value,
         owner: new Uint8Array(row.owner!),
-        guard: 'owner_signature',
+        guard: BOX_GUARDS.karma,
         proofSource: e.proofSource,
         ...prov,
       };
@@ -171,7 +173,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'credit',
         value: row.value,
         owner: new Uint8Array(row.owner!),
-        guard: 'owner_signature',
+        guard: BOX_GUARDS.credit,
         proofSource: e.proofSource,
         ...prov,
       };
@@ -188,7 +190,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         secretHash: new Uint8Array((extra as InviteExtra).secretHash),
         inviterId: hexToPubkey((extra as InviteExtra).inviterId),
-        guard: 'hash_preimage_with_bond',
+        guard: BOX_GUARDS.invite,
         ...prov,
       };
 
@@ -201,7 +203,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         // which documents the pinned constant rather than a storage guarantee.
         value: row.value as GenesisProofBox['value'],
         payload: new Uint8Array((extra as GenesisProofExtra).payload),
-        guard: 'unspendable',
+        guard: BOX_GUARDS.genesis_proof,
         ...prov,
       };
 
@@ -218,7 +220,7 @@ function rowToBox(row: UtxoRow): AnyBox {
           : new Uint8Array(0),
         probationStartBlock: e.probationStartBlock ?? 0,
         probationEndBlock: e.probationEndBlock ?? 0,
-        guard: 'bond_dual',
+        guard: BOX_GUARDS.bond,
         ...prov,
       };
     }
@@ -232,7 +234,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         originalValue: BigInt(e.originalValue),
         owner: new Uint8Array(e.owner),
         targetPostId: e.targetPostId,
-        guard: 'block_apply',
+        guard: BOX_GUARDS.post_lock,
         ...prov,
       };
     }
@@ -256,7 +258,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value as VouchBox['value'],
         voucherId: hexToPubkey(e.voucherId),
         targetId: hexToPubkey(e.targetId),
-        guard: 'owner_signature',
+        guard: BOX_GUARDS.vouch,
         ...prov,
       };
     }
@@ -313,12 +315,22 @@ export function getBoxByProvenance(txId: string, index: number): AnyBox | null {
  * `spent_at_block IS NULL` is carried for uniformity with its siblings, not
  * because the column can move — the box's `unspendable` guard is refused by
  * `checkGuards`, so no transaction can consume it.
+ *
+ * `ORDER BY id` because `LIMIT 1` alone names no row: SQLite is free to return
+ * any of the matches, so a store holding two proof boxes would answer this
+ * lookup differently between reads and `ensureGenesisProofBox` would report a
+ * different box each time it declined to create one. Two is unreachable —
+ * `OUTPUT_SHAPE` excludes `genesis_proof`, so no transaction can mint a second,
+ * and `assertEmptyBeforeGenesis` refuses to seed over a first — which is an
+ * argument about the rest of the tree, and the ordering costs nothing if it
+ * expires.
  */
 export function getGenesisProofBox(): GenesisProofBox | null {
   const row = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
        WHERE box_type = 'genesis_proof' AND spent_at_block IS NULL
+       ORDER BY id
        LIMIT 1`,
     )
     .safeIntegers()

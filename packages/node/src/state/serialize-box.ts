@@ -1,4 +1,5 @@
 import {
+  BOX_GUARDS,
   ReaderError,
   boxRecordBytes,
   boxRecordFromBytes,
@@ -11,30 +12,10 @@ import {
   writeVlqU,
   writeVlqU64OrThrow,
 } from '@dagsocial/types';
-import type { AnyBox, BoxGuard, StructCodec } from '@dagsocial/types';
+import type { AnyBox, StructCodec } from '@dagsocial/types';
 // Type-only: erased at compile time, so state/ does not gain a runtime edge
 // into the store module graph.
 import type { IdentityRecord } from '../store/identity-records.js';
-
-/**
- * `guard` per box type — the decode-side inverse of the encoder dropping it.
- *
- * `guard` is not in the value bytes (C10, `TYPES_INTERFACE` → Layout — Boxes:
- * "**`guard` is absent** — it is a pure function of `boxType`"). Omitting it is
- * lossless because every box interface declares `guard` as a **single string
- * literal**, not a union, so the discriminator determines it completely. This
- * table is that function written out, and the `Record` type makes a new box
- * type a compile error here rather than an `undefined` guard at runtime.
- */
-const GUARD_FOR: Record<AnyBox['boxType'], BoxGuard> = {
-  karma: 'owner_signature',
-  credit: 'owner_signature',
-  invite: 'hash_preimage_with_bond',
-  genesis_proof: 'unspendable',
-  bond: 'bond_dual',
-  post_lock: 'block_apply',
-  vouch: 'owner_signature',
-};
 
 /**
  * Identity-record discriminator (`NODE_INTERFACE` → "Two entity kinds").
@@ -165,7 +146,13 @@ export function deserializeIdentityRecord(bytes: Uint8Array): IdentityRecord {
  * set, so the layer below would reject it anyway; the explicit check is here to
  * say *which* kind arrived rather than "unknown tag 128".
  *
- * `guard` is reattached from `GUARD_FOR` because the bytes do not carry it.
+ * `guard` is reattached from `BOX_GUARDS` because the bytes do not carry it
+ * (`TYPES_INTERFACE` → Layout — Boxes: "**`guard` is absent** — it is a pure
+ * function of `boxType`"). Dropping it is lossless because every box interface
+ * declares `guard` as a **single string literal**, not a union, so the
+ * discriminator determines it completely; `@dagsocial/types` owns that mapping,
+ * and its `satisfies` over the box interfaces makes a new box type a compile
+ * error there rather than an `undefined` guard here.
  */
 export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   if (bytes.length > 0 && bytes[0] === IDENTITY_RECORD_TAG) {
@@ -175,7 +162,7 @@ export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   const { candidate, txId, index } = boxRecordFromBytes(bytes);
   return {
     ...candidate,
-    guard: GUARD_FOR[candidate.boxType],
+    guard: BOX_GUARDS[candidate.boxType],
     txId,
     index,
   } as Omit<AnyBox, 'id'>;
