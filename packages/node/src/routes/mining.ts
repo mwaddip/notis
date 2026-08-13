@@ -12,6 +12,13 @@ export interface MiningDeps {
   getCurrentTemplate(): OrderingBlock | null;
   submitMinedBlock(powNonce: number, height: number): string | null;
   setMinerPubkey(pubkey: Uint8Array | null): void;
+  /**
+   * Whether the node has met its peers, or has finished looking
+   * (`services/peer-readiness.ts`). A decision rather than a side effect, so it
+   * arrives as a dependency — the gate is part of this route's contract and is
+   * testable without a net instance.
+   */
+  peerReady(): boolean;
   miningSecret: string;
 }
 
@@ -69,6 +76,25 @@ export function createRouter(deps: MiningDeps): Router {
         return;
       }
       deps.setMinerPubkey(new Uint8Array(Buffer.from(minerHex, 'hex')));
+    }
+
+    // The peer-readiness gate (MINING_INTERFACE → "The peer-readiness gate").
+    //
+    // Withheld with the *same* 404 the absent-template case answers with, which
+    // is what lets `scripts/miner.mjs` treat them identically — it retries on
+    // that response and has no give-up count, so an unmet node polls until the
+    // gate opens.
+    //
+    // Behind the `?miner=` validation on purpose: a malformed payout key is a
+    // client bug and must earn its 400 whatever this node's readiness is.
+    // Answering 404 there would tell a miner to retry a request that can never
+    // succeed.
+    //
+    // Gate at serve, never at creation — `startBlockCreator` keeps building
+    // templates, so "a miner node always holds a template" stays literally true.
+    if (!deps.peerReady()) {
+      res.status(404).json({ error: 'No block template available' });
+      return;
     }
 
     const tpl = deps.getCurrentTemplate();

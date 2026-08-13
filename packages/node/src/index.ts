@@ -18,6 +18,7 @@ import { verifyPostForRelay, type VerifierDeps } from './services/verifier.js';
 import { sweepPlaceholders, hasPlaceholders } from './services/content-sweep.js';
 import { validateTx } from './services/utxo-engine.js';
 import { setNet } from './services/net-instance.js';
+import { markDiscoveryStarted, markDiscoveryUnavailable } from './services/peer-readiness.js';
 import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
@@ -283,6 +284,25 @@ try {
   await net.start();
   console.log(`Net node started, peer ID: ${net.peerId()}`);
 
+  // The discovery window opens here, and this is the only place it can.
+  //
+  // `net.start()` awaits every bootstrap dial and its handshake in sequence, so
+  // its return already IS the bootstrap-completion signal — a peer reached is
+  // Active before this line runs. What the window covers is the case that
+  // completion leaves unfinished: a dial that failed, whose next attempt is on
+  // net's 30s outbound tick (`services/peer-readiness.ts` sizes the window from
+  // that cadence).
+  //
+  // With no bootstrap address there is no dial to wait for and never will be, so
+  // such a node is ready at once rather than waiting out a window that stands
+  // for nothing.
+  if (config.bootstrapPeers.length > 0) {
+    markDiscoveryStarted();
+  } else {
+    console.log('No bootstrap peers configured — mining without waiting for a mesh');
+    markDiscoveryUnavailable();
+  }
+
   // Register storage-backed sync handler (replaces the null placeholder
   // registered during NetNode.start())
   net.setSyncHandler((subBlockId: string) => {
@@ -308,6 +328,10 @@ try {
 
 } catch (err) {
   console.warn(`Net startup failed (continuing without networking): ${String(err)}`);
+  // No networking means no dial can be attempted, so there is nothing for the
+  // window to measure. Withholding templates until it elapsed would delay a node
+  // that cannot meet a peer at all, rather than protect one that might.
+  markDiscoveryUnavailable();
 }
 
 function runContentSweep(net: NetNode, deps: VerifierDeps): void {
