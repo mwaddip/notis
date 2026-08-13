@@ -34,7 +34,6 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
         value: 100n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'genesis',
       }) as AnyBox,
     metaPut: () => {},
     metaGet: () => null,
@@ -65,7 +64,6 @@ function makeKarmaLockTx(): UtxoTransaction {
         value: 75n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'post-lock',
       } as KarmaBox,
       {
         boxType: 'post_lock',

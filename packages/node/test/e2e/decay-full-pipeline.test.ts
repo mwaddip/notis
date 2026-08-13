@@ -160,7 +160,7 @@ function postLockTx(boxes: {boxId:string,value:string}[], lockAmount:bigint, tar
   return {
     inputs: boxes.map(b=>b.boxId),
     outputs: [
-      { boxType:'karma',value:t-lockAmount,owner:pubRaw,guard:'owner_signature',proofSource:targetPostId },
+      { boxType:'karma',value:t-lockAmount,owner:pubRaw,guard:'owner_signature' },
       { boxType:'post_lock',value:lockAmount,originalValue:lockAmount,owner:pubRaw,targetPostId,guard:'block_apply' },
     ],
     signatures:{},
@@ -169,12 +169,12 @@ function postLockTx(boxes: {boxId:string,value:string}[], lockAmount:bigint, tar
 }
 function likeTx(boxes: {boxId:string,value:string}[], targetPostId: string): UtxoTransaction {
   const t = boxes.reduce((s,b)=>s+BigInt(b.value),0n);
-  return { inputs: boxes.map(b=>b.boxId), outputs: [{ boxType:'karma',value:t-LIKE_COST,owner:pubRaw,guard:'owner_signature',proofSource:targetPostId }, { boxType:'like',value:LIKE_COST,likerId:pubRaw,targetPostId,guard:'epoch_tally' }], signatures:{}, protocolVersion:PROTOCOL_VERSION };
+  return { inputs: boxes.map(b=>b.boxId), outputs: [{ boxType:'karma',value:t-LIKE_COST,owner:pubRaw,guard:'owner_signature' }, { boxType:'like',value:LIKE_COST,likerId:pubRaw,targetPostId,guard:'epoch_tally' }], signatures:{}, protocolVersion:PROTOCOL_VERSION };
 }
 function inviteTx(boxes: {boxId:string,value:string}[], secretHashHex: string): UtxoTransaction {
   const t = boxes.reduce((s,b)=>s+BigInt(b.value),0n);
   const s = INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-  return { inputs: boxes.map(b=>b.boxId), outputs: [{ boxType:'karma',value:t-s,owner:pubRaw,guard:'owner_signature',proofSource:'e2e' }, { boxType:'invite',value:INVITE_KARMA_AMOUNT,secretHash:unhex(secretHashHex),inviterId:pubRaw,guard:'hash_preimage' }, { boxType:'bond',value:INVITE_BOND_KARMA,inviterId:pubRaw,inviteOutputIndex:1,inviteePublicKey:new Uint8Array(32),probationStartBlock:0,probationEndBlock:0,guard:'inviter_signature' }], signatures:{}, protocolVersion:PROTOCOL_VERSION };
+  return { inputs: boxes.map(b=>b.boxId), outputs: [{ boxType:'karma',value:t-s,owner:pubRaw,guard:'owner_signature' }, { boxType:'invite',value:INVITE_KARMA_AMOUNT,secretHash:unhex(secretHashHex),inviterId:pubRaw,guard:'hash_preimage' }, { boxType:'bond',value:INVITE_BOND_KARMA,inviterId:pubRaw,inviteOutputIndex:1,inviteePublicKey:new Uint8Array(32),probationStartBlock:0,probationEndBlock:0,guard:'inviter_signature' }], signatures:{}, protocolVersion:PROTOCOL_VERSION };
 }
 
 beforeAll(async () => {

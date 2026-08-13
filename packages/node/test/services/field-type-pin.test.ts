@@ -128,7 +128,6 @@ describe('field-type pin', () => {
         value,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       },
       1,
     );
@@ -156,7 +155,6 @@ describe('field-type pin', () => {
       value,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
   }
 
@@ -175,8 +173,8 @@ describe('field-type pin', () => {
     const karmaOwner32 = bytes32(0x11);
     const CORPUS: Array<[string, unknown]> = [
       // -- missing fields (the class-1 validate-time-throw sites) --
-      ['karma missing owner', { boxType: 'karma', value: 10n, guard: 'owner_signature', proofSource: 't' }],
-      ['karma missing value', { boxType: 'karma', owner: karmaOwner32, guard: 'owner_signature', proofSource: 't' }],
+      ['karma missing owner', { boxType: 'karma', value: 10n, guard: 'owner_signature' }],
+      ['karma missing value', { boxType: 'karma', owner: karmaOwner32, guard: 'owner_signature' }],
       ['vouch missing voucherId', { boxType: 'vouch', value: 1n, targetId: karmaOwner32, guard: 'owner_signature' }],
       ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32, inviteOutputIndex: 0, probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }],
       ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, owner: karmaOwner32, targetPostId: 'a'.repeat(64), guard: 'block_apply' }],
@@ -188,11 +186,7 @@ describe('field-type pin', () => {
       ['karma owner 31 bytes', { ...honest('karma'), owner: new Uint8Array(31) }],
       ['karma owner 33 bytes', { ...honest('karma'), owner: new Uint8Array(33) }],
       ['karma owner as number', { ...honest('karma'), owner: 5 }],
-      ['karma proofSource as number', { ...honest('karma'), proofSource: 42 }],
       ['karma decayBurn as string', { ...honest('karma'), decayBurn: 'yes' }],
-      ['credit proofSource as string', { ...honest('credit'), proofSource: 'x' }],
-      ['credit proofSource as -0', { ...honest('credit'), proofSource: -0 }],
-      ['credit proofSource fractional', { ...honest('credit'), proofSource: 1.5 }],
       ['credit lockedUntilBlock negative', { ...honest('credit'), lockedUntilBlock: -1 }],
       ['credit lockedUntilBlock as -0', { ...honest('credit'), lockedUntilBlock: -0 }],
       ['post_lock originalValue as string (the class-3 poison)', { ...honest('post_lock'), originalValue: 'x' }],
@@ -233,9 +227,9 @@ describe('field-type pin', () => {
     function honest(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature', proofSource: 't' };
+          return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature' };
         case 'credit':
-          return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature', proofSource: 7 };
+          return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature' };
         case 'invite':
           return { boxType, value: 10n, secretHash: bytes32(0xaa), inviterId: karmaOwner32, guard: 'hash_preimage_with_bond' };
         case 'bond':
@@ -290,9 +284,9 @@ describe('field-type pin', () => {
     function honestCandidate(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', proofSource: 't', decayBurn: false };
+          return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', decayBurn: false };
         case 'credit':
-          return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', proofSource: 7, lockedUntilBlock: 5 };
+          return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', lockedUntilBlock: 5 };
         case 'invite':
           return { boxType, value: 10n, secretHash: bytes32(0xaa), inviterId: bytes32(1), guard: 'hash_preimage_with_bond' };
         case 'bond':
@@ -310,8 +304,8 @@ describe('field-type pin', () => {
     // (guard/boxType are pinned by their own arms, tested in the guard-shape
     // suite.)
     const WRONG: Record<string, Record<string, unknown>> = {
-      karma: { value: 10, owner: new Uint8Array(31), proofSource: 42, decayBurn: 1 },
-      credit: { value: -1n, owner: 'aa'.repeat(32), proofSource: 1.5, lockedUntilBlock: -1 },
+      karma: { value: 10, owner: new Uint8Array(31), decayBurn: 1 },
+      credit: { value: -1n, owner: 'aa'.repeat(32), lockedUntilBlock: -1 },
       invite: { value: 1n << 64n, secretHash: new Uint8Array(33), inviterId: 7 },
       bond: {
         value: Number.NaN,
@@ -366,20 +360,6 @@ describe('field-type pin', () => {
       expect(checkOutputShape([over] as unknown as AnyBoxCandidate[]).valid).toBe(false);
     });
 
-    it('credit proofSource -1 is accepted (the live transfer sentinel)', () => {
-      const transfer = { ...honestCandidate('credit'), proofSource: -1 };
-      const r = checkOutputShape([transfer] as unknown as AnyBoxCandidate[]);
-      expect(r.valid, r.error).toBe(true);
-    });
-
-    it('credit proofSource -5 is rejected (the value set is closed: heights or -1)', () => {
-      const lying = { ...honestCandidate('credit'), proofSource: -5 };
-      const r = checkOutputShape([lying] as unknown as AnyBoxCandidate[]);
-      expect(r.valid).toBe(false);
-      expect(r.error).toContain(
-        "field 'proofSource' must be a block height (non-negative safe integer) or -1",
-      );
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -503,7 +483,6 @@ describe('field-type pin', () => {
               value: 100n - POST_LOCK_THREAD_COST,
               owner: ownerPubKey,
               guard: 'owner_signature',
-              proofSource: 'test',
             },
             lock,
           ] as unknown as UtxoTransaction['outputs'],
@@ -524,7 +503,7 @@ describe('field-type pin', () => {
 
   describe('CBOR ingress (block funnel)', () => {
     /**
-     * ⚠ **Why the poison is `proofSource` and not `originalValue`.**
+     * ⚠ **Why the poison is a stray key and not `originalValue`.**
      *
      * A string `originalValue` on the post_lock cannot serve: `originalValue`
      * is `vlqU64`, which **throws** on a non-bigint, so the block is
@@ -532,12 +511,11 @@ describe('field-type pin', () => {
      * `computeTxId` would throw into the funnel's *totality catch* — the exact
      * path this test exists to prove is not taken.
      *
-     * So the poison has to be one whose writer is **total**, or the funnel never
-     * reaches the gate under test. `proofSource` on karma is `lpUtf8`: a number
-     * takes the unreachable sentinel instead of throwing, the transaction hashes
-     * and signs normally, and `checkOutputShape` (validateTx step 4) rejects it
-     * for being a number where the schema says string. Same property, same clean
-     * path, a poison the encoder can carry.
+     * So the poison has to be one the encoder can carry, or the funnel never
+     * reaches the gate under test. A key the layout does not declare is total by
+     * construction: `canonicalBoxBytes` writes the layout's fields positionally
+     * and never reads this one, so the transaction hashes and signs normally and
+     * `checkOutputShape` (validateTx step 4) rejects it as an unexpected key.
      *
      * Class-3 — a poison whose writer THROWS — is the case below this one. It
      * needs its own fixture rather than a variant of this one: an unhashable
@@ -556,7 +534,7 @@ describe('field-type pin', () => {
             value: 100n - POST_LOCK_THREAD_COST,
             owner: attacker.userId,
             guard: 'owner_signature',
-            proofSource: 42, // total writer (lpUtf8 sentinels), schema says string
+            note: 'x', // not in the layout: never encoded, so the tx still hashes
           },
           {
             boxType: 'post_lock',
@@ -626,7 +604,6 @@ describe('field-type pin', () => {
             value: 100n,
             owner: attacker.userId,
             guard: 'owner_signature',
-            proofSource: 'test',
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
@@ -698,7 +675,6 @@ describe('field-type pin', () => {
             value: 100n - POST_LOCK_THREAD_COST,
             owner: author.userId,
             guard: 'owner_signature',
-            proofSource: 'test',
           },
           {
             boxType: 'post_lock',

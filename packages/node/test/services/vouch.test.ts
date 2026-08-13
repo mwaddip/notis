@@ -58,7 +58,6 @@ function createKarmaBox(
       value,
       owner,
       guard: 'owner_signature' as const,
-      proofSource: 'test',
     },
     seed,
   );
@@ -162,7 +161,6 @@ describe('vouch service', () => {
       value: 99n,
       owner,
       guard: 'owner_signature',
-      proofSource: `vouch:${Buffer.from(targetId).toString('hex')}`,
     };
     const vouchBox: CandidateOf<VouchBox> = {
       boxType: 'vouch',
@@ -441,7 +439,6 @@ describe('vouch service', () => {
         value: 99n,
         owner: voucherPubKey,
         guard: 'owner_signature',
-        proofSource: `vouch:${targetPubKeyHex}`,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
 
@@ -493,7 +490,6 @@ describe('vouch service', () => {
         value: 99n,
         owner: voucherPubKey,
         guard: 'owner_signature',
-        proofSource: `vouch:${targetPubKeyHex}`,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
 

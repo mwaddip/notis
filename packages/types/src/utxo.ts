@@ -10,9 +10,7 @@ import {
   readBytesN,
   readHexN,
   readLp,
-  readLpUtf8,
   readOpt,
-  readVlqS,
   readVlqU,
   readVlqU64,
   writeArr,
@@ -20,9 +18,7 @@ import {
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
-  writeLpUtf8,
   writeOpt,
-  writeVlqS,
   writeVlqU,
   writeVlqU64OrThrow,
 } from './codec.js';
@@ -102,8 +98,8 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
  *
- *   | karma         | b32(owner) ‖ lpUtf8(proofSource) ‖ opt(decayBurn)          |
- *   | credit        | b32(owner) ‖ vlqS(proofSource) ‖ opt(lockedUntilBlock)     |
+ *   | karma         | b32(owner) ‖ opt(decayBurn)                                |
+ *   | credit        | b32(owner) ‖ opt(lockedUntilBlock)                         |
  *   | invite        | b32(secretHash) ‖ b32(inviterId)                          |
  *   | genesis_proof | lp(payload)                                               |
  *   | bond          | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
@@ -168,21 +164,10 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
   switch (box.boxType) {
     case 'karma':
       writeBytesNOrThrow(w, box.owner, 32);
-      // `lpUtf8`, not `b32`: the stamped set mixes short tags with 64-char hex
-      // ids. Node's mint paths write `mint-<height>`, `decay-<height>`,
-      // `faucet`, `faucet:system` and `genesis:system`; the demo UI's tx
-      // builders write `invite-create`, `invite-cancel`, the target PostId and
-      // the claimed invite's BoxId. Node's output-shape schema types the field
-      // a free `'string'`. A `b32` would throw on every tag-shaped one.
-      writeLpUtf8(w, box.proofSource);
       writeOpt(w, box.decayBurn, writeBool);
       return;
     case 'credit':
       writeBytesNOrThrow(w, box.owner, 32);
-      // `vlqS`, not `vlqU`: this carries `-1`, the transfer sentinel stamped on
-      // every user-path credit box (`heightOrTransfer`, node's
-      // `routes/utxo.ts`). A `vlqU` would sentinel every one of them.
-      writeVlqS(w, box.proofSource);
       writeOpt(w, box.lockedUntilBlock, writeVlqU);
       return;
     case 'invite':
@@ -268,7 +253,6 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         boxType,
         value,
         owner: readBytesN(r, 32),
-        proofSource: readLpUtf8(r),
         decayBurn: readOpt(r, readBool) ?? undefined,
       };
     case 'credit':
@@ -276,7 +260,6 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         boxType,
         value,
         owner: readBytesN(r, 32),
-        proofSource: readVlqS(r),
         lockedUntilBlock: readOpt(r, readVlqU) ?? undefined,
       };
     case 'invite':
@@ -499,8 +482,13 @@ export interface BoxRecord {
 }
 
 /**
- * A box candidate as the **bytes** carry it — every per-type field except
- * `guard`, which is not in the encoding.
+ * A box candidate as the **bytes** carry it — every per-type field except the
+ * one that has no encoding.
+ *
+ * `guard` is omitted because it is a pure function of `boxType` and is absent
+ * from the layout table. A reader cannot return it without inventing it, and a
+ * type that promised it would make every consumer's `undefined` check
+ * unreachable while the value was missing at runtime anyway.
  *
  * The omission is applied per union member, not to the union: `Omit` on a union
  * collapses it to the common keys, which here would leave `boxType` and `value`
@@ -742,7 +730,6 @@ export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   guard: 'owner_signature';
-  proofSource: string;        // Free-form tag or hex id — the stamped set is in writeBoxTypeFields
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
   decayBurn?: boolean;
@@ -754,7 +741,6 @@ export interface CreditBox extends BoxBase {
   boxType: 'credit';
   owner: Uint8Array;          // 32 raw bytes
   guard: 'owner_signature';
-  proofSource: number;        // Minting block height, OR -1: the transfer sentinel (heightOrTransfer)
   lockedUntilBlock?: number;  // Block height before which credits cannot be spent
 }
 

@@ -1,17 +1,28 @@
 import { getDb } from './db.js';
 
 /**
- * Version 2 requires the `like_records` table and
- * `identity_records.like_carry`. `CREATE TABLE IF NOT EXISTS` does not tighten
- * an existing database, so a v1 `dagsocial.db` would keep an `identity_records`
- * with no `like_carry` column and fail at the first record read — late,
- * confusing, and exactly the outcome `db.ts`'s own precedent rules out ("a DB
- * predating a schema change should fail loudly at startup; pre-stable, reset
- * acceptable"). `ensureSchemaVersion` below is that loud failure; `index.ts`
- * calls it before anything reads the store. No bespoke guard belongs alongside
- * it.
+ * Version 3 requires every `utxo_boxes.id` to derive from a preimage without
+ * `proofSource`: the karma and credit rows of the box layout carry `b32(owner)`
+ * and one option field, nothing else (TYPES_INTERFACE → Layout — Boxes).
+ * ⚠ **This is not a column leaving the schema — it is a change to how a value
+ * the schema stores is derived.** An id is computed once at mint and thereafter
+ * served verbatim: `rowToBox` returns `row.id`, and the one root comparison that
+ * could name a divergence, `assertGenesisRoot`, runs inside `seedGenesisState`,
+ * which returns early once genesis is committed. So a v2 file serves ids no peer
+ * derives while minting new ones under the current rule, and the first inbound
+ * block fails a state-root comparison naming two digests and nothing about the
+ * store.
+ *
+ * Version 2 requires the `like_records` table and `identity_records.like_carry`.
+ * `CREATE TABLE IF NOT EXISTS` does not tighten an existing database, so a v1
+ * `dagsocial.db` would keep an `identity_records` with no `like_carry` column
+ * and fail at the first record read — late, confusing, and exactly the outcome
+ * `db.ts`'s own precedent rules out ("a DB predating a schema change should fail
+ * loudly at startup; pre-stable, reset acceptable"). `ensureSchemaVersion` below
+ * is that loud failure; `index.ts` calls it before anything reads the store. No
+ * bespoke guard belongs alongside it.
  */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 /**
  * Retrieve a metadata value by key. Returns null if the key does not exist.

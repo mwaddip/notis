@@ -74,7 +74,7 @@ describe('a genesis_proof box may never be a transaction OUTPUT', () => {
   it('refuses it at any position, and leaves the other six types alone', () => {
     const karma = {
       boxType: 'karma', value: 10n, owner: new Uint8Array(32).fill(1),
-      guard: 'owner_signature', proofSource: 'test',
+      guard: 'owner_signature',
     };
     expect(checkOutputShape([karma] as unknown as AnyBoxCandidate[]).valid).toBe(true);
     const r = checkOutputShape([karma, proofCandidate()] as unknown as AnyBoxCandidate[]);
@@ -138,7 +138,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
   it('refuses it whatever the transaction tries to produce', () => {
     const karmaOut = {
       boxType: 'karma', value: 0n, owner: new Uint8Array(32).fill(2),
-      guard: 'owner_signature', proofSource: 'test',
+      guard: 'owner_signature',
     } as unknown as AnyBoxCandidate;
     const result = validateTx(deps, spend([karmaOut]), 10);
     expect(result.valid).toBe(false);
@@ -151,7 +151,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
     // rather than an accident.
     const karma = seedProvenance({
       boxType: 'karma' as const, value: 5n, owner: rawKey(),
-      guard: 'owner_signature' as const, proofSource: 'test',
+      guard: 'owner_signature' as const,
     });
     storeInsertBox(karma);
     const tx: UtxoTransaction = {

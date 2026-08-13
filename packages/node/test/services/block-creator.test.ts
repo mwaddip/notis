@@ -209,7 +209,6 @@ function makeKarmaBox(
     value,
     owner,
     guard: 'owner_signature',
-    proofSource: 'genesis',
   }, seed);
   const id = box.id;
   box.id = id;
@@ -236,7 +235,6 @@ function makeLikeTx(
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: liker.userId,
         guard: 'owner_signature',
-        proofSource: 'like_op',
       } as KarmaBox,
     ],
     signatures: {},

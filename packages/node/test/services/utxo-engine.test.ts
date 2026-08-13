@@ -153,7 +153,6 @@ describe('validateAndApplyTx', () => {
     owner: Uint8Array,
     value: bigint,
     seed: number,
-    proofSource = 'test',
   ): Stored<KarmaBox> {
     const box = seedProvenance<KarmaBox>(
       {
@@ -161,7 +160,6 @@ describe('validateAndApplyTx', () => {
         value,
         owner,
         guard: 'owner_signature' as const,
-        proofSource,
       },
       seed,
     );
@@ -210,7 +208,6 @@ describe('validateAndApplyTx', () => {
       value: 100n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -245,7 +242,6 @@ describe('validateAndApplyTx', () => {
       value: 70n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const secretHash = new Uint8Array(32).fill(0xaa);
@@ -301,7 +297,6 @@ describe('validateAndApplyTx', () => {
       value: 100n - LIKE_KARMA_COST,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx(
@@ -338,7 +333,6 @@ describe('validateAndApplyTx', () => {
       value: 100n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -360,7 +354,6 @@ describe('validateAndApplyTx', () => {
       value: 120n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -388,7 +381,6 @@ describe('validateAndApplyTx', () => {
       value: 100n,
       owner: otherPubRaw,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -409,7 +401,6 @@ describe('validateAndApplyTx', () => {
       value: 100n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     // Build tx WITHOUT the owner's signature
@@ -436,7 +427,6 @@ describe('validateAndApplyTx', () => {
       value: 100n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -476,14 +466,12 @@ describe('validateAndApplyTx', () => {
       value: 60n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
     const splitB: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 40n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test-b',
     };
 
     const tx = buildSignedTx(
@@ -519,7 +507,6 @@ describe('validateAndApplyTx', () => {
       value: 100n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -605,7 +592,6 @@ describe('validateAndApplyTx', () => {
         value: 25n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
 
       const tx: UtxoTransaction = {
@@ -636,7 +622,6 @@ describe('validateAndApplyTx', () => {
         value: 25n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
 
       const tx: UtxoTransaction = {
@@ -668,7 +653,6 @@ describe('validateAndApplyTx', () => {
         value: 25n,
         owner: new Uint8Array(32),
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
 
       const tx: UtxoTransaction = {
@@ -714,7 +698,6 @@ describe('validateAndApplyTx', () => {
         value: 25n,
         owner: inviteePubKey,
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
 
       const tx: UtxoTransaction = {
@@ -825,7 +808,6 @@ describe('validateAndApplyTx', () => {
         value: 25n,
         owner: inviteePubKey,
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
       const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
@@ -851,7 +833,6 @@ describe('validateAndApplyTx', () => {
         value: 50n,
         owner: inviteePubKey,
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
 
       const tx: UtxoTransaction = {
@@ -876,7 +857,6 @@ describe('validateAndApplyTx', () => {
         value: 25n,
         owner: inviteePubKey,
         guard: 'owner_signature',
-        proofSource: 'claim',
       };
       const bondOut: CandidateOf<BondBox> = {
         boxType: 'bond',
@@ -924,14 +904,12 @@ describe('validateAndApplyTx', () => {
         value: 100n,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
       const conjured: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 2n,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
 
       const tx = buildSignedTx(
@@ -960,7 +938,6 @@ describe('validateAndApplyTx', () => {
         value: 100n - LIKE_KARMA_COST,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
 
       const tx = buildSignedTx(
@@ -1009,7 +986,6 @@ describe('validateAndApplyTx', () => {
           value: 100n,
           owner: ownerPubKey,
           guard: 'owner_signature',
-          proofSource: 'test',
         };
 
         const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -1032,14 +1008,12 @@ describe('validateAndApplyTx', () => {
         value: 15n,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
       const negative: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 0n,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
 
       const tx = buildSignedTx(
@@ -1068,7 +1042,6 @@ describe('validateAndApplyTx', () => {
         value: 100n - POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
       const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
@@ -1101,7 +1074,6 @@ describe('validateAndApplyTx', () => {
         value: 100n - VOUCH_KARMA_AMOUNT,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
@@ -1131,7 +1103,6 @@ describe('validateAndApplyTx', () => {
         value: 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
@@ -1173,7 +1144,6 @@ describe('validateAndApplyTx', () => {
         value: 100n,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       };
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
@@ -1278,10 +1248,6 @@ describe('validateAndApplyTx', () => {
         value: 100n,
         owner: ownerPubKey,
         guard: 'owner_signature' as const,
-        // A number, per TYPES_INTERFACE — this fixture carried the string
-        // 'test' (karma's convention) until the field-type pin started
-        // checking credit proofSource's runtime type.
-        proofSource: 1,
       };
       const seededCreditBox = seedProvenance<CreditBox>(creditBox, 1);
       const creditBoxId = seededCreditBox.id;
@@ -1387,7 +1353,6 @@ describe('validateAndApplyTx', () => {
         value: SWEPT_TOTAL,
         owner: beneficiary,
         guard: 'owner_signature',
-        proofSource: `invite-cancel:${inviteBoxId}`,
       };
       return {
         inputs: [karmaInId, inviteBoxId, bondBoxId],
@@ -1411,7 +1376,7 @@ describe('validateAndApplyTx', () => {
     }
 
     it('rejects a preimage-only sweep of Invite+Bond into the attacker karma', () => {
-      const attackerKarma = createAndInsertKarma(attackerPubKey, KARMA_IN, 1, 'attacker');
+      const attackerKarma = createAndInsertKarma(attackerPubKey, KARMA_IN, 1);
       const tx = buildSweepTx(attackerPubKey, attackerKarma.id!);
       // The attacker signs only for their own KarmaBox input. The inviter
       // authorised nothing — knowing `s` is the attacker's entire claim.
@@ -1427,7 +1392,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('non-vacuity control: the inviter-signed sweep reaches the transition layer, where P2-B stops it', () => {
-      const attackerKarma = createAndInsertKarma(attackerPubKey, KARMA_IN, 1, 'attacker');
+      const attackerKarma = createAndInsertKarma(attackerPubKey, KARMA_IN, 1);
       const tx = buildSweepTx(attackerPubKey, attackerKarma.id!);
       addSignature(tx, attackerPubKey, attackerPrivKey);
       // One added signature is the only difference from the rejected tx above.
@@ -1448,7 +1413,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('still accepts a legitimate inviter cancel (uncommitted bond)', () => {
-      const inviterKarma = createAndInsertKarma(inviterPubKey, KARMA_IN, 1, 'inviter');
+      const inviterKarma = createAndInsertKarma(inviterPubKey, KARMA_IN, 1);
       const tx = buildSweepTx(inviterPubKey, inviterKarma.id!);
       addSignature(tx, inviterPubKey, inviterPrivKey);
 
@@ -1473,7 +1438,6 @@ describe('validateAndApplyTx', () => {
         value,
         owner,
         guard: 'owner_signature',
-        proofSource: 'like-quadrant',
       } as KarmaBox;
     }
 
@@ -1532,8 +1496,8 @@ describe('validateAndApplyTx', () => {
     // --- input rules --------------------------------------------------------
 
     it('multi-input like: two karma boxes, one owner, one −1 output: valid', () => {
-      const karmaA = createAndInsertKarma(ownerPubKey, 60n, 1, 'box-a');
-      const karmaB = createAndInsertKarma(ownerPubKey, 40n, 2, 'box-b');
+      const karmaA = createAndInsertKarma(ownerPubKey, 60n, 1);
+      const karmaB = createAndInsertKarma(ownerPubKey, 40n, 2);
       const tx = buildSignedTx(
         [karmaA.id!, karmaB.id!],
         [karmaOut(100n - LIKE_KARMA_COST, ownerPubKey)],
@@ -1547,8 +1511,8 @@ describe('validateAndApplyTx', () => {
     it('foreign-owner karma input mixed into a like: invalid (same-owner rule)', () => {
       const { publicKey: otherPub, privateKey: otherPriv } = generateKeyPairSync('ed25519');
       const otherRaw = rawPublicKey(otherPub);
-      const karmaA = createAndInsertKarma(ownerPubKey, 60n, 1, 'own');
-      const karmaB = createAndInsertKarma(otherRaw, 40n, 2, 'foreign');
+      const karmaA = createAndInsertKarma(ownerPubKey, 60n, 1);
+      const karmaB = createAndInsertKarma(otherRaw, 40n, 2);
 
       const tx = buildSignedTx(
         [karmaA.id!, karmaB.id!],
@@ -1570,7 +1534,6 @@ describe('validateAndApplyTx', () => {
         value: 100n,
         owner: ownerPubKey,
         guard: 'owner_signature' as const,
-        proofSource: 1,
       };
       Object.assign(creditBox, fixtureProvenance(creditBox, 1));
       const creditId = computeBoxId(creditBox as never);

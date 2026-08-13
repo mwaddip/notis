@@ -109,7 +109,6 @@ describe('stateRoot verification (P3 acceptance)', () => {
       value: 100n,
       owner: holder.userId,
       guard: 'owner_signature' as const,
-      proofSource: 0,
     }, 1);
     seeded.id = computeBoxId(seeded);
     (await importUtxo()).insertBox(seeded);

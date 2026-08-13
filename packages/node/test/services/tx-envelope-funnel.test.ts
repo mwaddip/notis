@@ -80,7 +80,6 @@ function karmaSelfSpend(id: TestIdentity, box: KarmaBox): UtxoTransaction {
         value: box.value,
         owner: id.userId,
         guard: 'owner_signature',
-        proofSource: 'genesis',
       } as unknown as KarmaBox,
     ],
     signatures: {},

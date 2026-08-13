@@ -738,17 +738,8 @@ schema for its `boxType`**:
     (credit, when present). `-0` is called out because it is JSON- and
     CBOR-reachable and breaks byte round-trips: cbor-x encodes it as a float
     where the store's JSON round-trip returns integer `0`.
-  - `proofSource` (credit): a block height **or `-1`, the transfer sentinel**
-    — the closed live value set (`heightOrTransfer`). The pin's first draft
-    said "a block height" alone; the implementing unit found every user-path
-    credit transfer and faucet grant stamps `-1` (`routes/utxo.ts` documents
-    the convention), and enforcing non-negativity broke 13 honest-path tests
-    — the invariance pin outranks a drafted bullet. Recorded in
-    `TYPES_INTERFACE` §CreditBox; the sentinel retires with P2-C row C8
-    (`proofSource` leaves the consensus bytes).
-  - `string`: `proofSource` (karma), `targetPostId` (post_lock). Type only —
-    format/length pins (hex-64 ids, byte caps) are a recorded rider, not
-    this pin.
+  - `string`: `targetPostId` (post_lock). Type only — format/length pins
+    (hex-64 ids, byte caps) are a recorded rider, not this pin.
   - `boolean`: `decayBurn` (karma, when present).
 - **Unknown `boxType` is a reject — and the schema lookup is an own-property
   lookup** (`Object.hasOwn` or equivalent), never a bare index into the
@@ -3310,7 +3301,7 @@ match its committed ids **applies different state under the same block hash**.
 The envelope arm reaches the same verdict by the obligation rather than by a separate argument: it
 runs before `computeTxId`, so a failure there means the proof was never attempted. Folding it in
 costs no liveness, and that is measured rather than reasoned — 2026-08-10, 13 envelope-valid
-transactions covering all six box types, **all nine `FieldType` values** (`u64` at `0n` and above
+transactions covering all six box types, **all nine `FieldType` values then defined** (`u64` at `0n` and above
 2⁵³, `bytes32`, `bytes0or32` at length 0, `hex32`, `heightOrTransfer` at `-1`, `uint`, `u32`,
 multibyte `string`, explicit `false`) and empty `signatures`/`inputs`/`outputs`, round-tripped
 `encodeTx` → `decodeTx` under cbor-x 1.6.4 with

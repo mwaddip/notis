@@ -367,7 +367,6 @@ function makeKarmaBox(id: string, value: bigint, height: number): AnyBox & { id:
     value,
     owner: new Uint8Array(32).fill(0x77),
     guard: 'owner_signature' as const,
-    proofSource: 'mint-1',
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, height) };
 }

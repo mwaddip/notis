@@ -128,7 +128,6 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       value,
       owner,
       guard: 'owner_signature' as const,
-      proofSource: 'test',
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -228,7 +227,6 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       value: INVITE_BOND_KARMA,
       owner: beneficiary,
       guard: 'owner_signature',
-      proofSource: 'bond-settle',
     };
     const tx: UtxoTransaction = {
       inputs: [bond.id!],
@@ -324,7 +322,6 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       value: INVITE_BOND_KARMA * 2n,
       owner: inviter.pub,
       guard: 'owner_signature',
-      proofSource: 'bond-settle',
     };
     const tx: UtxoTransaction = {
       inputs: [bondA.id!, bondB.id!],
@@ -351,7 +348,6 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       value: INVITE_BOND_KARMA,
       owner: inviter.pub,
       guard: 'owner_signature',
-      proofSource: 'bond-settle',
     };
     const tx: UtxoTransaction = {
       inputs: [bond.id!],
@@ -384,7 +380,6 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
       owner: invitee.pub,
       guard: 'owner_signature',
-      proofSource: 'invite-cancel',
     };
     const tx: UtxoTransaction = {
       inputs: [inviteeKarma.id!, invite.id!, bond.id!],
@@ -412,7 +407,6 @@ describe('P2-B bond tightening (audit F-consensus-1)', () => {
       value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
       owner: inviter.pub,
       guard: 'owner_signature',
-      proofSource: 'invite-cancel',
     };
     const tx: UtxoTransaction = {
       inputs: [inviterKarma.id!, invite.id!, bond.id!],

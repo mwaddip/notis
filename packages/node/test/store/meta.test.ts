@@ -80,8 +80,8 @@ describe('ensureSchemaVersion — the startup gate (P2-D N2a)', () => {
     closeDb();
   });
 
-  it('the current schema version is 2 (like_records + identity_records.like_carry)', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+  it('the current schema version is 3 (box ids derive from a preimage without proofSource)', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(3);
   });
 
   it('stamps a fresh database with the current version', () => {
@@ -109,17 +109,19 @@ describe('ensureSchemaVersion — the startup gate (P2-D N2a)', () => {
     expect(schemaVersion()).toBe(1);
   });
 
-  it('refuses a v1-stamped database FILE across a close/reopen — the real startup shape', () => {
-    const dbPath = path.join(os.tmpdir(), `dagsocial-v1-gate-${process.pid}-${Date.now()}.db`);
+  it('refuses a v2-stamped database FILE across a close/reopen — the real startup shape', () => {
+    const dbPath = path.join(os.tmpdir(), `dagsocial-v2-gate-${process.pid}-${Date.now()}.db`);
     try {
-      // A node stamped this file v1 and shut down…
+      // A node stamped this file v2 and shut down. Its `utxo_boxes` rows hold
+      // ids derived from a preimage that still carried `proofSource`, and
+      // nothing recomputes a stored id (`meta.ts` → CURRENT_SCHEMA_VERSION).
       initDb(dbPath);
-      writeSchemaVersion(1);
+      writeSchemaVersion(2);
       closeDb();
 
-      // …and a v2 build starts against it.
+      // …and a v3 build starts against it.
       initDb(dbPath);
-      expect(() => ensureSchemaVersion()).toThrow(/expects 2/i);
+      expect(() => ensureSchemaVersion()).toThrow(/expects 3/i);
     } finally {
       closeDb();
       for (const suffix of ['', '-wal', '-shm']) {

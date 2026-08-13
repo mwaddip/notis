@@ -260,44 +260,6 @@ describe('faucet route', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 2d: A settled faucet-origin box blocks a further grant, spent or not
-  // -----------------------------------------------------------------------
-
-  it('rejects an identity that already holds a settled faucet-origin box', async () => {
-    const pk = generateKeyPair().publicKey;
-    const box = seedProvenance<KarmaBox>({
-      boxType: 'karma' as const,
-      value: 100n,
-      owner: pk,
-      guard: 'owner_signature' as const,
-      proofSource: 'faucet',
-    }, 1);
-    insertBox(box);
-
-    const app = buildApp(deps);
-    const res = await request(app, '/faucet', 'POST', { userId: hex(pk) });
-    expect(res.status).toBe(409);
-  });
-
-  it('rejects an identity whose faucet grant has already been spent', async () => {
-    const pk = generateKeyPair().publicKey;
-    const box = seedProvenance<KarmaBox>({
-      boxType: 'karma' as const,
-      value: 100n,
-      owner: pk,
-      guard: 'owner_signature' as const,
-      proofSource: 'faucet',
-    }, 1);
-    const boxId = box.id;
-    insertBox({ ...box, id: boxId });
-    getDb().prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(5, boxId);
-
-    const app = buildApp(deps);
-    const res = await request(app, '/faucet', 'POST', { userId: hex(pk) });
-    expect(res.status).toBe(409);
-  });
-
-  // -----------------------------------------------------------------------
   // Test 3: Unknown userId → succeeds (no registration needed)
   // -----------------------------------------------------------------------
 

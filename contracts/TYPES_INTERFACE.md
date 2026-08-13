@@ -355,7 +355,6 @@ KarmaBox extends BoxBase {
   boxType: "karma"
   owner: Uint8Array            // 32 raw bytes — Ed25519 public key
   guard: "owner_signature"     // Only owner may spend
-  proofSource: string          // PostId | StumpHash | InviteTxId
   decayBurn?: boolean          // Set by the decay engine on its burn outputs; gates the decay clock
 }
 ```
@@ -370,10 +369,16 @@ Karma boxes are non-tradeable. They can only be consumed by the owner to:
 clock it nominally represented now lives in the committed per-identity record
 (`NODE_INTERFACE.md`), not on a box.
 
-> **Known defect, out of Spec G's scope:** `proofSource` is not trustworthy on a karma box.
-> Forced consolidation in `mintKarma` inherits the *first* consumed box's `proofSource`
-> arbitrarily, so provenance is lost after the first merge, and nothing reads the field. Fixed
-> by the consolidation-removal follow-up, which the karma track owns.
+**A karma box carries no provenance field.** Provenance is `txId`/`index`, both inside the id
+preimage. A mint's `txId` is `computeMintTxId(height, reason, subject)`, whose `reason` tag
+names why the karma was created; a user-path box carries the transaction that made it.
+
+⚠ **`mintKarma` still consolidates** — it consumes every unspent karma box an owner holds and
+mints one replacement — and `getKarmaBoxes` orders by value with no tie-break. That is
+identity-harmless now, because nothing the merge chooses between reaches the id preimage.
+It was not: while a free-text provenance tag was in the preimage, the merge inherited one
+arbitrarily and two nodes ordering an equal-valued pair differently derived **different box
+ids**. Removing the consolidation is a separate change and is not owed by this rule.
 
 ### CreditBox
 
@@ -382,19 +387,16 @@ CreditBox extends BoxBase {
   boxType: "credit"
   owner: Uint8Array            // 32 raw bytes
   guard: "owner_signature"
-  proofSource: number          // Minting block height, OR -1: the transfer sentinel
   lockedUntilBlock?: number    // Block height before which credits cannot be spent
 }
 ```
 
-`proofSource` on a credit box is **a block height or `-1`, nothing else** —
-the closed value set the field-type pin enforces (`heightOrTransfer`). Mint
-paths stamp the ordering-block height; every user-path transfer and faucet
-grant stamps `-1`, the "transfer" convention `routes/utxo.ts` documents. (This
-contract said "block height" alone until 2026-08-08; the field-type pin's
-executor found the live `-1` producers, and the sentinel is now the recorded
-rule. P2-C row **C8** deletes `proofSource` from the consensus bytes entirely,
-retiring the sentinel with it.)
+**A credit box carries no minting-height field.** Which block minted a credit box is
+`txId`/`index`, inside the id preimage; the box asserts nothing about its own origin.
+
+`lockedUntilBlock` is an **option**, and the tag is what keeps absence from being a value:
+an unlocked box writes a bare `u8(0)` and `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`.
+A raw `vlqU` with `0` meaning "unlocked" would give the two one id.
 
 Credits are freely transferable between any accounts. Locked credits (from
 coinbase) cannot be spent until `lockedUntilBlock` passes.
@@ -1105,8 +1107,8 @@ from this table — a use that reads every cell as an instruction rather than as
 
 | Type | Trailing fields |
 |---|---|
-| `karma` | `b32(owner)` ‖ `lpUtf8(proofSource)` ‖ `opt(decayBurn, u8)` |
-| `credit` | `b32(owner)` ‖ `vlqS(proofSource)` ‖ `opt(lockedUntilBlock, vlqU)` |
+| `karma` | `b32(owner)` ‖ `opt(decayBurn, u8)` |
+| `credit` | `b32(owner)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
 | `genesis_proof` | `lp(payload)` |
 | `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
@@ -1126,12 +1128,15 @@ row and no other — a second implementation that took the bound from `lp` itsel
 `tx.preimages`, `utxoTxs` and the block's three sections, all of which use the same primitive
 unbounded. Every other refusal these rows make belongs to the primitive named in the cell.
 
-`credit.proofSource` is `vlqS`, **not** `vlqU`: it carries `-1`, the transfer sentinel
-(`heightOrTransfer`). A `vlqU` there would throw on every user-path credit box.
+**`karma` and `credit` are the two arms with no variable-length field**, so
+`genesis_proof.payload` above is the only place inside a box where a length prefix can change
+width. Both arms are a fixed 32-byte owner and one option, and the `enum8` tag is the whole of
+what separates them at equal `value`.
 
-`karma.proofSource` is `lpUtf8` because it is typed `string` (`PostId | StumpHash | InviteTxId`) with
-no pinned length. ⚠ **Grep the producers before narrowing this to `b32`** — a bullet drafted from the
-type is a hypothesis, which is how the credit `proofSource` range broke 13 honest-path tests.
+⚠ **The option tag is what keeps absence from being a value.** An absent `lockedUntilBlock`
+writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `vlqU` with `0`
+standing for "unlocked" would give an unlocked box and a box locked until block 0 one id. The
+same holds for `decayBurn`, which is the field the decay clock reads.
 
 **`bond.inviteePublicKey` is `opt(b32)`, not `b32` — corrected 2026-08-09, and the error was this
 table's.** The field is **0-or-32 bytes**: this contract says so at the BondBox definition above
@@ -1155,8 +1160,8 @@ mapping, so `Uint8Array` stays and node's `bytes0or32` stays the domain gate.
 
 **The lesson, for every remaining layout row:** a `b32` row is a claim that the field is *always*
 exactly 32 bytes. This row was written from the field's *type* (`Uint8Array`) rather than its
-*domain*, and the domain was documented one section up. Check the producers before pinning a width —
-the same rule already stated above for `proofSource`, which was followed there and not here.
+*domain*, and the domain was documented one section up. **Check the producers before pinning a
+width.**
 
 ⚠ **It was NOT the only one, and the way that claim failed is the lesson.** This block first said
 "it is the only one", on the strength of a search for `bytes0or32` — every byte-kind entry in node's

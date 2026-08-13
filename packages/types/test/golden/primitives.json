@@ -149,7 +149,7 @@
       "codec": "vlqS",
       "value": -1,
       "bytes": "01",
-      "note": "The transfer sentinel `heightOrTransfer` carried by credit.proofSource — the reason that field is vlqS and not vlqU."
+      "note": "ZigZag interleaves the signs, so the first negative value costs one byte rather than the full width a two's-complement encoding would spend on it. Read with vlqS/one and vlqS/minus-two: -1, 1 and -2 are 01, 02 and 03."
     },
     {
       "name": "vlqS/one",

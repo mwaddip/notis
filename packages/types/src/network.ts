@@ -166,7 +166,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: '5102c07d088b4c3ab219c66a9392cef6a0b19630088e006839e955fd23ccf79403',
+  genesisStateRoot: '9644b4276b9d22c792a500eca6f7558b9f21ee8e75d23f8a848696a96139693b03',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -214,7 +214,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // Testnet and devnet seed byte-identical karma and credit boxes — same system
   // keypair, same values — so the proof box is the whole difference between
   // these two roots.
-  genesisStateRoot: 'fc6df0a1293cfe0b16e18410c4821a9a506175befba787f326184ea53d499a4603',
+  genesisStateRoot: 'ab0e17abc32dada484e7374df5183f5ff0346cacc6ad3e02ec2de3cdb1fadc7503',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 

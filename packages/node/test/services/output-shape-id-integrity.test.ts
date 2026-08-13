@@ -95,7 +95,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
         value,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 'test',
       },
       1,
     );
@@ -110,7 +109,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
         value,
         owner: ownerPubKey,
         guard: 'owner_signature',
-        proofSource: 1,
       },
       1,
     );
@@ -149,7 +147,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 'test',
     };
   }
 
@@ -252,7 +249,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value: 40n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 1,
       lockedUntilBlock: 500,
     };
     const tx = signedTx([credit.id!], [out]);
@@ -326,7 +322,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value: 40n,
       owner: ownerPubKey,
       guard: 'owner_signature',
-      proofSource: 1,
       lockedUntilBlock: -0,
     };
     const r = validateTx(deps, signedTx([credit.id!], [out]), 10);

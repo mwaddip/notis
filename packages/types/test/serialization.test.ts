@@ -156,7 +156,6 @@ function makeKarmaBox(): CandidateOf<KarmaBox> {
     value: 100n,
     owner: new Uint8Array(32).fill(0xaa),
     guard: 'owner_signature',
-    proofSource: 'genesis',
   };
 }
 
@@ -567,7 +566,19 @@ describe('positional serialization', () => {
     });
 
     it('OrderingBlock: the whole frame moved', () => {
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('91e57d42cc34321a0fe6b080ca19300c58947aa056de4b0b650cf19082c0f8eb');
+      // ⚠ **Transport, not commitment — this pin moves for reasons the others
+      // cannot.** The frame carries `utxoTxs` as `arr(utxoTxs, lp)`, opaque
+      // length-prefixed `encodeTx` output, and `encodeTx` is cbor-x over the
+      // live object: it writes whatever own properties the fixture happens to
+      // carry, key names and all. So adding or removing a *field* on a box or
+      // transaction moves this hash with no format change at all.
+      //
+      // Nothing committed follows it. `utxoTxRoot` is a Merkle root over
+      // `utxoTxIds` and `coinbaseOutputBytes` (node's `computeUtxoTxRoot`) and
+      // never reads `utxoTxs`; the id itself is `computeTxId`, positional and
+      // routed through `canonicalBoxBytes`. A move here is a consensus event
+      // only if the BlockHeader pin above moved too.
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('abbcaf3dbbf770baa5d40887fc123af4d3c6bb323aabba39f41d3a58224c7ac6');
     });
 
     it('Post: the wire codec is the id preimage plus a two-field tail', () => {

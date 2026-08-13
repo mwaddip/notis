@@ -52,7 +52,6 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
     value: 100n,
     owner,
     guard: 'owner_signature',
-    proofSource: 'genesis',
     txId: FIXTURE_TX_ID,
     index: 0,
     ...overrides,
@@ -65,7 +64,6 @@ function makeCreditBox(): CreditBox {
     value: 500n,
     owner,
     guard: 'owner_signature',
-    proofSource: 42,
     txId: FIXTURE_TX_ID,
     index: 1,
   };
@@ -198,11 +196,10 @@ describe('boxes', () => {
  * Layout — Boxes). Do not "fix" a failure by editing the hashes: the encoding is
  * protocol-breaking and unversioned.
  *
- * **`CreditBox.proofSource` carries the wide-int pin.** A karma box's canonical
- * bytes hold no numeric field beyond `value`, so without a box field above
- * 65536 the wide-int encoding path has no coverage here. `proofSource` is a
- * block height and is `vlqS`, because the same field also carries `-1`, the
- * transfer sentinel — so it pins the signed wide path specifically.
+ * **`CreditBox.value` carries the wide-int pin.** `value` is the widest number
+ * either of these two arms encodes, so the credit candidate's is deliberately
+ * 12_345_678_900_000_000 — above 2^53, the range that makes box values `bigint`
+ * and their writer the one that throws rather than sentinels.
  *
  * Candidates and boxes are separate because the derivation is layered: the
  * candidates define the transaction, the transaction defines its id, and that id
@@ -217,7 +214,6 @@ const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   value: 100n,
   owner: GOLDEN_OWNER,
   guard: 'owner_signature',
-  proofSource: 'genesis',
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
@@ -225,7 +221,6 @@ const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — the range P0 exists for
   owner: GOLDEN_OWNER,
   guard: 'owner_signature',
-  proofSource: 70000,             // > 65536 — locks the wide-int encoding path (L-5)
 };
 
 const GOLDEN_TX: UtxoTransaction = {
@@ -236,11 +231,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '4ac16757cfa8adb833a281bd48b917478457a93e21cc7b90cc7bb93cc03f423c';
+  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
 const GOLDEN_CREDIT_BOX_ID =
-  '38d81346e5a47c6043f51e1e15aee5c6048aec92b5eb07c14003ccbcd4bb2bc5';
+  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
 const GOLDEN_TX_ID =
-  '09b0c0e3fb832cd886114f0d099ec751537cef8377d7bc5a935f1ddf9c8eef62';
+  '1377c556cc3dd835e4a51c9f0186afa749cf0904a415bcea2c08a7f6fcc4c893';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -252,22 +247,20 @@ const GOLDEN_CREDIT_BOX: CreditBox = { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_
  * for every box, so this is what the demo UI's hand-written mirror is checked
  * against.
  *
- *   karma  = 00 | 64 | b32(owner)             | 07 "genesis" | 00
- *            ^tag ^vlqU(100)                    ^lpUtf8        ^opt absent
- *   credit = 01 | vlqU(12345678900000000) | b32(owner) | e0c508 | 00
- *                                                        ^vlqS(70000)
+ *   karma  = 00 | 64 | b32(owner)             | 00
+ *            ^tag ^vlqU(100)                    ^opt decayBurn absent
+ *   credit = 01 | vlqU(12345678900000000) | b32(owner) | 00
+ *                                                        ^opt lockedUntilBlock absent
  */
 const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
   '64' +                                                               // vlqU(100)
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  '07' + '67656e65736973' +                                            // lpUtf8 'genesis'
   '00';                                                                // opt decayBurn absent
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
   '80eae1eac58af715' +                                                 // vlqU(12345678900000000)
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  'e0c508' +                                                           // vlqS(70000)
   '00';                                                                // opt lockedUntilBlock absent
 
 describe('golden vectors (positional box encoding)', () => {
@@ -283,7 +276,7 @@ describe('golden vectors (positional box encoding)', () => {
     expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
   });
 
-  it('value is vlqU over the full u64; proofSource is vlqS because it carries -1', () => {
+  it('value is vlqU over the full u64', () => {
     const karmaHex = Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex');
     const creditHex = Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex');
     // 100n → one byte, where the CBOR form spent nine (`1b` + u64BE).
@@ -292,24 +285,14 @@ describe('golden vectors (positional box encoding)', () => {
     // why `value` is a bigint and its writer is the one that throws rather than
     // sentinels (the u64 wire domain has no unreachable value).
     expect(creditHex).toContain('80eae1eac58af715');
-    // `credit.proofSource` is ZigZag: the same field is `-1` on every
-    // user-path credit box (the transfer sentinel), so a `vlqU` here would
-    // sentinel every transfer the node makes. 70000 → zigzag 140000 → e0c508.
-    expect(creditHex).toContain('e0c508');
-    // Bound to a variable, not written inline: `canonicalBoxBytes` takes the
-    // `BoxCandidate` base, and excess-property checking rejects a per-type key
-    // written into a fresh literal at the call site while accepting the
-    // identical value through a variable — the file's existing idiom.
-    const transfer: CandidateOf<CreditBox> = { ...GOLDEN_CREDIT_CANDIDATE, proofSource: -1 };
-    expect(Buffer.from(canonicalBoxBytes(transfer)).toString('hex')).toContain('01');  // zigzag(-1) = 1
   });
 
   it('golden vector: full canonical identity bytes are frozen', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
-    // 43 bytes: no map header, no key names, no `guard`, and a one-byte
-    // `value`.
-    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(43);
+    // 35 bytes: no map header, no key names, no `guard`, a one-byte `value`,
+    // and a one-byte absent option.
+    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(35);
   });
 
   it('guard has left the consensus bytes (P2-C row C10)', () => {
@@ -388,9 +371,9 @@ const ALL_MINT_REASONS: MintReason[] = [
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '4ac16757cfa8adb833a281bd48b917478457a93e21cc7b90cc7bb93cc03f423c';
+  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  '38d81346e5a47c6043f51e1e15aee5c6048aec92b5eb07c14003ccbcd4bb2bc5';
+  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
 const GOLDEN_MINT_COINBASE_ID =
   'da905d0f72efd81bc5c1ed3074e28fae890d7d1140fcb7f17d155da4bc12ce18';
 const GOLDEN_MINT_DECAY_ID =
@@ -561,10 +544,10 @@ describe('bond.inviteePublicKey is opt(b32), not b32', () => {
   });
 
   it('nothing outside the bond arm moved', () => {
-    // The claim that keeps this a one-field fix rather than a third movement of
-    // everything. The five non-bond box types and the transaction that carries
-    // none are pinned at their pre-2a-iii bytes and ids — these values are
-    // carried over unchanged, so a change reaching any other arm fails here.
+    // The claim that keeps a bond-arm edit a one-field fix rather than a
+    // movement of everything: the five non-bond box types and the transaction
+    // that carries none are pinned here, so a change reaching any other arm
+    // fails at this test rather than at a moved `stateRoot` much later.
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
     expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
@@ -955,7 +938,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '09b0c0e3fb832cd886114f0d099ec751537cef8377d7bc5a935f1ddf9c8eef62' + // b32 txId
+      '1377c556cc3dd835e4a51c9f0186afa749cf0904a415bcea2c08a7f6fcc4c893' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1004,7 +987,7 @@ describe('boxRecordFromBytes', () => {
   const ALL_BOX_TYPES: [string, AnyBoxCandidate][] = [
     ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
     ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, decayBurn: true }],
-    ['credit (transfer sentinel)', { ...GOLDEN_CREDIT_CANDIDATE, proofSource: -1 }],
+    ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
     ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
     ['invite', {
       boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
@@ -1031,11 +1014,12 @@ describe('boxRecordFromBytes', () => {
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
     it(`round-trips ${label}`, () => {
-      // `guard` is not in the bytes (C10) and the reader does not invent it, so
-      // it is dropped from the expectation rather than from the assertion — the
+      // `guard` is not in the bytes and the reader does not invent it, so it is
+      // dropped from the expectation rather than from the assertion — the
       // difference between "this field is absent by design" and "this field is
-      // not compared".
-      const { guard: _guard, ...expected } = candidate as AnyBoxCandidate & { guard: string };
+      // not compared". Every other field is compared.
+      const { guard: _guard, ...expected } =
+        candidate as AnyBoxCandidate & { guard: string };
       const decoded = boxRecordFromBytes(boxRecordBytes(candidate, GOLDEN_TX_ID, 3));
       expect(decoded).toEqual({ candidate: expected, txId: GOLDEN_TX_ID, index: 3 });
     });
@@ -1524,9 +1508,9 @@ describe('transactions', () => {
       expect(computeTxId(likeA)).not.toBe(computeTxId(likeB));
     });
 
-    it('absence appends nothing: the frozen pre-P2-D golden txId is unchanged', () => {
-      // Restates the golden-vector pin as the additive-phase invariant: a tx
-      // without likeTarget hashes byte-identically to before the field existed.
+    it('absence appends nothing: a tx without likeTarget hashes to the golden txId', () => {
+      // `opt()` writes a single absent tag, so an unset `likeTarget` costs the
+      // preimage one byte in a fixed position and the golden pin covers it.
       expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
     });
 
@@ -1692,8 +1676,8 @@ describe('selectBoxes', () => {
  */
 describe('the box-type tables', () => {
   const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
-    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature', proofSource: 'genesis' },
-    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature', proofSource: 42 },
+    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature' },
+    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature' },
     invite: {
       boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
       inviterId: inviter, guard: 'hash_preimage_with_bond',

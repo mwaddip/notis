@@ -23,15 +23,19 @@ async function importAll() {
 
 const OWNER = uid('journal-owner');
 
+// `hashSeed(id)` is the provenance nonce for the same reason it is on the vouch
+// factory below: every box here shares one owner and, by default, one value, so
+// the label is what separates them and `canonicalBoxBytes` does not carry it.
+// Without the nonce two labels derive one txId and the second insert trips
+// `UNIQUE(tx_id, output_index)`.
 function makeKarmaBox(id: string, value = 100n): KarmaBox {
   const candidate = {
     boxType: 'karma' as const,
     value,
     owner: OWNER,
     guard: 'owner_signature' as const,
-    proofSource: `tx-test-${id}`,
   };
-  return { id, ...candidate, ...fixtureProvenance(candidate, 1) };
+  return { id, ...candidate, ...fixtureProvenance(candidate, 1, hashSeed(id)) };
 }
 
 // A second, non-karma box type: proves the journal records type-agnostically,

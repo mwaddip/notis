@@ -54,7 +54,6 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
     value: 100n,
     owner: OWNER,
     guard: 'owner_signature' as const,
-    proofSource: 'test',
   };
   return {
     ...candidate,

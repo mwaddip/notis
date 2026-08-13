@@ -642,7 +642,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
           value: 1n,
           owner: liker.userId,
           guard: 'owner_signature',
-          proofSource: 'like_op',
         },
       ],
       signatures: {},

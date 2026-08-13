@@ -11,7 +11,6 @@ import {
   hasPendingFaucetGrant,
   recordFaucetGrant,
 } from '../store/faucet-grants.js';
-import { hasFaucetOriginKarmaBox } from '../store/utxo.js';
 import { validateTx } from './utxo-engine.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
@@ -59,17 +58,18 @@ export interface FaucetGrantResult {
 /**
  * Throw 409 if this identity has already drawn a karma grant.
  *
- * Three sources, cheapest first, together covering every window in which a
- * grant can exist:
+ * Two sources, cheapest first, together covering every window in which a grant
+ * can exist:
  *  - the grant ledger — every grant this node has issued, pending or settled;
- *  - a faucet-origin karma box — identities funded before the ledger existed,
- *    including ones that have since spent the grant;
  *  - the mempool — a grant relayed from a peer, which leaves no local row.
+ *
+ * A settled karma box carries no faucet-origin marker, so there is no third
+ * source to read: `faucetGrant` builds an ordinary signed transaction and its
+ * `txId` has no shape distinguishing it from any other.
  */
 function assertNotAlreadyFunded(userIdBytes: Uint8Array): void {
   if (
     hasFaucetGrantRecord(userIdBytes, 'karma') ||
-    hasFaucetOriginKarmaBox(userIdBytes) ||
     hasPendingFaucetGrant(userIdBytes, 'karma')
   ) {
     throw new FaucetServiceError(
@@ -130,7 +130,6 @@ export function faucetGrant(
       value: systemBox.value - FAUCET_AMOUNT,
       owner: sysKeypair.publicKey,
       guard: 'owner_signature',
-      proofSource: 'faucet:system',
     };
 
     const userBox: CandidateOf<KarmaBox> = {
@@ -138,7 +137,6 @@ export function faucetGrant(
       value: FAUCET_AMOUNT,
       owner: userIdBytes,
       guard: 'owner_signature',
-      proofSource: 'faucet',
     };
 
     // The outputs carry no precomputed `id`, and nothing needs one: `computeTxId`

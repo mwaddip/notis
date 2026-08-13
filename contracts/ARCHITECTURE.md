@@ -209,9 +209,9 @@ content availability.
 **`UserId` is `Uint8Array` — 32 raw bytes — everywhere it appears as `UserId`.** This
 document previously said `hex(publicKey) — 64 chars`, which was never true of `Post.author`.
 
-A public key is rendered as a **hex `string`** in exactly three places, each explicitly
-typed `string` rather than `UserId`: `SubBlockEntry.author`, the `signatures` map keys,
-and `proofSource`. That is deliberate, not drift — those structures are JSON-oriented and
+A public key is rendered as a **hex `string`** in exactly two places, each explicitly
+typed `string` rather than `UserId`: `SubBlockEntry.author` and the `signatures` map keys.
+That is deliberate, not drift — those structures are JSON-oriented and
 JSON has no byte type. `SubBlockEntry` in particular is serialized through
 `JSON.stringify` into a consensus Merkle leaf, so a byte array there would encode as
 `{"0":1,"1":2,…}`.
@@ -311,9 +311,13 @@ KarmaBox {
   owner: PublicKey             // Ed25519 public key (32 bytes)
   createdAtBlock: number       // Block height when box was created
   guard: "owner_signature"     // Only the owner can spend
-  proofSource: PostId | StumpHash | InviteTxId  // Where this karma came from
 }
 ```
+
+Provenance is `txId`/`index`, not a field on the box. A mint's `txId` is
+`computeMintTxId(height, reason, subject)`, whose `reason` tag names why the karma
+was created; a user-path box carries the transaction that made it. Both are inside
+the id preimage, so provenance is committed rather than asserted.
 
 Karma can only be transferred via the **invite mechanism** (§4). Normal
 transfers between existing accounts are forbidden — this is what makes karma
@@ -395,7 +399,7 @@ CreditBox {
   value: bigint                // Credit balance (integer base units of 10⁻⁸ credit)
   owner: PublicKey
   guard: "owner_signature"
-  proofSource: BlockId         // Which ordering block minted these credits
+  lockedUntilBlock?: number    // Coinbase rewards cannot be spent before this height
 }
 ```
 
@@ -466,12 +470,11 @@ total — and `checkOutputShape` moved to `validateTx` **step 4**, ahead of the
 transition arms that dereference those fields, which is what closed the totality
 gap the same marker used to book as a queued follow-up.
 
-Two corrections that phase produced are worth keeping, because both were
-type-versus-domain errors of the kind this section is about: credit
-`proofSource` is `heightOrTransfer`, not a plain height, because production
-stamps `-1` as the transfer sentinel; and `post_lock.targetPostId` needed a
-`hex32` type added in the wire-format bundle, having been admitted as any
-`string` while `canonicalBoxBytes` wrote it with a throwing fixed-width writer.
+One correction that phase produced is worth keeping, because it was a
+type-versus-domain error of the kind this section is about:
+`post_lock.targetPostId` needed a `hex32` type added in the wire-format bundle,
+having been admitted as any `string` while `canonicalBoxBytes` wrote it with a
+throwing fixed-width writer.
 
 > ✅ **RESOLVED — the inbound obligation is now structural. Verified 2026-08-11.** This read
 > `AHEAD OF CODE` until Phase 9; the positional bundle

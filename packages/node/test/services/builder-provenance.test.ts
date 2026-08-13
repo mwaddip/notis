@@ -67,7 +67,6 @@ describe('invite id prediction carries transaction provenance', () => {
       value: 100n,
       owner: inviterId,
       guard: 'owner_signature',
-      proofSource: 'seed',
     }, 1);
     insertBox(karma);
 
@@ -76,7 +75,6 @@ describe('invite id prediction carries transaction provenance', () => {
       value: 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
       owner: inviterId,
       guard: 'owner_signature',
-      proofSource: 'create-invite',
     };
     const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',

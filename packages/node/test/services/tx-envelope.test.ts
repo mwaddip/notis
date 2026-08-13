@@ -429,7 +429,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       value,
       owner: o,
       guard: 'owner_signature' as const,
-      proofSource: 'test',
     }, 1, nonce);
     storeInsertBox(box);
     return box;
@@ -457,7 +456,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
           value: 100n,
           owner: owner.pub,
           guard: 'owner_signature',
-          proofSource: 'test',
         } as unknown as KarmaBox,
       ],
       signatures: {},
@@ -577,7 +575,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
           value: 100n - LIKE_KARMA_COST,
           owner: owner.pub,
           guard: 'owner_signature',
-          proofSource: 'test',
         } as unknown as KarmaBox,
       ],
       signatures: {},

@@ -159,7 +159,6 @@ describe('vouch routes — the JSON edge', () => {
         value,
         owner,
         guard: 'owner_signature' as const,
-        proofSource: 'test',
       },
       1,
       nonce,
@@ -198,7 +197,6 @@ describe('vouch routes — the JSON edge', () => {
       value: karmaBox.value - VOUCH_KARMA_AMOUNT,
       owner: voucher.pub,
       guard: 'owner_signature',
-      proofSource: `vouch:${target.hex}`,
     };
     const vouchOut: CandidateOf<VouchBox> = {
       boxType: 'vouch' as const,

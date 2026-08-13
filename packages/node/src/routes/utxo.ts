@@ -192,9 +192,8 @@ export function createRouter(deps: UtxoDeps): Router {
 
     // The eligibility check, the mempool insert and the grant record share one
     // transaction, so two calls for the same recipient in the same block cannot
-    // both succeed. Unlike karma, a settled credit box carries no faucet-origin
-    // marker (`proofSource` is a block height, and -1 also means "transfer"),
-    // so the grant ledger plus the mempool scan are the whole check.
+    // both succeed. A settled box carries no faucet-origin marker, so the grant
+    // ledger plus the mempool scan are the whole check.
     let outcome:
       | { ok: true; txId: string; tx: UtxoTransaction }
       | { ok: false; status: number; error: string }
@@ -230,7 +229,6 @@ export function createRouter(deps: UtxoDeps): Router {
           value: FAUCET_AMOUNT,
           owner: toBytes,
           guard: 'owner_signature',
-          proofSource: -1,
         }];
         if (change > 0n) {
           outputs.push({
@@ -238,7 +236,6 @@ export function createRouter(deps: UtxoDeps): Router {
             value: change,
               owner: sysKeypair.publicKey,
             guard: 'owner_signature',
-            proofSource: -1,
           });
         }
 

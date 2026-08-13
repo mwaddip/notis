@@ -8,11 +8,10 @@
       "value": {
         "boxType": "karma",
         "value": "100",
-        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        "proofSource": "genesis"
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300",
-      "note": "43 bytes: one tag byte, one value byte, the 32-byte owner, and a seven-byte proofSource behind its length prefix. No key names — the field list is the layout table's, so it costs nothing in the bytes. Trailing 00 is the absent decayBurn option."
+      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "note": "35 bytes, and every one of them is a field the layout table names: one tag byte, one value byte, the 32-byte owner, and the absent decayBurn option's 00. No key names — the field list is positional, so it costs nothing in the bytes. This is the smallest a karma box gets."
     },
     {
       "name": "box/karma-decay-burn",
@@ -21,11 +20,10 @@
         "boxType": "karma",
         "value": "5",
         "owner": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-        "proofSource": "decay-70000",
         "decayBurn": true
       },
-      "bytes": "0005ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0b64656361792d37303030300101",
-      "note": "The option present, and a real production proofSource. `decay-70000` is what node's decay service actually stamps — which is the evidence that karma.proofSource is lpUtf8 and not b32: a fixed-width writer would throw on every karma mint the node performs."
+      "bytes": "0005ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0101",
+      "note": "The karma arm's option present: `01` is the present tag and the second `01` is the boolean, two bytes where box/karma-minimal spends one. decayBurn is what gates the decay clock, so this is the one vector that pins the encoding of a field production reads rather than merely stores. The all-ff owner also keeps the option bytes visible against a field that is not all-ff."
     },
     {
       "name": "box/karma-value-u64-max",
@@ -33,10 +31,9 @@
       "value": {
         "boxType": "karma",
         "value": "18446744073709551615",
-        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        "proofSource": ""
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "00ffffffffffffffffff01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0000",
+      "bytes": "00ffffffffffffffffff01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
       "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a perfectly legal box value. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead — sentinelling would give a malformed box a well-formed box's id."
     },
     {
@@ -45,11 +42,10 @@
       "value": {
         "boxType": "credit",
         "value": "1",
-        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        "proofSource": -1
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "0101000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0100",
-      "note": "Why credit.proofSource is vlqS. Production stamps -1 here as the transfer marker on every user-path credit box, so an unsigned writer would sentinel every transfer the node makes. ZigZag maps -1 to 1: one byte."
+      "bytes": "0101000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "note": "The smallest credit box: value 1, the owner, and the absent lockedUntilBlock option. 35 bytes, the same width as box/karma-minimal — the two arms differ only in the tag byte and in which writer the option wraps, so the enum8 tag is the whole of what separates them here."
     },
     {
       "name": "box/credit-wide",
@@ -58,11 +54,10 @@
         "boxType": "credit",
         "value": "12345678900000000",
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        "proofSource": 70000,
         "lockedUntilBlock": 720
       },
-      "bytes": "0180eae1eac58af715000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fe0c50801d005",
-      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. proofSource 70000 is above 65536 and carries the wide-int pin: `credit.proofSource` is the box arms' only `vlqS`, and this is the vector that takes it past one byte. lockedUntilBlock present, so the option's other branch is covered on this type too."
+      "bytes": "0180eae1eac58af715000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01d005",
+      "note": "value > 2^53 — the range a `number` cannot hold, which is why box values are bigint at all. Eight VLQ bytes here; box/karma-value-u64-max carries the ten-byte maximum. lockedUntilBlock 720 is present, so the option's other branch is covered on this type and it takes vlqU past one byte: 720 is d0 05."
     },
     {
       "name": "box/invite",
@@ -179,14 +174,14 @@
     {
       "name": "box/non-minimal-value",
       "codec": "boxContent",
-      "bytes": "00e400000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300",
+      "bytes": "00e400000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
       "failure": "non-canonical",
       "note": "box/karma-minimal with `value` padded from 64 to e4 00. It decodes to 100 either way — only the re-encode compare rejects it, and this is the field a malleability attempt would target because it is what a box is worth."
     },
     {
       "name": "box/trailing-byte",
       "codec": "boxContent",
-      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0767656e6573697300ff",
+      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00ff",
       "failure": "trailing-bytes",
       "note": "box/karma-minimal plus a byte. Appended junk is a rejection, not slack — the defect class this format exists to close is junk riding inside a committed structure."
     },
@@ -205,11 +200,11 @@
       "note": "The option's PRESENT branch with 31 bytes of key instead of 32. The other half of the structural claim: `00` means absent and `01` means exactly 32 bytes, so there is no third encoding and a short key has none at all rather than sharing one with a valid bond."
     },
     {
-      "name": "box/invalid-utf8-proofSource",
+      "name": "box/karma-decay-burn-not-a-boolean",
       "codec": "boxContent",
-      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01ff00",
+      "bytes": "0064000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01ff",
       "code": "invalid-tag",
-      "note": "A one-byte proofSource of 0xff, which is not valid UTF-8 in any position. Rejected by readLpUtf8's fatal decoder rather than replaced with U+FFFD — a lossy decode would map two distinct byte strings onto one value and the re-encode compare could only report it as `non-canonical`, naming the wrong fault."
+      "note": "The karma option's PRESENT branch carrying 0xff where the boolean goes. `writeBool`'s domain is {0,1} inside a byte, so the other 254 have no encoding and the reader refuses them rather than reading any non-zero as true — a lenient reader would map 254 byte strings onto one value, and every one of them would re-encode to 01."
     }
   ]
 }

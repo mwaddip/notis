@@ -230,7 +230,6 @@ describe('posts routes', () => {
       value: 100n,
       owner: userId,
       guard: 'owner_signature',
-      proofSource: 'genesis',
     }, 1);
     const karmaBoxId = karmaBox.id;
     insertBox({ ...karmaBox, id: karmaBoxId });
@@ -248,7 +247,6 @@ describe('posts routes', () => {
       value: 100n - POST_LOCK_THREAD_COST,
       owner: userId,
       guard: 'owner_signature',
-      proofSource: 'post-lock',
     }, 1);
     const newKarmaId = newKarma.id;
 

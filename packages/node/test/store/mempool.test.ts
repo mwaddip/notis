@@ -78,7 +78,6 @@ function likeTx(targetPostId: string, likerHex: string) {
         value: 99n,
         owner: bytes(likerHex),
         guard: 'owner_signature',
-        proofSource: targetPostId,
       },
     ],
     signatures: { [likerHex]: new Uint8Array(64) },

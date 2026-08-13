@@ -79,10 +79,9 @@ function karmaBox(
     value,
     owner: o,
     guard: 'owner_signature',
-    // `seed` is a fixture discriminator, NOT a box field: it rides
-    // `proofSource` so that distinct boxes keep distinct ids. Nothing reads it
-    // back, and the journal height is what the clock assertions turn on.
-    proofSource: `p-${seed}-${value}-${decayBurn ?? 'n'}`,
+    // `seed` is a fixture discriminator, NOT a box field: `seedProvenance`
+    // hashes it into the synthetic provenance, so distinct boxes keep distinct
+    // ids. The journal height is what the clock assertions turn on.
   };
   if (decayBurn !== undefined) candidate.decayBurn = decayBurn;
   return seedProvenance<KarmaBox>(candidate, seed);
@@ -94,7 +93,6 @@ function creditBox(o: UserId, value: bigint, seed: number): Stored<CreditBox> {
     value,
     owner: o,
     guard: 'owner_signature' as const,
-    proofSource: seed,
   }, 1);
 }
 

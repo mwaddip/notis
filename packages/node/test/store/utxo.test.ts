@@ -66,7 +66,6 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
     value: 100n,
     owner: OWNER_A,
     guard: 'owner_signature' as const,
-    proofSource: 'tx-genesis-001',
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -78,7 +77,6 @@ function makeCreditBox(overrides: Partial<CreditBox> = {}): CreditBox {
     value: 1000n,
     owner: OWNER_A,
     guard: 'owner_signature' as const,
-    proofSource: 1,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -133,7 +131,7 @@ describe('utxo store', () => {
 
     initDb(':memory:');
 
-    const box = makeKarmaBox({ value: 200n, proofSource: 'tx-post-abc' });
+    const box = makeKarmaBox({ value: 200n });
     Object.assign(box, fixtureProvenance(box, 1));
     box.id = computeBoxId(box);
     insertBox(box);
@@ -144,7 +142,6 @@ describe('utxo store', () => {
     expect(result.value).toBe(200n);
     expect(result.owner).toEqual(OWNER_A);
     expect(result.guard).toBe('owner_signature');
-    expect(result.proofSource).toBe('tx-post-abc');
     // Provenance is what the row has to carry back: the box id derives from
     // `txId`/`index`, so a row that lost either reconstructs a box that no
     // longer hashes to its own key.
@@ -177,7 +174,7 @@ describe('utxo store', () => {
 
     initDb(':memory:');
 
-    const box = makeCreditBox({ value: 5000n, proofSource: 42 });
+    const box = makeCreditBox({ value: 5000n });
     Object.assign(box, fixtureProvenance(box, 1));
     box.id = computeBoxId(box);
     insertBox(box);
@@ -188,7 +185,6 @@ describe('utxo store', () => {
     expect(result.value).toBe(5000n);
     expect(result.owner).toEqual(OWNER_A);
     expect(result.guard).toBe('owner_signature');
-    expect(result.proofSource).toBe(42);
   });
 
   it("insertBox throws on the retired 'like' box type — the store has no like arm (T2b)", async () => {
@@ -309,7 +305,7 @@ describe('utxo store', () => {
 
     initDb(':memory:');
 
-    const box = makeCreditBox({ value: 999n, owner: OWNER_A, proofSource: 3 });
+    const box = makeCreditBox({ value: 999n, owner: OWNER_A });
     Object.assign(box, fixtureProvenance(box, 1));
     box.id = computeBoxId(box);
     insertBox(box);
@@ -317,7 +313,6 @@ describe('utxo store', () => {
     const found = getCreditBox(OWNER_A);
     expect(found).not.toBeNull();
     expect(found!.value).toBe(999n);
-    expect(found!.proofSource).toBe(3);
 
     // Owner without a credit box returns null
     const none = getCreditBox(OWNER_B);
@@ -568,24 +563,24 @@ describe('utxo store', () => {
     const owner = bytes(32);
     const currentHeight = 100;
 
-    const box1 = makeCreditBox({ value: 300n, owner, proofSource: 1 });
+    const box1 = makeCreditBox({ value: 300n, owner });
     Object.assign(box1, fixtureProvenance(box1, 1));
     box1.id = computeBoxId(box1);
     insertBox(box1);
 
-    const box2 = makeCreditBox({ value: 500n, owner, proofSource: 2 });
+    const box2 = makeCreditBox({ value: 500n, owner });
     box2.lockedUntilBlock = 150;
     Object.assign(box2, fixtureProvenance(box2, 1));
     box2.id = computeBoxId(box2);
     insertBox(box2);
 
-    const box3 = makeCreditBox({ value: 200n, owner, proofSource: 3 });
+    const box3 = makeCreditBox({ value: 200n, owner });
     box3.lockedUntilBlock = 50;
     Object.assign(box3, fixtureProvenance(box3, 1));
     box3.id = computeBoxId(box3);
     insertBox(box3);
 
-    const box4 = makeCreditBox({ value: 100n, owner, proofSource: 4 });
+    const box4 = makeCreditBox({ value: 100n, owner });
     Object.assign(box4, fixtureProvenance(box4, 1));
     box4.id = computeBoxId(box4);
     insertBox(box4);
@@ -605,7 +600,7 @@ describe('utxo store', () => {
     initDb(':memory:');
 
     const owner = bytes(32);
-    const box = makeCreditBox({ value: 500n, owner, proofSource: 2 });
+    const box = makeCreditBox({ value: 500n, owner });
     box.lockedUntilBlock = 200;
     Object.assign(box, fixtureProvenance(box, 1));
     box.id = computeBoxId(box);
