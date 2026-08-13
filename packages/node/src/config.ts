@@ -4,6 +4,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
+  MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
@@ -134,8 +135,40 @@ export function loadConfig(): Readonly<Config> {
   assertTreasuryKeyEncodable(cfg);
   assertGenesisProofPayloadEncodable(cfg);
   assertOrderingTargetAboveFloor(cfg);
+  assertProofHistoryCoversReorgDepth(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * `MAX_PROOF_HISTORY` must cover every height a reorg can walk back to.
+ *
+ * `checkpointProver` prunes AVL versions below `height - maxProofHistory`, while
+ * `findForkPoint` walks back a fixed `MAX_REORG_DEPTH` and can answer height 0.
+ * A `maxProofHistory` under that depth prunes inside the window the walk still
+ * answers within: `reorg` then finds no version at or before its fork height and
+ * throws, and the node keeps a chain it should have switched away from. The two
+ * numbers must be ordered, and nothing but this check orders them.
+ *
+ * Refusal, never clamping — the same rule `assertOrderingTargetAboveFloor`
+ * follows: raising a too-small value to `MAX_REORG_DEPTH` would retain history
+ * against a bound nobody configured, and failing at load puts the verdict where
+ * a human is reading it.
+ *
+ * Written as a negated `>=` rather than a `<` so the check is total on the
+ * parse: `parseInt` yields `NaN` for a non-numeric `MAX_PROOF_HISTORY`, and
+ * `NaN < MAX_REORG_DEPTH` is false — a `<` would pass the one value that makes
+ * every pruning height `NaN`.
+ */
+function assertProofHistoryCoversReorgDepth(cfg: Config): void {
+  if (!(cfg.maxProofHistory >= MAX_REORG_DEPTH)) {
+    throw new Error(
+      `MAX_PROOF_HISTORY ${cfg.maxProofHistory} is below MAX_REORG_DEPTH ` +
+        `${MAX_REORG_DEPTH} — AVL versions inside the reorg window would be ` +
+        'pruned, and a reorg reaching one of them would abort with the node ' +
+        'still on its own chain',
+    );
+  }
 }
 
 /**
@@ -195,8 +228,8 @@ function assertTreasuryKeyEncodable(cfg: Config): void {
  * alphabet instead of failing, and `writeLp` is total by sentinel rather than
  * throwing, so a malformed payload produces a **shorter payload and a different
  * genesis state root** with nothing raised anywhere. The node then runs, mines,
- * and forks from every honest peer at height 1. Refusal at load is #58's
- * precedent: put the verdict where a human is reading it.
+ * and forks from every honest peer at height 1. Refuse at load rather than
+ * clamp or default: put the verdict where a human is reading it.
  *
  * **Non-empty, and that half is not pedantry.** The proof box is the whole of
  * the difference between testnet's and devnet's genesis states — they share the
