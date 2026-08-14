@@ -28,21 +28,6 @@ export class PostValidationError extends PostServiceError {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function encodeUint32(n: number): Uint8Array {
-  const buf = new ArrayBuffer(4);
-  new DataView(buf).setUint32(0, n, true); // LE
-  return new Uint8Array(buf);
-}
-
-function decodeUint32(bytes: Uint8Array): number {
-  if (bytes.length < 4) return 0;
-  return new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, true);
-}
-
-// ---------------------------------------------------------------------------
 // Dependencies
 // ---------------------------------------------------------------------------
 
@@ -94,10 +79,6 @@ export interface PostServiceDeps {
     currentBlockHeight: number,
   ) => { valid: boolean; error?: string; computedOutputs?: AnyBox[]; txId?: string };
   getBox: (id: string) => AnyBox | null;
-
-  // Watermark tracking (dag_meta)
-  metaPut: (key: string, value: Uint8Array) => void;
-  metaGet: (key: string) => Uint8Array | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +104,7 @@ export interface PostCreateResult {
  * Phase 1 — Structural validation (stateless checks)
  * Phase 2 — Cryptographic validation (signature, PoW)
  * Phase 3 — DAG integrity (parent-hash recomputation, content-hash verification)
- * Phase 4 — Content validation + watermark advancement
+ * Phase 4 — Content validation
  *
  * Every self-reported claim (parent hashes, content hash) is independently
  * recomputed before the post enters the store. No data enters the store
@@ -185,10 +166,9 @@ export function createPost(
   // ID. The post ID is derived entirely from post fields.
   const postId = computePostId(post);
 
-  // ---- Phase 3 complete: store post, then advance indexed watermark ----
+  // ---- Phase 3 complete: store the post ----
   const rawCbor = deps.encodePost(post);
   deps.insertPost(post, rawCbor);
-  advanceWatermark(deps, 'last_indexed_sequence');
 
   // ---- Validate the karma-lock tx ----
   const txResult = deps.validateTx(karmaLockTx, currentHeight);
@@ -254,10 +234,6 @@ export function createPost(
   deps.insertMempoolSubBlock(postId, expiresAtHeight, batchId);
   deps.insertUtxoTx(karmaLockTx, batchId, expiresAtHeight);
 
-  // ---- Phase 4 complete: advance validated watermark ----
-  // All content checks passed; the post is safe for external queries.
-  advanceWatermark(deps, 'last_validated_sequence');
-
   return {
     postId,
     status: 'pending',
@@ -266,21 +242,4 @@ export function createPost(
     subBlock,
     karmaLockTx,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Watermark helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Advance a monotonically-increasing watermark in dag_meta.
- * Used to track the boundary between indexed and validated posts.
- */
-function advanceWatermark(
-  deps: PostServiceDeps,
-  key: 'last_indexed_sequence' | 'last_validated_sequence',
-): void {
-  const current = deps.metaGet(key);
-  const seq = current ? decodeUint32(current) : 0;
-  deps.metaPut(key, encodeUint32(seq + 1));
 }

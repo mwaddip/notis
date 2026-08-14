@@ -22,7 +22,7 @@ import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
 import { getDb } from './store/db.js';
-import { validateTx } from './services/utxo-engine.js';
+import { validateTx, KARMA_BOX_TYPES } from './services/utxo-engine.js';
 import { createAdminRouter } from './routes/admin.js';
 import { registerProofEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
@@ -237,8 +237,6 @@ export function createApp(config: Config): express.Express {
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
       getBox: store.getBoxWithPending,
-      metaPut: store.metaPut,
-      metaGet: store.metaGet,
     }),
   );
 
@@ -387,7 +385,24 @@ export function createApp(config: Config): express.Express {
             )
             .get() as { c: number }
         ).c,
+      // Karma in existence, escrow included: karma locked in a post lock, a
+      // bond, an invite or a vouch is held, not destroyed. The family comes
+      // from `KARMA_BOX_TYPES`, which the engine's karma transition arm reads
+      // too, so the two cannot name different sets.
       getTotalKarma: () => {
+        const row = db
+          .prepare(
+            `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+              WHERE box_type IN (${KARMA_BOX_TYPES.map(() => '?').join(', ')})
+                AND spent_at_block IS NULL`,
+          )
+          .safeIntegers()
+          .get(...KARMA_BOX_TYPES) as { s: bigint };
+        return row.s;
+      },
+      // Karma its owner can spend now — the escrowed four are excluded by
+      // construction.
+      getLiquidKarma: () => {
         const row = db
           .prepare(
             "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL",

@@ -20,8 +20,10 @@ import type {
   OrderingBlock,
   Post,
   PostLockBox,
+  Stump,
   UtxoTransaction,
 } from '@dagsocial/types';
+import type { StoredPost } from '../../src/store/posts.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
@@ -131,7 +133,7 @@ async function importAvl() {
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (post: Post, rawCbor: Uint8Array) => void;
-    getPost: (id: string) => Post | null;
+    getPost: (id: string) => StoredPost | Stump | null;
   };
 }
 

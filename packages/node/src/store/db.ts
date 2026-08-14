@@ -364,6 +364,20 @@ function migrateMempoolTxColumns(database: Database.Database): void {
 }
 
 /**
+ * Drop the two `dag_meta` counters `last_indexed_sequence` and
+ * `last_validated_sequence`. Nothing writes them and nothing reads them; a
+ * store carried over from a node that wrote them keeps the rows otherwise, and
+ * a `dag_meta` key that survives its only writer reads as live state.
+ */
+function migrateDropValidationCounters(database: Database.Database): void {
+  database
+    .prepare(
+      `DELETE FROM dag_meta WHERE key IN ('last_indexed_sequence', 'last_validated_sequence')`,
+    )
+    .run();
+}
+
+/**
  * Partial indexes over the mempool gate-metadata columns (audit M-8). Created
  * after the mempool migrations so they land on whichever CREATE TABLE ran last.
  * A database predating the gate columns fails loudly here at startup rather
@@ -411,6 +425,7 @@ export function initDb(path: string): void {
   migrateVerifiablePrune(db);
   migrateVouchCooldowns(db);
   migrateMempoolTxColumns(db);
+  migrateDropValidationCounters(db);
   createMempoolGateIndexes(db);
 
   emitDbOpenComplete(Date.now() - startedAt);

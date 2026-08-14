@@ -113,9 +113,6 @@ export {
 } from './system.js';
 export type { SystemKeypair } from './system.js';
 
-export type { PostStore, StoreEntry } from './post-store.js';
-export { SqlitePostStore } from './sqlite-store.js';
-
 export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
 export { metaGet, metaPut, metaDelete, metaHas } from './meta.js';

@@ -24,7 +24,6 @@ import {
 import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
-import { metaPut, metaGet } from '../../src/store/meta.js';
 import { insertSubBlock as insertMempoolSubBlock, insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
@@ -80,8 +79,6 @@ async function request(
       getCurrentHeight,
       insertMempoolSubBlock,
       insertUtxoTx,
-      metaPut,
-      metaGet,
       validateTx: (tx: UtxoTransaction, height: number) => {
         return validateTx(
           {

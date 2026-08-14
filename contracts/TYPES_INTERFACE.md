@@ -1823,28 +1823,6 @@ above it.
 
 ---
 
-## PostStore Interface Types
-
-`StoreEntry`:
-```
-{
-  typeId: uint8,
-  id: bytes[32],
-  sequence: uint32,
-  data: bytes
-}
-```
-
-`PeerRecord`:
-```
-{
-  peerId: string,
-  lastSeenMs: uint64,
-  addresses: string[],
-  features: bytes
-}
-```
-
 ## Journal Event Types
 
 `JournalEvent`:

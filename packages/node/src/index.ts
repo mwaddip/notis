@@ -22,7 +22,6 @@ import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
-import { SqlitePostStore } from './store/sqlite-store.js';
 import { extendsOurTip, resolveFork } from './services/fork-resolution.js';
 import { failStopIfCorruptChain } from './services/corrupt-state.js';
 import {
@@ -141,8 +140,7 @@ const deps = {
 };
 
 // DagService — owns canonical branch population and DAG reorg logic
-const postStore = new SqlitePostStore();
-const dagService = new DagService(postStore);
+const dagService = new DagService();
 setDagServiceForMiner(dagService);
 
 // 3. Register Stage 2 handlers
@@ -402,11 +400,12 @@ const server = app.listen(config.port, () => {
   // host, so the public API has no configured bind address — only the admin
   // server does — and which interface Node chose is a fact only the bound
   // socket holds. `address()` is an `AddressInfo` here: this is a TCP server
-  // inside its own listening callback.
+  // inside its own listening callback. Both events report the same read, so a
+  // dual-stack host cannot get two answers to one question.
   const bound = server.address() as { address: string; port: number };
   emitApiListening(bound.address, bound.port);
   emitServerReady(
-    `0.0.0.0:${config.port}`,
+    `${bound.address}:${bound.port}`,
     `${config.adminBindAddress}:${config.adminPort}`,
     Date.now() - startTime,
   );

@@ -12,7 +12,10 @@ export interface BlocksDeps {
   getCurrentHeight(): number;
   getPostCount(): number;
   getPendingPostCount(): number;
+  /** Karma in existence — every box of the karma family, escrow included. */
   getTotalKarma(): bigint;
+  /** Karma its owner can spend now — `karma` boxes alone. */
+  getLiquidKarma(): bigint;
   getTotalCredits(): bigint;
   networkType: string;
   /**
@@ -123,6 +126,7 @@ export function createRouter(deps: BlocksDeps): Router {
       postCount: deps.getPostCount(),
       pendingPosts: deps.getPendingPostCount(),
       totalKarma: deps.getTotalKarma().toString(),
+      liquidKarma: deps.getLiquidKarma().toString(),
       totalCredits: deps.getTotalCredits().toString(),
       // A plain number, unlike the two decimal strings above — it is not a
       // bigint server-side (`Config.inviteProbationBlocks`).

@@ -9,6 +9,7 @@ import {
   createOrderingBlock,
 } from '../../src/store/ordering.js';
 import { createRouter } from '../../src/routes/blocks.js';
+import { KARMA_BOX_TYPES } from '../../src/services/utxo-engine.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { unlinkSync } from 'fs';
@@ -89,6 +90,17 @@ async function request(
       // number here than the node would. A mock that diverges arithmetically
       // from the interface it stands for is testing its own arithmetic.
       getTotalKarma: () => {
+        const row = db
+          .prepare(
+            `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+              WHERE box_type IN (${KARMA_BOX_TYPES.map(() => '?').join(', ')})
+                AND spent_at_block IS NULL`,
+          )
+          .safeIntegers()
+          .get(...KARMA_BOX_TYPES) as { s: bigint };
+        return row.s;
+      },
+      getLiquidKarma: () => {
         const row = db
           .prepare(
             "SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE box_type = 'karma' AND spent_at_block IS NULL",
@@ -225,11 +237,52 @@ describe('blocks routes', () => {
     expect(typeof body.postCount).toBe('number');
     expect(typeof body.pendingPosts).toBe('number');
     expect(typeof body.totalKarma).toBe('string');
+    expect(typeof body.liquidKarma).toBe('string');
     expect(typeof body.totalCredits).toBe('string');
     expect(body.networkType).toBe('testnet');
     // A number, not a decimal string — the two above are bigint server-side and
     // this one is not (NODE_INTERFACE → Status).
     expect(body.inviteProbationBlocks).toBe(1000);
     expect(typeof body.inviteProbationBlocks).toBe('number');
+  });
+
+  // -------------------------------------------------------------------------
+  // `totalKarma` is karma in existence and `liquidKarma` is karma its owner can
+  // spend now (NODE_INTERFACE → the `/status` row). One box of each karma-family
+  // type, so a sixth type added to `KARMA_BOX_TYPES` without a fixture here
+  // shows up as a sum that no longer matches rather than as silent
+  // under-counting.
+  // -------------------------------------------------------------------------
+
+  it('GET /status counts escrowed karma in totalKarma and only spendable karma in liquidKarma', async () => {
+    const db = getDb();
+    const insert = db.prepare(
+      `INSERT INTO utxo_boxes
+         (id, box_type, value, created_at_block, spent_at_block, owner, guard, tx_id, output_index)
+       VALUES (?, ?, ?, 1, ?, NULL, 'owner_signature', ?, 0)`,
+    );
+    const seeded: Array<[string, bigint]> = [
+      ['karma', 7n],
+      ['invite', 11n],
+      ['bond', 13n],
+      ['post_lock', 5n],
+      ['vouch', 1n],
+    ];
+    for (const [boxType, value] of seeded) {
+      insert.run(`box-${boxType}`, boxType, value, null, `tx-${boxType}`);
+    }
+    // The other ledger, and a spent box: neither sum may reach either.
+    insert.run('box-credit', 'credit', 100n, null, 'tx-credit');
+    insert.run('box-spent-karma', 'karma', 1000n, 2, 'tx-spent-karma');
+
+    const res = await request('/status');
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+
+    const expectedTotal = seeded.reduce((sum, [, value]) => sum + value, 0n);
+    expect(seeded.map(([boxType]) => boxType)).toEqual([...KARMA_BOX_TYPES]);
+    expect(body.totalKarma).toBe(expectedTotal.toString());
+    expect(body.liquidKarma).toBe('7');
+    expect(body.totalCredits).toBe('100');
   });
 });
