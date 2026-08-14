@@ -336,10 +336,36 @@ function migrateVouchCooldowns(database: Database.Database): void {
 }
 
 /**
+ * `tx_inputs` — the JSON array of box ids a pooled transaction spends, lifted at
+ * insert so the conflicting-spend gate is plain SQL over every row, on the same
+ * principle as the like/invite/vouch gate columns above.
+ *
+ * An ALTER rather than a column in a CREATE TABLE, because every mempool CREATE
+ * TABLE in this file is superseded: `migrateVerifiablePrune` drops and recreates
+ * the table on a fresh database, and returns early on one that already ran it.
+ * A single ALTER pass is the one statement that reaches both.
+ *
+ * Rows written before this pass hold NULL, and `json_each` reads NULL as zero
+ * rows rather than raising — a pre-migration entry therefore matches no conflict
+ * query and blocks no admission.
+ */
+function migrateMempoolTxInputs(database: Database.Database): void {
+  const cols = database.prepare("PRAGMA table_info('mempool')").all() as Array<{ name: string }>;
+  if (cols.some(c => c.name === 'tx_inputs')) return;
+
+  database.exec(`ALTER TABLE mempool ADD COLUMN tx_inputs TEXT`);
+}
+
+/**
  * Partial indexes over the mempool gate-metadata columns (audit M-8). Created
  * after the mempool migrations so they land on whichever CREATE TABLE ran last.
  * A database predating the gate columns fails loudly here at startup rather
  * than silently at the first insert — pre-stable, DB reset acceptable.
+ *
+ * `idx_mempool_tx_inputs` covers a membership test, not a lookup: a B-tree over
+ * the JSON text cannot resolve `json_each(...) WHERE value = ?`. It earns its
+ * place as the covering index the scan reads, which is also what confines the
+ * scan to rows that carry inputs at all.
  */
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
@@ -351,6 +377,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(vouch_voucher) WHERE vouch_voucher IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_subblock_id
       ON mempool(subblock_id) WHERE subblock_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_tx_inputs
+      ON mempool(tx_inputs) WHERE tx_inputs IS NOT NULL;
   `);
 }
 
@@ -373,6 +401,7 @@ export function initDb(path: string): void {
   migrateBlockTopology(db);
   migrateVerifiablePrune(db);
   migrateVouchCooldowns(db);
+  migrateMempoolTxInputs(db);
   createMempoolGateIndexes(db);
 
   emitDbOpenComplete(Date.now() - startedAt);

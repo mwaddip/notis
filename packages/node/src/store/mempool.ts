@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
 import { config } from '../config.js';
+import { ClientError } from '../services/client-error.js';
 import type {
   UtxoTransaction,
   PruneEntry,
@@ -19,6 +20,27 @@ export class MempoolFullError extends Error {
   constructor(public readonly cap: number) {
     super(`Mempool full: at capacity (${cap} entries)`);
     this.name = 'MempoolFullError';
+  }
+}
+
+/**
+ * Thrown by `insertUtxoTx` when one of the transaction's inputs is already
+ * spent by an entry the pool holds.
+ *
+ * Two pooled transactions naming one box put both into one block, where the
+ * first spends the box and the second cannot apply — the state a block is
+ * invalid for carrying (NODE_INTERFACE → the apply funnel's block validity).
+ * Refusing at admission is what keeps this node from composing such a block.
+ *
+ * A `ClientError`, so the refusal reaches the submitter as its own message
+ * rather than a generic 500: a pool declining a conflicting spend is an
+ * intentional rejection, not a fault. 409, because the request is well formed
+ * and conflicts with state the pool already holds.
+ */
+export class PendingSpendConflictError extends ClientError {
+  constructor(public readonly boxId: string) {
+    super(`Input ${boxId} is already spent by a pending transaction`, 409);
+    this.name = 'PendingSpendConflictError';
   }
 }
 
@@ -135,12 +157,18 @@ export function insertUtxoTx(
 ): number {
   const db = getDb();
   assertCapacity(db);
+
+  const inputs = tx.inputs ?? [];
+  const conflict = hasPendingSpend(inputs);
+  if (conflict !== null) throw new PendingSpendConflictError(conflict);
+
   const cbor = encodeTx(tx);
   const meta = gateMetadata(tx);
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_cbor, batch_id, expires_at_height,
-                          like_target, like_liker, invite_inviter, vouch_voucher)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?)`,
+                          like_target, like_liker, invite_inviter, vouch_voucher,
+                          tx_inputs)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(cbor),
     batchId,
@@ -149,6 +177,7 @@ export function insertUtxoTx(
     meta.likeLiker,
     meta.inviteInviter,
     meta.vouchVoucher,
+    JSON.stringify(inputs),
   );
   return Number(result.lastInsertRowid);
 }
@@ -184,6 +213,30 @@ export function hasPendingVouch(voucherId: string): boolean {
     `SELECT 1 FROM mempool WHERE vouch_voucher = ? LIMIT 1`,
   ).get(voucherId);
   return row !== undefined;
+}
+
+/**
+ * The first of `boxIds` already spent by a pending entry, or `null` when none
+ * is. Returned rather than a boolean so the refusal can name the box that
+ * collided instead of only reporting that one did.
+ *
+ * `tx_inputs IS NOT NULL` is what the partial index covers, and it is the whole
+ * filter needed: sub-block and prune rows carry no inputs, and a row written
+ * before the column existed reads as zero `json_each` rows.
+ */
+export function hasPendingSpend(boxIds: string[]): string | null {
+  if (boxIds.length === 0) return null;
+  const db = getDb();
+  const stmt = db.prepare(
+    `SELECT 1 FROM mempool
+      WHERE tx_inputs IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_inputs) WHERE value = ?)
+      LIMIT 1`,
+  );
+  for (const id of boxIds) {
+    if (stmt.get(id) !== undefined) return id;
+  }
+  return null;
 }
 
 /**

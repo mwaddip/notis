@@ -23,6 +23,8 @@ async function importMempoolFresh() {
     hasPendingLike: (targetPostId: string, likerId: string) => boolean;
     countPendingInvites: (inviterId: string) => number;
     hasPendingVouch: (voucherId: string) => boolean;
+    hasPendingSpend: (boxIds: string[]) => string | null;
+    PendingSpendConflictError: new (boxId: string) => Error;
     insertMempoolPrune: (entry: any, expiresAtHeight: number) => number;
     drainMempoolPrunes: (limit: number) => any[];
     removeMempoolPrunes: (entryIds: string[]) => void;
@@ -448,6 +450,94 @@ describe('mempool store', () => {
       const row = getDbRow();
       expect(row.like_target).toBeNull();
       expect(row.like_liker).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Conflicting-spend gate
+  //
+  // Two pooled transactions naming one input is the state that puts a
+  // transaction into a block it cannot apply in: the first spends the box, the
+  // second's input is then dead. The gate is at the insert chokepoint because
+  // that is the only place every admission path passes through.
+  // -------------------------------------------------------------------------
+
+  describe('conflicting spends', () => {
+    const BOX_A = '41'.repeat(32);
+    const BOX_B = '42'.repeat(32);
+
+    /** A transaction whose only interesting property is which boxes it spends. */
+    const spendTx = (inputs: string[]) => ({
+      inputs,
+      outputs: [],
+      signatures: {},
+      protocolVersion: 1,
+    });
+
+    it('refuses a second pending spend of the same box', async () => {
+      const mem = await importMempoolFresh();
+
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000)).toThrow(
+        mem.PendingSpendConflictError,
+      );
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000)).toThrow(
+        /already spent by a pending/i,
+      );
+    });
+
+    it('admits two transactions spending different boxes', async () => {
+      const mem = await importMempoolFresh();
+
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+
+      expect(() => mem.insertUtxoTx(spendTx([BOX_B]) as any, null, 1000)).not.toThrow();
+      expect(mem.getPendingEntries(10)).toHaveLength(2);
+    });
+
+    it('refuses on any shared input, not only the first', async () => {
+      const mem = await importMempoolFresh();
+
+      mem.insertUtxoTx(spendTx([BOX_B]) as any, null, 1000);
+
+      // BOX_A is free; the conflict is on the second input, and the error names
+      // the box that actually collided rather than the first one checked.
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A, BOX_B]) as any, null, 1000)).toThrow(
+        new RegExp(BOX_B),
+      );
+    });
+
+    it('hasPendingSpend names the conflicting box and is null when there is none', async () => {
+      const mem = await importMempoolFresh();
+
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+
+      expect(mem.hasPendingSpend([BOX_A])).toBe(BOX_A);
+      expect(mem.hasPendingSpend([BOX_B])).toBeNull();
+      expect(mem.hasPendingSpend([])).toBeNull();
+    });
+
+    it('an entry written before the column existed blocks nothing', async () => {
+      // Rows predating `migrateMempoolTxInputs` hold NULL, and `json_each` reads
+      // NULL as zero rows rather than raising — so a pre-migration entry matches
+      // no conflict query. Asserted rather than assumed.
+      const mem = await importMempoolFresh();
+      const { getDb } = await importDbFresh();
+
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+      getDb().prepare('UPDATE mempool SET tx_inputs = NULL').run();
+
+      expect(mem.hasPendingSpend([BOX_A])).toBeNull();
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000)).not.toThrow();
+    });
+
+    it('a sub-block entry carries no inputs and blocks nothing', async () => {
+      const mem = await importMempoolFresh();
+
+      mem.insertSubBlock('post_x', 1000);
+
+      expect(mem.hasPendingSpend([BOX_A])).toBeNull();
     });
   });
 
