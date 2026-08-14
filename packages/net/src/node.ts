@@ -993,7 +993,7 @@ export class NetNode {
        * The decline paths `MSG_GET_HEADERS` and `MSG_GET_BLOCKS` share.
        *
        * Every one of them answers — see the arms below for why silence is the
-       * failure mode this migration has to design against. The two arms differ
+       * failure mode to design against on this stream. The two arms differ
        * only in which decoder produced `request` and which serve loop turns it
        * into a frame, so both live at the call site and everything around them
        * lives here.

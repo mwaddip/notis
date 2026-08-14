@@ -322,10 +322,9 @@ describe('Two-node integration', () => {
   }, TIMEOUT);
 
   it('node B fetches headers from node A over the framed sync stream', async () => {
-    // The live measurement the migration's security claim rests on: the serve
-    // arm drops anything from a peer that is not Active, so this only passes if
-    // node A's inbound handshake with node B has completed by the time B asks.
-    // A separate protocol served anyone who dialled.
+    // The live measurement of the Active gate: the serve arm drops anything
+    // from a peer that is not Active, so this only passes if node A's inbound
+    // handshake with node B has completed by the time B asks.
     //
     // The protocol is registered by start() and both arms resolve the provider
     // per request, so this passes with the provider set either side of start().

@@ -516,10 +516,9 @@ describe('sync stream handler — the chain query arms', () => {
     const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3) });
 
     // A body that is not two heights — `0xff` opens a VLQ that never closes.
-    // Unlike our own store failing, this is the peer's doing, and it is
-    // attributable because it arrived over a stream that knows who sent it.
-    // That attribution is what the protocol this replaced could not do: its
-    // handler took `{ stream }` only and never looked at the connection.
+    // Unlike our own store failing, this is the peer's doing, and the arm
+    // attributes it: the request arrived over a stream that knows who sent it,
+    // so the sender is a peer that can be penalized.
     const written = await send(encodeFrame(MAGIC, MSG_GET_HEADERS, new Uint8Array([0xff])));
 
     expect(isEmptyReply(written)).toBe(true);

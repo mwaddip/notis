@@ -215,10 +215,10 @@ describe('chain query request encode/decode', () => {
   });
 
   it('carries no discriminator, so the two bodies are interchangeable bytes', () => {
-    // The `mode` field is gone and nothing replaced it inside the body: the same
-    // two vlqU fields decode under either codec. What tells the serve arms apart
-    // is the frame code, which is why an arm never trusts the body to say which
-    // query it is.
+    // Nothing inside the body says which query this is — the same two vlqU
+    // fields decode under either codec. What tells the serve arms apart is the
+    // frame code, which is why an arm never trusts the body to say which query
+    // it is.
     const body = bodyOf(encodeGetHeaders(MAGIC, { startHeight: 7, maxCount: 2 }), MSG_GET_HEADERS);
     expect(decodeGetBlocks(body)).toEqual({ startHeight: 7, endHeight: 2 });
   });
@@ -241,7 +241,7 @@ describe('chain query request encode/decode', () => {
     expect(decodeGetBlocks(new Uint8Array([0x81, 0x00, 0x03]))).toBeNull();
   });
 
-  it('rejects the cbor-x dialect these requests replaced', () => {
+  it('rejects a cbor-x map body under either code', () => {
     expect(decodeGetHeaders(new Uint8Array(encode({ startHeight: 10, maxCount: 5 })))).toBeNull();
     expect(
       decodeGetBlocks(new Uint8Array(encode({ startHeight: 1, endHeight: 3, mode: 'blocks' }))),
