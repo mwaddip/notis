@@ -624,14 +624,29 @@ Stump {
    binding (`authorId` equals the `block_topology`-recorded author of the
    root; unconfirmed roots are not prunable), Ed25519 signature, postId set
    against block_topology, Merkle root, then settles UTXO deterministically
-   (consumes the subtree's PostLockBoxes, mints `prune-refund-author` karma,
-   deletes the subtree's like-records — journalled; P2-D)
+   (consumes the subtree's PostLockBoxes, mints `prune-refund-author` karma
+   **to every lock owner except the pruning author**, deletes the subtree's
+   like-records — journalled; P2-D)
 7. The simplified Stump is inserted, derived from the verified entry —
    unconditionally, so a node holding no DAG content records the same
    stump — then DAG content is pruned when present
 
 No validator attestation is needed — the author's signature authorizes the
 prune, and the settlement is deterministically computable from UTXO state.
+
+> ⚠ **AHEAD OF CODE.** `settlePruneUtxo` refunds every lock in the subtree,
+> the pruning author's own included.
+
+**Destroying your own post costs you its bond; destroying someone else's reply
+returns theirs.** `PostLockBox.owner` against the entry's `authorId` decides
+which, from committed state alone — no `block_topology` read. Refunding the
+pruner made post → prune → repost a free loop that recycled the same karma
+forever, and the same rule sets **withdrawal's** price: a withdrawn post burns
+its author's remaining lock and mints nothing.
+
+⚠ **The descendant-count price is NOT part of this rule.** Charging the pruner
+for the replies they destroy is a separate consensus transition and is not
+specified here.
 
 #### Cryptographic guarantees
 
@@ -894,104 +909,102 @@ interval and `EPOCH_BLOCKS` · `LIKE_COST` · `LIKE_THRESHOLD` · `LIKE_MAX_AUTH
 
 ## Invite System
 
-The network is invite-only. An existing account must vouch for every new
-account. Invites are hash-locked karma boxes — the invitee doesn't need a
-keypair until they're ready to claim.
+The network is invite-only. An existing account must stake for every new
+account, and **the invite is the network's only source of karma** — nothing else
+creates it after genesis.
+
+> ⚠ **AHEAD OF CODE.** The tree still has the hash-locked bearer invite, its
+> commit step, and no forfeiture.
+
+An invite names its invitee. Bob gives Alice his public key out of band; from
+there each of them acts under their own signature and no secret exists anywhere
+in the flow.
 
 ### Invite creation
-
-Alice creates an invite for Bob:
-
-1. Alice generates a random secret `s`
-2. Alice gives `s` to Bob out of band
-3. Alice constructs a UTXO transaction:
 
 ```
 Consume: Alice's karma box (K karma)
 
 Create:
-  1. Alice's remaining karma box:  K - N - D
-  2. Invite karma box:             N karma
-     Guard: H(s_preimage) == H(s) ∧ recipient_pubkey not already an account
-     (Bob claims by revealing s and his pubkey)
-  3. Bond box:                     D karma
-     Guard: Alice's signature
-     Unlock conditions:
-       ├── Bob.karma ≥ INVITE_KARMA_THRESHOLD within probation → Alice claims
-       ├── Bob.karma < KARMA_POSTING_MINIMUM during probation      → burned
-       └── Probation expires (block H + INVITE_PROBATION_BLOCKS)  → Alice claims
+  1. Alice's remaining karma box:  K − B
+  2. InviteBox:                    0 karma      — a named right to mint
+     inviterId = Alice, inviteePublicKey = Bob
+     Guard: invite_dual — Bob's signature claims, Alice's cancels
+  3. BondBox:                      B karma
+     inviterId = Alice, inviteePublicKey = Bob
+     Guard: block_apply — nobody can spend it
 ```
 
-The invite is a bearer instrument — anyone holding `s` can claim it. Bob can
-pass `s` to Carol if he chooses not to join.
-
-The node implements this as a two-phase **commit → claim**: the invitee first
-commits, binding their public key to the bond, then claims. The bond-commit
-guard requires a **valid signature from the committed public key**, so revealing
-the preimage `s` alone does not authorize a commit and a commit cannot bind a
-key the committer does not control (audit H-2). This does **not** remove the
-bearer front-run: because `s` names no specific invitee, an observer who learns
-`s` can commit under their own key. Binding the invite to a specific invitee at
-creation — which would close the front-run — is deferred to the karma-econ
-emission-model design (the same track that owns bond settlement).
+**Alice pays only the bond.** `G` does not exist yet: the invite is a right to
+mint it, and creation therefore conserves value like any other transaction.
+Bob's key must never have been invited before — an address may be invited
+**once, ever** — which is checked here so that a second inviter's bond is never
+locked against an invite that could not have been claimed. Being barred costs an
+uninvited party nothing: with no karma they have never posted, so the identity
+carries nothing and a new keypair costs a keygen.
 
 ### Invite claim
 
-Bob generates a keypair, then constructs a claim transaction:
-
 ```
-Consume: Invite karma box (N karma, guarded by H(s))
-         (Bob reveals s as preimage, provides his pubkey as recipient)
+Consume: InviteBox (0 karma, Bob signs)
 
 Create:
-  1. Bob's karma box: N karma (Bob's first box — account exists now)
+  1. Bob's karma box: G karma — MINTED. Bob's account exists now
 ```
+
+The bond is not an input. This is the only transaction in the system that may
+create karma, and the conservation gate admits a surplus of exactly `G` in this
+shape and no other. The claim is also what starts the clock: block application
+records the height on Bob's identity record, which both dates the probation and
+bars his key from any further invite.
 
 ### Invite cancellation
 
-Alice may cancel an unclaimed invite at any time:
-
 ```
-Consume: Invite karma box (N karma, guarded by Alice's signature)
+Consume: InviteBox (0 karma, Alice signs)
 
-Create:
-  1. Alice's karma box: Alice's current karma + N (return)
+Create:  (nothing)
 ```
 
-The bond box is also reclaimable by Alice if the invite is canceled (the bond
-is tied to the invite — cancelling the invite cancels the bond).
+The bond returns to Alice through block application, resolved by Bob's key.
+Alice's cancel transaction does not name the bond and could not spend it.
+
+**An invite never expires.** It stays claimable until Alice cancels it, and her
+bond stays locked for exactly that long — which is the whole of the rate limit.
+An account can fund `K / B` concurrent invites and no more, so leaving invites
+open costs Alice her own capacity and no rule has to bound it.
 
 ### Bond outcomes
 
+The bond settles **once**, at `invitedAtBlock + INVITE_PROBATION_BLOCKS`, and
+reads one thing: how many likes Bob has received in his life.
+
 | Scenario | Bond karma | Significance |
 |----------|------------|--------------|
-| Bob reaches `INVITE_KARMA_THRESHOLD` within probation | Returned to Alice | Alice vetted a good member |
-| Bob's karma drops below `KARMA_POSTING_MINIMUM` during probation | Burned | Alice vouched for a bad actor |
-| Probation expires without Bob reaching threshold | Returned to Alice | Bob was fine, just didn't cross the threshold |
+| Alice cancels before Bob claims | Returned to Alice | No account was created |
+| Bob received ≥ 5·B likes by the deadline | Returned to Alice in full | Alice vouched for someone the network valued |
+| Bob received fewer | `floor(likes / 5)` returned, **the rest burned** | Alice's stake was partly forfeit |
+| Bob never engaged | Burned entirely | Alice vouched for nobody |
 
-**Enforcement status (P2-B phase 1).** The two "returned to Alice" rows are
-consensus rules in their spend-time form: a committed bond spends only to a
-karma box **owned by Alice**, when probation has expired or Bob's current
-summed karma meets the threshold (NODE_INTERFACE → "Bond transition rules").
-The **burn row is not implemented and has no legal transition** — "dropped
-below during probation" is a historical predicate needing per-block bond
-scanning, and the karma-econ vesting design (design track §1.2) replaces bond
-settlement wholesale, so the scanner would be built for deletion. Until that
-lands, a bond is never destroyed; the paragraph below describes the *intended*
-economics, not running code.
+Vesting is `min(floor(inviteeLifetimeLikes / 5), B)` — one karma per five likes.
+Nothing else is consulted: not Bob's balance, not whether he is still active, not
+when the likes arrived. **A single evaluation at the deadline is arithmetically
+identical to accruing instalments**, because the vested amount is a pure function
+of a lifetime count, which is why no per-block bond pass exists and a `BondBox` is
+byte-identical from creation to the block that consumes it.
 
-Burned karma is permanently destroyed — not redistributed. This creates
-deflationary pressure on karma supply and makes invite decisions consequential.
+Burned karma is permanently destroyed — not redistributed. Against the invite
+mint on the other side, a failed invite is a **net loss of karma to the network**
+and a fully successful one is a net gain.
 
 ### Invite parameters
 
 | Parameter | Description |
 |-----------|-------------|
-| `MAX_PENDING_INVITES` | Maximum concurrent unclaimed invites per account |
-| `INVITE_MIN_KARMA` | Minimum karma transferred in an invite (= `KARMA_POSTING_MINIMUM`) |
-| `INVITE_BOND_KARMA` | Karma deposit locked during probation |
-| `INVITE_PROBATION_BLOCKS` | Probation window in blocks |
-| `INVITE_KARMA_THRESHOLD` | Invitee's karma target for early bond return |
+| `INVITE_MIN_KARMA` | Minimum karma an account must hold to invite (= `KARMA_POSTING_MINIMUM`) |
+| `INVITE_KARMA_AMOUNT` | Karma minted to the invitee at claim (`G`) |
+| `INVITE_BOND_KARMA` | Karma the inviter locks at creation (`B`) |
+| `INVITE_PROBATION_BLOCKS` | Blocks from the claim to bond settlement |
 
 ---
 
@@ -1160,7 +1173,7 @@ before multi-node operation rather than after it.
 ```
 
 1. **Genesis:** Committee mints initial karma/credit boxes
-2. **Invite:** Committee invites first users via hash-locked invite boxes
+2. **Invite:** Committee invites first users, each invite naming one public key
 3. **Account creation:** Invitee claims invite with keypair → karma box exists
 4. **Posting:** User requests challenge from node, constructs post, solves
    PoW → sub-block + karma-lock UTXO tx → mempool (batch-linked by postId)
@@ -1581,29 +1594,20 @@ forever. A node rejects objects with an unsupported protocol version.
 ### Identity
 
 - An account comes into existence via first UTXO box appearance
-- Invite secrets are hash-locked, portable bearer instruments
-- An invite can be cancelled by the inviter (before claim) or claimed by the
-  preimage holder
-  > ⚠ **QUALIFIED — "bearer instrument" is no longer the whole story. Verified 2026-08-11.**
-  > §Invite System records that a commit now requires a signature from the committed key
-  > (audit H-2), so the preimage alone is not sufficient. This bullet was not updated when that
-  > landed 200 lines above it.
-- Invite bonds are lost if the invitee's karma drops below the posting minimum
-  during probation
-  > ⚠ **VIOLATED — narrowed 2026-08-10, re-verified 2026-08-11. The failure this marker
-  > described is closed; a different one remains, and it is the rule itself.** All three checks
-  > it called missing exist, in `node/src/services/utxo-engine.ts`'s bond-settlement arm: the
-  > settlement karma output must be owned by the **inviter** (which closes "the bond can be
-  > taken by the invitee" outright), `probationExpired` requires probation to have elapsed, and
-  > `thresholdMet` requires the invitee's karma to reach `INVITE_KARMA_THRESHOLD`. **All three
-  > line pins here still resolved correctly** — unlike the three in §Karma decay, which had all
-  > rotted.
-  >
-  > **What remains unimplemented is forfeiture — there is no such path at all.** Nothing burns
-  > the bond when the invitee's karma drops below the posting minimum during probation.
-  > Settlement returns it to the inviter once probation expires *or* the threshold is met, so
-  > an invitee who never engages costs the inviter a wait rather than the bond. The rule is
-  > right and stays.
+- An invite names one public key and is claimable only by it. There is no secret,
+  no preimage and no bearer form
+- An invite can be cancelled by its inviter until it is claimed, and never expires
+  otherwise
+- An address can be invited **once, ever**
+- Invite bonds vest against the invitee's lifetime likes and the unvested part is
+  **burned** at the probation deadline
+  > ⚠ **AHEAD OF CODE**, and this bullet is the one that changes most. The tree
+  > settles a bond by returning it to the inviter in full — on probation expiry *or*
+  > on the invitee's current karma balance — and has no burn path of any kind, which
+  > its own engine says in the error string *"bond forfeiture is not implemented; no
+  > burn shape exists"*. A bond today is therefore an escrow that always pays back,
+  > and the balance leg fires the moment the invitee claims. **Forfeiture is
+  > introduced here, not repaired here.**
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
   > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
   > Usernames become a **UTXO asset**: tradeable for
@@ -1615,9 +1619,20 @@ forever. A node rejects objects with an unsupported protocol version.
 
 - Karma supply changes only via the mint reasons (NODE_INTERFACE's mint-reason table is
   the **authoritative enumeration** — derive from it, never maintain a parallel list here;
-  a hand-kept mirror of it had already diverged once) and exactly two burns: **decay**, and
+  a hand-kept mirror of it had already diverged once) and exactly three burns: **decay**,
   **the like burn** — `LIKE_KARMA_COST` leaves the liker per like, `x−1` per `x` returns
-  via `like-payout`, net 1 burned per `LIKES_PER_KARMA_PAYOUT` likes.
+  via `like-payout`, net 1 burned per `LIKES_PER_KARMA_PAYOUT` likes — and **bond
+  forfeiture**, the unvested remainder destroyed at a bond's settlement.
+  > ⚠ **AHEAD OF CODE**, and it is the whole of karma emission. Only **one** reason on
+  > that table increases supply after genesis: `invite-claim`. `bond-settle` and
+  > `bond-return` re-mint value a `BondBox` already held, exactly as `vouch-settle`
+  > re-mints an escrow. **Read the table's own note before deriving a supply figure from
+  > it** — a reason that mints is not the same as a reason that creates.
+  >
+  > Every source and sink is therefore an **invite**: `G` enters when one is claimed, and
+  > the unvested part of `B` leaves when the bond settles. Supply grows only as fast as
+  > the network admits members who earn likes, and shrinks when it admits members who do
+  > not — on top of decay and the like burn, which run against everyone.
 - Total credit supply = genesis + ordering block rewards - future sinks
   > ⚠ **QUALIFIED — true in shape, but "total" is currently unbounded. Verified 2026-08-11.**
   > The reward function has **no terminus**: `block-creator.ts` floors it at
@@ -2073,11 +2088,10 @@ fresh. Namespacing keeps the option open to split into separate stores later
   > tier and no epoch — `node/src/services/likes.ts` states the rule at its head ("no free tier,
   > no refund"). The **free-like tier has no producer anywhere in the node** — correctly never
   > built rather than a gap. See §Likes.
-- Invite system: hash-locked bearer invites, bond/probation, cancel
-  > ⚠ **PARTIAL. Verified 2026-08-11.** A commit now requires a signature from the committed key
-  > (H-2), so "bearer" is qualified; and **bond forfeiture on probation failure is not enforced** —
-  > the invitee can take the bond. `node/src/services/utxo-engine.ts` states this at its bond
-  > section: *"Forfeiture is not implemented"*, and records that the economics design owns it.
+- Invite system: key-named invites, bond vesting against likes, cancel
+  > ⚠ **AHEAD OF CODE.** The tree has hash-locked bearer invites with a commit step, and
+  > no forfeiture — `node/src/services/utxo-engine.ts` says so at its bond section:
+  > *"Forfeiture is not implemented"*. See §Invite System for the shape that replaces it.
 - ~~Post karma locking with gradual unlock at epoch boundaries~~
   > ⚠ **PARTIAL. Verified 2026-08-11** — `PostLockBox` is a live interface in
   > `types/src/utxo.ts` and a member of the `AnyBox` union. The post bond is real and stays — it is

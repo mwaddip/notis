@@ -191,7 +191,7 @@ Two shapes, not one:
 
 ```
 interface BoxCandidate {              // the shared BASE — no per-type fields
-  boxType: "karma" | "credit" | "like" | "invite" | "bond" | "post_lock" | "vouch"
+  boxType: "karma" | "credit" | "invite" | "genesis_proof" | "bond" | "post_lock" | "vouch"
   value: bigint                // integer base units — uniform bigint (see "Value denomination")
 }
 
@@ -411,34 +411,70 @@ historical debugging ambiguous forever.
 
 ### InviteBox
 
+> ⚠ **AHEAD OF CODE.** The tree still carries `secretHash`, the
+> `hash_preimage_with_bond` guard, and a commit transition.
+
 ```
 InviteBox extends BoxBase {
   boxType: "invite"
-  value: bigint                       // N karma transferred
-  secretHash: Uint8Array(32)          // H(s) — blake2b512(s).subarray(0,32)
-  inviterId: UserId
-  guard: "hash_preimage_with_bond"    // H(s_preimage) == secretHash ∧ committed BondBox present
+  value: bigint                       // Always 0 — a claim ticket, not a container
+  inviterId: UserId                   // May cancel
+  inviteePublicKey: Uint8Array(32)    // May claim — the key INVITE_KARMA_AMOUNT mints to
+  guard: "invite_dual"                // invitee signature (claim) OR inviter signature (cancel)
 }
 ```
 
-Cancel path: inviter provides the preimage to spend the InviteBox alongside
-an uncommitted BondBox. Reveal path: invitee provides the preimage alongside a
-BondBox committed to their pubkey.
+**The box carries no value because the karma does not exist yet.** An invite is a
+named right to mint, held open until one of the two parties acts: the invitee
+spends it into a `KarmaBox` of `INVITE_KARMA_AMOUNT`, which is where the mint
+happens, or the inviter spends it to nothing and takes their bond back. There is
+no secret and no preimage — each party proves who they are with an ordinary
+Ed25519 signature over the transaction, so `hash_preimage_with_bond` and
+`hash_preimage` both go.
+
+**An invite never expires.** With no deadline there is no sweep and no
+`expiryBlock` field; an unclaimed invite stays claimable until the inviter
+cancels it, and their bond stays locked for exactly as long. Their `K /
+INVITE_BOND_KARMA` capacity absorbs the cost, which is what makes the rate limit
+self-enforcing without a rule.
+
+`'hash_preimage_with_bond'` and `'bond_dual'` join the **reserved** guard strings
+under BoxGuard below — box content, inside the box-id preimage, on the same
+argument that reserved `'epoch_tally'`.
 
 ### BondBox
+
+> ⚠ **AHEAD OF CODE.** The tree still carries `inviteOutputIndex`, both probation
+> fields, the `bond_dual` guard, and an `inviteePublicKey` that begins empty.
 
 ```
 BondBox extends BoxBase {
   boxType: "bond"
-  value: bigint                       // D karma deposited
+  value: bigint                       // B karma deposited by the inviter
   inviterId: UserId                   // Owner — the inviter
-  inviteOutputIndex: number           // Output index of the paired InviteBox in the creating tx — (txId, index) names it until C9 pins the box id at commit
-  inviteePublicKey: Uint8Array        // empty = unclaimed, 32 bytes = committed
-  probationStartBlock: number         // Set during commit
-  probationEndBlock: number           // probationStartBlock + INVITE_PROBATION_BLOCKS
-  guard: "bond_dual"                  // inviter_signature (reclaim) OR hash_preimage (commit)
+  inviteePublicKey: Uint8Array(32)    // Set at creation — the key the paired invite names
+  guard: "block_apply"                // Consumable only by block application
 }
 ```
+
+**A `BondBox` is byte-identical from creation to the block that consumes it**, and
+the field list is what makes that true. `inviteOutputIndex` goes with the pairing
+it expressed: an address can be invited only once, so `inviteePublicKey` names the
+paired invite by itself and no output index is needed. Both probation fields go
+too — the window runs from the **claim**, not the creation, and the claim height
+is already recorded as `IdentityRecord.invitedAtBlock` (`NODE_INTERFACE` →
+Identity Records), so carrying it here would be a second copy of committed state.
+
+**There is no `originalValue`,** and the contrast with `PostLockBox` below is the
+reason. A post lock vests per block, so its current and initial values differ and
+both have to be carried. A bond settles **once**, for
+`min(floor(inviteeLifetimeLikes / 5), value)` — a pure function of the invitee's
+lifetime like count, which makes a single evaluation arithmetically identical to
+accumulated instalments. No partial state exists to record.
+
+**Nothing spends a bond.** Creation, claim, cancellation and settlement all move
+it through block application, so the guard admits no user transaction at all —
+the same standing `PostLockBox` has.
 
 ### PostLockBox
 
@@ -525,21 +561,27 @@ argument for the choice.
 
 ### BoxGuard
 
+> ⚠ **AHEAD OF CODE.** The tree still declares all seven of the old members and
+> none of `invite_dual`.
+
 ```
-type BoxGuard = "owner_signature" | "block_apply" | "hash_preimage" | "inviter_signature" | "bond_dual" | "hash_preimage_with_bond" | "unspendable"
+type BoxGuard = "owner_signature" | "block_apply" | "invite_dual" | "unspendable"
 // "unspendable" names no spender at all, which no other member does — "block_apply" is still
 //   consumable, by block application. Carried only by GenesisProofBox.
-// "block_apply" replaced "epoch_tally" in P2-D — there is no epoch, and the meaning was
-//   always "consumable only by block application". The string 'epoch_tally' is RESERVED,
-//   never to be reused; guard strings are box content, inside the box-id preimage.
-// ⚠ "hash_preimage" and "inviter_signature" are UNREACHABLE — no box type can carry them.
-//   Every box fixes its guard to a literal (InviteBox → 'hash_preimage_with_bond',
-//   BondBox → 'bond_dual', rest → 'owner_signature' | 'block_apply'). The engine switches
-//   only on the live names, the store writes only the live names, and db.ts carries a
-//   migration that DELETES rows still holding the old ones.
-//   Low severity, but it is why stale test fixtures using them look plausible, and it
-//   invites a new box type to be given a guard the engine has no case for.
+// "invite_dual" is satisfied by EITHER named key's signature, and the transition arm decides
+//   which shape that key may take: invitee → claim, inviter → cancel. Two signatures, no
+//   preimage — the claimant proves identity, not knowledge of a secret.
+// RESERVED, never to be reused: "epoch_tally", "hash_preimage_with_bond", "bond_dual",
+//   "hash_preimage", "inviter_signature". Guard strings are box content, inside the
+//   box-id preimage, so a reused name makes two different rules share a byte string.
 ```
+
+Every box fixes its guard to a literal and the union holds one member per
+reachable spender, so the engine's switch is total over the names the store can
+write. `"hash_preimage"` and `"inviter_signature"` never had a box type that could
+carry them — they existed only as the two paths *inside* `bond_dual`, and they go
+when it does. That closes the hazard this section used to describe, a new box type
+given a guard the engine has no case for, by deletion rather than by warning.
 
 ### UtxoTransaction
 
@@ -548,7 +590,7 @@ UtxoTransaction {
   inputs: BoxId[]                          // Boxes consumed
   outputs: BoxCandidate[]                  // Boxes created — candidates: no id, no txId, no index
   signatures: Record<string, Uint8Array>   // publicKey (hex) → Ed25519 sig (64 bytes) over TxId
-  preimages?: Record<string, Uint8Array>   // boxId → hash preimage, for hash_preimage guards
+  preimages?: Record<string, Uint8Array>   // boxId → hash preimage — encoded and hashed, read by nothing
   protocolVersion: number                  // 1
   likeTarget?: PostId                      // Present ⟺ this tx is a like (P2-D) — see below
 }
@@ -573,8 +615,12 @@ without circularity, so ids are derived once `TxId` is known; the ledger materia
 `i` into a `BoxBase` with `txId` and `index: i` at apply. (Pre-Spec-G this was `AnyBox[]` whose
 per-output `id` was excluded from the hash — the same exclusion, now expressed in the type.)
 
-> `preimages` was already present in the code (`types/src/utxo.ts:133`) and hashed into `TxId`
-> (`:153-159`) but missing from this contract. Documented here, not introduced.
+⛔ **`preimages` has no consumer.** With no hash-locked guard left in `BoxGuard`,
+nothing reads the map — but it stays field 3 of the encoding, sorted by key and
+hashed into every `TxId`, so it is a consensus surface that carries no meaning.
+**Removing it changes every transaction id**, which is why it goes with the
+transaction-representation work rather than here. Until then it is encoded,
+validated for envelope shape, and never consulted.
 
 Transaction signatures are over the transaction hash (`computeTxId`), not over
 domain messages. The signer signs `TxId` with their Ed25519 key; verifiers
@@ -1109,9 +1155,9 @@ from this table — a use that reads every cell as an instruction rather than as
 |---|---|
 | `karma` | `b32(owner)` ‖ `opt(decayBurn, u8)` |
 | `credit` | `b32(owner)` ‖ `opt(lockedUntilBlock, vlqU)` |
-| `invite` | `b32(secretHash)` ‖ `b32(inviterId)` |
+| `invite` | `b32(inviterId)` ‖ `b32(inviteePublicKey)` |
 | `genesis_proof` | `lp(payload)` |
-| `bond` | `b32(inviterId)` ‖ `vlqU(inviteOutputIndex)` ‖ **`opt(b32(inviteePublicKey))`** ‖ `vlqU(probationStartBlock)` ‖ `vlqU(probationEndBlock)` |
+| `bond` | `b32(inviterId)` ‖ **`b32(inviteePublicKey)`** |
 | `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` ‖ `b32(targetPostId)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
 
@@ -1138,46 +1184,40 @@ writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `
 standing for "unlocked" would give an unlocked box and a box locked until block 0 one id. The
 same holds for `decayBurn`, which is the field the decay clock reads.
 
-**`bond.inviteePublicKey` is `opt(b32)`, not `b32` — corrected 2026-08-09, and the error was this
-table's.** The field is **0-or-32 bytes**: this contract says so at the BondBox definition above
-("empty = unclaimed, 32 bytes = committed"), node types it `bytes0or32` in the output-shape schema
-(`utxo-engine.ts:1049`), and invite creation **requires** it empty — `utxo-engine.ts:403` rejects any
-invite-create whose bond output has a non-empty `inviteePublicKey`, because a pre-committed bond
-would let the inviter reclaim immediately and make the network's only sybil cost free.
+> ⚠ **AHEAD OF CODE.** The tree still encodes this field as `opt(b32)` and still
+> types it `bytes0or32`.
 
-So this table specified a fixed-width writer for a field production guarantees is empty on the
-create path. `writeBytesNOrThrow` throws on a zero-length input, which made `computeTxId` — and
-therefore `createInvite` and `validateTx` — **throw on every invite creation**. Not a fixture
-problem: dead in production. Caught by the node session in Phase 2b, after the types session had
-implemented this table faithfully.
+**`bond.inviteePublicKey` is `b32`.** The field is exactly 32 bytes at every point
+in a bond's life: invite creation sets it (BondBox above) and no later transition
+clears or widens it, so there is no absence for an option tag to distinguish from a
+value. **`bytes0or32` loses its only user with this row** — `utxo-engine.ts:1065`
+is the sole site in the output-shape schema that names it.
 
-`opt(b32)` rather than `lp`: it keeps the 0-or-32 domain **structural on the wire** (a decoder can
-produce only absence or exactly 32 bytes, where `lp` would round-trip a 5-byte value and leave the
-domain entirely to validation), it costs the same bytes, and it is the idiom three sibling fields
-already use — `karma.decayBurn`, `credit.lockedUntilBlock`, and `tx.likeTarget`, which is itself an
-optional 32-byte hex field. **The in-memory type does not change**: empty ↔ absent is the encoder's
-mapping, so `Uint8Array` stays and node's `bytes0or32` stays the domain gate.
+`invite` and `bond` carry **identical trailing fields**, so their leaves differ only
+by the `enum8` tag and by `value` — the same standing that `karma` and `credit`
+have two rows above. The tag is what makes the encoding injective; `value` happens
+to differ too (an invite is always `0`), but nothing may rely on that.
 
-**The lesson, for every remaining layout row:** a `b32` row is a claim that the field is *always*
-exactly 32 bytes. This row was written from the field's *type* (`Uint8Array`) rather than its
-*domain*, and the domain was documented one section up. **Check the producers before pinning a
-width.**
+**The standing rule, for every layout row:** a `b32` row is a claim about the
+field's **domain**, not its TypeScript type — `Uint8Array` is equally the type of a
+fixed-32 field and a 0-or-32 one, so the type cannot settle the width. **Check the
+producers before pinning a width.** The cost of over-pinning is not a fixture
+problem: `writeBytesNOrThrow` throws on zero-length input, and `computeTxId` runs
+inside `validateTx`, so an over-pinned row is a live throw on every producer of
+that box.
 
-⚠ **It was NOT the only one, and the way that claim failed is the lesson.** This block first said
-"it is the only one", on the strength of a search for `bytes0or32` — every byte-kind entry in node's
-output-shape schema is `bytes32` except `inviteePublicKey`. True, and the wrong shape: it searched a
-**name** (`bytes0or32`) rather than the **property** (a throwing writer whose schema type does not
-pin its domain). `post_lock.targetPostId` is a hex **string**, so it is not a byte-kind entry at all
-and no amount of searching that list could surface it. Found by the types session hours later, from
-the other direction.
+⚠ **A search for `bytes0or32` cannot find every instance of this defect**, and the
+reason generalises: that searches a **name**, where the property is *a throwing
+writer whose schema type does not pin its domain*. `post_lock.targetPostId` is a
+hex **string**, so it is not a byte-kind entry at all and no pass over that list
+can surface it — it is the `✗` row in the table above, still open.
 
 **The correct search, and the one to reuse: cross-check every throwing writer in the layout against
 the schema type of the field it writes.** Run over the box arms 2026-08-09:
 
 | Field | Writer | Schema type | |
 |---|---|---|---|
-| `karma.owner`, `credit.owner`, `invite.secretHash`, `invite.inviterId`, `bond.inviterId`, `post_lock.owner`, `vouch.voucherId`, `vouch.targetId` | `writeBytesNOrThrow(…, 32)` | `bytes32` | ✓ |
-| `bond.inviteePublicKey` | `opt(b32)` | `bytes0or32` | ✓ (this correction) |
+| `karma.owner`, `credit.owner`, `invite.inviterId`, `invite.inviteePublicKey`, `bond.inviterId`, `bond.inviteePublicKey`, `post_lock.owner`, `vouch.voucherId`, `vouch.targetId` | `writeBytesNOrThrow(…, 32)` | `bytes32` | ✓ |
 | `post_lock.originalValue` | `writeVlqU64OrThrow` | `u64` | ✓ |
 | **`post_lock.targetPostId`** | **`writeHexNOrThrow(…, 32)`** | **`'string'`** — `typeof v === 'string'`, no width, no alphabet | **✗** |
 
@@ -1623,8 +1663,8 @@ threshold / percentage / bits** constants stay `number`.
 - **Karma amounts → `bigint` literals, NOT rescaled** (karma is indivisible):
   `KARMA_POSTING_MINIMUM`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
   `POST_LOCK_THREAD_COST`, `POST_LOCK_REPLY_COST`, `LIKE_KARMA_COST`,
-  `INVITE_MIN_KARMA`, `INVITE_BOND_KARMA`,
-  `INVITE_KARMA_THRESHOLD`, `VOUCH_KARMA_AMOUNT`, `VOUCH_MIN_BALANCE`,
+  `INVITE_MIN_KARMA`, `INVITE_KARMA_AMOUNT`, `INVITE_BOND_KARMA`,
+  `VOUCH_KARMA_AMOUNT`, `VOUCH_MIN_BALANCE`,
   `GENESIS_KARMA_PER_MEMBER`.
 - **Stay `number`:** all `*_BLOCKS`, `*_TARGET_BITS`/`*_FLOOR`,
   `LIKES_PER_KARMA_PAYOUT` (a count), `POST_LOCK_UNLOCK_PER_LIKES`, `MAX_*`,
@@ -1734,13 +1774,25 @@ reserved; the deletion-proof grep for the old mechanics depends on them never re
 ### Invites
 
 ```typescript
-export const MAX_PENDING_INVITES = 5;              // consensus — max concurrent unclaimed invites
 export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;  // consensus
-export const INVITE_KARMA_AMOUNT = 25n;            // consensus — karma carried by an InviteBox
-export const INVITE_BOND_KARMA = 25n;              // consensus — bond locked during probation (was 10)
-export const INVITE_PROBATION_BLOCKS = 1000;       // consensus — probation window in blocks
-export const INVITE_KARMA_THRESHOLD = 20n;         // consensus — invitee target for early bond return
+export const INVITE_KARMA_AMOUNT = 25n;            // consensus — karma MINTED to the invitee
+export const INVITE_BOND_KARMA = 25n;              // consensus — bond locked by the inviter
+export const INVITE_PROBATION_BLOCKS = 43200;      // consensus — 30 days at 60s → profile: inviteProbationBlocks
 ```
+
+> ⚠ **AHEAD OF CODE.** The tree has `INVITE_PROBATION_BLOCKS = 1000` and still
+> declares both deleted constants.
+
+`MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **deleted. Names reserved**,
+on the same argument as the retired like constants: a deletion-proof grep only
+works while the old name stays gone.
+
+The pending-invite cap needs no successor because the balance is one. An inviter
+locks `INVITE_BOND_KARMA` per invite out of their own karma, so `K /
+INVITE_BOND_KARMA` bounds their concurrent invites without a rule. The threshold
+goes with the early-unlock leg it served: a bond settles **once**, at
+`IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and nothing reads a
+karma balance to decide it.
 
 ### Vouch
 
@@ -1881,8 +1933,8 @@ above it.
 - Every id preimage carries a domain tag; box ids, tx ids and identity-record keys share one
   32-byte keyspace and must not be forgeable across it
 - A box carries **no block height**. Consensus-relevant time lives in explicit named fields
-  (`lockedUntilBlock`, `probationStartBlock`, `probationEndBlock`) or in committed per-identity
-  state — never in an implicit creation stamp
+  (`lockedUntilBlock`) or in committed per-identity state (`IdentityRecord.invitedAtBlock`,
+  which is what dates a bond's probation) — never in an implicit creation stamp
 - Box `value` is `bigint` integer base units (uniform across box types), `< 2⁶⁴`
   so it CBOR-encodes as a uint64 (`0x1b`); no float math anywhere in consensus
   value arithmetic
