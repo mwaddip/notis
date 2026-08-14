@@ -732,12 +732,6 @@ Making the tick configurable would put both failures behind a documented knob. I
 configurable, `DISCOVERY_WINDOW_MS` must derive from it rather than hardcode a value, and the
 `GET_PEERS_INTERVAL_MS` sampling must be moved off this tick.
 
-> ⚠ **NEVER BUILT — NOT PLANNED (2026-08-13).** `outboundFillIntervalMs` was a `NetConfig` field,
-> an `OUTBOUND_FILL_INTERVAL_MS` environment read, and three sentences here. **No `net/src` code
-> ever read it** — verified across its full git history, not just the current tree. Setting it
-> changed nothing. It is deleted from all three rather than wired up, because the tick it named
-> must stay fixed (above). Recorded so it is not re-added as an oversight.
-
 ### Bootstrap Flow (New Node)
 
 ```

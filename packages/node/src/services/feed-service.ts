@@ -1,5 +1,6 @@
 import { computePostId } from '@dagsocial/types';
-import type { Post, Stump } from '@dagsocial/types';
+import type { Stump } from '@dagsocial/types';
+import type { PostStatus, StoredPost } from '../store/posts.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -17,16 +18,16 @@ export interface FeedServiceDeps {
    * stump arm away, and a future variant added to the store's return breaks
    * here rather than in a response body.
    */
-  getPost: (id: string) => Post | Stump | null;
+  getPost: (id: string) => StoredPost | Stump | null;
   queryPosts: (opts: {
     author?: Uint8Array;
     limit?: number;
     offset?: number;
-  }) => Post[];
+  }) => StoredPost[];
   getLikeRecordCount: (postId: string) => number;
   getLikersForPost: (postId: string) => string[];
-  getAncestors: (postId: string) => Post[];
-  getSubtree: (postId: string) => Post[];
+  getAncestors: (postId: string) => StoredPost[];
+  getSubtree: (postId: string) => StoredPost[];
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ export interface PostJson {
   protocolVersion: number;
   timestamp: number;
   signature: string;
-  status: string;
+  status: PostStatus;
   likeCount: number;
   likers: string[];
 }
@@ -82,10 +83,15 @@ export interface ThreadJson {
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a Post's Uint8Array fields to hex for JSON responses.
+ * Convert a stored post's Uint8Array fields to hex for JSON responses.
+ *
+ * Takes a `StoredPost`, so `status` is a value the caller had to carry rather
+ * than one this function can invent. An optional field here reads as an
+ * absence the serializer must decide about; required, there is nothing to
+ * decide.
  */
 export function postToJson(
-  post: Post & { status?: string },
+  post: StoredPost,
   likeCount: number,
   likers: string[],
 ): PostJson {
@@ -100,7 +106,7 @@ export function postToJson(
     protocolVersion: post.protocolVersion,
     timestamp: post.timestamp,
     signature: Buffer.from(post.signature).toString('hex'),
-    status: post.status ?? 'unknown',
+    status: post.status,
     likeCount,
     likers,
   };
@@ -133,7 +139,7 @@ export function stumpToJson(stump: Stump): StumpJson {
  * `'subtreeMerkleRoot' in` — that field lives on PruneIntent/PruneEntry,
  * never on Stump, so the check can never fire.)
  */
-function isStump(result: Post | Stump): result is Stump {
+function isStump(result: StoredPost | Stump): result is Stump {
   return !('content' in result);
 }
 

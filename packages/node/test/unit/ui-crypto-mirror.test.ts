@@ -32,8 +32,10 @@ import { fileURLToPath } from 'node:url';
 import {
   computePostId, signingHash, postPowPreimage, computeBoxId, computeTxId,
   computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS, powNonceBytes,
+  PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
 import { verifyPoW } from '../../src/services/pow.js';
+import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
@@ -290,14 +292,27 @@ const MIRRORED_OTHER = [
   'powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget',
   'computePostId', 'canonicalBoxBytes', 'boxTypeFields',
   'computeBoxId', 'computeCandidateBoxId', 'computeTxId',
+  'jsonBigint',
 ] as const;
 
+/**
+ * Transaction builders lifted from the page, so what the mirror hashes is the
+ * object a user's click actually signs rather than a copy of it kept here.
+ *
+ * A hand-copied builder in a test asserts agreement between the test and
+ * itself: `devnet-bond-commit-agreement.test.ts` re-states `buildCommitTx`'s
+ * arithmetic, and nothing ties that restatement to the page.
+ */
+const MIRRORED_BUILDERS = ['selectBoxes', 'buildVouchTx', 'buildUnvouchTx'] as const;
+
 /** Every function declaration the mirror lifts out of `index.html`. */
-const MIRRORED_FUNCTIONS: readonly string[] = [...BYTE_PRIMITIVES, ...MIRRORED_OTHER];
+const MIRRORED_FUNCTIONS: readonly string[] =
+  [...BYTE_PRIMITIVES, ...MIRRORED_OTHER, ...MIRRORED_BUILDERS];
 
 /** Consts the mirror lifts. A top-level one may itself construct bytes. */
 const MIRRORED_CONSTS = [
   'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'BOX_TYPE_TAGS',
+  'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
 ] as const;
 
 /** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
@@ -307,6 +322,8 @@ const RETURNED = [
   'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'boolByte', 'enum8Tag',
   'b32Bytes', 'b32Hex',
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
+  'jsonBigint', 'buildVouchTx', 'buildUnvouchTx',
+  'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
 ] as const;
 
 interface UiCrypto {
@@ -337,6 +354,15 @@ interface UiCrypto {
   computeCandidateBoxId: (
     candidate: Record<string, unknown>, txId: string, index: number,
   ) => string;
+  jsonBigint: (key: string, value: unknown) => unknown;
+  buildVouchTx: (
+    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
+    targetIdHex: string,
+    pubKeyHex: string,
+  ) => Record<string, unknown>;
+  buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+  VOUCH_KARMA_AMOUNT: bigint;
+  VOUCH_MIN_BALANCE: bigint;
 }
 
 /**
@@ -1170,6 +1196,78 @@ function auditByteConstruction(): { findings: Finding[]; unattributed: Finding[]
   }
   return { findings, unattributed };
 }
+
+describe('demo UI vouch builders ↔ the id the node derives', () => {
+  // The page carries hex where the node carries bytes, so the two only agree if
+  // the JSON edge converts before the preimage. `canonicalBoxBytes` is pinned
+  // hex-vs-byte per box type above; this pins the same property one level up, at
+  // `computeTxId` — the hash a vouch signature is actually over. Transitivity
+  // through the box encoder would give the same answer today and is not the
+  // thing that has to keep holding.
+
+  const VOUCHER_HEX = Buffer.from(GOLDEN_AUTHOR).toString('hex');
+  const TARGET_HEX = 'c3'.repeat(32);
+
+  /** What `fetchKarmaBox()` hands a builder. */
+  const karmaState = (values: bigint[]) => ({
+    total: values.reduce((sum, v) => sum + v, 0n),
+    boxes: values.map((value, i) => ({ boxId: String(i).padStart(2, '0').repeat(32), value })),
+  });
+
+  /** The tx as it arrives server-side: through the page's own bigint replacer. */
+  const overTheWire = (tx: Record<string, unknown>) =>
+    jsonToTx(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
+
+  it('the page mirrors the vouch amount constants it stakes against', () => {
+    // Mirrored by hand from `@dagsocial/types`, so nothing but this compares
+    // them. A drifted stake builds a tx `checkTransitions` rejects outright.
+    expect(ui.VOUCH_KARMA_AMOUNT).toBe(VOUCH_KARMA_AMOUNT);
+    expect(ui.VOUCH_MIN_BALANCE).toBe(VOUCH_MIN_BALANCE);
+  });
+
+  it('a cast the page builds hashes to the same txId the node derives', () => {
+    const tx = ui.buildVouchTx(karmaState([VOUCH_MIN_BALANCE + 1n]), TARGET_HEX, VOUCHER_HEX);
+    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
+  });
+
+  it('an unvouch the page builds hashes to the same txId the node derives', () => {
+    const tx = ui.buildUnvouchTx('ab'.repeat(32));
+    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
+  });
+
+  it('the cast carries the shape consensus pins', () => {
+    // NODE_INTERFACE → "Vouch transition rules": one karma output plus one
+    // vouch output, the stake exactly `VOUCH_KARMA_AMOUNT`, `voucherId` the
+    // karma input's owner. A cast missing any of the three is rejected, and the
+    // page is the only producer of this shape.
+    const tx = ui.buildVouchTx(karmaState([7n, 5n]), TARGET_HEX, VOUCHER_HEX);
+    const decoded = overTheWire(tx);
+    const [change, vouch] = decoded.outputs as [KarmaBox, VouchBox];
+
+    expect(decoded.outputs).toHaveLength(2);
+    expect(change.boxType).toBe('karma');
+    expect(vouch.boxType).toBe('vouch');
+    expect(vouch.value).toBe(VOUCH_KARMA_AMOUNT);
+    expect(Buffer.from(vouch.voucherId).toString('hex')).toBe(VOUCHER_HEX);
+    expect(Buffer.from(vouch.targetId).toString('hex')).toBe(TARGET_HEX);
+    expect(Buffer.from(change.owner).toString('hex')).toBe(VOUCHER_HEX);
+    expect(decoded.protocolVersion).toBe(PROTOCOL_VERSION);
+
+    // Conservation, over exactly the boxes named as inputs: one karma box
+    // covers the 1-karma stake, so the second is not selected and its value is
+    // not in the sum.
+    expect(decoded.inputs).toEqual([karmaState([7n, 5n]).boxes[0]!.boxId]);
+    expect(change.value + vouch.value).toBe(7n);
+  });
+
+  it('the unvouch spends one named box and produces nothing', () => {
+    // Zero outputs is the shape: the stake is escrowed and re-minted at cooldown
+    // maturity, so a change output here would be the same karma twice.
+    const decoded = overTheWire(ui.buildUnvouchTx('ab'.repeat(32)));
+    expect(decoded.inputs).toEqual(['ab'.repeat(32)]);
+    expect(decoded.outputs).toEqual([]);
+  });
+});
 
 describe('demo UI byte-construction completeness audit', () => {
   const { findings, unattributed } = auditByteConstruction();

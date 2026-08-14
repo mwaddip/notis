@@ -18,6 +18,7 @@ export {
   pruneSubtree,
   insertPostPlaceholder,
 } from './posts.js';
+export type { PostStatus, StoredPost } from './posts.js';
 
 export {
   getBox,

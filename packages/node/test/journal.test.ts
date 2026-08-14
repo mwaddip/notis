@@ -112,6 +112,56 @@ describe('journal (initialized)', () => {
     });
   });
 
+  describe('phase timing events', () => {
+    it('emitDbOpenStarted records the database path', async () => {
+      const { emitDbOpenStarted } = await import('../src/journal.js');
+      emitDbOpenStarted('/var/lib/notis/node.db');
+      const r = lastRecord();
+      expect(r!.event).toBe('db_open_started');
+      expect(r!.level).toBe('INFO');
+      expect(r!.path).toBe('/var/lib/notis/node.db');
+    });
+
+    it('emitDbOpenComplete records the duration', async () => {
+      const { emitDbOpenComplete } = await import('../src/journal.js');
+      emitDbOpenComplete(17);
+      const r = lastRecord();
+      expect(r!.event).toBe('db_open_complete');
+      expect(r!.level).toBe('INFO');
+      expect(r!.duration_ms).toBe(17);
+    });
+
+    it('emitApiListening records bind address and port', async () => {
+      const { emitApiListening } = await import('../src/journal.js');
+      emitApiListening('::', 3000);
+      const r = lastRecord();
+      expect(r!.event).toBe('api_listening');
+      expect(r!.level).toBe('INFO');
+      expect(r!.bind_address).toBe('::');
+      // A number, per the contract's field list — a port rendered as a string
+      // is a different type to anything parsing these lines.
+      expect(r!.port).toBe(3000);
+    });
+
+    it('opening a database emits the started/complete pair around it', async () => {
+      // The emitters exist only to be called from `initDb`, and a helper with
+      // no call site is the failure this closes. Driven through the real
+      // function so the pair is observed in the order the contract states.
+      const { initDb, closeDb } = await import('../src/store/db.js');
+      const before = capturedLines.length;
+      initDb(':memory:');
+      closeDb();
+
+      const emitted = capturedLines.slice(before).map(parseRecord);
+      const started = emitted.findIndex((r) => r.event === 'db_open_started');
+      const complete = emitted.findIndex((r) => r.event === 'db_open_complete');
+      expect(started).toBeGreaterThanOrEqual(0);
+      expect(complete).toBeGreaterThan(started);
+      expect(emitted[started]!.path).toBe(':memory:');
+      expect(typeof emitted[complete]!.duration_ms).toBe('number');
+    });
+  });
+
   describe('core events', () => {
     it('emitPostReceived includes post_id and source', async () => {
       const { emitPostReceived } = await import('../src/journal.js');

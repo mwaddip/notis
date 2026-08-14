@@ -9,15 +9,18 @@
 // at `validateTx`'s step-4 `bytes32` schema. The route pair can be unreachable
 // with the whole suite green; only this edge notices.
 //
-// The demo UI's vouch buttons remain unmigrated: they POST `{userId,
-// targetId}` with no `tx` and get the routes' `tx required` 400. This file
-// covers the edge underneath them and stops there.
+// The last group drives the demo UI's own builders, lifted out of
+// `public/index.html` rather than restated here. The page is the only producer
+// of these two transaction shapes, and a builder that emits a shape the routes
+// reject is invisible to every test that constructs its own.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { generateKeyPairSync, type KeyObject } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import Database from 'better-sqlite3';
 import {
   computeBoxId,
@@ -58,8 +61,47 @@ import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import { materializeOutput } from '../../src/services/utxo-engine.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { createRouter } from '../../src/routes/vouches.js';
+import { extractDeclaration } from '../unit/extract-declaration.js';
 
 const HEIGHT = 100;
+
+const INDEX_HTML = fileURLToPath(new URL('../../public/index.html', import.meta.url));
+
+interface UiBuilders {
+  jsonBigint: (key: string, value: unknown) => unknown;
+  buildVouchTx: (
+    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
+    targetIdHex: string,
+    pubKeyHex: string,
+  ) => Record<string, unknown>;
+  buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+}
+
+/**
+ * The page's vouch builders and its bigint replacer, lifted by name from
+ * `public/index.html` — the same extraction the crypto mirrors use.
+ *
+ * Lifted rather than restated: a builder copied into a test asserts agreement
+ * between the test and itself, and the page is served statically with no
+ * bundler, so nothing else ties the two together.
+ */
+function loadUiBuilders(): UiBuilders {
+  const html = readFileSync(INDEX_HTML, 'utf8');
+  const lift = (header: string): string => extractDeclaration(html, header, 'index.html');
+  return new Function(
+    [
+      lift('const PROTOCOL_VERSION ='),
+      lift('const VOUCH_KARMA_AMOUNT ='),
+      lift('function jsonBigint('),
+      lift('function selectBoxes('),
+      lift('function buildVouchTx('),
+      lift('function buildUnvouchTx('),
+      'return { jsonBigint, buildVouchTx, buildUnvouchTx };',
+    ].join('\n\n'),
+  )() as UiBuilders;
+}
+
+const ui = loadUiBuilders();
 
 describe('vouch routes — the JSON edge', () => {
   let db: Database.Database;
@@ -276,9 +318,10 @@ describe('vouch routes — the JSON edge', () => {
     expect(Buffer.from(edgeVouch.targetId).toString('hex')).toBe(target.hex);
   });
 
-  it('POST /vouches still requires a tx — the unmigrated UI shape 400s', async () => {
-    // Documents rather than fixes the unmigrated UI: the demo's button sends
-    // exactly this, and gets a 400 before `jsonToTx` runs.
+  it('POST /vouches requires a tx — a bare identity body 400s', async () => {
+    // The gate sits ahead of `jsonToTx`, so a body with no `tx` is refused
+    // without a decode attempt. Naming identities rather than a transaction is
+    // the shape that reaches it.
     const res = await request('/', 'POST', { userId: voucher.hex, targetId: target.hex });
     expect(res.status).toBe(400);
     expect((res.data as Record<string, unknown>)['reason']).toBe('tx required');
@@ -347,5 +390,60 @@ describe('vouch routes — the JSON edge', () => {
 
     const res = await request(`/${target.hex}`, 'DELETE', { tx: txToJson(tx) });
     expect(res.status).toBe(200);
+  });
+
+  // -------------------------------------------------------------------------
+  // The bodies the demo UI's two buttons actually send
+  // -------------------------------------------------------------------------
+
+  describe('the page builders, lifted from index.html', () => {
+    /** `fetchKarmaBox()`'s return shape, over boxes that are really in the store. */
+    const karmaState = (...boxes: Array<Stored<KarmaBox>>) => ({
+      total: boxes.reduce((sum, b) => sum + b.value, 0n),
+      boxes: boxes.map((b) => ({ boxId: b.id!, value: b.value })),
+    });
+
+    /**
+     * Serialize as the page does — its own bigint replacer — then sign the
+     * txId the node derives from the decoded result. That the page's own
+     * `computeTxId` agrees on that hash is pinned in `ui-crypto-mirror`; here
+     * the subject is the body, so the signature is taken as given.
+     */
+    function signedBody(uiTx: Record<string, unknown>): Record<string, unknown> {
+      const wire = JSON.parse(JSON.stringify(uiTx, ui.jsonBigint)) as Record<string, unknown>;
+      const sig = cryptoSign(
+        null,
+        Buffer.from(computeTxId(jsonToTx(wire)), 'hex'),
+        voucher.priv,
+      );
+      return { ...wire, signatures: { [voucher.hex]: Buffer.from(sig).toString('hex') } };
+    }
+
+    it('POST /vouches accepts what the vouch button sends', async () => {
+      const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT);
+      const body = signedBody(ui.buildVouchTx(karmaState(karma), target.hex, voucher.hex));
+
+      const res = await request('/', 'POST', { tx: body });
+      expect(res.status, JSON.stringify(res.data)).toBe(200);
+      expect((res.data as Record<string, unknown>)['status']).toBe('pending');
+    });
+
+    it('DELETE /vouches/:targetId accepts what the unvouch button sends', async () => {
+      const vouchBox = seedVouchBox(voucher.pub, target.pub);
+      // Read the id the way the button reads it: off the `?voucher=` listing,
+      // the only surface that names the box an unvouch has to spend.
+      const listed = (
+        (await request(`/?voucher=${voucher.hex}`, 'GET')).data as {
+          vouches: Array<{ boxId: string }>;
+        }
+      ).vouches[0]!.boxId;
+      expect(listed).toBe(vouchBox.id);
+
+      const res = await request(`/${target.hex}`, 'DELETE', {
+        tx: signedBody(ui.buildUnvouchTx(listed)),
+      });
+      expect(res.status, JSON.stringify(res.data)).toBe(200);
+      expect((res.data as Record<string, unknown>)['status']).toBe('pending');
+    });
   });
 });

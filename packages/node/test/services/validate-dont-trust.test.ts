@@ -5,6 +5,7 @@ import {
   PostValidationError,
 } from '../../src/services/post-service.js';
 import type { PostServiceDeps } from '../../src/services/post-service.js';
+import type { StoredPost } from '../../src/store/posts.js';
 import type { Post, UtxoTransaction, AnyBox, KarmaBox } from '@dagsocial/types';
 import { PROTOCOL_VERSION, encodePost, computePostId } from '@dagsocial/types';
 
@@ -39,11 +40,11 @@ function mockDeps(
       userId: new Uint8Array(32),
     }),
     getKarmaBoxes: () => [{ value: 100n }],
-    // The dep is `(id) => Post | Stump | null`. This returned `{id, content}`,
-    // which is neither — it satisfied no branch of the union and only compiled
-    // because nothing checked. What these tests actually need is presence, so
-    // they get a real `Post` and read its identity from the store key.
-    getPost: (id: string): Post | null =>
+    // The dep is `(id) => StoredPost | Stump | null`. A `{id, content}` object
+    // is neither — it satisfies no branch of the union. What these tests
+    // actually need is presence, so they get a real `StoredPost` and read its
+    // identity from the store key.
+    getPost: (id: string): StoredPost | null =>
       store.posts.has(id) ? makeStoredParent(id) : null,
     getPostRaw: (id: string) => {
       const raw = store.posts.get(id);
@@ -83,12 +84,12 @@ function makeStore(): MockStore {
 }
 
 /**
- * A real `Post` standing in for a stored parent. `getPost` is contractually
- * `(id) => Post | Stump | null`, so the mock has to return one of those; the
- * `id` is carried in `content` because a `Post` has no id field — its identity
- * is `computePostId(post)`.
+ * A real `StoredPost` standing in for a stored parent. `getPost` is
+ * contractually `(id) => StoredPost | Stump | null`, so the mock has to return
+ * one of those; the `id` is carried in `content` because a `Post` has no id
+ * field — its identity is `computePostId(post)`.
  */
-function makeStoredParent(id: string): Post {
+function makeStoredParent(id: string): StoredPost {
   return {
     content: `stored-parent:${id}`,
     author: new Uint8Array(32),
@@ -98,6 +99,7 @@ function makeStoredParent(id: string): Post {
     protocolVersion: PROTOCOL_VERSION,
     timestamp: 0,
     signature: new Uint8Array(64),
+    status: 'confirmed',
   };
 }
 
