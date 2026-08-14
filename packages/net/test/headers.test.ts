@@ -742,7 +742,7 @@ const registrationValidators: NetValidators = {
 describe('chain query protocol registration', () => {
   let net: NetNode | undefined;
 
-  /** The sync stream is registered; the protocol it replaced is not. */
+  /** The sync stream is registered; `/dagsocial/headers/1` is not. */
   function expectOnlySyncProtocol(node: NetNode): void {
     const protocols = node.libp2pNode?.getProtocols() ?? [];
     expect(protocols).toContain(SYNC_PROTOCOL);
