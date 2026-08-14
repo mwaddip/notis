@@ -44,10 +44,10 @@ import type { DagService } from './dag-service.js';
  * The hash of a header from our own chain.
  *
  * `blockHash` answers `null` for a header outside the encodable domain,
- * and no *stored* header can be one: in `src` the ordering store has exactly one
- * writer, `block-apply.ts`'s `storeCreateOrderingBlock`, downstream of the
- * `verifyOrderingBlockStructure` gate whose header checks *are*
- * `verifyHeaderFieldDomains`. So a `null` here is not a rejection to absorb — it
+ * and no *stored* header can be one: the ordering store's one writer sits
+ * downstream of the header-domain gate, so every stored header cleared
+ * `verifyHeaderFieldDomains` (the provenance is stated on `store/ordering.ts`'s
+ * `createOrderingBlock`). So a `null` here is not a rejection to absorb — it
  * is our own chain having become something apply could never have written, and
  * every fork-choice answer computed from it would be computed from state we
  * cannot hash. Say so and stop, rather than returning a verdict we have no basis
@@ -184,11 +184,11 @@ export function findForkPoint(
   // holds a byte-identical height-0 state by construction — `seedGenesisState`
   // refuses any other (`assertGenesisRoot`) — and a peer's height-1 block has
   // its `prevBlockHash` checked as all-zeros before it can be stored. That
-  // check is on every path that reaches the ordering store: `ordering_blocks`
-  // has one writer, `applyBlockBody`'s `storeCreateOrderingBlock`, downstream
-  // of the chain-link gate in the same function, and all four callers of
-  // `applyOrderingBlock` — gossip, sync pull, the block creator and `reorg`
-  // below — go through it.
+  // check is on every path that reaches the ordering store: the store's one
+  // writer is called from `applyBlockBody`, below that function's own
+  // chain-link gate (the provenance is stated on `store/ordering.ts`'s
+  // `createOrderingBlock`), and all four callers of `applyOrderingBlock` —
+  // gossip, sync pull, the block creator and `reorg` below — go through it.
   //
   // ⚠ **This is reachable only below `MAX_REORG_DEPTH`, and the bound does not
   // move.** Height 0 became a valid ancestor; how far back a reorg may go did

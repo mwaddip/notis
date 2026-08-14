@@ -109,9 +109,6 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
   )) as unknown as BlockCreatorModule;
 }
 
-async function importIdentities() {
-}
-
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (post: Post, rawCbor: Uint8Array) => void;
@@ -268,7 +265,6 @@ describe('block-apply journal recording', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const post = makePost(author.userId, 'journal test post');
     const postId = computePostId(post);
@@ -302,7 +298,6 @@ describe('block-apply journal recording', () => {
     const db = await importDb();
     db.initDb(':memory:');
 
-    const ids = await importIdentities();
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -608,7 +603,6 @@ describe('block-apply journal recording', () => {
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
-    const ids = await importIdentities();
 
     // Create an identity with a karma box at block 0 (ancient). The value is
     // large enough that the value-over-minimum cap cannot bind — see the

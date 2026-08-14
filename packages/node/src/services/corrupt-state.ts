@@ -7,11 +7,11 @@
  * construct may take the node down.
  *
  * "Our own stored header cannot be hashed" is not in that class and cannot be
- * put in it. In `src` the ordering store has exactly one writer,
- * `block-apply.ts`'s `storeCreateOrderingBlock`, downstream of the
- * `verifyOrderingBlockStructure` gate whose header checks *are*
- * `verifyHeaderFieldDomains`. So no peer can cause this: it means local
- * corruption or a bug in us, and the honest response is to stop.
+ * put in it. The ordering store's provenance is stated on `store/ordering.ts`'s
+ * `createOrderingBlock`; the half this argument needs is the header-domain
+ * gate, so every stored header cleared `verifyHeaderFieldDomains`. No peer can
+ * cause this: it means local corruption or a bug in us, and the honest response
+ * is to stop.
  *
  * The alternative is worse than stopping. A stored `prevBlock` that cannot be
  * hashed makes every subsequent block fail its chain-link check, forever, logged
@@ -61,15 +61,12 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  *
  * **Why this is corrupt state and not a rejection, stated as provenance rather
  * than as a guess about the error class.** The decode that raises it reads a
- * row of `ordering_blocks`, and that table has exactly one INSERT
- * (`store/ordering.ts`), reached from exactly one caller in `src`
- * (`block-apply.ts`'s `storeCreateOrderingBlock`), downstream of the
- * `verifyOrderingBlockStructure` gate. What that INSERT stores is
- * `encodeHeader`/`encodeSubBlockTree`/`encodeUtxoTxTree` **of the decoded
- * block** — our own re-encoding, never the bytes a peer sent. So there is no
- * input a peer can choose that reaches this decoder: a row that will not decode
- * means the row changed after we wrote it, or our writer and our reader
- * disagree. Corruption, or a bug in us. Both are what fail-stop is for.
+ * row of `ordering_blocks`, and what that table holds is our own re-encoding of
+ * a block that already cleared the apply gate — one INSERT, one `src` caller,
+ * stated on `store/ordering.ts`'s `createOrderingBlock`. So there is no input a
+ * peer can choose that reaches this decoder: a row that will not decode means
+ * the row changed after we wrote it, or our writer and our reader disagree.
+ * Corruption, or a bug in us. Both are what fail-stop is for.
  *
  * ⚠ **The distinction this type exists to keep is the one between those bytes
  * and the block's own**, and it is why the naming happens at the read rather
