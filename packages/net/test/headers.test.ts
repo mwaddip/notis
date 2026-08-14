@@ -704,10 +704,10 @@ describe('chain query round-trip', () => {
 // the whole path rests on: an unregistered protocol answers `protocol selection
 // failed` to every dial, and each layer below keeps passing.
 //
-// The second assertion is the migration's: `/dagsocial/headers/1` is gone, so a
-// chain query reaches a serve arm only through the handshaken, penalty-bearing
-// stream. Asserting its absence alone would also pass on a node that registered
-// nothing at all, which is why both run together.
+// A chain query reaches a serve arm only through this one handshaken,
+// penalty-bearing stream, so the absence of any second chain-data protocol is
+// half that property. Asserting the absence alone would also pass on a node
+// that registered nothing at all, which is why both assertions run together.
 //
 // NET_INTERFACE → Sync Handler Registration: setters are order-independent and
 // registration belongs to start(). All three orders are asserted because a

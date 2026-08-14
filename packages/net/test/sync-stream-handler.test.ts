@@ -431,12 +431,9 @@ describe('sync stream handler — sync dispatch failures', () => {
 // ---------------------------------------------------------------------------
 // The chain-query serve arms — GetHeaders (14) and GetBlocks (16)
 //
-// Fork resolution's two queries moved onto this stream, which cost them the one
-// thing a separate protocol gave for free: an unregistered `/dagsocial/headers/1`
-// failed *fast*, at libp2p's protocol selection. Here the same "I do not serve
-// that" is a timeout unless the arm answers — a 5× one for blocks — so what
-// these tests pin is that every path answers, the declining ones included
-// (NET_INTERFACE → Sync Handler Registration).
+// On this stream "I do not serve that" is a timeout — a 5× one for blocks —
+// unless the arm answers. So every path answers, the declining ones included,
+// and that is what these tests pin (NET_INTERFACE → Sync Handler Registration).
 // ---------------------------------------------------------------------------
 
 function makeQueryHeader(height: number): BlockHeader {
@@ -545,11 +542,9 @@ describe('sync stream handler — the chain query arms', () => {
   });
 
   it('refuses a non-Active peer on both arms without consulting the provider', async () => {
-    // The security win the migration buys: `/dagsocial/headers/1` took `{ stream }`
-    // only and served whole ordering blocks over arbitrary height ranges to
-    // anyone who dialled. The gate now precedes the arm, which is what
-    // "without consulting the provider" pins — an arm reached and then declined
-    // would still have read our chain.
+    // The Active gate precedes the arm, so a declined request never reads our
+    // chain. That is what "without consulting the provider" pins: an arm
+    // reached and only then declining would have consulted it already.
     let providerCalls = 0;
     const counting = (height: number): OrderingBlock | null => {
       providerCalls++;
