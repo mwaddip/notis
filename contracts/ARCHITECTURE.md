@@ -982,18 +982,19 @@ deflationary pressure on karma supply and makes invite decisions consequential.
 
 ## Validators
 
-> ⚠ **NOT IMPLEMENTED as described — 35 lines, 100% original 2026-07-20 text, written
-> before any of it existed. Verified 2026-08-11.** Block production works, but the "validator"
-> as a *distinct role* with the responsibilities enumerated below is not a thing the code has:
-> `NODE_ROLE` is parsed as a config mode in `node/src/config.ts` and gates whether
-> `MINING_SECRET` is required — it is a node mode, not a separate class of participant with
-> its own lifecycle. Read this as design intent and verify every claim against
-> `MINING_INTERFACE.md` and `block-creator.ts` before relying on it.
+> ✅ **The role framing is stated below as what the code has.** "Validator" is a mode a node
+> runs in, not a separate class of participant with its own lifecycle: `NODE_ROLE` is parsed
+> in `node/src/config.ts` and gates whether `MINING_SECRET` is required. The **validator
+> signature** on ordering blocks is real and load-bearing — verified on every apply path
+> (audit H-1).
 >
-> The one part that is real and load-bearing: the **validator signature** on ordering
-> blocks is verified on every apply path (audit H-1, confirmed).
+> ⚠ **The remainder of this section is 2026-07-20 text that predates the implementation.**
+> Selection and the responsibilities below match the code; anything else here should be
+> checked against `MINING_INTERFACE.md` and `block-creator.ts` before it is relied on.
 
-Validators secure the network via Proof of Work. They are distinct from users.
+A validator is a node producing ordering blocks by solving their Proof of Work.
+It is a role a node plays, not a separate class of participant — the same key
+material may also hold karma and author posts.
 
 ### Responsibilities
 
@@ -1732,71 +1733,77 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 > because nothing consensus-critical reads it, whereas here `createdAtBlock` **was** the
 > decay clock, so the field had to leave the box protocol entirely and the clock moved into
 > committed state. An invariant that is correct for Ergo and wrong here, kept because the
-> analogy sounded right, is this section's characteristic failure — and one bullet below is
-> transliterated Rust naming a hazard TypeScript does not have.
+> analogy sounded right, is this section's characteristic failure. **The transliteration risk
+> is not hypothetical here**: this section's first bullet had to be restated because a rule
+> against *truncating* casts, correct in Rust, names nothing TypeScript does — and misses the
+> larger hazard `as` actually carries.
 
 ### Validation boundaries
-- **No method panics on untrusted input** — every deserialization and
-  signature-verification function returns a `Result<T, Error>` equivalent.
-  No `unwrap()`, no `as` casts that truncate, no OOM on adversarial input.
-  > ⚠ **FALSE on the `as`-cast clause only — the OOM and cast limbs are CLOSED. Verified
-  > 2026-08-11.** This marker said "FALSE on all three limbs"; two have since been fixed.
-  > - *OOM — closed.* `readArray` bounds on `MAX_ARRAY_LENGTH` **and** on bytes remaining
-  >   before allocating (`wire/src/reader.ts:3`, `:149`, `:153-157`), and `cumulativeWork`
-  >   skips any `powTargetBits` outside `powTarget`'s domain
-  >   (`VALIDATION_INTERFACE → blockWork / cumulativeWork`). Neither allocates on
-  >   attacker-chosen input.
-  > - *Casts — closed.* The sync decode boundary shape-checks every field and never throws;
-  >   malformed CBOR collapses to `null` and the returned object is rebuilt from checked
-  >   fields only (`net/src/sync-codec.ts:55-74`).
-  > - *Panics — **not re-verified**.* The original claim named "an unguarded throwing step
-  >   between the Stage-1 pipeline's documented calls" without pinning a file or line, and it
-  >   could not be relocated from that description. **Unknown, not holding** — re-derive it
-  >   before relying on either answer.
+- **Untrusted input reaches no unhandled throw** — every deserialization and
+  signature-verification function answers with a value or a typed error. A decoded
+  value entering a typed field is **range-checked, never `as`-cast**, and nothing
+  allocates on an attacker-chosen length.
+  > ✅ **Two of the three limbs hold, and the third is unmeasured.**
+  > - *Allocation.* `readArray` bounds on `MAX_ARRAY_LENGTH` **and** on the bytes remaining
+  >   before allocating (`wire/src/reader.ts`), and `cumulativeWork` skips any `powTargetBits`
+  >   outside `powTarget`'s domain (`VALIDATION_INTERFACE → blockWork / cumulativeWork`).
+  >   Neither allocates on attacker-chosen input.
+  > - *Casts.* The sync decode boundary shape-checks every field and never throws; malformed
+  >   CBOR collapses to `null` and the returned object is rebuilt from checked fields only
+  >   (`net/src/sync-codec.ts`).
+  > - ⚠ *Throws — **UNMEASURED**.* The claim behind this limb named "an unguarded throwing step
+  >   between the Stage-1 pipeline's documented calls" without pinning a file, and it cannot be
+  >   relocated from that description. **Unknown, not holding** — re-derive before relying on
+  >   either answer.
   >
-  > **The `as`-cast clause is why this marker stays, and it was never true rather than having
-  > gone stale.** A TypeScript `as` cast does not truncate — it erases at compile time and
-  > asserts a type that was never checked. That is a *different and larger* hazard than Rust's
-  > truncating numeric cast: it produces no runtime error at all. The clause reads as
-  > transliterated Rust and should name the real risk — unvalidated `as` on decoded input.
+  > ⚠ **The clause says `as`-cast rather than "truncating cast", and the difference is the
+  > whole point.** A TypeScript `as` does not truncate: it erases at compile time and asserts a
+  > type nothing checked, producing no runtime error at all. That is a *larger* hazard than a
+  > truncating numeric cast, and a rule phrased against truncation does not catch it.
+  >
+  > ⚠ **"Untrusted" is load-bearing.** The fail-stop family deliberately ends the process, but
+  > only on this node's own stored bytes — see `NODE_INTERFACE` and
+  > `node/src/services/corrupt-state.ts`. That is not an exception to this bullet; it is a
+  > different subject.
 - **Validate, don't trust** — independently recompute every self-reported
   claim. A post's parent hash, PoW solution, and signature MUST be verified
   by the local node before the post enters the store.
-  > ⚠ **FALSE — two paths write before verifying. Verified 2026-08-11.**
-  > `insertPostPlaceholder` writes a confirmed row before anything verifies it; and a post is
-  > written to `dag_posts` before its karma-lock transaction validates, with no rollback.
-  > (A third path — `onStump` storing unauthenticated gossip stumps — was closed by P2-F F1:
-  > no network path writes `dag_stumps` anymore; see §3.)
+  > ⚠ **VIOLATED — two write paths run ahead of verification. The rule is right; the code is
+  > wrong. Re-verified 2026-08-14.**
+  > - `insertPostPlaceholder` (`node/src/store/posts.ts`) writes a row built from a *block's*
+  >   sub-block entry: empty content, a 32-zero-byte author, a 64-zero-byte signature. Nothing
+  >   in that row is author-signed, and `confirmPost` will set `status = 'confirmed'` on it —
+  >   so a confirmed row precedes any verified bytes, in two steps rather than one. The
+  >   `parent_refs` it writes are the block's, and `insertPost`'s upgrade branch does not
+  >   revisit them, so a row can hold refs the author never signed (P2-F **F6**).
+  > - `post-service.ts` calls `insertPost` **before** `validateTx` on the karma-lock
+  >   transaction, with no rollback.
   >
-  > ⚠ **The PoW sentence this marker used to carry was wrong and is corrected here.** It said
-  > *"`verifyPoW` has two call sites, both in the verifier"*. There are **three**, and one is
-  > not in the verifier: `net/src/gossip.ts:255` (gossip relay validation),
-  > `verifier.ts:165` (inside `verifyPost`) and `verifier.ts:253` (inside
-  > `verifyPostForRelay`). There is also a **re-export** at `node/src/services/pow.ts:3`,
-  > which is a second entry point under a different module path and is invisible to a search
-  > for callers of the original.
+  > (A third path — `onStump` storing unauthenticated gossip stumps — is closed: no network
+  > path writes `dag_stumps`; see §3.)
   >
-  > **What was re-verified:** the call sites and that node's `verifyPost` is reached from
-  > `post-service.ts:145`, the submission path. **What was not:** exhaustive unreachability
-  > from block application. The original "neither reachable from block application" is
-  > therefore neither confirmed nor refuted here — it rests on a search this pass did not run.
-- **Never add checks the reference lacks** — extra validation rules beyond
-  the protocol spec create fork surfaces. Every rule is either
-  protocol-spec or explicitly local-policy-only.
-  > ⚠ **UNENFORCED, and the premise has no referent. Verified 2026-08-11.** There **is** no
-  > reference implementation — this node is the only one — so "the reference" names nothing.
-  > The gap the parameter-class convention fills for configuration remains open for
-  > validation rules: there is no repo-wide register saying which post-validity rules are
-  > protocol and which are local policy.
+  > ⚠ **`verifyPoW` has three call sites and a re-export, and one site is outside the
+  > verifier** — `net/src/gossip.ts` (gossip relay validation), and `verifier.ts` inside both
+  > `verifyPost` and `verifyPostForRelay`. The re-export at `node/src/services/pow.ts` is a
+  > second entry point under a different module path, invisible to a search for callers of the
+  > original. **Unreachability from block application is unverified** — it rests on a search
+  > nobody has run, so treat it as open rather than as either answer.
+- **Every validation rule declares itself protocol or local policy** — a rule
+  every node must reach the same verdict on is protocol and changing it forks the
+  network; a rule this node applies alone is local policy and may change freely.
+  The declaration goes at the rule's own definition.
+  > ✅ **This replaces "never add checks the reference lacks", which had no referent.** There
+  > is no reference implementation — this node is the only one — so that form named nothing,
+  > and a rule keyed on a document nobody can open cannot be applied. What it was reaching for
+  > is the fork surface, which the form above states directly.
   >
-  > ⚠ **This marker's example is stale and is corrected here.** It named
-  > `verifyContentCharacters` as "neither declared protocol nor declared local". It is now
-  > **declared**, at its own definition: `validation/src/content-charset.ts:5` states it is
-  > *"a **consensus Stage-1 check**: every node must reach the same verdict for the same
-  > bytes"*, and derives the pinned-codepoint implementation from that. The declaration lives
-  > in source rather than in a register, which is why a contract-side search did not see it —
-  > and that is the actual shape of the gap: **the knowledge exists per-rule and is nowhere
-  > aggregated.**
+  > ⚠ **The knowledge exists per-rule and is nowhere aggregated.** `verifyContentCharacters`
+  > declares itself at its own definition (`validation/src/content-charset.ts`) as *"a
+  > **consensus Stage-1 check**: every node must reach the same verdict for the same bytes"*,
+  > and derives its pinned-codepoint implementation from that. There is no repo-wide register,
+  > so a contract-side search cannot answer "which rules are protocol?" — **whether to derive
+  > that register or keep pointing at the definitions is open**, and it is the same question
+  > as the consumer-list one.
 
 ### Storage guarantees
 - **Single-transaction atomic writes** — every post insertion that touches
@@ -1887,18 +1894,19 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > height.** A *local* wall clock is precisely what makes two nodes disagree. That clause
   > should be struck, not merely qualified — it licenses the failure mode it exists to
   > prevent.
-- **Precondition/postcondition documentation** on every public function in
-  the store and service layers.
-  > ⚠ **FALSE — 172 exported functions across `store/` and `services/`, and exactly one
-  > file in `packages/node/src` contains the word "Precondition". Re-counted 2026-08-11.**
-  > Either the invariant is adopted for real or it should be dropped; as written it is
-  > aspiration in the present indicative, which is the failure mode the status markers exist
-  > to prevent.
+- **Preconditions documented where violating one is unrecoverable** — a function
+  that can fail-stop the process, or that is the sole writer of consensus state,
+  states what it assumes of its caller. Elsewhere the types are the contract.
+  > ✅ **Deliberately narrow, and the broad form is not what this asks for.** A precondition
+  > block on every public function in `store/` and `services/` is not enforced and would not
+  > be: there are 172 exported functions across those two directories, and exactly one file in
+  > `packages/node/src` contains the word "Precondition". A mandate nothing meets reads as
+  > satisfied because nobody checks it.
   >
-  > ⚠ **The count was 174 when this marker was written and nothing re-derived it.** It is a
-  > worked example of why every marker here now carries a verification date: the *substance*
-  > held — one file, out of 172 — while the number quietly went wrong. A reader who spot-checks
-  > the number and finds it off has no way to tell whether the argument moved with it.
+  > The narrow form is checkable by reading the fail-stop sites, and it is met today by the
+  > `CorruptChainStateError` family (`node/src/services/corrupt-state.ts`) and by
+  > `createOrderingBlock` (`node/src/store/ordering.ts`), which states the provenance every
+  > argument against a peer-caused fail-stop rests on.
 
 ---
 
