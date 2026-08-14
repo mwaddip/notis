@@ -211,8 +211,13 @@ remit; its former home next to `BlockHeader` was proximity, not ownership.
 
 The wall is exactly 2³⁰ and one integer wide. **A per-term bound is not sufficient on its own** — two
 terms each below the wall sum past it — which is why the bound is the digest width rather than anything
-near the arithmetic limit. A peer controls roughly **18,900** terms, not the `MAX_REORG_DEPTH * 2` the
-caller asks for: `requestHeaders`' `maxCount` is not enforced on the response, only `MAX_STREAM_BYTES` is.
+near the arithmetic limit. **The term count is bounded by the caller's own request**: `requestHeaders`
+passes its `maxCount` to `decodeHeaders`, and `lpItemsCodec` checks
+`min(maxCount, MAX_CHAIN_RESPONSE_ITEMS)` — 400 — **before the first element is read**, so a peer
+answering a `MAX_REORG_DEPTH * 2` request with 18,900 headers is refused rather than summed. The bound
+here is still the digest width and not that count: a per-term bound never was the thing holding, and
+tying this argument to a response cap in another package would make it decay on that package's
+schedule.
 
 ⚠ **No `src` shifts by a variable BigInt any more** — `blockWork` shifts by the constant `256n` and
 divides. The measurement therefore constrains future code rather than justifying present code, which is
@@ -242,9 +247,11 @@ count. Nothing rejects a block for exceeding the bound; the consensus minimum is
 `ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
 
 **Totality is required, not convenient.** The headers reach fork choice from `net`'s `requestHeaders`
-as a decode plus a cast, and the encodable domain is `isU64Safe` — so `powTargetBits` arrives anywhere
-in `[0, 2^53)`. A header outside the domain is a routine input on that path, not an anomaly, and
-refusing the whole segment over one would hand a peer a way to void the comparison.
+through the positional codec, which checks each element's byte span — **and that is a shape check, not
+a domain check.** The encodable domain is `isU64Safe`, so `powTargetBits` still arrives anywhere in
+`[0, 2^53)`: a value in range for the codec and far outside anything this function can shift. A header
+outside the domain is a routine input on that path, not an anomaly, and refusing the whole segment over
+one would hand a peer a way to void the comparison.
 
 **`blockWork`'s `null` is what bounds a claimed target, and the bound is consensus-visible.** The store
 walk publishes its total as `SyncInfo.tipCumulativeWork`, which peers compare. A header claiming more
@@ -348,9 +355,11 @@ returned `string` and performed **no input check at all**, handing `header` stra
 > unenforced precondition and 13 `src` call sites, each independently responsible for remembering it.
 > `isEncodableHeader` was that precondition written down — and applied at three of them. The
 > enumeration behind Phase 1f (spec §6.2) found a caller that reaches this function with peer-supplied
-> data that has passed no check whatsoever: `net`'s `requestHeaders` returns
-> `decode(response) as BlockHeader[]` — a raw cbor decode with a cast, not even an `Array.isArray` —
-> and node's fork resolution hands those bare headers straight here.
+> data that has passed **no domain check**: `net`'s `requestHeaders` hands its result to node's fork
+> resolution, which passes those bare headers straight here. The positional codec those headers now
+> decode through checks each element's byte span and refuses a malformed one — **it does not check a
+> field's range**, so `powTargetBits` still arrives anywhere `isU64Safe` allows. Shape and domain are
+> different questions, and only one of them was ever answered on this path.
 > `verifyOrderingBlockStructure` **cannot** cover that path: it takes an `OrderingBlock` and the path
 > carries bare headers. A check the caller must remember to invoke is the shape the spec blames for
 > this whole defect class (§2.1), and Phase 1d had already ruled the same way for
