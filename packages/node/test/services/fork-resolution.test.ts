@@ -18,9 +18,11 @@ import type {
   Post,
   KarmaBox,
   OrderingBlock,
+  Stump,
   UtxoTransaction,
   BlockHeader,
 } from '@dagsocial/types';
+import type { StoredPost } from '../../src/store/posts.js';
 import type { BlockJournal } from '../../src/store/journal.js';
 import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 import type Database from 'better-sqlite3';
@@ -105,7 +107,7 @@ async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (post: Post, rawCbor: Uint8Array) => void;
     confirmPost: (postId: string, blockHeight: number) => void;
-    getPost: (id: string) => Post | null;
+    getPost: (id: string) => StoredPost | Stump | null;
   };
 }
 

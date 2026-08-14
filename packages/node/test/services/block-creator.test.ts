@@ -31,9 +31,11 @@ import type {
   Post,
   KarmaBox,
   OrderingBlock,
+  Stump,
   UtxoTransaction,
   SubBlockEntry,
 } from '@dagsocial/types';
+import type { StoredPost } from '../../src/store/posts.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 
@@ -96,7 +98,7 @@ async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (post: Post, rawCbor: Uint8Array) => void;
     confirmPost: (postId: string, blockHeight: number) => void;
-    getPost: (id: string) => Post | null;
+    getPost: (id: string) => StoredPost | Stump | null;
   };
 }
 
