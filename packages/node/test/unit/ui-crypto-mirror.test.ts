@@ -303,7 +303,11 @@ const MIRRORED_OTHER = [
  * itself: `devnet-bond-commit-agreement.test.ts` re-states `buildCommitTx`'s
  * arithmetic, and nothing ties that restatement to the page.
  */
-const MIRRORED_BUILDERS = ['selectBoxes', 'buildVouchTx', 'buildUnvouchTx'] as const;
+const MIRRORED_BUILDERS = [
+  'selectBoxes', 'buildVouchTx', 'buildUnvouchTx',
+  'buildKarmaLockTx', 'buildLikeTx', 'predictOutputBoxId',
+  'recordPendingKarmaChange', 'applyPendingKarmaChange',
+] as const;
 
 /** Every function declaration the mirror lifts out of `index.html`. */
 const MIRRORED_FUNCTIONS: readonly string[] =
@@ -313,6 +317,8 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 const MIRRORED_CONSTS = [
   'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'BOX_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
+  'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
+  'pendingKarmaChange',
 ] as const;
 
 /** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
@@ -323,8 +329,13 @@ const RETURNED = [
   'b32Bytes', 'b32Hex',
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
   'jsonBigint', 'buildVouchTx', 'buildUnvouchTx',
+  'buildKarmaLockTx', 'buildLikeTx', 'predictOutputBoxId',
+  'recordPendingKarmaChange', 'applyPendingKarmaChange', 'pendingKarmaChange',
   'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
 ] as const;
+
+/** The shape `GET /karma` returns, and what the page's builders select from. */
+interface KarmaView { total: bigint; boxes: Array<{ boxId: string; value: bigint }> }
 
 interface UiCrypto {
   postFieldBytes: (
@@ -361,6 +372,21 @@ interface UiCrypto {
     pubKeyHex: string,
   ) => Record<string, unknown>;
   buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+  buildKarmaLockTx: (
+    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
+    lockAmount: bigint,
+    targetPostId: string,
+    pubKeyHex: string,
+  ) => UtxoTransaction;
+  buildLikeTx: (
+    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
+    targetPostId: string,
+    pubKeyHex: string,
+  ) => UtxoTransaction;
+  predictOutputBoxId: (tx: Record<string, unknown>, index: number) => string;
+  recordPendingKarmaChange: (tx: Record<string, unknown>) => void;
+  applyPendingKarmaChange: (data: KarmaView) => KarmaView;
+  pendingKarmaChange: Map<string, { boxId: string; value: bigint }>;
   VOUCH_KARMA_AMOUNT: bigint;
   VOUCH_MIN_BALANCE: bigint;
 }
@@ -843,6 +869,122 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     ];
     expect(new Set(ids).size).toBe(3);
     expect(ids[2]).toBe(computeCandidateBoxId(GOLDEN_KARMA_BOX, otherTx, 0));
+  });
+
+  it('the page predicts a change box id the way types computes it', () => {
+    // The chaining the page does rests entirely on this equality: it spends the
+    // change of its own pending transaction, so the id it predicts must be the
+    // id block application materializes. A mirror that drifted here would have
+    // the page spending a box that never exists.
+    const karmaBox = {
+      total: 100n,
+      boxes: [{ boxId: 'a1'.repeat(32), value: 100n }],
+    };
+    const pubKeyHex = '02'.repeat(32);
+    const targetPostId = '11'.repeat(32);
+
+    for (const tx of [
+      ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex),
+      ui.buildKarmaLockTx(karmaBox, 5n, targetPostId, pubKeyHex),
+    ]) {
+      const asTx = tx as unknown as Record<string, unknown>;
+      const txId = computeTxId(jsonToTx(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))));
+      for (let i = 0; i < (tx.outputs as unknown[]).length; i++) {
+        expect(ui.predictOutputBoxId(asTx, i)).toBe(
+          computeCandidateBoxId(
+            jsonToTx(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))).outputs[i]!,
+            txId,
+            i,
+          ),
+        );
+      }
+    }
+  });
+
+  it('the page spends its own pending change, not the box it just spent', () => {
+    // The production incident in one assertion: a post's lock and a like on it,
+    // both built from `GET /karma`, both naming the confirmed box — one block,
+    // and the second cannot apply. The page carries its own change forward, so
+    // the second transaction chains onto the first.
+    ui.pendingKarmaChange.clear();
+    const pubKeyHex = '02'.repeat(32);
+    const confirmed = { boxId: 'a1'.repeat(32), value: 100n };
+
+    const lock = ui.buildKarmaLockTx(
+      { total: 100n, boxes: [{ ...confirmed }] }, 5n, '11'.repeat(32), pubKeyHex,
+    );
+    ui.recordPendingKarmaChange(lock as unknown as Record<string, unknown>);
+
+    // The lock has not landed, so the server still answers with the box it spends.
+    const view = ui.applyPendingKarmaChange({ total: 100n, boxes: [{ ...confirmed }] });
+    const changeId = ui.predictOutputBoxId(lock as unknown as Record<string, unknown>, 0);
+    expect(view.boxes.map(b => b.boxId)).toEqual([changeId]);
+    expect(view.total).toBe(95n);
+
+    const like = ui.buildLikeTx(view, '22'.repeat(32), pubKeyHex);
+    expect(like.inputs).toEqual([changeId]);
+    expect(like.inputs).not.toContain(confirmed.boxId);
+  });
+
+  it('a chain of three carries the whole way forward', () => {
+    ui.pendingKarmaChange.clear();
+    const pubKeyHex = '02'.repeat(32);
+    const confirmed = { boxId: 'b1'.repeat(32), value: 100n };
+    let view: KarmaView = { total: 100n, boxes: [{ ...confirmed }] };
+
+    for (let i = 0; i < 3; i++) {
+      const tx = ui.buildLikeTx(view, '33'.repeat(32), pubKeyHex);
+      ui.recordPendingKarmaChange(tx as unknown as Record<string, unknown>);
+      view = ui.applyPendingKarmaChange({ total: 100n, boxes: [{ ...confirmed }] });
+    }
+
+    // Three likes at 1 karma each, all still pending against one confirmed box.
+    expect(view.total).toBe(97n);
+    expect(view.boxes).toHaveLength(1);
+  });
+
+  it('forgets a pending change once the server reports it confirmed', () => {
+    ui.pendingKarmaChange.clear();
+    const pubKeyHex = '02'.repeat(32);
+    const confirmed = { boxId: 'c1'.repeat(32), value: 100n };
+
+    const tx = ui.buildLikeTx({ total: 100n, boxes: [{ ...confirmed }] }, '44'.repeat(32), pubKeyHex);
+    ui.recordPendingKarmaChange(tx as unknown as Record<string, unknown>);
+    const changeId = ui.predictOutputBoxId(tx as unknown as Record<string, unknown>, 0);
+
+    // The block landed: the server now reports the change box itself.
+    const view = ui.applyPendingKarmaChange({ total: 99n, boxes: [{ boxId: changeId, value: 99n }] });
+
+    expect(view.boxes.map(b => b.boxId)).toEqual([changeId]);
+    expect(view.total).toBe(99n);
+    expect(ui.pendingKarmaChange.size).toBe(0);
+  });
+
+  it('leaves a box no pending transaction spends untouched', () => {
+    ui.pendingKarmaChange.clear();
+    const untouched = { boxId: 'd1'.repeat(32), value: 42n };
+
+    const view = ui.applyPendingKarmaChange({ total: 42n, boxes: [{ ...untouched }] });
+
+    expect(view.boxes).toEqual([untouched]);
+    expect(view.total).toBe(42n);
+  });
+
+  it('the predicted id moves with the transaction it is predicted from', () => {
+    // One byte of difference in the spending transaction, and the change box is
+    // a different box. This is what makes the prediction safe to chain on: it
+    // cannot silently name some other transaction's output.
+    const pubKeyHex = '02'.repeat(32);
+    const a = ui.buildLikeTx(
+      { total: 100n, boxes: [{ boxId: 'a1'.repeat(32), value: 100n }] },
+      '11'.repeat(32), pubKeyHex,
+    ) as unknown as Record<string, unknown>;
+    const b = ui.buildLikeTx(
+      { total: 100n, boxes: [{ boxId: 'a2'.repeat(32), value: 100n }] },
+      '11'.repeat(32), pubKeyHex,
+    ) as unknown as Record<string, unknown>;
+
+    expect(ui.predictOutputBoxId(a, 0)).not.toBe(ui.predictOutputBoxId(b, 0));
   });
 
   it('a wide index agrees byte for byte across implementations', () => {
