@@ -192,9 +192,6 @@ forward from a peer's height along the server's own best chain, while fork resol
 **height range on a chain the requester does not hold** so it can find a common ancestor and compare
 cumulative work.
 
-> ⚠ **AHEAD OF CODE** — codes 14–17 and the deletion of `/dagsocial/headers/1` are specified here
-> ahead of the implementation that lands on this branch.
-
 Every code in this table is carried by `/dagsocial/sync/1`. There is no second stream protocol for
 chain data.
 
