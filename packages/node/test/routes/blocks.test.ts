@@ -9,7 +9,7 @@ import {
   createOrderingBlock,
 } from '../../src/store/ordering.js';
 import { createRouter } from '../../src/routes/blocks.js';
-import { generateKeyPair, PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { unlinkSync } from 'fs';
 
@@ -165,10 +165,6 @@ describe('blocks routes', () => {
       { postId: COMMITTED_ID, parentRefs: [], author: 'cc'.repeat(32) },
     ];
     createOrderingBlock(block);
-
-    // Create an identity
-    const kp = generateKeyPair();
-    const userId = kp.publicKey;
   });
 
   afterAll(() => {
