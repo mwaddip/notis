@@ -969,10 +969,11 @@ export class NetNode {
        * hanging until its own timeout. Used only on paths that failed to
        * produce a real response; the success paths sink their own frames.
        *
-       * It answers the peer and nothing more: each failure path below logs
-       * before calling it, so the empty frame is never the whole record of a
-       * failure. The one silent caller is the not-Active drop just below, which
-       * is routine policy rather than a failure.
+       * It answers the peer and nothing more: every path that reaches it after a
+       * *failure* logs first, so the empty frame is never the whole record of
+       * one. The silent callers are the paths where declining is routine policy
+       * — the not-Active drop just below, and a query for which we hold no
+       * provider or handler at all.
        */
       const replyEmpty = async (): Promise<void> => {
         try {
@@ -1113,19 +1114,28 @@ export class NetNode {
         }
 
         // Handle post requests (MSG_GET_POSTS)
+        //
+        // ⚠ **Every path answers, including the three that decline** — the rule
+        // the chain-query arms below state in full (NET_INTERFACE → Sync Handler
+        // Registration). On a shared stream an unanswered request is not a
+        // refusal the caller can read: it is a caller blocked until its own
+        // timeout expires. `requestPosts` reads zero bytes as `{ entries: [] }`,
+        // which is what all three of these mean.
         if (code === MSG_GET_POSTS) {
           if (!this.postsHandler) {
-            // No handler registered — silently ignore (peer will time out)
+            await replyEmpty();
             return;
           }
           const request = decodeGetPosts(body);
           if (!request) {
             console.warn(`[net] malformed GetPosts from ${peerId}, dropping`);
             this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, 'malformed GetPosts');
+            await replyEmpty();
             return;
           }
           if (request.postIds.length > 100) {
             console.warn(`[net] GetPosts request with ${request.postIds.length} IDs exceeds limit, dropping`);
+            await replyEmpty();
             return;
           }
           // The app-layer callback gets its own span. It is node's code, not

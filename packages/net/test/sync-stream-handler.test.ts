@@ -36,7 +36,7 @@ import {
   MSG_SYNC_INFO,
   PeerState,
 } from '../src/types.js';
-import type { NetConfig, NetValidators } from '../src/types.js';
+import type { NetConfig, NetValidators, PostsEntry } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ type StreamHandler = (arg: {
  * `setPostsHandler` is public and goes in the front door.
  */
 function makeHandlerHarness(opts: {
-  postsHandler?: (postIds: string[]) => never;
+  postsHandler?: (postIds: string[]) => PostsEntry[];
   syncHandler?: (id: string) => SubBlock | null;
   headersHandler?: (height: number) => OrderingBlock | null;
   syncMachine?: { handleMessage: (p: string, c: number, b: Uint8Array) => void };
@@ -327,6 +327,60 @@ describe('sync stream handler — app-layer callback failures', () => {
 
     expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(before);
     errSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The posts arm's three declining paths
+//
+// Same rule as the chain-query arms: on a shared stream, an unanswered request
+// is not a refusal the caller can read — it is a caller blocked until its own
+// timeout expires. `requestPosts` reads zero bytes as `{ entries: [] }`, which
+// is what all three of these mean.
+// ---------------------------------------------------------------------------
+
+describe('sync stream handler — the posts arm answers on every path', () => {
+  /** A handler that must not be reached — the two paths below return before it. */
+  const unreachableHandler = (): PostsEntry[] => {
+    throw new Error('posts handler must not run');
+  };
+
+  it('answers zero bytes when no posts handler is registered', async () => {
+    const { send } = makeHandlerHarness();
+
+    const written = await send(encodeGetPosts(MAGIC, { postIds: [STORED_ID] }));
+
+    expect(isEmptyReply(written)).toBe(true);
+  });
+
+  it('answers and permanently bans on a malformed GetPosts body', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ postsHandler: unreachableHandler });
+
+    // Not well-formed CBOR at all, so the decode boundary returns null.
+    const written = await send(
+      encodeFrame(MAGIC, MSG_GET_POSTS, new Uint8Array([0xff, 0xff, 0xff, 0xff])),
+    );
+
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('malformed GetPosts'));
+    warnSpy.mockRestore();
+  });
+
+  it('answers when the id list exceeds the serve limit', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ postsHandler: unreachableHandler });
+    const postIds = Array.from({ length: 101 }, (_, i) => i.toString(16).padStart(64, '0'));
+
+    const written = await send(encodeGetPosts(MAGIC, { postIds }));
+
+    expect(isEmptyReply(written)).toBe(true);
+    // Over-limit is not classified as a violation — the request is declined and
+    // the sender keeps its standing, unlike the malformed body above.
+    expect(peerMgr.isPeerActive(peerId)).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('exceeds limit'));
+    warnSpy.mockRestore();
   });
 });
 
