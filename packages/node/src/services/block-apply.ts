@@ -190,13 +190,15 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
     //
     // Totality here is a promise about **untrusted input** — no block a peer can
     // construct takes the node down. Our own stored header having no hash is not
-    // in that class and cannot be put in it: the store's only writer is this
-    // function, downstream of the gate that checks the same domain, so no peer
-    // can cause it. Answering `false` would turn local corruption into a
-    // permanent rejection of every subsequent block, logged as an unexpected
-    // failure — a node that rejects everything while staying up looks exactly
-    // like a quiet network. The unwinding below still runs, because the boundary
-    // is the caller's decision and not this function's to presume.
+    // in that class and cannot be put in it: the ordering store's one writer
+    // runs inside `applyBlockBody` below, downstream of the
+    // `verifyOrderingBlockStructure` call above — the same domain predicate —
+    // so no peer can cause it. (`store/ordering.ts`'s `createOrderingBlock`
+    // states the provenance.) Answering `false` would turn local corruption
+    // into a permanent rejection of every subsequent block, logged as an
+    // unexpected failure — a node that rejects everything while staying up looks
+    // exactly like a quiet network. The unwinding below still runs, because the
+    // boundary is the caller's decision and not this function's to presume.
     if (err instanceof CorruptChainStateError) {
       abortBlockJournal();
       restoreProver();

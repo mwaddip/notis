@@ -70,7 +70,36 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
 // ---------------------------------------------------------------------------
 
 /**
- * Insert a new ordering block.
+ * Insert a new ordering block — the only write path into `ordering_blocks`.
+ *
+ * **The provenance claim, stated here because several arguments elsewhere rest
+ * on it.** This is the table's only INSERT, and in `src` it has exactly one
+ * caller: `block-apply.ts` imports it as `storeCreateOrderingBlock` and calls
+ * it from `applyBlockBody`. What it stores is `encodeHeader` /
+ * `encodeSubBlockTree` / `encodeUtxoTxTree` **of the decoded block** — this
+ * node's own re-encoding, never the bytes a peer sent. So no input a peer can
+ * choose reaches a reader of this table, and a row that disagrees with our own
+ * writer means local corruption or a bug in us.
+ *
+ * **Two gates sit above that call and they are not interchangeable.**
+ * `applyOrderingBlock` runs `verifyOrderingBlockStructure` before the body,
+ * whose header checks *are* `verifyHeaderFieldDomains`; `applyBlockBody` runs
+ * its own `prevBlockHash` and height chain-link checks above the call. A site
+ * citing this claim names whichever of the two its own conclusion needs — a
+ * `blockHash` of `null` needs the header-domain gate, an all-zeros height-1
+ * `prevBlockHash` needs the chain-link one.
+ *
+ * ⚠ **A second writer belongs nowhere else.** Added here it lands directly
+ * under the sentence saying there is one; added anywhere else it falsifies
+ * every argument above and nothing says so.
+ *
+ * ⚠ **Neither obvious grep re-derives the enumeration.** `createOrderingBlock`
+ * is also the block creator's own function (`services/block-creator.ts`), so a
+ * search on the exported name returns two unrelated functions, and a search on
+ * the alias returns only the sites already using the alias. Re-derive by arity
+ * — this writer takes a block, the creator's takes nothing — or by import
+ * source, and search the table name for the INSERT. The claim is about `src`:
+ * tests call this writer directly.
  */
 export function createOrderingBlock(block: OrderingBlock): void {
   const db = getDb();
