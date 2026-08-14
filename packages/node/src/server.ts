@@ -237,8 +237,6 @@ export function createApp(config: Config): express.Express {
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
       getBox: store.getBoxWithPending,
-      metaPut: store.metaPut,
-      metaGet: store.metaGet,
     }),
   );
 

@@ -35,8 +35,6 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
         owner: new Uint8Array(32),
         guard: 'owner_signature',
       }) as AnyBox,
-    metaPut: () => {},
-    metaGet: () => null,
     ...overrides,
   };
 }

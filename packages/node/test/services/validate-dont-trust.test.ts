@@ -10,22 +10,11 @@ import type { Post, UtxoTransaction, AnyBox, KarmaBox } from '@dagsocial/types';
 import { PROTOCOL_VERSION, encodePost, computePostId } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function encodeUint32(n: number): Uint8Array {
-  const buf = new ArrayBuffer(4);
-  new DataView(buf).setUint32(0, n, true);
-  return new Uint8Array(buf);
-}
-
-// ---------------------------------------------------------------------------
 // Mock deps factory
 // ---------------------------------------------------------------------------
 
 interface MockStore {
   posts: Map<string, Uint8Array>; // id -> raw CBOR bytes
-  watermarkValues: Map<string, Uint8Array>;
 }
 
 function mockDeps(
@@ -66,12 +55,6 @@ function mockDeps(
         owner: new Uint8Array(32),
         guard: 'owner_signature',
       }) as AnyBox,
-    metaPut: (key: string, value: Uint8Array) => {
-      store.watermarkValues.set(key, value);
-    },
-    metaGet: (key: string) => {
-      return store.watermarkValues.get(key) ?? null;
-    },
     ...overrides,
   };
 }
@@ -79,7 +62,6 @@ function mockDeps(
 function makeStore(): MockStore {
   return {
     posts: new Map(),
-    watermarkValues: new Map(),
   };
 }
 
@@ -270,92 +252,6 @@ describe('validate-dont-trust', () => {
     const postC = makePost({ ...base, powNonce: 43 });
     const resultC = createPost(mockDeps(store), postC, tx);
     expect(resultC.postId).not.toBe(resultA.postId);
-  });
-
-  // -----------------------------------------------------------------------
-  // Watermark advancement
-  // -----------------------------------------------------------------------
-
-  it('advances last_indexed_sequence watermark after successful insertion', () => {
-    const store = makeStore();
-    const post = makePost({ parentRefs: [] });
-    const tx = makeKarmaLockTx();
-
-    createPost(mockDeps(store), post, tx);
-
-    const indexedBytes = store.watermarkValues.get('last_indexed_sequence');
-    expect(indexedBytes).toBeDefined();
-    const indexed = new DataView(
-      indexedBytes!.buffer,
-      indexedBytes!.byteOffset,
-      4,
-    ).getUint32(0, true);
-    expect(indexed).toBe(1);
-  });
-
-  it('advances last_validated_sequence watermark after full pipeline', () => {
-    const store = makeStore();
-    const post = makePost({ parentRefs: [] });
-    const tx = makeKarmaLockTx();
-
-    createPost(mockDeps(store), post, tx);
-
-    const validatedBytes = store.watermarkValues.get('last_validated_sequence');
-    expect(validatedBytes).toBeDefined();
-    const validated = new DataView(
-      validatedBytes!.buffer,
-      validatedBytes!.byteOffset,
-      4,
-    ).getUint32(0, true);
-    expect(validated).toBe(1);
-  });
-
-  it('does NOT advance watermarks when validation fails', () => {
-    const store = makeStore();
-    const post = makePost({ parentRefs: [] });
-    const tx = makeKarmaLockTx();
-
-    const deps = mockDeps(store, {
-      verifyPost: () => ({ valid: false, error: 'Content is empty' }),
-    });
-
-    expect(() => createPost(deps, post, tx)).toThrow(PostServiceError);
-
-    // Watermarks should not have been written
-    expect(store.watermarkValues.has('last_indexed_sequence')).toBe(false);
-    expect(store.watermarkValues.has('last_validated_sequence')).toBe(false);
-  });
-
-  it('advances watermarks monotonically across multiple posts', () => {
-    const store = makeStore();
-    const tx = makeKarmaLockTx();
-
-    // First post
-    createPost(mockDeps(store), makePost({ content: 'post 1' }), tx);
-    // Second post
-    createPost(mockDeps(store), makePost({ content: 'post 2' }), tx);
-    // Third post
-    createPost(mockDeps(store), makePost({ content: 'post 3' }), tx);
-
-    const indexedBytes = store.watermarkValues.get('last_indexed_sequence');
-    const validatedBytes = store.watermarkValues.get('last_validated_sequence');
-
-    expect(indexedBytes).toBeDefined();
-    expect(validatedBytes).toBeDefined();
-
-    const indexed = new DataView(
-      indexedBytes!.buffer,
-      indexedBytes!.byteOffset,
-      4,
-    ).getUint32(0, true);
-    const validated = new DataView(
-      validatedBytes!.buffer,
-      validatedBytes!.byteOffset,
-      4,
-    ).getUint32(0, true);
-
-    expect(indexed).toBe(3);
-    expect(validated).toBe(3);
   });
 
   // -----------------------------------------------------------------------
