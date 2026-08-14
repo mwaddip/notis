@@ -1005,8 +1005,18 @@ structure, PoW, and signatures.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `onSubBlock(callback)` | `((SubBlock) => void) => void` | Register handler for inbound sub-blocks |
-| `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us |
+| `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
 | `onTx(callback)` | `((UtxoTransaction) => void) => void` | Register handler for inbound UTXO transactions |
+
+⚠ **`fromPeerId` is not guaranteed to be a peer id.** It is read defensively from the gossip event's
+`propagationSource`, which the gossipsub type declares required — and *required by the type* is not
+*present at runtime*, while net's invariant is that one bad message degrades one message rather than
+the subsystem. A source-less event therefore delivers **`''`**, which is not a peer id and matches no
+entry in `getConnectedPeers()`.
+
+**A consumer must treat `fromPeerId` as a hint to be checked, never as an identity to be trusted.**
+Reading this field as always-a-peer is what makes a membership test look decorative, and the
+membership test is the thing standing between a relayed hint and a counterparty choice.
 
 ### Pull Requests (Peer-to-Peer)
 
