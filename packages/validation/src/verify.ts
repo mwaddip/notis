@@ -873,9 +873,10 @@ export function verifyOrderingBlockStructure(
   // No commitment makes that unreachable: `utxoTxRoot` commits `utxoTxIds` and
   // `coinbaseOutputs` and **never `utxoTxs`**, and the validator signature
   // covers the header only — so a *relaying* node can swap the payload on an
-  // honest block with no re-mine and no re-sign. Both peer paths decode through
-  // the positional codec (`decodeOrderingBlock` on gossip, `decodeBlocks` under
-  // `requestBlocks`), so a swap is refused there; this pin is what keeps the
+  // honest block with no re-mine and no re-sign. All three peer paths decode
+  // through the positional codec (`decodeOrderingBlock` on gossip,
+  // `decodeBlocks` under `requestBlocks`, `decodeOrderingBlock` again under
+  // `appendBlocks`), so a swap is refused there; this pin is what keeps the
   // store write safe independently of that.
   for (const tx of block.utxoTxTree.utxoTxs) {
     if (!isBytes(tx)) {
