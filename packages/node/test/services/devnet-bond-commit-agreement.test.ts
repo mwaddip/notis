@@ -72,6 +72,7 @@ async function fetchStatus(u: Universe): Promise<Record<string, unknown>> {
       getPostCount: () => 0,
       getPendingPostCount: () => 0,
       getTotalKarma: () => 0n,
+      getLiquidKarma: () => 0n,
       getTotalCredits: () => 0n,
       // Wired exactly as `server.ts` wires it.
       networkType: u.config.networkType,

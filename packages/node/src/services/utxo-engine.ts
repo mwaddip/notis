@@ -22,6 +22,21 @@ import { ed25519PublicKeyToKeyObject } from '@dagsocial/validation';
 import { config } from '../config.js';
 
 // ---------------------------------------------------------------------------
+// The karma family
+// ---------------------------------------------------------------------------
+
+/**
+ * The box types that hold karma: spendable in a `karma` box, escrowed in the
+ * other four. `credit` is the other ledger and `genesis_proof` is unspendable
+ * at 0 (NODE_INTERFACE → the `/status` row).
+ *
+ * One statement, two readers. The karma transition arm below admits exactly
+ * these as the outputs of a karma spend, and `/status` sums `totalKarma` over
+ * them — a sixth karma-bearing box type is named here and both follow.
+ */
+export const KARMA_BOX_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+
+// ---------------------------------------------------------------------------
 // Dependency interface
 // ---------------------------------------------------------------------------
 
@@ -227,15 +242,14 @@ function checkTransitions(
       const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
 
-      // A 'like'-type output is an illegal transition: a like is a burn
-      // transaction named by `likeTarget`, never a box.
-      const totalOutputs =
-        karmaOutputs.length + inviteOutputs.length + bondOutputs.length + postLockOutputs.length + vouchOutputs.length;
-
-      if (totalOutputs !== outputs.length) {
+      // A karma spend produces karma-family outputs and nothing else. A
+      // 'like'-type output is an illegal transition in particular: a like is a
+      // burn transaction named by `likeTarget`, never a box.
+      const karmaFamily: readonly string[] = KARMA_BOX_TYPES;
+      if (outputs.some((o) => !karmaFamily.includes(o.boxType))) {
         return {
           valid: false,
-          error: `Illegal karma transition: outputs contain non-karma/invite/bond/post_lock/vouch boxes`,
+          error: `Illegal karma transition: outputs contain non-${KARMA_BOX_TYPES.join('/')} boxes`,
         };
       }
 
