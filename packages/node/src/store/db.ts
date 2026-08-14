@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { emitDbOpenStarted, emitDbOpenComplete } from '../journal.js';
 
 let db: Database.Database | null = null;
 
@@ -354,6 +355,13 @@ function createMempoolGateIndexes(database: Database.Database): void {
 }
 
 export function initDb(path: string): void {
+  // JOURNAL_EVENTS → Phase Timing Events. `db_open_complete` is emitted at the
+  // END of this function, not after the last `migrate*` call: the contract puts
+  // it after the migrations have run, and the gate indexes are the last pass
+  // that has to succeed before the database is usable.
+  const startedAt = Date.now();
+  emitDbOpenStarted(path);
+
   db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -366,6 +374,8 @@ export function initDb(path: string): void {
   migrateVerifiablePrune(db);
   migrateVouchCooldowns(db);
   createMempoolGateIndexes(db);
+
+  emitDbOpenComplete(Date.now() - startedAt);
 }
 
 export function getDb(): Database.Database {

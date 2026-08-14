@@ -73,6 +73,22 @@ export function emitServerShuttingDown(reason: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Convenience emitters for phase timing events
+// ---------------------------------------------------------------------------
+
+export function emitDbOpenStarted(path: string): void {
+  emitEvent({ event: 'db_open_started', level: 'INFO', path });
+}
+
+export function emitDbOpenComplete(durationMs: number): void {
+  emitEvent({ event: 'db_open_complete', level: 'INFO', duration_ms: durationMs });
+}
+
+export function emitApiListening(bindAddress: string, port: number): void {
+  emitEvent({ event: 'api_listening', level: 'INFO', bind_address: bindAddress, port });
+}
+
+// ---------------------------------------------------------------------------
 // Convenience emitters for core events
 // ---------------------------------------------------------------------------
 

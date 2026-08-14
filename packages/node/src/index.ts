@@ -8,6 +8,7 @@ import {
   initJournal,
   emitServerStarting,
   emitServerReady,
+  emitApiListening,
   emitShutdownSignalReceived,
   emitServerShuttingDown,
 } from './journal.js';
@@ -388,6 +389,13 @@ if (config.nodeRole === 'miner') {
 const app = createApp(config);
 const adminServer = createAdminApp(config);
 const server = app.listen(config.port, () => {
+  // Read off the socket rather than named from config: `listen(port)` passes no
+  // host, so the public API has no configured bind address — only the admin
+  // server does — and which interface Node chose is a fact only the bound
+  // socket holds. `address()` is an `AddressInfo` here: this is a TCP server
+  // inside its own listening callback.
+  const bound = server.address() as { address: string; port: number };
+  emitApiListening(bound.address, bound.port);
   emitServerReady(
     `0.0.0.0:${config.port}`,
     `${config.adminBindAddress}:${config.adminPort}`,
