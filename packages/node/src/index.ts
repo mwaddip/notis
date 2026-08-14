@@ -187,15 +187,15 @@ net.onSubBlock((sb) => {
  * and the day `net` awaits its handlers the fail-stop would silently become a
  * swallow with nothing to say so.
  */
-net.onOrderingBlock(async (block) => {
+net.onOrderingBlock(async (block, fromPeerId) => {
   try {
-    await handleOrderingBlock(block);
+    await handleOrderingBlock(block, fromPeerId);
   } catch (err) {
     failStopIfCorruptChain(err);
   }
 });
 
-async function handleOrderingBlock(block: OrderingBlock): Promise<void> {
+async function handleOrderingBlock(block: OrderingBlock, fromPeerId: string): Promise<void> {
   const currentHeight = getCurrentHeight();
 
   // Genesis or extends our tip: apply normally
@@ -204,7 +204,9 @@ async function handleOrderingBlock(block: OrderingBlock): Promise<void> {
     return;
   }
 
-  await resolveFork(block, net, dagService);
+  // The relaying peer is the counterparty fork resolution asks (NET_INTERFACE →
+  // Pull Requests).
+  await resolveFork(block, net, fromPeerId, dagService);
 }
 
 net.onTx((tx) => {

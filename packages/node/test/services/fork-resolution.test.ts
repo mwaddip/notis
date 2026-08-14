@@ -179,6 +179,7 @@ async function importForkResolution() {
     resolveFork: (
       block: OrderingBlock,
       net: ForkResolutionNet,
+      fromPeerId: string,
       dagService?: unknown,
     ) => Promise<void>;
   };
@@ -1974,16 +1975,34 @@ async function buildForkScenario(): Promise<ForkScenario> {
   };
 }
 
-/** A peer that answers the header request honestly and the block request with `answer`. */
-function stubNet(theirHeaders: BlockHeader[], answer: OrderingBlock[]): ForkResolutionNet & {
+/**
+ * A peer that answers the header request honestly and the block request with
+ * `answer`.
+ *
+ * `connected` is what `getConnectedPeers()` reports — the Active list a
+ * counterparty is selected from — and `askedPeers` records the peer id each of
+ * the two requests went to, in call order.
+ */
+function stubNet(
+  theirHeaders: BlockHeader[],
+  answer: OrderingBlock[],
+  connected: string[] = ['peer-withholding'],
+): ForkResolutionNet & {
   blockRequests: Array<{ startHeight: number; endHeight: number }>;
+  askedPeers: string[];
 } {
   const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+  const askedPeers: string[] = [];
   return {
     blockRequests,
-    getConnectedPeers: () => ['peer-withholding'],
-    requestHeaders: async () => theirHeaders,
-    requestBlocks: async (startHeight: number, endHeight: number) => {
+    askedPeers,
+    getConnectedPeers: () => connected,
+    requestHeaders: async (_startHeight: number, _maxCount: number, peerId: string) => {
+      askedPeers.push(peerId);
+      return theirHeaders;
+    },
+    requestBlocks: async (startHeight: number, endHeight: number, peerId: string) => {
+      askedPeers.push(peerId);
       blockRequests.push({ startHeight, endHeight });
       return answer;
     },
@@ -2010,7 +2029,7 @@ describe('resolveFork — never reorg to a shorter chain', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const net = stubNet(scenario.theirHeaders, []);
-    await forkResolution.resolveFork(scenario.competingBlock, net);
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-withholding');
 
     // The peer was asked for the whole range above the fork — the reorg was
     // refused on its answer, not skipped earlier in fork choice.
@@ -2044,6 +2063,7 @@ describe('resolveFork — never reorg to a shorter chain', () => {
     await forkResolution.resolveFork(
       scenario.competingBlock,
       stubNet(scenario.theirHeaders, [scenario.theirBlocks[0]!]),
+      'peer-withholding',
     );
 
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -2062,6 +2082,7 @@ describe('resolveFork — never reorg to a shorter chain', () => {
     await forkResolution.resolveFork(
       scenario.competingBlock,
       stubNet(scenario.theirHeaders, scenario.theirBlocks),
+      'peer-withholding',
     );
 
     expect(ordering.getCurrentHeight()).toBe(4);
@@ -2082,6 +2103,13 @@ describe('resolveFork — never reorg to a shorter chain', () => {
 // a stranger's chain be adopted — and because the fork walk bottoms out at the
 // genesis state, a node below MAX_REORG_DEPTH can have its whole chain replaced
 // rather than a suffix of it.
+//
+// Within that list the peer asked is the one that relayed the competing block
+// (NET_INTERFACE → Pull Requests): it holds the fork chain, where an arbitrary
+// connected peer may hold nothing about it and answers the same empty list a
+// peer with no reorg to offer would. The source is filtered *through* the
+// Active list, so the two rules compose in one direction only — a relaying
+// peer that is not Active is not askable.
 // ---------------------------------------------------------------------------
 
 describe('resolveFork — the counterparty is an Active peer', () => {
@@ -2106,6 +2134,10 @@ describe('resolveFork — the counterparty is an Active peer', () => {
     // Known but not Active — the shape of a peer on another network. Its chain
     // is the genuinely-heavier one that the control below does adopt, so the
     // only thing refusing this reorg is which list the counterparty came from.
+    //
+    // It is also the peer that gossiped the block, which buys it nothing: the
+    // selection reads the Active list and the gossip source is filtered through
+    // it, so a stranger is no more askable for having relayed the block.
     let headersRequested = 0;
     const strangerOnly = {
       peers: () => [{ id: 'wrong-network-peer' }],
@@ -2114,7 +2146,11 @@ describe('resolveFork — the counterparty is an Active peer', () => {
       requestBlocks: async () => scenario.theirBlocks,
     } as unknown as ForkResolutionNet;
 
-    await forkResolution.resolveFork(scenario.competingBlock, strangerOnly);
+    await forkResolution.resolveFork(
+      scenario.competingBlock,
+      strangerOnly,
+      'wrong-network-peer',
+    );
 
     expect(ordering.getCurrentHeight()).toBe(3);
     for (const h of [1, 2, 3]) {
@@ -2137,8 +2173,70 @@ describe('resolveFork — the counterparty is an Active peer', () => {
     await forkResolution.resolveFork(
       scenario.competingBlock,
       stubNet(scenario.theirHeaders, scenario.theirBlocks),
+      'peer-withholding',
     );
 
+    expect(ordering.getCurrentHeight()).toBe(4);
+  });
+
+  it('asks the peer that relayed the block, not the head of the list', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+
+    // The source sits second among the Active peers, so "asked the relaying
+    // peer" is distinguishable from "asked whichever came first".
+    const net = stubNet(scenario.theirHeaders, scenario.theirBlocks, [
+      'peer-idle',
+      'peer-relayed-it',
+    ]);
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-relayed-it');
+
+    // Both queries — the header walk and the block fetch — went to it.
+    expect(net.askedPeers).toEqual(['peer-relayed-it', 'peer-relayed-it']);
+    expect(ordering.getCurrentHeight()).toBe(4);
+  });
+
+  it('falls back to an Active peer when the relaying peer is no longer connected', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+
+    const net = stubNet(scenario.theirHeaders, scenario.theirBlocks, ['peer-active']);
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-since-disconnected');
+
+    // The non-member is never asked, and what replaces it is a member: the
+    // membership test is what keeps the counterparty on the Active list rather
+    // than wherever the source came from.
+    expect(net.askedPeers).not.toContain('peer-since-disconnected');
+    expect(net.askedPeers).toEqual(['peer-active', 'peer-active']);
+    for (const asked of net.askedPeers) {
+      expect(net.getConnectedPeers()).toContain(asked);
+    }
+    expect(ordering.getCurrentHeight()).toBe(4);
+  });
+
+  it('falls back for a source that is no peer id at all', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+
+    const net = stubNet(scenario.theirHeaders, scenario.theirBlocks, ['peer-active']);
+
+    // The empty string is what reaches a handler for a gossip event carrying no
+    // source, and it is no more a peer id than a stranger's is. Membership is
+    // the whole test, so this needs no case of its own.
+    await forkResolution.resolveFork(scenario.competingBlock, net, '');
+
+    expect(net.askedPeers).toEqual(['peer-active', 'peer-active']);
     expect(ordering.getCurrentHeight()).toBe(4);
   });
 });

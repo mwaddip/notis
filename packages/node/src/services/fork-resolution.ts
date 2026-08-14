@@ -84,14 +84,14 @@ export function extendsOurTip(block: OrderingBlock): boolean {
  * The rule and its bound are stated at the `reachedGenesis` return below.
  *
  * `ourTip` is a header of ours; `theirHeaders` is not. It arrives from
- * `net.requestHeaders`, which parses the response through
- * `decodeLegacyHeadersResponse` — a real codec, capped at the caller's own
- * request size and carrying the whole boundary check (TYPES_INTERFACE → The
- * boundary check), so the array is structurally well-formed and canonically
- * encoded. That is not the same as trustworthy: every field is still
- * peer-chosen within its domain, a well-formed header is not a header of a
- * chain that exists, and `verifyOrderingBlockStructure` cannot cover the path
- * because it takes an `OrderingBlock` and this one carries bare headers.
+ * `net.requestHeaders`, which parses the response through `decodeHeaders` — a
+ * real codec, capped at the caller's own request size and carrying the whole
+ * boundary check (TYPES_INTERFACE → The boundary check), so the array is
+ * structurally well-formed and canonically encoded. That is not the same as
+ * trustworthy: every field is still peer-chosen within its domain, a
+ * well-formed header is not a header of a chain that exists, and
+ * `verifyOrderingBlockStructure` cannot cover the path because it takes an
+ * `OrderingBlock` and this one carries bare headers.
  *
  * **A batch with an unhashable header in it is refused whole.** A header we
  * cannot hash is not "a header that did not match": it is input we cannot
@@ -481,10 +481,16 @@ export interface ForkResolutionNet {
  * fork-choice rule lives here — common-ancestor depth, the cumulative-work
  * comparison, the tip-changed re-read, and the shorter-chain refusal — while
  * `reorg` below stays the mechanism that carries out a decision already made.
+ *
+ * `fromPeerId` is the peer that relayed the competing block (NET_INTERFACE →
+ * Inbound Processing), which is therefore a peer that holds the chain the block
+ * belongs to. It is the counterparty when the Active list agrees; the selection
+ * is at the `peers.includes` line below.
  */
 export async function resolveFork(
   block: OrderingBlock,
   net: ForkResolutionNet,
+  fromPeerId: string,
   dagService?: DagService,
 ): Promise<void> {
   const currentHeight = getCurrentHeight();
@@ -502,7 +508,17 @@ export async function resolveFork(
     console.warn('Fork resolution failed: no connected peers');
     return;
   }
-  const peerId = peers[0]!;
+  // Ask the peer that relayed the block: it holds the competing chain, where
+  // any other connected peer may hold nothing about it — and at this call site
+  // "knows nothing about this fork" and "has no reorg to offer" are the same
+  // answer, an empty header list (NET_INTERFACE → Pull Requests).
+  //
+  // The gossip source is filtered **through** the Active list, never around it:
+  // membership is the whole guarantee stated on `ForkResolutionNet`, and this
+  // selection admits nothing that list does not already admit. Any
+  // `fromPeerId` outside it — a relay that has since disconnected among them —
+  // takes the fallback.
+  const peerId = peers.includes(fromPeerId) ? fromPeerId : peers[0]!;
 
   try {
     // Request headers from competing tip going backward (newest-first)
