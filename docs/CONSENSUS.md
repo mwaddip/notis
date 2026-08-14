@@ -47,12 +47,20 @@ rejects the block.
 
 ### PoW and difficulty
 
-PoW is standard hashcash: miner iterates `powNonce` until the first
-`powTargetBits` of `blake2b-512(preimage ++ LE64(nonce)).subarray(0,32)` are
-zero, where `preimage` is the header hash with `powNonce=0`. Difficulty adjusts
-at credit epoch boundaries (every 129,600 blocks, ~90 days at 60s):
-`newTarget = round(oldTarget * actualDuration / expectedDuration)`, clamped to
-+/- 50% and floored at 4. Initial target: 12 bits.
+The ordering block's PoW is hashcash: a miner iterates `powNonce` until
+`blake2b-512(preimage ++ LE64(nonce)).subarray(0,32)`, read big-endian, is at or
+below the target, where `preimage` is the header hash with `powNonce=0`.
+
+`powTargetBits` is a scale in units of 1/256 of a bit, not a count of leading
+zero bits. It expands to `R - 1` for the unique `R` with
+`R^256 <= 2^(65536 - powTargetBits) < (R+1)^256`; mainnet and testnet run 5984,
+which is 23.375 bits. Post PoW is a separate puzzle whose target is not in these
+units.
+
+The target is a per-network constant and does not vary with height. Every block
+is checked against it on every path that revalidates one -- gossip, sync and
+reorg alike -- so changing the value rejects every block already stored under the
+old one. `MINING_INTERFACE.md` owns the parameters and the rule.
 
 ## 3. State Root (AVL+)
 
