@@ -45,7 +45,7 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -83,21 +83,18 @@ function honestCandidate(
     case 'invite':
       return {
         boxType: 'invite',
-        value: 10n,
-        secretHash: new Uint8Array(32).fill(0xaa),
+        value: 0n,
         inviterId: owner,
-        guard: 'hash_preimage_with_bond',
+        inviteePublicKey: new Uint8Array(32).fill(0xaa),
+        guard: 'invite_dual',
       };
     case 'bond':
       return {
         boxType: 'bond',
         value: 10n,
         inviterId: owner,
-        inviteOutputIndex: 1,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
+        inviteePublicKey: new Uint8Array(32).fill(0xaa),
+        guard: 'block_apply',
       };
     case 'post_lock':
       return {
@@ -130,7 +127,7 @@ const WRONG_GUARD: Record<(typeof BOX_TYPES)[number], string> = {
   invite: 'owner_signature',
   bond: 'owner_signature',
   post_lock: 'owner_signature',
-  vouch: 'bond_dual',
+  vouch: 'invite_dual',
 };
 
 function shapeOf(outputs: unknown[]) {
@@ -191,8 +188,8 @@ describe('checkOutputShape (direct)', () => {
     const dropped: Record<string, string> = {
       karma: 'owner',
       credit: 'owner',
-      invite: 'secretHash',
-      bond: 'probationEndBlock',
+      invite: 'inviteePublicKey',
+      bond: 'inviteePublicKey',
       post_lock: 'targetPostId',
       vouch: 'targetId',
     };
@@ -225,11 +222,18 @@ describe('checkOutputShape (direct)', () => {
     }
   });
 
-  it('rejects the retired-reserved guard strings on the types that once wore them', () => {
-    // 'hash_preimage' / 'inviter_signature' are unreachable by contract;
-    // 'epoch_tally' is reserved-retired (P2-D). All are lies about the bytes.
-    expect(shapeOf([{ ...honestCandidate('invite', owner), guard: 'hash_preimage' }]).valid).toBe(false);
-    expect(shapeOf([{ ...honestCandidate('bond', owner), guard: 'inviter_signature' }]).valid).toBe(false);
+  it('rejects every reserved guard string on the types that once wore them', () => {
+    // Reserved-retired, never to be reused (TYPES_INTERFACE → BoxGuard): a
+    // guard string is box content, so a reinstated name would make two
+    // different rules share a byte string. All of these are lies about the box.
+    for (const retired of ['hash_preimage_with_bond', 'hash_preimage', 'inviter_signature']) {
+      expect(shapeOf([{ ...honestCandidate('invite', owner), guard: retired }]).valid, retired)
+        .toBe(false);
+    }
+    for (const retired of ['bond_dual', 'inviter_signature']) {
+      expect(shapeOf([{ ...honestCandidate('bond', owner), guard: retired }]).valid, retired)
+        .toBe(false);
+    }
     expect(shapeOf([{ ...honestCandidate('post_lock', owner), guard: 'epoch_tally' }]).valid).toBe(false);
   });
 
@@ -268,7 +272,7 @@ describe('validateTx output shape (integration)', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
@@ -418,26 +422,24 @@ describe('validateTx output shape (integration)', () => {
     expect(r.valid, r.error).toBe(true);
   });
 
-  it('accepts karma → karma + invite + bond (honest, uncommitted bond)', () => {
+  it('accepts karma → karma + invite + bond (honest)', () => {
     const karma = seedKarma(100n);
+    const invitee = new Uint8Array(32).fill(0xaa);
     const invite = {
       boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash: new Uint8Array(32).fill(0xaa),
+      value: 0n,
       inviterId: ownerPubKey,
-      guard: 'hash_preimage_with_bond',
+      inviteePublicKey: invitee,
+      guard: 'invite_dual',
     };
     const bond = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId: ownerPubKey,
-      inviteOutputIndex: 1,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual',
+      inviteePublicKey: invitee,
+      guard: 'block_apply',
     };
-    const change = karmaChange(100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA);
+    const change = karmaChange(100n - INVITE_BOND_KARMA);
     const r = validateTx(deps, signedTx([karma.id!], [change, invite, bond]), 10);
     expect(r.valid, r.error).toBe(true);
   });
@@ -495,14 +497,14 @@ describe('validateTx output shape (integration)', () => {
     expect(r.error).toMatch(/\(post_lock\): guard must be 'block_apply'/);
   });
 
-  it('rejects vouch output with guard bond_dual', () => {
+  it('rejects vouch output with guard invite_dual', () => {
     const karma = seedKarma(100n);
     const vouch = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
-      guard: 'bond_dual',
+      guard: 'invite_dual',
     };
     const r = validateTx(
       deps,
@@ -515,40 +517,38 @@ describe('validateTx output shape (integration)', () => {
 
   it('rejects invite output with guard owner_signature and bond output with guard owner_signature', () => {
     const karma = seedKarma(100n);
+    const invitee = new Uint8Array(32).fill(0xaa);
     const invite = (guard: string) => ({
       boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash: new Uint8Array(32).fill(0xaa),
+      value: 0n,
       inviterId: ownerPubKey,
+      inviteePublicKey: invitee,
       guard,
     });
     const bond = (guard: string) => ({
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId: ownerPubKey,
-      inviteOutputIndex: 1,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
+      inviteePublicKey: invitee,
       guard,
     });
-    const change = karmaChange(100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA);
+    const change = karmaChange(100n - INVITE_BOND_KARMA);
 
     const r1 = validateTx(
       deps,
-      signedTx([karma.id!], [change, invite('owner_signature'), bond('bond_dual')]),
+      signedTx([karma.id!], [change, invite('owner_signature'), bond('block_apply')]),
       10,
     );
     expect(r1.valid).toBe(false);
-    expect(r1.error).toMatch(/\(invite\): guard must be 'hash_preimage_with_bond'/);
+    expect(r1.error).toMatch(/\(invite\): guard must be 'invite_dual'/);
 
     const r2 = validateTx(
       deps,
-      signedTx([karma.id!], [change, invite('hash_preimage_with_bond'), bond('owner_signature')]),
+      signedTx([karma.id!], [change, invite('invite_dual'), bond('owner_signature')]),
       10,
     );
     expect(r2.valid).toBe(false);
-    expect(r2.error).toMatch(/\(bond\): guard must be 'bond_dual'/);
+    expect(r2.error).toMatch(/\(bond\): guard must be 'block_apply'/);
   });
 
   // ---- key-set rejects through the full pipeline ----

@@ -17,7 +17,7 @@ import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services
 import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
-import { createInvite, claimInvite, cancelInvite, commitInvite } from './services/invites.js';
+import { createInvite, claimInvite, cancelInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
@@ -176,12 +176,12 @@ export function createApp(config: Config): express.Express {
   // set does not hold that output yet.
   const utxoEngineDeps = {
     getBox: store.getBoxWithPending,
-      getBoxByProvenance: store.getBoxByProvenance,
     insertBox: store.insertBox,
     consumeBox: store.consumeBox,
     getKarmaBox: store.getKarmaBox,
     getKarmaBoxes: store.getKarmaBoxes,
     getKarmaValue: store.getKarmaValue,
+      getIdentityRecord: store.getIdentityRecord,
     hasActiveVouchCooldown: store.hasActiveVouchCooldown,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     isSystemBox: (boxId: string) => {
@@ -247,11 +247,11 @@ export function createApp(config: Config): express.Express {
       castLike,
       getCurrentHeight: store.getCurrentHeight,
       getBox: store.getBoxWithPending,
-      getBoxByProvenance: store.getBoxByProvenance,
       insertBox: store.insertBox,
       consumeBox: store.consumeBox,
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
+      getIdentityRecord: store.getIdentityRecord,
       hasActiveVouchCooldown: store.hasActiveVouchCooldown,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -265,11 +265,11 @@ export function createApp(config: Config): express.Express {
       initiateUnvouch,
       getCurrentHeight: store.getCurrentHeight,
       getBox: store.getBoxWithPending,
-      getBoxByProvenance: store.getBoxByProvenance,
       insertBox: store.insertBox,
       consumeBox: store.consumeBox,
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
+      getIdentityRecord: store.getIdentityRecord,
       hasActiveVouchCooldown: store.hasActiveVouchCooldown,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -282,14 +282,13 @@ export function createApp(config: Config): express.Express {
       createInvite,
       claimInvite,
       cancelInvite,
-      commitInvite,
       getCurrentHeight: store.getCurrentHeight,
       getBox: store.getBoxWithPending,
-      getBoxByProvenance: store.getBoxByProvenance,
       insertBox: store.insertBox,
       consumeBox: store.consumeBox,
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
+      getIdentityRecord: store.getIdentityRecord,
       hasActiveVouchCooldown: store.hasActiveVouchCooldown,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -304,10 +303,10 @@ export function createApp(config: Config): express.Express {
       faucetRoutes({
         getKarmaBox: store.getKarmaBox,
         getKarmaValue: store.getKarmaValue,
+      getIdentityRecord: store.getIdentityRecord,
         hasActiveVouchCooldown: store.hasActiveVouchCooldown,
         getCurrentHeight: store.getCurrentHeight,
         getBox: store.getBoxWithPending,
-      getBoxByProvenance: store.getBoxByProvenance,
         insertBox: store.insertBox,
         consumeBox: store.consumeBox,
         runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
@@ -337,7 +336,7 @@ export function createApp(config: Config): express.Express {
       getKarmaBoxes: store.getKarmaBoxes,
       getCreditBox: store.getCreditBox,
       getCreditBoxes: store.getCreditBoxes,
-      getPendingInvites: store.getPendingInvites,
+      getOpenInvites: store.getOpenInvites,
       getBondBoxes: store.getBondBoxes,
       getCurrentHeight: store.getCurrentHeight,
       getUtxoEngineDeps: () => utxoEngineDeps,

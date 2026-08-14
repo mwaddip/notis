@@ -25,12 +25,15 @@ describe('seedInviteAndBond — distinct provenance per call', () => {
     const a = seedInviteAndBond({ label: 'first', inviterId });
     const b = seedInviteAndBond({ label: 'second', inviterId });
 
-    // Same txId within a pair — the invite and bond are outputs of ONE tx, which
-    // is what makes `(bond.txId, bond.inviteOutputIndex)` resolve the invite.
+    // Same txId within a pair — the invite and bond are outputs of ONE tx, the
+    // shape invite creation actually emits.
     expect(a.invite.txId).toBe(a.bond.txId);
     expect(a.invite.index).toBe(0);
     expect(a.bond.index).toBe(1);
-    expect(a.bond.inviteOutputIndex).toBe(0);
+    // And the pairing itself: one invitee key on both boxes, which is the whole
+    // of what resolves a bond from its invite.
+    expect(Buffer.from(a.bond.inviteePublicKey).toString('hex'))
+      .toBe(Buffer.from(a.invite.inviteePublicKey).toString('hex'));
 
     // Different txId across pairs — the property `label` exists to guarantee.
     // Without it these two calls share a txId and both bonds land on

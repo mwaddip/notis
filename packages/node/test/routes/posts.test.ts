@@ -19,8 +19,8 @@ import {
   getKarmaBoxes,
   insertBox,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
 } from '../../src/store/utxo.js';
+import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
@@ -100,8 +100,8 @@ async function request(
             // why it stayed green — but an incomplete deps object throws the
             // moment a rule starts consulting one of them, and these wire to
             // the same store functions production does.
-            getBoxByProvenance: (txId: string, index: number) =>
-              storeGetBoxByProvenance(txId, index),
+            getIdentityRecord: (identityId: Uint8Array) =>
+              storeGetIdentityRecord(identityId),
             getKarmaValue: (owner: Uint8Array) =>
               getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
             hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) =>

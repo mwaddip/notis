@@ -567,27 +567,6 @@ function b32Either(value, n) {
   return value instanceof Uint8Array ? b32Bytes(value, n) : b32Hex(value, n);
 }
 
-/**
- * `opt(b32(x))` over a field whose *absence* is spelled empty in memory —
- * `bond.inviteePublicKey`, and it is the only one.
- *
- * The field is **0-or-32 bytes**: empty = unclaimed, 32 bytes = committed. A
- * plain `b32` here throws on every uncommitted bond, which is every bond an
- * invite-create emits, so this is the one box field that is optional on the
- * wire while staying non-optional in memory.
- *
- * Absence is "empty", nothing else: a *missing* field is out of domain, not
- * unclaimed, and letting it take the absent branch would give a malformed box a
- * well-formed box's id. Anything that is neither an empty byte view nor an empty
- * string goes to the present branch and reaches the throwing writer. The empty
- * *string* counts because the tx-builder form carries this field as hex.
- */
-function optB32Either(value, n) {
-  const unclaimed =
-    (value instanceof Uint8Array && value.length === 0) || value === '';
-  return opt(unclaimed ? undefined : { present: value }, (w) => b32Either(w.present, n));
-}
-
 /** lp(x) = vlqU(byteLength) ‖ bytes. Total: a non-view sentinels its length. */
 function lp(bytes) {
   if (!(bytes instanceof Uint8Array)) return vlqBigInt(VLQ_SENTINEL);
@@ -737,8 +716,8 @@ function boxTypeFields(box) {
       ]);
     case 'invite':
       return concatUint8Arrays([
-        b32Either(box.secretHash, 32),
         b32Either(box.inviterId, 32),
+        b32Either(box.inviteePublicKey, 32),
       ]);
     case 'genesis_proof':
       // `lp`, not `b32Either`: the payload is variable-length and opaque to
@@ -747,13 +726,11 @@ function boxTypeFields(box) {
       // stays the byte-only primitive it is in @dagsocial/types.
       return lp(box.payload);
     case 'bond':
+      // Byte-for-byte the `invite` arm above. `enum8Tag(BOX_TYPE_TAGS, …)` is
+      // field 1, so the tag is the whole of what separates the two leaves.
       return concatUint8Arrays([
         b32Either(box.inviterId, 32),
-        vlqU(box.inviteOutputIndex),
-        // 0-or-32, not 32 — see `optB32Either`.
-        optB32Either(box.inviteePublicKey, 32),
-        vlqU(box.probationStartBlock),
-        vlqU(box.probationEndBlock),
+        b32Either(box.inviteePublicKey, 32),
       ]);
     case 'post_lock':
       return concatUint8Arrays([

@@ -63,6 +63,33 @@ export function getLikeRecordCount(postId: string): number {
 }
 
 /**
+ * Lifetime count of likes an author has **received**, across every live post
+ * they authored — the bond settlement's only input (ARCHITECTURE → Bond
+ * outcomes).
+ *
+ * Authorship comes from `block_topology`, never from `dag_posts`: the topology
+ * row is derived from block data alone, so every node reaches the same count
+ * from the same chain, and it is the same authority prune authorization reads.
+ *
+ * "Lifetime" is the same qualified lifetime `getLikeRecordCount` carries —
+ * records die with the post on prune, so a pruned post's likes count zero. That
+ * is a property of the like-record tier rather than of this read.
+ *
+ * @param authorHex the author's public key as lowercase hex, the form
+ *   `block_topology.author` stores
+ */
+export function getLikesReceivedCount(authorHex: string): number {
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM like_records lr
+       JOIN block_topology bt ON bt.post_id = lr.target_post_id
+       WHERE bt.author = ?`,
+    )
+    .get(authorHex) as { cnt: number };
+  return row.cnt;
+}
+
+/**
  * Delete every like-record for the given posts — prune settlement only.
  *
  * While a block journal is open, captures every deleted row (all three

@@ -12,8 +12,8 @@ import {
   getKarmaBoxes,
   insertBox,
   getBox,
-  getBoxByProvenance,
 } from '../../src/store/utxo.js';
+import { getIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getPendingEntries, getBoxWithPending } from '../../src/store/mempool.js';
 import { initSystemKeypair, ensureSystemKarmaBox, getSystemKeypair } from '../../src/store/system.js';
@@ -59,6 +59,7 @@ function buildDeps(): FaucetDeps {
     getKarmaBox,
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    getIdentityRecord,
     hasActiveVouchCooldown: storeHasActiveVouchCooldown,
     getCurrentHeight,
     // The pending view, as server.ts wires the submission routes: a grant
@@ -67,8 +68,7 @@ function buildDeps(): FaucetDeps {
     // confirmed set alone both answers are wrong and the grant is rejected as an
     // ordinary karma transfer.
     getBox: getBoxWithPending,
-    getBoxByProvenance,
-    insertBox,
+      insertBox,
     consumeBox: (id: string, atBlock: number) => {
       getDb().prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
     },

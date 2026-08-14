@@ -12,7 +12,8 @@ import { generateKeyPairSync, createPrivateKey, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost } from '../../src/store/posts.js';
 import {
-  getBoxByProvenance as storeGetBoxByProvenance, insertBox, getKarmaBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
+  insertBox, getKarmaBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
+import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import { castLike } from '../../src/services/likes.js';
@@ -53,7 +54,7 @@ async function request(
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => {
         insertBox(box);
       },

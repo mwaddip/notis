@@ -9,14 +9,14 @@ import {
   getKarmaBoxes,
   getCreditBox,
   getCreditBoxes,
-  getPendingInvites,
+  getOpenInvites,
   getBondBoxes,
   insertBox,
   getBox,
-  getBoxByProvenance,
   getKarmaValue,
   consumeBox,
 } from '../../src/store/utxo.js';
+import { getIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
@@ -63,19 +63,19 @@ async function request(
       getKarmaBoxes,
       getCreditBox,
       getCreditBoxes,
-      getPendingInvites,
+      getOpenInvites,
       getBondBoxes,
       getCurrentHeight: () => 100,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
         // spending the change box of one still pooled resolves its input here.
         getBox: getBoxWithPending,
-        getBoxByProvenance,
-        insertBox,
+              insertBox,
         consumeBox,
         getKarmaBox,
         getKarmaValue,
         hasActiveVouchCooldown,
+        getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
       }),
@@ -169,28 +169,24 @@ describe('UTXO routes', () => {
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
     // ⚠ Guard strings are box CONTENT — they sit inside the box-id preimage —
     // so a fixture spelling one wrong describes a box that could never exist.
-    // `InviteBox.guard` is `hash_preimage_with_bond`; `BondBox.guard` is
-    // `bond_dual` (TYPES_INTERFACE → BoxGuard). The bond also needs
-    // `inviteOutputIndex`: it resolves its invite through
-    // `(txId, inviteOutputIndex)`, so without it the bond cannot name the
-    // invite it shipped with.
+    // `InviteBox.guard` is `invite_dual`; `BondBox.guard` is `block_apply`
+    // (TYPES_INTERFACE → BoxGuard). Both boxes name the same invitee, which is
+    // the whole of the pairing.
+    const inviteePublicKey = new Uint8Array(32).fill(0xbb);
     const inviteBox = seedProvenance<InviteBox>({
       boxType: 'invite' as const,
-      value: 10n,
-      secretHash: new Uint8Array(32).fill(0xaa),
+      value: 0n,
       inviterId: inviteUserId,
-      guard: 'hash_preimage_with_bond' as const,
+      inviteePublicKey,
+      guard: 'invite_dual' as const,
     }, 1);
     insertBox(inviteBox);
     const bondBox = seedProvenance<BondBox>({
       boxType: 'bond' as const,
       value: 5n,
       inviterId: inviteUserId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(32).fill(0xbb),
-      probationStartBlock: 100,
-      probationEndBlock: 1100,
-      guard: 'bond_dual' as const,
+      inviteePublicKey,
+      guard: 'block_apply' as const,
     }, 1);
     insertBox(bondBox);
 
@@ -232,14 +228,20 @@ describe('UTXO routes', () => {
     expect(b0.value).toBe('99');
   });
 
-  it('GET /invites/:userId returns pending and bonds arrays', async () => {
+  it('GET /invites/:userId returns open and bonds arrays', async () => {
     const res = await request(`/invites/${inviteUserIdHex}`);
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
-    expect(Array.isArray(body.pending)).toBe(true);
+    expect(Array.isArray(body.open)).toBe(true);
     expect(Array.isArray(body.bonds)).toBe(true);
-    expect((body.pending as unknown[]).length).toBeGreaterThanOrEqual(1);
+    expect((body.open as unknown[]).length).toBeGreaterThanOrEqual(1);
     expect((body.bonds as unknown[]).length).toBeGreaterThanOrEqual(1);
+    // The invitee key is on both, and it is what pairs them.
+    const invite = (body.open as Record<string, unknown>[])[0]!;
+    const bond = (body.bonds as Record<string, unknown>[])[0]!;
+    expect(invite.inviteePublicKey).toBe(bond.inviteePublicKey);
+    expect(invite.guard).toBe('invite_dual');
+    expect(bond.guard).toBe('block_apply');
   });
 
   // ---------------------------------------------------------------------------

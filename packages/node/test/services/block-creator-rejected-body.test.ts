@@ -1,15 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   EMPTY_STATE_ROOT,
-  INVITE_BOND_KARMA,
-  INVITE_PROBATION_BLOCKS,
   PROTOCOL_VERSION,
+  VOUCH_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type {
-  BondBox,
   KarmaBox,
   OrderingBlock,
   UtxoTransaction,
+  VouchBox,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
@@ -28,12 +27,16 @@ import {
 // P2-B phase 1c — the creator must not mine a body its own mutation phase
 // rejected.
 //
-// The reachable scenario is a stale mempool entry: a bond settlement that was
-// valid at pool entry (invitee at/above INVITE_KARMA_THRESHOLD) turns invalid
-// while pooled, because the invitee's karma-reducing spend commits first. Its
-// inputs (the bond) stay live, so at block creation the embedded-tx
-// re-validation — not the liveness skip — is what fails, and the speculative
-// state-root run (H-6) rejects the whole body.
+// The reachable scenario is a stale mempool entry: a vouch cast that was valid
+// at pool entry (voucher at or above VOUCH_MIN_BALANCE) turns invalid while
+// pooled, because a spend of the voucher's OTHER karma box commits first. Its
+// own input stays live, so at block creation the embedded-tx re-validation —
+// not the liveness skip — is what fails, and the speculative state-root run
+// (H-6) rejects the whole body.
+//
+// The vehicle has to be a rule whose verdict can move without touching the
+// transaction's inputs, and the minimum-balance gate is one: it reads the
+// voucher's summed karma, which any other spend changes.
 //
 // The pre-fix twin of the first test passed on unmodified HEAD (2026-08-07):
 // createOrderingBlock() solved real PoW over a header carrying
@@ -101,6 +104,7 @@ async function importUtxo() {
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
+    getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };
 }
@@ -132,10 +136,11 @@ async function activateProver() {
 async function storeBackedDeps() {
   const utxoStore = await import('../../src/store/utxo.js');
   const vouchCooldowns = await import('../../src/store/vouch-cooldowns.js');
+  const identityStore = await import('../../src/store/identity-records.js');
   const { getDb } = await import('../../src/store/db.js');
   return {
     getBox: utxoStore.getBox,
-    getBoxByProvenance: utxoStore.getBoxByProvenance,
+    getIdentityRecord: identityStore.getIdentityRecord,
     insertBox: utxoStore.insertBox,
     consumeBox: utxoStore.consumeBox,
     getKarmaBox: utxoStore.getKarmaBox,
@@ -148,89 +153,77 @@ async function storeBackedDeps() {
   };
 }
 
-/** Committed bond (inviter ← settlement) whose probation spans the window. */
-function makeCommittedBond(
-  inviterId: Uint8Array,
-  inviteePublicKey: Uint8Array,
-  probationStartBlock: number,
-  probationEndBlock: number,
-): Stored<BondBox> {
-  return seedProvenance<BondBox>(
-    {
-      boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 0,
-      inviteePublicKey,
-      probationStartBlock,
-      probationEndBlock,
-      guard: 'bond_dual' as const,
-    },
-    1,
-  );
-}
-
-/** Settlement of `bond` to its inviter, signed by the committed invitee. */
-function makeSettlementTx(bond: BondBox, invitee: TestIdentity): UtxoTransaction {
+/** `karmaIn` → karma change + a VouchBox staking VOUCH_KARMA_AMOUNT. */
+function makeVouchCastTx(
+  karmaIn: KarmaBox,
+  voucher: TestIdentity,
+  targetId: Uint8Array,
+): UtxoTransaction {
   const tx: UtxoTransaction = {
-    inputs: [bond.id!],
+    inputs: [karmaIn.id!],
     outputs: [
       {
         boxType: 'karma',
-        value: INVITE_BOND_KARMA,
-        owner: bond.inviterId,
+        value: karmaIn.value - VOUCH_KARMA_AMOUNT,
+        owner: voucher.userId,
         guard: 'owner_signature',
       } as KarmaBox,
+      {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        voucherId: voucher.userId,
+        targetId,
+        guard: 'owner_signature',
+      } as VouchBox,
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
-  signTransaction(tx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
+  signTransaction(tx, voucher.privateKey, Buffer.from(voucher.userId).toString('hex'));
   return tx;
 }
 
 /**
- * Seed the stale-settlement scenario and return its pieces:
- * bond committed, settlement valid at pool entry, pooled, then invalidated by
- * the invitee's karma-reducing spend committing — with the bond still live.
+ * Seed the stale-entry scenario and return its pieces: a vouch cast that was
+ * valid at pool entry and turns invalid while pooled, with its own input still
+ * live.
+ *
+ * The vehicle is the vouch minimum-balance gate, which is a predicate on the
+ * voucher's *summed* karma rather than on this transaction's inputs. That is
+ * what makes the staleness reachable at all: a spend of a box the cast never
+ * named moves the verdict, so at block creation the embedded-tx re-validation —
+ * not the liveness skip — is what fails.
  */
-async function seedStaleSettlement() {
+async function seedStaleVouchCast() {
   const utxo = await importUtxo();
   const mempool = await importMempool();
 
-  const inviter = makeTestIdentity();
-  const invitee = makeTestIdentity();
+  const voucher = makeTestIdentity();
+  const target = makeTestIdentity();
 
-  // Above INVITE_KARMA_THRESHOLD (20n) at pool time.
-  const inviteeKarma = makeKarmaBox(24n, invitee.userId, 0);
-  utxo.insertBox(inviteeKarma);
+  // 6 + 6 = 12, above VOUCH_MIN_BALANCE (11) at pool time. Split across two
+  // boxes on purpose: the cast names only the first, so consuming the second is
+  // a change to the voucher's balance that leaves the cast's input live.
+  const spent = makeKarmaBox(6n, voucher.userId, 0, 0);
+  const other = makeKarmaBox(6n, voucher.userId, 0, 1);
+  utxo.insertBox(spent);
+  utxo.insertBox(other);
 
-  // Probation still running at the settle height (1): window (1, 1001) of the
-  // pinned length. The threshold leg is the only possible unlock.
-  const bond = makeCommittedBond(
-    inviter.userId,
-    invitee.userId,
-    1,
-    1 + INVITE_PROBATION_BLOCKS,
-  );
-  utxo.insertBox(bond);
-
-  const settlement = makeSettlementTx(bond, invitee);
+  const cast = makeVouchCastTx(spent, voucher, target.userId);
 
   // Entry-time proof: this is the tx pool entry / relay validation accepts.
   const { validateTx } = await import('../../src/services/utxo-engine.js');
   const deps = await storeBackedDeps();
-  expect(validateTx(deps, settlement, 1).valid).toBe(true);
+  expect(validateTx(deps, cast, 1).valid).toBe(true);
 
-  mempool.insertUtxoTx(settlement, null, 1000);
+  mempool.insertUtxoTx(cast, null, 1000);
 
-  // The invitee's karma-reducing spend commits AFTER the settlement pooled.
-  // The settlement's own input (the bond) stays live, so at the block path
-  // this fails re-validation, not the liveness skip.
-  utxo.consumeBox(inviteeKarma.id!, 0);
-  expect(validateTx(deps, settlement, 1).valid).toBe(false);
+  // The voucher's other box is consumed AFTER the cast pooled, dropping the
+  // summed balance below the minimum. The cast's own input stays live.
+  utxo.consumeBox(other.id!, 0);
+  expect(validateTx(deps, cast, 1).valid).toBe(false);
 
-  return { utxo, mempool, inviter, invitee, bond, settlement };
+  return { utxo, mempool, voucher, target, spent, cast };
 }
 
 describe('block creator vs a body its own mutation phase rejects', () => {
@@ -253,7 +246,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     const db = await importDb();
     db.initDb(':memory:');
 
-    const { utxo, mempool, inviter, bond } = await seedStaleSettlement();
+    const { utxo, mempool, voucher, spent } = await seedStaleVouchCast();
 
     // Real prover over the committed unspent set — production wiring. This is
     // what makes EMPTY_STATE_ROOT impossible to reach benignly: with a prover
@@ -275,9 +268,14 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
 
-    // Nothing settled: the bond survives and the inviter was never paid.
-    expect(utxo.getBox(bond.id!)).not.toBeNull();
-    expect(utxo.getKarmaBox(inviter.userId)).toBeNull();
+    // Nothing applied: the cast's karma input survives and no VouchBox exists.
+    expect(utxo.getBox(spent.id!)).not.toBeNull();
+    expect(utxo.getKarmaBoxes(voucher.userId).reduce((sum, b) => sum + b.value, 0n)).toBe(6n);
+    expect(
+      db.getDb()
+        .prepare(`SELECT id FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL`)
+        .all(),
+    ).toHaveLength(0);
 
     // The poisoned body's entries are evicted — the same cleanup a rejected
     // finalize runs. Without this every later rebuild reassembles the identical

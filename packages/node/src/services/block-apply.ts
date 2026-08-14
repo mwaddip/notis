@@ -3,6 +3,8 @@ import * as validation from '@dagsocial/validation';
 import { mintKarma } from './karma.js';
 import { mintCredits } from './credits.js';
 import {
+  bondReturnContext,
+  bondSettleContext,
   coinbaseContext,
   likePayoutContext,
   postlockRemainderContext,
@@ -53,7 +55,6 @@ import {
   insertPostPlaceholder,
   insertBox,
   getBox,
-  getBoxByProvenance,
   consumeBox,
   confirmPost,
   pruneSubtree,
@@ -71,6 +72,9 @@ import {
   hasLikeRecord,
   insertLikeRecord,
   getLikeRecordCount,
+  getLikesReceivedCount,
+  getBondFor,
+  getMaturedBonds,
   getPostLockBox,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
@@ -91,6 +95,7 @@ import {
   decodeTx,
   MAX_REORG_DEPTH,
   PROTOCOL_VERSION,
+  INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
@@ -117,6 +122,57 @@ function processVouchCooldowns(currentHeight: number): void {
       vouchSettleContext(row.voucherId, row.targetId),
     );
     deleteVouchCooldown(row.voucherId, row.targetId);
+  }
+}
+
+/**
+ * Return a cancelled invite's bond to its inviter, whole.
+ *
+ * The cancel transaction neither names the bond nor could spend it — a bond's
+ * guard is `block_apply` and no signature satisfies it (NODE_INTERFACE → "Bond
+ * transition rules"). The pairing is `inviteePublicKey` and nothing else, since
+ * an address is invited once, ever.
+ *
+ * No bond is not a fault: a store that has the invite but not its bond is
+ * reachable only through a rollback boundary, and re-minting against a bond that
+ * is not there would create karma from nothing — the one thing this whole unit
+ * exists to confine to the claim.
+ */
+function returnBond(inviteePublicKey: Uint8Array, height: number): void {
+  const bond = getBondFor(inviteePublicKey);
+  if (!bond || !bond.id) return;
+  consumeBox(bond.id, height);
+  mintKarma(bond.inviterId, bond.value, height, bondReturnContext(inviteePublicKey));
+}
+
+/**
+ * Settle every bond whose probation deadline is this block — once, at the
+ * deadline, reading only likes (ARCHITECTURE → Bond outcomes).
+ *
+ * Vested is `min(floor(inviteeLifetimeLikes / INVITE_BOND_VEST_PER_LIKES),
+ * bond.value)`: the inviter is minted that much and the remainder **burns**.
+ * Nothing else is consulted — not the invitee's balance, not whether they are
+ * still active, not when the likes arrived. A single evaluation is
+ * arithmetically identical to accumulated instalments because the vested amount
+ * is a pure function of a lifetime count, which is what lets a `BondBox` stay
+ * byte-identical from creation to here.
+ *
+ * All arithmetic is `bigint`; a float intermediate is a consensus fork.
+ */
+function processMaturedBonds(height: number): void {
+  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
+  for (const bond of getMaturedBonds(height)) {
+    if (!bond.id) continue;
+    const likes = BigInt(
+      getLikesReceivedCount(Buffer.from(bond.inviteePublicKey).toString('hex')),
+    );
+    const earned = likes / VEST_PER_LIKES;
+    const vested = earned < bond.value ? earned : bond.value;
+    consumeBox(bond.id, height);
+    // `mintKarma` returns early at 0, so a fully-forfeit bond mints nothing and
+    // the whole value is destroyed — the burn is the absence of a mint, not a
+    // second box.
+    mintKarma(bond.inviterId, vested, height, bondSettleContext(bond.inviteePublicKey));
   }
 }
 
@@ -890,19 +946,20 @@ function applyMutationPhase(
   //    block itself is malformed. A valid block cannot contain an invalid tx.
   const utxoDeps = {
     getBox,
-    getBoxByProvenance,
-    insertBox,
+      insertBox,
     consumeBox,
     getKarmaBox,
-    // Bond settlement's unlock predicate reads the invitee's current summed
-    // karma (NODE_INTERFACE → "Bond transition rules"). The store's
-    // getKarmaValue is the single implementation shared with the pool and relay
-    // paths — a different read here would be a consensus split, not a style
-    // difference.
+    // The vouch cast's minimum-balance gate reads the voucher's current summed
+    // karma (ARCHITECTURE → "Vouch boxes"). The store's getKarmaValue is the
+    // single implementation shared with the pool and relay paths — a different
+    // read here would be a consensus split, not a style difference.
     getKarmaValue,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same single-implementation rule as getKarmaValue.
     hasActiveVouchCooldown,
+    // The invite-create once-ever bar (NODE_INTERFACE → "Bond transition
+    // rules") — same rule again.
+    getIdentityRecord,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },
@@ -1130,8 +1187,48 @@ function applyMutationPhase(
         }
       }
 
+      // Detect an invite claim or cancel before the InviteBox is consumed. The
+      // effects run *after* `applyTx`, because the claim's own karma output
+      // bumps the invitee's activity clock and the record write below must
+      // carry that bump rather than overwrite it.
+      let inviteToSettle: { invitee: Uint8Array; isCancel: boolean } | null = null;
+      for (const inputId of item.tx.inputs) {
+        const inputBox = getBox(inputId);
+        if (inputBox && inputBox.boxType === 'invite') {
+          // validateTx pinned an invite transaction to exactly one InviteBox
+          // input and to two shapes — zero outputs is a cancel, one karma
+          // output is a claim — so first-match is exhaustive and the
+          // discriminant is total.
+          inviteToSettle = {
+            invitee: (inputBox as import('@dagsocial/types').InviteBox).inviteePublicKey,
+            isCancel: item.tx.outputs.length === 0,
+          };
+          break;
+        }
+      }
+
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
+
+      if (inviteToSettle !== null) {
+        if (inviteToSettle.isCancel) {
+          returnBond(inviteToSettle.invitee, height);
+        } else {
+          // The claim's height, recorded once and read by two rules: the
+          // once-ever invite bar and the settlement sweep's deadline
+          // (NODE_INTERFACE → Identity Records). Re-read after `applyTx` so the
+          // activity bump the karma mint just wrote survives; a missing record
+          // means maximally stale ({0, 0}), never "skip".
+          const invitee = inviteToSettle.invitee;
+          const after = getIdentityRecord(invitee);
+          putIdentityRecord(invitee, {
+            lastActivityBlock: after?.lastActivityBlock ?? 0,
+            lastDecayBlock: after?.lastDecayBlock ?? 0,
+            likeCarry: after?.likeCarry ?? 0n,
+            invitedAtBlock: height,
+          });
+        }
+      }
 
       if (likeToRecord !== null) {
         // Journalled side-record (inverse: deleteLikeRecord), plus the
@@ -1213,6 +1310,9 @@ function applyMutationPhase(
       lastActivityBlock: after?.lastActivityBlock ?? 0,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
       likeCarry: carry,
+      // Carried through: the claim path owns it, and an author being paid for
+      // likes in the same block they claimed is reachable.
+      invitedAtBlock: after?.invitedAtBlock ?? 0,
     });
   }
 
@@ -1286,6 +1386,11 @@ function applyMutationPhase(
 
   // 12b. Process vouch cooldowns
   processVouchCooldowns(height);
+
+  // 12c. Settle bonds whose probation deadline is this block. After decay, on
+  // the same standing as the vouch sweep: both are height-driven settlements
+  // that read committed state the embedded transactions have already moved.
+  processMaturedBonds(height);
 
   return true;
 }

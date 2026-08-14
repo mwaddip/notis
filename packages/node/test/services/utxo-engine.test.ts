@@ -41,7 +41,7 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -114,7 +114,7 @@ describe('validateAndApplyTx', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
@@ -237,36 +237,29 @@ describe('validateAndApplyTx', () => {
   it('valid karma to karma+invite+bond (invite creation)', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
+    const invitee = new Uint8Array(32).fill(0xaa);
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: 70n,
+      // Only the bond is paid: INVITE_KARMA_AMOUNT is minted at the claim.
+      value: 100n - INVITE_BOND_KARMA,
       owner: ownerPubKey,
       guard: 'owner_signature',
     };
 
-    const secretHash = new Uint8Array(32).fill(0xaa);
     const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
-      value: 15n,
-      secretHash,
+      value: 0n,
       inviterId: ownerUserId,
-      guard: 'hash_preimage_with_bond',
+      inviteePublicKey: invitee,
+      guard: 'invite_dual',
     };
-    const seededInviteBox = seedProvenance<InviteBox>(inviteBox, 1);
-    const inviteId = seededInviteBox.id;
 
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
-      value: 15n,
+      value: INVITE_BOND_KARMA,
       inviterId: ownerUserId,
-      inviteOutputIndex: 0,
-      // Length 0 is the uncommitted state. This fixture used 32 zero bytes,
-      // which is the *committed* shape — accepted only while invite creation
-      // never looked at the commitment fields (P2-B phase 2 pins them).
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual',
+      inviteePublicKey: invitee,
+      guard: 'block_apply',
     };
 
     const tx = buildSignedTx(
@@ -530,17 +523,22 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 11. hash_preimage_with_bond guard
+  // 11. invite_dual — the guard and the two shapes it separates
+  //
+  // Either key the InviteBox names satisfies the guard, and the shape decides
+  // which one may sign: invitee → claim, inviter → cancel (TYPES_INTERFACE →
+  // BoxGuard). Accepting either signature over either shape is not equivalent,
+  // and the pair of rejections below is what pins that.
   // ---------------------------------------------------------------------------
-  describe('hash_preimage_with_bond guard', () => {
+  describe('invite_dual guard and the invite transitions', () => {
     let inviterPubKey: Uint8Array;
     let inviterPrivKey: KeyObject;
     let inviteePubKey: Uint8Array;
     let inviteePrivKey: KeyObject;
+    let strangerPubKey: Uint8Array;
+    let strangerPrivKey: KeyObject;
     let inviteBoxId: string;
     let bondBoxId: string;
-    let secret: Uint8Array;
-    let secretHash: Uint8Array;
 
     beforeEach(() => {
       const inviterKeys = generateKeyPairSync('ed25519');
@@ -551,338 +549,167 @@ describe('validateAndApplyTx', () => {
       inviteePubKey = rawPublicKey(inviteeKeys.publicKey);
       inviteePrivKey = inviteeKeys.privateKey;
 
-      secret = new Uint8Array(Buffer.from('a'.repeat(64), 'hex'));
-      secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
+      const strangerKeys = generateKeyPairSync('ed25519');
+      strangerPubKey = rawPublicKey(strangerKeys.publicKey);
+      strangerPrivKey = strangerKeys.privateKey;
 
-      // Create an invite box
+      // The pair as invite creation emits it: one transaction, both boxes
+      // naming the same invitee.
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
-        value: 25n,
-        secretHash,
+        value: 0n,
         inviterId: inviterPubKey,
-        guard: 'hash_preimage_with_bond',
-      };
-      // Create an unclaimed bond box paired with the invite.
-      //
-      // Seeded as outputs 0 and 1 of ONE synthetic transaction, because the bond
-      // now finds its invite at `(bond.txId, bond.inviteOutputIndex)`. Two
-      // independently-seeded boxes would leave the bond pointing at an index of
-      // a transaction with no invite at it — the mispairing the index form
-      // exists to make inexpressible, so the fixture must not fake it.
-      const bondCandidate = {
-        boxType: 'bond' as const,
-        value: 25n,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual' as const,
-      };
-      const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate]);
-      inviteBoxId = seededInvite!.id!;
-      bondBoxId = seededBond!.id!;
-      storeInsertBox(seededInvite!);
-      storeInsertBox(seededBond!);
-    });
-
-    it('rejects tx with no BondBox input', () => {
-      const newKarmaBox: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 25n,
-        owner: new Uint8Array(32),
-        guard: 'owner_signature',
-      };
-
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId],
-        outputs: [newKarmaBox],
-        signatures: {},
-        protocolVersion: 1,
-      };
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('requires a BondBox');
-    });
-
-    it('rejects tx with missing preimage', () => {
-      const bondOut: CandidateOf<BondBox> = {
-        boxType: 'bond',
-        value: 25n,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
-      };
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 25n,
-        owner: new Uint8Array(32),
-        guard: 'owner_signature',
-      };
-
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [karmaOut, bondOut],
-        signatures: {},
-        protocolVersion: 1,
-      };
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('Missing preimage');
-    });
-
-    it('rejects tx with wrong preimage', () => {
-      const wrongSecret = new Uint8Array(32);
-      const bondOut: CandidateOf<BondBox> = {
-        boxType: 'bond',
-        value: 25n,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
-      };
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 25n,
-        owner: new Uint8Array(32),
-        guard: 'owner_signature',
-      };
-
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [karmaOut, bondOut],
-        signatures: {},
-        preimages: { [inviteBoxId]: wrongSecret },
-        protocolVersion: 1,
-      };
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('preimage mismatch');
-    });
-
-    it('accepts tx with valid preimage and committed bond', () => {
-      // Simulate committed BondBox
-      db.prepare(
-        'UPDATE utxo_boxes SET extra_data = ? WHERE id = ?',
-      ).run(
-        JSON.stringify({
-          inviterId: Buffer.from(inviterPubKey).toString('hex'),
-          inviteOutputIndex: 0,
-          inviteePublicKey: Array.from(inviteePubKey),
-          probationStartBlock: 3,
-          probationEndBlock: 1003,
-        }),
-        bondBoxId,
-      );
-
-      const bondOut: CandidateOf<BondBox> = {
-        boxType: 'bond',
-        value: 25n,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
         inviteePublicKey: inviteePubKey,
-        probationStartBlock: 3,
-        probationEndBlock: 1003,
-        guard: 'bond_dual',
+        guard: 'invite_dual',
       };
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 25n,
-        owner: inviteePubKey,
-        guard: 'owner_signature',
-      };
-
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [karmaOut, bondOut],
-        signatures: {},
-        preimages: { [inviteBoxId]: secret },
-        protocolVersion: 1,
-      };
-      const hash = computeTxHash(tx);
-      const hexKey = Buffer.from(inviteePubKey).toString('hex');
-      tx.signatures[hexKey] = signHash(hash, inviteePrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // 12. invite+bond reveal (claim) transition
-  // ---------------------------------------------------------------------------
-  describe('invite+bond reveal transition', () => {
-    let inviterPubKey: Uint8Array;
-    let inviterPrivKey: KeyObject;
-    let inviteePubKey: Uint8Array;
-    let inviteePrivKey: KeyObject;
-    let secret: Uint8Array;
-    let secretHash: Uint8Array;
-    let inviteBoxId: string;
-    let bondBoxId: string;
-
-    beforeEach(() => {
-      const inviterKeys = generateKeyPairSync('ed25519');
-      inviterPubKey = rawPublicKey(inviterKeys.publicKey);
-      inviterPrivKey = inviterKeys.privateKey;
-
-      const inviteeKeys = generateKeyPairSync('ed25519');
-      inviteePubKey = rawPublicKey(inviteeKeys.publicKey);
-      inviteePrivKey = inviteeKeys.privateKey;
-
-      secret = new Uint8Array(Buffer.from('a'.repeat(64), 'hex'));
-      secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
-
-      // Create invite box
-      const inviteBox: CandidateOf<InviteBox> = {
-        boxType: 'invite',
-        value: 25n,
-        secretHash,
+      const bondBox: CandidateOf<BondBox> = {
+        boxType: 'bond',
+        value: INVITE_BOND_KARMA,
         inviterId: inviterPubKey,
-        guard: 'hash_preimage_with_bond',
+        inviteePublicKey: inviteePubKey,
+        guard: 'block_apply',
       };
-      // Invite and bond seeded as outputs 0 and 1 of ONE synthetic transaction —
-      // the bond resolves its invite from `(txId, inviteOutputIndex)`.
-      const bondCandidate = {
-        boxType: 'bond' as const,
-        value: 25n,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual' as const,
-      };
-      const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate]);
-      inviteBoxId = seededInvite!.id!;
-      bondBoxId = seededBond!.id!;
-      storeInsertBox(seededInvite!);
-      storeInsertBox(seededBond!);
+      const [invite, bond] = seedAsOneTx([inviteBox, bondBox]);
+      deps.insertBox(invite!);
+      deps.insertBox(bond!);
+      inviteBoxId = invite!.id!;
+      bondBoxId = bond!.id!;
     });
 
-    /** Build a signed reveal tx with preimages and invitee signature. */
-    // Candidates, like `buildSignedTx` above: these are the reveal
-    // transaction's outputs, not stored boxes.
-    function buildRevealTx(
-      karmaOut: CandidateOf<KarmaBox>,
-      bondOut: CandidateOf<BondBox>,
-    ): UtxoTransaction {
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [karmaOut, bondOut],
+    /** Invite → one KarmaBox for the invitee. */
+    function claimTx(owner = inviteePubKey, value = INVITE_KARMA_AMOUNT): UtxoTransaction {
+      return {
+        inputs: [inviteBoxId],
+        outputs: [{ boxType: 'karma', value, owner, guard: 'owner_signature' } as KarmaBox],
         signatures: {},
-        preimages: { [inviteBoxId]: secret },
         protocolVersion: 1,
       };
-      const hash = computeTxHash(tx);
-      const hexKey = Buffer.from(inviteePubKey).toString('hex');
-      tx.signatures[hexKey] = signHash(hash, inviteePrivKey);
-      return tx;
     }
 
-    it('accepts valid invite+bond reveal', () => {
-      // Simulate committed BondBox
-      db.prepare(
-        'UPDATE utxo_boxes SET extra_data = ? WHERE id = ?',
-      ).run(
-        JSON.stringify({
-          inviterId: Buffer.from(inviterPubKey).toString('hex'),
-          inviteOutputIndex: 0,
-          inviteePublicKey: Array.from(inviteePubKey),
-          probationStartBlock: 3,
-          probationEndBlock: 1003,
-        }),
-        bondBoxId,
-      );
-
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 25n,
-        owner: inviteePubKey,
-        guard: 'owner_signature',
+    /** Invite → nothing. */
+    function cancelTx(): UtxoTransaction {
+      return {
+        inputs: [inviteBoxId],
+        outputs: [],
+        signatures: {},
+        protocolVersion: 1,
       };
-      const bondOut: CandidateOf<BondBox> = {
-        boxType: 'bond',
-        value: 25n,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: inviteePubKey,
-        probationStartBlock: 3,
-        probationEndBlock: 1003,
-        guard: 'bond_dual',
-      };
+    }
 
-      const tx = buildRevealTx(karmaOut, bondOut);
+    it('accepts an invitee-signed claim', () => {
+      const tx = claimTx();
+      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
+
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(true);
+      expect(result.error).toBeUndefined();
     });
 
-    it('rejects reveal with no bond output', () => {
-      // karma output value matches total input value (50) to pass value conservation,
-      // then the transition check catches the missing bond output
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 50n,
-        owner: inviteePubKey,
-        guard: 'owner_signature',
-      };
+    it('accepts an inviter-signed cancel', () => {
+      const tx = cancelTx();
+      tx.signatures[Buffer.from(inviterPubKey).toString('hex')] = signHash(computeTxHash(tx), inviterPrivKey);
 
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [karmaOut],
-        signatures: {},
-        preimages: { [inviteBoxId]: secret },
-        protocolVersion: 1,
-      };
-      const hash = computeTxHash(tx);
-      const hexKey = Buffer.from(inviterPubKey).toString('hex');
-      tx.signatures[hexKey] = signHash(hash, inviterPrivKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('rejects an inviter-signed CLAIM', () => {
+      // Guard-satisfied by a named key, and still refused: the mint belongs to
+      // the invitee's own decision, and applying it bars their address from any
+      // further invite forever.
+      const tx = claimTx();
+      tx.signatures[Buffer.from(inviterPubKey).toString('hex')] = signHash(computeTxHash(tx), inviterPrivKey);
 
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('Invalid invite reveal');
+      expect(result.error).toContain('signed by the invitee');
     });
 
-    it('rejects reveal with uncommitted bond output (empty inviteePubKey)', () => {
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 25n,
-        owner: inviteePubKey,
-        guard: 'owner_signature',
+    it('rejects an invitee-signed CANCEL', () => {
+      const tx = cancelTx();
+      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('signed by the inviter');
+    });
+
+    it('rejects a stranger on either shape', () => {
+      for (const build of [claimTx, cancelTx]) {
+        const tx = build();
+        tx.signatures[Buffer.from(strangerPubKey).toString('hex')] = signHash(computeTxHash(tx), strangerPrivKey);
+        expect(validateTx(deps, tx, 10).valid).toBe(false);
+      }
+    });
+
+    it('rejects a claim paying anyone but the named invitee', () => {
+      const tx = claimTx(strangerPubKey);
+      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("owned by the invite's inviteePublicKey");
+    });
+
+    it('rejects a claim minting anything but INVITE_KARMA_AMOUNT', () => {
+      for (const value of [INVITE_KARMA_AMOUNT - 1n, INVITE_KARMA_AMOUNT + 1n]) {
+        const tx = claimTx(inviteePubKey, value);
+        tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
+        const result = validateTx(deps, tx, 10);
+        expect(result.valid, `value=${value}`).toBe(false);
+        // The conservation carve fires first: the surplus is wrong before the
+        // transition arm reads the amount. Two layers over one rule.
+        expect(result.error).toContain('non-conservation');
+      }
+    });
+
+    it('rejects a claim that also names the bond', () => {
+      // Mixed input types have no legal shape any more, and a bond input is
+      // refused at the guard besides.
+      const tx: UtxoTransaction = {
+        inputs: [inviteBoxId, bondBoxId],
+        outputs: [{
+          boxType: 'karma', value: INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
+          owner: inviteePubKey, guard: 'owner_signature',
+        } as KarmaBox],
+        signatures: {},
+        protocolVersion: 1,
       };
-      const bondOut: CandidateOf<BondBox> = {
-        boxType: 'bond',
-        value: 25n,
+      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Mixed input types|block application/);
+    });
+
+    it('rejects two invites in one transaction', () => {
+      // Shaped as a two-invite CANCEL, not a two-invite claim: both boxes hold
+      // 0 and there are no outputs, so the transaction conserves and reaches
+      // step 7. A two-invite claim would be caught one step earlier by the
+      // conservation carve, which requires exactly one input — the bound would
+      // then be untested rather than proven.
+      const second: CandidateOf<InviteBox> = {
+        boxType: 'invite',
+        value: 0n,
         inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
+        inviteePublicKey: strangerPubKey,
+        guard: 'invite_dual',
       };
+      const seeded = seedProvenance<InviteBox>(second, 2);
+      deps.insertBox(seeded);
 
       const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [karmaOut, bondOut],
+        inputs: [inviteBoxId, seeded.id!],
+        outputs: [],
         signatures: {},
-        preimages: { [inviteBoxId]: secret },
         protocolVersion: 1,
       };
-      const hash = computeTxHash(tx);
-      const hexKey = Buffer.from(inviterPubKey).toString('hex');
-      tx.signatures[hexKey] = signHash(hash, inviterPrivKey);
+      tx.signatures[Buffer.from(inviterPubKey).toString('hex')] = signHash(computeTxHash(tx), inviterPrivKey);
 
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('Invalid invite reveal');
+      expect(result.error).toContain('exactly one InviteBox');
     });
   });
 
@@ -1095,31 +922,29 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toBeUndefined();
     });
 
-    it('accepts a conserving invite-create tx K(v) -> K(v-50) + Invite(25) + Bond(25)', () => {
+    it('accepts a conserving invite-create tx K(v) -> K(v-25) + Invite(0) + Bond(25)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
-        value: 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
+        // Only the bond leaves the change box: the invite holds nothing.
+        value: 100n - INVITE_BOND_KARMA,
         owner: ownerPubKey,
         guard: 'owner_signature',
       };
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
-        value: INVITE_KARMA_AMOUNT,
-        secretHash: new Uint8Array(32).fill(0xbb),
+        value: 0n,
         inviterId: ownerUserId,
-        guard: 'hash_preimage_with_bond',
+        inviteePublicKey: new Uint8Array(32).fill(0xbb),
+        guard: 'invite_dual',
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerUserId,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
+        inviteePublicKey: new Uint8Array(32).fill(0xbb),
+        guard: 'block_apply',
       };
 
       const tx = buildSignedTx(
@@ -1137,8 +962,8 @@ describe('validateAndApplyTx', () => {
     it('rejects invite-create that does not debit the change box (audit C-1)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
-      // invites.ts checks only that invite/bond equal 25 each — never that the
-      // change box was debited. Conservation is what catches this.
+      // The transition arm pins the bond's value but nothing there requires the
+      // change box to be debited for it. Conservation is what catches this.
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n,
@@ -1147,20 +972,17 @@ describe('validateAndApplyTx', () => {
       };
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
-        value: INVITE_KARMA_AMOUNT,
-        secretHash: new Uint8Array(32).fill(0xcc),
+        value: 0n,
         inviterId: ownerUserId,
-        guard: 'hash_preimage_with_bond',
+        inviteePublicKey: new Uint8Array(32).fill(0xcc),
+        guard: 'invite_dual',
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerUserId,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
+        inviteePublicKey: new Uint8Array(32).fill(0xcc),
+        guard: 'block_apply',
       };
 
       const tx = buildSignedTx(
@@ -1175,22 +997,18 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('Value non-conservation');
     });
 
-    it('rejects a BondBox burn (zero outputs) — the exemption was removed in P2-B', () => {
-      // This test asserted acceptance until P2-B phase 1. Bond forfeiture is
-      // not implemented and no legal transition destroys a bond, so the
-      // exemption bought nothing but a burn shape the *committed invitee* could
-      // reach — their signature satisfies `bond_dual`, so they could torch the
-      // inviter's stake. See test/services/bond-tightening.test.ts for the
-      // attack form and its non-vacuity controls.
+    it('rejects a BondBox burn (zero outputs) — no zero-output exemption is bond-shaped', () => {
+      // The zero-output exemption is vouch-only, so conservation answers first
+      // (step 5, ahead of the guard at step 6): the value is gone and the sums
+      // say so. The guard is the layer under it, and refuses a bond input even
+      // when the sums balance. See test/services/bond-tightening.test.ts for
+      // both layers with their non-vacuity controls.
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual',
+        inviteePublicKey: new Uint8Array(32).fill(0xdd),
+        guard: 'block_apply',
       };
       const seededBondBox = seedProvenance<BondBox>(bondBox, 1);
       const bondBoxId = seededBondBox.id;
@@ -1203,6 +1021,19 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('Value non-conservation');
       // Nothing applied — the bond is still unspent.
       expect(deps.getBox(bondBoxId)).not.toBeNull();
+
+      // And the layer below, on a shape conservation cannot answer: sending the
+      // bond's value straight back out balances the sums, so the guard is what
+      // refuses.
+      const conserving = buildSignedTx(
+        [bondBoxId],
+        [{ boxType: 'karma', value: INVITE_BOND_KARMA, owner: ownerPubKey, guard: 'owner_signature' } as KarmaBox],
+        ownerPrivKey,
+        ownerPubKey,
+      );
+      const guarded = validateTx(deps, conserving, 10);
+      expect(guarded.valid).toBe(false);
+      expect(guarded.error).toContain('block application');
     });
 
     it('accepts a VouchBox burn (unvouch) — karma escrows into the cooldown', () => {
@@ -1270,157 +1101,86 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 14. Cancel-shape Invite+Bond sweep (audit H-2)
+  // 14. The Invite+Bond sweep (audit H-2), closed by construction
   //
-  // The old `bond_dual` commit path accepted any non-empty `signatures` map
-  // once the preimage matched. That let anyone who learned the invite secret
-  // `s` spend their OWN KarmaBox alongside the InviteBox and the still-
-  // uncommitted BondBox in the 3-input "cancel shape" — a mixed-type
-  // combination `validateTx` step 3 explicitly permits — and sweep both boxes
-  // into their own karma with NO inviter signature. Nothing else stopped it:
-  // the total conserves, the InviteBox's `hash_preimage_with_bond` guard skips
-  // the signature check while the bond is uncommitted, and the cancel
-  // transition only requires `karmaOut.owner == karmaIn.owner`, which the
-  // attacker's own box satisfies.
+  // The attack was a 3-input "cancel shape" — the attacker's own KarmaBox plus
+  // the InviteBox plus the uncommitted BondBox — sweeping both into their own
+  // karma with no inviter signature. It needed a mixed-type input combination,
+  // which `validateTx` step 3 permitted for exactly two shapes.
   //
-  // The sweep produces no BondBox output, so the hardened guard now rejects it.
-  // This attack never goes through `commitInvite`, so it belongs here at the
-  // consensus layer rather than in invites.test.ts.
+  // Both preconditions are gone: every legal shape is single-type now, and a
+  // bond input is refused at the guard whatever else the transaction holds. The
+  // sweep is enumerated here rather than assumed unreachable, because "step 3
+  // admits no exceptions" is a claim a future arm could quietly reverse.
   // ---------------------------------------------------------------------------
-  describe('cancel-shape Invite+Bond sweep (audit H-2)', () => {
-    const KARMA_IN = 100n;
-    const SWEPT_TOTAL = KARMA_IN + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-
-    let inviterPubKey: Uint8Array;
-    let inviterPrivKey: KeyObject;
-    let attackerPubKey: Uint8Array;
-    let attackerPrivKey: KeyObject;
-    let secret: Uint8Array;
-    let inviteBoxId: string;
-    let bondBoxId: string;
-
-    beforeEach(() => {
+  describe('the Invite+Bond sweep (audit H-2)', () => {
+    it('rejects the 3-input sweep, attacker-signed', () => {
       const inviterKeys = generateKeyPairSync('ed25519');
-      inviterPubKey = rawPublicKey(inviterKeys.publicKey);
-      inviterPrivKey = inviterKeys.privateKey;
-
+      const inviterPubKey = rawPublicKey(inviterKeys.publicKey);
       const attackerKeys = generateKeyPairSync('ed25519');
-      attackerPubKey = rawPublicKey(attackerKeys.publicKey);
-      attackerPrivKey = attackerKeys.privateKey;
+      const attackerPubKey = rawPublicKey(attackerKeys.publicKey);
 
-      secret = new Uint8Array(Buffer.from('b'.repeat(64), 'hex'));
-      const secretHash = createHash('blake2b512')
-        .update(Buffer.from(secret))
-        .digest()
-        .subarray(0, 32);
+      const karma = createAndInsertKarma(attackerPubKey, 100n, 3);
+      const [invite, bond] = seedAsOneTx([
+        {
+          boxType: 'invite' as const, value: 0n, inviterId: inviterPubKey,
+          inviteePublicKey: attackerPubKey, guard: 'invite_dual' as const,
+        },
+        {
+          boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviterPubKey,
+          inviteePublicKey: attackerPubKey, guard: 'block_apply' as const,
+        },
+      ]);
+      deps.insertBox(invite!);
+      deps.insertBox(bond!);
 
-      const inviteBox: CandidateOf<InviteBox> = {
-        boxType: 'invite',
-        value: INVITE_KARMA_AMOUNT,
-        secretHash,
-        inviterId: inviterPubKey,
-        guard: 'hash_preimage_with_bond',
-      };
-      // Uncommitted bond — the state the sweep depends on. Seeded with the
-      // invite as outputs 0 and 1 of ONE synthetic transaction, so the bond's
-      // `inviteOutputIndex` resolves to the invite it shipped with.
-      const bondCandidate = {
-        boxType: 'bond' as const,
-        value: INVITE_BOND_KARMA,
-        inviterId: inviterPubKey,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual' as const,
-      };
-      const [seededInvite, seededBond] = seedAsOneTx([inviteBox, bondCandidate], 1, 42);
-      inviteBoxId = seededInvite!.id!;
-      bondBoxId = seededBond!.id!;
-      storeInsertBox(seededInvite!);
-      storeInsertBox(seededBond!);
-    });
-
-    /**
-     * The 3-input cancel shape: karma + invite + bond → a single KarmaBox
-     * holding the full sum, owned by `beneficiary`. Both preimage slots carry
-     * `s`, so the InviteBox guard and the bond commit path each see a matching
-     * secret. Returned unsigned — every test adds the signatures it is about.
-     */
-    function buildSweepTx(beneficiary: Uint8Array, karmaInId: string): UtxoTransaction {
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: SWEPT_TOTAL,
-        owner: beneficiary,
-        guard: 'owner_signature',
-      };
-      return {
-        inputs: [karmaInId, inviteBoxId, bondBoxId],
-        outputs: [karmaOut],
+      const tx: UtxoTransaction = {
+        inputs: [karma.id!, invite!.id!, bond!.id!],
+        outputs: [{
+          boxType: 'karma',
+          value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
+          owner: attackerPubKey,
+          guard: 'owner_signature',
+        } as KarmaBox],
         signatures: {},
-        preimages: { [inviteBoxId]: secret, [bondBoxId]: secret },
         protocolVersion: 1,
       };
-    }
-
-    /** Sign the tx hash for `pubKey`. Signatures are not part of the hash. */
-    function addSignature(
-      tx: UtxoTransaction,
-      pubKey: Uint8Array,
-      privKey: KeyObject,
-    ): void {
-      tx.signatures[Buffer.from(pubKey).toString('hex')] = signHash(
-        computeTxHash(tx),
-        privKey,
-      );
-    }
-
-    it('rejects a preimage-only sweep of Invite+Bond into the attacker karma', () => {
-      const attackerKarma = createAndInsertKarma(attackerPubKey, KARMA_IN, 1);
-      const tx = buildSweepTx(attackerPubKey, attackerKarma.id!);
-      // The attacker signs only for their own KarmaBox input. The inviter
-      // authorised nothing — knowing `s` is the attacker's entire claim.
-      addSignature(tx, attackerPubKey, attackerPrivKey);
+      tx.signatures[Buffer.from(attackerPubKey).toString('hex')] = signHash(computeTxHash(tx), attackerKeys.privateKey);
 
       const result = validateTx(deps, tx, 10);
-
       expect(result.valid).toBe(false);
-      // Rejected AT the bond-commit guard — not earlier for conservation, a
-      // mixed-input-type violation, or a bad preimage. The control test below
-      // proves every other check passes on this exact transaction.
-      expect(result.error).toContain('committed BondBox output');
+      expect(result.error).toContain('Mixed input types');
+
+      // The store is untouched: a rejected transaction applies nothing.
+      expect(deps.getBox(invite!.id!)).not.toBeNull();
+      expect(deps.getBox(bond!.id!)).not.toBeNull();
     });
 
-    it('non-vacuity control: the inviter-signed sweep reaches the transition layer, where P2-B stops it', () => {
-      const attackerKarma = createAndInsertKarma(attackerPubKey, KARMA_IN, 1);
-      const tx = buildSweepTx(attackerPubKey, attackerKarma.id!);
-      addSignature(tx, attackerPubKey, attackerPrivKey);
-      // One added signature is the only difference from the rejected tx above.
-      // With it, `bond_dual` Path 1 (inviter reclaim) matches and every guard is
-      // satisfied — which is what makes this a control: the tx above fails for
-      // exactly one reason, missing bond authorisation.
-      addSignature(tx, inviterPubKey, inviterPrivKey);
+    it('every legal shape is single-type — step 3 admits no exceptions', () => {
+      // The precondition itself, stated directly. The two exceptions step 3
+      // used to carry (invite+bond claim, karma+invite+bond cancel) were the
+      // whole of the sweep's admission.
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 4);
+      const [invite] = seedAsOneTx([{
+        boxType: 'invite' as const, value: 0n, inviterId: ownerUserId,
+        inviteePublicKey: new Uint8Array(32).fill(0x5c), guard: 'invite_dual' as const,
+      }], 1, 77);
+      deps.insertBox(invite!);
+
+      const tx: UtxoTransaction = {
+        inputs: [karma.id!, invite!.id!],
+        outputs: [{
+          boxType: 'karma', value: 100n + INVITE_KARMA_AMOUNT, owner: ownerPubKey,
+          guard: 'owner_signature',
+        } as KarmaBox],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      tx.signatures[Buffer.from(ownerPubKey).toString('hex')] = signHash(computeTxHash(tx), ownerPrivKey);
 
       const result = validateTx(deps, tx, 10);
-
-      // The bond's value only ever returns to the inviter (NODE_INTERFACE →
-      // "Bond transition rules", audit F-consensus-1), so an attacker-owned
-      // cancel output is illegal whoever signs it. This is still a control:
-      // failing at the transition layer proves conservation and every guard
-      // passed on this exact transaction.
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('inviterId');
-    });
-
-    it('still accepts a legitimate inviter cancel (uncommitted bond)', () => {
-      const inviterKarma = createAndInsertKarma(inviterPubKey, KARMA_IN, 1);
-      const tx = buildSweepTx(inviterPubKey, inviterKarma.id!);
-      addSignature(tx, inviterPubKey, inviterPrivKey);
-
-      const result = validateTx(deps, tx, 10);
-
-      expect(result.valid).toBe(true);
-      expect(result.error).toBeUndefined();
+      expect(result.error).toContain('Mixed input types');
     });
   });
 

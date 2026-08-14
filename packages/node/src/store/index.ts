@@ -22,7 +22,6 @@ export type { PostStatus, StoredPost } from './posts.js';
 
 export {
   getBox,
-  getBoxByProvenance,
   getKarmaBox,
   getKarmaBoxes,
   getKarmaValue,
@@ -30,8 +29,10 @@ export {
   getCreditBox,
   getCreditBoxes,
   getUnlockedCreditBoxes,
-  getPendingInvites,
-  getPendingInviteCount,
+  getOpenInvites,
+  getInviteFor,
+  getBondFor,
+  getMaturedBonds,
   getBondBoxes,
   getUnspentPostLockBoxes,
   getPostLockBox,
@@ -47,6 +48,7 @@ export {
   insertLikeRecord,
   hasLikeRecord,
   getLikeRecordCount,
+  getLikesReceivedCount,
   deleteLikeRecordsForPosts,
   deleteLikeRecord,
   restoreLikeRecord,

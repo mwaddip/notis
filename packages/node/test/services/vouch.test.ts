@@ -27,7 +27,7 @@ import {
   insertBox,
   insertVouchCooldown,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
   getPendingEntries,
 } from '../../src/store/index.js';
@@ -130,7 +130,7 @@ describe('vouch service', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => {
         insertBox(box);
       },

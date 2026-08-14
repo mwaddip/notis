@@ -205,7 +205,7 @@ export function insertUtxoTx(
 //
 // SQL over the gate-metadata columns — never a bounded scan. A gate that
 // decodes `getPendingEntries(N)` per request cannot see an entry past row N,
-// which makes the duplicate-like and MAX_PENDING_INVITES checks silently
+// which makes the duplicate-like and pending-invite checks silently
 // partial. Parameters are hex strings, compared against the columns as stored.
 // ---------------------------------------------------------------------------
 

@@ -77,13 +77,14 @@ export function serializeBox(box: AnyBox): Uint8Array {
  * matters most here: without it, non-minimal VLQ means two byte strings decode
  * to one record, which is two AVL values for one state.
  *
- * `likeCarry` is **always written, zero included** — the field is part of the
- * record and a layout writes every field. `bigint` is its type for the
+ * `likeCarry` and `invitedAtBlock` are **always written, zero included** — they
+ * are fields of the record and a layout writes every field. Conditional presence
+ * would reopen the key-set-exactness fork. `bigint` is `likeCarry`'s type for the
  * `safeIntegers` row boundary, not for the bytes: under `vlqU64` a `number` and
  * a `bigint` of equal value encode **identically**, so what the type guards is a
  * silent `Number()` coercion at the store edge.
  *
- * Domains belong upstream (TYPES_INTERFACE → "Totality"): the two heights are
+ * Domains belong upstream (TYPES_INTERFACE → "Totality"): the three heights are
  * `vlqU`, total by sentinel, so an out-of-domain height collides rather than
  * panicking;
  * `likeCarry` is `vlqU64` and `writeVlqU64OrThrow` throws outside `[0, 2⁶⁴)`,
@@ -97,6 +98,7 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
     writeVlqU(w, record.lastActivityBlock);
     writeVlqU(w, record.lastDecayBlock);
     writeVlqU64OrThrow(w, record.likeCarry);
+    writeVlqU(w, record.invitedAtBlock);
   },
   read(r) {
     const tag = readU8(r);
@@ -113,6 +115,7 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
       lastActivityBlock: readVlqU(r),
       lastDecayBlock: readVlqU(r),
       likeCarry: readVlqU64(r),
+      invitedAtBlock: readVlqU(r),
     };
   },
 };

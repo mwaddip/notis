@@ -6,6 +6,7 @@ import {
   recordBoxRemove,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
+import { config } from '../config.js';
 import { BOX_GUARDS } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -52,23 +53,20 @@ interface CreditExtra {
 }
 
 interface InviteExtra {
-  secretHash: number[];
-  inviterId: string;     // hex-encoded pubkey in JSON (Uint8Array in code)
+  inviterId: string;          // hex-encoded pubkey in JSON (Uint8Array in code)
+  inviteePublicKey: string;   // hex-encoded pubkey — `getInviteFor` queries on it
 }
 
 interface GenesisProofExtra {
-  // Raw bytes as a number array, like `secretHash` and `post_lock.owner`. The
-  // hex form above is for pubkeys; this payload is opaque to consensus and is
-  // not one.
+  // Raw bytes as a number array, like `post_lock.owner`. The hex form above is
+  // for pubkeys; this payload is opaque to consensus and is not one.
   payload: number[];
 }
 
 interface BondExtra {
-  inviterId: string;                // hex-encoded pubkey in JSON (Uint8Array in code)
-  inviteOutputIndex: number;        // Output position of the paired InviteBox in this bond's own tx
-  inviteePublicKey: number[] | null;
-  probationStartBlock: number | null;
-  probationEndBlock: number | null;
+  inviterId: string;          // hex-encoded pubkey in JSON (Uint8Array in code)
+  inviteePublicKey: string;   // hex-encoded pubkey — names the paired invite, and
+                              // what `getBondFor` and the settlement sweep join on
 }
 
 interface PostLockExtra {
@@ -184,8 +182,8 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'invite',
         value: row.value,
-        secretHash: new Uint8Array((extra as InviteExtra).secretHash),
         inviterId: hexToPubkey((extra as InviteExtra).inviterId),
+        inviteePublicKey: hexToPubkey((extra as InviteExtra).inviteePublicKey),
         guard: BOX_GUARDS.invite,
         ...prov,
       };
@@ -210,12 +208,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'bond',
         value: row.value,
         inviterId: hexToPubkey(e.inviterId),
-        inviteOutputIndex: e.inviteOutputIndex ?? 0,
-        inviteePublicKey: e.inviteePublicKey
-          ? new Uint8Array(e.inviteePublicKey)
-          : new Uint8Array(0),
-        probationStartBlock: e.probationStartBlock ?? 0,
-        probationEndBlock: e.probationEndBlock ?? 0,
+        inviteePublicKey: hexToPubkey(e.inviteePublicKey),
         guard: BOX_GUARDS.bond,
         ...prov,
       };
@@ -278,27 +271,6 @@ export function getBox(boxId: string): AnyBox | null {
     .prepare('SELECT * FROM utxo_boxes WHERE id = ? AND spent_at_block IS NULL')
     .safeIntegers()
     .get(boxId) as UtxoRow | undefined;
-  return row ? rowToBox(row) : null;
-}
-
-/**
- * Resolve an unspent box by its creating-transaction provenance.
- *
- * `UNIQUE(tx_id, output_index)` makes the pair name at most one box, so no
- * `LIMIT` or ordering is needed — the index *is* the uniqueness argument.
- *
- * Added for the bond commit path (user decision, 2026-08-06): `BondBox` pairs
- * with its InviteBox by output index rather than by box id, because a box id in
- * a content field is circular under the provenance derivation. This is the
- * lookup that replaces `getBox(bond.inviteBoxId)`.
- */
-export function getBoxByProvenance(txId: string, index: number): AnyBox | null {
-  const row = getDb()
-    .prepare(
-      'SELECT * FROM utxo_boxes WHERE tx_id = ? AND output_index = ? AND spent_at_block IS NULL',
-    )
-    .safeIntegers()
-    .get(txId, index) as UtxoRow | undefined;
   return row ? rowToBox(row) : null;
 }
 
@@ -445,9 +417,13 @@ export function getUnlockedCreditBoxes(
 }
 
 /**
- * Return all unclaimed (unspent) invite boxes created by the given inviter.
+ * Every open invite created by the given inviter — created, neither claimed nor
+ * cancelled.
+ *
+ * An invite has no expiry, so "open" is the whole of it: unspent IS open
+ * (NODE_INTERFACE → Store).
  */
-export function getPendingInvites(inviterId: Uint8Array): InviteBox[] {
+export function getOpenInvites(inviterId: Uint8Array): InviteBox[] {
   const db = getDb();
   const rows = db
     .prepare(
@@ -462,19 +438,89 @@ export function getPendingInvites(inviterId: Uint8Array): InviteBox[] {
 }
 
 /**
- * Return the count of unclaimed invite boxes for the given inviter.
+ * The at-most-one live invite naming this key, or null.
+ *
+ * At most one because an address may be invited **once, ever**, and invite
+ * creation is where that is enforced (NODE_INTERFACE → "Bond transition
+ * rules"). `LIMIT 1` is safe for that reason and not by hope; a second row would
+ * mean the create-time bar had been bypassed, which is a consensus fault rather
+ * than a case to order around.
  */
-export function getPendingInviteCount(inviterId: Uint8Array): number {
-  const db = getDb();
-  const row = db
+export function getInviteFor(inviteePublicKey: Uint8Array): InviteBox | null {
+  const row = getDb()
     .prepare(
-      `SELECT COUNT(*) AS cnt FROM utxo_boxes
+      `SELECT * FROM utxo_boxes
        WHERE box_type = 'invite'
          AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.inviterId') = ?`,
+         AND json_extract(extra_data, '$.inviteePublicKey') = ?
+       LIMIT 1`,
     )
-    .get(pubkeyToHex(inviterId)) as { cnt: number };
-  return row.cnt;
+    .safeIntegers()
+    .get(pubkeyToHex(inviteePublicKey)) as UtxoRow | undefined;
+  return row ? (rowToBox(row) as InviteBox) : null;
+}
+
+/**
+ * The bond paired with this invitee's invite, or null.
+ *
+ * `inviteePublicKey` IS the pairing — the invite and the bond are pinned to one
+ * key at creation and an address is invited once, so this names exactly one live
+ * pair. The claim, cancel and settlement paths all resolve through here.
+ */
+export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'bond'
+         AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.inviteePublicKey') = ?
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get(pubkeyToHex(inviteePublicKey)) as UtxoRow | undefined;
+  return row ? (rowToBox(row) as BondBox) : null;
+}
+
+/**
+ * Bonds whose probation deadline is exactly `height` — the settlement sweep's
+ * feed, in the `getMaturedVouchCooldowns` shape.
+ *
+ * The deadline is `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and
+ * the bond carries neither half: the height lives on the invitee's record and
+ * the length on the network profile. So the join runs the other way — resolve
+ * the identities claimed at `height − probation`, then take their bonds.
+ *
+ * ⚠ **`0` means *never invited*, and at `height == INVITE_PROBATION_BLOCKS` the
+ * subtraction lands on it** — so without a guard every uninvited identity that
+ * holds a record matches at once, and every open invite's bond settles for free
+ * in one block. **Two guards hold that shut and either alone suffices**: the
+ * early return here and the `invited_at_block > 0` predicate in the SQL. They
+ * are the same rule written twice rather than two independent checks, which is
+ * why `invite-block-apply.test.ts` has to remove both before its case fails.
+ *
+ * Equality rather than `<=` follows the contract's "at the deadline". The two
+ * are not observably different in-protocol — a settled bond is consumed, so a
+ * widened comparison would match nothing a later block could still act on — but
+ * equality is what NODE_INTERFACE states and what a mirror implementation would
+ * be written against.
+ */
+export function getMaturedBonds(height: number): BondBox[] {
+  const invitedAt = height - config.inviteProbationBlocks;
+  if (invitedAt <= 0) return [];
+  const rows = getDb()
+    .prepare(
+      `SELECT b.* FROM utxo_boxes b
+       WHERE b.box_type = 'bond'
+         AND b.spent_at_block IS NULL
+         AND json_extract(b.extra_data, '$.inviteePublicKey') IN (
+           SELECT lower(hex(identity_id)) FROM identity_records
+           WHERE invited_at_block > 0 AND invited_at_block = ?
+         )
+       ORDER BY b.id`,
+    )
+    .safeIntegers()
+    .all(invitedAt) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as BondBox);
 }
 
 /**
@@ -562,7 +608,9 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
  * have different writers, and an activity bump that reset the decay clock would
  * hand the owner a free interval. `likeCarry` likewise — it is
  * settlement-owned, and zeroing it here would confiscate accrued likes on
- * every karma receipt.
+ * every karma receipt. `invitedAtBlock` likewise — the claim path owns it, and
+ * this hook fires on the claim's OWN karma output, so a bump that reset it would
+ * erase the height the very same transaction is being recorded for.
  *
  * With no journal open — genesis, bootstrap, any non-block path — this records
  * nothing, consistent with every other choke-point hook. Consensus only reads
@@ -577,6 +625,7 @@ function bumpActivityClock(owner: Uint8Array): void {
     lastActivityBlock: height,
     lastDecayBlock: existing?.lastDecayBlock ?? 0,
     likeCarry: existing?.likeCarry ?? 0n,
+    invitedAtBlock: existing?.invitedAtBlock ?? 0,
   });
 }
 
@@ -633,8 +682,8 @@ export function insertBox(box: AnyBox): void {
     case 'invite': {
       const i = box as InviteBox;
       extraData = {
-        secretHash: Array.from(i.secretHash),
         inviterId: pubkeyToHex(i.inviterId),
+        inviteePublicKey: pubkeyToHex(i.inviteePublicKey),
       } satisfies InviteExtra;
       break;
     }
@@ -649,15 +698,7 @@ export function insertBox(box: AnyBox): void {
       const b = box as BondBox;
       extraData = {
         inviterId: pubkeyToHex(b.inviterId),
-        inviteOutputIndex: b.inviteOutputIndex,
-        inviteePublicKey:
-          b.inviteePublicKey.length > 0
-            ? Array.from(b.inviteePublicKey)
-            : null,
-        probationStartBlock:
-          b.probationStartBlock > 0 ? b.probationStartBlock : null,
-        probationEndBlock:
-          b.probationEndBlock > 0 ? b.probationEndBlock : null,
+        inviteePublicKey: pubkeyToHex(b.inviteePublicKey),
       } satisfies BondExtra;
       break;
     }

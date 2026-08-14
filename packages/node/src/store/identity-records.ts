@@ -50,6 +50,27 @@ export interface IdentityRecord {
    * consensus path.
    */
   likeCarry: bigint;
+  /**
+   * u32 — the height an invite claim applied for this identity. `0` = never
+   * invited.
+   *
+   * **One field carrying two rules**, which is why it is one and not two. It is
+   * the **once-ever invite bar** — invite creation rejects an `inviteePublicKey`
+   * whose record already holds a non-zero value — and it is the **probation
+   * clock**, since the paired bond settles at
+   * `invitedAtBlock + INVITE_PROBATION_BLOCKS`. Both need the same height and
+   * neither needs anything else, so a bond carries no probation fields of its
+   * own (NODE_INTERFACE → Identity Records).
+   *
+   * `0` is unambiguous on the same convention `lastDecayBlock` uses for *never
+   * decayed*: a claim is a **user transaction**, and the only event at
+   * `GENESIS_HEIGHT` (`= 0`) is genesis, which carries none. A field whose zero
+   * were a reachable value would need an option tag instead.
+   *
+   * Written ONLY by block application when a claim applies. Every other writer
+   * of this record carries the stored value through unchanged.
+   */
+  invitedAtBlock: number;
 }
 
 /**
@@ -75,18 +96,22 @@ export function identityRecordKey(identityId: UserId): string {
 export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
   const row = getDb()
     .prepare(
-      `SELECT last_activity_block, last_decay_block, like_carry
+      `SELECT last_activity_block, last_decay_block, like_carry, invited_at_block
        FROM identity_records WHERE identity_id = ?`,
     )
     .safeIntegers()
     .get(Buffer.from(identityId)) as
-      { last_activity_block: bigint; last_decay_block: bigint; like_carry: bigint }
+      {
+        last_activity_block: bigint; last_decay_block: bigint;
+        like_carry: bigint; invited_at_block: bigint;
+      }
       | undefined;
   if (!row) return null;
   return {
     lastActivityBlock: Number(row.last_activity_block),
     lastDecayBlock: Number(row.last_decay_block),
     likeCarry: row.like_carry,
+    invitedAtBlock: Number(row.invited_at_block),
   };
 }
 
@@ -106,7 +131,8 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
 export function getAllIdentityRecords(): Array<{ identityId: UserId; record: IdentityRecord }> {
   const rows = getDb()
     .prepare(
-      `SELECT identity_id, last_activity_block, last_decay_block, like_carry
+      `SELECT identity_id, last_activity_block, last_decay_block, like_carry,
+              invited_at_block
        FROM identity_records ORDER BY identity_id`,
     )
     .safeIntegers()
@@ -115,6 +141,7 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       last_activity_block: bigint;
       last_decay_block: bigint;
       like_carry: bigint;
+      invited_at_block: bigint;
     }>;
   return rows.map((row) => ({
     identityId: new Uint8Array(row.identity_id),
@@ -122,6 +149,7 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       lastActivityBlock: Number(row.last_activity_block),
       lastDecayBlock: Number(row.last_decay_block),
       likeCarry: row.like_carry,
+      invitedAtBlock: Number(row.invited_at_block),
     },
   }));
 }
@@ -146,14 +174,16 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO identity_records
-         (identity_id, last_activity_block, last_decay_block, like_carry)
-       VALUES (?, ?, ?, ?)`,
+         (identity_id, last_activity_block, last_decay_block, like_carry,
+          invited_at_block)
+       VALUES (?, ?, ?, ?, ?)`,
     )
     .run(
       Buffer.from(identityId),
       record.lastActivityBlock,
       record.lastDecayBlock,
       record.likeCarry,
+      record.invitedAtBlock,
     );
   recordIdentityRecordPut(identityRecordKey(identityId), identityId, record, replaced);
 }

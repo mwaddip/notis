@@ -4,7 +4,6 @@ import {
   computeBoxId,
   computeTxId,
   generateKeyPair,
-  INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
@@ -16,7 +15,7 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 import { initDb, closeDb } from '../../src/store/db.js';
-import { insertBox, getBox } from '../../src/store/utxo.js';
+import { insertBox, getBox, getKarmaBoxes } from '../../src/store/utxo.js';
 import { createInvite } from '../../src/services/invites.js';
 import { validateTx, materializeOutput } from '../../src/services/utxo-engine.js';
 import {
@@ -42,6 +41,7 @@ import {
 describe('invite id prediction carries transaction provenance', () => {
   let inviter: ReturnType<typeof generateKeyPair>;
   let inviterId: Uint8Array;
+  let invitee: Uint8Array;
   let inviterPrivKeyObj: ReturnType<typeof createPrivateKey>;
   const HEIGHT = 50;
 
@@ -49,6 +49,7 @@ describe('invite id prediction carries transaction provenance', () => {
     initDb(':memory:');
     inviter = generateKeyPair();
     inviterId = inviter.publicKey;
+    invitee = generateKeyPair().publicKey;
     inviterPrivKeyObj = createPrivateKey({
       key: Buffer.from(inviter.secretKey),
       format: 'der',
@@ -72,29 +73,25 @@ describe('invite id prediction carries transaction provenance', () => {
 
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
+      value: 100n - INVITE_BOND_KARMA,
       owner: inviterId,
       guard: 'owner_signature',
     };
+    // Both boxes name the same invitee — that key IS the pairing, and the
+    // create transition rejects a pair that disagrees on it.
     const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash: new Uint8Array(32).fill(0x99),
+      value: 0n,
       inviterId,
-      guard: 'hash_preimage_with_bond',
+      inviteePublicKey: invitee,
+      guard: 'invite_dual',
     };
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
-      // The invite is output 1 of this transaction ([karma, invite, bond]).
-      // `createInvite` rejects any other value as of phase G3b, so this is now
-      // asserted rather than merely conventional.
-      inviteOutputIndex: 1,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual',
+      inviteePublicKey: invitee,
+      guard: 'block_apply',
     };
 
     const tx: UtxoTransaction = {
@@ -116,6 +113,9 @@ describe('invite id prediction carries transaction provenance', () => {
     insertBox,
     consumeBox: () => {},
     getKarmaBox: () => null,
+    getKarmaValue: (owner: Uint8Array) =>
+      getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    getIdentityRecord: () => null,
     runInTransaction: (fn: () => void) => fn(),
   });
 

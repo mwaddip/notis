@@ -18,7 +18,7 @@ export interface InvitesDeps extends UtxoEngineDeps {
     status: 'pending';
     txId: string;
     expiresAtHeight: number;
-    inviteBox: { id?: string; secretHash: Uint8Array };
+    inviteBox: { id?: string };
     bondBox: { id?: string };
     tx: UtxoTransaction;
   };
@@ -42,17 +42,6 @@ export interface InvitesDeps extends UtxoEngineDeps {
     status: 'pending';
     txId: string;
     expiresAtHeight: number;
-    tx: UtxoTransaction;
-  };
-  commitInvite(
-    deps: UtxoEngineDeps,
-    tx: UtxoTransaction,
-    currentBlockHeight: number,
-  ): {
-    status: 'pending';
-    txId: string;
-    expiresAtHeight: number;
-    bondBoxId: string;
     tx: UtxoTransaction;
   };
   getCurrentHeight(): number;
@@ -100,52 +89,9 @@ export function createRouter(deps: InvitesDeps): Router {
         expiresAtHeight: result.expiresAtHeight,
         inviteBoxId: result.inviteBox.id,
         bondBoxId: result.bondBox.id,
-        secretHash: Buffer.from(result.inviteBox.secretHash).toString('hex'),
       });
     } catch (err) {
       respondError(res, err, 'POST /invites', 'message');
-    }
-  });
-
-  // POST /invites/commit — commit to an invite (bind invitee identity to BondBox)
-  router.post('/commit', (req, res) => {
-    const body = req.body as { tx?: Record<string, unknown> };
-
-    if (!body.tx) {
-      res.status(400).json({ error: 'tx required' });
-      return;
-    }
-
-    let tx: UtxoTransaction;
-    try {
-      tx = jsonToTx(body.tx);
-    } catch (err) {
-      respondError(res, err, 'POST /invites/commit (tx decode)', 'message');
-      return;
-    }
-
-    try {
-      const currentHeight = deps.getCurrentHeight();
-      const result = deps.commitInvite(deps, tx, currentHeight);
-
-      // Broadcast commit tx to peers (fire-and-forget)
-      const net = getNet();
-      if (net) {
-        net.broadcastTx(result.tx).catch((err: Error) => {
-          console.warn(`Failed to broadcast commit tx: ${err.message}`);
-        });
-      }
-
-      res.status(201).json({
-        status: 'pending',
-        txId: result.txId,
-        expiresAtHeight: result.expiresAtHeight,
-        bondBoxId: result.bondBoxId,
-      });
-    } catch (err) {
-      // 409 for an already-committed BondBox now rides on the typed error's
-      // statusCode — no message sniffing (audit L-12).
-      respondError(res, err, 'POST /invites/commit', 'message');
     }
   });
 

@@ -36,7 +36,7 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -73,7 +73,7 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
@@ -215,26 +215,24 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
 
   it('honest karma → karma + invite + bond applies and round-trips id-clean', () => {
     const karma = seedKarma(100n);
+    const invitee = new Uint8Array(32).fill(0xaa);
     const invite = {
       boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash: new Uint8Array(32).fill(0xaa),
+      value: 0n,
       inviterId: ownerPubKey,
-      guard: 'hash_preimage_with_bond',
+      inviteePublicKey: invitee,
+      guard: 'invite_dual',
     };
     const bond = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId: ownerPubKey,
-      inviteOutputIndex: 1,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual',
+      inviteePublicKey: invitee,
+      guard: 'block_apply',
     };
     const tx = signedTx(
       [karma.id!],
-      [karmaChange(100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA), invite, bond],
+      [karmaChange(100n - INVITE_BOND_KARMA), invite, bond],
     );
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
@@ -329,82 +327,53 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
     expect(r.error).toMatch(/field 'lockedUntilBlock'.*got -0/);
   });
 
-  it('class-4c mutant, now closed: bond commit with string probation fields is rejected; the honest commit round-trips id-clean', () => {
-    const inviter = makeTestIdentity();
-    const invitee = makeTestIdentity();
-    const secret = new Uint8Array(32).fill(7);
-    const secretHash = new Uint8Array(
-      createHash('blake2b512').update(secret).digest().subarray(0, 32),
-    );
-    const invite = {
-      boxType: 'invite' as const,
-      value: 25n,
-      secretHash,
-      inviterId: inviter.userId,
-      guard: 'hash_preimage_with_bond' as const,
-    };
-    const bond = {
-      boxType: 'bond' as const,
-      value: 25n,
-      inviterId: inviter.userId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual' as const,
-    };
-    const [seededInvite, seededBond] = seedAsOneTx([invite, bond]);
-    storeInsertBox(seededInvite!);
-    storeInsertBox(seededBond!);
+  it('class-4c mutant, now closed: an invite pair with HEX-STRING keys is rejected; the honest pair round-trips id-clean', () => {
+    // The class in the form it now takes. Both boxes carry `inviteePublicKey`,
+    // and the create arm pairs them by comparing
+    // `Buffer.from(x).toString('hex')` — which two identical hex STRINGS satisfy
+    // just as well as two identical byte arrays. So the arm cannot catch this:
+    // the pairing check passes, and the wrong-typed field reaches
+    // `writeBytesNOrThrow` inside `computeTxId` at the last line of
+    // `validateTx` — a throw on adversary-supplied input, which the no-panic
+    // rule forbids. The schema's `bytes32` is what has to reject it.
+    const karma = seedKarma(100n);
+    const inviteeHex = 'bb'.repeat(32);
+    const lyingPair = (key: unknown) => [
+      karmaChange(100n - INVITE_BOND_KARMA),
+      {
+        boxType: 'invite', value: 0n, inviterId: ownerPubKey,
+        inviteePublicKey: key, guard: 'invite_dual',
+      },
+      {
+        boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: ownerPubKey,
+        inviteePublicKey: key, guard: 'block_apply',
+      },
+    ];
 
-    const commitOut = (probationStartBlock: unknown, probationEndBlock: unknown) => ({
-      boxType: 'bond',
-      value: 25n,
-      inviterId: inviter.userId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: invitee.userId,
-      probationStartBlock,
-      probationEndBlock,
-      guard: 'bond_dual',
-    });
-    const commitTx = (out: unknown): UtxoTransaction => {
-      const tx: UtxoTransaction = {
-        inputs: [seededBond!.id!],
-        outputs: [out] as unknown as UtxoTransaction['outputs'],
-        signatures: {},
-        preimages: { [seededBond!.id!]: secret },
-        protocolVersion: 1,
-      };
-      const hash = Buffer.from(computeTxId(tx), 'hex');
-      tx.signatures[Buffer.from(invitee.userId).toString('hex')] = new Uint8Array(
-        cryptoSign(null, hash, invitee.privateKey),
-      );
-      return tx;
-    };
-
-    // The before-leg P4 shape: strings pass the arm's arithmetic by coercion
-    // (the string pair subtracts to exactly the profile's window) and committed a wrong-typed
-    // bond whose id round-tripped CLEAN — an undetectable lie. Now the schema
-    // rejects it before the arm can coerce.
-    const lying = validateTx(
-      deps,
-      commitTx(commitOut('25', String(25 + config.inviteProbationBlocks))),
-      100,
-    );
+    // Unsigned deliberately, and it changes nothing about what is being shown:
+    // `checkOutputShape` is step 4 and `checkGuards` — which is where a txId is
+    // first computed — is step 6, so the schema answers before any signature is
+    // consulted. It also has to be unsigned to build at all: signing means
+    // hashing the transaction, so a builder that signs this shape throws on the
+    // client instead of reaching the node.
+    const lying = validateTx(deps, {
+      inputs: [karma.id!],
+      outputs: lyingPair(inviteeHex) as unknown as UtxoTransaction['outputs'],
+      signatures: {},
+      protocolVersion: 1,
+    }, 10);
     expect(lying.valid).toBe(false);
-    expect(lying.error).toMatch(/field 'probationStartBlock' must be a non-negative safe integer/);
-    // The stored bond is still uncommitted.
-    const row = db
-      .prepare('SELECT extra_data FROM utxo_boxes WHERE id = ?')
-      .get(seededBond!.id!) as { extra_data: string };
-    expect(JSON.parse(row.extra_data).inviteePublicKey).toBeNull();
+    expect(lying.error).toMatch(/field 'inviteePublicKey' must be a 32-byte Uint8Array/);
+    // Nothing applied: the karma input is still unspent.
+    expect(deps.getBox(karma.id!)).not.toBeNull();
 
-    // The honest commit — same shape, typed numbers — validates, applies,
-    // and its output satisfies the discriminator.
-    const honestOut = commitOut(25, 25 + config.inviteProbationBlocks);
-    const honest = validateTx(deps, commitTx(honestOut), 100);
+    // The honest pair — same shape, raw bytes — validates, applies, and every
+    // output satisfies the discriminator.
+    const honestOutputs = lyingPair(new Uint8Array(Buffer.from(inviteeHex, 'hex')));
+    const honestTx = signedTx([karma.id!], honestOutputs);
+    const honest = validateTx(deps, honestTx, 10);
     expect(honest.valid, honest.error).toBe(true);
-    applyTx(deps, commitTx(honestOut), honest.computedOutputs!, 100);
+    applyTx(deps, honestTx, honest.computedOutputs!, 10);
     for (const o of honest.computedOutputs!) expectIdClean(o.id!);
   });
 });

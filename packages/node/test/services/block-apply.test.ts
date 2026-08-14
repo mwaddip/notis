@@ -15,16 +15,15 @@ import {
   LIKE_KARMA_COST,
   KARMA_STALE_THRESHOLD_BLOCKS,
   EMPTY_STATE_ROOT,
-  INVITE_BOND_KARMA,
-  INVITE_KARMA_THRESHOLD,
-  INVITE_PROBATION_BLOCKS,
+  VOUCH_KARMA_AMOUNT,
+  VOUCH_MIN_BALANCE,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   Post,
   KarmaBox,
-  BondBox,
+  VouchBox,
   PostLockBox,
   BlockHeader,
   OrderingBlock,
@@ -1093,138 +1092,113 @@ describe('block-apply embedded tx re-validation', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Bond settlement's threshold unlock at the block path (P2-B phase 1b).
+  // The vouch minimum-balance gate at the block path.
   //
-  // The unit suite exercises the unlock predicate only through a test-local
-  // deps stub, so the production `getKarmaValue` wiring was unpinned: mutating
-  // the block path's read from summed to single-box left all tests green.
-  // These two run the settlement through the real block pipeline, where deps
-  // come from the store. The fixture makes summed-vs-single observable: the
-  // invitee's karma sums past INVITE_KARMA_THRESHOLD only across boxes.
+  // `getKarmaValue` is a consensus input and MUST sum across boxes rather than
+  // read one (NODE_INTERFACE → Store): `getKarmaBox` is `LIMIT 1` with no
+  // `ORDER BY`, so a single-box read makes the verdict a function of SQLite's
+  // physical row order — M-12's class. The unit suite exercises the gate only
+  // through a test-local deps stub, so the *production* wiring is unpinned
+  // there: mutating the block path's read from summed to single-box left every
+  // unit test green until these two were written.
+  //
+  // They run a vouch cast through the real block pipeline, where deps come from
+  // the store, and the fixture makes summed-vs-single observable: the voucher's
+  // karma clears `VOUCH_MIN_BALANCE` only across boxes.
   // -------------------------------------------------------------------------
 
-  /** Committed bond (inviter ← settlement) whose probation spans the window. */
-  function makeCommittedBond(
-    inviterId: Uint8Array,
-    inviteePublicKey: Uint8Array,
-    probationStartBlock: number,
-    probationEndBlock: number,
-  ): BondBox {
-    return seedProvenance<BondBox>(
-      {
-        boxType: 'bond' as const,
-        value: INVITE_BOND_KARMA,
-        inviterId,
-        inviteOutputIndex: 0,
-        inviteePublicKey,
-        probationStartBlock,
-        probationEndBlock,
-        guard: 'bond_dual' as const,
-      },
-      1,
-    );
-  }
-
-  /** Settlement of `bond` to its inviter, signed by the committed invitee. */
-  function makeSettlementTx(bond: BondBox, invitee: TestIdentity): UtxoTransaction {
+  /** `karmaIn` → karma change + a VouchBox staking VOUCH_KARMA_AMOUNT. */
+  function makeVouchCastTx(
+    karmaIn: KarmaBox,
+    voucher: TestIdentity,
+    targetId: Uint8Array,
+  ): UtxoTransaction {
     const tx: UtxoTransaction = {
-      inputs: [bond.id!],
+      inputs: [karmaIn.id!],
       outputs: [
         {
           boxType: 'karma',
-          value: INVITE_BOND_KARMA,
-          owner: bond.inviterId,
+          value: karmaIn.value - VOUCH_KARMA_AMOUNT,
+          owner: voucher.userId,
           guard: 'owner_signature',
         } as KarmaBox,
+        {
+          boxType: 'vouch',
+          value: VOUCH_KARMA_AMOUNT,
+          voucherId: voucher.userId,
+          targetId,
+          guard: 'owner_signature',
+        } as VouchBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
-    signTransaction(tx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
+    signTransaction(tx, voucher.privateKey, Buffer.from(voucher.userId).toString('hex'));
     return tx;
   }
 
-  it('bond settlement threshold sums the invitee karma across boxes at the block path', async () => {
+  it('the vouch minimum-balance gate sums the voucher karma across boxes at the block path', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
 
-    const inviter = makeTestIdentity();
-    const invitee = makeTestIdentity();
+    const voucher = makeTestIdentity();
+    const target = makeTestIdentity();
 
-    // 12 + 12 = 24 ≥ INVITE_KARMA_THRESHOLD (20), but neither box alone
-    // reaches it — a single-box read (getKarmaBox is LIMIT 1 with no ORDER BY)
-    // sees 12 < 20 whichever row it lands on, and verdicts locked.
-    const splitA = makeKarmaBox(12n, invitee.userId, 0, 0);
-    const splitB = makeKarmaBox(12n, invitee.userId, 0, 1);
+    // 6 + 6 = 12 ≥ VOUCH_MIN_BALANCE (11), but neither box alone reaches it —
+    // a single-box read sees 6 < 11 whichever row it lands on, and the cast is
+    // refused however the karma is partitioned.
+    const splitA = makeKarmaBox(6n, voucher.userId, 0, 0);
+    const splitB = makeKarmaBox(6n, voucher.userId, 0, 1);
     utxo.insertBox(splitA);
     utxo.insertBox(splitB);
 
-    // Probation still running at the block's height (1): window (1, 1001) of
-    // the pinned length, ending far past the settle height. The threshold leg
-    // is therefore the ONLY way this settlement can unlock — an expired window
-    // would settle under either read and pin nothing.
-    const bond = makeCommittedBond(
-      inviter.userId,
-      invitee.userId,
-      1,
-      1 + INVITE_PROBATION_BLOCKS,
-    );
-    utxo.insertBox(bond);
-
-    mempool.insertUtxoTx(makeSettlementTx(bond, invitee), null, 1000);
+    mempool.insertUtxoTx(makeVouchCastTx(splitA, voucher, target.userId), null, 1000);
     const block = await mineBlockOverMempool();
     expect(block).not.toBeNull();
 
     // Settled state, not a rejection message: under a single-box read the
-    // creator's speculative mutation pass (Spec B P3) drops the settlement —
-    // or the verifier rejects the block — and either way the bond survives
-    // and the inviter is never paid.
-    expect(utxo.getBox(bond.id!)).toBeNull();
-    const inviterKarma = utxo.getKarmaBox(inviter.userId);
-    expect(inviterKarma).not.toBeNull();
-    expect(inviterKarma!.value).toBe(INVITE_BOND_KARMA);
+    // creator's speculative mutation pass drops the cast — or the verifier
+    // rejects the block — and either way no VouchBox is ever created.
+    expect(utxo.getBox(splitA.id!)).toBeNull();
+    const vouches = db.getDb()
+      .prepare(`SELECT id FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL`)
+      .all() as Array<{ id: string }>;
+    expect(vouches).toHaveLength(1);
 
-    // The predicate reads the invitee's boxes; the settlement must not spend
-    // them.
-    expect(utxo.getBox(splitA.id!)).not.toBeNull();
+    // The gate reads the voucher's boxes; the cast must not spend the one it
+    // did not name.
     expect(utxo.getBox(splitB.id!)).not.toBeNull();
   });
 
-  it('the same settlement settles with the invitee karma in one box (control)', async () => {
-    // Non-vacuity for the split fixture above: 24 in a single box clears the
-    // threshold under summed AND single-box reads, so this control passing
-    // while the split test fails is what isolates a mutation to partitioning
-    // rather than to the settlement flow being broken generally.
+  it('the same cast settles with the voucher karma in one box (control)', async () => {
+    // Non-vacuity for the split fixture above: 12 in a single box clears the
+    // minimum under summed AND single-box reads, so this control passing while
+    // the split test fails is what isolates a mutation to partitioning rather
+    // than to the vouch flow being broken generally.
     const db = await importDb();
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
 
-    const inviter = makeTestIdentity();
-    const invitee = makeTestIdentity();
+    const voucher = makeTestIdentity();
+    const target = makeTestIdentity();
 
-    utxo.insertBox(makeKarmaBox(24n, invitee.userId, 0));
+    const whole = makeKarmaBox(12n, voucher.userId, 0);
+    utxo.insertBox(whole);
 
-    const bond = makeCommittedBond(
-      inviter.userId,
-      invitee.userId,
-      1,
-      1 + INVITE_PROBATION_BLOCKS,
-    );
-    utxo.insertBox(bond);
-
-    mempool.insertUtxoTx(makeSettlementTx(bond, invitee), null, 1000);
+    mempool.insertUtxoTx(makeVouchCastTx(whole, voucher, target.userId), null, 1000);
     const block = await mineBlockOverMempool();
     expect(block).not.toBeNull();
 
-    expect(utxo.getBox(bond.id!)).toBeNull();
-    const inviterKarma = utxo.getKarmaBox(inviter.userId);
-    expect(inviterKarma).not.toBeNull();
-    expect(inviterKarma!.value).toBe(INVITE_BOND_KARMA);
+    expect(utxo.getBox(whole.id!)).toBeNull();
+    const vouches = db.getDb()
+      .prepare(`SELECT id FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL`)
+      .all() as Array<{ id: string }>;
+    expect(vouches).toHaveLength(1);
   });
 });
 
@@ -1445,6 +1419,7 @@ describe('block-apply mint provenance', () => {
         lastActivityBlock: 4,
         lastDecayBlock: 4,
         likeCarry: 0n,
+        invitedAtBlock: 0,
       });
       const afterAdjacency = utxo.getKarmaBox(idle.userId)!.value;
 
@@ -1455,6 +1430,7 @@ describe('block-apply mint provenance', () => {
         lastActivityBlock: 4,
         lastDecayBlock: 4,
         likeCarry: 0n,
+        invitedAtBlock: 0,
       });
       expect(utxo.getKarmaBox(idle.userId)!.value).toBe(afterAdjacency);
 
@@ -1468,6 +1444,7 @@ describe('block-apply mint provenance', () => {
         lastActivityBlock: 4,
         lastDecayBlock: 7,
         likeCarry: 0n,
+        invitedAtBlock: 0,
       });
     } finally {
       vi.doUnmock('../../src/config.js');

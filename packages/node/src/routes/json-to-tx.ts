@@ -8,9 +8,8 @@ import { ClientError } from '../services/client-error.js';
  */
 const BINARY_BOX_FIELDS = new Set([
   'owner',            // KarmaBox, CreditBox, PostLockBox
-  'secretHash',       // InviteBox
   'inviterId',        // InviteBox, BondBox
-  'inviteePublicKey', // BondBox
+  'inviteePublicKey', // InviteBox, BondBox
   // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over
   // HTTP JSON — the value arrives as a hex string and dies at `validateTx`'s
   // step-4 schema, which wants `bytes32`. Service-level tests cannot see it:

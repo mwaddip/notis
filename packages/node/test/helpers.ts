@@ -11,7 +11,6 @@ import {
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   EMPTY_STATE_ROOT,
-  INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
@@ -181,11 +180,9 @@ export function seedProvenance<T extends AnyBox>(
 /**
  * Seed several candidates as outputs of **one** synthetic transaction.
  *
- * The shape an invite/bond pair needs since the bond resolves its InviteBox from
- * `(bond.txId, bond.inviteOutputIndex)` (user decision, 2026-08-06). Seeding them
- * with independent provenance would leave the bond pointing at an index of a
- * transaction that has no invite at it — which is exactly the mispairing the
- * index form makes inexpressible in production, so a fixture must not fake it.
+ * The shape an invite/bond pair needs: production emits the two from one
+ * transaction, so a fixture giving them independent provenance is a pair no
+ * transaction could have produced.
  *
  * Returns the boxes in the order given; each `index` is its position here.
  */
@@ -216,11 +213,10 @@ export function labelNonce(label: string): number {
 /**
  * Seed an invite and its bond as the two outputs of ONE synthetic transaction.
  *
- * The pairing is a property of the pair: a bond resolves its InviteBox through
- * `(bond.txId, bond.inviteOutputIndex)`, so seeding the two with independent
- * provenance leaves the bond pointing at an index of a transaction that has no
- * invite at it — the mispairing the index form exists to make inexpressible.
- * A caller cannot build half of this correctly, so there is no half to build.
+ * Production emits the pair from one transaction, and every rule that reads them
+ * assumes it: both boxes carry the same `inviterId` and the same
+ * `inviteePublicKey`, and that key IS the pairing — an address is invited once,
+ * ever, so it names exactly one live pair.
  *
  * **`label` is required, and it is the whole point.** `seedAsOneTx` derives the
  * shared txId from `candidates[0]` alone, so two pairs whose *invite* is
@@ -229,10 +225,10 @@ export function labelNonce(label: string): number {
  * because only `candidates[0]` feeds the txId, a difference confined to the
  * **bond** does not separate the pairs either. Two such pairs produce bonds with
  * *different ids* sharing one `(txId, index)`, which is exactly what
- * `UNIQUE(tx_id, output_index)` forbids and what `getBoxByProvenance` resolves
- * by. Centralising the pattern here would multiply that hazard across every
- * caller, so `label` has no default: forgetting it is a compile error rather
- * than a silent collision. Pinned by `helpers.test.ts`.
+ * `UNIQUE(tx_id, output_index)` forbids. Centralising the pattern here would
+ * multiply that hazard across every caller, so `label` has no default: forgetting
+ * it is a compile error rather than a silent collision. Pinned by
+ * `helpers.test.ts`.
  */
 export function seedInviteAndBond(opts: {
   /** Distinguishes this pair from every other. Required — see above. */
@@ -240,29 +236,24 @@ export function seedInviteAndBond(opts: {
   inviterId: Uint8Array;
   inviteValue?: bigint;
   bondValue?: bigint;
-  secretHash?: Uint8Array;
   inviteePublicKey?: Uint8Array;
-  probationStartBlock?: number;
-  probationEndBlock?: number;
   seedHeight?: number;
 }): { invite: Stored<InviteBox>; bond: Stored<BondBox> } {
+  const invitee = opts.inviteePublicKey ?? new Uint8Array(32).fill(0xaa);
   const inviteCandidate = {
     boxType: 'invite' as const,
-    value: opts.inviteValue ?? INVITE_KARMA_AMOUNT,
-    secretHash: opts.secretHash ?? new Uint8Array(32).fill(0xaa),
+    // An invite holds nothing; the karma it names is minted at the claim.
+    value: opts.inviteValue ?? 0n,
     inviterId: opts.inviterId,
-    guard: 'hash_preimage_with_bond' as const,
+    inviteePublicKey: invitee,
+    guard: 'invite_dual' as const,
   };
   const bondCandidate = {
     boxType: 'bond' as const,
     value: opts.bondValue ?? INVITE_BOND_KARMA,
     inviterId: opts.inviterId,
-    // Index 0: the invite is output 0 of this same transaction, below.
-    inviteOutputIndex: 0,
-    inviteePublicKey: opts.inviteePublicKey ?? new Uint8Array(0),
-    probationStartBlock: opts.probationStartBlock ?? 0,
-    probationEndBlock: opts.probationEndBlock ?? 0,
-    guard: 'bond_dual' as const,
+    inviteePublicKey: invitee,
+    guard: 'block_apply' as const,
   };
   const [invite, bond] = seedAsOneTx(
     [inviteCandidate, bondCandidate],

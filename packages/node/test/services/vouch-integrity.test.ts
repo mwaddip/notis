@@ -25,7 +25,6 @@ import {
   computeTxId,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
-  INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type {
@@ -50,15 +49,16 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
   insertVouchCooldown,
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  getBondFor,
 } from '../../src/store/index.js';
-import { validateTx } from '../../src/services/utxo-engine.js';
+import { applyTx, materializeOutput, validateTx } from '../../src/services/utxo-engine.js';
 import { castVouch } from '../../src/services/vouch.js';
 import { createInvite } from '../../src/services/invites.js';
 
@@ -95,7 +95,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
@@ -327,48 +327,38 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   // -------------------------------------------------------------------------
-  // V4 — a BondBox can be born already-committed, so the bond is free. The
-  // karma arm of `checkTransitions` checks output counts only, and
-  // `createInvite` checks values and index pairing but never the commitment
-  // fields. A bond born committed with a zeroed window satisfies settlement
-  // immediately (expiry leg vacuously true at any height ≥ 1) while the
-  // InviteBox stays live and claimable — the network's only sybil cost, free.
+  // V4 — the bond is the network's only sybil cost, and nothing may make it
+  // free. Two rules carry that: the create arm pins the bond's value, and no
+  // transaction shape can spend a bond back out (NODE_INTERFACE → "Bond
+  // transition rules").
   // -------------------------------------------------------------------------
 
-  /** K(100) → K(50) + Invite(25) + Bond(25), the bond's commitment fields free. */
+  /** K(100) → K(75) + Invite(0) + Bond(25), with the bond's value free. */
   function buildInviteCreate(
     inviter: TestKeys,
     karmaBox: KarmaBox,
-    bondFields: {
-      inviteePublicKey: Uint8Array;
-      probationStartBlock: number;
-      probationEndBlock: number;
-    },
+    invitee: Uint8Array,
+    bondValue: bigint,
   ): UtxoTransaction {
-    const secret = new Uint8Array(Buffer.from('d'.repeat(64), 'hex'));
-    const secretHash = new Uint8Array(
-      createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32),
-    );
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: karmaBox.value - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA,
+      value: karmaBox.value - bondValue,
       owner: inviter.pub,
       guard: 'owner_signature',
     };
     const inviteOut = {
       boxType: 'invite' as const,
-      value: INVITE_KARMA_AMOUNT,
-      secretHash,
+      value: 0n,
       inviterId: inviter.pub,
-      guard: 'hash_preimage_with_bond' as const,
+      inviteePublicKey: invitee,
+      guard: 'invite_dual' as const,
     } as InviteBox;
     const bondOut = {
       boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
+      value: bondValue,
       inviterId: inviter.pub,
-      inviteOutputIndex: 1,
-      ...bondFields,
-      guard: 'bond_dual' as const,
+      inviteePublicKey: invitee,
+      guard: 'block_apply' as const,
     } as BondBox;
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
@@ -380,80 +370,80 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     return tx;
   }
 
-  it('V4: rejects an invite create whose bond is born committed', () => {
-    // Accepted on HEAD — and so was the second leg: the same bond settled
-    // straight back to the inviter at height 1 (committed ✓, owner ✓, expiry
-    // leg vacuously true over a zeroed window) while the InviteBox stayed
-    // live and claimable. Both legs green meant the bond — the network's only
-    // sybil cost — cost nothing.
+  it('V4: rejects an invite create whose bond holds nothing', () => {
+    // Conservation alone permits a 0-value bond: the karma output simply keeps
+    // the difference. Without the value pin the inviter gets a live, claimable
+    // InviteBox for no stake at all.
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
-    const createTx = buildInviteCreate(inviter, karma, {
-      inviteePublicKey: inviter.pub,
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-    });
+    const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 0n);
 
     const result = validateTx(deps, createTx, 1);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('must emit an uncommitted bond');
+    expect(result.error).toContain(`BondBox must hold exactly ${INVITE_BOND_KARMA}`);
   });
 
-  it('V4: rejects a bond born with a non-zero probationStartBlock', () => {
-    // The window fields are pinned independently of the key: pre-filled
-    // probation state is exactly what would let a later commit-shaped step
-    // inherit a window it never passed through the commit pin.
+  it('V4: rejects an invite create whose bond is under-funded', () => {
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
-    const createTx = buildInviteCreate(inviter, karma, {
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 5,
-      probationEndBlock: 0,
-    });
+    const createTx = buildInviteCreate(
+      inviter, karma, makeKeys().pub, INVITE_BOND_KARMA - 1n,
+    );
 
-    const result = validateTx(deps, createTx, 10);
+    const result = validateTx(deps, createTx, 1);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('must emit an uncommitted bond');
+    expect(result.error).toContain(`BondBox must hold exactly ${INVITE_BOND_KARMA}`);
   });
 
-  it('V4: rejects a bond born with a non-zero probationEndBlock', () => {
+  it('V4 service path: createInvite rejects an under-funded bond', () => {
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
-    const createTx = buildInviteCreate(inviter, karma, {
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 1005,
-    });
-
-    const result = validateTx(deps, createTx, 10);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('must emit an uncommitted bond');
-  });
-
-  it('V4 service path: createInvite rejects a born-committed bond', () => {
-    // Accepted on HEAD: createInvite checked values and index pairing but
-    // never the commitment fields, and the demo UI drives this path.
-    const inviter = makeKeys();
-    const karma = seedKarma(inviter.pub, 100n);
-    const createTx = buildInviteCreate(inviter, karma, {
-      inviteePublicKey: inviter.pub,
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-    });
+    const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 1n);
 
     expect(() => createInvite(deps, createTx, 1)).toThrow(
-      /must emit an uncommitted bond/,
+      new RegExp(`BondBox must hold exactly ${INVITE_BOND_KARMA}`),
     );
   });
 
-  it('V4 non-vacuity: the same create with an uncommitted zeroed bond is accepted', () => {
+  it('V4: no transaction can spend a bond back out, whoever signs', () => {
+    // The other half. A funded bond is worth nothing as a cost if either party
+    // can reclaim it: the guard is `block_apply`, so neither the inviter's
+    // signature nor the invitee's satisfies it, and the settlement that does
+    // release it is block application's alone.
+    const inviter = makeKeys();
+    const invitee = makeKeys();
+    const karma = seedKarma(inviter.pub, 100n);
+    const createTx = buildInviteCreate(inviter, karma, invitee.pub, INVITE_BOND_KARMA);
+    const created = validateTx(deps, createTx, 1);
+    expect(created.valid).toBe(true);
+    applyTx(deps, createTx, created.computedOutputs!, 1);
+
+    const bond = getBondFor(invitee.pub)!;
+    expect(bond).not.toBeNull();
+
+    for (const signer of [inviter, invitee]) {
+      const reclaim: UtxoTransaction = {
+        inputs: [bond.id!],
+        outputs: [{
+          boxType: 'karma', value: bond.value, owner: signer.pub,
+          guard: 'owner_signature',
+        }],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      addSignature(reclaim, signer);
+      const result = validateTx(deps, reclaim, 2);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('block application');
+    }
+  });
+
+  it('V4 non-vacuity: the same create with a fully-funded bond is accepted', () => {
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
-    const createTx = buildInviteCreate(inviter, karma, {
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-    });
+    const createTx = buildInviteCreate(
+      inviter, karma, makeKeys().pub, INVITE_BOND_KARMA,
+    );
 
     const result = validateTx(deps, createTx, 1);
     expect(result.valid).toBe(true);

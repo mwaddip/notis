@@ -52,7 +52,7 @@ function makeKarmaBox(id: string, value = 10n): KarmaBox {
   return { id, ...candidate, ...fixtureProvenance(candidate, 1, hashSeed(id)) };
 }
 
-const REC: IdentityRecord = { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n };
+const REC: IdentityRecord = { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0 };
 
 describe('identity records in the AVL tree (Spec G phase B3)', () => {
   let db: Database.Database;
@@ -93,12 +93,12 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n,
         owner, guard: 'owner_signature' }),
       // No 0x03 row: that tag is the reserved `like` gap, and no box emits it.
-      withProvenance('04'.repeat(32), { boxType: 'invite', value: 50n,
-        secretHash: new Uint8Array(randomBytes(32)), inviterId: owner,
-        guard: 'hash_preimage_with_bond' }),
+      withProvenance('04'.repeat(32), { boxType: 'invite', value: 0n,
+        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)),
+        guard: 'invite_dual' }),
       withProvenance('05'.repeat(32), { boxType: 'bond', value: 10n,
-        inviterId: owner, inviteOutputIndex: 0, inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }),
+        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)),
+        guard: 'block_apply' }),
       withProvenance('06'.repeat(32), { boxType: 'post_lock', value: 5n,
         // `b32` in the id preimage — `'p1'` has no encoding.
         originalValue: 5n, owner, targetPostId: '66'.repeat(32), guard: 'block_apply' }),
@@ -154,16 +154,16 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   });
 
   it('a record with a zero clock round-trips as zero', () => {
-    const zero: IdentityRecord = { lastActivityBlock: 0, lastDecayBlock: 0, likeCarry: 0n };
+    const zero: IdentityRecord = { lastActivityBlock: 0, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0 };
     expect(deserializeIdentityRecord(serializeIdentityRecord(zero))).toEqual(zero);
   });
 
   it('record value bytes are a pure function of the record', () => {
-    const a = serializeIdentityRecord({ lastActivityBlock: 3, lastDecayBlock: 4, likeCarry: 0n });
-    const b = serializeIdentityRecord({ lastActivityBlock: 3, lastDecayBlock: 4, likeCarry: 0n });
+    const a = serializeIdentityRecord({ lastActivityBlock: 3, lastDecayBlock: 4, likeCarry: 0n, invitedAtBlock: 0 });
+    const b = serializeIdentityRecord({ lastActivityBlock: 3, lastDecayBlock: 4, likeCarry: 0n, invitedAtBlock: 0 });
     expect(Buffer.from(a).toString('hex')).toBe(Buffer.from(b).toString('hex'));
 
-    const c = serializeIdentityRecord({ lastActivityBlock: 4, lastDecayBlock: 3, likeCarry: 0n });
+    const c = serializeIdentityRecord({ lastActivityBlock: 4, lastDecayBlock: 3, likeCarry: 0n, invitedAtBlock: 0 });
     expect(Buffer.from(c).toString('hex')).not.toBe(Buffer.from(a).toString('hex'));
   });
 
@@ -190,7 +190,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
 
     const d1 = applyBlockMutations(p1, [], [], [{ key: 'cd'.repeat(32), record: REC }]);
     const d2 = applyBlockMutations(p2, [], [], [
-      { key: 'cd'.repeat(32), record: { lastActivityBlock: 43, lastDecayBlock: 7, likeCarry: 0n } },
+      { key: 'cd'.repeat(32), record: { lastActivityBlock: 43, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0 } },
     ]);
 
     expect(Buffer.from(d1).toString('hex')).not.toBe(Buffer.from(d2).toString('hex'));
@@ -204,7 +204,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     applyBlockMutations(prover, [], [], [{ key, record: REC }]);
     expect(() =>
       applyBlockMutations(prover, [], [], [
-        { key, record: { lastActivityBlock: 99, lastDecayBlock: 7, likeCarry: 0n } },
+        { key, record: { lastActivityBlock: 99, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0 } },
       ]),
     ).not.toThrow();
   });
@@ -223,7 +223,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
 
     const afterChange = Buffer.from(
       applyBlockMutations(p1, [], [], [
-        { key, record: { lastActivityBlock: 100, lastDecayBlock: 7, likeCarry: 0n } },
+        { key, record: { lastActivityBlock: 100, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0 } },
       ]),
     ).toString('hex');
     expect(afterChange).not.toBe(afterCreate);
@@ -240,7 +240,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     );
     const puts: RecordPut[] = ['bb', '33', 'dd'].map((k) => ({
       key: k.repeat(32),
-      record: { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n },
+      record: { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0 },
     }));
 
     const d1 = applyBlockMutations(p1, [], boxes, puts);
@@ -256,7 +256,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const boxes: AnyBox[] = ['77', '10'].map((b) => makeKarmaBox(b.repeat(32), 5n));
     const puts: RecordPut[] = ['fe', '01', '8a'].map((k) => ({
       key: k.repeat(32),
-      record: { lastActivityBlock: 9, lastDecayBlock: 2, likeCarry: 0n },
+      record: { lastActivityBlock: 9, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0 },
     }));
 
     const d1 = applyBlockMutations(p1, [], boxes, puts);
@@ -296,11 +296,11 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// `likeCarry` in the record's AVL value encoding — an always-present field
-// (NODE_INTERFACE → Layout — IdentityRecord).
+// `likeCarry` and `invitedAtBlock` in the record's AVL value encoding — both
+// always-present fields (NODE_INTERFACE → Layout — IdentityRecord).
 // ---------------------------------------------------------------------------
 
-describe('likeCarry in the record encoding (P2-D N2a)', () => {
+describe('the always-present fields in the record encoding', () => {
   let db: Database.Database;
   let db2: Database.Database;
 
@@ -308,7 +308,7 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
   afterEach(() => { db.close(); db2.close(); });
 
   it('a non-zero likeCarry round-trips as bigint', () => {
-    const rec: IdentityRecord = { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n };
+    const rec: IdentityRecord = { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 0 };
     const back = deserializeIdentityRecord(serializeIdentityRecord(rec));
     expect(back).toEqual(rec);
     expect(typeof back.likeCarry).toBe('bigint');
@@ -326,25 +326,36 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
   //   2a   vlqU(lastActivityBlock = 42)
   //   07   vlqU(lastDecayBlock = 7)
   //   00   vlqU64(likeCarry = 0n)      ← present at zero, never omitted
+  //   00   vlqU(invitedAtBlock = 0)    ← same standing: 0 means never invited
   //
   // Derived from the layout table by hand BEFORE running the encoder, then
   // found to match it. That ordering is the point: a golden captured from the
   // implementation only proves the implementation equals itself, whereas these
-  // two derivations agreeing is evidence about the format. The heights differ
-  // (42 vs 7) so a transposition of the two adjacent `vlqU` fields is visible;
-  // equal values would have hidden it.
-  const GOLDEN_ZERO = '802a0700';
-  const GOLDEN_THREE = '802a0703';
-  /** The same layout with `likeCarry` absent — the shape a reader must reject. */
-  const GOLDEN_PRE_P2D = '802a07';
+  // two derivations agreeing is evidence about the format. Every field carries a
+  // distinct value where it can, so a transposition of two adjacent `vlqU`
+  // fields is visible; equal values would have hidden it.
+  const GOLDEN_ZERO = '802a070000';
+  const GOLDEN_THREE = '802a070300';
+  const GOLDEN_INVITED = '802a07030b';
+  /** The same layout with the trailing field absent — a shape a reader must reject. */
+  const GOLDEN_SHORT = '802a0703';
 
-  it('golden bytes: {42, 7, likeCarry: 0n} — the field is present at zero', () => {
+  it('golden bytes: {42, 7, likeCarry: 0n, invitedAtBlock: 0} — both fields present at zero', () => {
     expect(Buffer.from(serializeIdentityRecord(REC)).toString('hex')).toBe(GOLDEN_ZERO);
   });
 
-  it('golden bytes: {42, 7, likeCarry: 3n} — one value byte apart from the zero case', () => {
-    const bytes = serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n });
+  it('golden bytes: {42, 7, likeCarry: 3n, invitedAtBlock: 0} — one value byte apart from the zero case', () => {
+    const bytes = serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 0 });
     expect(Buffer.from(bytes).toString('hex')).toBe(GOLDEN_THREE);
+  });
+
+  it('golden bytes: an invited identity differs in the last byte alone', () => {
+    // `invitedAtBlock` is the last field, so a record that carries a claim
+    // height differs from the same record without one by exactly that byte —
+    // which is what makes the field's position readable from the vectors.
+    const bytes = serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 11 });
+    expect(Buffer.from(bytes).toString('hex')).toBe(GOLDEN_INVITED);
+    expect(GOLDEN_INVITED.slice(0, -2)).toBe(GOLDEN_THREE.slice(0, -2));
   });
 
   // ⚠ `likeCarry` is `vlqU64`, so its width tracks its MAGNITUDE. Two records
@@ -354,26 +365,26 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
   // change explicit instead of leaving it to be discovered by a fork.
   it('likeCarry is variable-width under vlqU64 — equal length below 128 is not a rule', () => {
     const len = (carry: bigint): number =>
-      serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: carry }).length;
+      serializeIdentityRecord({ lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: carry, invitedAtBlock: 0 }).length;
 
     expect(len(0n)).toBe(len(3n));      // both single-byte VLQ — a coincidence, not structure
     expect(len(127n)).toBe(len(0n));    // last single-byte value
     expect(len(128n)).toBe(len(0n) + 1); // first two-byte value: the width moves
   });
 
-  it('the encoding grew by exactly the always-present field vs the pre-P2-D shape', () => {
-    // The layout is otherwise identical, so the difference is `vlqU64(0n)`:
-    // one byte, on every record, zero included.
-    expect(serializeIdentityRecord(REC).length).toBe(GOLDEN_PRE_P2D.length / 2 + 1);
+  it('the encoding is exactly the five declared fields, no more', () => {
+    // Tag, two heights, the carry, the claim height — one byte each at these
+    // values, and nothing else in the layout.
+    expect(serializeIdentityRecord(REC).length).toBe(5);
   });
 
-  it('bytes missing likeCarry are REJECTED, not defaulted to 0n', () => {
-    // A record value without the field must fail loudly: a silent 0n default
-    // would mask exactly the fork the always-present rule exists to prevent.
-    // Under the positional layout the reader simply runs out of input — the
-    // field is not optional, so there is nothing to be absent.
-    const preP2D = Buffer.from(GOLDEN_PRE_P2D, 'hex');
-    expect(() => deserializeIdentityRecord(preP2D)).toThrow();
+  it('bytes missing a trailing field are REJECTED, not defaulted', () => {
+    // A record value without a field must fail loudly: a silent 0 default would
+    // mask exactly the fork the always-present rule exists to prevent. Under the
+    // positional layout the reader simply runs out of input — the fields are not
+    // optional, so there is nothing to be absent.
+    expect(() => deserializeIdentityRecord(Buffer.from(GOLDEN_SHORT, 'hex'))).toThrow();
+    expect(() => deserializeIdentityRecord(Buffer.from('802a07', 'hex'))).toThrow();
   });
 
   it('trailing bytes and non-minimal VLQ are both rejected (boundary check 2 and 3)', () => {
@@ -382,8 +393,8 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
     // one record — two AVL values for one state, which is a fork with no
     // producer disagreement behind it.
     expect(() => deserializeIdentityRecord(Buffer.from(GOLDEN_ZERO + 'ff', 'hex'))).toThrow();
-    // `80 2a 07 8000` — likeCarry 0 written in two bytes instead of one.
-    expect(() => deserializeIdentityRecord(Buffer.from('802a078000', 'hex'))).toThrow();
+    // `80 2a 07 8000 00` — likeCarry 0 written in two bytes instead of one.
+    expect(() => deserializeIdentityRecord(Buffer.from('802a07800000', 'hex'))).toThrow();
   });
 
   it('two provers fed the same record put agree on the digest', () => {
@@ -391,7 +402,7 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
     const { prover: p2 } = createAvlProver(db2);
     const put: RecordPut = {
       key: 'a1'.repeat(32),
-      record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 2n },
+      record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 2n, invitedAtBlock: 0 },
     };
 
     const d1 = applyBlockMutations(p1, [], [], [put]);
@@ -405,12 +416,12 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
 
     const at0 = Buffer.from(
       applyBlockMutations(prover, [], [], [
-        { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n } },
+        { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0 } },
       ]),
     ).toString('hex');
     const at3 = Buffer.from(
       applyBlockMutations(prover, [], [], [
-        { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n } },
+        { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 0 } },
       ]),
     ).toString('hex');
 
@@ -423,10 +434,10 @@ describe('likeCarry in the record encoding (P2-D N2a)', () => {
     const key = 'c3'.repeat(32);
 
     const d1 = applyBlockMutations(p1, [], [], [
-      { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n } },
+      { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0 } },
     ]);
     const d2 = applyBlockMutations(p2, [], [], [
-      { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n } },
+      { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 0 } },
     ]);
     expect(Buffer.from(d1).toString('hex')).not.toBe(Buffer.from(d2).toString('hex'));
   });

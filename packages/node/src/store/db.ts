@@ -78,7 +78,7 @@ const MIGRATIONS = [
     spent_at_block INTEGER,           -- NULL = unspent
     owner BLOB,                       -- 32-byte public key (NULL for invite/genesis_proof/bond/vouch boxes)
     guard TEXT NOT NULL,
-    extra_data TEXT,                  -- JSON for box-specific fields (secretHash, likerId, targetPostId, etc.)
+    extra_data TEXT,                  -- JSON for box-specific fields (inviteePublicKey, targetPostId, etc.)
     tx_id TEXT NOT NULL,              -- Creating transaction — real or synthetic mint (Spec G)
     output_index INTEGER NOT NULL,    -- u32 position within that transaction's outputs
     UNIQUE(tx_id, output_index)
@@ -96,11 +96,18 @@ const MIGRATIONS = [
   // like_carry: outstanding like accrual < LIKES_PER_KARMA_PAYOUT,
   // written only by per-block like settlement. Committed state — it enters the
   // record's AVL value encoding as an always-present field.
+  //
+  // invited_at_block: the height an invite claim applied, 0 = never invited.
+  // Written only by block application when a claim applies, and read by two
+  // rules — the once-ever invite bar and the bond's probation deadline
+  // (NODE_INTERFACE → Identity Records). Committed state, always-present in the
+  // AVL value encoding for the same reason like_carry is.
   `CREATE TABLE IF NOT EXISTS identity_records (
     identity_id BLOB PRIMARY KEY,
     last_activity_block INTEGER NOT NULL,
     last_decay_block INTEGER NOT NULL,
-    like_carry INTEGER NOT NULL DEFAULT 0
+    like_carry INTEGER NOT NULL DEFAULT 0,
+    invited_at_block INTEGER NOT NULL DEFAULT 0
   )`,
 
   // Like-records (NODE_INTERFACE → "Like-records"): (liker, targetPostId) pairs,
@@ -160,8 +167,12 @@ const MIGRATIONS = [
     journal_cbor BLOB NOT NULL
   )`,
 
-  // Clean invite/bond boxes with old guard types (pre commit-reveal)
-  `DELETE FROM utxo_boxes WHERE (box_type = 'invite' AND guard = 'hash_preimage') OR (box_type = 'bond' AND guard = 'inviter_signature')`,
+  // Clean invite and bond boxes carrying a retired guard. The five reserved
+  // strings are listed in TYPES_INTERFACE → BoxGuard; a box wearing one is a box
+  // no current rule can spend, and `rowToBox` would hand it back with the
+  // canonical guard fabricated over the top.
+  `DELETE FROM utxo_boxes WHERE (box_type = 'invite' AND guard != 'invite_dual')
+     OR (box_type = 'bond' AND guard != 'block_apply')`,
 
   // dag_meta key-value metadata table
   `CREATE TABLE IF NOT EXISTS dag_meta (

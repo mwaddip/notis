@@ -180,22 +180,18 @@ const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domai
  */
 const COVERAGE_TX_ID = 'de'.repeat(32);
 
-const BYTES_SECRET = new Uint8Array(32).fill(0xa1);
 const BYTES_INVITEE = new Uint8Array(32).fill(0xb2);
 const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
 
 const GOLDEN_INVITE_BOX: InviteBox = {
-  boxType: 'invite', value: 10n,
-  secretHash: BYTES_SECRET, inviterId: GOLDEN_AUTHOR, guard: 'hash_preimage_with_bond',
+  boxType: 'invite', value: 0n,
+  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE, guard: 'invite_dual',
   txId: COVERAGE_TX_ID, index: 0,
 };
 
 const GOLDEN_BOND_BOX: BondBox = {
   boxType: 'bond', value: 5n,
-  inviterId: GOLDEN_AUTHOR,
-  inviteOutputIndex: 1,
-  inviteePublicKey: BYTES_INVITEE,
-  probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual',
+  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE, guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 1,
 };
 
@@ -212,25 +208,11 @@ const GOLDEN_VOUCH_BOX: VouchBox = {
   txId: COVERAGE_TX_ID, index: 3,
 };
 
-/**
- * The bond as invite creation emits it: `inviteePublicKey` **empty**, meaning
- * unclaimed. It is the only 0-or-32 field in any box and `opt(b32)` is the only
- * option-shaped field in the box arms (TYPES_INTERFACE → Layout — Boxes), so
- * without a fixture on the absent branch a plain `b32` in that slot encodes
- * every unclaimed bond wrongly and nothing observes it. One fixture per branch.
- */
-const GOLDEN_BOND_BOX_UNCLAIMED: BondBox = {
-  ...GOLDEN_BOND_BOX,
-  inviteePublicKey: new Uint8Array(0),
-  index: 4,
-};
-
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> = [
   { name: 'karma', box: GOLDEN_KARMA_BOX },
   { name: 'credit', box: GOLDEN_CREDIT_BOX },
   { name: 'invite', box: GOLDEN_INVITE_BOX },
   { name: 'bond', box: GOLDEN_BOND_BOX },
-  { name: 'bond (unclaimed)', box: GOLDEN_BOND_BOX_UNCLAIMED },
   { name: 'post_lock', box: GOLDEN_POST_LOCK_BOX },
   { name: 'vouch', box: GOLDEN_VOUCH_BOX },
 ];
@@ -281,7 +263,7 @@ function extractConst(src: string, name: string): string {
  */
 const BYTE_PRIMITIVES = [
   'vlqU', 'vlqS', 'vlqU64', 'vlqBigInt', 'lp', 'lpUtf8', 'arr', 'opt',
-  'boolByte', 'enum8Tag', 'b32Bytes', 'b32Hex', 'b32Either', 'optB32Either',
+  'boolByte', 'enum8Tag', 'b32Bytes', 'b32Hex', 'b32Either',
 ] as const;
 
 /** The rest of what the mirror evaluates: helpers, the id preimages, the PoW pair. */
@@ -697,24 +679,23 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     }
   });
 
-  it('an unclaimed bond takes the absent branch, and is distinguishable from every committed one', () => {
-    // Both directions of the `opt(b32)` injectivity argument, on both sides.
-    const unclaimed = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX_UNCLAIMED));
-    const committed = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX));
-    expect(hexOf(ui.canonicalBoxBytes(GOLDEN_BOND_BOX_UNCLAIMED as unknown as Record<string, unknown>)))
-      .toBe(unclaimed);
-    // Unclaimed ends `00 00 00` — absent tag, then the two zero probation
-    // fields — and carries no key bytes at all. The tag byte is present either
-    // way, so committed is exactly 32 bytes longer, not 33.
-    expect(unclaimed.length + 32 * 2).toBe(committed.length);
-    expect(unclaimed).not.toBe(committed);
-    // The tx-builder form spells the same absence as an empty hex string, and
-    // must reach the same bytes — otherwise a client-built invite derives a bond
-    // id the node never agrees with.
-    expect(hexOf(ui.canonicalBoxBytes({ ...toUiForm(GOLDEN_BOND_BOX), inviteePublicKey: '' })))
-      .toBe(unclaimed);
-    // A *missing* field is out of domain, not unclaimed: letting it take the
-    // absent branch would give a malformed box a well-formed box's id.
+  it('invite and bond differ only by the tag, on both sides', () => {
+    // The pair is one trailing layout under two tags (TYPES_INTERFACE → Layout
+    // — Boxes), so `enum8Tag` is the whole of what keeps their leaves apart.
+    // Asserted on the UI side as well: an encoder that dropped the tag would
+    // give an invite and a bond with the same parties one id.
+    const sameValueInvite = { ...GOLDEN_INVITE_BOX, value: GOLDEN_BOND_BOX.value };
+    const a = hexOf(canonicalBoxBytes(sameValueInvite));
+    const b = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX));
+    expect(a.slice(2)).toBe(b.slice(2));
+    expect(a).not.toBe(b);
+    expect(hexOf(ui.canonicalBoxBytes(sameValueInvite as unknown as Record<string, unknown>))).toBe(a);
+    expect(hexOf(ui.canonicalBoxBytes(GOLDEN_BOND_BOX as unknown as Record<string, unknown>))).toBe(b);
+    // The tx-builder form carries keys as hex and must reach the same bytes —
+    // otherwise a client-built invite derives ids the node never agrees with.
+    expect(hexOf(ui.canonicalBoxBytes(toUiForm(GOLDEN_BOND_BOX)))).toBe(b);
+    // A *missing* key is out of domain: a malformed box must not be handed a
+    // well-formed box's id.
     const missing = { ...GOLDEN_BOND_BOX } as Partial<BondBox>;
     delete missing.inviteePublicKey;
     expect(() => canonicalBoxBytes(missing as never)).toThrow();
