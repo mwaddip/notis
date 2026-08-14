@@ -351,6 +351,17 @@ const POST_LOCK_REPLY_COST = 3n;
 const INVITE_KARMA_AMOUNT = 25n;
 const INVITE_BOND_KARMA = 25n;
 /**
+ * The vouch stake, pinned at cast — NODE_INTERFACE → "Vouch transition rules".
+ * A vouch is one vote and always stakes exactly this, so it is not a client
+ * choice: `checkTransitions` rejects a VouchBox carrying any other value.
+ */
+const VOUCH_KARMA_AMOUNT = 1n;
+/**
+ * The karma floor a voucher must clear. The check here is advisory — `castVouch`
+ * owns the verdict, and its message is what the button shows on a refusal.
+ */
+const VOUCH_MIN_BALANCE = 11n;
+/**
  * Per-network, so it is served rather than known: `loadStatus()` overwrites it
  * from `/status` (NODE_INTERFACE → Status). The mainnet value is the default,
  * so a node that does not answer leaves the UI on the widest window.
@@ -1206,6 +1217,67 @@ function buildCancelInviteTx(karmaBox, inviteBox, bondBox, pubKeyHex) {
   };
 }
 
+/**
+ * Build a vouch-cast tx: karma boxes → karma(change) + vouch.
+ *
+ * The three fields consensus pins, all in NODE_INTERFACE → "Vouch transition
+ * rules": the stake is exactly `VOUCH_KARMA_AMOUNT`, `voucherId` is the karma
+ * input's owner, and the shape is exactly one karma output plus one vouch
+ * output. `targetId` is the only free field.
+ *
+ * `voucherId` and `targetId` go out as hex, like every other binary field this
+ * page sends — `jsonToTx`'s `BINARY_BOX_FIELDS` names both, and the mirror in
+ * `boxTypeFields` encodes them through `b32Either`, so the id the node derives
+ * is the one this page signed.
+ */
+function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
+  const selected = selectBoxes(karmaBox.boxes, VOUCH_KARMA_AMOUNT);
+  const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
+
+  const karmaOutput = {
+    boxType: 'karma',
+    value: selectedTotal - VOUCH_KARMA_AMOUNT,
+    owner: pubKeyHex,
+    guard: 'owner_signature',
+  };
+
+  const vouchOutput = {
+    boxType: 'vouch',
+    value: VOUCH_KARMA_AMOUNT,
+    voucherId: pubKeyHex,
+    targetId: targetIdHex,
+    guard: 'owner_signature',
+  };
+
+  return {
+    inputs: selected.map(b => b.boxId),
+    outputs: [karmaOutput, vouchOutput],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+}
+
+/**
+ * Build an unvouch tx: one VouchBox → nothing.
+ *
+ * **Zero outputs is the shape, not an omission.** The staked karma is escrowed
+ * by block application and re-minted to the voucher at cooldown maturity, so a
+ * change output here would be karma minted twice; `checkTransitions` requires
+ * `outputs.length === 0` and exactly one VouchBox input, and conservation
+ * exempts precisely that shape.
+ *
+ * The box id is not derivable client-side — it comes from
+ * `GET /vouches?voucher=<hex>`, the one read surface that names it.
+ */
+function buildUnvouchTx(vouchBoxId) {
+  return {
+    inputs: [vouchBoxId],
+    outputs: [],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+}
+
 // ===========================================================================
 // Box identity (client-side, matches server @dagsocial/types)
 // ===========================================================================
@@ -1640,12 +1712,23 @@ function hideProfileBar() {
   document.getElementById('profileBar').style.display = 'none';
 }
 
+/**
+ * The active vouch this identity holds on `targetId`, or null.
+ *
+ * `?voucher=`, never `?target=`: only the voucher arm carries `boxId`, and an
+ * unvouch spends a NAMED box. The target arm answers the display question and
+ * leaves the button it enables unable to act.
+ */
+async function fetchOwnVouch(targetId) {
+  const res = await fetch(API + '/vouches?voucher=' + encodeURIComponent(userId));
+  if (!res.ok) return null;
+  const data = await res.json();
+  return (data.vouches || []).find(v => v.targetId === targetId) || null;
+}
+
 async function checkVouchStatus(targetId) {
   try {
-    const res = await fetch(API + '/vouches?target=' + encodeURIComponent(targetId));
-    const data = await res.json();
-    const hasVouch = data.vouches && data.vouches.some(v => v.voucherId === userId);
-    if (hasVouch) {
+    if (await fetchOwnVouch(targetId)) {
       document.getElementById('vouchBtn').style.display = 'none';
       document.getElementById('unvouchBtn').style.display = '';
     }
@@ -1658,9 +1741,21 @@ document.getElementById('vouchBtn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = '...';
   try {
+    const karmaBox = await fetchKarmaBox();
+    if (!karmaBox || karmaBox.total < VOUCH_MIN_BALANCE) {
+      document.getElementById('vouchStatus').textContent =
+        `need ${VOUCH_MIN_BALANCE} karma to vouch`;
+      return;
+    }
+
+    const pubKeyHex = buf2hex(pubKeyRaw);
+    const tx = buildVouchTx(karmaBox, feedFilter, pubKeyHex);
+    const { signature } = await signTxId(tx);
+    tx.signatures[pubKeyHex] = signature;
+
     const res = await fetch(API + '/vouches', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, targetId: feedFilter }),
+      body: JSON.stringify({ tx }, jsonBigint),
     });
     const data = await res.json();
     document.getElementById('vouchStatus').textContent = res.ok ? 'Vouched!' : (data.reason || data.error || 'failed');
@@ -1682,9 +1777,23 @@ document.getElementById('unvouchBtn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = '...';
   try {
+    // Read at click time rather than caching what `checkVouchStatus` saw: the
+    // box can be spent between opening the profile and pressing the button,
+    // and a stale id names an input the node will not find.
+    const vouch = await fetchOwnVouch(feedFilter);
+    if (!vouch) {
+      document.getElementById('vouchStatus').textContent = 'no active vouch';
+      return;
+    }
+
+    const pubKeyHex = buf2hex(pubKeyRaw);
+    const tx = buildUnvouchTx(vouch.boxId);
+    const { signature } = await signTxId(tx);
+    tx.signatures[pubKeyHex] = signature;
+
     const res = await fetch(API + '/vouches/' + encodeURIComponent(feedFilter), {
       method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
+      body: JSON.stringify({ tx }, jsonBigint),
     });
     const data = await res.json();
     document.getElementById('vouchStatus').textContent = res.ok ? 'Unvouched.' : (data.reason || data.error || 'failed');
