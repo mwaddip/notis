@@ -92,9 +92,6 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
   )) as unknown as BlockCreatorModule;
 }
 
-async function importIdentities() {
-}
-
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (post: Post, rawCbor: Uint8Array) => void;
@@ -294,7 +291,6 @@ describe('block-creator', () => {
 
     // Set up identity
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     // Create and insert post
     const post = makePost(author.userId, 'hello world');
@@ -340,7 +336,6 @@ describe('block-creator', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const post = makePost(author.userId, 'post one');
     const postId = computePostId(post);
@@ -374,7 +369,6 @@ describe('block-creator', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const post = makePost(author.userId, 'confirm me');
     const postId = computePostId(post);
@@ -475,7 +469,6 @@ describe('block-creator', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
 
@@ -514,7 +507,6 @@ describe('block-creator', () => {
   it('populates utxoTxIds from mempool standalone UTXO entries', async () => {
     const db = await importDb();
     db.initDb(':memory:');
-    const ids = await importIdentities();
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -580,7 +572,6 @@ describe('block-creator', () => {
   it('batch-linked UTXO transactions appear in utxoTxIds', async () => {
     const db = await importDb();
     db.initDb(':memory:');
-    const ids = await importIdentities();
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();

@@ -110,12 +110,24 @@ export class UnreadableStoredBlockError extends CorruptChainStateError {
 /**
  * A height that should hold a block and does not.
  *
- * `ordering_blocks` holds exactly heights 1..MAX with no holes, and the store
- * itself is what guarantees it: one insert, gated on
- * `height === currentHeight + 1` (or genesis at 1), and one delete, reached only
- * from `revertBlock` inside `reorg`'s strictly top-down loop and inside its
- * transaction. Nothing prunes blocks. `getCurrentHeight()` is `MAX(height)`, so
- * a hole does not lower the tip and nothing else would notice it either.
+ * `ordering_blocks` holds exactly heights 1..MAX with no holes. Two facts hold
+ * it, and they sit in different files.
+ *
+ * The **gate** is `applyBlockBody`'s chain-link check —
+ * `block.header.height !== currentHeight + 1` is a rejection there, above the
+ * insert. The store's writer has no height check of its own: it is exported and
+ * takes whatever block it is handed, so the contiguity of the table is a
+ * property of the path, never of the INSERT.
+ *
+ * The **single writer** is what makes that gate cover every row, and it is
+ * stated on `store/ordering.ts`'s `createOrderingBlock`: one INSERT, one `src`
+ * caller, which is the gated one. Both halves are needed — a gate on one of two
+ * writers guarantees nothing.
+ *
+ * The one delete is reached only from `revertBlock` inside `reorg`'s strictly
+ * top-down loop and inside its transaction. Nothing prunes blocks.
+ * `getCurrentHeight()` is `MAX(height)`, so a hole does not lower the tip and
+ * nothing else would notice it either.
  *
  * A missing block below a tip we do hold is therefore not "no block yet" — it is
  * the contiguity invariant broken.
@@ -151,11 +163,16 @@ export class MissingStoredBlockError extends CorruptChainStateError {
  */
 export function failStopIfCorruptChain(err: unknown): never {
   if (err instanceof CorruptChainStateError) {
+    // The operator's conclusion, not the argument for it: an operator reading
+    // this at 3am needs "do not go looking for a bad peer", and the provenance
+    // it rests on is one hop away for whoever wants to check it. Restating that
+    // provenance here would be a copy that decays on its own schedule, in the
+    // one artifact nobody greps when the store gains a second writer.
     console.error(
-      `FATAL: ${err.message}. The ordering store's only writer is this node's ` +
-      `own apply path, so nothing a peer sent can have caused this. Stopping ` +
-      `rather than serving, mining or deciding fork choice from a chain this ` +
-      `node cannot read.`,
+      `FATAL: ${err.message}. Nothing a peer sent can have caused this ` +
+      `(store/ordering.ts → createOrderingBlock). Stopping rather than ` +
+      `serving, mining or deciding fork choice from a chain this node ` +
+      `cannot read.`,
     );
     process.exit(1);
   }

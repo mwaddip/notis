@@ -101,9 +101,6 @@ async function importBlockCreatorRoots() {
   };
 }
 
-async function importIdentities() {
-}
-
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (post: Post, rawCbor: Uint8Array) => void;
@@ -303,7 +300,6 @@ describe('extendsOurTip', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const post = makePost(author.userId, 'genesis');
     const postId = computePostId(post);
@@ -354,7 +350,6 @@ describe('extendsOurTip', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const post = makePost(author.userId, 'genesis');
     const postId = computePostId(post);
@@ -438,7 +433,6 @@ describe('findForkPoint', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
@@ -503,7 +497,6 @@ describe('findForkPoint', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
@@ -551,7 +544,6 @@ describe('findForkPoint', () => {
 
     // Build a deep chain (more than MAX_REORG_DEPTH) via block-creator
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
@@ -736,7 +728,6 @@ describe('findForkPoint', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    await importIdentities();
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
@@ -1254,7 +1245,6 @@ describe('revertBlock', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const post = makePost(author.userId, 'unconfirm me');
     const postId = computePostId(post);
@@ -1297,7 +1287,6 @@ describe('revertBlock', () => {
     const db = await importDb();
     db.initDb(':memory:');
 
-    const ids = await importIdentities();
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -1391,7 +1380,6 @@ describe('revertBlock', () => {
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
-    const ids = await importIdentities();
 
     // Create identity with a karma box at block 0 (ancient)
     const identity = makeTestIdentity();
@@ -1489,7 +1477,6 @@ describe('reorg', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
@@ -1538,7 +1525,6 @@ describe('reorg', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
@@ -1586,7 +1572,6 @@ describe('reorg', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const ids = await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
@@ -1655,7 +1640,6 @@ describe('reorg', () => {
       db.initDb(':memory:');
 
       const author = makeTestIdentity();
-      await importIdentities();
 
       const { encodePost } = await import('@dagsocial/types');
       const posts = await importPosts();
@@ -1704,7 +1688,6 @@ describe('reorg', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    await importIdentities();
 
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
