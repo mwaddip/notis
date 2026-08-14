@@ -1009,8 +1009,19 @@ function applyMutationPhase(
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
-  const MAX_PASSES = 20;
-  for (let pass = 0; pass < MAX_PASSES && queue.length > 0; pass++) {
+  //
+  // ⛔ **There is no pass bound, and adding one would create a consensus
+  // parameter.** Validity is "every embedded transaction applied", with no
+  // number in it; a cap makes a block carrying a chain deeper than the cap
+  // invalid here and valid on a node that chose a larger one, from the same
+  // bytes. Selection cannot fix that — selection is local, and an incoming
+  // block is not bound by it.
+  //
+  // Termination does not rest on a cap either. The `applied === 0` return below
+  // ends the loop the moment a pass makes no progress, so every pass that
+  // continues applied at least one transaction and the pass count is bounded by
+  // the block's transaction count.
+  while (queue.length > 0) {
     const remaining: QueuedTx[] = [];
     let applied = 0;
 
@@ -1150,24 +1161,22 @@ function applyMutationPhase(
     }
 
     if (applied === 0) {
-      // No progress — remaining txs have inputs that truly don't exist.
+      // No progress, so these inputs will never exist: the block commits in
+      // `utxoTxIds` to a transaction its own `stateRoot` cannot reflect. Reject
+      // it, like the two arms above — the block is invalid if any embedded
+      // transaction does not apply (NODE_INTERFACE → the apply funnel's block
+      // validity).
       for (const item of remaining) {
         console.warn(
-          `UTXO tx ${item.txId} in block ${height}: ` +
-          `input liveness check failed after ${pass + 1} passes, skipping`,
+          `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
+          `has an input no transaction in this block creates and the chain ` +
+          `does not hold`,
         );
       }
-      break;
+      return false;
     }
     queue.length = 0;
     queue.push(...remaining);
-  }
-
-  if (queue.length > 0) {
-    console.warn(
-      `Block ${height}: ${queue.length} UTXO tx(s) could not be applied ` +
-      `after ${MAX_PASSES} passes`,
-    );
   }
 
   // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like

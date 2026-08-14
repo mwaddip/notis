@@ -163,8 +163,19 @@ export function createApp(config: Config): express.Express {
   // karma (NODE_INTERFACE → "Bond transition rules"). Every deps literal below
   // references the store's getKarmaValue directly — the single implementation
   // shared with block application and the relay path.
+  // ⛔ **Every `getBox` below is `getBoxWithPending`, and that is an admission
+  // convenience, not a consensus one.** These deps reach submission services
+  // only. Block application takes its `getBox` from a direct store import
+  // (`block-apply.ts`), so nothing here can reach it — and nothing here may be
+  // given to it: a block's inputs must resolve against the confirmed set alone,
+  // or what a block may spend would depend on one node's unshared pool.
+  //
+  // Submission needs the wider view because a transaction that spends the change
+  // box of one still in the pool is ordinary — the client chains rather than
+  // re-spending the box its own pending transaction consumed — and the confirmed
+  // set does not hold that output yet.
   const utxoEngineDeps = {
-    getBox: store.getBox,
+    getBox: store.getBoxWithPending,
       getBoxByProvenance: store.getBoxByProvenance,
     insertBox: store.insertBox,
     consumeBox: store.consumeBox,
@@ -176,7 +187,11 @@ export function createApp(config: Config): express.Express {
     isSystemBox: (boxId: string) => {
       const sysKey = getSystemKeypair();
       if (!sysKey) return false;
-      const box = store.getBox(boxId);
+      // The pending view here too: the faucet's second grant in a block interval
+      // spends the change box of its first, which is still pending. Resolved
+      // against the confirmed set this returns false and the grant is rejected
+      // as an ordinary karma transfer.
+      const box = store.getBoxWithPending(boxId);
       if (!box || box.boxType !== 'karma') return false;
       return Buffer.from((box as import('@dagsocial/types').KarmaBox).owner).equals(
         Buffer.from(sysKey.publicKey),
@@ -221,7 +236,7 @@ export function createApp(config: Config): express.Express {
       insertUtxoTx: store.insertUtxoTx,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
-      getBox: store.getBox,
+      getBox: store.getBoxWithPending,
       metaPut: store.metaPut,
       metaGet: store.metaGet,
     }),
@@ -233,7 +248,7 @@ export function createApp(config: Config): express.Express {
     likeRoutes({
       castLike,
       getCurrentHeight: store.getCurrentHeight,
-      getBox: store.getBox,
+      getBox: store.getBoxWithPending,
       getBoxByProvenance: store.getBoxByProvenance,
       insertBox: store.insertBox,
       consumeBox: store.consumeBox,
@@ -251,7 +266,7 @@ export function createApp(config: Config): express.Express {
       castVouch,
       initiateUnvouch,
       getCurrentHeight: store.getCurrentHeight,
-      getBox: store.getBox,
+      getBox: store.getBoxWithPending,
       getBoxByProvenance: store.getBoxByProvenance,
       insertBox: store.insertBox,
       consumeBox: store.consumeBox,
@@ -271,7 +286,7 @@ export function createApp(config: Config): express.Express {
       cancelInvite,
       commitInvite,
       getCurrentHeight: store.getCurrentHeight,
-      getBox: store.getBox,
+      getBox: store.getBoxWithPending,
       getBoxByProvenance: store.getBoxByProvenance,
       insertBox: store.insertBox,
       consumeBox: store.consumeBox,
@@ -293,7 +308,7 @@ export function createApp(config: Config): express.Express {
         getKarmaValue: store.getKarmaValue,
         hasActiveVouchCooldown: store.hasActiveVouchCooldown,
         getCurrentHeight: store.getCurrentHeight,
-        getBox: store.getBox,
+        getBox: store.getBoxWithPending,
       getBoxByProvenance: store.getBoxByProvenance,
         insertBox: store.insertBox,
         consumeBox: store.consumeBox,

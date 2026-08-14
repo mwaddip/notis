@@ -929,9 +929,83 @@ async function signPost(content, authorBytes, parentRefs, challengeBytes, protoc
 // ===========================================================================
 
 /**
+ * The id of the box output `index` of `tx` will create.
+ *
+ * The page computes `txId` itself in order to sign, and a box id is a function
+ * of the candidate plus that `txId` and the index — so the id of a box a
+ * transaction has not been submitted yet is already determined, with no
+ * round-trip. `computeCandidateBoxId` is the single derivation both sides share.
+ */
+function predictOutputBoxId(tx, index) {
+  return computeCandidateBoxId(tx.outputs[index], computeTxId(tx), index);
+}
+
+/**
+ * Karma change boxes this page's own submitted transactions will create, keyed
+ * by the box each one supersedes.
+ *
+ * `GET /karma` answers from the confirmed set, so between submitting a
+ * transaction and its block landing the server still reports the box that
+ * transaction spends. Building the next transaction from that answer names an
+ * input the first one consumes: both reach one block, the first spends the box,
+ * and the second cannot apply. Posting and then liking inside one block interval
+ * is an ordinary sequence, and that is exactly the pair it produces.
+ *
+ * So the page spends its own change instead. The node admits this — its
+ * admission resolves inputs against pending outputs too — and the apply path's
+ * dependency ordering settles the whole chain in one block.
+ */
+const pendingKarmaChange = new Map();
+
+/**
+ * Record the karma change a submitted transaction will create.
+ *
+ * Every karma-spending builder on this page puts its change at output 0, and
+ * calling this after a successful submit — rather than inside the builders — is
+ * what keeps a transaction the server refused out of the map.
+ */
+function recordPendingKarmaChange(tx) {
+  const change = { boxId: predictOutputBoxId(tx, 0), value: tx.outputs[0].value };
+  for (const spentId of tx.inputs) pendingKarmaChange.set(spentId, change);
+}
+
+/**
+ * Walk each confirmed box forward through the pending changes to the box that
+ * is actually spendable, and forget the entries the server has caught up with.
+ *
+ * Mirrors what the node does when it selects boxes for its own transactions.
+ */
+function applyPendingKarmaChange(data) {
+  const confirmed = new Set(data.boxes.map(b => b.boxId));
+  for (const [spentId, change] of pendingKarmaChange) {
+    if (confirmed.has(change.boxId)) pendingKarmaChange.delete(spentId);
+  }
+
+  const tips = new Map();
+  for (const box of data.boxes) {
+    let current = box;
+    // Output ids are hashes of their transaction, so a chain cannot close on
+    // itself; the set makes that a local guarantee rather than an assumption.
+    const seen = new Set();
+    while (pendingKarmaChange.has(current.boxId) && !seen.has(current.boxId)) {
+      seen.add(current.boxId);
+      current = pendingKarmaChange.get(current.boxId);
+    }
+    tips.set(current.boxId, current);
+  }
+
+  data.boxes = [...tips.values()].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
+  data.total = data.boxes.reduce((sum, b) => sum + b.value, 0n);
+  return data;
+}
+
+/**
  * Fetch all karma boxes for the active identity.
  * Returns { total, boxes: [{ boxId, value }] } with total/value as bigint
  * (the API serializes them as decimal strings — JSON cannot carry a bigint).
+ *
+ * Boxes this page's own pending transactions supersede are replaced by the
+ * change they create, so the next transaction chains rather than re-spending.
  */
 async function fetchKarmaBox() {
   if (!userId) return null;
@@ -941,7 +1015,7 @@ async function fetchKarmaBox() {
     const data = await res.json(); // { userId, total, boxes: [{ boxId, value }] }
     data.total = BigInt(data.total);
     for (const b of data.boxes) b.value = BigInt(b.value);
-    return data;
+    return applyPendingKarmaChange(data);
   } catch {
     return null;
   }
@@ -1002,7 +1076,6 @@ async function fetchInviteState() {
 
 /** Build the karma-lock tx for post creation. Uses all boxes needed to cover lockAmount. */
 function buildKarmaLockTx(karmaBox, lockAmount, targetPostId, pubKeyHex) {
-  const now = currentBlockHeight;
   const selected = selectBoxes(karmaBox.boxes, lockAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const newKarmaValue = selectedTotal - lockAmount;
@@ -1061,7 +1134,6 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
 
 /** Build an invite-create tx: karma boxes → karma + invite + bond. */
 function buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex) {
-  const now = currentBlockHeight;
   const totalDeducted = INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
   const selected = selectBoxes(karmaBox.boxes, totalDeducted);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
@@ -1127,7 +1199,6 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex) {
  * @param {string} secretHex - raw hex preimage for hash_preimage guard
  */
 function buildClaimInviteTx(inviteBox, bondBox, inviteePubKeyHex, secretHex) {
-  const now = currentBlockHeight;
 
   const karmaOutput = {
     boxType: 'karma',
@@ -1197,7 +1268,6 @@ function buildCommitTx(bondBox, inviteePubKeyHex, secretHex) {
  * @param {string} pubKeyHex - inviter's public key
  */
 function buildCancelInviteTx(karmaBox, inviteBox, bondBox, pubKeyHex) {
-  const now = currentBlockHeight;
   // Refund: consolidate all karma boxes + invite value + bond value
   const allKarmaBoxIds = karmaBox.boxes.map(b => b.boxId);
   const totalRefund = karmaBox.total + inviteBox.value + bondBox.value;
@@ -1647,6 +1717,9 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       return;
     }
     const posted = await postRes.json();
+    // The lock is pending now, so a like on the next click must spend this
+    // transaction's change rather than the box it just consumed.
+    recordPendingKarmaChange(karmaLockTx);
     setStatus('posted! ' + posted.postId.slice(0, 12) + '...', 'ok');
     document.getElementById('content').value = '';
     document.getElementById('parents').value = '';
@@ -1847,6 +1920,9 @@ async function doLike(targetPostId) {
       return false;
     }
 
+    // Liking twice before a block lands is the same sequence as post-then-like:
+    // the second like spends this one's change.
+    recordPendingKarmaChange(tx);
     return true;
   } catch (e) {
     setStatus('like error: ' + e.message, 'error');

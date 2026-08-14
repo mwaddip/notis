@@ -1640,10 +1640,24 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
    producer is untrusted (permissionless PoW), so nothing is assumed verified. **If
    a tx whose inputs are present fails validation, the entire block is rejected**
    and nothing is applied — a valid block must not contain an invalid tx. This runs
-   on every apply path (local finalization, gossip receipt, reorg). The multi-pass
-   handling of input *presence* is unchanged: a tx whose inputs are not yet present
-   is deferred and retried (intra-block dependency). Idempotent: skips boxes already
-   inserted or spent (survives gossip loopback).
+   on every apply path (local finalization, gossip receipt, reorg). Input *presence*
+   is handled by deferral: a tx whose inputs are not yet present is retried, because
+   an earlier tx in the same block may create them (intra-block dependency).
+   Idempotent: skips boxes already inserted or spent (survives gossip loopback).
+
+   **A block is invalid if any embedded transaction does not apply.** Deferral ends
+   when a pass applies nothing; anything still queued at that point can never apply,
+   and **the block is rejected** — the same rule as a failed re-validation, reaching
+   the case deferral leaves open. Partial application is not an outcome: a block
+   whose `utxoTxIds` names a transaction its own application dropped commits a
+   `stateRoot` that does not reflect its own transaction set.
+
+   ⚠ **The rule carries no pass bound, deliberately.** Termination comes from
+   "a pass applied nothing", so the pass count is bounded by the block's transaction
+   count and never needs stating. **A retry cap would be a consensus parameter** —
+   two nodes with different caps would disagree about a block carrying a dependency
+   chain longer than the smaller one, and the disagreement would be indistinguishable
+   from this rule working. A chain of any depth the block can hold must apply.
 6. Remove confirmed entries from mempool (`removeEntry` for each confirmed rowid).
    ⚠ **This runs even when the block was rejected**, and that is deliberate,
    not an oversight: whatever made the body invalid is still pooled, so

@@ -336,10 +336,43 @@ function migrateVouchCooldowns(database: Database.Database): void {
 }
 
 /**
+ * The two JSON array columns a pooled transaction's own fields are lifted into
+ * at insert — `tx_inputs`, the box ids it spends, and `tx_output_ids`, the ids
+ * of the boxes it creates. Together they are the pending view the admission
+ * path resolves against: confirmed set ∪ pending outputs − pending inputs.
+ * Same principle as the like/invite/vouch gate columns above — the queries stay
+ * plain SQL over every row rather than a decode-scan of the first N.
+ *
+ * ALTERs rather than columns in a CREATE TABLE, because every mempool CREATE
+ * TABLE in this file is superseded: `migrateVerifiablePrune` drops and recreates
+ * the table on a fresh database, and returns early on one that already ran it.
+ * One ALTER pass is the single statement that reaches both.
+ *
+ * Each column is guarded on its own, so a database that gained one before the
+ * other still gains the one it lacks.
+ *
+ * Rows written before a column existed hold NULL, and `json_each` reads NULL as
+ * zero rows rather than raising — such an entry matches no conflict query, and
+ * serves no pending output.
+ */
+function migrateMempoolTxColumns(database: Database.Database): void {
+  const cols = database.prepare("PRAGMA table_info('mempool')").all() as Array<{ name: string }>;
+  const has = (name: string): boolean => cols.some(c => c.name === name);
+
+  if (!has('tx_inputs')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_inputs TEXT`);
+  if (!has('tx_output_ids')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_output_ids TEXT`);
+}
+
+/**
  * Partial indexes over the mempool gate-metadata columns (audit M-8). Created
  * after the mempool migrations so they land on whichever CREATE TABLE ran last.
  * A database predating the gate columns fails loudly here at startup rather
  * than silently at the first insert — pre-stable, DB reset acceptable.
+ *
+ * `idx_mempool_tx_inputs` covers a membership test, not a lookup: a B-tree over
+ * the JSON text cannot resolve `json_each(...) WHERE value = ?`. It earns its
+ * place as the covering index the scan reads, which is also what confines the
+ * scan to rows that carry inputs at all.
  */
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
@@ -351,6 +384,10 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(vouch_voucher) WHERE vouch_voucher IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_subblock_id
       ON mempool(subblock_id) WHERE subblock_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_tx_inputs
+      ON mempool(tx_inputs) WHERE tx_inputs IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_tx_output_ids
+      ON mempool(tx_output_ids) WHERE tx_output_ids IS NOT NULL;
   `);
 }
 
@@ -373,6 +410,7 @@ export function initDb(path: string): void {
   migrateBlockTopology(db);
   migrateVerifiablePrune(db);
   migrateVouchCooldowns(db);
+  migrateMempoolTxColumns(db);
   createMempoolGateIndexes(db);
 
   emitDbOpenComplete(Date.now() - startedAt);

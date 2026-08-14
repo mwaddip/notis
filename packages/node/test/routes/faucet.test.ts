@@ -15,7 +15,7 @@ import {
   getBoxByProvenance,
 } from '../../src/store/utxo.js';
 import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
-import { getPendingEntries } from '../../src/store/mempool.js';
+import { getPendingEntries, getBoxWithPending } from '../../src/store/mempool.js';
 import { initSystemKeypair, ensureSystemKarmaBox, getSystemKeypair } from '../../src/store/system.js';
 import { generateKeyPair, computeBoxId, computeTxId } from '@dagsocial/types';
 import type { KarmaBox } from '@dagsocial/types';
@@ -61,7 +61,12 @@ function buildDeps(): FaucetDeps {
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     hasActiveVouchCooldown: storeHasActiveVouchCooldown,
     getCurrentHeight,
-    getBox,
+    // The pending view, as server.ts wires the submission routes: a grant
+    // spending the change box of one still pooled resolves its input here, and
+    // `isSystemBox` recognizes that change box as the system's. Against the
+    // confirmed set alone both answers are wrong and the grant is rejected as an
+    // ordinary karma transfer.
+    getBox: getBoxWithPending,
     getBoxByProvenance,
     insertBox,
     consumeBox: (id: string, atBlock: number) => {
@@ -71,7 +76,7 @@ function buildDeps(): FaucetDeps {
     isSystemBox: (boxId: string) => {
       const sysKey = getSystemKeypair();
       if (!sysKey) return false;
-      const box = getBox(boxId);
+      const box = getBoxWithPending(boxId);
       if (!box || box.boxType !== 'karma') return false;
       return Buffer.from((box as KarmaBox).owner).equals(Buffer.from(sysKey.publicKey));
     },
@@ -257,6 +262,49 @@ describe('faucet route', () => {
     const codes = [res1.status, res2.status].sort();
     expect(codes).toEqual([200, 409]);
     expect(pendingFaucetKarmaFor(pk)).toBe(100n);
+  });
+
+  // -----------------------------------------------------------------------
+  // Test 2d: Different identities in one block interval all succeed, chained
+  // -----------------------------------------------------------------------
+
+  it('funds several identities in one block interval, each chaining on the last', async () => {
+    // The one-grant-per-identity rule is the only thing that bounds the faucet.
+    // Selecting from the confirmed set alone, grant 2 would name the box grant 1
+    // already spends — the composition a block cannot apply. Each grant instead
+    // spends its predecessor's change, so all of them apply in one block.
+    const app = buildApp(deps);
+    const heightBefore = getCurrentHeight();
+    const keys = [generateKeyPair().publicKey, generateKeyPair().publicKey, generateKeyPair().publicKey];
+
+    for (const pk of keys) {
+      const res = await request(app, '/faucet', 'POST', { userId: hex(pk) });
+      expect(res.status).toBe(200);
+    }
+    expect(getCurrentHeight()).toBe(heightBefore);
+
+    for (const pk of keys) expect(pendingFaucetKarmaFor(pk)).toBe(100n);
+
+    // A chain, not repeated spends of one box. Asserted over the whole pool —
+    // every grant this file made descends from the same confirmed system box —
+    // so it holds however many entries the earlier tests left behind.
+    const txs = getPendingEntries(1000)
+      .filter((e) => e.entryType === 'utxo_tx' && e.utxoTxCbor)
+      .map((e) => decodeTx(e.utxoTxCbor!));
+    expect(txs.length).toBeGreaterThanOrEqual(3);
+
+    // No box is named by two pending inputs.
+    const inputs = txs.flatMap((t) => t.inputs);
+    expect(new Set(inputs).size).toBe(inputs.length);
+
+    // Exactly one input comes from outside the pool: the root of the chain.
+    const producedIds = new Set(
+      txs.flatMap((t) => {
+        const txId = computeTxId(t);
+        return t.outputs.map((out, i) => computeBoxId({ ...out, txId, index: i } as never));
+      }),
+    );
+    expect(inputs.filter((id) => !producedIds.has(id))).toHaveLength(1);
   });
 
   // -----------------------------------------------------------------------

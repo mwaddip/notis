@@ -23,6 +23,7 @@ import {
   removeMempoolPrunes,
   rollbackBlockTopology,
   MempoolFullError,
+  PendingSpendConflictError,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
@@ -303,15 +304,26 @@ export function revertBlock(height: number): PruneEntry[] {
 }
 
 /**
- * Return a reverted entry to the mempool, tolerating a full pool.
+ * Return a reverted entry to the mempool, tolerating the pool's own refusals.
  *
  * Re-insertion is bookkeeping — it gives txs from the losing chain a chance to
- * be re-mined. A `MempoolFullError` here must not abort the reorg: that would
- * turn mempool pressure into a consensus-liveness failure, leaving the node
- * stuck on the lighter chain (the whole reorg runs in one SQLite transaction,
- * so a throw rolls back the chain switch too). Dropped entries are lost from
- * the local pool only; the ledger state is already reverted, and peers still
- * hold the txs.
+ * be re-mined. A refusal here must not abort the reorg: that would turn mempool
+ * state into a consensus-liveness failure, leaving the node stuck on the lighter
+ * chain (the whole reorg runs in one SQLite transaction, so a throw rolls back
+ * the chain switch too). Dropped entries are lost from the local pool only; the
+ * ledger state is already reverted, and peers still hold the txs.
+ *
+ * Two refusals qualify, for that one reason:
+ *
+ * - `MempoolFullError` — the pool is at its cap.
+ * - `PendingSpendConflictError` — an entry admitted since spends one of this
+ *   tx's inputs. Both are valid now that the block is reverted and only one can
+ *   be, so the incumbent keeps its place.
+ *
+ * ⛔ **The conflict gate is not opted out of here.** Admitting both would leave
+ * the pool holding two spends of one box, which is the composition a block is
+ * refused for carrying — the node would then be unable to produce a block at
+ * all until one of them expired. Dropping one entry costs strictly less.
  */
 function reinsert(insert: () => void, label: string): void {
   try {
@@ -319,6 +331,10 @@ function reinsert(insert: () => void, label: string): void {
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Reorg re-insertion dropped, mempool full: ${label}`);
+      return;
+    }
+    if (err instanceof PendingSpendConflictError) {
+      console.warn(`Reorg re-insertion dropped, input spent by a pending entry: ${label}`);
       return;
     }
     throw err;

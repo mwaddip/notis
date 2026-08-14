@@ -978,6 +978,119 @@ describe('block-apply embedded tx re-validation', () => {
   });
 
   // -------------------------------------------------------------------------
+  // A block is invalid if any embedded transaction does not apply
+  //
+  // The two arms beside it in the same loop already reject the block — a failed
+  // re-validation and a like on an unconfirmed post. The liveness arm was the
+  // one that warned and carried on, which left the header committing to a
+  // `utxoTxIds` its own `stateRoot` did not reflect.
+  // -------------------------------------------------------------------------
+
+  /**
+   * A karma self-transfer: one box in, one box of the same value out to the
+   * same owner. Conserving and like-free, so a chain of them needs no confirmed
+   * post per link — what it tests is the dependency ordering, nothing else.
+   */
+  function makeSelfTransferTx(owner: TestIdentity, karmaBox: KarmaBox): UtxoTransaction {
+    const tx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        {
+          boxType: 'karma',
+          value: karmaBox.value,
+          owner: owner.userId,
+          guard: 'owner_signature',
+        },
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, owner.privateKey, Buffer.from(owner.userId).toString('hex'));
+    return tx;
+  }
+
+  it('refuses a block whose embedded transactions do not all apply', async () => {
+    // Block 94's exact shape: two transactions naming ONE input, each valid on
+    // its own. The first spends the box, the second's input is then dead.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const utxo = await importUtxo();
+    const { computeTxId } = await import('@dagsocial/types');
+    const owner = makeTestIdentity();
+    const box = makeKarmaBox(100n, owner.userId, 0);
+    utxo.insertBox(box);
+
+    const first = makeSelfTransferTx(owner, box);
+    const second: UtxoTransaction = {
+      ...makeSelfTransferTx(owner, box),
+      // A second, distinct transaction on the same input — the change is paid
+      // to a different key, so the two are not the same transaction twice.
+      outputs: [{
+        boxType: 'karma',
+        value: box.value,
+        owner: makeTestIdentity().userId,
+        guard: 'owner_signature',
+      }],
+    };
+    signTransaction(second, owner.privateKey, Buffer.from(owner.userId).toString('hex'));
+    expect(computeTxId(first)).not.toBe(computeTxId(second));
+
+    const block = await makeApplicableBlock({ utxoTxs: [first, second] });
+
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+
+    // Rolled back whole — no partial application survives the refusal.
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(0);
+    expect(ordering.getOrderingBlock(1)).toBeNull();
+    expect(utxo.getBox(box.id!)).not.toBeNull();
+
+    const journal = await importJournalStore();
+    expect(journal.getBlockJournal(1)).toBeNull();
+  });
+
+  it('applies a dependency chain deeper than twenty in one block', async () => {
+    // The regression for removing the pass cap. At twenty the tail was dropped
+    // silently and the block applied anyway; a node with a different cap would
+    // have accepted a different set from the same bytes.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const utxo = await importUtxo();
+    const owner = makeTestIdentity();
+    const root = makeKarmaBox(100n, owner.userId, 0);
+    utxo.insertBox(root);
+
+    const CHAIN = 25;
+    const chain: UtxoTransaction[] = [];
+    let current: KarmaBox = root;
+    for (let i = 0; i < CHAIN; i++) {
+      const tx = makeSelfTransferTx(owner, current);
+      chain.push(tx);
+      current = changeBoxOf(tx);
+    }
+
+    // Reversed, so no transaction's input exists until the one after it in the
+    // block has applied: the deepest ordering the retry loop can be handed.
+    const block = await makeApplicableBlock({ utxoTxs: [...chain].reverse() });
+
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    const journal = await importJournalStore();
+    const saved = journal.getBlockJournal(1);
+    expect(saved!.appliedUtxoTxs).toHaveLength(CHAIN);
+
+    // The whole chain settled: the root is spent and only the last change lives.
+    expect(utxo.getBox(root.id!)).toBeNull();
+    const tip = utxo.getBox(changeBoxOf(chain[CHAIN - 1]!).id!) as KarmaBox | null;
+    expect(tip).not.toBeNull();
+    expect(tip!.value).toBe(100n);
+  });
+
+  // -------------------------------------------------------------------------
   // Bond settlement's threshold unlock at the block path (P2-B phase 1b).
   //
   // The unit suite exercises the unlock predicate only through a test-local

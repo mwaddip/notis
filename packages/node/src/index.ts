@@ -38,6 +38,7 @@ import {
   insertMempoolSubBlock,
   insertUtxoTx,
   MempoolFullError,
+  PendingSpendConflictError,
   getOrderingBlock,
   peerStorage,
 } from './store/index.js';
@@ -254,6 +255,14 @@ net.onTx((tx) => {
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
+      return;
+    }
+    // A peer's transaction spending a box one of ours already spends is the
+    // pool declining an entry, not this node failing. Dropping it is the whole
+    // response: whichever side confirms first settles the box, and a throw here
+    // would escape into net's gossip handler.
+    if (err instanceof PendingSpendConflictError) {
+      console.warn(`Relayed tx dropped, input spent by a pending entry: ${result.txId}`);
       return;
     }
     throw err;

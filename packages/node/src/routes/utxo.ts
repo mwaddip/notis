@@ -9,7 +9,7 @@ import type { CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, NetworkType,
 import { sendCredits } from '../services/credits.js';
 import { validateTx } from '../services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
-import { insertUtxoTx } from '../store/mempool.js';
+import { insertUtxoTx, resolvePendingTip } from '../store/mempool.js';
 import { getUnlockedCreditBoxes } from '../store/utxo.js';
 import {
   hasFaucetGrantRecord,
@@ -215,7 +215,14 @@ export function createRouter(deps: UtxoDeps): Router {
 
         ensureFaucetCreditBox(sysKeypair.publicKey, currentHeight);
 
-        const unlocked = getUnlockedCreditBoxes(sysKeypair.publicKey, currentHeight);
+        // Under the pending view: a grant issued earlier in this block interval
+        // already spends these boxes, and selecting one again would name an
+        // input its own pool entry consumes. Each confirmed box resolves to the
+        // live tip of its pending spend chain, so consecutive grants chain and
+        // all of them apply in one block.
+        const unlocked = getUnlockedCreditBoxes(sysKeypair.publicKey, currentHeight)
+          .map(box => resolvePendingTip(box) as CreditBox | null)
+          .filter((box): box is CreditBox => box !== null);
         const selected = selectBoxes(unlocked, FAUCET_AMOUNT);
         const totalSelected = selected.reduce((s, b) => s + b.value, 0n);
         const change = totalSelected - FAUCET_AMOUNT;

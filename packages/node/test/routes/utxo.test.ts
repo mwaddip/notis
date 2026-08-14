@@ -18,6 +18,7 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
   initSystemKeypair,
@@ -66,7 +67,9 @@ async function request(
       getBondBoxes,
       getCurrentHeight: () => 100,
       getUtxoEngineDeps: () => ({
-        getBox,
+        // The pending view, as server.ts wires the submission routes: a grant
+        // spending the change box of one still pooled resolves its input here.
+        getBox: getBoxWithPending,
         getBoxByProvenance,
         insertBox,
         consumeBox,

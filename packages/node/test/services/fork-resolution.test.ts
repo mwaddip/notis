@@ -1520,6 +1520,54 @@ describe('reorg', () => {
     expect(pendingAfter.length).toBeGreaterThan(0);
   });
 
+  it('a re-insert whose input a pending entry spends is dropped, not thrown', async () => {
+    // The reverted tx and the incumbent are both valid once the block is gone,
+    // and only one can be. Admitting both would leave the pool holding two
+    // spends of one box; throwing would roll the whole chain switch back. The
+    // reorg drops it and completes.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const { encodePost } = await import('@dagsocial/types');
+    const posts = await importPosts();
+    const utxo = await importUtxo();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    const author = makeTestIdentity();
+
+    const post = makePost(author.userId, 'reorg re-insert conflict');
+    const postId = computePostId(post);
+    posts.insertPost(post, encodePost(post));
+    mempool.insertSubBlock(postId, 1000);
+
+    const karmaBox = makeKarmaBox(100n, author.userId, 0);
+    utxo.insertBox(karmaBox);
+    mempool.insertUtxoTx(makeLikeTx(author, karmaBox, postId), null, 1000);
+
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+    expect(mempool.getPendingEntries(100)).toHaveLength(0);
+
+    // An entry admitted since, spending the box the block's tx spent.
+    mempool.insertUtxoTx(
+      { inputs: [karmaBox.id!], outputs: [], signatures: {}, protocolVersion: 1 } as never,
+      null,
+      1000,
+    );
+
+    const forkResolution = await importForkResolution();
+    expect(() => forkResolution.reorg(0, [])).not.toThrow();
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(0);
+
+    // The incumbent kept its place; the reverted tx was not admitted beside it.
+    const spenders = mempool.getPendingEntries(100).filter((e: { entryType: string; utxoTxCbor: Uint8Array | null }) =>
+      e.entryType === 'utxo_tx' && e.utxoTxCbor !== null,
+    );
+    expect(spenders).toHaveLength(1);
+  });
+
   it('reorg then rebuild: state matches new chain', async () => {
     const db = await importDb();
     db.initDb(':memory:');

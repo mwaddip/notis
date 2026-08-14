@@ -1,12 +1,16 @@
 import { getDb } from './db.js';
+import { getBox } from './utxo.js';
 import { config } from '../config.js';
+import { ClientError } from '../services/client-error.js';
+import { materializeOutput } from '../services/utxo-engine.js';
 import type {
   UtxoTransaction,
   PruneEntry,
   InviteBox,
   VouchBox,
+  AnyBox,
 } from '@dagsocial/types';
-import { encodeTx, computePruneEntryId } from '@dagsocial/types';
+import { encodeTx, decodeTx, computeTxId, computePruneEntryId } from '@dagsocial/types';
 import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
@@ -19,6 +23,27 @@ export class MempoolFullError extends Error {
   constructor(public readonly cap: number) {
     super(`Mempool full: at capacity (${cap} entries)`);
     this.name = 'MempoolFullError';
+  }
+}
+
+/**
+ * Thrown by `insertUtxoTx` when one of the transaction's inputs is already
+ * spent by an entry the pool holds.
+ *
+ * Two pooled transactions naming one box put both into one block, where the
+ * first spends the box and the second cannot apply — the state a block is
+ * invalid for carrying (NODE_INTERFACE → the apply funnel's block validity).
+ * Refusing at admission is what keeps this node from composing such a block.
+ *
+ * A `ClientError`, so the refusal reaches the submitter as its own message
+ * rather than a generic 500: a pool declining a conflicting spend is an
+ * intentional rejection, not a fault. 409, because the request is well formed
+ * and conflicts with state the pool already holds.
+ */
+export class PendingSpendConflictError extends ClientError {
+  constructor(public readonly boxId: string) {
+    super(`Input ${boxId} is already spent by a pending transaction`, 409);
+    this.name = 'PendingSpendConflictError';
   }
 }
 
@@ -128,6 +153,20 @@ export function insertSubBlock(
   return Number(result.lastInsertRowid);
 }
 
+/**
+ * The ids of the boxes this transaction would create.
+ *
+ * Derived through `materializeOutput`, never re-derived here: outputs are
+ * client-supplied and may carry any of `id`/`txId`/`index`, and that function is
+ * where stripping them and computing the real id is stated. Block application
+ * materializes the same outputs through the same call, so the pool's prediction
+ * and the block's result cannot disagree.
+ */
+function outputBoxIds(tx: UtxoTransaction): string[] {
+  const txId = computeTxId(tx);
+  return (tx.outputs ?? []).map((out, i) => materializeOutput(out, txId, i).id!);
+}
+
 export function insertUtxoTx(
   tx: UtxoTransaction,
   batchId: string | null,
@@ -135,12 +174,18 @@ export function insertUtxoTx(
 ): number {
   const db = getDb();
   assertCapacity(db);
+
+  const inputs = tx.inputs ?? [];
+  const conflict = hasPendingSpend(inputs);
+  if (conflict !== null) throw new PendingSpendConflictError(conflict);
+
   const cbor = encodeTx(tx);
   const meta = gateMetadata(tx);
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_cbor, batch_id, expires_at_height,
-                          like_target, like_liker, invite_inviter, vouch_voucher)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?)`,
+                          like_target, like_liker, invite_inviter, vouch_voucher,
+                          tx_inputs, tx_output_ids)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(cbor),
     batchId,
@@ -149,6 +194,8 @@ export function insertUtxoTx(
     meta.likeLiker,
     meta.inviteInviter,
     meta.vouchVoucher,
+    JSON.stringify(inputs),
+    JSON.stringify(outputBoxIds(tx)),
   );
   return Number(result.lastInsertRowid);
 }
@@ -184,6 +231,150 @@ export function hasPendingVouch(voucherId: string): boolean {
     `SELECT 1 FROM mempool WHERE vouch_voucher = ? LIMIT 1`,
   ).get(voucherId);
   return row !== undefined;
+}
+
+/**
+ * The first of `boxIds` already spent by a pending entry, or `null` when none
+ * is. Returned rather than a boolean so the refusal can name the box that
+ * collided instead of only reporting that one did.
+ *
+ * `tx_inputs IS NOT NULL` is what the partial index covers, and it is the whole
+ * filter needed: sub-block and prune rows carry no inputs, and a row written
+ * before the column existed reads as zero `json_each` rows.
+ */
+export function hasPendingSpend(boxIds: string[]): string | null {
+  if (boxIds.length === 0) return null;
+  const db = getDb();
+  const stmt = db.prepare(
+    `SELECT 1 FROM mempool
+      WHERE tx_inputs IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_inputs) WHERE value = ?)
+      LIMIT 1`,
+  );
+  for (const id of boxIds) {
+    if (stmt.get(id) !== undefined) return id;
+  }
+  return null;
+}
+
+/**
+ * The box a pooled transaction would create under `boxId`, or `null`.
+ *
+ * One targeted decode, not a scan: the index finds the single row whose output
+ * ids contain `boxId`, and only that entry is decoded. The ids were computed at
+ * insert by the same `materializeOutput` the block path uses, so the box
+ * returned here is the box application will write.
+ */
+export function findPendingOutput(boxId: string): AnyBox | null {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT utxo_tx_cbor FROM mempool
+      WHERE tx_output_ids IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_output_ids) WHERE value = ?)
+      LIMIT 1`,
+  ).get(boxId) as { utxo_tx_cbor: Buffer } | undefined;
+  if (!row) return null;
+
+  const tx = decodeTx(new Uint8Array(row.utxo_tx_cbor));
+  const txId = computeTxId(tx);
+  for (let i = 0; i < tx.outputs.length; i++) {
+    const box = materializeOutput(tx.outputs[i]!, txId, i);
+    if (box.id === boxId) return box;
+  }
+  return null;
+}
+
+/**
+ * A box as the pending view sees it: the confirmed UTXO set **∪** pending
+ * outputs **−** pending inputs.
+ *
+ * ⛔ **Admission only.** Block application resolves inputs against the confirmed
+ * set alone — it imports `getBox` directly — and must keep doing so: letting
+ * pool contents decide what a block may spend would make consensus depend on
+ * local, unshared state.
+ *
+ * The subtraction comes first and applies to both halves: a box a pooled entry
+ * already spends is not spendable again, whether it was confirmed or is itself
+ * pending. That is what lets a chained transaction be admitted while its
+ * predecessor's input stays refused.
+ */
+export function getBoxWithPending(boxId: string): AnyBox | null {
+  if (hasPendingSpend([boxId]) !== null) return null;
+  return getBox(boxId) ?? findPendingOutput(boxId);
+}
+
+/**
+ * The pooled transaction that spends `boxId`, or `null`. At most one can exist
+ * — that is what the conflicting-spend gate guarantees.
+ */
+function findPendingSpender(boxId: string): UtxoTransaction | null {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT utxo_tx_cbor FROM mempool
+      WHERE tx_inputs IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_inputs) WHERE value = ?)
+      LIMIT 1`,
+  ).get(boxId) as { utxo_tx_cbor: Buffer } | undefined;
+  return row ? decodeTx(new Uint8Array(row.utxo_tx_cbor)) : null;
+}
+
+/** An owned box — the only kind a spend chain can be followed through. */
+type OwnedBox = AnyBox & { owner: Uint8Array };
+
+function isOwned(box: AnyBox): box is OwnedBox {
+  return 'owner' in box && (box as OwnedBox).owner instanceof Uint8Array;
+}
+
+/**
+ * The live tip of `box`'s pending spend chain, or `null` if the chain ends in
+ * the box being fully consumed.
+ *
+ * A node that builds its own transactions — the faucets are the only ones —
+ * must spend the change of its pending transaction rather than the box that
+ * transaction already consumed. Selecting from the confirmed set alone, two
+ * grants in one block interval name the same box and the second is refused;
+ * chained, both apply in one block, which is what the apply path's dependency
+ * ordering is for.
+ *
+ * The successor is the output carrying the same owner and box type — the
+ * change. This is local selection, not consensus: picking wrong yields a
+ * transaction `validateTx` refuses, never a bad accept. A box owned by nobody,
+ * or a spend that returns no change, ends the walk at `null`.
+ *
+ * ⚠ **Reachable only forward from a confirmed box.** A pending output paid to
+ * this owner by someone else's transaction is not on any chain rooted here, so
+ * it is not found. That errs toward under-counting the balance — a refusal at
+ * worst, never an overspend.
+ */
+export function resolvePendingTip(box: AnyBox): AnyBox | null {
+  if (!isOwned(box)) return findPendingSpender(box.id!) === null ? box : null;
+
+  const ownerHex = Buffer.from(box.owner).toString('hex');
+  let current: OwnedBox = box;
+  // Output ids are hashes of their transaction, so a chain cannot close on
+  // itself. The set is what makes that structural fact a local guarantee rather
+  // than an assumption about the pool's contents.
+  const seen = new Set<string>();
+
+  for (;;) {
+    const id = current.id;
+    if (id === undefined || seen.has(id)) return null;
+    seen.add(id);
+
+    const spender = findPendingSpender(id);
+    if (spender === null) return current;
+
+    const txId = computeTxId(spender);
+    const change = spender.outputs
+      .map((out, i) => materializeOutput(out, txId, i))
+      .find((out): out is OwnedBox =>
+        out.boxType === current.boxType &&
+        isOwned(out) &&
+        Buffer.from(out.owner).toString('hex') === ownerHex,
+      );
+    if (change === undefined) return null;
+    current = change;
+  }
 }
 
 /**

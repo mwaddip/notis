@@ -94,7 +94,12 @@ export {
   hasPendingLike,
   countPendingInvites,
   hasPendingVouch,
+  hasPendingSpend,
+  findPendingOutput,
+  getBoxWithPending,
+  resolvePendingTip,
   MempoolFullError,
+  PendingSpendConflictError,
 } from './mempool.js';
 export type { PoolEntry } from './mempool.js';
 
