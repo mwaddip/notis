@@ -34,10 +34,36 @@ interface StumpRow {
 }
 
 // ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/**
+ * `dag_posts.status` — a post's local lifecycle. The column's whole domain:
+ * every writer in this file sets one of these three and nothing else sets it.
+ */
+export type PostStatus = 'pending' | 'confirmed' | 'pruned';
+
+/**
+ * A stored post: the consensus `Post` plus the local column a reader needs.
+ *
+ * `status` is deliberately NOT a field on `Post`. `Post` is the consensus type
+ * — shared with `@dagsocial/types`, hashed into the post id, and written to the
+ * wire — and whether *this* node has seen a block confirm the post is a fact
+ * about this node, not about the post. Two nodes hold the same post at
+ * different statuses.
+ *
+ * Required rather than optional, so a caller that has no status fails to
+ * compile instead of reporting one it never had.
+ */
+export interface StoredPost extends Post {
+  status: PostStatus;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function rowToPost(row: PostRow): Post {
+function rowToPost(row: PostRow): StoredPost {
   return {
     content: row.content,
     author: new Uint8Array(row.author),
@@ -47,6 +73,10 @@ function rowToPost(row: PostRow): Post {
     protocolVersion: row.protocol_version,
     timestamp: row.timestamp,
     signature: new Uint8Array(row.signature),
+    // The one narrowing cast on this path — the column is TEXT, and the
+    // schema's three-value domain is what `PostStatus` states. Same shape as
+    // `rowToStump`'s `trigger`.
+    status: row.status as PostStatus,
   };
 }
 
@@ -155,7 +185,7 @@ export function insertPost(post: Post, rawCbor: Uint8Array): void {
  * 3. If not found in dag_posts at all, try dag_stumps by stump id directly.
  * 4. Return null if nothing matches.
  */
-export function getPost(id: string): Post | Stump | null {
+export function getPost(id: string): StoredPost | Stump | null {
   const db = getDb();
 
   // 1. Try dag_posts first
@@ -226,7 +256,7 @@ export function queryPosts(opts: {
   author?: Uint8Array;
   limit?: number;
   offset?: number;
-}): Post[] {
+}): StoredPost[] {
   const db = getDb();
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
@@ -249,7 +279,7 @@ export function queryPosts(opts: {
 /**
  * Get pending (unconfirmed) posts, oldest first.
  */
-export function getPendingPosts(limit: number): Post[] {
+export function getPendingPosts(limit: number): StoredPost[] {
   const db = getDb();
   const rows = db
     .prepare(
@@ -288,9 +318,9 @@ export function unconfirmPost(subBlockId: string): void {
  * genesis → immediate parent of the target. The target post itself is NOT
  * included. Pruned posts are skipped (they break the chain).
  */
-export function getAncestors(postId: string): Post[] {
+export function getAncestors(postId: string): StoredPost[] {
   const db = getDb();
-  const ancestors: Post[] = [];
+  const ancestors: StoredPost[] = [];
   const seen = new Set<string>();
   let currentId: string | null = postId;
 
@@ -359,7 +389,7 @@ export function insertPostPlaceholder(postId: string, parentRefs: string[]): voi
  * Return all descendant posts of the given root post, using a recursive CTE
  * over dag_parent_refs. The root post itself is NOT included in the result.
  */
-export function getSubtree(postId: string): Post[] {
+export function getSubtree(postId: string): StoredPost[] {
   const db = getDb();
   const rows = db
     .prepare(

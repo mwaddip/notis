@@ -17,9 +17,9 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
       userId: new Uint8Array(32),
     }),
     getKarmaBoxes: () => [{ value: 100n }],
-    // `(id) => Post | Stump | null` — a two-field object is neither. These
-    // tests only need presence, so return a real Post.
-    getPost: () => makePost({ content: 'hello' }),
+    // `(id) => StoredPost | Stump | null` — a two-field object is neither.
+    // These tests only need presence, so return a real stored post.
+    getPost: () => ({ ...makePost({ content: 'hello' }), status: 'confirmed' as const }),
     getPostRaw: () => new Uint8Array(32).fill(0xaa),
     encodePost: () => new Uint8Array(10),
     insertPost: () => {},

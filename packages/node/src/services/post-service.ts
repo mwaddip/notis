@@ -4,6 +4,7 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { Post, Stump, KarmaBox, UtxoTransaction, AnyBox, SubBlock } from '@dagsocial/types';
+import type { StoredPost } from '../store/posts.js';
 import type { VerifierDeps, VerificationResult } from './verifier.js';
 import { ClientError } from './client-error.js';
 
@@ -56,8 +57,13 @@ export interface PostServiceDeps {
     userId: Uint8Array,
   ) => { challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array } | null;
   getKarmaBoxes: (owner: Uint8Array) => { value: bigint; id?: string }[];
-  /** The store's real signature — passed straight through to `VerifierDeps`. */
-  getPost: (id: string) => Post | Stump | null;
+  /**
+   * The store's real signature — passed straight through to `VerifierDeps`,
+   * which needs only the `Post` half. Named as the store returns it because
+   * `PostsDeps` extends this interface and `FeedServiceDeps` together, and two
+   * descriptions of one injected function have to agree.
+   */
+  getPost: (id: string) => StoredPost | Stump | null;
 
   // Raw byte access for independent hash recomputation
   getPostRaw: (id: string) => Uint8Array | null;

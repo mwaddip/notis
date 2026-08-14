@@ -15,8 +15,10 @@ import {
   getSubtree,
   insertStump,
   pruneSubtree,
+  confirmPost,
 } from '../../src/store/index.js';
 import { FeedService } from '../../src/services/feed-service.js';
+import type { PostJson } from '../../src/services/feed-service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -199,5 +201,39 @@ describe('feed-service', () => {
 
   it('getThread returns null for an unknown id', () => {
     expect(feedService.getThread('ab'.repeat(32))).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // status — the local column, on every path that serves a post
+  // -----------------------------------------------------------------------
+
+  it('getPost serves the stored status, and it tracks confirmation', () => {
+    // `status` is node-local state that `Post` deliberately does not carry, so
+    // it reaches a response only if the store's own record does. Asserting the
+    // value against `dag_posts` is what separates "serves the column" from
+    // "serves a constant that happens to look plausible".
+    expect(asRecord(feedService.getPost(liveRootId))['status']).toBe('pending');
+
+    confirmPost(liveRootId, 42);
+    expect(asRecord(feedService.getPost(liveRootId))['status']).toBe('confirmed');
+  });
+
+  it('every path that serves a post serves its status', () => {
+    // Four store reads back the four `postToJson` call sites — `getPost`,
+    // `queryPosts`, and the thread's ancestors and descendants. Each maps rows
+    // through `rowToPost` independently, so a path that dropped the column
+    // would be invisible to a test that only exercised one of them.
+    confirmPost(liveRootId, 42);
+
+    const listed = feedService.queryPosts({ author: authorId });
+    expect(listed.find((p) => p.id === liveRootId)!.status).toBe('confirmed');
+    expect(listed.find((p) => p.id === liveReplyId)!.status).toBe('pending');
+
+    const thread = feedService.getThread(liveReplyId)!;
+    expect((thread.post as PostJson).status).toBe('pending');
+    expect(thread.ancestors.map((p) => p.status)).toEqual(['confirmed']);
+
+    const rootThread = feedService.getThread(liveRootId)!;
+    expect(rootThread.descendants.map((p) => p.status)).toEqual(['pending']);
   });
 });
