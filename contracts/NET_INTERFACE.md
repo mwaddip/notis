@@ -166,6 +166,10 @@ to the envelope structure (not the message bodies).
 | 11 | `Posts` | ← | Posts response |
 | 12 | — | | **Retired** (was `GetStumps`; P2-F F1) — never reuse |
 | 13 | — | | **Retired** (was `Stumps`; P2-F F1) — never reuse |
+| 14 | `GetHeaders` | → | Request headers by height range (fork resolution) |
+| 15 | `Headers` | ← | Header list response |
+| 16 | `GetBlocks` | → | Request whole ordering blocks by height range (reorg) |
+| 17 | `Blocks` | ← | Ordering block list response |
 
 Codes 10–11 support content-sweep (placeholder fill) for posts the node
 has headers for but not content. Codes 12–13 are retired: stumps are
@@ -174,38 +178,23 @@ PruneEntries in applied blocks (NODE_INTERFACE → "Stumps are derived
 state"), so no stump crosses the network in either direction. The numbers
 stay reserved so a stale peer sending code 12 is an identifiable protocol
 violation rather than a misparse of some future message.
-Codes 6-7 replace the old ad-hoc `/dagsocial/sync/1` stream protocol.
-Codes 2-5 replace the old `/dagsocial/headers/1` protocol. The old protocols
-are deleted.
 
-> ⚠ **VIOLATED — narrowed 2026-08-10. The verdict stands; both of its supporting claims have
-> since gone stale.** "The old protocols are deleted" remains false: `/dagsocial/headers/1` is
-> **live, and is the only path fork resolution uses.**
->
-> Two corrections, both true when originally written. **Framed codes 6–7 do now carry bytes** —
-> `net/src/node.ts` dispatches `MSG_GET_SUB_BLOCK` and answers `MSG_SUB_BLOCK_RESPONSE`. And the
-> **bare-`decode()`-plus-a-cast gap is closed** (PR #33): both arms go through `lpItemsCodec`
-> (`legacyBlocksResponse` and `legacyHeadersResponse` in `net/src/sync-codec.ts`) over the same
-> positional codec as the rest of the package, so every element runs the four-part boundary check
-> on its own byte span. What has *not* changed is the reason the verdict stays — anyone hardening
-> "the sync path" from this document would still harden the wrong one.
->
-> ⚠ **Re-verified 2026-08-11: the verdict holds and both line pins had rotted.**
-> `/dagsocial/headers/1` is live — `HEADERS_PROTOCOL` is declared in `net/src/sync.ts`, served
-> via `libp2p.handle(HEADERS_PROTOCOL, …)` and requested through `requestHeaders`, all in
-> `net/src/node.ts`. The old pins `node.ts:956,961` now land on `let code: number;` and
-> `body = framed.body;`, and `sync-codec.ts:358,362` on closing braces. **Symbols replace them.**
->
-> ⚠ **This note used to say `ARCHITECTURE.md` also describes header-first sync as implemented.
-> It does not — verified 2026-08-11, the phrase appears nowhere in that file.** The claim lives
-> in `CLAUDE.md`, `README.md` (three places), and **this contract's own opening line**. Fix
-> those together; `ARCHITECTURE.md` needs nothing.
->
-> ⚠ **Second instance of one pattern:** a Phase 9 item also booked "`ARCHITECTURE.md` describes
-> `@dagsocial/wire` as the stream-framing package", and that text is in `CLAUDE.md`/`README.md`
-> too. **`ARCHITECTURE.md` is being cited as the home of root-level prose it does not contain** —
-> when correcting a claim, re-derive where the claim actually lives rather than inheriting the
-> pointer.
+**This table is the code allocator, not `net/src/types.ts`** — the retirement of 12–13 is recorded
+here and nowhere in the source, so a new code chosen by reading `types.ts` alone will collide with a
+reservation it cannot see.
+
+Codes 6-7 replace the old ad-hoc `/dagsocial/sync/1` stream protocol.
+Codes 14–17 carry fork resolution's two queries and `/dagsocial/headers/1` is deleted. Those queries
+have **no expression in codes 2–5**: 2–5 are an id-addressed inventory conversation, offering ids
+forward from a peer's height along the server's own best chain, while fork resolution asks for a
+**height range on a chain the requester does not hold** so it can find a common ancestor and compare
+cumulative work.
+
+> ⚠ **AHEAD OF CODE** — codes 14–17 and the deletion of `/dagsocial/headers/1` are specified here
+> ahead of the implementation that lands on this branch.
+
+Every code in this table is carried by `/dagsocial/sync/1`. There is no second stream protocol for
+chain data.
 
 ---
 
@@ -295,9 +284,10 @@ Handshake specifics:
 - `chainHeight` (and `SyncInfo.tipHeight`) must be a non-negative integer `<=
   MAX_ADVERTISED_HEIGHT` (= 100,000,000, ~190 years at 1 block/min) — they drive
   `servePeer`, so an unbounded or negative value must never reach the serve loop (it
-  would otherwise scan ~10⁹ heights). The same bound applies to the legacy
-  `/dagsocial/headers/1` request range, which is ungated (no handshake) and must clamp
-  its serve loop to the local tip.
+  would otherwise scan ~10⁹ heights). The same bound applies to the `GetHeaders` / `GetBlocks`
+  request range (codes 14, 16), which must clamp its serve loop to the local tip. That range
+  arrives over `/dagsocial/sync/1`, so it reaches the serve loop only from a peer in **Active**
+  state and a malformed body is attributable to a peer that can be penalized.
 - `agentName` / `nodeName` are strings; `capabilities` is an array of numbers (unknown
   capabilities preserved, not rejected — forward compat)
 
@@ -331,16 +321,17 @@ All messages are CBOR-encoded bodies wrapped in frames.
 > - **Common-ancestor discovery.** `anchors` are built (`getAnchors` in `net/src/node.ts`), sent
 >   (`net/src/sync-machine.ts`), decoded (`net/src/sync-codec.ts`) and capped — and **never
 >   read** by the receiver: the cap check counts them, nothing consumes their values. There is
->   no ancestor search. **Verified 2026-08-11.**
-> - **The framed protocol is not the live path.** `/dagsocial/headers/1` — described elsewhere
->   in this file as *removed* — is live and is the **only** path fork resolution uses.
+>   no ancestor search. **Verified 2026-08-11.** Fork resolution instead asks a peer for a header
+>   range over codes 14–17. Wiring anchors up would let divergence be discovered from the
+>   `SyncInfo` both nodes already exchange — sketched, and not planned, in
+>   `docs/specs/2026-08-14-sync-transport-unification-design.md` Part 2.
 >
->   ⚠ **This bullet used to end "Framed codes 6–7 have never carried a byte", and that is
->   FALSE — corrected 2026-08-11.** `net/src/node.ts` dispatches `MSG_GET_SUB_BLOCK` and answers
->   `MSG_SUB_BLOCK_RESPONSE`. The `⚠ VIOLATED` note ~150 lines above **already recorded this**
->   as one of its "two corrections". **Two markers in one file, on one subject, disagreeing** —
->   the same shape as the removed-protocols table below. The live-path claim is what survives;
->   the never-carried-a-byte claim does not.
+> ⚠ **The "not header-first" claim above is also made in four places outside this file, and they
+> are not covered by this marker:** `CLAUDE.md:27`, `README.md:146`, `:331`, `:364`, and **this
+> contract's own opening line (`:10`)** all describe header-first sync as implemented. Fix them
+> together. `ARCHITECTURE.md` needs nothing — the phrase does not appear in it, despite two
+> separate items having booked it as the home of this prose. **When correcting a claim, re-derive
+> where it actually lives rather than inheriting the pointer.**
 >
 > Per-mechanism status is marked below. Inventory: `prompts/audit-net.report.md`.
 
@@ -884,13 +875,14 @@ node operator may choose to link them (same keypair) or keep them separate.
 | Protocol | Framing | Purpose |
 |----------|---------|---------|
 | `/dagsocial/handshake/1` | Frame | Post-identify peer handshake |
-| `/dagsocial/sync/1` | Frame | Historical sync + peer discovery (codes 2-9) |
-| **`/dagsocial/headers/1`** | **Request raw CBOR, responses positional** | **LIVE — the only path fork resolution uses** |
+| `/dagsocial/sync/1` | Frame | Historical sync, peer discovery, content sweep, fork resolution (codes 2–11, 14–17) |
 
-All stream protocols multiplex over the sync stream. The frame `code`
-byte disambiguates message types.
+**These two are the whole set.** Every chain-data query multiplexes over the sync stream and the
+frame `code` byte disambiguates it. A second stream protocol for chain data is what codes exist to
+avoid: it duplicates the framing, the caps and the serve loop, and — because protocol handlers are
+registered per protocol — it acquires its own admission policy by omission rather than by decision.
 
-### `/dagsocial/headers/1` responses — positional, `arr(item, lp)`
+### `GetHeaders` / `GetBlocks` responses — positional, `arr(item, lp)`
 
 **Landed 2026-08-10.** Both arms previously answered in a **second wire format** — `encode({ blocks })`
 / `encode(headers)` out, `decode(raw) as {…}` back — bare `cbor-x` plus a TypeScript cast, while every
@@ -903,12 +895,19 @@ the band-aid; the root cause was the second dialect, so the dialect is gone.
 - **The per-element `lp` is load-bearing**: it gives each item its own byte span, so the four-part
   boundary check (spec §2.1) runs over exactly that span — exhaustion and re-encode compare included —
   and a malformed block is rejected at its own offset rather than as an outer mismatch.
-- **The request stays raw CBOR.** It is a control message carrying no consensus bytes
-  (`{ startHeight, maxCount, endHeight, mode }`) and is shape-checked by
-  `decodeLegacyHeadersRequest`.
+- **The requests are positional too**, and carry no `mode` field — the code pair is the
+  discriminator:
+
+  ```
+  GetHeaders (14):  vlqU(startHeight) vlqU(maxCount)
+  GetBlocks  (16):  vlqU(startHeight) vlqU(endHeight)
+  ```
+
+  A response is identified by its own frame code, so a caller checks `MSG_HEADERS` / `MSG_BLOCKS`
+  rather than trusting that the answer matches the question it asked.
 - ⚠ **Zero bytes and `vlqU(0)` are DISTINCT and consumers depend on it.** Zero bytes is the handler's
   *"I cannot answer"*; `vlqU(0)` is *"no items"*. Collapsing them is a live defect — see below.
-- **`MAX_LEGACY_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap is
+- **`MAX_CHAIN_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap is
   `min(requested, 400)` **checked before the first element is read**. A peer answering a 40-header
   request with 18,900 headers is not answering the question, and the count is a `vlqU` the peer
   chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds only at `MAX_ARRAY_LENGTH` (2²⁴),
@@ -929,19 +928,9 @@ the band-aid; the root cause was the second dialect, so the dialect is gone.
 Removed protocols:
 - Old `/dagsocial/sync/1` (individual sub-block request/response) —
   replaced by framed GetSubBlock/SubBlockResponse (codes 6-7)
-- **`/dagsocial/headers/1` — NOT removed. Still live, and still the path fork resolution uses.**
-
-  > ⚠ **FALSE — this row claimed a removal that never happened, and it was false when written.
-  > Verified 2026-08-11.** The strikethrough is deleted rather than kept: struck text is skipped
-  > by every reader, so a live warning parked inside it is invisible — and this row is the one
-  > entry in a "Removed protocols" list that describes a protocol still carrying production
-  > traffic. The framed codes 2-5 exist; nothing routes fork resolution through them.
-  > `HEADERS_PROTOCOL` is declared in `net/src/sync.ts` and served from `net/src/node.ts`.
-  >
-  > **The contract contradicted itself in two places** — a `⚠` note ~600 lines above said the
-  > protocol was live while this table said it was removed, and only the note was ever corrected.
-  > Retiring it in favour of codes 2-5 is a real question and is **still open**; until then this
-  > table describes what runs.
+- `/dagsocial/headers/1` — replaced by GetHeaders/Headers and GetBlocks/Blocks (codes 14–17).
+  Its two queries kept their signatures; what changed is the stream they ride, the encoding of the
+  request, and the admission policy that reaches them.
 
 ---
 
@@ -1014,16 +1003,28 @@ structure, PoW, and signatures.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `onSubBlock(callback)` | `((SubBlock) => void) => void` | Register handler for inbound sub-blocks |
-| `onOrderingBlock(callback)` | `((OrderingBlock) => void) => void` | Register handler for inbound ordering blocks |
+| `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us |
 | `onTx(callback)` | `((UtxoTransaction) => void) => void` | Register handler for inbound UTXO transactions |
 
 ### Pull Requests (Peer-to-Peer)
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution |
-| `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg |
+| `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution (codes 14/15) |
+| `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
 | `requestPosts(peerId, postIds)` | `(string, string[]) => Promise<PostsMsg>` | Request posts by ID (content-sweep) |
+
+⚠ **`requestHeaders` and `requestBlocks` THROW where `requestPosts` returns empty.** `requestPosts`
+answers an unexpected frame code or a malformed body with `{ entries: [] }`; the two chain queries must
+reject instead, for the reason given under **responses** above — `requestBlocks`' result goes straight
+to `reorg(forkHeight, newBlocks)`, so an empty array truncates our own chain rather than failing to
+extend it. They share a transport and a shape; they do not share an error contract.
+
+**The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
+competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
+to that list otherwise. That peer provably holds the fork chain; an arbitrary connected peer does not,
+and asking one that does not is indistinguishable at the call site from a peer that has no reorg to
+offer.
 
 ### Sync Handler Registration
 
@@ -1031,7 +1032,7 @@ structure, PoW, and signatures.
 |----------|-----------|-------------|
 | `setSyncHandler(cb)` | `((id: string) => SubBlock \| null) => void` | Provider for sub-block content (placeholder fill) |
 | `setBlocksHandler(cb)` | `((block: OrderingBlock) => void) => void` | Handler for blocks received during sync |
-| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `/dagsocial/headers/1`. Returns the whole block, not the header: one provider serves both response modes — headers mode reads `.header`, blocks mode returns the block |
+| `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16). Returns the whole block, not the header: one provider serves both responses — `Headers` reads `.header`, `Blocks` returns the block |
 | `setPostsHandler(cb)` | `((ids: string[]) => PostsEntry[]) => void` | Provider for posts by ID |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired when sync finishes |
 | `onPeerActive(cb)` | `((peerId: string) => void) => void` | Fired when a peer becomes active |
@@ -1044,18 +1045,25 @@ has not created yet, the guard falls through, and every layer beneath keeps pass
 simply absent for the life of the process, which a peer sees as `protocol selection failed` and reads
 as the peer's fault rather than ours.
 
-**A node that has registered no headers provider answers zero bytes** on `/dagsocial/headers/1`, rather
-than declining the protocol. Zero bytes is this protocol's "I cannot answer", and it is distinct from an
+**A node that has registered no headers provider answers zero bytes** to `GetHeaders` / `GetBlocks`,
+rather than leaving the stream unanswered. Zero bytes is "I cannot answer", and it is distinct from an
 empty header *list* — one byte, `vlqU(0)` — which means "I consulted my chain and have nothing at that
 height". A node holding no provider has no chain to consult, so it cannot honestly send the second. Both
 reach the caller as an empty array, and fork resolution treats that as "no reorg" like any other
 non-match, so nothing downstream needs a new case.
 
-Declining the protocol is **not** equivalent to either. `requestHeaders` wraps its dial in `try`/`finally`
-with no `catch`, so an unregistered protocol reaches the caller as a **rejected promise** rather than an
-empty result. "This peer has nothing to serve" and "this peer does not speak the protocol" are therefore
-different events at the call site, and collapsing them costs the caller the only signal that distinguishes
-a peer's state from its capability.
+**Silence is not equivalent to either, and it is now the failure mode to design against.** An
+unrecognized code falls through the serve arms to `SyncMachine.handleMessage`, which answers nothing —
+so a peer that speaks `/dagsocial/sync/1` but does not know code 14 leaves the requester blocked for its
+full timeout, and `requestBlocks` runs a **5× timeout** because blocks are bigger. Both serve arms must
+therefore answer on every path, including the ones that decline to serve.
+
+⚠ **This is the one semantic the migration does not preserve.** A separate protocol failed *fast*: an
+unregistered `/dagsocial/headers/1` reached the caller as a rejected promise from libp2p's protocol
+selection, so "this peer has nothing to serve" and "this peer does not speak the query" were different
+events at the call site. On a shared stream the second becomes a timeout. The trade is deliberate — the
+gain is that a single registered protocol carries one admission policy (Active-only, penalty-bearing)
+instead of two, and a query on the shared stream is unreachable by a peer that never handshook.
 
 ---
 
