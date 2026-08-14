@@ -195,24 +195,7 @@ Deletes a single entry by rowid. Called during block finalization for each
 confirmed entry. The block creator tracks which rowids were included in the
 block and removes them after the block is stored.
 
-### removeBatch
-
-```
-removeBatch(batchId: string): void
-```
-
-Deletes all entries with the given `batch_id`. Used to remove linked
-sub-block + UTXO payload pairs atomically after block finalization. The
-block creator prefers `removeEntry` per-rowid; `removeBatch` is available
-for cleanup of partially-included batches.
-
-> ⚠ **NEVER BUILT — NOT PLANNED. Verified 2026-08-11: `removeBatch` is 0 occurrences across
-> `packages/`.** The function does not exist. The signature, the use
-> case and the "is available for" clause were all written for something that was never
-> implemented — note the sentence describes the block creator *preferring* an alternative
-> to it, which is why the gap reads as a design choice rather than an absence.
-> Batch cleanup happens via `removeEntry` per-rowid. Kept so this is not re-added as an
-> apparent oversight.
+Batch cleanup happens through `removeEntry` per rowid.
 
 ---
 

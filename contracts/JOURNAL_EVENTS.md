@@ -4,24 +4,25 @@
 **Stability:** stable
 **Last verified against code:** 2026-08-06
 
-> ⚠ **PARTIAL — and the shortfall is most of the document. Re-verified 2026-08-11.**
-> **17 of the 22 events declared "stable" below are never emitted, and 8 have no emitter
-> anywhere in the codebase.**
+> ⚠ **PARTIAL — most of this document describes events nothing emits. Re-derived 2026-08-14.**
+> **20 events are declared below, and 6 have no emitter in any package's `src`:**
+> `api_listening`, `db_open_started`, `db_open_complete`, `migration_started`,
+> `migration_complete`, `sync_complete`.
 >
-> **Both halves re-derived: 22 events are declared, and these 8 do not appear in any
-> package's `src` at all** — `api_listening`, `dag_load_started`, `dag_load_complete`,
-> `db_open_started`, `db_open_complete`, `migration_started`, `migration_complete`,
-> `sync_complete`. The other 14 names occur somewhere in `src`, but **occurring is not
-> emitting**: a name can appear in a type or a comment. The "17 never emitted" figure was not
-> re-derived here and rests on the original audit; the 8 is exact. This file was written 2026-07-26 and **not one line was
-> changed** through Specs A–G; the Peer and Sync families predate the net package's peer
-> discovery and sync work, and the Migration family predates the schema-version guard.
-> Treat every event here as unimplemented unless you have found its emitter. "Stability:
-> stable" refers to the *format contract* for events that are emitted — it is not a claim
-> that the events exist.
+> The other 14 names occur somewhere in `src`, but **occurring is not emitting** — a name can
+> appear in a type or a comment, and **how many of the 14 reach `emitEvent` has never been
+> derived.** Treat every event here as unimplemented unless you have found its emitter.
+> "Stability: stable" refers to the *format contract* for events that are emitted; it is not a
+> claim that the events exist.
 >
-> Per-family status is marked at each heading. Full inventory:
-> `prompts/audit-node-store.report.md`.
+> ⚠ **`migration_started` / `migration_complete` cannot be emitted as declared.** They carry
+> `from_version` and `to_version`, and there is no stored schema version to read: the five
+> `migrate*` passes in `node/src/store/db.ts` run unconditionally, with no number selecting
+> which. **The field lists are the open question, not the emitters.**
+>
+> ⚠ **`sync_complete` is not `@dagsocial/node`'s to emit alone.** `SyncMachine.onSynced` is
+> public, but `NetNode` registers the callback internally and exposes no passthrough, so this
+> needs a `@dagsocial/net` change first.
 
 > ⚠ **Two different things share the word "journal" and this document covers only one.**
 > **This file** = the JSON-line **observability event log**. **`BlockJournal` / `BoxMutation`**
@@ -92,16 +93,6 @@ Event-specific fields are additional top-level keys.
 > ⚠ **NOT IMPLEMENTED.** Neither `db_open_started` nor `db_open_complete` is emitted anywhere in
 > `packages/node/src` — measured 2026-08-13, and the gap predates this note. The field list above
 > is what an implementation should carry, not a description of output anyone can observe.
-
-### dag_load_started
-**Level:** INFO
-**Fields:** (none)
-**Emitted:** Before rebuilding the in-memory DAG view from canonical_branch.
-
-### dag_load_complete
-**Level:** INFO
-**Fields:** `post_count` (number), `duration_ms` (number)
-**Emitted:** After the canonical branch is loaded into memory.
 
 ### api_listening
 **Level:** INFO
