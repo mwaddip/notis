@@ -38,6 +38,7 @@ import {
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
   getPendingEntries,
   insertMempoolSubBlock,
+  removeEntry,
 } from '../../src/store/index.js';
 import { createInvite, claimInvite, cancelInvite, commitInvite } from '../../src/services/invites.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
@@ -294,7 +295,12 @@ describe('invites service', () => {
     expect(commitResult.status).toBe('pending');
     expect(commitResult.bondBoxId).toBe(bondBox.id);
 
-    // Simulate commit confirmed by updating BondBox extra_data
+    // Simulate commit confirmed: the bond box carries the commitment fields,
+    // and the pool no longer holds the commit. Draining the entry is half of
+    // what confirmation means — leaving it makes the reveal below a second
+    // pending spend of the bond box, which the pool refuses.
+    for (const entry of getPendingEntries(100)) removeEntry(entry.rowid);
+
     const db = getDb();
     db.prepare(
       'UPDATE utxo_boxes SET extra_data = ? WHERE id = ?',

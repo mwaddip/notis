@@ -27,7 +27,7 @@ import type { Post, KarmaBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/likes.js';
 import type { LikesDeps } from '../../src/routes/likes.js';
 import { ClientError } from '../../src/services/client-error.js';
-import { MempoolFullError } from '../../src/store/mempool.js';
+import { MempoolFullError, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-likes.sqlite';
@@ -279,6 +279,23 @@ describe('likes routes', () => {
 
       expect(res.status).toBe(503);
       expect(res.data).toEqual({ error: 'mempool full' });
+    });
+
+    it('a conflicting spend reaches the client as a 409 naming the box', async () => {
+      // The refusal must not be a silent drop: `PendingSpendConflictError` is a
+      // `ClientError`, so the message the pool wrote is the message the caller
+      // reads, under the status the error chose.
+      const boxId = 'ab'.repeat(32);
+      const res = await request('/', 'POST', { tx: validTxJson() }, {
+        castLike: () => {
+          throw new PendingSpendConflictError(boxId);
+        },
+      });
+
+      expect(res.status).toBe(409);
+      const body = res.data as Record<string, unknown>;
+      expect(body.reason).toContain(boxId);
+      expect(body.reason).toMatch(/already spent by a pending/i);
     });
   });
 
