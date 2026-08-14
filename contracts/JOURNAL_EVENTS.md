@@ -5,9 +5,8 @@
 **Last verified against code:** 2026-08-06
 
 > ⚠ **PARTIAL — most of this document describes events nothing emits. Re-derived 2026-08-14.**
-> **20 events are declared below, and 6 have no emitter in any package's `src`:**
-> `api_listening`, `db_open_started`, `db_open_complete`, `migration_started`,
-> `migration_complete`, `sync_complete`.
+> **20 events are declared below, and 3 have no emitter in any package's `src`:**
+> `migration_started`, `migration_complete`, `sync_complete`.
 >
 > The other 14 names occur somewhere in `src`, but **occurring is not emitting** — a name can
 > appear in a type or a comment, and **how many of the 14 reach `emitEvent` has never been
@@ -90,9 +89,10 @@ Event-specific fields are additional top-level keys.
 **Fields:** `duration_ms` (number)
 **Emitted:** After the SQLite database is open and its migrations have run.
 
-> ⚠ **NOT IMPLEMENTED.** Neither `db_open_started` nor `db_open_complete` is emitted anywhere in
-> `packages/node/src` — measured 2026-08-13, and the gap predates this note. The field list above
-> is what an implementation should carry, not a description of output anyone can observe.
+> ✅ **Both are emitted, and `initDb` brackets itself.** `db_open_complete` fires at the **end** of
+> `initDb`, past `createMempoolGateIndexes` — a sixth pass after the five `migrate*` calls — since
+> the contract's "after the migrations have run" means after the last pass the database needs to be
+> usable, not after the five that carry the `migrate` prefix.
 
 ### api_listening
 **Level:** INFO

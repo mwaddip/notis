@@ -304,19 +304,17 @@ mempool-side mirror of the apply-time gate, not the only enforcement (see
 "Vouch transition rules"). The single-active-vouch and pending-vouch checks
 above remain service-layer policy.
 
-> ⚠ **NOT IMPLEMENTED (recorded 2026-08-08, re-verified 2026-08-11) — the demo UI's vouch
-> controls do not construct transactions.** Both mutating routes require a client-signed
-> `tx` (P2-B phase 2), but the UI's vouch handler still sends
-> `JSON.stringify({ userId, targetId })` and unvouch sends `JSON.stringify({ userId })`
-> (`node/public/index.html`, the `vouchBtn` / `unvouchBtn` click handlers) — both
-> die at the routes' `tx required` 400 before `jsonToTx` runs. The UI was
-> never migrated when vouches became transactions; it has `signTxId` builders
-> for karma-lock, like, transfer, and invite commit/reveal, but none for
-> vouch/unvouch. Invisible to the suite: vouch coverage is service-level only
-> (raw `Uint8Array` objects) — the JSON edge has zero route tests. **Restoring
-> the UI flow is its own recorded follow-up phase (user decision 2026-08-08);
-> the tx-envelope bundle restores the JSON edge underneath it and stops
-> there.**
+> ✅ **The demo UI builds and signs both transactions.** `buildVouchTx` and `buildUnvouchTx` in
+> `node/public/index.html` construct them, `signTxId` signs, and both handlers POST `{ tx }`.
+> Unvouch resolves the VouchBox id from `GET /vouches?voucher=` — the only arm carrying `boxId` —
+> **at click time**, since a box can be spent between opening a profile and pressing the button.
+>
+> ⚠ **The page's builders are pinned to the consensus rule, not merely present.**
+> `test/unit/ui-crypto-mirror.test.ts` lifts both out of the page **by name** and pins
+> `ui.computeTxId(pageTx)` against `computeTxId(jsonToTx(wireForm))` — the digest a vouch
+> signature is actually over — and `test/routes/vouches.test.ts` drives the same lifted builders
+> through the live routes. A re-implementation of the page's arithmetic in a test would pin
+> nothing; lifting by name is what makes the page the subject.
 
 **The JSON edge (rides the tx-envelope bundle):** `jsonToTx`'s
 `BINARY_BOX_FIELDS` lacks `voucherId`/`targetId`, so even a correctly built
@@ -1868,15 +1866,25 @@ Fresh schema — no Phase 1 migration.
 | Function | Signature |
 |----------|-----------|
 | `insertPost(post, rawCbor)` | `(Post, Buffer) => void` — status = pending |
-| `getPost(id)` | `(string) => Post \| Stump \| null` |
+| `getPost(id)` | `(string) => StoredPost \| Stump \| null` |
 | `getPostRaw(id)` | `(string) => Uint8Array \| null` — raw CBOR for hash verification |
-| `queryPosts({ author?, limit, offset })` | `(QueryOpts) => Post[]` — live only, newest first |
-| `getPendingPosts(limit)` | `(number) => Post[]` — oldest first |
+| `queryPosts({ author?, limit, offset })` | `(QueryOpts) => StoredPost[]` — live only, newest first |
+| `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first |
 | `confirmPost(postId, blockHeight)` | `(string, number) => void` |
 | `unconfirmPost(subBlockId)` | `(string) => void` — for fork rollbacks |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
-| `getAncestors(postId)` | `(string) => Post[]` — walk up parent chain, genesis → parent |
-| `getSubtree(postId)` | `(string) => Post[]` — all descendants (recursive CTE) |
+| `getAncestors(postId)` | `(string) => StoredPost[]` — walk up parent chain, genesis → parent |
+| `getSubtree(postId)` | `(string) => StoredPost[]` — all descendants (recursive CTE) |
+
+> **`StoredPost` is `Post` plus a required `status: PostStatus`**
+> (`'pending' | 'confirmed' | 'pruned'`), exported from `store/posts.ts` and re-exported from
+> `store/index.ts`. It exists because **`status` is node-local state and must not enter `Post`** —
+> `Post` is the consensus type and travels on the wire.
+>
+> ⚠ **The field is required, not optional, and that is the whole mechanism.** While `postToJson`
+> declared `Post & { status?: string }`, a bare `Post` type-checked and `?? 'unknown'` read as a
+> verdict rather than an absence — every response served `"unknown"` and nothing complained. A
+> required field makes a caller with no status fail to compile instead.
 | `pruneSubtree(rootPostId)` | `(string) => void` — mark subtree as pruned |
 | `insertPostPlaceholder(postId, parentRefs)` | `(string, string[]) => void` — for block-synced posts |
 
