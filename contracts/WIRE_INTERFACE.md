@@ -374,26 +374,16 @@ Encodes a non-negative integer as VLQ bytes.
 
 Thin wrapper: returns `reader.readVlqU()`.
 
-> ⚠ **`MAX_ARRAY_LENGTH` bounds the count, not the memory, and the two differ by ~128 MB.**
-> `readArray` checks `length > MAX_ARRAY_LENGTH` and then does `new Array(length)` — a
-> pre-allocation of up to 16,777,216 slots (~128 MB on 64-bit V8) **before reading a single
-> element.** So a 4-byte VLQ inside the cap buys 128 MB of heap from any peer.
+> ✅ **`MAX_ARRAY_LENGTH` bounds the count; the bytes remaining bound the memory. `readArray`
+> checks both, and both are required.** A count cap alone is a value-space limit doing a
+> resource-limit's job: `new Array(length)` pre-allocates up to 16,777,216 slots (~128 MB on
+> 64-bit V8) **before reading a single element**, so a 4-byte VLQ inside the cap would buy that
+> heap from any peer. An `N`-element array cannot decode from fewer than `N` bytes, so
+> `length > remaining` is the tighter bound and makes the declared-vs-available mismatch
+> unrepresentable.
 >
-> **A declared length must be cross-checked against the bytes actually remaining.** An
-> `N`-element array cannot decode from fewer than `N` bytes, so `length > remaining()` is a
-> tighter bound than `MAX_ARRAY_LENGTH`, costs nothing, and makes the declared-vs-available
-> mismatch unrepresentable. The current cap is a value-space limit doing a resource-limit's
-> job.
->
-> ⛔ **NO LONGER LATENT — corrected 2026-08-10. `readArray` has callers, and the parenthetical
-> that said otherwise went stale when the positional codec layer landed.** `types/src/codec.ts`'s
-> `readArr` is a direct wrapper (`return r.readArray(f)`), so this sits on **every** positional
-> decode path in the repo — gossip's `decodeOrderingBlock` included. `length > remaining()` is
-> **required**, not suggested.
->
-> The note was accurate when written and nobody re-checked it against the phase that added the
-> callers. Same shape as the other four contract-vs-code divergences found this session, all by
-> reading the code beside the claim.
+> `readArr` in `types/src/codec.ts` wraps `readArray` directly, so this sits on **every**
+> positional decode path in the repo — gossip's `decodeOrderingBlock` included.
 
 ### `encodeVlqZigZag(value: number): Uint8Array`
 

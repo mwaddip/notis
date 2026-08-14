@@ -820,11 +820,11 @@ tree collapse into clean rejections:
 > | **`UnreadableStoredBlockError`** | **a stored block's bytes will not decode** | **`store/ordering.ts` → `rowToOrderingBlock`** |
 >
 > The class is outside the totality property's scope by construction, and the argument is about
-> **provenance, not validation**: peer bytes are never stored. Grepping the *table* rather than the
-> function finds exactly one `INSERT` into `ordering_blocks`, from one caller, downstream of the
-> structure gate, writing this node's **own re-encoding** of an already-decoded block. An attacker
-> inverting that would have to make our writer emit bytes our reader rejects — a bug in us, which is
-> what fail-stop is for.
+> **provenance, not validation**: peer bytes are never stored. **The provenance claim is stated
+> once, on `createOrderingBlock` in `node/src/store/ordering.ts`** — one INSERT, one `src` caller,
+> this node's own re-encoding of an already-decoded block — and that statement carries the
+> re-derivation, because neither obvious grep reproduces it. An attacker inverting it would have to
+> make our writer emit bytes our reader rejects: a bug in us, which is what fail-stop is for.
 >
 > ⚠ **The store is now a raising site, and that is the point.** An earlier draft of this section
 > implied the boundary lives only at apply's callers. **It cannot.** By the time a `ReaderError`
@@ -2927,10 +2927,10 @@ that share no block. Heights still start at 1, so height 0 holds no block and no
 holds is the genesis *state*, which every node on a network shares byte for byte because the
 section above makes any other one fail-stop. There is nothing for a peer to lie about: a
 height-1 block has its `prevBlockHash` checked as all-zeros before it can be stored, and that
-check is on every path into the store — `ordering_blocks` has one writer,
-`applyBlockBody`'s `storeCreateOrderingBlock`, downstream of the chain-link gate in the same
-function, and all four callers of `applyOrderingBlock` (gossip, sync pull, block creator,
-`reorg`) go through it.
+check is on every path into the store, and what makes "every path" true is stated on
+`createOrderingBlock` in `node/src/store/ordering.ts`: one writer, called from `applyBlockBody`
+downstream of the chain-link gate in the same function. All four callers of `applyOrderingBlock`
+(gossip, sync pull, block creator, `reorg`) go through it.
 
 **`MAX_REORG_DEPTH` does not move.** Height 0 became a reachable *answer*; how far back a reorg
 may go is unchanged, and must be — journal retention is the real floor under revert depth, and
