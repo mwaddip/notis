@@ -24,6 +24,7 @@ import {
   computeBoxId,
   computeTxId,
   VOUCH_KARMA_AMOUNT,
+  VOUCH_MIN_BALANCE,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
 } from '@dagsocial/types';
@@ -284,6 +285,42 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     insertVouchCooldown(voucher.pub, otherTarget.pub, 999, VOUCH_KARMA_AMOUNT);
 
     const tx = buildVouchCast(karma, voucher, {});
+    const result = validateTx(deps, tx, 10);
+    expect(result.valid).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // V5 — the balance threshold is a consensus rule (ARCHITECTURE → "Vouch
+  // boxes"). It is the one vouch rule that cannot be read off the transaction:
+  // it is a predicate on the voucher's summed karma, so a cast arriving inside
+  // a block — which passes no service gate on the receiving node — is decided
+  // by the same number every other path reads.
+  // -------------------------------------------------------------------------
+
+  it('V5: rejects a cast whose voucher holds less than VOUCH_MIN_BALANCE', () => {
+    const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n);
+    const tx = buildVouchCast(karma, voucher, {});
+
+    const result = validateTx(deps, tx, 10);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('requires a karma balance of at least');
+  });
+
+  it('V5: a balance spread over two boxes clears a threshold neither box alone covers', () => {
+    const first = seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 0);
+    seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 1);
+
+    const tx = buildVouchCast(first, voucher, {});
+    const result = validateTx(deps, tx, 10);
+    expect(result.valid).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('V5 non-vacuity: the same cast from a voucher at exactly VOUCH_MIN_BALANCE is accepted', () => {
+    const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE);
+    const tx = buildVouchCast(karma, voucher, {});
+
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();

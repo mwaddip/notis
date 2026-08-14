@@ -313,6 +313,37 @@ describe('vouch service', () => {
       );
     });
 
+    it('accepts a voucher whose balance clears the threshold across two boxes', () => {
+      // The threshold is a balance summed across the voucher's karma boxes
+      // (ARCHITECTURE → "Vouch boxes"): two 10-karma boxes cover 11 twice
+      // over, and which of them the cast spends does not enter the predicate.
+      const first = createKarmaBox(voucherPubKey, 10n, 1);
+      createKarmaBox(voucherPubKey, 10n, 2);
+
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: first.value - VOUCH_KARMA_AMOUNT,
+        owner: voucherPubKey,
+        guard: 'owner_signature',
+      };
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        voucherId: voucherPubKey,
+        targetId: targetPubKey,
+        guard: 'owner_signature',
+      };
+      const tx: UtxoTransaction = {
+        inputs: [first.id!],
+        outputs: [newKarma, vouchBox],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(tx, voucherPrivKey, voucherPubKeyHex);
+
+      expect(castVouch(deps, tx, 5).status).toBe('pending');
+    });
+
     it('rejects duplicate vouch (pair already exists)', () => {
       // Give voucher enough karma to pass the balance check
       createKarmaBox(voucherPubKey, 100n, 1);

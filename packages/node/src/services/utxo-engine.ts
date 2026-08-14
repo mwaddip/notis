@@ -7,6 +7,7 @@ import {
   LIKE_KARMA_COST,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
+  VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, InviteBox, VouchBox } from '@dagsocial/types';
 
@@ -39,13 +40,14 @@ export interface UtxoEngineDeps {
   /**
    * Summed value of every unspent KarmaBox owned by `owner`.
    *
-   * Consensus input, not a convenience read: the bond settlement unlock is a
-   * spend-time predicate on the invitee's *current* karma
-   * (NODE_INTERFACE → "Bond transition rules"). Summed rather than
-   * `getKarmaBox().value` because multiple unspent karma boxes per owner is
-   * reachable — a faucet grant alongside a mint, or a plain karma split — and
-   * reading one box would let an invitee's threshold be evaded, or met, by how
-   * their karma happens to be partitioned.
+   * Consensus input, not a convenience read. Two transition rules are
+   * predicates on an identity's *current* karma: the bond settlement unlock
+   * reads the invitee's (NODE_INTERFACE → "Bond transition rules") and the
+   * vouch cast reads the voucher's (ARCHITECTURE → "Vouch boxes"). Summed
+   * rather than `getKarmaBox().value` because multiple unspent karma boxes per
+   * owner is reachable — a faucet grant alongside a mint, or a plain karma
+   * split — and reading one box would let either threshold be evaded, or met,
+   * by how the karma happens to be partitioned.
    */
   getKarmaValue: (owner: Uint8Array) => bigint;
   /**
@@ -371,6 +373,25 @@ function checkTransitions(
             error:
               `Vouch cast is locked: an active cooldown exists for this ` +
               `voucher/target pair`,
+          };
+        }
+        // The voucher's balance clears VOUCH_MIN_BALANCE (ARCHITECTURE →
+        // "Vouch boxes"). Summed over every unspent karma box the voucher
+        // holds, not over this transaction's inputs: a voucher may stake from
+        // one box while the threshold is covered across several, and reading
+        // the inputs alone would make the verdict depend on how their karma
+        // happens to be partitioned. Read here rather than at submission
+        // alone, because a vouch reaching a node inside a block never passes a
+        // service gate — `getKarmaValue` is the confirmed-set reader every
+        // validation path shares, so the predicate decides the same way on
+        // every node.
+        const voucherBalance = deps.getKarmaValue(vouchOut.voucherId);
+        if (voucherBalance < VOUCH_MIN_BALANCE) {
+          return {
+            valid: false,
+            error:
+              `Vouch cast requires a karma balance of at least ` +
+              `${VOUCH_MIN_BALANCE}, voucher holds ${voucherBalance}`,
           };
         }
       } else if (inviteOutputs.length > 0 || bondOutputs.length > 0) {
