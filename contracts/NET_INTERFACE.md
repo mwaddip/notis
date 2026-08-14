@@ -179,9 +179,11 @@ state"), so no stump crosses the network in either direction. The numbers
 stay reserved so a stale peer sending code 12 is an identifiable protocol
 violation rather than a misparse of some future message.
 
-**This table is the code allocator, not `net/src/types.ts`** — the retirement of 12–13 is recorded
-here and nowhere in the source, so a new code chosen by reading `types.ts` alone will collide with a
-reservation it cannot see.
+**This table is the code allocator; `net/src/types.ts` mirrors it**, retirement comment included.
+⚠ **Neither is findable by grepping `MSG_`.** A reservation is a comment, not an assignment, and
+`handshake.ts:72` frames its code as the literal `1` rather than through `MSG_HANDSHAKE` — so a
+`MSG_`-keyed search sees neither the reservations nor every allocation. The sweep that does is
+`grep -rn 'encodeFrame([A-Za-z_.]*, *[0-9]' packages/`, read together with this table.
 
 Codes 6-7 replace the old ad-hoc `/dagsocial/sync/1` stream protocol.
 Codes 14–17 carry fork resolution's two queries and `/dagsocial/headers/1` is deleted. Those queries

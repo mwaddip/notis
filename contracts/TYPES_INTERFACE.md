@@ -1451,7 +1451,7 @@ reorg can physically go; the fork walk is policy**, and nothing requires the two
 
 ⚠ **`net`'s `msg-guards.ts` is not a consumer**, though it reads like one. It mentions
 `MAX_REORG_DEPTH * 2` as *what fork resolution asks for*; the cap it actually enforces is
-`MAX_LEGACY_RESPONSE_ITEMS = 400`. The two differ by 10×, and reading the prose as the limit
+`MAX_CHAIN_RESPONSE_ITEMS = 400`. The two differ by 10×, and reading the prose as the limit
 conflates a caller's request size with the bound applied to it.
 
 **It lives here because node's `config.ts` cannot reach it anywhere else.**
