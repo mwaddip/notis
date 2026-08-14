@@ -95,6 +95,8 @@ export {
   countPendingInvites,
   hasPendingVouch,
   hasPendingSpend,
+  findPendingOutput,
+  getBoxWithPending,
   MempoolFullError,
   PendingSpendConflictError,
 } from './mempool.js';

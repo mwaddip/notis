@@ -1,13 +1,16 @@
 import { getDb } from './db.js';
+import { getBox } from './utxo.js';
 import { config } from '../config.js';
 import { ClientError } from '../services/client-error.js';
+import { materializeOutput } from '../services/utxo-engine.js';
 import type {
   UtxoTransaction,
   PruneEntry,
   InviteBox,
   VouchBox,
+  AnyBox,
 } from '@dagsocial/types';
-import { encodeTx, computePruneEntryId } from '@dagsocial/types';
+import { encodeTx, decodeTx, computeTxId, computePruneEntryId } from '@dagsocial/types';
 import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
@@ -150,6 +153,20 @@ export function insertSubBlock(
   return Number(result.lastInsertRowid);
 }
 
+/**
+ * The ids of the boxes this transaction would create.
+ *
+ * Derived through `materializeOutput`, never re-derived here: outputs are
+ * client-supplied and may carry any of `id`/`txId`/`index`, and that function is
+ * where stripping them and computing the real id is stated. Block application
+ * materializes the same outputs through the same call, so the pool's prediction
+ * and the block's result cannot disagree.
+ */
+function outputBoxIds(tx: UtxoTransaction): string[] {
+  const txId = computeTxId(tx);
+  return (tx.outputs ?? []).map((out, i) => materializeOutput(out, txId, i).id!);
+}
+
 export function insertUtxoTx(
   tx: UtxoTransaction,
   batchId: string | null,
@@ -167,8 +184,8 @@ export function insertUtxoTx(
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_cbor, batch_id, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
-                          tx_inputs)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          tx_inputs, tx_output_ids)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(cbor),
     batchId,
@@ -178,6 +195,7 @@ export function insertUtxoTx(
     meta.inviteInviter,
     meta.vouchVoucher,
     JSON.stringify(inputs),
+    JSON.stringify(outputBoxIds(tx)),
   );
   return Number(result.lastInsertRowid);
 }
@@ -237,6 +255,52 @@ export function hasPendingSpend(boxIds: string[]): string | null {
     if (stmt.get(id) !== undefined) return id;
   }
   return null;
+}
+
+/**
+ * The box a pooled transaction would create under `boxId`, or `null`.
+ *
+ * One targeted decode, not a scan: the index finds the single row whose output
+ * ids contain `boxId`, and only that entry is decoded. The ids were computed at
+ * insert by the same `materializeOutput` the block path uses, so the box
+ * returned here is the box application will write.
+ */
+export function findPendingOutput(boxId: string): AnyBox | null {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT utxo_tx_cbor FROM mempool
+      WHERE tx_output_ids IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_output_ids) WHERE value = ?)
+      LIMIT 1`,
+  ).get(boxId) as { utxo_tx_cbor: Buffer } | undefined;
+  if (!row) return null;
+
+  const tx = decodeTx(new Uint8Array(row.utxo_tx_cbor));
+  const txId = computeTxId(tx);
+  for (let i = 0; i < tx.outputs.length; i++) {
+    const box = materializeOutput(tx.outputs[i]!, txId, i);
+    if (box.id === boxId) return box;
+  }
+  return null;
+}
+
+/**
+ * A box as the pending view sees it: the confirmed UTXO set **∪** pending
+ * outputs **−** pending inputs.
+ *
+ * ⛔ **Admission only.** Block application resolves inputs against the confirmed
+ * set alone — it imports `getBox` directly — and must keep doing so: letting
+ * pool contents decide what a block may spend would make consensus depend on
+ * local, unshared state.
+ *
+ * The subtraction comes first and applies to both halves: a box a pooled entry
+ * already spends is not spendable again, whether it was confirmed or is itself
+ * pending. That is what lets a chained transaction be admitted while its
+ * predecessor's input stays refused.
+ */
+export function getBoxWithPending(boxId: string): AnyBox | null {
+  if (hasPendingSpend([boxId]) !== null) return null;
+  return getBox(boxId) ?? findPendingOutput(boxId);
 }
 
 /**

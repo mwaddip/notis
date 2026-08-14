@@ -24,6 +24,8 @@ async function importMempoolFresh() {
     countPendingInvites: (inviterId: string) => number;
     hasPendingVouch: (voucherId: string) => boolean;
     hasPendingSpend: (boxIds: string[]) => string | null;
+    findPendingOutput: (boxId: string) => { id?: string } | null;
+    getBoxWithPending: (boxId: string) => { id?: string } | null;
     PendingSpendConflictError: new (boxId: string) => Error;
     insertMempoolPrune: (entry: any, expiresAtHeight: number) => number;
     drainMempoolPrunes: (limit: number) => any[];
@@ -61,6 +63,15 @@ const VOUCHER_A = 'ee'.repeat(32);
 const VOUCHER_B = 'ff'.repeat(32);
 const TARGET_ID = '11'.repeat(32);
 
+// Input box ids. `computeTxId` writes each input as `b32`, so a short label has
+// no encoding — the same rule the post ids above carry, applied to inputs now
+// that the pool derives its output ids at insert.
+const BOX_1 = '61'.repeat(32);
+const BOX_2 = '62'.repeat(32);
+const BOX_3 = '63'.repeat(32);
+const BOX_5 = '65'.repeat(32);
+const BOX_99 = '69'.repeat(32);
+
 const bytes = (hex: string) => new Uint8Array(Buffer.from(hex, 'hex'));
 
 /**
@@ -94,7 +105,7 @@ function inviteTx(inviterHex: string) {
     outputs: [
       {
         boxType: 'invite',
-        value: 25,
+        value: 25n,
         inviterId: bytes(inviterHex),
         secretHash: new Uint8Array(32),
         guard: 'hash_preimage_with_bond',
@@ -111,7 +122,7 @@ function vouchTx(voucherHex: string, targetHex: string) {
     outputs: [
       {
         boxType: 'vouch',
-        value: 10,
+        value: 10n,
         voucherId: bytes(voucherHex),
         targetId: bytes(targetHex),
         guard: 'owner_signature',
@@ -173,7 +184,7 @@ describe('mempool store', () => {
   it('inserts a UTXO transaction and retrieves it', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = {
-      inputs: ['box1'],
+      inputs: [BOX_1],
       outputs: [],
       signatures: {},
       protocolVersion: 1,
@@ -202,7 +213,7 @@ describe('mempool store', () => {
   it('inserts a UTXO tx with batchId and retrieves it', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = {
-      inputs: ['box2'],
+      inputs: [BOX_2],
       outputs: [],
       signatures: {},
       protocolVersion: 1,
@@ -247,7 +258,7 @@ describe('mempool store', () => {
 
     insertSubBlock('sb_expired', 10);
     insertSubBlock('sb_valid', 50);
-    const tx = { inputs: ['box3'], outputs: [], signatures: {}, protocolVersion: 1 };
+    const tx = { inputs: [BOX_3], outputs: [], signatures: {}, protocolVersion: 1 };
     insertUtxoTx(tx as any, null, 30);
 
     const removed = purgeExpired(25); // removes entries with expires_at_height < 25
@@ -286,7 +297,7 @@ describe('mempool store', () => {
 
   it('handles multiple entries of mixed types', async () => {
     const { insertSubBlock, insertUtxoTx, getPendingEntries } = await importMempoolFresh();
-    const tx = { inputs: ['box5'], outputs: [], signatures: {}, protocolVersion: 1 };
+    const tx = { inputs: [BOX_5], outputs: [], signatures: {}, protocolVersion: 1 };
 
     insertSubBlock('sb1', 100);
     insertUtxoTx(tx as any, null, 100);
@@ -347,7 +358,7 @@ describe('mempool store', () => {
 
   it('utxo_tx entry has subblockId null and utxoTxCbor set', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
-    const tx = { inputs: ['box99'], outputs: [], signatures: {}, protocolVersion: 1 };
+    const tx = { inputs: [BOX_99], outputs: [], signatures: {}, protocolVersion: 1 };
     insertUtxoTx(tx as any, null, 300);
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
@@ -441,7 +452,7 @@ describe('mempool store', () => {
       insertUtxoTx({
         inputs: [],
         outputs: [{
-          boxType: 'like', value: 2, likerId: bytes(LIKER_A),
+          boxType: 'like', value: 2n, likerId: bytes(LIKER_A),
           targetPostId: TARGET, guard: 'epoch_tally',
         }],
         signatures: {},
@@ -538,6 +549,124 @@ describe('mempool store', () => {
       mem.insertSubBlock('post_x', 1000);
 
       expect(mem.hasPendingSpend([BOX_A])).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The pending view: confirmed ∪ pending outputs − pending inputs
+  //
+  // A transaction spending the change box of one still in the pool is the
+  // ordinary shape — the client chains rather than re-spending the box its own
+  // pending transaction consumed — and the confirmed set does not hold that
+  // output yet.
+  // -------------------------------------------------------------------------
+
+  describe('pending view', () => {
+    const CONFIRMED = '51'.repeat(32);
+    const OWNER = '52'.repeat(32);
+
+    /** A karma output shaped as the positional writer needs it (value is u64). */
+    const karmaOut = (value: bigint) => ({
+      boxType: 'karma',
+      value,
+      owner: bytes(OWNER),
+      guard: 'owner_signature',
+    });
+
+    const chainTx = (inputs: string[], outputs: unknown[]) => ({
+      inputs,
+      outputs,
+      signatures: {},
+      protocolVersion: 1,
+    });
+
+    /** The id the pool predicts for output `index` of `tx`. */
+    async function predictedId(tx: unknown, index: number): Promise<string> {
+      const { computeTxId } = await import('@dagsocial/types');
+      const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+      const t = tx as { outputs: unknown[] };
+      return materializeOutput(
+        t.outputs[index] as never,
+        computeTxId(tx as never),
+        index,
+      ).id!;
+    }
+
+    it('serves a box a pending transaction would create', async () => {
+      const mem = await importMempoolFresh();
+
+      const parent = chainTx([CONFIRMED], [karmaOut(95n), karmaOut(5n)]);
+      mem.insertUtxoTx(parent as never, null, 1000);
+      const changeId = await predictedId(parent, 0);
+
+      expect(mem.findPendingOutput(changeId)).not.toBeNull();
+      expect(mem.findPendingOutput(changeId)!.id).toBe(changeId);
+      expect(mem.getBoxWithPending(changeId)!.id).toBe(changeId);
+    });
+
+    it('does not serve a pending output that a later pending input consumed', async () => {
+      const mem = await importMempoolFresh();
+
+      const parent = chainTx([CONFIRMED], [karmaOut(95n)]);
+      mem.insertUtxoTx(parent as never, null, 1000);
+      const changeId = await predictedId(parent, 0);
+
+      mem.insertUtxoTx(chainTx([changeId], [karmaOut(90n)]) as never, null, 1000);
+
+      // The row is still findable — subtracting the spend is the view's job,
+      // not the index's.
+      expect(mem.findPendingOutput(changeId)).not.toBeNull();
+      expect(mem.getBoxWithPending(changeId)).toBeNull();
+    });
+
+    it('subtracts a pending spend from the confirmed set too', async () => {
+      const mem = await importMempoolFresh();
+      const utxo = await import('../../src/store/utxo.js');
+      const { computeBoxId } = await import('@dagsocial/types');
+
+      const box = {
+        boxType: 'karma' as const,
+        value: 100n,
+        owner: bytes(OWNER),
+        guard: 'owner_signature' as const,
+        txId: '53'.repeat(32),
+        index: 0,
+      };
+      const confirmed = { ...box, id: computeBoxId(box) };
+      utxo.insertBox(confirmed as never);
+
+      expect(mem.getBoxWithPending(confirmed.id)!.id).toBe(confirmed.id);
+
+      mem.insertUtxoTx(chainTx([confirmed.id], [karmaOut(99n)]) as never, null, 1000);
+
+      expect(mem.getBoxWithPending(confirmed.id)).toBeNull();
+    });
+
+    it('answers null for a box no one holds', async () => {
+      const mem = await importMempoolFresh();
+
+      expect(mem.findPendingOutput(CONFIRMED)).toBeNull();
+      expect(mem.getBoxWithPending(CONFIRMED)).toBeNull();
+    });
+
+    it('predicts the id block application will materialize', async () => {
+      // The pool stores ids from `materializeOutput`, which strips
+      // client-supplied provenance. An output arriving with a forged `id`/`txId`
+      // must therefore be found under the real one, not the forged one.
+      const mem = await importMempoolFresh();
+
+      const forged = {
+        ...karmaOut(95n),
+        id: 'ff'.repeat(32),
+        txId: 'ee'.repeat(32),
+        index: 7,
+      };
+      const parent = chainTx([CONFIRMED], [forged]);
+      mem.insertUtxoTx(parent as never, null, 1000);
+
+      expect(mem.findPendingOutput('ff'.repeat(32))).toBeNull();
+      const realId = await predictedId(parent, 0);
+      expect(mem.findPendingOutput(realId)!.id).toBe(realId);
     });
   });
 
