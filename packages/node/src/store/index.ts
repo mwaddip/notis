@@ -97,6 +97,7 @@ export {
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
+  resolvePendingTip,
   MempoolFullError,
   PendingSpendConflictError,
 } from './mempool.js';

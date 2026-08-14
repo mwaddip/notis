@@ -304,6 +304,80 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
 }
 
 /**
+ * The pooled transaction that spends `boxId`, or `null`. At most one can exist
+ * — that is what the conflicting-spend gate guarantees.
+ */
+function findPendingSpender(boxId: string): UtxoTransaction | null {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT utxo_tx_cbor FROM mempool
+      WHERE tx_inputs IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(mempool.tx_inputs) WHERE value = ?)
+      LIMIT 1`,
+  ).get(boxId) as { utxo_tx_cbor: Buffer } | undefined;
+  return row ? decodeTx(new Uint8Array(row.utxo_tx_cbor)) : null;
+}
+
+/** An owned box — the only kind a spend chain can be followed through. */
+type OwnedBox = AnyBox & { owner: Uint8Array };
+
+function isOwned(box: AnyBox): box is OwnedBox {
+  return 'owner' in box && (box as OwnedBox).owner instanceof Uint8Array;
+}
+
+/**
+ * The live tip of `box`'s pending spend chain, or `null` if the chain ends in
+ * the box being fully consumed.
+ *
+ * A node that builds its own transactions — the faucets are the only ones —
+ * must spend the change of its pending transaction rather than the box that
+ * transaction already consumed. Selecting from the confirmed set alone, two
+ * grants in one block interval name the same box and the second is refused;
+ * chained, both apply in one block, which is what the apply path's dependency
+ * ordering is for.
+ *
+ * The successor is the output carrying the same owner and box type — the
+ * change. This is local selection, not consensus: picking wrong yields a
+ * transaction `validateTx` refuses, never a bad accept. A box owned by nobody,
+ * or a spend that returns no change, ends the walk at `null`.
+ *
+ * ⚠ **Reachable only forward from a confirmed box.** A pending output paid to
+ * this owner by someone else's transaction is not on any chain rooted here, so
+ * it is not found. That errs toward under-counting the balance — a refusal at
+ * worst, never an overspend.
+ */
+export function resolvePendingTip(box: AnyBox): AnyBox | null {
+  if (!isOwned(box)) return findPendingSpender(box.id!) === null ? box : null;
+
+  const ownerHex = Buffer.from(box.owner).toString('hex');
+  let current: OwnedBox = box;
+  // Output ids are hashes of their transaction, so a chain cannot close on
+  // itself. The set is what makes that structural fact a local guarantee rather
+  // than an assumption about the pool's contents.
+  const seen = new Set<string>();
+
+  for (;;) {
+    const id = current.id;
+    if (id === undefined || seen.has(id)) return null;
+    seen.add(id);
+
+    const spender = findPendingSpender(id);
+    if (spender === null) return current;
+
+    const txId = computeTxId(spender);
+    const change = spender.outputs
+      .map((out, i) => materializeOutput(out, txId, i))
+      .find((out): out is OwnedBox =>
+        out.boxType === current.boxType &&
+        isOwned(out) &&
+        Buffer.from(out.owner).toString('hex') === ownerHex,
+      );
+    if (change === undefined) return null;
+    current = change;
+  }
+}
+
+/**
  * Delete confirmed sub-block entries by postId — a keyed DELETE, never a
  * bounded fetch-and-find loop, which would stop removing entries past its cap
  * (bookkeeping only — no consensus behaviour change). Chunked because a single

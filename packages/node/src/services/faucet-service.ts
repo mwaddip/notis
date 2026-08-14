@@ -4,7 +4,7 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { CandidateOf, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { insertUtxoTx } from '../store/mempool.js';
+import { insertUtxoTx, resolvePendingTip } from '../store/mempool.js';
 import { getSystemKeypair, ensureSystemKarmaBox, signWithSystemKey } from '../store/system.js';
 import {
   hasFaucetGrantRecord,
@@ -113,8 +113,14 @@ export function faucetGrant(
     // ---- 2. One grant per identity, ever ----
     assertNotAlreadyFunded(userIdBytes);
 
-    const systemBox = ensureSystemKarmaBox(sysKeypair.publicKey, currentHeight);
-    if (systemBox.value < FAUCET_AMOUNT) {
+    // The faucet builds its own transaction, so it must select under the pending
+    // view: a grant issued earlier in this block interval already spends the
+    // confirmed system box, and selecting that box again would name an input its
+    // own pool entry consumes. `resolvePendingTip` follows that spend to the
+    // change box, so consecutive grants chain and all of them apply in one block.
+    const confirmedBox = ensureSystemKarmaBox(sysKeypair.publicKey, currentHeight);
+    const systemBox = resolvePendingTip(confirmedBox) as KarmaBox | null;
+    if (!systemBox || systemBox.value < FAUCET_AMOUNT) {
       throw new FaucetServiceError('Faucet depleted');
     }
 
