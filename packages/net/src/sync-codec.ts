@@ -1,8 +1,15 @@
 import { encode, decode } from 'cbor-x';
 import { encodeFrame } from './frame.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from './sync-types.js';
-import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE, MSG_GET_PEERS, MSG_PEERS, MSG_GET_POSTS, MSG_POSTS } from './types.js';
-import type { GetPeersMsg, PeersMsg, PeerEntryMsg, GetPostsMsg, PostsMsg, PostsEntry } from './types.js';
+import {
+  MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE,
+  MSG_GET_PEERS, MSG_PEERS, MSG_GET_POSTS, MSG_POSTS,
+  MSG_GET_HEADERS, MSG_HEADERS, MSG_GET_BLOCKS, MSG_BLOCKS,
+} from './types.js';
+import type {
+  GetPeersMsg, PeersMsg, PeerEntryMsg, GetPostsMsg, PostsMsg, PostsEntry,
+  GetHeadersMsg, GetBlocksMsg,
+} from './types.js';
 import {
   ReaderError,
   decodeHeader,
@@ -15,6 +22,7 @@ import {
   readVlqU,
   writeArr,
   writeLp,
+  writeVlqU,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, Post, StructCodec } from '@dagsocial/types';
 import {
@@ -27,7 +35,7 @@ import {
   isWorkString,
   MAX_TYPE_ID,
   MAX_CAPABILITY_CODE,
-  MAX_LEGACY_RESPONSE_ITEMS,
+  MAX_CHAIN_RESPONSE_ITEMS,
   MAX_PEERS_ENTRIES,
 } from './msg-guards.js';
 
@@ -224,43 +232,77 @@ export function decodePosts(body: Uint8Array): PostsMsg | null {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy /dagsocial/headers/1 request
+// GetHeaders (14) / GetBlocks (16) requests — positional
+//
+// Two `vlqU` fields each, in declared order, with no discriminator inside the
+// body: the frame's code is what says which query this is (NET_INTERFACE →
+// `GetHeaders` / `GetBlocks` responses). Both fields of both requests drive a
+// serve loop that reads the store once per height, so both are bounded here
+// exactly like an advertised chain height.
+//
+// `decodeStruct` supplies the rest of the boundary check — exhaustion and the
+// re-encode compare, which is what refuses a non-minimal VLQ (TYPES_INTERFACE →
+// The boundary check).
 // ---------------------------------------------------------------------------
 
-/**
- * Body of the legacy headers-protocol request. Raw CBOR, no frame — the
- * protocol predates framing and is kept only for backward compatibility.
- */
-export interface LegacyHeadersRequest {
-  startHeight: number;
-  maxCount?: number;
-  endHeight?: number;
-  mode?: string;
+/** A two-field positional request whose fields are both heights. */
+function heightPairCodec<T>(
+  name: string,
+  fields: [keyof T & string, keyof T & string],
+): StructCodec<T> {
+  const [first, second] = fields;
+  return {
+    name,
+    write(w, value) {
+      writeVlqU(w, value[first] as number);
+      writeVlqU(w, value[second] as number);
+    },
+    read(r) {
+      const a = readVlqU(r);
+      const b = readVlqU(r);
+      if (!isHeight(a) || !isHeight(b)) {
+        // `'invalid-tag'` for the reason `CodecError` gives it (types →
+        // CodecError): `ReaderErrorCode` has no member for "well-formed but out
+        // of range", and this is the one of the eight that carries no fallback
+        // semantics elsewhere in this package.
+        throw new ReaderError(
+          `${name}: ${a}/${b} is outside the advertisable height range`,
+          'invalid-tag',
+        );
+      }
+      return { [first]: a, [second]: b } as T;
+    },
+  };
 }
 
-/**
- * Decode and validate a legacy headers request.
- *
- * Both heights drive serve loops that read the store once per height, so both
- * are bounded here exactly like an advertised chain height.
- */
-export function decodeLegacyHeadersRequest(body: Uint8Array): LegacyHeadersRequest | null {
-  const v = tryDecode(body);
-  if (!isRecord(v)) return null;
-  if (!isHeight(v.startHeight)) return null;
-  if (v.maxCount !== undefined && !isHeight(v.maxCount)) return null;
-  if (v.endHeight !== undefined && !isHeight(v.endHeight)) return null;
-  if (v.mode !== undefined && typeof v.mode !== 'string') return null;
+const getHeadersCodec = heightPairCodec<GetHeadersMsg>('getHeaders', [
+  'startHeight',
+  'maxCount',
+]);
 
-  const req: LegacyHeadersRequest = { startHeight: v.startHeight };
-  if (v.maxCount !== undefined) req.maxCount = v.maxCount;
-  if (v.endHeight !== undefined) req.endHeight = v.endHeight;
-  if (v.mode !== undefined) req.mode = v.mode;
-  return req;
+const getBlocksCodec = heightPairCodec<GetBlocksMsg>('getBlocks', [
+  'startHeight',
+  'endHeight',
+]);
+
+export function encodeGetHeaders(magic: number, msg: GetHeadersMsg): Uint8Array {
+  return encodeFrame(magic, MSG_GET_HEADERS, encodeStruct(getHeadersCodec, msg));
+}
+
+export function decodeGetHeaders(body: Uint8Array): GetHeadersMsg | null {
+  return tryDecodeStruct(getHeadersCodec, body);
+}
+
+export function encodeGetBlocks(magic: number, msg: GetBlocksMsg): Uint8Array {
+  return encodeFrame(magic, MSG_GET_BLOCKS, encodeStruct(getBlocksCodec, msg));
+}
+
+export function decodeGetBlocks(body: Uint8Array): GetBlocksMsg | null {
+  return tryDecodeStruct(getBlocksCodec, body);
 }
 
 // ---------------------------------------------------------------------------
-// Legacy /dagsocial/headers/1 responses
+// Headers (15) / Blocks (17) responses
 //
 // Both responses are `arr(item, lp)` over the same positional codec the rest of
 // this package speaks, and every element runs the four-part boundary check
@@ -303,7 +345,7 @@ export function decodeLegacyHeadersRequest(body: Uint8Array): LegacyHeadersReque
  * `readArr` cannot express here: its bounds are `MAX_ARRAY_LENGTH` and the bytes
  * remaining, neither of which is the number of items *this* response may carry.
  * That number is the caller's own request size clamped to
- * `MAX_LEGACY_RESPONSE_ITEMS` (`responseCap`) — a peer answering a 40-header
+ * `MAX_CHAIN_RESPONSE_ITEMS` (`responseCap`) — a peer answering a 40-header
  * request with 18,900 headers is not answering the question, and the caller is
  * the only party that knows the question. The byte layout is identical to
  * `arr`'s, so the re-encode compare below still uses `writeArr`.
@@ -335,14 +377,14 @@ function lpItemsCodec<T>(
 }
 
 /**
- * Decode a legacy response body, converting every `ReaderError` into `null`.
+ * Decode a positional body, converting every `ReaderError` into `null`.
  *
  * TYPES_INTERFACE → The boundary check, step 4 — "callers convert `ReaderError`
  * into a verdict" — discharged in the shape the rest of this file uses:
  * decoders at net's boundary never throw, they return `null`, and the caller
  * decides what a `null` means for the peer that sent it.
  */
-function decodeLegacyResponse<T>(codec: StructCodec<T[]>, bytes: Uint8Array): T[] | null {
+function tryDecodeStruct<T>(codec: StructCodec<T>, bytes: Uint8Array): T | null {
   try {
     return decodeStruct(codec, bytes);
   } catch {
@@ -351,55 +393,63 @@ function decodeLegacyResponse<T>(codec: StructCodec<T[]>, bytes: Uint8Array): T[
 }
 
 function blocksResponseCodec(maxBlocks: number): StructCodec<OrderingBlock[]> {
-  return lpItemsCodec('legacyBlocksResponse', encodeOrderingBlock, decodeOrderingBlock, maxBlocks);
+  return lpItemsCodec('blocksResponse', encodeOrderingBlock, decodeOrderingBlock, maxBlocks);
 }
 
 function headersResponseCodec(maxHeaders: number): StructCodec<BlockHeader[]> {
-  return lpItemsCodec('legacyHeadersResponse', encodeHeader, decodeHeader, maxHeaders);
+  return lpItemsCodec('headersResponse', encodeHeader, decodeHeader, maxHeaders);
 }
 
 /**
- * Serialize a blocks-mode response.
+ * Frame a `Blocks` (17) response.
  *
  * Throws only for a block *we* hold that has no encoding — a corrupt local
- * store, not a peer's doing. The handler's own `catch` turns that into an empty
- * response, which is the same answer it gives for every other local failure.
+ * store, not a peer's doing. The serve arm's own `catch` turns that into zero
+ * bytes, which is the same answer it gives for every other local failure.
  */
-export function encodeLegacyBlocksResponse(blocks: OrderingBlock[]): Uint8Array {
-  return encodeStruct(blocksResponseCodec(MAX_LEGACY_RESPONSE_ITEMS), blocks);
+export function encodeBlocks(magic: number, blocks: OrderingBlock[]): Uint8Array {
+  return encodeFrame(
+    magic,
+    MSG_BLOCKS,
+    encodeStruct(blocksResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), blocks),
+  );
 }
 
 /**
- * Parse a blocks-mode response. `null` for anything that is not a well-formed,
- * canonical response of at most `maxBlocks` blocks.
+ * Parse a `Blocks` response body. `null` for anything that is not a
+ * well-formed, canonical response of at most `maxBlocks` blocks.
  *
  * `maxBlocks` is the caller's own request size — the peer is answering a
  * question only the caller knows.
  */
-export function decodeLegacyBlocksResponse(
-  bytes: Uint8Array,
+export function decodeBlocks(
+  body: Uint8Array,
   maxBlocks: number,
 ): OrderingBlock[] | null {
-  return decodeLegacyResponse(blocksResponseCodec(responseCap(maxBlocks)), bytes);
+  return tryDecodeStruct(blocksResponseCodec(responseCap(maxBlocks)), body);
 }
 
-/** Serialize a headers-mode response. See `encodeLegacyBlocksResponse`. */
-export function encodeLegacyHeadersResponse(headers: BlockHeader[]): Uint8Array {
-  return encodeStruct(headersResponseCodec(MAX_LEGACY_RESPONSE_ITEMS), headers);
+/** Frame a `Headers` (15) response. See `encodeBlocks`. */
+export function encodeHeaders(magic: number, headers: BlockHeader[]): Uint8Array {
+  return encodeFrame(
+    magic,
+    MSG_HEADERS,
+    encodeStruct(headersResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), headers),
+  );
 }
 
-/** Parse a headers-mode response. See `decodeLegacyBlocksResponse`. */
-export function decodeLegacyHeadersResponse(
-  bytes: Uint8Array,
+/** Parse a `Headers` response body. See `decodeBlocks`. */
+export function decodeHeaders(
+  body: Uint8Array,
   maxHeaders: number,
 ): BlockHeader[] | null {
-  return decodeLegacyResponse(headersResponseCodec(responseCap(maxHeaders)), bytes);
+  return tryDecodeStruct(headersResponseCodec(responseCap(maxHeaders)), body);
 }
 
 /**
  * How many items a response to a request of this size may carry.
  *
- * Clamped to `MAX_LEGACY_RESPONSE_ITEMS` because the requested size is derived
+ * Clamped to `MAX_CHAIN_RESPONSE_ITEMS` because the requested size is derived
  * from peer-supplied heights (`requestBlocks` spans `forkHeight + 1` to a tip
  * height that came off the wire), so it is not by itself a bound. A nonsensical
  * request size accepts an empty response and nothing else, rather than
@@ -407,5 +457,5 @@ export function decodeLegacyHeadersResponse(
  */
 function responseCap(requested: number): number {
   if (!Number.isSafeInteger(requested) || requested < 0) return 0;
-  return Math.min(requested, MAX_LEGACY_RESPONSE_ITEMS);
+  return Math.min(requested, MAX_CHAIN_RESPONSE_ITEMS);
 }

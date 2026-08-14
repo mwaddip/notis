@@ -12,14 +12,16 @@ import type { SubBlock, OrderingBlock, UtxoTransaction, BlockHeader } from '@dag
 import { PROTOCOL_VERSION, decodeOrderingBlock } from '@dagsocial/types';
 import { blockHash, blockWork } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
-import type { NetConfig, NetValidators, Peer, PeerEntryMsg, PostsMsg, PostsEntry } from './types.js';
+import type {
+  NetConfig, NetValidators, Peer, PeerEntryMsg, PostsMsg, PostsEntry,
+  GetHeadersMsg, GetBlocksMsg,
+} from './types.js';
 import { PeerState, PenaltyKind } from './types.js';
 import type { Libp2pGossip, GossipHandlers } from './gossip.js';
 import { PeerManager } from './peer-mgr.js';
 import { subscribeTopics, broadcastSubBlock, broadcastOrderingBlock, broadcastTx } from './gossip.js';
 import {
   SYNC_PROTOCOL,
-  HEADERS_PROTOCOL,
   requestSubBlock,
   requestHeaders,
   requestBlocks,
@@ -33,15 +35,15 @@ import {
   decodeGetPosts,
   encodePosts,
   decodePosts,
-  decodeLegacyHeadersRequest,
-  encodeLegacyBlocksResponse,
-  encodeLegacyHeadersResponse,
+  decodeGetHeaders,
+  decodeGetBlocks,
+  encodeBlocks,
+  encodeHeaders,
 } from './sync-codec.js';
-import type { LegacyHeadersRequest } from './sync-codec.js';
 import { encodeServableOrderingBlock, encodeServableSubBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
-import { MAX_LEGACY_RESPONSE_ITEMS, MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -61,10 +63,12 @@ import {
   MSG_PEERS,
   MSG_GET_POSTS,
   MSG_POSTS,
+  MSG_GET_HEADERS,
+  MSG_GET_BLOCKS,
 } from './types.js';
 
 type SubBlockCallback = (sb: SubBlock) => void;
-type OrderingBlockCallback = (block: OrderingBlock) => void;
+type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 type TxCallback = (tx: UtxoTransaction) => void;
 
 /**
@@ -323,59 +327,69 @@ export class LazySyncStore implements SyncStore {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy /dagsocial/headers/1 serve side
+// GetHeaders (14) / GetBlocks (16) serve side
+//
+// One function per code, because the code pair is the discriminator: a single
+// function branching on a field inside the body would be re-erecting the `mode`
+// field the positional requests drop (NET_INTERFACE → `GetHeaders` /
+// `GetBlocks` responses).
+//
+// Module-level and exported for the reason `servePeersBody`,
+// `decodeHandshakePayload` and `LazySyncStore` are: the tests drive **these**
+// functions rather than a copy of the serve loops. A test double that
+// re-implements those loops stays green through a change to the response wire
+// format, which is the one thing a protocol suite exists to notice.
+//
+// Both are bounded twice: by what the peer asked for, and by
+// `MAX_CHAIN_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
+// each loop reads the store once per height into an in-memory array, so the
+// second bound is what keeps the size of that array — and of the bytes we then
+// hold — off the peer's control panel.
+//
+// `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
+// have, so this never truncates a legitimate request, and a peer asking for
+// height 1e15 costs us nothing.
+//
+// Both throw only if a block *we* hold has no encoding — a corrupt local store,
+// not a peer's doing. The caller's `catch` answers with zero bytes, as it does
+// for every other local failure.
 // ---------------------------------------------------------------------------
 
-/**
- * Build the body of a legacy headers-protocol response.
- *
- * Module-level and exported for the reason `servePeersBody`,
- * `decodeHandshakePayload` and `LazySyncStore` are: the tests drive **this**
- * function rather than a copy of the serve loops. A test double that
- * re-implements those loops stays green through a change to the response wire
- * format, which is the one thing a protocol suite exists to notice.
- *
- * Both arms are bounded twice: by what the peer asked for, and by
- * `MAX_LEGACY_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
- * each loop reads the store once per height into an in-memory array, so the
- * second bound is what keeps the size of that array — and of the bytes we then
- * hold — off the peer's control panel.
- *
- * `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
- * have, so this never truncates a legitimate request, and a peer asking for
- * height 1e15 costs us nothing.
- *
- * Throws only if a block *we* hold has no encoding — a corrupt local store, not
- * a peer's doing. The caller's `catch` answers with zero bytes, as it does for
- * every other local failure.
- */
-export function serveLegacyHeadersBody(
-  request: LegacyHeadersRequest,
+/** Frame a `Headers` (15) response: our chain walking down from `startHeight`. */
+export function serveHeadersResponse(
+  magic: number,
+  request: GetHeadersMsg,
   ourHeight: number,
   getBlock: (height: number) => OrderingBlock | null,
 ): Uint8Array {
-  if (request.mode === 'blocks') {
-    const blocks: OrderingBlock[] = [];
-    const endHeight = Math.min(request.endHeight ?? ourHeight, ourHeight);
-    for (
-      let h = request.startHeight;
-      h <= endHeight && blocks.length < MAX_LEGACY_RESPONSE_ITEMS;
-      h++
-    ) {
-      const block = getBlock(h);
-      if (block) blocks.push(block);
-    }
-    return encodeLegacyBlocksResponse(blocks);
-  }
-
   const headers: BlockHeader[] = [];
-  const maxCount = Math.min(request.maxCount ?? 20, MAX_LEGACY_RESPONSE_ITEMS);
+  const maxCount = Math.min(request.maxCount, MAX_CHAIN_RESPONSE_ITEMS);
   for (let h = Math.min(request.startHeight, ourHeight); h > 0 && headers.length < maxCount; h--) {
     const block = getBlock(h);
     if (block) headers.push(block.header);
     else break; // gap — the chain below this height is not ours to serve
   }
-  return encodeLegacyHeadersResponse(headers);
+  return encodeHeaders(magic, headers);
+}
+
+/** Frame a `Blocks` (17) response: our chain across an inclusive height range. */
+export function serveBlocksResponse(
+  magic: number,
+  request: GetBlocksMsg,
+  ourHeight: number,
+  getBlock: (height: number) => OrderingBlock | null,
+): Uint8Array {
+  const blocks: OrderingBlock[] = [];
+  const endHeight = Math.min(request.endHeight, ourHeight);
+  for (
+    let h = request.startHeight;
+    h <= endHeight && blocks.length < MAX_CHAIN_RESPONSE_ITEMS;
+    h++
+  ) {
+    const block = getBlock(h);
+    if (block) blocks.push(block);
+  }
+  return encodeBlocks(magic, blocks);
 }
 
 // ---------------------------------------------------------------------------
@@ -537,13 +551,12 @@ export class NetNode {
   private syncTimer: ReturnType<typeof setInterval> | null = null;
   private handshakeHandlerRegistered = false;
   private syncHandlerRegistered = false;
-  private headersHandlerRegistered = false;
   /**
-   * The block provider for `/dagsocial/headers/1`, read at request time rather
-   * than closed over at registration. NET_INTERFACE → Sync Handler Registration:
-   * setters are order-independent, so the protocol is registered by start()
-   * whether or not a provider exists yet, and a request that arrives without one
-   * is answered with an empty body.
+   * The block provider for `GetHeaders` (14) and `GetBlocks` (16), read at
+   * request time rather than closed over at registration. NET_INTERFACE → Sync
+   * Handler Registration: setters are order-independent, so the sync protocol is
+   * registered by start() whether or not a provider exists yet, and a query that
+   * arrives without one is answered with zero bytes.
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
   private postsHandler: ((postIds: string[]) => PostsEntry[]) | null = null;
@@ -647,9 +660,6 @@ export class NetNode {
     // Register sync stream handler (framed protocol)
     this.registerSyncStreamHandler(libp2p);
 
-    // Register headers stream handler (fork resolution's transport)
-    this.registerHeadersStreamHandler(libp2p);
-
     // Track peers on connect/disconnect.
     // Listen for all four event types because the timing and payload differ:
     //   connection:open  — fires first, has full Connection object (addr, direction)
@@ -706,7 +716,9 @@ export class NetNode {
     // Subscribe to gossip topics
     const handlers: GossipHandlers = {
       onSubBlock: (sb) => { for (const cb of this.subBlockHandlers) cb(sb); },
-      onOrderingBlock: (block) => { for (const cb of this.orderingBlockHandlers) cb(block); },
+      onOrderingBlock: (block, fromPeerId) => {
+        for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
+      },
       onTx: (tx) => { for (const cb of this.txHandlers) cb(tx); },
     };
 
@@ -976,6 +988,59 @@ export class NetNode {
         return;
       }
 
+      /**
+       * The decline paths `MSG_GET_HEADERS` and `MSG_GET_BLOCKS` share.
+       *
+       * Every one of them answers — see the arms below for why silence is the
+       * failure mode this migration has to design against. The two arms differ
+       * only in which decoder produced `request` and which serve loop turns it
+       * into a frame, so both live at the call site and everything around them
+       * lives here.
+       */
+      const serveChainQuery = async <T>(
+        code: number,
+        request: T | null,
+        serve: (
+          request: T,
+          ourHeight: number,
+          getBlock: (height: number) => OrderingBlock | null,
+        ) => Uint8Array,
+      ): Promise<void> => {
+        if (request === null) {
+          console.warn(`[net] malformed chain query (code ${code}) from ${peerId}, dropping`);
+          this.peerMgr.recordPenaltyKind(
+            PenaltyKind.ProtocolViolation,
+            peerId,
+            `malformed chain query (code ${code})`,
+          );
+          await replyEmpty();
+          return;
+        }
+
+        const getBlock = this.headersProvider;
+        if (!getBlock) {
+          await replyEmpty();
+          return;
+        }
+
+        // The serve loops read our own store through node's provider, so a
+        // throw here is a row we hold and cannot encode — ours, not the peer's,
+        // and no reason to penalise the sender (NET_INTERFACE → Penalty
+        // Attribution). Its own span for the same reason the posts callback has
+        // one.
+        let response: Uint8Array;
+        try {
+          response = serve(request, this.syncStore.chainHeight(), getBlock);
+        } catch (err) {
+          console.error(
+            `[net] cannot serve chain query (code ${code}) for ${peerId}: ${String(err)}`,
+          );
+          await replyEmpty();
+          return;
+        }
+        await stream.sink([response]);
+      };
+
       try {
         const data = await readStreamBounded(stream.source);
         if (data === null) {
@@ -1080,6 +1145,34 @@ export class NetNode {
           return;
         }
 
+        // Handle fork resolution's two chain queries (MSG_GET_HEADERS,
+        // MSG_GET_BLOCKS). Both read `this.headersProvider` at request time, so
+        // setter order does not matter (NET_INTERFACE → Sync Handler
+        // Registration).
+        //
+        // ⚠ **Every path in both arms answers, including the ones that
+        // decline.** An unrecognized code falls through to
+        // `syncMachine.handleMessage`, whose switch answers nothing, and an
+        // unanswered stream blocks the caller for its whole timeout — 5× for
+        // blocks. Zero bytes ("I cannot answer") stays distinct from a framed
+        // `vlqU(0)` ("I consulted my chain and have nothing"): a node holding no
+        // provider has no chain to consult, so it cannot honestly send the
+        // second.
+        //
+        // `serveChainQuery` owns the decline paths both arms share; each arm
+        // owns its own decoder, because the code pair is the discriminator.
+        if (code === MSG_GET_HEADERS) {
+          await serveChainQuery(code, decodeGetHeaders(body), (request, ourHeight, getBlock) =>
+            serveHeadersResponse(magic, request, ourHeight, getBlock));
+          return;
+        }
+
+        if (code === MSG_GET_BLOCKS) {
+          await serveChainQuery(code, decodeGetBlocks(body), (request, ourHeight, getBlock) =>
+            serveBlocksResponse(magic, request, ourHeight, getBlock));
+          return;
+        }
+
         // Dispatch to sync machine for all other message types
         console.log(`[net] sync handler: received code=${code} body_len=${body.length} from ${peerId}`);
         // Its own span, for the same reason. `handleMessage` decodes the body
@@ -1104,57 +1197,6 @@ export class NetNode {
     });
 
     this.syncHandlerRegistered = true;
-  }
-
-  // -----------------------------------------------------------------------
-  // Headers stream handler — /dagsocial/headers/1
-  //
-  // That protocol is named "legacy" throughout this file but is not a
-  // compatibility shim: it is the live transport fork resolution uses, and the
-  // framed codes 2-5 carry none of that traffic (NET_INTERFACE →
-  // `/dagsocial/headers/1` responses — positional, `arr(item, lp)`).
-  // -----------------------------------------------------------------------
-
-  private registerHeadersStreamHandler(libp2p: Libp2p): void {
-    if (this.headersHandlerRegistered) return;
-
-    libp2p.handle(HEADERS_PROTOCOL, async ({ stream }) => {
-      try {
-        // The legacy protocol is ungated — no handshake, so no peer identity to
-        // penalize. An over-cap stream is simply dropped.
-        const data = await readStreamBounded(stream.source);
-        if (data === null || data.length === 0) {
-          await stream.sink([new Uint8Array(0)]);
-          return;
-        }
-
-        const request = decodeLegacyHeadersRequest(data);
-        if (!request) {
-          await stream.sink([new Uint8Array(0)]);
-          return;
-        }
-
-        // Resolved per request, so setter order does not matter. No provider is
-        // an empty answer, not an error: fork resolution already treats a peer
-        // that returns no headers as "no reorg".
-        const getBlock = this.headersProvider;
-        if (!getBlock) {
-          await stream.sink([new Uint8Array(0)]);
-          return;
-        }
-
-        const body = serveLegacyHeadersBody(
-          request,
-          this.syncStore.chainHeight(),
-          getBlock,
-        );
-        await stream.sink([body]);
-      } catch {
-        await stream.sink([new Uint8Array(0)]);
-      }
-    });
-
-    this.headersHandlerRegistered = true;
   }
 
   // -----------------------------------------------------------------------
@@ -1505,10 +1547,10 @@ export class NetNode {
 
   /**
    * Register the block provider for header-first sync. Wires the sync machine's
-   * store adapter and the `/dagsocial/headers/1` responder, both of which read
-   * the provider when they need it — so this is valid before or after `start()`,
-   * and a later call replaces the provider (NET_INTERFACE → Sync Handler
-   * Registration).
+   * store adapter and the `GetHeaders` / `GetBlocks` serve arms, both of which
+   * read the provider when they need it — so this is valid before or after
+   * `start()`, and a later call replaces the provider (NET_INTERFACE → Sync
+   * Handler Registration).
    */
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));

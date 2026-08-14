@@ -6,7 +6,6 @@ import {
   encodeModifierRequest, decodeModifierRequest,
   encodeModifierResponse, decodeModifierResponse,
   decodeGetPosts, decodePosts,
-  decodeLegacyHeadersRequest,
 } from '@dagsocial/net';
 import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT } from '@dagsocial/net';
 import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
@@ -72,6 +71,9 @@ describe('sync codec', () => {
 // ---------------------------------------------------------------------------
 
 describe('sync codec decode boundary', () => {
+  // The CBOR-bodied messages only. `GetHeaders` / `GetBlocks` are positional and
+  // have no CBOR shape to malform, so their boundary lives beside the rest of
+  // that protocol in `headers.test.ts`.
   const decoders = {
     decodeSyncInfo,
     decodeInv,
@@ -79,7 +81,6 @@ describe('sync codec decode boundary', () => {
     decodeModifierResponse,
     decodeGetPosts,
     decodePosts,
-    decodeLegacyHeadersRequest,
   };
 
   for (const [name, decodeFn] of Object.entries(decoders)) {
@@ -229,25 +230,4 @@ describe('sync codec decode boundary', () => {
     });
   });
 
-  describe('legacy headers request', () => {
-    it('accepts a well-formed request', () => {
-      expect(decodeLegacyHeadersRequest(body({ startHeight: 10, maxCount: 5 })))
-        .toEqual({ startHeight: 10, maxCount: 5 });
-      expect(decodeLegacyHeadersRequest(body({ startHeight: 1, endHeight: 3, mode: 'blocks' })))
-        .toEqual({ startHeight: 1, endHeight: 3, mode: 'blocks' });
-    });
-
-    it('rejects a negative startHeight', () => {
-      expect(decodeLegacyHeadersRequest(body({ startHeight: -1 }))).toBeNull();
-    });
-
-    it('rejects out-of-range endHeight — a 1e15 span would freeze the serve loop', () => {
-      expect(decodeLegacyHeadersRequest(body({ startHeight: 0, endHeight: 1e15, mode: 'blocks' }))).toBeNull();
-    });
-
-    it('rejects a non-integer maxCount', () => {
-      expect(decodeLegacyHeadersRequest(body({ startHeight: 1, maxCount: -5 }))).toBeNull();
-      expect(decodeLegacyHeadersRequest(body({ startHeight: 1, maxCount: 'all' }))).toBeNull();
-    });
-  });
 });

@@ -50,7 +50,13 @@ export const TOPICS = {
 
 export interface GossipHandlers {
   onSubBlock: (sb: SubBlock) => void;
-  onOrderingBlock: (block: OrderingBlock) => void;
+  /**
+   * `fromPeerId` is the peer that **relayed** this block to us
+   * (`propagationSource`), not the peer that published it. Fork resolution asks
+   * that peer for the competing chain, because it provably holds one — see the
+   * dispatch below for why `msg.from` is the wrong value.
+   */
+  onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
   onTx: (tx: UtxoTransaction) => void;
 }
 
@@ -169,6 +175,20 @@ export function subscribeTopics(
     const { topic } = detail.msg;
     const raw = new Uint8Array(detail.msg.data);
 
+    // The peer that sent this message to *us*, which is not the peer above:
+    // `msg.from` is the message's original publisher and need not be connected
+    // to us at all, while `propagationSource` is by construction the peer we
+    // received it from — so it is the one that provably holds the chain a
+    // competing block belongs to (NET_INTERFACE → Pull Requests).
+    //
+    // Read the same defensive way `msg.from` is: the field is required by
+    // gossipsub's own type, so an event without it is a broken event rather than
+    // a peer's doing, and no method here panics on one. The empty string is not
+    // a peer id, so a consumer testing membership in its connected set falls
+    // back exactly as it does for a source that has since disconnected.
+    const relayPeerId =
+      (detail as { propagationSource?: { toString(): string } }).propagationSource?.toString() ?? '';
+
     // Decode and dispatch are separated because they fail for different
     // reasons, and neither reason is the peer's.
     //
@@ -203,7 +223,7 @@ export function subscribeTopics(
     if (topic === TOPICS.subblock) {
       deliver(decodeSubBlock, (sb) => handlers.onSubBlock(sb));
     } else if (topic === TOPICS.orderingBlock) {
-      deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block));
+      deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block, relayPeerId));
     } else if (topic === TOPICS.tx) {
       deliver(decodeTx, (tx) => handlers.onTx(tx));
     }

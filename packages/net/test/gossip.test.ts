@@ -488,12 +488,17 @@ describe('sub-block topic validator (per-network post difficulty)', () => {
 // ---------------------------------------------------------------------------
 
 type GossipListener = (evt: {
-  detail: { msg: { topic: string; data: Uint8Array; from?: { toString(): string } } };
+  detail: {
+    propagationSource?: { toString(): string };
+    msg: { topic: string; data: Uint8Array; from?: { toString(): string } };
+  };
 }) => void;
+
+const RELAY_PEER = 'peer-that-relayed-it';
 
 function makeDispatchHarness(handlers: {
   onSubBlock?: (sb: SubBlock) => void;
-  onOrderingBlock?: (block: OrderingBlock) => void;
+  onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
   onTx?: (tx: unknown) => void;
 } = {}) {
   let listener: GossipListener | null = null;
@@ -524,10 +529,20 @@ function makeDispatchHarness(handlers: {
 
   // `from` is left undefined so the Active-peer filter is skipped — this suite
   // is about what happens after a message is accepted for dispatch, and peer
-  // state has its own tests.
-  const deliver = (topic: string, data: Uint8Array): void => {
+  // state has its own tests. `propagationSource` is the peer that relayed the
+  // message to us, which is the value the ordering-block handler receives; it is
+  // a separate field precisely because it is a different peer.
+  // `null` is how a caller asks for an event with no source at all — an explicit
+  // `undefined` would take the default, which is the opposite of the request.
+  const deliver = (
+    topic: string,
+    data: Uint8Array,
+    propagationSource: { toString(): string } | null = { toString: () => RELAY_PEER },
+  ): void => {
     if (!listener) throw new Error('subscribeTopics registered no message listener');
-    listener({ detail: { msg: { topic, data } } });
+    listener({
+      detail: { propagationSource: propagationSource ?? undefined, msg: { topic, data } },
+    });
   };
 
   return { deliver };
@@ -564,6 +579,33 @@ describe('gossip dispatch listener', () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0]!.header.height).toBe(3);
+  });
+
+  it('hands the handler the peer that relayed the block, not its publisher', () => {
+    // `propagationSource` is what fork resolution asks for the competing chain,
+    // because that peer provably holds one. `msg.from` — the original publisher
+    // — need not be connected to us at all, and this asserts which of the two
+    // arrives.
+    const seen: string[] = [];
+    const { deliver } = makeDispatchHarness({ onOrderingBlock: (_b, from) => seen.push(from) });
+
+    deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock));
+
+    expect(seen).toEqual([RELAY_PEER]);
+  });
+
+  it('degrades rather than throwing when the event carries no source', () => {
+    // gossipsub's own type makes the field required, so an event without it is a
+    // broken event — and net's invariant is that one bad message degrades one
+    // message, never the listener.
+    const seen: string[] = [];
+    const { deliver } = makeDispatchHarness({ onOrderingBlock: (_b, from) => seen.push(from) });
+
+    expect(() =>
+      deliver(TOPICS.orderingBlock, encodeOrderingBlock(dispatchBlock), null),
+    ).not.toThrow();
+
+    expect(seen).toEqual(['']);
   });
 
   it('logs when a handler throws, instead of absorbing it silently', () => {

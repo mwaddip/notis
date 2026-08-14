@@ -321,9 +321,14 @@ describe('Two-node integration', () => {
     expect(received).toBe(false);
   }, TIMEOUT);
 
-  it('node B fetches headers from node A over /dagsocial/headers/1', async () => {
-    // The protocol is registered by start() and resolves its provider per
-    // request, so this passes with the provider set either side of start().
+  it('node B fetches headers from node A over the framed sync stream', async () => {
+    // The live measurement the migration's security claim rests on: the serve
+    // arm drops anything from a peer that is not Active, so this only passes if
+    // node A's inbound handshake with node B has completed by the time B asks.
+    // A separate protocol served anyone who dialled.
+    //
+    // The protocol is registered by start() and both arms resolve the provider
+    // per request, so this passes with the provider set either side of start().
     // Set before, deliberately: it is the order node/src/index.ts uses.
     nodeA = new NetNode(makeConfig(), validators);
     const chain = new Map<number, OrderingBlock>();
