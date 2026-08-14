@@ -1167,6 +1167,11 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Vouch transition rules (P2-B phase 2)
 
+- **The voucher's karma balance is at least `VOUCH_MIN_BALANCE` at cast**, summed across their
+  karma boxes — not the value of any single one. Enforced at block application like every other
+  rule in this list, so it travels with the transaction rather than guarding one node's front
+  door. The service layer applies the same threshold before pooling, which is a courtesy: a vouch
+  that would be refused at apply is refused earlier, and refusing it earlier changes no verdict.
 - **The stake is pinned at cast: `VouchBox.value == VOUCH_KARMA_AMOUNT`.**
   A vouch is one vote and always stakes exactly 1 karma (user decision,
   2026-08-07). Before the pin, value was bounded only by conservation and
@@ -2749,11 +2754,21 @@ CREATE TABLE dag_meta (
 | Key | Value encoding | Invariant |
 |-----|---------------|-----------|
 | `dag_tip_hash` | 32 bytes | Updated atomically with every canonical DAG advance. |
-| `last_validated_sequence` | u32 LE | Must never exceed the DAG tip. Reset to fork point on reorg. |
-| `last_indexed_sequence` | u32 LE | `last_validated_sequence <= last_indexed_sequence <= dag_tip_height`. External queries serve only up to `last_validated_sequence`. |
 | `reorg_floor` | u32 LE | Height below which no reorg is accepted. |
 
-**Startup contract:** read `dag_tip_hash` and the watermarks to rebuild the in-memory DAG view.
+> ⚠ **There is no startup rebuild to contract for.** This section required
+> `last_validated_sequence` and `last_indexed_sequence`, and a startup line reading them "to
+> rebuild the in-memory DAG view". **No such rebuild exists** — `dag-service.ts` queries
+> `canonical_branch` per call, every `Map` and `Set` in it is local to a method, and nothing is
+> loaded at startup. The two keys were write-only `+1` counters with no reader and no reorg reset,
+> and their writer is deleted.
+>
+> **Same phantom as the `dag_load_started` / `dag_load_complete` events**, which described the same
+> rebuild and were removed from `JOURNAL_EVENTS.md` for the same reason.
+>
+> ⚠ **The two remaining keys are carried forward unverified.** Whether `dag_tip_hash` and
+> `reorg_floor` have writers and readers matching these invariants **was not re-derived** when the
+> watermarks were removed — do not read their presence here as confirmation.
 
 ### No store schema version, and none is owed
 
