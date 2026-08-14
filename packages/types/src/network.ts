@@ -166,7 +166,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: '9644b4276b9d22c792a500eca6f7558b9f21ee8e75d23f8a848696a96139693b03',
+  genesisStateRoot: '805433adbafdeea5bed690e91088d71f3f309784575cca8b5134053613ecc35803',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -174,10 +174,12 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 // ones the parked e2e harness ran on (packages/node/test/harness/node-manager.ts).
 // postPowTargetBits is the value that harness wanted but could not override without
 // desynchronising the challenge endpoint from the verifier — the exact defect the profile
-// removes. The remaining durations are compressed roughly two orders of magnitude,
-// preserving mainnet's orderings (probation < bootstrap < stale threshold,
-// epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
-// that is not timescale; see orderingBlockPowTargetBits below.
+// removes. The remaining durations are compressed roughly two orders of magnitude, each by
+// the ratio its own line states. Two of mainnet's orderings survive that compression —
+// bootstrap < stale threshold, epoch < fixed-rate period — and probation's does not:
+// mainnet's probation is the longest of those three windows, devnet's sits between
+// bootstrap and the stale threshold. Ordering difficulty is compressed too, and for a
+// reason that is not timescale; see orderingBlockPowTargetBits below.
 const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'devnet',
   magic: MAGIC_DEVNET,
@@ -199,7 +201,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   karmaDecayIntervalBlocks: 3, // (harness)
   karmaStaleThresholdBlocks: 500, // (harness)
   vouchCooldownBlocks: 3, // shortest wait that still spans block boundaries
-  inviteProbationBlocks: 10, // 1000 ÷ 100
+  inviteProbationBlocks: 432, // 43200 ÷ 100
   creditMinerRewardDelay: 10, // 720 ÷ 72 — small enough to spend, large enough to observe immaturity
   bootstrapPeriodBlocks: 100, // 10000 ÷ 100
 
@@ -214,7 +216,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // Testnet and devnet seed byte-identical karma and credit boxes — same system
   // keypair, same values — so the proof box is the whole difference between
   // these two roots.
-  genesisStateRoot: 'ab0e17abc32dada484e7374df5183f5ff0346cacc6ad3e02ec2de3cdb1fadc7503',
+  genesisStateRoot: '4d454391cac6360a374b9b124812e5a160c2ac3fb802c0ed22e93b774d0a4e8b03',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 

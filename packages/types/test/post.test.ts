@@ -18,10 +18,10 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
-  MAX_PENDING_INVITES,
+  INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   INVITE_PROBATION_BLOCKS,
-  INVITE_KARMA_THRESHOLD,
+  INVITE_BOND_VEST_PER_LIKES,
   GENESIS_COMMITTEE_KEYS,
   GENESIS_KARMA_PER_MEMBER,
   GENESIS_CREDITS_PER_MEMBER,
@@ -391,10 +391,10 @@ describe('constants', () => {
   });
 
   it('invite constants are defined', () => {
-    expect(MAX_PENDING_INVITES).toBe(5);
+    expect(INVITE_KARMA_AMOUNT).toBe(25n);
     expect(INVITE_BOND_KARMA).toBe(25n);
-    expect(INVITE_PROBATION_BLOCKS).toBe(1000);
-    expect(INVITE_KARMA_THRESHOLD).toBe(20n);
+    expect(INVITE_PROBATION_BLOCKS).toBe(43200); // 30 days at 60s blocks
+    expect(INVITE_BOND_VEST_PER_LIKES).toBe(5);
   });
 
   it('genesis constants are defined', () => {

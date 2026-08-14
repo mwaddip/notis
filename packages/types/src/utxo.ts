@@ -100,11 +100,9 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  *   | karma         | b32(owner) ‖ opt(decayBurn)                                |
  *   | credit        | b32(owner) ‖ opt(lockedUntilBlock)                         |
- *   | invite        | b32(secretHash) ‖ b32(inviterId)                          |
+ *   | invite        | b32(inviterId) ‖ b32(inviteePublicKey)                     |
  *   | genesis_proof | lp(payload)                                               |
- *   | bond          | b32(inviterId) ‖ vlqU(inviteOutputIndex)                   |
- *   |               |   ‖ opt(b32(inviteePublicKey)) ‖ vlqU(probationStartBlock) |
- *   |               |   ‖ vlqU(probationEndBlock)                               |
+ *   | bond          | b32(inviterId) ‖ b32(inviteePublicKey)                     |
  *   | post_lock     | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
  *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
  *
@@ -140,8 +138,11 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * domain is `checkOutputShape`'s (node, `validateTx` step 4); see the note on
  * `computeTxId` for the one call site where that gate has not run yet.
  *
- * **One field is not fixed-width**: `bond.inviteePublicKey` is 0-or-32 bytes and
- * therefore `opt(b32)` — see `writeOptBytesNOrThrow`.
+ * **`invite` and `bond` carry identical trailing fields** (TYPES_INTERFACE →
+ * Layout — Boxes). `enum8(boxType)` is field 1, so the tag is what makes the
+ * encoding injective across the two; `value` happens to differ as well — an
+ * invite is always `0` — but nothing may rely on that. It is the standing
+ * `karma` and `credit` already have.
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
@@ -171,8 +172,8 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       writeOpt(w, box.lockedUntilBlock, writeVlqU);
       return;
     case 'invite':
-      writeBytesNOrThrow(w, box.secretHash, 32);
       writeBytesNOrThrow(w, box.inviterId, 32);
+      writeBytesNOrThrow(w, box.inviteePublicKey, 32);
       return;
     case 'genesis_proof':
       // `lp`, not `lpUtf8`: the payload is opaque to consensus. Whether it
@@ -188,11 +189,7 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       return;
     case 'bond':
       writeBytesNOrThrow(w, box.inviterId, 32);
-      writeVlqU(w, box.inviteOutputIndex);
-      // `opt(b32)`, not `b32`: this field is 0-or-32 bytes. See below.
-      writeOptBytesNOrThrow(w, box.inviteePublicKey, 32);
-      writeVlqU(w, box.probationStartBlock);
-      writeVlqU(w, box.probationEndBlock);
+      writeBytesNOrThrow(w, box.inviteePublicKey, 32);
       return;
     case 'post_lock':
       writeVlqU64OrThrow(w, box.originalValue);
@@ -233,16 +230,11 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
  * it here would have this package assert an authorization fact it does not own,
  * and would put the guard table in two places.
  *
- * Two absences are mapped rather than passed through, and both are what make the
- * re-encode compare close:
- *
- * - `opt` fields decode to `undefined`, not `null`. `decayBurn?: boolean` and
- *   `lockedUntilBlock?: number` are optional, so `undefined` is the type-correct
- *   spelling of absent and it is what re-encodes to the same `u8(0)`.
- * - `bond.inviteePublicKey` decodes absent as **empty bytes**, inverting the
- *   encoder's empty-↔-absent mapping for a 0-or-32-byte field. A reader
- *   returning `undefined` there would fail the boundary check on every
- *   unclaimed bond.
+ * One absence is mapped rather than passed through, and it is what makes the
+ * re-encode compare close: `opt` fields decode to `undefined`, not `null`.
+ * `decayBurn?: boolean` and `lockedUntilBlock?: number` are optional, so
+ * `undefined` is the type-correct spelling of absent and it is what re-encodes to
+ * the same `u8(0)`.
  */
 function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
   const boxType = BOX_TYPE.read(r);
@@ -266,8 +258,8 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       return {
         boxType,
         value,
-        secretHash: readBytesN(r, 32),
         inviterId: readBytesN(r, 32),
+        inviteePublicKey: readBytesN(r, 32),
       };
     case 'genesis_proof': {
       const payload = readLp(r);
@@ -300,10 +292,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         boxType,
         value,
         inviterId: readBytesN(r, 32),
-        inviteOutputIndex: readVlqU(r),
-        inviteePublicKey: readOpt(r, (rr) => readBytesN(rr, 32)) ?? new Uint8Array(0),
-        probationStartBlock: readVlqU(r),
-        probationEndBlock: readVlqU(r),
+        inviteePublicKey: readBytesN(r, 32),
       };
     case 'post_lock':
       return {
@@ -321,56 +310,6 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         targetId: readBytesN(r, 32),
       };
   }
-}
-
-/**
- * `opt(b32(x))` over a field whose *absence* is spelled **empty bytes** in
- * memory — `bond.inviteePublicKey`, and it is the only one in the box arms.
- *
- * The field is **0-or-32 bytes**, not 32: empty = unclaimed, 32 bytes =
- * committed (`BondBox` below, and TYPES_INTERFACE → BondBox). Invite creation
- * *requires* it empty — node's engine rejects an invite-create whose bond output
- * carries a key, because a pre-committed bond would let the inviter reclaim
- * immediately and make the network's only sybil cost free. So a fixed-width
- * `b32` here threw on the create path, which is to say on **every invite the
- * node makes**: dead in production, not merely in fixtures.
- *
- * **The in-memory type does not change.** Empty ↔ absent is this encoder's
- * mapping; `inviteePublicKey: Uint8Array` stays, and node's `bytes0or32`
- * output-shape entry stays the domain gate.
- *
- * Three things this shape buys, none of them incidental:
- *
- * - **`opt`, not `lp`.** Identical byte cost, but `lp` would round-trip a
- *   5-byte value and leave the 0-or-32 domain entirely to validation. `opt(b32)`
- *   makes it structural: a decoder can produce absence or exactly 32 bytes, and
- *   there is no third thing to reject.
- * - **Injectivity, both directions.** Unclaimed ↔ `00`; committed ↔
- *   `01 ‖ bytes`. The tags differ in the first byte, so no committed bond shares
- *   an encoding with an uncommitted one, and `01` is always followed by exactly
- *   32 bytes so no two committed bonds share one either.
- * - **`writeOpt`'s own null/undefined coercion must not fire here.** A *missing*
- *   field is out of domain, not unclaimed, and letting it take the absent branch
- *   would give a malformed box a well-formed box's id — precisely the collision
- *   `canonicalBoxBytes`' totality note refuses for `value`. So the absence test
- *   is "byte view of length zero" and nothing else; anything that is not a
- *   `Uint8Array` goes to the present branch and reaches the throwing writer,
- *   where the other fixed-width fields already send it.
- *
- * `writeOpt` writes the tag rather than this function hand-rolling `0x00`/`0x01`,
- * so the option encoding has one definition and cannot drift from the three
- * sibling fields already using it (`karma.decayBurn`, `credit.lockedUntilBlock`,
- * `tx.likeTarget`). The one-field wrapper is what keeps that coercion
- * unreachable while still going through it: a wrapper object is never `null` or
- * `undefined`, whatever it holds.
- *
- * @throws {Error} if `bytes` is present-but-not-`n`-bytes, or not a byte view
- */
-function writeOptBytesNOrThrow(w: ByteWriter, bytes: Uint8Array, n: number): void {
-  const unclaimed = bytes instanceof Uint8Array && bytes.length === 0;
-  writeOpt(w, unclaimed ? undefined : { present: bytes }, (ww, wrapped) => {
-    writeBytesNOrThrow(ww, wrapped.present, n);
-  });
 }
 
 /**
@@ -558,6 +497,13 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * `like-payout` settles likes per block (ARCHITECTURE → Per-block accrual and
  * settlement): one mint per author per block, subject = the raw author key.
  *
+ * The three invite reasons all take the invitee's public key as subject, and an
+ * address may be invited **once, ever** (NODE_INTERFACE → Bond transition rules),
+ * so each `(reason, subject)` pair occurs at most once in the whole history —
+ * without reading the height at all. `invite-claim` is the only reason on the
+ * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
+ * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.
+ *
  * **Retired reasons — reserved, never reuse:** `'author-reward'`,
  * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
  * prune settlement refunds no liker). None of them holds a number in
@@ -572,7 +518,10 @@ export type MintReason =
   | 'postlock-remainder'
   | 'decay'
   | 'genesis'
-  | 'prune-refund-author';
+  | 'prune-refund-author'
+  | 'invite-claim'
+  | 'bond-settle'
+  | 'bond-return';
 
 /**
  * The `MintReason` tag table.
@@ -607,6 +556,9 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
   decay: 5,
   genesis: 6,
   'prune-refund-author': 7,
+  'invite-claim': 8,
+  'bond-settle': 9,
+  'bond-return': 10,
 });
 
 /**
@@ -665,16 +617,24 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
 // ---------------------------------------------------------------------------
 
 // `'block_apply'` means "consumable only by block application"; there is no
-// epoch. **`'epoch_tally'` is a retired guard string — reserved, never reuse.**
-// Node's `checkOutputShape` rejects any guard that is not the canonical one for
-// its `boxType`, so reinstating the name would silently make an output shape
-// that is invalid today valid. Guard is *not* in the id preimage (see
-// `canonicalBoxBytes`), so this reservation is a validation-rule one, not an
-// identity one.
+// epoch. `'unspendable'` names no spender at all, which no other member does.
 //
-// `'unspendable'` names no spender at all, which no other member does —
-// `'block_apply'` is still consumable, by block application.
-export type BoxGuard = 'owner_signature' | 'block_apply' | 'hash_preimage' | 'inviter_signature' | 'bond_dual' | 'hash_preimage_with_bond' | 'unspendable';
+// `'invite_dual'` is satisfied by EITHER key the InviteBox names, and the shape
+// that key may take is the transition's: invitee → claim, inviter → cancel. Two
+// signatures, no preimage — the claimant proves identity, not knowledge of a
+// secret.
+//
+// **RESERVED, never to be reused:** `'epoch_tally'`, `'hash_preimage_with_bond'`,
+// `'bond_dual'`, `'hash_preimage'`, `'inviter_signature'`. Guard strings are box
+// content, so a reused name makes two different rules share a byte string; and
+// node's `checkOutputShape` rejects any guard that is not the canonical one for
+// its `boxType`, so reinstating a name would silently make an output shape that
+// is invalid today valid.
+//
+// Every box fixes its guard to a literal and this union holds one member per
+// reachable spender, so node's guard switch is total over the names the store can
+// write (TYPES_INTERFACE → BoxGuard).
+export type BoxGuard = 'owner_signature' | 'block_apply' | 'invite_dual' | 'unspendable';
 
 /**
  * The creator-chosen fields — what a client builds and what `computeTxId`
@@ -746,12 +706,27 @@ export interface CreditBox extends BoxBase {
 
 // --- Invite ---
 
+/**
+ * A named right to mint — TYPES_INTERFACE → InviteBox.
+ *
+ * **The box carries no value because the karma does not exist yet.** It is held
+ * open until one of the two keys it names acts: the invitee spends it into a
+ * `KarmaBox` of `INVITE_KARMA_AMOUNT`, which is where the mint happens, or the
+ * inviter spends it to nothing and takes their bond back through block
+ * application.
+ *
+ * **An invite never expires.** With no deadline there is no sweep and no
+ * `expiryBlock` field; it stays claimable until the inviter cancels, and their
+ * bond stays locked for exactly that long. `K / INVITE_BOND_KARMA` bounds an
+ * account's concurrent invites, which is what makes the rate limit self-enforcing
+ * without a rule.
+ */
 export interface InviteBox extends BoxBase {
   boxType: 'invite';
-  value: bigint;                    // N karma transferred
-  secretHash: Uint8Array;           // 32 bytes — H(s) = blake2b512(s).subarray(0,32)
-  inviterId: UserId;
-  guard: 'hash_preimage_with_bond'; // Unlocked by preimage + committed BondBox
+  value: bigint;                   // Always 0 — a claim ticket, not a container
+  inviterId: UserId;               // May cancel
+  inviteePublicKey: Uint8Array;    // 32 raw bytes — may claim; the key INVITE_KARMA_AMOUNT mints to
+  guard: 'invite_dual';            // Invitee signature (claim) OR inviter signature (cancel)
 }
 
 // --- Genesis proof ---
@@ -780,44 +755,33 @@ export interface GenesisProofBox extends BoxBase {
 
 // --- Bond ---
 
+/**
+ * The inviter's stake — TYPES_INTERFACE → BondBox.
+ *
+ * **A `BondBox` is byte-identical from creation to the block that consumes it**,
+ * and the field list is what makes that true. An address can be invited only
+ * once, so `inviteePublicKey` names the paired invite by itself: no box id, no
+ * output index, no provenance walk. It carries no probation fields either — the
+ * window runs from the **claim**, and that height is already committed as
+ * `IdentityRecord.invitedAtBlock` (NODE_INTERFACE → Identity Records).
+ *
+ * **There is no `originalValue`,** and the contrast with `PostLockBox` is the
+ * reason: a post lock vests per block, so its current and initial values differ.
+ * A bond settles **once**, for `min(floor(inviteeLifetimeLikes /
+ * INVITE_BOND_VEST_PER_LIKES), value)` — a pure function of a lifetime count, so
+ * one evaluation is arithmetically identical to accumulated instalments and no
+ * partial state exists to record.
+ *
+ * **Nothing spends a bond.** Creation, claim, cancellation and settlement all
+ * move it through block application, so the guard admits no user transaction at
+ * all — the same standing `PostLockBox` has.
+ */
 export interface BondBox extends BoxBase {
   boxType: 'bond';
-  value: bigint;                    // D karma deposited
+  value: bigint;                   // B karma deposited by the inviter
   inviterId: UserId;               // Owner — the inviter
-  /**
-   * Which output of this bond's **own creating transaction** is the paired
-   * InviteBox — an index, not a box id (user decision, 2026-08-06).
-   *
-   * A box id here would be **circular**: the id derives from the creating
-   * transaction's `txId`, and this is a content field, so it sits inside the
-   * bytes `computeTxId` hashes. Measured: no fixed point exists. The
-   * no-circularity argument in TYPES_INTERFACE → BoxId covers *provenance*
-   * fields (`computeTxId` excludes `id`/`txId`/`index`) and does not reach a
-   * content field carrying a box id.
-   *
-   * An index is not merely a workaround for that. The bond and the invite are
-   * always outputs of one transaction, so pairing by position makes a bond that
-   * points at *someone else's* invite inexpressible rather than caught late — a
-   * box id could name any box in the world, and is checked only when it is
-   * dereferenced, one transaction later. The invite resolves from
-   * `(bond.txId, inviteOutputIndex)`, which `UNIQUE(tx_id, output_index)`
-   * already indexes.
-   */
-  inviteOutputIndex: number;
-  /**
-   * **0 or 32 raw bytes**: empty = unclaimed, 32 bytes = committed. Set during
-   * commit; empty on the create path, which node's engine *requires* — a
-   * pre-committed bond would let the inviter reclaim immediately and make the
-   * network's only sybil cost free.
-   *
-   * The width is the field's whole subtlety: "32 raw bytes" is wrong for the
-   * unclaimed case, and the layout follows the width rather than the declared
-   * type. It encodes as `opt(b32)`; see `writeOptBytesNOrThrow`.
-   */
-  inviteePublicKey: Uint8Array;
-  probationStartBlock: number;     // Set during commit
-  probationEndBlock: number;       // probationStartBlock + INVITE_PROBATION_BLOCKS
-  guard: 'bond_dual';              // inviter_signature (reclaim) OR hash_preimage (commit)
+  inviteePublicKey: Uint8Array;    // 32 raw bytes — set at creation, the key the paired invite names
+  guard: 'block_apply';            // Consumable only by block application
 }
 
 // --- Post Lock ---
@@ -885,9 +849,9 @@ export type AnyBoxCandidate =
 export const BOX_GUARDS = Object.freeze({
   karma: 'owner_signature',
   credit: 'owner_signature',
-  invite: 'hash_preimage_with_bond',
+  invite: 'invite_dual',
   genesis_proof: 'unspendable',
-  bond: 'bond_dual',
+  bond: 'block_apply',
   post_lock: 'block_apply',
   vouch: 'owner_signature',
 } as const satisfies { [T in AnyBox['boxType']]: Extract<AnyBox, { boxType: T }>['guard'] });
@@ -906,7 +870,16 @@ export interface UtxoTransaction {
    */
   outputs: AnyBoxCandidate[];
   signatures: Record<string, Uint8Array>;  // publicKey (hex) → Ed25519 sig (64 bytes) over txId
-  preimages?: Record<string, Uint8Array>;  // boxId → hash preimage for hash_preimage guards
+  /**
+   * ⛔ **No consumer.** With no hash-locked guard left in `BoxGuard`, nothing
+   * reads this map — but it stays field 3 of the encoding, sorted by key and
+   * hashed into every `TxId`, so it is a consensus surface that carries no
+   * meaning. Removing it changes every transaction id, which is why it goes with
+   * the transaction-representation work (TYPES_INTERFACE → Layout —
+   * UtxoTransaction). Until then it is encoded, validated for envelope shape, and
+   * never consulted.
+   */
+  preimages?: Record<string, Uint8Array>;  // boxId → hash preimage
   protocolVersion: number;
   /**
    * Present ⟺ this transaction is a like on the named post (ARCHITECTURE →

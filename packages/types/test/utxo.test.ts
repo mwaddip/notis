@@ -72,13 +72,12 @@ function makeCreditBox(): CreditBox {
 function makeInviteBox(): InviteBox {
   return {
     boxType: 'invite',
-    value: 10n,
-    secretHash: new Uint8Array(32).fill(0xbb),
+    // An invite is a claim ticket and always holds 0 — the karma it names does
+    // not exist until the claim mints it (TYPES_INTERFACE → InviteBox).
+    value: 0n,
     inviterId: inviter,
-    // RETIRED guard string. The InviteBox guard is `hash_preimage_with_bond` —
-    // the rename happened when a reveal started requiring a paired BondBox
-    // input. This fixture named a guard the engine has no arm for.
-    guard: 'hash_preimage_with_bond',
+    inviteePublicKey: new Uint8Array(32).fill(0xcc),
+    guard: 'invite_dual',
     txId: FIXTURE_TX_ID,
     index: 2,
   };
@@ -89,16 +88,11 @@ function makeBondBox(): BondBox {
     boxType: 'bond',
     value: 20n,
     inviterId: inviter,
+    // The paired invite names the same key, and that is the whole pairing: an
+    // address can be invited once, so this field identifies exactly one live
+    // pair (TYPES_INTERFACE → BondBox).
     inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    // REQUIRED: the bond resolves its paired InviteBox by
-    // `(bond.txId, bond.inviteOutputIndex)`, so a fixture without it is not a
-    // bond box.
-    inviteOutputIndex: 2,
-    probationStartBlock: 17,
-    probationEndBlock: 1017,
-    // `bond_dual` is the canonical guard for a BondBox — see `BondBox` in
-    // `src/utxo.ts` for the satisfaction paths it names.
-    guard: 'bond_dual',
+    guard: 'block_apply',
     txId: FIXTURE_TX_ID,
     index: 3,
   };
@@ -410,151 +404,127 @@ describe('canonicalBoxBytes', () => {
 });
 
 // ---------------------------------------------------------------------------
-// bond.inviteePublicKey — the one 0-or-32-byte field
+// invite and bond — two tags over one trailing layout
 // ---------------------------------------------------------------------------
 
 /**
- * `opt(b32)`, not `b32` — and the tests below are the pin, in both directions.
+ * `invite` and `bond` carry **identical trailing fields** — `b32(inviterId) ‖
+ * b32(inviteePublicKey)` — so `enum8(boxType)` is the whole of what separates
+ * their leaves (TYPES_INTERFACE → Layout — Boxes). `value` happens to differ too,
+ * since an invite is always `0`, but nothing may rely on that: the tests below
+ * pin the pair at one shared value as well, which is the case a tag-blind encoder
+ * would collide.
  *
- * The field is 0-or-32 bytes: empty = unclaimed, 32 bytes = committed. The
- * layout table specified `b32`, drafted from the field's TYPE rather than its
- * DOMAIN, and `writeBytesNOrThrow` throws on a zero-length input — so
- * `canonicalBoxBytes` threw on every bond a *created* invite carries, and
- * through it `computeTxId` threw on every invite creation. Node's engine
- * *requires* the field empty on that path: a pre-committed bond would let the
- * inviter reclaim immediately and make the network's only sybil cost free. So
- * the throwing arm was not a corner — it was the whole create path.
+ * Both key fields are fixed 32 bytes. A width outside that has **no** encoding
+ * rather than sharing one — `writeBytesNOrThrow` throws, and its domain is
+ * established upstream by node's output-shape schema (`TYPES_INTERFACE` →
+ * Totality).
  *
- * What has to hold now, and what each test below covers:
- *
- *  1. Both states encode, and to the bytes the layout table names.
- *  2. **Injectivity forward** — the two states never share bytes. They differ in
- *     the option tag, which is the first byte after `inviteOutputIndex`.
- *  3. **Injectivity backward** — there is no third encoding. Anything that is
- *     not empty and not 32 bytes has *no* encoding rather than sharing one, and
- *     that includes a field which is missing altogether: a malformed box must
- *     not be handed a well-formed box's id.
- *  4. Nothing else in the bond arm moved, and nothing outside it moved at all.
- */
-const BOND_KEY = new Uint8Array(32).fill(0xcc);
-const BOND_UNCLAIMED = { ...makeBondBox(), inviteePublicKey: new Uint8Array(0) };
-const BOND_COMMITTED = { ...makeBondBox(), inviteePublicKey: BOND_KEY };
-
-/**
  * Hand-assembled from the layout table, not copied from the encoder's output —
- * the file's existing idiom for a frozen byte string, and the only form that
- * makes the vector an independent check rather than a screenshot.
+ * the file's idiom for a frozen byte string, and the only form that makes a
+ * vector an independent check rather than a screenshot.
  *
- *   04 | 14 | b32(inviterId) | 02 | <opt> | 11 | f907
- *   ^tag ^vlqU(20)             ^index      ^17  ^vlqU(1017)
+ *   02 | 00 | b32(inviterId) | b32(inviteePublicKey)     — invite, value 0
+ *   04 | 14 | b32(inviterId) | b32(inviteePublicKey)     — bond, value 20
+ *   ^tag ^vlqU64(value)
  */
-const BOND_PREFIX = '04' + '14' + '56'.repeat(32) + '02';
-const BOND_SUFFIX = '11' + 'f907';
-const BOND_UNCLAIMED_BYTES = BOND_PREFIX + '00' + BOND_SUFFIX;
-const BOND_COMMITTED_BYTES = BOND_PREFIX + '01' + 'cc'.repeat(32) + BOND_SUFFIX;
+const INVITEE_KEY = new Uint8Array(32).fill(0xcc);
+const PAIR_TAIL = '56'.repeat(32) + 'cc'.repeat(32);
+const INVITE_BYTES = '02' + '00' + PAIR_TAIL;
+const BOND_BYTES = '04' + '14' + PAIR_TAIL;
 
-describe('bond.inviteePublicKey is opt(b32), not b32', () => {
+describe('invite and bond share a trailing layout, separated by the tag', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-  it('an UNCLAIMED bond encodes — the case a b32 writer had no encoding for', () => {
-    expect(hexOf(canonicalBoxBytes(BOND_UNCLAIMED))).toBe(BOND_UNCLAIMED_BYTES);
-    // 39 bytes. Under `b32` this call threw: `expected 32 bytes, got 0`.
-    expect(canonicalBoxBytes(BOND_UNCLAIMED).length).toBe(39);
+  it('an invite encodes to tag, value 0, and the two keys — 66 bytes', () => {
+    expect(hexOf(canonicalBoxBytes(makeInviteBox()))).toBe(INVITE_BYTES);
+    expect(canonicalBoxBytes(makeInviteBox()).length).toBe(66);
   });
 
-  it('a COMMITTED bond encodes as 01 followed by exactly the key', () => {
-    expect(hexOf(canonicalBoxBytes(BOND_COMMITTED))).toBe(BOND_COMMITTED_BYTES);
-    // 71, one byte more than the 70 the b32 row produced — the option tag.
-    expect(canonicalBoxBytes(BOND_COMMITTED).length).toBe(71);
+  it('a bond encodes to the same tail under its own tag — 66 bytes', () => {
+    expect(hexOf(canonicalBoxBytes(makeBondBox()))).toBe(BOND_BYTES);
+    expect(canonicalBoxBytes(makeBondBox()).length).toBe(66);
   });
 
-  it('injective forward: the two states differ, at the option tag and nowhere else', () => {
-    const unclaimed = hexOf(canonicalBoxBytes(BOND_UNCLAIMED));
-    const committed = hexOf(canonicalBoxBytes(BOND_COMMITTED));
-    expect(unclaimed).not.toBe(committed);
-    // Same box otherwise, so everything before the tag is identical and
-    // everything after the payload is identical. That is what confines this
-    // change to one field rather than to the bond layout as a whole.
-    expect(unclaimed.startsWith(BOND_PREFIX)).toBe(true);
-    expect(committed.startsWith(BOND_PREFIX)).toBe(true);
-    expect(unclaimed.endsWith(BOND_SUFFIX)).toBe(true);
-    expect(committed.endsWith(BOND_SUFFIX)).toBe(true);
-    // The tag byte itself is the discriminant: 00 versus 01.
-    expect(unclaimed.slice(BOND_PREFIX.length, BOND_PREFIX.length + 2)).toBe('00');
-    expect(committed.slice(BOND_PREFIX.length, BOND_PREFIX.length + 2)).toBe('01');
-    // And the ids follow the bytes.
-    expect(computeBoxId(BOND_UNCLAIMED)).not.toBe(computeBoxId(BOND_COMMITTED));
+  it('the tag alone separates them when value agrees', () => {
+    // The case a tag-blind encoder collides: same inviter, same invitee, same
+    // value, different type. `enum8(boxType)` is field 1, so the leaves differ
+    // in byte 0 and nowhere else — and the ids follow the bytes.
+    const invite = { ...makeInviteBox(), value: 20n };
+    const bond = makeBondBox();
+    const a = hexOf(canonicalBoxBytes(invite));
+    const b = hexOf(canonicalBoxBytes(bond));
+    expect(a.slice(2)).toBe(b.slice(2));
+    expect(a.slice(0, 2)).toBe('02');
+    expect(b.slice(0, 2)).toBe('04');
+    expect(computeCandidateBoxId(invite, FIXTURE_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(bond, FIXTURE_TX_ID, 0));
   });
 
-  it('injective forward: two committed bonds with different keys never share bytes', () => {
-    const other = { ...BOND_COMMITTED, inviteePublicKey: new Uint8Array(32).fill(0xdd) };
-    expect(hexOf(canonicalBoxBytes(other))).not.toBe(hexOf(canonicalBoxBytes(BOND_COMMITTED)));
-    expect(computeBoxId(other)).not.toBe(computeBoxId(BOND_COMMITTED));
-  });
-
-  it('injective backward: there is no third encoding — off-domain widths have NONE', () => {
-    // `opt(b32)` rather than `lp` is what makes this structural. An `lp` costs
-    // the same bytes and would round-trip a 5-byte key happily, leaving the
-    // 0-or-32 domain entirely to validation; here a decoder can produce absence
-    // or exactly 32 bytes and there is nothing else to reject.
-    for (const width of [1, 31, 33, 64]) {
-      const off = { ...BOND_COMMITTED, inviteePublicKey: new Uint8Array(width) };
-      expect(() => canonicalBoxBytes(off)).toThrow(/expected 32 bytes/);
+  it('both round-trip through the reader', () => {
+    for (const box of [makeInviteBox(), makeBondBox()]) {
+      const { candidate } = boxRecordFromBytes(boxRecordBytes(box, box.txId, box.index));
+      expect(hexOf(canonicalBoxBytes(candidate as never))).toBe(hexOf(canonicalBoxBytes(box)));
     }
   });
 
-  it('injective backward: a MISSING field throws rather than encoding as unclaimed', () => {
-    // The subtle one, and the reason the absence test is "byte view of length
-    // zero" instead of `writeOpt`'s own null/undefined coercion. A missing
-    // field is out of domain, not unclaimed — letting it take the absent branch
-    // would give a malformed box a well-formed box's id, which is exactly the
-    // collision `canonicalBoxBytes` refuses for `value`.
-    const missing = { ...BOND_COMMITTED, inviteePublicKey: undefined as unknown as Uint8Array };
-    expect(() => canonicalBoxBytes(missing)).toThrow(/expected 32 bytes/);
-    const nulled = { ...BOND_COMMITTED, inviteePublicKey: null as unknown as Uint8Array };
-    expect(() => canonicalBoxBytes(nulled)).toThrow(/expected 32 bytes/);
-    // Not a byte view at all, and array-like is still not a Uint8Array.
-    const arrayLike = { ...BOND_COMMITTED, inviteePublicKey: [] as unknown as Uint8Array };
-    expect(() => canonicalBoxBytes(arrayLike)).toThrow(/expected 32 bytes/);
+  it('each key field is b32: an off-domain width has no encoding at all', () => {
+    // Not merely rejected late — there is no byte string for it, so a malformed
+    // box can never be handed a well-formed box's id.
+    for (const width of [0, 1, 31, 33, 64]) {
+      const shortInvitee = new Uint8Array(width);
+      const invite = { ...makeInviteBox(), inviteePublicKey: shortInvitee };
+      expect(() => canonicalBoxBytes(invite)).toThrow(/expected 32 bytes/);
+      const bond = { ...makeBondBox(), inviteePublicKey: shortInvitee };
+      expect(() => canonicalBoxBytes(bond)).toThrow(/expected 32 bytes/);
+    }
   });
 
-  it('the invite-creation path computes a txId instead of throwing', () => {
-    // The production defect, stated as the transaction that carries it. An
-    // invite create emits the InviteBox and its paired BondBox in ONE
-    // transaction, with the bond's invitee key empty — so `computeTxId` hashed
-    // an empty `b32` and threw, taking `createInvite` and `validateTx` with it.
+  it('a MISSING key throws rather than encoding as anything', () => {
+    for (const absent of [undefined, null, []]) {
+      const invite = { ...makeInviteBox(), inviteePublicKey: absent as unknown as Uint8Array };
+      expect(() => canonicalBoxBytes(invite)).toThrow(/expected 32 bytes/);
+      const bond = { ...makeBondBox(), inviteePublicKey: absent as unknown as Uint8Array };
+      expect(() => canonicalBoxBytes(bond)).toThrow(/expected 32 bytes/);
+    }
+  });
+
+  it('the invite-creation transaction hashes both outputs', () => {
+    // One transaction emits the InviteBox and its paired BondBox, both naming
+    // the same invitee. The key is inside the signed preimage, so a relay
+    // cannot re-point either box at an invitee of its own.
     const inviteCreate: UtxoTransaction = {
       inputs: [IN_1],
       outputs: [
-        { boxType: 'invite', value: 25n, secretHash: new Uint8Array(32).fill(0xbb), inviterId: inviter, guard: 'hash_preimage_with_bond' },
-        { boxType: 'bond', value: 25n, inviterId: inviter, inviteOutputIndex: 0, inviteePublicKey: new Uint8Array(0), probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' },
+        { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'invite_dual' },
+        { boxType: 'bond', value: 25n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'block_apply' },
       ],
       signatures: {},
       protocolVersion: 1,
     };
-    expect(() => computeTxId(inviteCreate)).not.toThrow();
     expect(computeTxId(inviteCreate)).toHaveLength(64);
-    // And committing to an invitee moves that id — the bond is inside the
-    // signed preimage, so a relay cannot swap in its own invitee key.
-    const committed: UtxoTransaction = {
+    const other: UtxoTransaction = {
       ...inviteCreate,
-      outputs: [inviteCreate.outputs[0]!, { ...(inviteCreate.outputs[1] as CandidateOf<BondBox>), inviteePublicKey: BOND_KEY }],
+      outputs: inviteCreate.outputs.map((o) => ({
+        ...(o as CandidateOf<BondBox>),
+        inviteePublicKey: new Uint8Array(32).fill(0xdd),
+      })) as UtxoTransaction['outputs'],
     };
-    expect(computeTxId(committed)).not.toBe(computeTxId(inviteCreate));
+    expect(computeTxId(other)).not.toBe(computeTxId(inviteCreate));
   });
 
-  it('nothing outside the bond arm moved', () => {
-    // The claim that keeps a bond-arm edit a one-field fix rather than a
-    // movement of everything: the five non-bond box types and the transaction
-    // that carries none are pinned here, so a change reaching any other arm
-    // fails at this test rather than at a moved `stateRoot` much later.
+  it('nothing outside the invite and bond arms moved', () => {
+    // The claim that keeps this a two-arm edit rather than a movement of
+    // everything: the other box types and the transaction that carries none are
+    // pinned here, so a change reaching another arm fails at this test rather
+    // than at a moved `stateRoot` much later.
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
     expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
     expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
     expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
-    // invite / post_lock / vouch have no inline golden here; theirs are the
-    // untouched vectors in `test/golden/boxes.json`, asserted by the corpus
+    // post_lock / vouch / genesis_proof have no inline golden here; theirs are
+    // the untouched vectors in `test/golden/boxes.json`, asserted by the corpus
     // suite in both directions.
   });
 });
@@ -990,18 +960,16 @@ describe('boxRecordFromBytes', () => {
     ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
     ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
     ['invite', {
-      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
-      inviterId: inviter, guard: 'hash_preimage_with_bond',
+      boxType: 'invite', value: 0n, inviterId: inviter,
+      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'invite_dual',
     }],
-    ['bond (unclaimed — empty ↔ absent)', {
-      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 2,
-      inviteePublicKey: new Uint8Array(0), probationStartBlock: 17,
-      probationEndBlock: 1017, guard: 'bond_dual',
-    }],
-    ['bond (committed — 32 bytes)', {
-      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 2,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc), probationStartBlock: 17,
-      probationEndBlock: 1017, guard: 'bond_dual',
+    // The same trailing fields under the other tag, at a value an invite never
+    // carries. Both rows are here because the pair is one layout with two tags:
+    // a reader that walked the bond arm as an invite would round-trip fine on
+    // the fields and fail only on the discriminant.
+    ['bond', {
+      boxType: 'bond', value: 20n, inviterId: inviter,
+      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'block_apply',
     }],
     ['post_lock', {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
@@ -1679,17 +1647,16 @@ describe('the box-type tables', () => {
     karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature' },
     credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature' },
     invite: {
-      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0xbb),
-      inviterId: inviter, guard: 'hash_preimage_with_bond',
+      boxType: 'invite', value: 0n, inviterId: inviter,
+      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'invite_dual',
     },
     genesis_proof: {
       boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([1, 2, 3]),
       guard: 'unspendable',
     },
     bond: {
-      boxType: 'bond', value: 20n, inviterId: inviter, inviteOutputIndex: 1,
-      inviteePublicKey: new Uint8Array(0), probationStartBlock: 5,
-      probationEndBlock: 1005, guard: 'bond_dual',
+      boxType: 'bond', value: 20n, inviterId: inviter,
+      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'block_apply',
     },
     post_lock: {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
@@ -1734,9 +1701,9 @@ describe('the box-type tables', () => {
     expect({ ...BOX_GUARDS }).toEqual({
       karma: 'owner_signature',
       credit: 'owner_signature',
-      invite: 'hash_preimage_with_bond',
+      invite: 'invite_dual',
       genesis_proof: 'unspendable',
-      bond: 'bond_dual',
+      bond: 'block_apply',
       post_lock: 'block_apply',
       vouch: 'owner_signature',
     });

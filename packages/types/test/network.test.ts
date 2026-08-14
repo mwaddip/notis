@@ -138,18 +138,30 @@ describe('NETWORK_PROFILES', () => {
     expect(devnet.orderingBlockPowTargetBits).toBeLessThan(mainnet.orderingBlockPowTargetBits);
   });
 
-  it('devnet compresses the remaining durations, preserving mainnet orderings', () => {
-    const devnet = NETWORK_PROFILES.devnet;
+  it('devnet compresses the remaining durations, and diverges on one ordering', () => {
+    const { mainnet, devnet } = NETWORK_PROFILES;
     expect(devnet.vouchCooldownBlocks).toBe(3);
-    expect(devnet.inviteProbationBlocks).toBe(10);
+    expect(devnet.inviteProbationBlocks).toBe(432); // 43200 ÷ 100
     expect(devnet.creditMinerRewardDelay).toBe(10);
     expect(devnet.bootstrapPeriodBlocks).toBe(100);
     expect(devnet.creditFixedRateBlocks).toBe(1000);
     expect(devnet.creditEpochBlocks).toBe(100);
-    // Orderings mainnet also satisfies: probation < bootstrap < stale, epoch < fixed-rate
-    expect(devnet.inviteProbationBlocks).toBeLessThan(devnet.bootstrapPeriodBlocks);
+
+    // Orderings both profiles satisfy, asserted on both so "devnet mirrors
+    // mainnet" is checked rather than assumed.
     expect(devnet.bootstrapPeriodBlocks).toBeLessThan(devnet.karmaStaleThresholdBlocks);
+    expect(mainnet.bootstrapPeriodBlocks).toBeLessThan(mainnet.karmaStaleThresholdBlocks);
     expect(devnet.creditEpochBlocks).toBeLessThan(devnet.creditFixedRateBlocks);
+    expect(mainnet.creditEpochBlocks).toBeLessThan(mainnet.creditFixedRateBlocks);
+
+    // The ordering the two profiles do NOT share. Each duration is compressed by
+    // the ratio its own line in `network.ts` states, and probation's ÷100 puts
+    // devnet's between bootstrap and the stale threshold where mainnet's is the
+    // longest of the three. Pinned on both sides, so restoring the agreement —
+    // or losing another ordering — has to come through this test.
+    expect(mainnet.inviteProbationBlocks).toBeGreaterThan(mainnet.karmaStaleThresholdBlocks);
+    expect(devnet.inviteProbationBlocks).toBeGreaterThan(devnet.bootstrapPeriodBlocks);
+    expect(devnet.inviteProbationBlocks).toBeLessThan(devnet.karmaStaleThresholdBlocks);
   });
 
   it('devnet keeps mainnet economics — genesis allocations are not compressed', () => {
