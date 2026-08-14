@@ -913,9 +913,6 @@ The network is invite-only. An existing account must stake for every new
 account, and **the invite is the network's only source of karma** — nothing else
 creates it after genesis.
 
-> ⚠ **AHEAD OF CODE.** The tree still has the hash-locked bearer invite, its
-> commit step, and no forfeiture.
-
 An invite names its invitee. Bob gives Alice his public key out of band; from
 there each of them acts under their own signature and no secret exists anywhere
 in the flow.
@@ -1601,13 +1598,6 @@ forever. A node rejects objects with an unsupported protocol version.
 - An address can be invited **once, ever**
 - Invite bonds vest against the invitee's lifetime likes and the unvested part is
   **burned** at the probation deadline
-  > ⚠ **AHEAD OF CODE**, and this bullet is the one that changes most. The tree
-  > settles a bond by returning it to the inviter in full — on probation expiry *or*
-  > on the invitee's current karma balance — and has no burn path of any kind, which
-  > its own engine says in the error string *"bond forfeiture is not implemented; no
-  > burn shape exists"*. A bond today is therefore an escrow that always pays back,
-  > and the balance leg fires the moment the invitee claims. **Forfeiture is
-  > introduced here, not repaired here.**
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
   > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
   > Usernames become a **UTXO asset**: tradeable for
@@ -1623,7 +1613,7 @@ forever. A node rejects objects with an unsupported protocol version.
   **the like burn** — `LIKE_KARMA_COST` leaves the liker per like, `x−1` per `x` returns
   via `like-payout`, net 1 burned per `LIKES_PER_KARMA_PAYOUT` likes — and **bond
   forfeiture**, the unvested remainder destroyed at a bond's settlement.
-  > ⚠ **AHEAD OF CODE**, and it is the whole of karma emission. Only **one** reason on
+  > ⚠ **This is the whole of karma emission.** Only **one** reason on
   > that table increases supply after genesis: `invite-claim`. `bond-settle` and
   > `bond-return` re-mint value a `BondBox` already held, exactly as `vouch-settle`
   > re-mints an escrow. **Read the table's own note before deriving a supply figure from
@@ -2089,9 +2079,6 @@ fresh. Namespacing keeps the option open to split into separate stores later
   > no refund"). The **free-like tier has no producer anywhere in the node** — correctly never
   > built rather than a gap. See §Likes.
 - Invite system: key-named invites, bond vesting against likes, cancel
-  > ⚠ **AHEAD OF CODE.** The tree has hash-locked bearer invites with a commit step, and
-  > no forfeiture — `node/src/services/utxo-engine.ts` says so at its bond section:
-  > *"Forfeiture is not implemented"*. See §Invite System for the shape that replaces it.
 - ~~Post karma locking with gradual unlock at epoch boundaries~~
   > ⚠ **PARTIAL. Verified 2026-08-11** — `PostLockBox` is a live interface in
   > `types/src/utxo.ts` and a member of the `AnyBox` union. The post bond is real and stays — it is

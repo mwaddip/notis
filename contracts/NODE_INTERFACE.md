@@ -224,9 +224,6 @@ gateway DoS for the price of one extra signature.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-> ⚠ **AHEAD OF CODE.** The tree serves `/invites/commit`, returns a `secretHash`,
-> and takes a preimage on claim.
-
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, inviteBoxId, bondBoxId }` | 400 if insufficient karma, 400 if that key has already been invited |
@@ -657,7 +654,7 @@ Full read-only validation. Performs all checks without modifying state:
      `INVITE_KARMA_AMOUNT` in the *output's* favour. This is the one place a user
      transaction may create karma, and it is a biconditional in both directions: a
      surplus in any other shape is invalid, and a claim carrying any other surplus
-     is invalid. ⚠ **AHEAD OF CODE;** the gate has no surplus arm today;
+     is invalid;
    - the **zero-output spend** of a `VouchBox` (unvouch — the staked karma is
      escrowed off-UTXO in `vouch_cooldowns` and re-minted at maturity, an escrow
      round-trip rather than a burn) or of an `InviteBox` (cancel — the box holds
@@ -743,10 +740,9 @@ schema for its `boxType`**:
     `checkOutputValues`, which retired with this pin (one owner per rule;
     `json-to-tx`'s `assertValidBoxValue` stays as the HTTP-edge twin).
   - 32-byte `Uint8Array`: `owner` (karma, credit, post_lock), `inviterId` and
-    `inviteePublicKey` (invite, bond), `voucherId`, `targetId` (vouch).
-    ⚠ **AHEAD OF CODE:** `inviteePublicKey` is `bytes0or32` in the tree, and
-    `bytes32` here — the empty state went with the commit transition, so the
-    length is no longer a transition-arm question.
+    `inviteePublicKey` (invite, bond), `voucherId`, `targetId` (vouch). The
+    empty state went with the commit transition, so `inviteePublicKey`'s length
+    is no longer a transition-arm question and `bytes0or32` has no user.
   - Non-negative safe integer, and never `-0`: `lockedUntilBlock`
     (credit, when present). `-0` is called out because it is JSON- and
     CBOR-reachable and breaks byte round-trips: cbor-x encodes it as a float
@@ -1076,9 +1072,6 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Bond transition rules
 
-> ⚠ **AHEAD OF CODE.** The tree still has the commit and claim transitions, the
-> spend-time settlement predicate, and no forfeiture.
-
 - **A bond is never spent, only settled.** Creation, the probation clock,
   forfeiture and the cancellation return are all block application's, so
   the guard is `block_apply` and no signature satisfies it. This is what
@@ -1317,9 +1310,6 @@ forms, so a mirror implementation derives the same ids:
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
 | `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
 
-> ⚠ **AHEAD OF CODE.** The three invite reasons are not in `MintReason` and have no
-> encoders.
-
 ⛔ **`invite-claim` is the only row on this table that increases karma supply.**
 `bond-settle` and `bond-return` re-mint karma that a `BondBox` already held, in the
 same sense `vouch-settle` re-mints an escrow — a synthetic txId for a box that
@@ -1548,8 +1538,6 @@ the provenance derivation: the id derives from the creating `txId`, and a conten
 field sits inside the bytes `computeTxId` hashes. Measured: no fixed point exists.
 Spec G §3.1's "no circularity" argument covers *provenance* fields and does not
 reach this.
-
-> ⚠ **AHEAD OF CODE.** The tree still carries `inviteOutputIndex`.
 
 The pairing needs no reference of either kind. **An address may be invited only
 once**, so `inviteePublicKey` — which the invite and the bond both carry, pinned
@@ -2036,8 +2024,6 @@ IdentityRecord {
   invitedAtBlock: number      // u32 — height the invite claim applied; 0 = never invited
 }
 ```
-
-> ⚠ **AHEAD OF CODE.** `invitedAtBlock` is not in the tree.
 
 **`invitedAtBlock` carries two rules at once,** which is why it is one field and
 not two. It is the **once-ever invite bar** — invite creation rejects an

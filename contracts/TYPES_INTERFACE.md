@@ -411,9 +411,6 @@ historical debugging ambiguous forever.
 
 ### InviteBox
 
-> ⚠ **AHEAD OF CODE.** The tree still carries `secretHash`, the
-> `hash_preimage_with_bond` guard, and a commit transition.
-
 ```
 InviteBox extends BoxBase {
   boxType: "invite"
@@ -443,9 +440,6 @@ under BoxGuard below — box content, inside the box-id preimage, on the same
 argument that reserved `'epoch_tally'`.
 
 ### BondBox
-
-> ⚠ **AHEAD OF CODE.** The tree still carries `inviteOutputIndex`, both probation
-> fields, the `bond_dual` guard, and an `inviteePublicKey` that begins empty.
 
 ```
 BondBox extends BoxBase {
@@ -560,9 +554,6 @@ a length-prefixed field whose *contents* are out of domain — and `CodecError` 
 argument for the choice.
 
 ### BoxGuard
-
-> ⚠ **AHEAD OF CODE.** The tree still declares all seven of the old members and
-> none of `invite_dual`.
 
 ```
 type BoxGuard = "owner_signature" | "block_apply" | "invite_dual" | "unspendable"
@@ -1184,9 +1175,6 @@ writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `
 standing for "unlocked" would give an unlocked box and a box locked until block 0 one id. The
 same holds for `decayBurn`, which is the field the decay clock reads.
 
-> ⚠ **AHEAD OF CODE.** The tree still encodes this field as `opt(b32)` and still
-> types it `bytes0or32`.
-
 **`bond.inviteePublicKey` is `b32`.** The field is exactly 32 bytes at every point
 in a bond's life: invite creation sets it (BondBox above) and no later transition
 clears or widens it, so there is no absence for an option tag to distinguish from a
@@ -1779,9 +1767,6 @@ export const INVITE_KARMA_AMOUNT = 25n;            // consensus — karma MINTED
 export const INVITE_BOND_KARMA = 25n;              // consensus — bond locked by the inviter
 export const INVITE_PROBATION_BLOCKS = 43200;      // consensus — 30 days at 60s → profile: inviteProbationBlocks
 ```
-
-> ⚠ **AHEAD OF CODE.** The tree has `INVITE_PROBATION_BLOCKS = 1000` and still
-> declares both deleted constants.
 
 `MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **deleted. Names reserved**,
 on the same argument as the retired like constants: a deletion-proof grep only
