@@ -1,4 +1,3 @@
-import type { PostStore } from '../store/post-store.js';
 import { getDb } from '../store/db.js';
 import { getParentRefs } from '../store/posts.js';
 import { getReorgFloor } from '../store/meta.js';
@@ -35,8 +34,6 @@ const MAX_ANCESTOR_WALK = 1000;
 // ---------------------------------------------------------------------------
 
 export class DagService {
-  constructor(private store: PostStore) {}
-
   // -----------------------------------------------------------------------
   // Scoring
   // -----------------------------------------------------------------------

@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { setReorgFloor } from '../../src/store/meta.js';
 import { DagService } from '../../src/services/dag-service.js';
-import { SqlitePostStore } from '../../src/store/sqlite-store.js';
 import * as journal from '../../src/journal.js';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +57,7 @@ describe('DagService', () => {
 
   beforeEach(() => {
     initDb(':memory:');
-    service = new DagService(new SqlitePostStore());
+    service = new DagService();
   });
 
   afterEach(() => {

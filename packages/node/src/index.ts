@@ -22,7 +22,6 @@ import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
-import { SqlitePostStore } from './store/sqlite-store.js';
 import { extendsOurTip, resolveFork } from './services/fork-resolution.js';
 import { failStopIfCorruptChain } from './services/corrupt-state.js';
 import {
@@ -141,8 +140,7 @@ const deps = {
 };
 
 // DagService — owns canonical branch population and DAG reorg logic
-const postStore = new SqlitePostStore();
-const dagService = new DagService(postStore);
+const dagService = new DagService();
 setDagServiceForMiner(dagService);
 
 // 3. Register Stage 2 handlers
