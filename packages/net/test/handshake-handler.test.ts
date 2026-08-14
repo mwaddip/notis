@@ -101,8 +101,8 @@ function makeHandshakeHarness(opts: {
     connectedAt: Date.now(),
   });
 
-  // Public door. Registers the legacy headers protocol against the stub above,
-  // and — the point of the option — wires `chainHeight()` to node's callback.
+  // Public door. Sets the block provider, and — the point of the option —
+  // wires `chainHeight()` to node's callback through it.
   if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
 
   // The stub is passed in, not read off the instance: the registrars take the

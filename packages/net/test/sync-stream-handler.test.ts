@@ -10,19 +10,33 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
-import { PROTOCOL_VERSION, decodeSubBlock } from '@dagsocial/types';
-import type { Post, SubBlock } from '@dagsocial/types';
+import {
+  CREDIT_MINER_REWARD_DELAY,
+  PROTOCOL_VERSION,
+  decodeSubBlock,
+} from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, Post, SubBlock } from '@dagsocial/types';
 import { NetNode } from '../src/node.js';
 import { decodeFrame, encodeFrame } from '../src/frame.js';
-import { encodeGetPosts } from '../src/sync-codec.js';
 import {
+  decodeBlocks,
+  decodeHeaders,
+  encodeGetBlocks,
+  encodeGetHeaders,
+  encodeGetPosts,
+} from '../src/sync-codec.js';
+import {
+  MSG_BLOCKS,
+  MSG_GET_BLOCKS,
+  MSG_GET_HEADERS,
   MSG_GET_POSTS,
   MSG_GET_SUB_BLOCK,
+  MSG_HEADERS,
   MSG_SUB_BLOCK_RESPONSE,
   MSG_SYNC_INFO,
   PeerState,
 } from '../src/types.js';
-import type { NetConfig, NetValidators } from '../src/types.js';
+import type { NetConfig, NetValidators, PostsEntry } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
@@ -86,8 +100,9 @@ type StreamHandler = (arg: {
  * `setPostsHandler` is public and goes in the front door.
  */
 function makeHandlerHarness(opts: {
-  postsHandler?: (postIds: string[]) => never;
+  postsHandler?: (postIds: string[]) => PostsEntry[];
   syncHandler?: (id: string) => SubBlock | null;
+  headersHandler?: (height: number) => OrderingBlock | null;
   syncMachine?: { handleMessage: (p: string, c: number, b: Uint8Array) => void };
   active?: boolean;
 } = {}) {
@@ -119,6 +134,7 @@ function makeHandlerHarness(opts: {
 
   if (opts.postsHandler) net.setPostsHandler(opts.postsHandler);
   if (opts.syncHandler) net.setSyncHandler(opts.syncHandler);
+  if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
   if (opts.syncMachine) internals.syncMachine = opts.syncMachine;
 
   // The stub is passed in, not read off the instance: the registrars take the
@@ -314,6 +330,60 @@ describe('sync stream handler — app-layer callback failures', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The posts arm's three declining paths
+//
+// Same rule as the chain-query arms: on a shared stream, an unanswered request
+// is not a refusal the caller can read — it is a caller blocked until its own
+// timeout expires. `requestPosts` reads zero bytes as `{ entries: [] }`, which
+// is what all three of these mean.
+// ---------------------------------------------------------------------------
+
+describe('sync stream handler — the posts arm answers on every path', () => {
+  /** A handler that must not be reached — the two paths below return before it. */
+  const unreachableHandler = (): PostsEntry[] => {
+    throw new Error('posts handler must not run');
+  };
+
+  it('answers zero bytes when no posts handler is registered', async () => {
+    const { send } = makeHandlerHarness();
+
+    const written = await send(encodeGetPosts(MAGIC, { postIds: [STORED_ID] }));
+
+    expect(isEmptyReply(written)).toBe(true);
+  });
+
+  it('answers and permanently bans on a malformed GetPosts body', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ postsHandler: unreachableHandler });
+
+    // Not well-formed CBOR at all, so the decode boundary returns null.
+    const written = await send(
+      encodeFrame(MAGIC, MSG_GET_POSTS, new Uint8Array([0xff, 0xff, 0xff, 0xff])),
+    );
+
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('malformed GetPosts'));
+    warnSpy.mockRestore();
+  });
+
+  it('answers when the id list exceeds the serve limit', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ postsHandler: unreachableHandler });
+    const postIds = Array.from({ length: 101 }, (_, i) => i.toString(16).padStart(64, '0'));
+
+    const written = await send(encodeGetPosts(MAGIC, { postIds }));
+
+    expect(isEmptyReply(written)).toBe(true);
+    // Over-limit is not classified as a violation — the request is declined and
+    // the sender keeps its standing, unlike the malformed body above.
+    expect(peerMgr.isPeerActive(peerId)).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('exceeds limit'));
+    warnSpy.mockRestore();
+  });
+});
+
 describe('sync stream handler — sync dispatch failures', () => {
   it('logs a throwing handleMessage with the code and peer', async () => {
     // The worst instance of the pattern: `handleMessage` decodes the body and
@@ -355,6 +425,155 @@ describe('sync stream handler — sync dispatch failures', () => {
     await send(encodeFrame(MAGIC, MSG_SYNC_INFO, new Uint8Array([1, 2, 3])));
 
     expect(seen).toEqual([{ code: MSG_SYNC_INFO, len: 3 }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The chain-query serve arms — GetHeaders (14) and GetBlocks (16)
+//
+// On this stream "I do not serve that" is a timeout — a 5× one for blocks —
+// unless the arm answers. So every path answers, the declining ones included,
+// and that is what these tests pin (NET_INTERFACE → Sync Handler Registration).
+// ---------------------------------------------------------------------------
+
+function makeQueryHeader(height: number): BlockHeader {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    height,
+    prevBlockHash: '00'.repeat(32),
+    subBlockRoot: '00'.repeat(32),
+    utxoTxRoot: '00'.repeat(32),
+    stateRoot: '00'.repeat(33),
+    validatorId: new Uint8Array(32),
+    powNonce: height,
+    powTargetBits: 4 * 256,
+    createdAt: 1_000_000 + height,
+  };
+}
+
+function makeQueryBlock(height: number): OrderingBlock {
+  return {
+    header: makeQueryHeader(height),
+    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
+    utxoTxTree: {
+      utxoTxIds: [],
+      utxoTxs: [],
+      coinbaseOutputs: [{
+        value: 100n,
+        owner: new Uint8Array(32),
+        lockedUntilBlock: height + CREDIT_MINER_REWARD_DELAY,
+        isTreasury: false,
+      }],
+    },
+    validatorSignature: new Uint8Array(64),
+  };
+}
+
+/** A contiguous chain 1..n behind a provider, as `setHeadersHandler` takes one. */
+function chainProvider(n: number): (height: number) => OrderingBlock | null {
+  return (height) => (height >= 1 && height <= n ? makeQueryBlock(height) : null);
+}
+
+describe('sync stream handler — the chain query arms', () => {
+  it('serves GetHeaders as a framed Headers response', async () => {
+    const { send } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+
+    const written = await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+
+    expect(written).toHaveLength(1);
+    const reply = decodeFrame(MAGIC, written[0]!);
+    expect(reply.code).toBe(MSG_HEADERS);
+    expect(decodeHeaders(reply.body, 2)!.map((h) => h.height)).toEqual([3, 2]);
+  });
+
+  it('serves GetBlocks as a framed Blocks response', async () => {
+    const { send } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+
+    const written = await send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+
+    expect(written).toHaveLength(1);
+    const reply = decodeFrame(MAGIC, written[0]!);
+    expect(reply.code).toBe(MSG_BLOCKS);
+    expect(decodeBlocks(reply.body, 2)!.map((b) => b.header.height)).toEqual([1, 2]);
+  });
+
+  it('answers zero bytes on both arms when no provider was registered', async () => {
+    // Zero bytes is "I cannot answer", and it is NOT the framed `vlqU(0)` an
+    // empty chain range produces: a node holding no provider has no chain to
+    // consult, so it cannot honestly send the second. Silence would be a third
+    // thing, and the only one the caller cannot tell from a hung peer.
+    const headers = await makeHandlerHarness()
+      .send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+    const blocks = await makeHandlerHarness()
+      .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+
+    expect(isEmptyReply(headers)).toBe(true);
+    expect(isEmptyReply(blocks)).toBe(true);
+  });
+
+  it('answers and permanently bans on a malformed chain query body', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+
+    // A body that is not two heights — `0xff` opens a VLQ that never closes.
+    // Unlike our own store failing, this is the peer's doing, and the arm
+    // attributes it: the request arrived over a stream that knows who sent it,
+    // so the sender is a peer that can be penalized.
+    const written = await send(encodeFrame(MAGIC, MSG_GET_HEADERS, new Uint8Array([0xff])));
+
+    expect(isEmptyReply(written)).toBe(true);
+    // `PenaltyKind.ProtocolViolation` is a permanent ban, which removes the peer
+    // outright rather than accruing a score against it.
+    expect(peerMgr.getPeerMetadata(peerId)).toBeNull();
+    expect(peerMgr.isPeerActive(peerId)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('malformed chain query'));
+    warnSpy.mockRestore();
+  });
+
+  it('leaves a well-formed query unpenalised', async () => {
+    // The control against an arm that bans everyone: the ban above must be the
+    // malformed body's doing, not the code's.
+    const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+
+    await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+
+    expect(peerMgr.isPeerActive(peerId)).toBe(true);
+  });
+
+  it('refuses a non-Active peer on both arms without consulting the provider', async () => {
+    // The Active gate precedes the arm, so a declined request never reads our
+    // chain. That is what "without consulting the provider" pins: an arm
+    // reached and only then declining would have consulted it already.
+    let providerCalls = 0;
+    const counting = (height: number): OrderingBlock | null => {
+      providerCalls++;
+      return chainProvider(3)(height);
+    };
+
+    const headers = await makeHandlerHarness({ headersHandler: counting, active: false })
+      .send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
+    const blocks = await makeHandlerHarness({ headersHandler: counting, active: false })
+      .send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
+
+    expect(isEmptyReply(headers)).toBe(true);
+    expect(isEmptyReply(blocks)).toBe(true);
+    expect(providerCalls).toBe(0);
+  });
+
+  it('answers rather than falling through to a sync machine that would not', async () => {
+    // The failure mode being designed against: an arm that returned without
+    // sinking would reach `handleMessage`, whose switch answers nothing, and the
+    // caller would block for its whole timeout. This asserts the arms are
+    // reached and the dispatch is not.
+    const dispatched: number[] = [];
+    const harness = makeHandlerHarness({
+      headersHandler: chainProvider(3),
+      syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
+    });
+
+    expect((await harness.send(encodeGetHeaders(MAGIC, { startHeight: 1, maxCount: 1 })))).toHaveLength(1);
+    expect((await harness.send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 1 })))).toHaveLength(1);
+    expect(dispatched).toEqual([]);
   });
 });
 

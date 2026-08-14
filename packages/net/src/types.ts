@@ -17,6 +17,10 @@ export const MSG_GET_POSTS = 10;
 export const MSG_POSTS = 11;
 // Codes 12–13 are retired — reserved, never reuse (NET_INTERFACE → Message
 // Codes). The next new message type starts at 14.
+export const MSG_GET_HEADERS = 14;
+export const MSG_HEADERS = 15;
+export const MSG_GET_BLOCKS = 16;
+export const MSG_BLOCKS = 17;
 
 // ---------------------------------------------------------------------------
 // Modifier type IDs
@@ -205,4 +209,24 @@ export interface PostsEntry {
 
 export interface PostsMsg {
   entries: PostsEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// GetHeaders / GetBlocks request types
+//
+// Positional bodies, not CBOR maps: `vlqU(startHeight) vlqU(maxCount)` for code
+// 14 and `vlqU(startHeight) vlqU(endHeight)` for code 16 (NET_INTERFACE →
+// `GetHeaders` / `GetBlocks` responses). Neither field is optional — the code
+// pair is what discriminates the two queries, so there is no shared shape for a
+// missing field to select within.
+// ---------------------------------------------------------------------------
+
+export interface GetHeadersMsg {
+  startHeight: number;
+  maxCount: number;
+}
+
+export interface GetBlocksMsg {
+  startHeight: number;
+  endHeight: number;
 }

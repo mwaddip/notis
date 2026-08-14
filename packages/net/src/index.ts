@@ -7,7 +7,7 @@ export {
 export type { HandshakePayload } from './node.js';
 export { PeerManager } from './peer-mgr.js';
 export type { PeerBanHooks } from './peer-mgr.js';
-export { SYNC_PROTOCOL, HEADERS_PROTOCOL } from './sync.js';
+export { SYNC_PROTOCOL } from './sync.js';
 export { TOPICS } from './gossip.js';
 export {
   encodeFrame,
@@ -30,6 +30,10 @@ export {
   MSG_PEERS,
   MSG_GET_POSTS,
   MSG_POSTS,
+  MSG_GET_HEADERS,
+  MSG_HEADERS,
+  MSG_GET_BLOCKS,
+  MSG_BLOCKS,
   MODIFIER_ORDERING_BLOCK,
 } from './types.js';
 export {
@@ -52,7 +56,7 @@ export {
   MAX_UINT32,
   MAX_CAPABILITY_CODE,
   MAX_INV_IDS,
-  MAX_LEGACY_RESPONSE_ITEMS,
+  MAX_CHAIN_RESPONSE_ITEMS,
   MAX_PEERS_ENTRIES,
   MAX_STREAM_BYTES,
   MAX_SERVE_BODY_BYTES,
@@ -82,6 +86,8 @@ export type {
   GetPostsMsg,
   PostsEntry,
   PostsMsg,
+  GetHeadersMsg,
+  GetBlocksMsg,
 } from './types.js';
 export type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
 export {
@@ -93,8 +99,10 @@ export {
   encodePeers, decodePeers,
   encodeGetPosts, decodeGetPosts,
   encodePosts, decodePosts,
-  decodeLegacyHeadersRequest,
+  encodeGetHeaders, decodeGetHeaders,
+  encodeHeaders, decodeHeaders,
+  encodeGetBlocks, decodeGetBlocks,
+  encodeBlocks, decodeBlocks,
 } from './sync-codec.js';
-export type { LegacyHeadersRequest } from './sync-codec.js';
 export { SyncMachine } from './sync-machine.js';
 export type { SyncStore } from './sync-machine.js';

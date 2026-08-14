@@ -21,18 +21,40 @@ import {
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
-import { HEADERS_PROTOCOL } from '../src/sync.js';
-import { NetNode, serveLegacyHeadersBody } from '../src/node.js';
-import type { NetConfig, NetValidators } from '../src/types.js';
+import { SYNC_PROTOCOL } from '../src/sync.js';
+import { NetNode, serveBlocksResponse, serveHeadersResponse } from '../src/node.js';
+import type {
+  GetBlocksMsg, GetHeadersMsg, NetConfig, NetValidators,
+} from '../src/types.js';
+import { MSG_BLOCKS, MSG_GET_BLOCKS, MSG_GET_HEADERS, MSG_HEADERS } from '../src/types.js';
 import {
-  decodeLegacyHeadersRequest,
-  decodeLegacyBlocksResponse,
-  decodeLegacyHeadersResponse,
-  encodeLegacyBlocksResponse,
-  encodeLegacyHeadersResponse,
+  decodeBlocks,
+  decodeGetBlocks,
+  decodeGetHeaders,
+  decodeHeaders,
+  encodeBlocks,
+  encodeGetBlocks,
+  encodeGetHeaders,
+  encodeHeaders,
 } from '../src/sync-codec.js';
-import { MAX_LEGACY_RESPONSE_ITEMS } from '../src/msg-guards.js';
+import { decodeFrame } from '../src/frame.js';
+import { MAX_CHAIN_RESPONSE_ITEMS } from '../src/msg-guards.js';
 import { mergeUint8Arrays } from '../src/util.js';
+
+const MAGIC = 0x54444147;
+
+/** The body of a framed message, with its code checked first. */
+function bodyOf(frame: Uint8Array, expectedCode: number): Uint8Array {
+  const decoded = decodeFrame(MAGIC, frame);
+  expect(decoded.code).toBe(expectedCode);
+  return decoded.body;
+}
+
+/** Response bodies, for the assertions that are about the codec rather than the frame. */
+const headersBody = (headers: BlockHeader[]): Uint8Array =>
+  bodyOf(encodeHeaders(MAGIC, headers), MSG_HEADERS);
+const blocksBody = (blocks: OrderingBlock[]): Uint8Array =>
+  bodyOf(encodeBlocks(MAGIC, blocks), MSG_BLOCKS);
 
 // ---------------------------------------------------------------------------
 // Mock data helpers
@@ -125,79 +147,104 @@ function makeChain(n: number): Map<number, OrderingBlock> {
 }
 
 /**
- * Serve one legacy request through the **production** serve path.
+ * Our own tip as the serve arms compute it.
  *
- * `serveLegacyHeadersBody` is exported for exactly this, and the request goes
- * through the real `decodeLegacyHeadersRequest` too, so the boundary a peer
- * actually hits is the boundary under test. A local re-implementation of the
- * two serve loops would agree with the assertions written beside it while
- * neither one touched the encoder production runs — which is how the suite
- * that exists to police this protocol stays green through a response
- * wire-format change.
+ * Both loops are clamped to it; `chainHeight()` walks up from 1 until it finds a
+ * gap, so a store with a hole reports the height below it — mirrored here rather
+ * than assumed.
  */
-function serve(
-  request: Record<string, unknown>,
-  store: Map<number, OrderingBlock>,
-): Uint8Array {
-  const decoded = decodeLegacyHeadersRequest(new Uint8Array(encode(request)));
-  if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
-
-  // The handler clamps both serve loops to our own tip; `chainHeight()` walks up
-  // from 1 until it finds a gap, so a store with a hole reports the height below
-  // it — mirrored here rather than assumed.
+function tipOf(store: Map<number, OrderingBlock>): number {
   let ourHeight = 0;
   while (store.has(ourHeight + 1)) ourHeight++;
-
-  return serveLegacyHeadersBody(decoded, ourHeight, (h) => store.get(h) ?? null);
+  return ourHeight;
 }
 
-/** What `requestHeaders` does with a served body: cap = what it asked for. */
-function receiveHeaders(body: Uint8Array, maxCount: number): BlockHeader[] | null {
-  return decodeLegacyHeadersResponse(body, maxCount);
+/**
+ * Serve one request through the **production** serve path, request boundary
+ * included.
+ *
+ * `serveHeadersResponse` / `serveBlocksResponse` are exported for exactly this,
+ * and the request goes through the real encode/decode pair too, so the boundary
+ * a peer actually hits is the boundary under test. A local re-implementation of
+ * either serve loop would agree with the assertions written beside it while
+ * neither one touched the encoder production runs — which is how the suite that
+ * exists to police these queries stays green through a response wire-format
+ * change.
+ */
+function serveHeaders(request: GetHeadersMsg, store: Map<number, OrderingBlock>): Uint8Array {
+  const decoded = decodeGetHeaders(bodyOf(encodeGetHeaders(MAGIC, request), MSG_GET_HEADERS));
+  if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
+  return serveHeadersResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h) ?? null);
 }
 
-/** What `requestBlocks` does with a served body: cap = the range it asked for. */
+function serveBlocks(request: GetBlocksMsg, store: Map<number, OrderingBlock>): Uint8Array {
+  const decoded = decodeGetBlocks(bodyOf(encodeGetBlocks(MAGIC, request), MSG_GET_BLOCKS));
+  if (!decoded) throw new Error('fixture request was rejected at the decode boundary');
+  return serveBlocksResponse(MAGIC, decoded, tipOf(store), (h) => store.get(h) ?? null);
+}
+
+/** What `requestHeaders` does with a served frame: cap = what it asked for. */
+function receiveHeaders(frame: Uint8Array, maxCount: number): BlockHeader[] | null {
+  return decodeHeaders(bodyOf(frame, MSG_HEADERS), maxCount);
+}
+
+/** What `requestBlocks` does with a served frame: cap = the range it asked for. */
 function receiveBlocks(
-  body: Uint8Array,
+  frame: Uint8Array,
   startHeight: number,
   endHeight: number,
 ): OrderingBlock[] | null {
-  return decodeLegacyBlocksResponse(body, endHeight - startHeight + 1);
+  return decodeBlocks(bodyOf(frame, MSG_BLOCKS), endHeight - startHeight + 1);
 }
 
 // ---------------------------------------------------------------------------
-// Tests — protocol constants
+// Tests — the requests are positional, and the code pair is the discriminator
 // ---------------------------------------------------------------------------
 
-describe('HEADERS_PROTOCOL', () => {
-  it('is the expected protocol string', () => {
-    expect(HEADERS_PROTOCOL).toBe('/dagsocial/headers/1');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tests — the request is still CBOR, and still shape-checked
-// ---------------------------------------------------------------------------
-
-describe('headers request encode/decode', () => {
-  it('encodes and decodes a headers request', () => {
-    const decoded = decodeLegacyHeadersRequest(
-      new Uint8Array(encode({ startHeight: 10, maxCount: 5 })),
-    );
-    expect(decoded).toEqual({ startHeight: 10, maxCount: 5 });
+describe('chain query request encode/decode', () => {
+  it('round-trips a GetHeaders request under its own code', () => {
+    const frame = encodeGetHeaders(MAGIC, { startHeight: 10, maxCount: 5 });
+    expect(decodeGetHeaders(bodyOf(frame, MSG_GET_HEADERS)))
+      .toEqual({ startHeight: 10, maxCount: 5 });
   });
 
-  it('encodes and decodes a blocks request', () => {
-    const decoded = decodeLegacyHeadersRequest(
-      new Uint8Array(encode({ startHeight: 1, endHeight: 3, mode: 'blocks' })),
-    );
-    expect(decoded).toEqual({ startHeight: 1, endHeight: 3, mode: 'blocks' });
+  it('round-trips a GetBlocks request under its own code', () => {
+    const frame = encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 3 });
+    expect(decodeGetBlocks(bodyOf(frame, MSG_GET_BLOCKS)))
+      .toEqual({ startHeight: 1, endHeight: 3 });
   });
 
-  it('rejects a request whose heights are not heights', () => {
-    expect(decodeLegacyHeadersRequest(new Uint8Array(encode({ startHeight: -1 })))).toBeNull();
+  it('carries no discriminator, so the two bodies are interchangeable bytes', () => {
+    // Nothing inside the body says which query this is — the same two vlqU
+    // fields decode under either codec. What tells the serve arms apart is the
+    // frame code, which is why an arm never trusts the body to say which query
+    // it is.
+    const body = bodyOf(encodeGetHeaders(MAGIC, { startHeight: 7, maxCount: 2 }), MSG_GET_HEADERS);
+    expect(decodeGetBlocks(body)).toEqual({ startHeight: 7, endHeight: 2 });
+  });
+
+  it('rejects heights outside the advertisable range', () => {
+    const w = new ByteWriter();
+    writeVlqU(w, 1);
+    writeVlqU(w, 200_000_000); // > MAX_ADVERTISED_HEIGHT
+    expect(decodeGetHeaders(w.toBytes())).toBeNull();
+    expect(decodeGetBlocks(w.toBytes())).toBeNull();
+  });
+
+  it('rejects a truncated, over-long or non-minimal body', () => {
+    const body = bodyOf(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 3 }), MSG_GET_BLOCKS);
+
+    expect(decodeGetBlocks(body.subarray(0, body.length - 1))).toBeNull();
+    expect(decodeGetBlocks(mergeUint8Arrays([body, new Uint8Array([0x00])]))).toBeNull();
+    // `0x81 0x00` decodes to 1 exactly as `0x01` does; the re-encode compare is
+    // what refuses it (TYPES_INTERFACE → The boundary check, step 3).
+    expect(decodeGetBlocks(new Uint8Array([0x81, 0x00, 0x03]))).toBeNull();
+  });
+
+  it('rejects a cbor-x map body under either code', () => {
+    expect(decodeGetHeaders(new Uint8Array(encode({ startHeight: 10, maxCount: 5 })))).toBeNull();
     expect(
-      decodeLegacyHeadersRequest(new Uint8Array(encode({ startHeight: 1, endHeight: 'x' }))),
+      decodeGetBlocks(new Uint8Array(encode({ startHeight: 1, endHeight: 3, mode: 'blocks' }))),
     ).toBeNull();
   });
 });
@@ -207,15 +254,15 @@ describe('headers request encode/decode', () => {
 //
 // The responses are `arr(item, lp)` over the same positional codec gossip and
 // the store use, not a second `cbor-x` dialect. See `sync-codec.ts` →
-// "Legacy /dagsocial/headers/1 responses".
+// "Headers (15) / Blocks (17) responses".
 // ---------------------------------------------------------------------------
 
-describe('legacy response framing', () => {
+describe('chain response framing', () => {
   it('round-trips a multi-block response', () => {
     const store = makeChain(3);
     const blocks = [store.get(1)!, store.get(2)!, store.get(3)!];
 
-    const decoded = decodeLegacyBlocksResponse(encodeLegacyBlocksResponse(blocks), 3);
+    const decoded = decodeBlocks(blocksBody(blocks), 3);
 
     expect(decoded).not.toBeNull();
     expect(decoded).toHaveLength(3);
@@ -230,18 +277,18 @@ describe('legacy response framing', () => {
   });
 
   it('round-trips an EMPTY block list, distinctly from no answer at all', () => {
-    const empty = encodeLegacyBlocksResponse([]);
+    const empty = blocksBody([]);
 
-    // `vlqU(0)` — one byte, not zero bytes. The handler answers zero bytes when
-    // it cannot answer at all (over-cap request, undecodable request, local
-    // failure), and `requestBlocks` returns `[]` for that without decoding. The
-    // two must not collapse into each other: one says "I have no blocks in that
-    // range", the other says "I did not process your request".
+    // `vlqU(0)` — one byte, not zero bytes. A serve arm answers zero bytes, and
+    // no frame at all, when it cannot answer (no provider, undecodable request,
+    // local failure), and `requestBlocks` returns `[]` for that without
+    // decoding. The two must not collapse into each other: one says "I have no
+    // blocks in that range", the other says "I did not process your request".
     expect(empty).toEqual(new Uint8Array([0]));
-    expect(decodeLegacyBlocksResponse(empty, 10)).toEqual([]);
+    expect(decodeBlocks(empty, 10)).toEqual([]);
 
     // ...and zero bytes is not a valid encoding of the empty list.
-    expect(decodeLegacyBlocksResponse(new Uint8Array(0), 10)).toBeNull();
+    expect(decodeBlocks(new Uint8Array(0), 10)).toBeNull();
   });
 
   it('round-trips a multi-header response and an empty one', () => {
@@ -251,49 +298,49 @@ describe('legacy response framing', () => {
       makeMockHeader(3, 'cc'.repeat(32)),
     ];
 
-    const decoded = decodeLegacyHeadersResponse(encodeLegacyHeadersResponse(headers), 3);
+    const decoded = decodeHeaders(headersBody(headers), 3);
     expect(decoded).not.toBeNull();
     expect(decoded!.map((h) => h.height)).toEqual([5, 4, 3]);
     expect(decoded![0]!.prevBlockHash).toBe('aa'.repeat(32));
     expect(decoded![0]!.validatorId).toBeInstanceOf(Uint8Array);
 
-    expect(encodeLegacyHeadersResponse([])).toEqual(new Uint8Array([0]));
-    expect(decodeLegacyHeadersResponse(new Uint8Array([0]), 20)).toEqual([]);
+    expect(headersBody([])).toEqual(new Uint8Array([0]));
+    expect(decodeHeaders(new Uint8Array([0]), 20)).toEqual([]);
   });
 
   it('rejects trailing bytes after a well-formed response', () => {
-    const body = encodeLegacyBlocksResponse([makeMockOrderingBlock(1, '00'.repeat(32))]);
+    const body = blocksBody([makeMockOrderingBlock(1, '00'.repeat(32))]);
     const padded = mergeUint8Arrays([body, new Uint8Array([0x00])]);
 
-    expect(decodeLegacyBlocksResponse(body, 1)).not.toBeNull();
-    expect(decodeLegacyBlocksResponse(padded, 1)).toBeNull();
+    expect(decodeBlocks(body, 1)).not.toBeNull();
+    expect(decodeBlocks(padded, 1)).toBeNull();
   });
 
   it('rejects a non-minimal VLQ count', () => {
     // `0x81 0x00` decodes to 1 exactly as `0x01` does — wire accepts non-minimal
     // VLQ deliberately, and canonicity is enforced by the re-encode compare.
-    const canonical = encodeLegacyHeadersResponse([makeMockHeader(1, '00'.repeat(32))]);
+    const canonical = headersBody([makeMockHeader(1, '00'.repeat(32))]);
     expect(canonical[0]).toBe(0x01);
 
     const padded = mergeUint8Arrays([
       new Uint8Array([0x81, 0x00]),
       canonical.subarray(1),
     ]);
-    expect(decodeLegacyHeadersResponse(padded, 5)).toBeNull();
+    expect(decodeHeaders(padded, 5)).toBeNull();
   });
 
   it('rejects a truncated response', () => {
-    const body = encodeLegacyBlocksResponse([makeMockOrderingBlock(1, '00'.repeat(32))]);
-    expect(decodeLegacyBlocksResponse(body.subarray(0, body.length - 1), 1)).toBeNull();
+    const body = blocksBody([makeMockOrderingBlock(1, '00'.repeat(32))]);
+    expect(decodeBlocks(body.subarray(0, body.length - 1), 1)).toBeNull();
   });
 
   it('rejects the old cbor-x dialect outright', () => {
     // The format this replaced. A peer still speaking it is not "mostly right":
     // there is no shared prefix to misinterpret, so it is refused whole.
     const blocks = [makeMockOrderingBlock(1, '00'.repeat(32))];
-    expect(decodeLegacyBlocksResponse(new Uint8Array(encode({ blocks })), 5)).toBeNull();
+    expect(decodeBlocks(new Uint8Array(encode({ blocks })), 5)).toBeNull();
     expect(
-      decodeLegacyHeadersResponse(new Uint8Array(encode([makeMockHeader(1, '00'.repeat(32))])), 5),
+      decodeHeaders(new Uint8Array(encode([makeMockHeader(1, '00'.repeat(32))])), 5),
     ).toBeNull();
   });
 });
@@ -309,8 +356,8 @@ describe('legacy response framing', () => {
 // Gossip refuses both at decode, which leaves this path as the only delivery
 // route.
 //
-// The assertion that matters is WHERE they die: `decodeLegacy*Response` returns
-// `null`, so `requestBlocks` throws and no object reaches the node. Refusal
+// The assertion that matters is WHERE they die: `decodeBlocks` / `decodeHeaders`
+// return `null`, so `requestBlocks` throws and no object reaches the node. Refusal
 // somewhere later — at the store, at read-back — is the failure being measured,
 // not a fix for it.
 // ---------------------------------------------------------------------------
@@ -340,7 +387,7 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     const column = encodeUtxoTxTree(block.utxoTxTree);
     expect(column[column.length - 1]).toBe(0xff);
 
-    expect(decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([block]), 1)).toBeNull();
+    expect(decodeBlocks(blocksBody([block]), 1)).toBeNull();
   });
 
   it('refuses a non-byte-view utxoTxs element', () => {
@@ -354,7 +401,7 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     // two payloads: `utxoTxRoot` never commits `utxoTxs` and the validator
     // signature covers only the header, so a relaying node can swap it into an
     // otherwise honest block with no PoW and no re-signing.
-    expect(decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([block]), 1)).toBeNull();
+    expect(decodeBlocks(blocksBody([block]), 1)).toBeNull();
   });
 
   it('refuses the whole response, not just the poisoned block', () => {
@@ -368,7 +415,7 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     });
 
     expect(
-      decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([honest, bad, honest]), 3),
+      decodeBlocks(blocksBody([honest, bad, honest]), 3),
     ).toBeNull();
   });
 
@@ -383,7 +430,7 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     (header as unknown as Record<string, unknown>)['createdAt'] = Number.NaN;
 
     expect(blockHash(header)).toBeNull();
-    expect(decodeLegacyHeadersResponse(encodeLegacyHeadersResponse([header]), 5)).toBeNull();
+    expect(decodeHeaders(headersBody([header]), 5)).toBeNull();
   });
 });
 
@@ -397,48 +444,47 @@ describe('response item caps', () => {
     const headers: BlockHeader[] = [];
     for (let h = 10; h >= 1; h--) headers.push(store.get(h)!.header);
 
-    const body = encodeLegacyHeadersResponse(headers);
+    const frame = encodeHeaders(MAGIC, headers);
 
     // A peer answering a 3-header request with 10 headers is not answering the
     // question. The caller is the only party that knows what it asked.
-    expect(receiveHeaders(body, 3)).toBeNull();
-    expect(receiveHeaders(body, 10)).toHaveLength(10);
+    expect(receiveHeaders(frame, 3)).toBeNull();
+    expect(receiveHeaders(frame, 10)).toHaveLength(10);
   });
 
   it('refuses more blocks than the requested range', () => {
     const store = makeChain(5);
     const blocks = [1, 2, 3, 4, 5].map((h) => store.get(h)!);
-    const body = encodeLegacyBlocksResponse(blocks);
+    const frame = encodeBlocks(MAGIC, blocks);
 
-    expect(receiveBlocks(body, 1, 3)).toBeNull();
-    expect(receiveBlocks(body, 1, 5)).toHaveLength(5);
+    expect(receiveBlocks(frame, 1, 3)).toBeNull();
+    expect(receiveBlocks(frame, 1, 5)).toHaveLength(5);
   });
 
-  it('caps at MAX_LEGACY_RESPONSE_ITEMS however large the request', () => {
+  it('caps at MAX_CHAIN_RESPONSE_ITEMS however large the request', () => {
     // The requested size is derived from peer-supplied heights, so it is not a
     // bound by itself: `requestBlocks` spans `forkHeight + 1` to a tip height
     // that came off the wire. A real over-cap body, one header past the line.
-    const headers = Array.from({ length: MAX_LEGACY_RESPONSE_ITEMS + 1 }, (_, i) =>
+    const headers = Array.from({ length: MAX_CHAIN_RESPONSE_ITEMS + 1 }, (_, i) =>
       makeMockHeader(i + 1, '00'.repeat(32)),
     );
-    const body = encodeLegacyHeadersResponse(headers);
 
-    expect(decodeLegacyHeadersResponse(body, Number.MAX_SAFE_INTEGER)).toBeNull();
+    expect(decodeHeaders(headersBody(headers), Number.MAX_SAFE_INTEGER)).toBeNull();
     // One fewer is fine — the cap is where it says it is.
     expect(
-      decodeLegacyHeadersResponse(
-        encodeLegacyHeadersResponse(headers.slice(0, MAX_LEGACY_RESPONSE_ITEMS)),
+      decodeHeaders(
+        headersBody(headers.slice(0, MAX_CHAIN_RESPONSE_ITEMS)),
         Number.MAX_SAFE_INTEGER,
       ),
-    ).toHaveLength(MAX_LEGACY_RESPONSE_ITEMS);
+    ).toHaveLength(MAX_CHAIN_RESPONSE_ITEMS);
   });
 
   it('accepts nothing but an empty response for a nonsensical request size', () => {
-    const one = encodeLegacyBlocksResponse([makeMockOrderingBlock(1, '00'.repeat(32))]);
+    const one = blocksBody([makeMockOrderingBlock(1, '00'.repeat(32))]);
 
     for (const bad of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY]) {
-      expect(decodeLegacyBlocksResponse(one, bad)).toBeNull();
-      expect(decodeLegacyBlocksResponse(encodeLegacyBlocksResponse([]), bad)).toEqual([]);
+      expect(decodeBlocks(one, bad)).toBeNull();
+      expect(decodeBlocks(blocksBody([]), bad)).toEqual([]);
     }
   });
 
@@ -453,7 +499,7 @@ describe('response item caps', () => {
     const body = w.toBytes();
 
     expect(body.length).toBe(4);
-    expect(decodeLegacyBlocksResponse(body, Number.MAX_SAFE_INTEGER)).toBeNull();
+    expect(decodeBlocks(body, Number.MAX_SAFE_INTEGER)).toBeNull();
   });
 });
 
@@ -490,28 +536,28 @@ describe('mergeUint8Arrays', () => {
 // Tests — serve side: requestHeaders
 // ---------------------------------------------------------------------------
 
-describe('serve: headers mode', () => {
+describe('serve: GetHeaders', () => {
   it('returns headers newest-first from startHeight', () => {
-    const body = serve({ startHeight: 5, maxCount: 3 }, makeChain(5));
-    const headers = receiveHeaders(body, 3);
+    const frame = serveHeaders({ startHeight: 5, maxCount: 3 }, makeChain(5));
+    const headers = receiveHeaders(frame, 3);
 
     expect(headers).not.toBeNull();
     expect(headers!.map((h) => h.height)).toEqual([5, 4, 3]);
   });
 
   it('respects maxCount', () => {
-    const headers = receiveHeaders(serve({ startHeight: 10, maxCount: 2 }, makeChain(10)), 2);
+    const headers = receiveHeaders(serveHeaders({ startHeight: 10, maxCount: 2 }, makeChain(10)), 2);
     expect(headers!.map((h) => h.height)).toEqual([10, 9]);
   });
 
   it('returns empty when no blocks at start height', () => {
     // Clamped to our own tip (2), so the walk starts there and returns 2, 1.
-    const headers = receiveHeaders(serve({ startHeight: 99, maxCount: 20 }, makeChain(2)), 20);
+    const headers = receiveHeaders(serveHeaders({ startHeight: 99, maxCount: 20 }, makeChain(2)), 20);
     expect(headers!.map((h) => h.height)).toEqual([2, 1]);
 
     // An empty store has nothing to clamp to and answers with nothing.
     expect(
-      receiveHeaders(serve({ startHeight: 99, maxCount: 20 }, new Map()), 20),
+      receiveHeaders(serveHeaders({ startHeight: 99, maxCount: 20 }, new Map()), 20),
     ).toEqual([]);
   });
 
@@ -522,28 +568,30 @@ describe('serve: headers mode', () => {
     store.set(4, makeMockOrderingBlock(4, 'ff'.repeat(32)));
     store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
-    const headers = receiveHeaders(serve({ startHeight: 5, maxCount: 5 }, store), 5);
+    const headers = receiveHeaders(serveHeaders({ startHeight: 5, maxCount: 5 }, store), 5);
     expect(headers!.map((h) => h.height)).toEqual([2, 1]);
   });
 
-  it('defaults maxCount to 20 when not specified', () => {
-    const headers = receiveHeaders(serve({ startHeight: 25 }, makeChain(25)), 20);
-    expect(headers).toHaveLength(20);
-    expect(headers![0]!.height).toBe(25);
-    expect(headers![19]!.height).toBe(6);
+  it('serves nothing for a maxCount of zero', () => {
+    // A positional request carries `maxCount` always — there is no absent field
+    // for a serve-side default to fill in, so zero is a requested count like any
+    // other and the arm serves nothing.
+    const frame = serveHeaders({ startHeight: 25, maxCount: 0 }, makeChain(25));
+    expect(bodyOf(frame, MSG_HEADERS)).toEqual(new Uint8Array([0]));
+    expect(receiveHeaders(frame, 0)).toEqual([]);
   });
 
-  it('serves no more than MAX_LEGACY_RESPONSE_ITEMS however many are asked for', () => {
-    const store = makeChain(MAX_LEGACY_RESPONSE_ITEMS + 5);
-    const body = serve(
-      { startHeight: MAX_LEGACY_RESPONSE_ITEMS + 5, maxCount: 100_000_000 },
+  it('serves no more than MAX_CHAIN_RESPONSE_ITEMS however many are asked for', () => {
+    const store = makeChain(MAX_CHAIN_RESPONSE_ITEMS + 5);
+    const frame = serveHeaders(
+      { startHeight: MAX_CHAIN_RESPONSE_ITEMS + 5, maxCount: 100_000_000 },
       store,
     );
 
     // Without the serve-side cap this is a peer-controlled knob over our whole
     // chain: one request, one array holding every block we hold.
-    expect(receiveHeaders(body, MAX_LEGACY_RESPONSE_ITEMS)).toHaveLength(
-      MAX_LEGACY_RESPONSE_ITEMS,
+    expect(receiveHeaders(frame, MAX_CHAIN_RESPONSE_ITEMS)).toHaveLength(
+      MAX_CHAIN_RESPONSE_ITEMS,
     );
   });
 });
@@ -552,10 +600,10 @@ describe('serve: headers mode', () => {
 // Tests — serve side: requestBlocks
 // ---------------------------------------------------------------------------
 
-describe('serve: blocks mode', () => {
+describe('serve: GetBlocks', () => {
   it('returns full blocks for a height range', () => {
-    const body = serve({ startHeight: 2, endHeight: 4, mode: 'blocks' }, makeChain(5));
-    const blocks = receiveBlocks(body, 2, 4);
+    const frame = serveBlocks({ startHeight: 2, endHeight: 4 }, makeChain(5));
+    const blocks = receiveBlocks(frame, 2, 4);
 
     expect(blocks).not.toBeNull();
     expect(blocks!.map((b) => b.header.height)).toEqual([2, 3, 4]);
@@ -568,20 +616,20 @@ describe('serve: blocks mode', () => {
 
     // `chainHeight()` is 1 (the gap at 2 stops the walk), and the serve loop is
     // clamped to it — we do not serve blocks above a hole in our own chain.
-    const blocks = receiveBlocks(serve({ startHeight: 1, endHeight: 5, mode: 'blocks' }, store), 1, 5);
+    const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 5 }, store), 1, 5);
     expect(blocks!.map((b) => b.header.height)).toEqual([1]);
   });
 
   it('returns an empty list when no blocks are in range', () => {
-    const body = serve({ startHeight: 10, endHeight: 20, mode: 'blocks' }, new Map());
-    expect(body).toEqual(new Uint8Array([0]));
-    expect(receiveBlocks(body, 10, 20)).toEqual([]);
+    const frame = serveBlocks({ startHeight: 10, endHeight: 20 }, new Map());
+    expect(bodyOf(frame, MSG_BLOCKS)).toEqual(new Uint8Array([0]));
+    expect(receiveBlocks(frame, 10, 20)).toEqual([]);
   });
 
   it('returns blocks with their bodies intact', () => {
     const store = makeChain(1);
     const blocks = receiveBlocks(
-      serve({ startHeight: 1, endHeight: 1, mode: 'blocks' }, store),
+      serveBlocks({ startHeight: 1, endHeight: 1 }, store),
       1,
       1,
     );
@@ -601,15 +649,15 @@ describe('serve: blocks mode', () => {
     expect(encodeOrderingBlock(returned)).toEqual(encodeOrderingBlock(store.get(1)!));
   });
 
-  it('serves no more than MAX_LEGACY_RESPONSE_ITEMS blocks', () => {
-    const store = makeChain(MAX_LEGACY_RESPONSE_ITEMS + 5);
-    const body = serve(
-      { startHeight: 1, endHeight: MAX_LEGACY_RESPONSE_ITEMS + 5, mode: 'blocks' },
+  it('serves no more than MAX_CHAIN_RESPONSE_ITEMS blocks', () => {
+    const store = makeChain(MAX_CHAIN_RESPONSE_ITEMS + 5);
+    const frame = serveBlocks(
+      { startHeight: 1, endHeight: MAX_CHAIN_RESPONSE_ITEMS + 5 },
       store,
     );
 
-    expect(receiveBlocks(body, 1, MAX_LEGACY_RESPONSE_ITEMS)).toHaveLength(
-      MAX_LEGACY_RESPONSE_ITEMS,
+    expect(receiveBlocks(frame, 1, MAX_CHAIN_RESPONSE_ITEMS)).toHaveLength(
+      MAX_CHAIN_RESPONSE_ITEMS,
     );
   });
 });
@@ -618,9 +666,9 @@ describe('serve: blocks mode', () => {
 // Tests — serve + receive, end to end
 // ---------------------------------------------------------------------------
 
-describe('handler round-trip', () => {
+describe('chain query round-trip', () => {
   it('headers: request, serve, receive, chain links hold', () => {
-    const headers = receiveHeaders(serve({ startHeight: 3, maxCount: 3 }, makeChain(3)), 3);
+    const headers = receiveHeaders(serveHeaders({ startHeight: 3, maxCount: 3 }, makeChain(3)), 3);
 
     expect(headers).toHaveLength(3);
     expect(headers!.map((h) => h.height)).toEqual([3, 2, 1]);
@@ -631,7 +679,7 @@ describe('handler round-trip', () => {
 
   it('blocks: request, serve, receive, full bodies', () => {
     const blocks = receiveBlocks(
-      serve({ startHeight: 1, endHeight: 2, mode: 'blocks' }, makeChain(2)),
+      serveBlocks({ startHeight: 1, endHeight: 2 }, makeChain(2)),
       1,
       2,
     );
@@ -643,29 +691,33 @@ describe('handler round-trip', () => {
   });
 
   it('headers: no matching blocks yields an empty list, not a rejection', () => {
-    const body = serve({ startHeight: 100, maxCount: 5 }, new Map());
-    expect(body).toEqual(new Uint8Array([0]));
-    expect(receiveHeaders(body, 5)).toEqual([]);
+    const frame = serveHeaders({ startHeight: 100, maxCount: 5 }, new Map());
+    expect(bodyOf(frame, MSG_HEADERS)).toEqual(new Uint8Array([0]));
+    expect(receiveHeaders(frame, 5)).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Tests — the protocol is registered with libp2p
+// Tests — the queries' protocol is registered with libp2p, and it is the only one
 //
-// Everything above this line exercises the codec and the serve loops directly.
-// None of it can see whether `/dagsocial/headers/1` is registered with libp2p
-// at all, which is the one property the whole protocol rests on: an unregistered
-// protocol answers `protocol selection failed` to every dial, and each layer
-// below keeps passing.
+// Everything above this line exercises the codecs and the serve loops directly.
+// None of it can see which protocols libp2p is holding, which is the property
+// the whole path rests on: an unregistered protocol answers `protocol selection
+// failed` to every dial, and each layer below keeps passing.
+//
+// A chain query reaches a serve arm only through this one handshaken,
+// penalty-bearing stream, so the absence of any second chain-data protocol is
+// half that property. Asserting the absence alone would also pass on a node
+// that registered nothing at all, which is why both assertions run together.
 //
 // NET_INTERFACE → Sync Handler Registration: setters are order-independent and
-// registration belongs to start(). Both orders are asserted because a
+// registration belongs to start(). All three orders are asserted because a
 // registration conditional on the provider already existing would satisfy the
-// first and fail the second.
+// first and fail the other two.
 // ---------------------------------------------------------------------------
 
 const registrationConfig: NetConfig = {
-  magic: 0x54444147,
+  magic: MAGIC,
   postPowTargetBits: 20,
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
@@ -688,8 +740,15 @@ const registrationValidators: NetValidators = {
   verifyOrderingBlockStructure,
 };
 
-describe('HEADERS_PROTOCOL registration', () => {
+describe('chain query protocol registration', () => {
   let net: NetNode | undefined;
+
+  /** The sync stream is registered; `/dagsocial/headers/1` is not. */
+  function expectOnlySyncProtocol(node: NetNode): void {
+    const protocols = node.libp2pNode?.getProtocols() ?? [];
+    expect(protocols).toContain(SYNC_PROTOCOL);
+    expect(protocols).not.toContain('/dagsocial/headers/1');
+  }
 
   afterEach(async () => {
     await net?.stop();
@@ -701,7 +760,7 @@ describe('HEADERS_PROTOCOL registration', () => {
     net.setHeadersHandler(() => null);
     await net.start();
 
-    expect(net.libp2pNode?.getProtocols()).toContain(HEADERS_PROTOCOL);
+    expectOnlySyncProtocol(net);
   }, 25000);
 
   it('is registered when the provider is set after start()', async () => {
@@ -709,13 +768,13 @@ describe('HEADERS_PROTOCOL registration', () => {
     await net.start();
     net.setHeadersHandler(() => null);
 
-    expect(net.libp2pNode?.getProtocols()).toContain(HEADERS_PROTOCOL);
+    expectOnlySyncProtocol(net);
   }, 25000);
 
   it('is registered when no provider is ever set', async () => {
     net = new NetNode(registrationConfig, registrationValidators);
     await net.start();
 
-    expect(net.libp2pNode?.getProtocols()).toContain(HEADERS_PROTOCOL);
+    expectOnlySyncProtocol(net);
   }, 25000);
 });

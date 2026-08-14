@@ -71,15 +71,15 @@ export const MAX_INV_IDS = 400;
 export const MAX_PEERS_ENTRIES = 64;
 
 /**
- * Largest number of items in a legacy `/dagsocial/headers/1` response —
+ * Largest number of items in a `Headers` (15) or `Blocks` (17) response —
  * enforced on BOTH sides.
  *
- * 400 is the same batch cap `MAX_INV_IDS` carries for the framed path
- * (NET_INTERFACE → Inv), and the two responses this protocol serves are the
- * same kind of thing: a bounded continuation of the chain. Fork resolution is
- * this protocol's only caller and it asks for at most `MAX_REORG_DEPTH * 2`
- * (40) headers and the blocks above the fork point, so the cap is an order of
- * magnitude above any honest request.
+ * 400 is the same batch cap `MAX_INV_IDS` carries for the inventory messages
+ * (NET_INTERFACE → Inv), and the two responses these codes serve are the same
+ * kind of thing: a bounded continuation of the chain. Fork resolution is their
+ * only caller and it asks for at most `MAX_REORG_DEPTH * 2` (40) headers and
+ * the blocks above the fork point, so the cap is an order of magnitude above
+ * any honest request.
  *
  * **Receive side.** The count is a `vlqU` the peer chooses, and the decoder
  * allocates per item, so it is checked before the first element is read — a
@@ -94,7 +94,7 @@ export const MAX_PEERS_ENTRIES = 64;
  * own tip), so without this the response size is a peer-controlled knob over
  * our whole chain.
  */
-export const MAX_LEGACY_RESPONSE_ITEMS = 400;
+export const MAX_CHAIN_RESPONSE_ITEMS = 400;
 
 /**
  * Largest number of bytes buffered from a single inbound stream.

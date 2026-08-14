@@ -1,15 +1,20 @@
 import { decodeSubBlock } from '@dagsocial/types';
 import type { SubBlock, BlockHeader, OrderingBlock } from '@dagsocial/types';
-import { encode } from 'cbor-x';
 import type { Libp2p } from 'libp2p';
 import type { Stream } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
+import { MSG_HEADERS, MSG_BLOCKS } from './types.js';
 import { readStreamBounded } from './util.js';
-import { decodeLegacyBlocksResponse, decodeLegacyHeadersResponse } from './sync-codec.js';
+import {
+  decodeBlocks,
+  decodeHeaders,
+  encodeGetBlocks,
+  encodeGetHeaders,
+} from './sync-codec.js';
+import { decodeFrame } from './frame.js';
 import { MAX_STREAM_BYTES } from './msg-guards.js';
 
 export const SYNC_PROTOCOL = '/dagsocial/sync/1';
-export const HEADERS_PROTOCOL = '/dagsocial/headers/1';
 
 // ---------------------------------------------------------------------------
 // Sub-block requests (legacy text-based protocol — kept for backward compat)
@@ -69,21 +74,24 @@ export async function requestSubBlock(
 }
 
 // ---------------------------------------------------------------------------
-// Header/block requests (legacy /dagsocial/headers/1 protocol)
+// Fork resolution's two chain queries — GetHeaders (14) and GetBlocks (16)
 //
-// The **request** is still raw CBOR — a `{ startHeight, maxCount, endHeight,
-// mode }` control message with no consensus bytes in it, shape-checked at the
-// far end by `decodeLegacyHeadersRequest`. The **responses** carry whole blocks
-// and headers and are positional: see `lpItemsCodec` in `sync-codec.ts` for
-// what that closes and why a shape check over `cbor-x` is the wrong instrument
-// here.
+// Both ride `SYNC_PROTOCOL` and both sides of the exchange are positional and
+// framed: `vlqU(startHeight) vlqU(maxCount)` out, `arr(item, lp)` back. See
+// `lpItemsCodec` in `sync-codec.ts` for what a positional response closes and
+// why a shape check over `cbor-x` is the wrong instrument here.
 //
-// An unparseable response **throws** rather than resolving to `[]`. The two are
-// not interchangeable here: `index.ts`'s fork resolution feeds `requestBlocks`'
-// result straight to `reorg(forkHeight, newBlocks)`, so an empty array would
-// roll our chain back to the fork point and apply nothing — a peer sending
-// junk would truncate our chain instead of failing to extend it. The throw
-// lands in that function's existing catch and abandons the reorg.
+// The response is identified by its own frame code rather than by the question
+// we asked, so an answer bearing the wrong code is refused instead of decoded
+// against the wrong codec.
+//
+// ⚠ **These two throw where `requestPosts` returns empty** (NET_INTERFACE →
+// Pull Requests). Fork resolution feeds `requestBlocks`' result straight to
+// `reorg(forkHeight, newBlocks)`, so an empty array rolls our chain back to the
+// fork point and applies nothing — a peer sending junk would truncate our chain
+// instead of failing to extend it. The throw lands in that function's existing
+// catch and abandons the reorg. Same transport and same shape as
+// `requestPosts`; deliberately not the same error contract.
 // ---------------------------------------------------------------------------
 
 /**
@@ -100,26 +108,31 @@ export async function requestHeaders(
   const peer = libp2p.getPeers().find(p => p.toString() === peerId);
   if (!peer) throw new Error(`Peer ${peerId} not connected`);
 
+  const magic = config.magic;
   let stream: Stream | undefined;
   try {
-    stream = await libp2p.dialProtocol(peer, HEADERS_PROTOCOL, {
+    stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(config.syncRequestTimeoutMs),
     });
 
-    const request = { startHeight, maxCount };
-    await stream.sink([Buffer.from(encode(request))] as any);
+    await stream.sink([encodeGetHeaders(magic, { startHeight, maxCount })]);
 
     const response = await readStreamBounded(stream.source);
     if (response === null) {
       throw new Error(`Headers response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
     }
 
-    // Zero bytes is the handler's "I cannot answer" signal (an over-cap
-    // request, an undecodable one, or a local failure), and it is distinct from
-    // an empty response — an empty header list encodes as `vlqU(0)`, one byte.
+    // Zero bytes is the serve arm's "I cannot answer" signal (no provider, an
+    // undecodable request, or a local failure), and it is distinct from an empty
+    // answer — an empty header list is a frame whose body is `vlqU(0)`.
     if (response.length === 0) return [];
 
-    const headers = decodeLegacyHeadersResponse(response, maxCount);
+    const frame = decodeFrame(magic, response);
+    if (frame.code !== MSG_HEADERS) {
+      throw new Error(`Headers response from peer ${peerId} bears code ${frame.code}`);
+    }
+
+    const headers = decodeHeaders(frame.body, maxCount);
     if (headers === null) {
       throw new Error(`Headers response from peer ${peerId} is not a well-formed headers response`);
     }
@@ -142,14 +155,14 @@ export async function requestBlocks(
   const peer = libp2p.getPeers().find(p => p.toString() === peerId);
   if (!peer) throw new Error(`Peer ${peerId} not connected`);
 
+  const magic = config.magic;
   let stream: Stream | undefined;
   try {
-    stream = await libp2p.dialProtocol(peer, HEADERS_PROTOCOL, {
+    stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
       signal: AbortSignal.timeout(config.syncRequestTimeoutMs * 5), // blocks are bigger
     });
 
-    const request = { startHeight, endHeight, mode: 'blocks' };
-    await stream.sink([Buffer.from(encode(request))] as any);
+    await stream.sink([encodeGetBlocks(magic, { startHeight, endHeight })]);
 
     const raw = await readStreamBounded(stream.source);
     if (raw === null) {
@@ -159,7 +172,12 @@ export async function requestBlocks(
     // See `requestHeaders` — zero bytes is "no answer", `vlqU(0)` is "no blocks".
     if (raw.length === 0) return [];
 
-    const blocks = decodeLegacyBlocksResponse(raw, endHeight - startHeight + 1);
+    const frame = decodeFrame(magic, raw);
+    if (frame.code !== MSG_BLOCKS) {
+      throw new Error(`Blocks response from peer ${peerId} bears code ${frame.code}`);
+    }
+
+    const blocks = decodeBlocks(frame.body, endHeight - startHeight + 1);
     if (blocks === null) {
       throw new Error(`Blocks response from peer ${peerId} is not a well-formed blocks response`);
     }
