@@ -574,7 +574,8 @@ describe('serve: GetHeaders', () => {
 
   it('serves nothing for a maxCount of zero', () => {
     // A positional request carries `maxCount` always — there is no absent field
-    // for a serve-side default to fill in, so zero means zero rather than 20.
+    // for a serve-side default to fill in, so zero is a requested count like any
+    // other and the arm serves nothing.
     const frame = serveHeaders({ startHeight: 25, maxCount: 0 }, makeChain(25));
     expect(bodyOf(frame, MSG_HEADERS)).toEqual(new Uint8Array([0]));
     expect(receiveHeaders(frame, 0)).toEqual([]);
