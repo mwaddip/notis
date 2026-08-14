@@ -937,27 +937,7 @@ rejected before phase N+1 executes.
 - `verifyContentCharacters(content)` passes (no Unicode category C except \n)
 - Content-specific validation (future: homoglyph detection, media checks)
 
-**Watermarks:**
-- `post_indexed_height`: advanced after Phase 3
-- `post_validated_height`: advanced after Phase 4
-
-Invariant: `post_validated_height <= post_indexed_height <= dag_tip_height`.
-External queries serve only up to `post_validated_height`.
-
-> ⚠ **NEVER BUILT — NOT PLANNED.** Neither identifier exists anywhere in `packages/`.
-> The invariant has nothing to hold between, and **"External queries serve only up to
-> `post_validated_height`" is false — every query serves the DAG tip.** The two
-> similarly-named values that do exist in `dag_meta` are **write-only `+1` counters**:
-> nothing reads them, nothing resets them on reorg, and they are not heights.
->
-> **Re-verified 2026-08-11.** The two keys are `last_indexed_sequence` and
-> `last_validated_sequence`, and each occurs exactly **twice** in `node/src` — the
-> `advanceWatermark(...)` write in `post-service.ts` and the key's own type annotation on that
-> helper's signature. **No read site exists.**
->
-> Kept rather than deleted so this is not re-added as an apparent oversight. The same
-> claim also appears in `NODE_INTERFACE.md → Service Layer Architecture` — **if this is
-> ever built, both must change together.**
+Queries serve the DAG tip. Phase completion gates nothing a reader can observe.
 
 **Protocol vs. local-policy rules:**
 - Phases 1-3 are protocol rules — all nodes must enforce identically

@@ -428,7 +428,22 @@ the VouchBox) triggers a cooldown: the karma is not immediately returned to the
 voucher but is held for `VOUCH_COOLDOWN_BLOCKS` before release.
 
 Each identity may vouch for at most one target at a time. The minimum karma
-balance to cast a vouch is `VOUCH_MIN_BALANCE` (11).
+balance to cast a vouch is `VOUCH_MIN_BALANCE` (11) — **a balance, summed across
+the voucher's karma boxes, not the value of any single one.**
+
+> ⚠ **VIOLATED on both halves. The rule is right; the code is wrong. Verified 2026-08-14.**
+> - **It is not enforced at block application.** `VOUCH_MIN_BALANCE` has exactly one reader in
+>   `packages/*/src` — `node/src/services/vouch.ts`, reached only from the HTTP route. The engine's
+>   vouch arm re-checks the output shape, the pinned `VOUCH_KARMA_AMOUNT` and the cooldown at apply;
+>   **the balance is the one vouch rule that does not travel with the transaction.** A vouch arriving
+>   by gossip is admitted with any balance.
+> - **The service gate reads one arbitrary box, not a balance.** It calls `getKarmaBox(owner)`,
+>   whose SQL is `… WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL LIMIT 1` with
+>   **no `ORDER BY`**, then compares that one box against the threshold. A voucher holding 20 karma
+>   across two 10-karma boxes is refused while the threshold is covered twice over.
+>
+> ⚠ **Same root as the faucet defect PR #69 fixed** — `getKarmaBox`'s single-box selection, one
+> function with two symptoms. Fix this against what landed there, not from scratch.
 
 #### Box lifecycle
 

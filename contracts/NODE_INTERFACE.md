@@ -530,7 +530,26 @@ endpoint semantics in `MINING_INTERFACE.md`.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, totalCredits, inviteProbationBlocks }` |
+| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks }` |
+
+> ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
+> **The karma family is `karma`, `invite`, `bond`, `post_lock`, `vouch`** — `credit` is the other
+> ledger and `genesis_proof` is unspendable. `totalKarma` sums all five; `liquidKarma` sums
+> `karma` alone.
+>
+> ⚠ **VIOLATED — `totalKarma` currently sums `box_type = 'karma'` only**, so karma escrowed in a
+> post lock, a bond, an invite or a vouch reads as destroyed. Measured on the live chain
+> 2026-08-14: 5 of the 6 karma missing from the initial 50000 sat in one `post_lock` box and only
+> 1 had been burned. **On a chain with real posting activity the understatement grows with every
+> live lock.** `liquidKarma` is the new name for that number, and adding it is what makes
+> correcting `totalKarma` non-lossy.
+>
+> ⛔ **The karma family is stated twice and nothing links the two.** `utxo-engine.ts`'s karma
+> transition rule filters exactly those five box types and names them in its error string; the
+> five box interfaces in `types/src/utxo.ts` say the same in prose. **A sixth karma-bearing box
+> type would need this query changed too, with no signal.** Both consumers are in `packages/node`,
+> so one exported constant serves both — the engine's arms reading from it rather than restating
+> it — with no cross-package change.
 
 > ✅ **RESOLVED — `inviteProbationBlocks` is served. Verified 2026-08-11.** This read
 > `AHEAD OF CODE` until Phase 9. The node resolves it from the network profile in
@@ -2768,81 +2787,6 @@ counter to be incremented in advance of one.
 under produces a `stateRoot` mismatch at the first inbound block — late, and naming two digests
 rather than the store. That is the accepted cost of the ruling above, not an oversight.
 
-### PostStore Interface
-
-The store layer is backend-agnostic. All storage access goes through the
-`PostStore` interface. The SQLite implementation (`SqlitePostStore`) is the
-default.
-
-> ⚠ **NEVER BUILT — NOT PLANNED, and this one is actively dangerous. Verified 2026-08-11.**
-> **"All storage access goes through the `PostStore` interface" is false.** Nothing routes
-> through it. Every real write path is a module function in `store/*`, and the abstraction
-> is wired but never called.
->
-> **The wiring is real and the calls are not, which is what makes this easy to misread.**
-> `node/src/index.ts` constructs `new SqlitePostStore()` and injects it into `DagService`,
-> and `DagService` is live throughout block application and reorg. But `dag-service.ts`
-> references `this.store` **zero times** — the constructor parameter is stored and never used —
-> and `putBatch` and `put` have **zero callers** anywhere in `node/src`. Injection is not a
-> route.
->
-> **Its `put()` would corrupt `dag_posts` if used.** A future session that reads this
-> section, believes the abstraction is the sanctioned path, and writes through it will
-> damage the posts table — which is why this is marked rather than deleted. Use the
-> `store/*` module functions.
->
-> The opaque `(typeId, id, sequence, data)` design principle below describes the intended
-> shape of an abstraction that was never adopted. Treat it as a design sketch, not as a
-> description of the store.
-
-**Design principle:** The store sees opaque `(typeId, id, sequence, data)`
-tuples. It does NOT parse post content, verify signatures, or validate the
-DAG structure. Domain semantics live in the service layer above.
-
-```typescript
-interface PostStore {
-  putBatch(entries: StoreEntry[]): void;
-  put(entry: StoreEntry): void;
-  get(typeId: number, id: Uint8Array): Uint8Array | null;
-  has(typeId: number, id: Uint8Array): boolean;
-  bestPostAt(sequence: number): Uint8Array | null;
-  canonicalBranchEntries(): Array<{ sequence: number; postId: Uint8Array }>;
-  metaGet(key: string): Uint8Array | null;
-  metaPut(key: string, value: Uint8Array): void;
-  listPeers(): PeerRecord[];
-  putPeer(peer: PeerRecord): void;
-  deletePeer(peerId: string): void;
-  pruneBelowHorizon(horizon: number, typeIds: number[]): void;
-  minSequencePresent(typeId: number): number;
-  close(): void;
-}
-
-interface StoreEntry {
-  typeId: number;
-  id: Uint8Array;       // 32-byte blake2b hash
-  sequence: number;      // caller-provided; store never derives it
-  data: Uint8Array;      // opaque serialized bytes
-}
-
-interface PeerRecord {
-  peerId: string;
-  lastSeenMs: number;
-  addresses: string[];
-  features: Uint8Array;
-}
-```
-
-**Invariants:**
-- `putBatch` is atomic — all entries commit or none do.
-- `put` is idempotent — duplicate `(typeId, id)` with same data is a no-op.
-- `bestPostAt(n)` returns null, not an error, for non-existent sequences.
-- `canonicalBranchEntries()` reads sequentially, not via N point lookups.
-- `pruneBelowHorizon` never touches structural types (post metadata, DAG
-  edges, scores).
-- All methods are synchronous — SQLite is the backing store.
-
----
-
 ## Service Layer Architecture
 
 Express route handlers are thin facades with zero business logic. Every
@@ -2877,19 +2821,8 @@ the handler.
 
 A post failing Phase N is rejected before Phase N+1 runs.
 
-**Validation watermarks:**
-- `post_indexed_height` — bytes stored, hash verified, DAG-linked
-- `post_validated_height` — full content checks passed, safe for queries
-
-Invariant: `post_validated_height <= post_indexed_height <= dag_tip_height`.
-External queries serve only up to `post_validated_height`.
-
-> ⚠ **NEVER BUILT — NOT PLANNED. Verified 2026-08-11: `post_indexed_height` and
-> `post_validated_height` are both 0 occurrences across `packages/`.** Queries serve
-> the DAG tip, not a validated watermark. The `dag_meta` values with similar names are
-> write-only `+1` counters — not heights, never read, not reset on reorg. Duplicated in
-> `VALIDATION_INTERFACE.md → Phased Validation Pipeline`; **change both together or
-> neither.**
+Queries serve the DAG tip. There is no validated watermark and nothing gates a
+read behind one.
 
 ### The genesis state root is checked fail-stop, once, where it is built
 
