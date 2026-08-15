@@ -54,18 +54,17 @@ export interface IdentityRecord {
    * u32 — the height an invite claim applied for this identity. `0` = never
    * invited.
    *
-   * **One field carrying two rules**, which is why it is one and not two. It is
-   * the **once-ever invite bar** — invite creation rejects an `inviteePublicKey`
-   * whose record already holds a non-zero value — and it is the **probation
-   * clock**, since the paired bond settles at
-   * `invitedAtBlock + INVITE_PROBATION_BLOCKS`. Both need the same height and
-   * neither needs anything else, so a bond carries no probation fields of its
-   * own (NODE_INTERFACE → Identity Records).
+   * **The probation clock, and only that.** The paired bond settles at
+   * `invitedAtBlock + INVITE_PROBATION_BLOCKS`, which is the whole of what this
+   * field decides — a bond therefore carries no probation fields of its own
+   * (NODE_INTERFACE → Identity Records). It is **not** the invite bar: an invite
+   * may only name a key that is not already an account, and *that* test is the
+   * existence of this record, not the value of this field.
    *
-   * `0` is unambiguous on the same convention `lastDecayBlock` uses for *never
-   * decayed*: a claim is a **user transaction**, and the only event at
-   * `GENESIS_HEIGHT` (`= 0`) is genesis, which carries none. A field whose zero
-   * were a reachable value would need an option tag instead.
+   * `0` stays reachable and stays meaningful — every identity that received
+   * karma without being invited carries it, genesis and faucet recipients
+   * included — so the settlement sweep must exclude it explicitly rather than
+   * treat it as an ordinary height.
    *
    * Written ONLY by block application when a claim applies. Every other writer
    * of this record carries the stored value through unchanged.

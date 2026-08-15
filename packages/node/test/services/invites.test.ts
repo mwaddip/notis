@@ -313,9 +313,8 @@ describe('invites service', () => {
   });
 
   it('createInvite rejects a key that has already been invited', () => {
-    // The once-ever bar, enforced at creation so a second inviter's bond is
-    // never locked against an invite that could not have been claimed
-    // (NODE_INTERFACE → "Bond transition rules").
+    // A claimed key holds a record, so the bar catches it — but by record
+    // existence, not by the height it carries.
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
@@ -326,19 +325,37 @@ describe('invites service', () => {
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
 
-    expect(() => createInvite(deps, tx, 5)).toThrow(/has already been invited/);
+    expect(() => createInvite(deps, tx, 5)).toThrow(/is already an account/);
   });
 
-  it('createInvite accepts a key whose record exists but was never invited', () => {
-    // Non-vacuity for the bar: `invitedAtBlock: 0` means *never invited*, and a
-    // record exists for anyone who has ever received karma.
+  it('createInvite rejects an ESTABLISHED account that was never invited', () => {
+    // ⚠ The karma-printing case, and the reason the bar is record existence
+    // rather than `invitedAtBlock !== 0`. Every genesis committee member and
+    // every faucet recipient holds karma without ever having been invited.
+    // Naming one mints it `INVITE_KARMA_AMOUNT` from nothing, and the bond then
+    // vests in full against likes that key had ALREADY earned — so the whole
+    // stake comes back and the inviter's only cost is a probation-length lock.
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
       likeCarry: 0n,
-      invitedAtBlock: 0,
-      lifetimeLikesReceived: 0n,
+      invitedAtBlock: 0,          // never invited
+      lifetimeLikesReceived: 900n, // and long since past a full vest
     });
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx = buildCreateTx(karma, inviteePubKey);
+
+    expect(() => createInvite(deps, tx, 5)).toThrow(/is already an account/);
+    // Consensus refuses it too, not only the service.
+    const result = validateTx(deps, tx, 5);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('may not name an existing account');
+  });
+
+  it('createInvite accepts a key with no record at all', () => {
+    // Non-vacuity for the bar, and the whole legal case: a key with no record
+    // has never held karma, so it has never posted and never been liked.
+    expect(storeGetIdentityRecord(inviteePubKey)).toBeNull();
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
 

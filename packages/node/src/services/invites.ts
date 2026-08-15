@@ -76,18 +76,18 @@ export function createInvite(
     );
   }
 
-  // ---- 4. Verify the named key has never been invited ----
+  // ---- 4. Verify the named key is not already an account ----
   //
   // Consensus-enforced in the invite-create transition; restated here for the
-  // diagnosis, because "an address may be invited only once" is the one rejection
-  // a well-formed client cannot predict from its own state.
+  // diagnosis, because "that key is already an account" is the one rejection a
+  // well-formed client cannot predict from its own state.
   const inviteOut = inviteOutputs[0] as InviteBox;
   const bondOut = bondOutputs[0] as BondBox;
   const inviteeRecord = deps.getIdentityRecord(inviteOut.inviteePublicKey);
-  if (inviteeRecord !== null && inviteeRecord.invitedAtBlock !== 0) {
+  if (inviteeRecord !== null) {
     throw new ClientError(
-      `${Buffer.from(inviteOut.inviteePublicKey).toString('hex')} has already been ` +
-      `invited (block ${inviteeRecord.invitedAtBlock}); an address may be invited once`,
+      `${Buffer.from(inviteOut.inviteePublicKey).toString('hex')} is already an ` +
+      `account; an invite may only name a key that is not one`,
     );
   }
 

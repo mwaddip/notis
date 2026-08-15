@@ -129,8 +129,9 @@ function processVouchCooldowns(currentHeight: number): void {
  *
  * The cancel transaction neither names the bond nor could spend it — a bond's
  * guard is `block_apply` and no signature satisfies it (NODE_INTERFACE → "Bond
- * transition rules"). The pairing is `inviteePublicKey` and nothing else, since
- * an address is invited once, ever.
+ * transition rules"). The pairing is `inviteePublicKey` and nothing else: an
+ * invite may not name an existing account, and a claim makes the invitee one, so
+ * a key is invited at most once and names at most one live pair.
  *
  * No bond is not a fault: a store that has the invite but not its bond is
  * reachable only through a rollback boundary, and re-minting against a bond that
@@ -970,8 +971,8 @@ function applyMutationPhase(
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same single-implementation rule as getKarmaValue.
     hasActiveVouchCooldown,
-    // The invite-create once-ever bar (NODE_INTERFACE → "Bond transition
-    // rules") — same rule again.
+    // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
+    // transition rules") — same rule again.
     getIdentityRecord,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
@@ -1227,8 +1228,7 @@ function applyMutationPhase(
         if (inviteToSettle.isCancel) {
           returnBond(inviteToSettle.invitee, height);
         } else {
-          // The claim's height, recorded once and read by two rules: the
-          // once-ever invite bar and the settlement sweep's deadline
+          // The claim's height, which dates the settlement sweep's deadline
           // (NODE_INTERFACE → Identity Records). Re-read after `applyTx` so the
           // activity bump the karma mint just wrote survives; a missing record
           // means maximally stale ({0, 0}), never "skip".
@@ -1239,9 +1239,10 @@ function applyMutationPhase(
             lastDecayBlock: after?.lastDecayBlock ?? 0,
             likeCarry: after?.likeCarry ?? 0n,
             invitedAtBlock: height,
-            // Carried through, not reset. A key can receive likes before it is
-            // ever invited, and zeroing the count here would hand the inviter a
-            // bond that vests from nothing.
+            // Carried through rather than written, and it is always 0 here: a
+            // legal invitee is not an account yet, so it has never held karma,
+            // never posted and never been liked. The read is what keeps that a
+            // consequence of the bar rather than an assumption this line makes.
             lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
           });
         }

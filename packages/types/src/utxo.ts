@@ -497,9 +497,10 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * `like-payout` settles likes per block (ARCHITECTURE → Per-block accrual and
  * settlement): one mint per author per block, subject = the raw author key.
  *
- * The three invite reasons all take the invitee's public key as subject, and an
- * address may be invited **once, ever** (NODE_INTERFACE → Bond transition rules),
- * so each `(reason, subject)` pair occurs at most once in the whole history —
+ * The three invite reasons all take the invitee's public key as subject, and a
+ * key is invited **at most once** — an invite may not name an existing account
+ * and a claim makes the invitee one (NODE_INTERFACE → Bond transition rules) —
+ * so each `(reason, subject)` pair occurs at most once in the whole history,
  * without reading the height at all. `invite-claim` is the only reason on the
  * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
  * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.

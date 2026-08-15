@@ -63,11 +63,12 @@ export interface UtxoEngineDeps {
   /**
    * The committed per-identity record, or null when the identity has none.
    *
-   * Consensus input: invite creation rejects an `inviteePublicKey` whose record
-   * already carries a non-zero `invitedAtBlock`, which is where "an address may
-   * be invited once, ever" is enforced (NODE_INTERFACE → "Bond transition
-   * rules"). Checked at creation rather than at claim so a second inviter's bond
-   * is never locked against an invite that could not have been claimed.
+   * Consensus input: invite creation rejects an `inviteePublicKey` that already
+   * has one, which is where "an invite may only name a key that is not already
+   * an account" is enforced. **Existence is the whole test** — the record's
+   * contents decide nothing here. Checked at creation rather than at claim so a
+   * second inviter's bond is never locked against an invite that could not have
+   * been claimed.
    */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
   /**
@@ -381,18 +382,31 @@ function checkTransitions(
             error: `Invite and bond must name the same inviteePublicKey`,
           };
         }
-        // An address may be invited once, ever (NODE_INTERFACE → "Bond
-        // transition rules"). Enforced here rather than at claim so a second
-        // inviter's bond is never locked against an invite that could not have
-        // been claimed. `0` is "never invited": a claim is a user transaction
-        // and the only event at GENESIS_HEIGHT is genesis, which carries none.
+        // **An invite may only name a key that is not already an account**, and
+        // "is an account" is *holds an identity record* — not "was invited
+        // before". Enforced here rather than at claim so a second inviter's bond
+        // is never locked against an invite that could not have been claimed.
+        //
+        // ⚠ The weaker "never invited" reading PRINTS KARMA. An established
+        // account that simply had not been invited — every genesis committee
+        // member, every faucet recipient — could be named: the claim mints it
+        // `INVITE_KARMA_AMOUNT` from nothing, and the bond then vests in full
+        // against likes that key had *already* earned, so the whole stake
+        // returns to the inviter at the deadline. The inviter's cost is a
+        // probation-length lock and nothing else.
+        //
+        // Record existence is the right test because every karma receipt writes
+        // one through `insertBox`'s choke point. A key with no record has never
+        // held karma, so it has never posted and never been liked — which is
+        // also what makes the claim the record-CREATING event for every legal
+        // invitee.
         const inviteeRecord = deps.getIdentityRecord(inviteOut.inviteePublicKey);
-        if (inviteeRecord !== null && inviteeRecord.invitedAtBlock !== 0) {
+        if (inviteeRecord !== null) {
           return {
             valid: false,
             error:
-              `An address may be invited only once: ${inviteeHex} was invited ` +
-              `at block ${inviteeRecord.invitedAtBlock}`,
+              `An invite may not name an existing account: ${inviteeHex} already ` +
+              `holds an identity record`,
           };
         }
       }

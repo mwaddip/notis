@@ -211,8 +211,8 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // record. Under that height they never coincide, and every `putIdentityRecord` writer
   // that carried `invitedAtBlock` or `lifetimeLikesReceived` through would be untested on
   // the one network the suite actually runs — the fields are REQUIRED on the type, so a
-  // writer passing `0` instead of the stored value compiles and silently destroys the
-  // clock, the once-ever bar and the vesting count.
+  // writer passing `0` instead of the stored value compiles and silently moves a
+  // probation deadline or forfeits a bond that had vested.
   inviteProbationBlocks: 540,
   creditMinerRewardDelay: 10, // 720 ÷ 72 — small enough to spend, large enough to observe immaturity
   bootstrapPeriodBlocks: 100, // 10000 ÷ 100

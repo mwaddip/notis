@@ -211,8 +211,9 @@ describe('the invite at block application', () => {
   });
 
   it('a claim bars the key from any further invite', async () => {
-    // The other half of what `invitedAtBlock` is for. Once written, an invite
-    // create naming the same key is refused by the transition arm.
+    // The claim is the record-CREATING event for every legal invitee, and a key
+    // that holds a record is already an account — so one claim is what makes a
+    // second invite for the same key unrepresentable.
     const { utxo, invite, invitee } = await seedPair();
     const mempool = await importMempool();
     const engine = await import('../../src/services/utxo-engine.js');
@@ -257,7 +258,7 @@ describe('the invite at block application', () => {
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('invited only once');
+    expect(result.error).toContain('may not name an existing account');
   });
 
   // -------------------------------------------------------------------------
@@ -421,66 +422,79 @@ describe('the invite at block application', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * Author a post as `author`, then have `liker` like it — through the real
-   * pipeline, so per-block like settlement is what moves the counter.
+   * Earn `count` likes for `author` in ONE block, through the real pipeline —
+   * so per-block like settlement is what moves the counter, not a fixture.
    *
-   * The like targets a post the same block confirms: apply rejects a like on an
+   * Each like targets a post the same block confirms: apply rejects a like on an
    * unconfirmed target, and topology lands before the transaction loop, so
-   * confirm-and-like-in-one-block is the valid shape.
+   * confirm-and-like-in-one-block is the valid shape. Distinct posts and
+   * distinct likers, because one liker may like a post once.
    */
-  async function earnOneLike(author: TestIdentity, liker: TestIdentity, nonce: number) {
+  async function earnLikes(author: TestIdentity, count: number, nonceBase: number) {
     const posts = await import('../../src/store/posts.js');
     const mempool = await importMempool();
     const utxo = await importUtxo();
     const types = await import('@dagsocial/types');
 
-    const post = makePost(author.userId, `post ${nonce}`);
-    const postId = types.computePostId(post);
-    posts.insertPost(post, types.encodePost(post));
-    mempool.insertSubBlock(postId, 1000);
+    const postIds: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const nonce = nonceBase + i;
+      const post = makePost(author.userId, `post ${nonce}`);
+      const postId = types.computePostId(post);
+      posts.insertPost(post, types.encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      postIds.push(postId);
 
-    const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
-    utxo.insertBox(karma);
-    mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), null, 1000);
+      const liker = makeTestIdentity();
+      const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
+      utxo.insertBox(karma);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), null, 1000);
+    }
 
-    const block = await mineOne();
-    expect(block).not.toBeNull();
-    return postId;
+    expect(await mineOne()).not.toBeNull();
+    return postIds;
   }
 
-  it('per-block like settlement is what moves the counter, and settlement reads it', async () => {
+  /** Mine until the chain tip is `target`. */
+  async function mineTo(target: number) {
+    const ordering = await import('../../src/store/ordering.js');
+    while (ordering.getCurrentHeight() < target) {
+      expect(await mineOne()).not.toBeNull();
+    }
+    expect(ordering.getCurrentHeight()).toBe(target);
+  }
+
+  it('per-block like settlement ACCUMULATES the counter across blocks, and settlement reads it', async () => {
     // End to end: no fixture writes the count. If the settlement's reader and
     // the settlement's writer disagreed about the field, nothing else in this
     // suite would see it.
     //
-    // Likes are earned BEFORE the claim, which is both reachable — a key can
-    // receive likes long before anyone invites it — and the sharper order: the
-    // claim path rewrites this record, so a claim that zeroed the counter
-    // instead of carrying it through would forfeit a bond the invitee had
-    // already earned, and this is the only case that would see it.
+    // Every like is earned AFTER the claim, and that is now the only reachable
+    // order: an invite may not name an existing account, so a legal invitee has
+    // no record — and therefore no karma, no posts and no likes — until the
+    // claim creates one. "The claim drops a pre-existing counter" is closed by
+    // construction rather than by a test.
+    //
+    // The likes are split across TWO blocks on purpose. That is what separates
+    // accumulation from overwriting: a settlement that assigned this block's
+    // count instead of adding it would leave the same total after a single
+    // block and only diverge here.
     const { utxo, inviter, invitee, invite, bond } = await seedPair();
     const mempool = await importMempool();
     const records = await importRecords();
 
-    // Five real likes on the invitee's own posts → floor(5 / 5) = 1 karma.
-    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
-      await earnOneLike(invitee, makeTestIdentity(), i);
-    }
-    const earned = BigInt(INVITE_BOND_VEST_PER_LIKES);
-    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(earned);
-
     mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
-    const claimBlock = await mineOne();
-    const invitedAtBlock = claimBlock!.header.height;
-    // Carried through the claim, not reset.
-    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(earned);
+    const invitedAtBlock = (await mineOne())!.header.height;
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
-    let height = invitedAtBlock;
-    while (height < invitedAtBlock + PROBATION) {
-      const block = await mineOne();
-      expect(block).not.toBeNull();
-      height = block!.header.height;
-    }
+    // Block A: three likes. Block B: two more. floor(5 / 5) = 1 karma vested.
+    await earnLikes(invitee, 3, 0);
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(3n);
+    await earnLikes(invitee, 2, 10);
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived)
+      .toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
+
+    await mineTo(invitedAtBlock + PROBATION);
 
     expect(utxo.getBox(bond.id!)).toBeNull();
     expect(utxo.getKarmaValue(inviter.userId)).toBe(1n);
@@ -497,15 +511,12 @@ describe('the invite at block application', () => {
     const records = await importRecords();
     const db = await importDb();
 
-    const postIds: string[] = [];
-    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
-      postIds.push(await earnOneLike(invitee, makeTestIdentity(), 100 + i));
-    }
-    const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
-    expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
-
     mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
     const invitedAtBlock = (await mineOne())!.header.height;
+
+    const postIds = await earnLikes(invitee, INVITE_BOND_VEST_PER_LIKES, 100);
+    const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
+    expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
 
     // Every like-record gone — the state prune leaves behind.
     db.getDb().prepare('DELETE FROM like_records').run();
@@ -515,15 +526,143 @@ describe('the invite at block application', () => {
     // The counter is untouched, and the bond still vests on it.
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(earned);
 
-    let height = invitedAtBlock;
-    while (height < invitedAtBlock + PROBATION) {
-      const block = await mineOne();
-      expect(block).not.toBeNull();
-      height = block!.header.height;
-    }
+    await mineTo(invitedAtBlock + PROBATION);
 
-    expect(utxo.getBox(bond.id!)).toBeNull();
+    expect(utxo.getBox(bond!.id!)).toBeNull();
     expect(utxo.getKarmaValue(inviter.userId)).toBe(1n);
   });
+});
 
+// ---------------------------------------------------------------------------
+// The decay writer, at the sweep's own height.
+//
+// Its own suite because it needs the decay knobs compressed as well as the
+// probation length, and every case above asserts exact karma balances that a
+// firing decay would move. The probation length here is deliberately longer
+// than the stale threshold — which is the property devnet's 540 exists to give
+// a real network (`network.ts` → inviteProbationBlocks).
+// ---------------------------------------------------------------------------
+
+const DECAY_PROBATION = 8;
+const DECAY_STALE = 3;
+
+describe('the invite at block application — decay adjacency', () => {
+  beforeEach(async () => {
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: Object.freeze({
+          ...actual.config,
+          inviteProbationBlocks: DECAY_PROBATION,
+          karmaStaleThresholdBlocks: DECAY_STALE,
+          karmaDecayIntervalBlocks: 1,
+        }),
+      };
+    });
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    try {
+      (await import('../../src/services/block-creator.js')).stopBlockCreator();
+    } catch {
+      // never imported
+    }
+    vi.doUnmock('../../src/config.js');
+    vi.resetModules();
+  });
+
+  it('decay carries the counter through, and the sweep reads it in the same block', async () => {
+    // Decay is step 12 of block application and the bond sweep is 12c, so at the
+    // deadline the decay writer rewrites this record and the settlement reads it
+    // back **in the same block**. A decay that passed `0` instead of the stored
+    // value compiles, and would forfeit a bond the invitee had earned.
+    //
+    // This is the adjacency a probation shorter than the stale threshold makes
+    // unreachable: under it the two never meet on one record, and the carry-
+    // through goes untested on the only network the suite runs.
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    const utxo = await import('../../src/store/utxo.js');
+    const records = await import('../../src/store/identity-records.js');
+    const mempool = await import('../../src/store/mempool.js');
+    const posts = await import('../../src/store/posts.js');
+    const ordering = await import('../../src/store/ordering.js');
+    const bc = await import('../../src/services/block-creator.js');
+    const types = await import('@dagsocial/types');
+    (await import('../../src/state/avl-prover.js')).createAvlProver();
+
+    const cfg = makeTestConfig({
+      dbPath: ':memory:',
+      networkType: 'devnet' as const,
+      nodeRole: 'miner' as const,
+      orderingBlockPowTargetBits: 3072,
+      inviteProbationBlocks: DECAY_PROBATION,
+    });
+    const mine = async () => {
+      bc.startBlockCreator(cfg);
+      const block = await mineNextBlock(bc);
+      expect(block).not.toBeNull();
+      return block!;
+    };
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    const [invite, bond] = seedAsOneTx([
+      {
+        boxType: 'invite' as const, value: 0n, inviterId: inviter.userId,
+        inviteePublicKey: invitee.userId, guard: 'invite_dual' as const,
+      },
+      {
+        boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviter.userId,
+        inviteePublicKey: invitee.userId, guard: 'block_apply' as const,
+      },
+    ]);
+    utxo.insertBox(invite!);
+    utxo.insertBox(bond!);
+
+    const claim: UtxoTransaction = {
+      inputs: [invite!.id!],
+      outputs: [{
+        boxType: 'karma', value: INVITE_KARMA_AMOUNT, owner: invitee.userId,
+        guard: 'owner_signature',
+      } as KarmaBox],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(claim, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
+    mempool.insertUtxoTx(claim, null, 1000);
+    const invitedAtBlock = (await mine()).header.height;
+
+    // Five likes in one block → floor(5 / 5) = 1 karma vested at the deadline.
+    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
+      const post = makePost(invitee.userId, `decay post ${i}`);
+      const postId = types.computePostId(post);
+      posts.insertPost(post, types.encodePost(post));
+      mempool.insertSubBlock(postId, 1000);
+      const liker = makeTestIdentity();
+      const karma = makeKarmaBox(100n, liker.userId, 0, 900 + i);
+      utxo.insertBox(karma);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), null, 1000);
+    }
+    await mine();
+    const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
+    expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
+
+    const deadline = invitedAtBlock + DECAY_PROBATION;
+    while (ordering.getCurrentHeight() < deadline) await mine();
+
+    // Decay really fired on the invitee — without this the case would pass on a
+    // chain where the two writers never met, which is the whole hazard.
+    const after = records.getIdentityRecord(invitee.userId)!;
+    expect(after.lastDecayBlock).toBeGreaterThan(0);
+    // ...and the counter survived every one of those writes.
+    expect(after.lifetimeLikesReceived).toBe(earned);
+    // ...so the bond settled on it rather than forfeiting.
+    expect(utxo.getBox(bond!.id!)).toBeNull();
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(1n);
+  });
 });

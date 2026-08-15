@@ -223,9 +223,9 @@ net.onTx((tx) => {
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
     hasActiveVouchCooldown,
-    // The invite-create once-ever bar (NODE_INTERFACE → "Bond transition
-    // rules") — same rule again: a relayed invite naming an already-invited key
-    // must be refused here as well as at the block path.
+    // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
+    // transition rules") — same rule again: a relayed invite naming an existing
+    // account must be refused here as well as at the block path.
     getIdentityRecord,
     runInTransaction: (fn: () => void) => fn(),
     isSystemBox: (boxId: string) => {

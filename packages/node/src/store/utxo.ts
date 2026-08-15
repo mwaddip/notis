@@ -439,11 +439,12 @@ export function getOpenInvites(inviterId: Uint8Array): InviteBox[] {
 /**
  * The at-most-one live invite naming this key, or null.
  *
- * At most one because an address may be invited **once, ever**, and invite
- * creation is where that is enforced (NODE_INTERFACE → "Bond transition
- * rules"). `LIMIT 1` is safe for that reason and not by hope; a second row would
- * mean the create-time bar had been bypassed, which is a consensus fault rather
- * than a case to order around.
+ * At most one because an invite may not name an existing account and a claim
+ * makes the invitee one, so a key is invited at most once — and invite creation
+ * is where that is enforced (NODE_INTERFACE → "Bond transition rules"). `LIMIT
+ * 1` is safe for that reason and not by hope; a second row would mean the
+ * create-time bar had been bypassed, which is a consensus fault rather than a
+ * case to order around.
  */
 export function getInviteFor(inviteePublicKey: Uint8Array): InviteBox | null {
   const row = getDb()
@@ -463,8 +464,8 @@ export function getInviteFor(inviteePublicKey: Uint8Array): InviteBox | null {
  * The bond paired with this invitee's invite, or null.
  *
  * `inviteePublicKey` IS the pairing — the invite and the bond are pinned to one
- * key at creation and an address is invited once, so this names exactly one live
- * pair. The claim, cancel and settlement paths all resolve through here.
+ * key at creation and a key is invited at most once, so this names exactly one
+ * live pair. The claim, cancel and settlement paths all resolve through here.
  */
 export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
   const row = getDb()

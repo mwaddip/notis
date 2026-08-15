@@ -98,10 +98,10 @@ const MIGRATIONS = [
   // record's AVL value encoding as an always-present field.
   //
   // invited_at_block: the height an invite claim applied, 0 = never invited.
-  // Written only by block application when a claim applies, and read by two
-  // rules — the once-ever invite bar and the bond's probation deadline
-  // (NODE_INTERFACE → Identity Records). Committed state, always-present in the
-  // AVL value encoding for the same reason like_carry is.
+  // Written only by block application when a claim applies, and read by the
+  // bond's probation deadline (NODE_INTERFACE → Identity Records). It is NOT the
+  // invite bar — that is the existence of the row. Committed state,
+  // always-present in the AVL value encoding for the same reason like_carry is.
   //
   // lifetime_likes_received: likes this identity has received, ever. Incremented
   // by per-block like settlement and decremented by nothing — prune deletes
