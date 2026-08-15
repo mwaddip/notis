@@ -355,7 +355,7 @@ real key**; devnet and testnet burning is intended.
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify `sum(coinbaseOutputs.map(o => o.value)) === computeBlockReward(height) + fees`
+2. Verify `sum(coinbaseOutputs.map(o => o.value))` equals the **minted total** the slice table yields for this height, fee sum and actor count. That is `emission + fees` on a keyed profile, and that **less the treasury share and the unearned bonus** on an unkeyed one, where neither is minted. ⚠ **Income and minted total are not the same number**, and only the keyed profile makes them coincide
 3. Verify the **split**, not only the total — a block paying the whole income to the miner sums correctly and forfeits nothing
 4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes
 5. For each output, mint credits
@@ -427,8 +427,10 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 
 ## Invariants
 
-1. Coinbase value per block matches `computeBlockReward(height) + fees` exactly, and
-   **no coinbase output carries `value === 0`** at any height
+1. Coinbase value per block matches the **minted total** exactly — stated once at
+   "On block receipt" step 2, and not restated here, because this file has already
+   carried two copies of this rule that disagreed. **No coinbase output carries
+   `value === 0`** at any height
 2. The coinbase's split matches the slice table above — verified **per output**, not
    only as a sum. On a profile with no treasury key, the treasury share and the
    unearned bonus are not minted and income is reduced by exactly that amount —
