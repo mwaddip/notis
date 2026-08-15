@@ -1363,7 +1363,8 @@ a fourth.
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_LOCK_*`,
 `VOUCH_KARMA_AMOUNT`, `INVITE_*`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
-`CREDIT_TREASURY_PCT`, `CREDIT_INITIAL_REWARD`).
+`COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
+`CREDIT_INITIAL_REWARD`).
 
 **The split is normative: compress time, never economics.** Every per-network parameter is a
 place where devnet and mainnet behave differently, which is precisely where a defect hides

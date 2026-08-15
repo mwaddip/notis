@@ -1839,7 +1839,10 @@ else:
 ```
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
-If `treasuryPubKey` is configured, `CREDIT_TREASURY_PCT` (10%) goes to treasury.
+The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. A
+`treasuryPubKey` is **required**, not optional: without one the treasury's share and
+the unearned inclusion bonus would both fall to the miner, who would then recover
+their own forfeit.
 
 > ⚠ **VIOLATED — the lock has no spend-time enforcement, so it is decorative.**
 > Measured 2026-08-07, **re-verified 2026-08-11 by reading every `lockedUntilBlock` occurrence
@@ -3160,7 +3163,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `TREASURY_PUBKEY` | **profile** | Genesis data — a different chain has a different treasury |
 | `KARMA_DECAY_AMOUNT` | universal constant | Economics. Devnet decays *often*, not *harder* |
 | `KARMA_MINIMUM` | universal constant | Economics |
-| `CREDIT_TREASURY_PCT` | universal constant | Economics |
+| `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | universal constant | Economics — the coinbase split |
 | `CREDIT_INITIAL_REWARD` | universal constant | Economics — separately, it is read and never used (A5) |
 | `AVL_KEY_LENGTH` | universal constant | Format. No network has a reason to differ |
 
@@ -3184,7 +3187,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`KARMA_STALE_THRESHOLD_BLOCKS`~~ | **removed** | ~~`20160`~~ | → profile field `karmaStaleThresholdBlocks`. Value corrected to `40320` by P2-A (60s blocks) |
 | ~~`KARMA_MINIMUM`~~ | **removed** | ~~`10`~~ | → universal constant `KARMA_MINIMUM` (`@dagsocial/types`) |
 | ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`. Closed MINING invariants 4, 5 and 7 — `expectedTarget(height)` now sources the profile, and its unused `height` parameter is the seam a real retarget will need |
-| ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `CREDIT_TREASURY_PCT` (`@dagsocial/types`) |
+| ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | → profile field `treasuryPubKey` — genesis data, so a different chain has a different treasury |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
 | `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |

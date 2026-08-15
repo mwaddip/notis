@@ -31,7 +31,11 @@ Ergo-style linear decay with flat tail. At 60-second blocks:
 | `CREDIT_REWARD_REDUCTION` | 2 | Credits reduced per epoch |
 | `CREDIT_TAIL_REWARD` | 2 | Flat reward after emission ends |
 | `CREDIT_MINER_REWARD_DELAY` | 720 | Blocks before coinbase can be spent (~12h) |
-| `CREDIT_TREASURY_PCT` | 10 | Percent of each reward to treasury |
+| `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
+| `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
+| `COINBASE_BACKER_PCT` | 35 | Backer pool. **AHEAD OF CODE** — nothing stakes, so it falls to the miner floor |
+| `COINBASE_BONUS_PCT` | 25 | The inclusion bonus pool |
+| `INCLUSION_BONUS_K` | 5n | The bonus curve's knee — at `K` actors the miner earns half the pool. `bigint`, because the curve computes in base units |
 
 **Reward function:**
 
@@ -49,9 +53,10 @@ computeBlockReward(height):
 
 **Total supply:** ~453.9M credits (triangular decay area + tail).
 
-**Treasury split:** `treasuryAmount = floor(reward × CREDIT_TREASURY_PCT / 100)`,
-`minerAmount = reward - treasuryAmount`. Treasury output is omitted if no
-treasury public key is configured.
+**Coinbase split:** see "Coinbase Application → The slices" below. It is taken over
+block **income**, not over the reward; the treasury's share is per income term; and
+the miner floor absorbs every remainder. **A treasury key is required** — a node
+configured without one does not start.
 
 ## Ordering Block (extended)
 
@@ -368,7 +373,8 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 | `creditMinerRewardDelay` | profile | **yes** | Blocks before a coinbase output is spendable |
 | `treasuryPubKey` | profile | **yes** | Treasury key — genesis data, differs per chain |
 | `CREDIT_INITIAL_REWARD` | constant | no | Credits per block in the fixed-rate period, base units of 10⁻⁸ |
-| `CREDIT_TREASURY_PCT` | constant | no | Percent to treasury |
+| `COINBASE_TREASURY_PCT` | constant | no | Percent of emission and of fees to treasury |
+| `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | constant | no | The rest of the coinbase split |
 
 > ✅ **RESOLVED — the bypass is closed. All five are profile-sourced. Verified 2026-08-11.**
 > This read `PARTLY IMPLEMENTED` until Phase 9.
@@ -397,7 +403,7 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 > re-derive the count from this section.**
 >
 > **Note which two did *not* become per-network.** `CREDIT_INITIAL_REWARD` and
-> `CREDIT_TREASURY_PCT` are *economics*, and the split in `ARCHITECTURE §Network Identity`
+> `COINBASE_TREASURY_PCT` are *economics*, and the split in `ARCHITECTURE §Network Identity`
 > is normative: compress time, never economics. Devnet mines fast; it does not mine rich.
 > A test chain that pays a different reward is a test chain that cannot catch a reward bug.
 
