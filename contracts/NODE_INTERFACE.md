@@ -669,7 +669,7 @@ Full read-only validation. Performs all checks without modifying state:
      `0`, so this conserves arithmetically and is listed here only because the
      gate rejects zero-output shapes structurally);
    - the **transaction fee** — a transaction whose inputs are `credit` boxes may
-     leave a deficit, zero included. The block carrying it claims the
+     leave a deficit of any size, zero included. The block carrying it claims the
      difference in its coinbase (MINING_INTERFACE → Coinbase Application). A
      *surplus* on credit inputs stays invalid: a deficit is a fee, a surplus is a
      mint, and the invite claim above is the only mint a user transaction may
@@ -683,10 +683,12 @@ Full read-only validation. Performs all checks without modifying state:
      > **No amount is checked here.** A zero-fee transaction is valid consensus —
      > the price is each node's relay policy (MEMPOOL_INTERFACE → Fee floor), and
      > what makes paying rational is the block creator's fill order, not this gate.
-     > **The upper bound is the transition table's, not this gate's.** A credit
-     > spend must create at least one `CreditBox`, so a deficit equal to the whole
-     > input is not expressible — there is no zero-output credit shape to carry it,
-     > and a zero-output credit spend is refused *there* rather than here.
+     > **A whole-input deficit is expressible, and the encoding is worth knowing.**
+     > An output `value` is a **non-negative** `bigint` (step 4's schema, `u64`), so
+     > `credit(X) → credit(0)` pays the entire input as fee. What the transition
+     > rules refuse is the zero-**length** output list — a constraint on the output
+     > list's shape, not on the fee's size. **The two are independent, and reading
+     > the first as bounding the second is wrong.**
 
    There is **no BondBox exception, and none is needed**: a bond is destroyed by
    the probation-deadline settlement, which is block application, and this gate
