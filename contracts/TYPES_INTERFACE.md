@@ -2068,7 +2068,7 @@ export const COINBASE_BACKER_PCT = 35;       // consensus — AHEAD OF CODE, fal
 export const COINBASE_BONUS_PCT = 25;        // consensus — the inclusion bonus pool
 export const INCLUSION_BONUS_K = 5n;         // consensus — the bonus curve's knee
 export const MEMPOOL_CREDIT_SHARE_PCT = 50;  // policy — credit share of the pool
-export const MIN_FEE_RATE_PER_BYTE = 0n;     // policy — relay floor, base units per encoded byte
+export const MIN_FEE_RATE_PER_BYTE = 0n;     // policy — relay floor, base units per IN-BLOCK byte
 ```
 
 > The four `COINBASE_*_PCT` values **must sum to 100** — four independent `export const`s

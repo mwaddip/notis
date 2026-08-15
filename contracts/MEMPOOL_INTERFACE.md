@@ -503,8 +503,15 @@ its own as entries expire or confirm.
 ### Fee floor
 
 A node refuses a credit transaction whose fee rate — deficit in base units per
-encoded byte — falls below `MIN_FEE_RATE_PER_BYTE`. This is **relay policy, not
-consensus**: a zero-fee transaction is valid and a miner may mine one.
+**in-block byte** — falls below `MIN_FEE_RATE_PER_BYTE`. This is **relay policy,
+not consensus**: a zero-fee transaction is valid and a miner may mine one.
+
+⚠ **The denominator is the in-block cost, not the bare encoded length.** A
+transaction occupies its length-prefixed body *and* its fixed-width `utxoTxIds`
+entry, and the block budget spends both — so that is the resource a bid is
+measured against. An operator computing a floor from the encoded size alone
+arrives at a number stricter than they intended, because the real denominator is
+larger.
 
 ⛔ **The floor sits above `insertUtxoTx`, never inside it.** The reorg caller
 re-inserts transactions the chain has already accepted, and an operator raises
