@@ -19,7 +19,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
@@ -3037,6 +3037,228 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       expect(MALFORMED.some((bad) => CONFORMS.createdAt!(bad))).toBe(true);
       expect(blockHash(header())).not.toBeNull();
       expect(computePowHash(header())).not.toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The weight bounds — MAX_TX_BYTES and MAX_BLOCK_BODY_BYTES
+// ---------------------------------------------------------------------------
+//
+// ⛔ **Attribution is the requirement.** An oversized object satisfies every
+// other structural rule, so a fixture that fails two checks says nothing about
+// the one under test. Every rejection below is one byte away from a fixture the
+// same test asserts is ACCEPTED, and every assertion names the reason — which is
+// what tells this gate apart from the ones above it.
+
+describe('verifyTxStructure — the transaction weight bound', () => {
+  const TOO_LARGE = `Transaction too large (max ${MAX_TX_BYTES} bytes)`;
+  const NOT_ENCODABLE = 'Transaction is not encodable';
+
+  const karmaOut: AnyBoxCandidate = {
+    boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature',
+  };
+
+  /** What a cbor-x text string of `k` characters costs: its header plus itself. */
+  const stringCost = (k: number): number => k + (k < 24 ? 1 : k < 256 ? 2 : 3);
+
+  /**
+   * A transaction encoding to exactly `target` bytes, grown through `inputs` —
+   * the only field that scales. A 64-hex box id costs 66 bytes, so the count
+   * alone cannot land on an arbitrary number: the last input carries whatever
+   * remains, and its own length is solved for rather than searched. Dropping one
+   * whole id widens the remainder by 66 when no single tail closes the gap
+   * (nothing costs exactly 25).
+   */
+  const txOfEncodedSize = (target: number): UtxoTransaction => {
+    const build = (n: number, tail: string): UtxoTransaction => ({
+      inputs: [...Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, '0')), tail],
+      outputs: [karmaOut],
+      signatures: {},
+      protocolVersion: 1,
+    });
+    for (let n = Math.ceil(target / 66); n >= 0; n--) {
+      const withoutTail = encodeTx(build(n, '')).length - stringCost(0);
+      const gap = target - withoutTail;
+      for (const k of [gap - 1, gap - 2, gap - 3]) {
+        if (k >= 0 && stringCost(k) === gap) return build(n, 'f'.repeat(k));
+      }
+    }
+    throw new Error(`no transaction fixture of exactly ${target} bytes`);
+  };
+
+  const atLimit = txOfEncodedSize(MAX_TX_BYTES);
+  /** The same transaction, one character longer in its tail input. */
+  const overLimit: UtxoTransaction = {
+    ...atLimit,
+    inputs: [...atLimit.inputs.slice(0, -1), `${atLimit.inputs[atLimit.inputs.length - 1]!}f`],
+  };
+
+  it('accepts a transaction encoding to exactly MAX_TX_BYTES', () => {
+    expect(encodeTx(atLimit).length).toBe(MAX_TX_BYTES);
+    expect(verifyTxStructure(atLimit)).toEqual({ valid: true });
+  });
+
+  it('rejects one byte more, and names the weight bound', () => {
+    // One character apart from the fixture the test above asserts is valid, so
+    // no other rule can be credited with this rejection.
+    expect(encodeTx(overLimit).length).toBe(MAX_TX_BYTES + 1);
+    expect(verifyTxStructure(overLimit)).toEqual({ valid: false, error: TOO_LARGE });
+  });
+
+  // ⚠ **That the measure is the re-encoding and not the received bytes has no
+  // test here, and cannot have one** — this function takes a `UtxoTransaction`
+  // and never sees the bytes it arrived as, so the clause holds by the
+  // signature. The half that IS observable is the block side's opposite measure,
+  // pinned below: `utxoTxs` elements are weighed as bytes, never decoded.
+
+  describe('an encoder throw is a rejection, not an escape (M-5)', () => {
+    const withOutput = (out: unknown): UtxoTransaction =>
+      ({
+        inputs: ['aa'.repeat(32)],
+        outputs: [out],
+        signatures: {},
+        protocolVersion: 1,
+      }) as unknown as UtxoTransaction;
+
+    // `cbor-x` refuses these outright. They clear every check above — the
+    // genesis_proof scan reads `boxType` and nothing else, and no rule here types
+    // an output's fields.
+    it.each([
+      ['a symbol', Symbol('x')],
+      ['a function', () => 1],
+    ])('rejects an output holding %s', (_label, value) => {
+      expect(verifyTxStructure(withOutput({ boxType: 'karma', value }))).toEqual({
+        valid: false,
+        error: NOT_ENCODABLE,
+      });
+    });
+
+    it('rejects an output whose getter throws inside the encoder', () => {
+      const out = { boxType: 'karma' };
+      Object.defineProperty(out, 'value', {
+        get() { throw new Error('boom'); },
+        enumerable: true,
+      });
+      expect(verifyTxStructure(withOutput(out))).toEqual({ valid: false, error: NOT_ENCODABLE });
+    });
+
+    // ⛔ The reachable one. Net's `tx` topic validator hands this function
+    // `decodeTx(raw)`, and nesting decodes a level cheaper than it re-encodes: a
+    // ~2 KB payload of nested arrays decodes at a depth whose re-encode overflows
+    // the stack (measured against cbor-x 1.6.4, 2026-08-15). The fixture is built
+    // directly and far deeper, so it does not ride on where that margin sits
+    // under a test runner's own stack. The verdict is asserted rather than the
+    // input, so a failure prints the result and not 100,000 nested arrays.
+    it('rejects nesting the encoder cannot walk', () => {
+      let deep: unknown = 0;
+      for (let i = 0; i < 100_000; i++) deep = [deep];
+      const verdict = verifyTxStructure(withOutput({ boxType: 'karma', value: deep }));
+      expect(verdict).toEqual({ valid: false, error: NOT_ENCODABLE });
+    });
+  });
+});
+
+describe('verifyOrderingBlockStructure — the body and embedded-transaction bounds', () => {
+  const BODY_TOO_LARGE = `Ordering block body too large (max ${MAX_BLOCK_BODY_BYTES} bytes)`;
+  const TX_TOO_LARGE = `Ordering block utxoTx too large (max ${MAX_TX_BYTES} bytes)`;
+
+  /**
+   * A block that passes every structural check, carrying the transactions given.
+   * `pruneEntries` and `coinbaseOutputs` stay empty so the body's weight is the
+   * transactions and their framing alone.
+   */
+  const makeBlock = (utxoTxs: Uint8Array[]): OrderingBlock => ({
+    header: {
+      protocolVersion: 1,
+      height: 1,
+      prevBlockHash: '0'.repeat(64),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32).fill(1),
+      powNonce: 0,
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+      createdAt: 1_700_000_000_000,
+    },
+    utxoTxTree: {
+      utxoTxIds: utxoTxs.map((_, i) => i.toString(16).padStart(64, '0')),
+      utxoTxs,
+      pruneEntries: [],
+      coinbaseOutputs: [],
+    },
+    validatorSignature: new Uint8Array(64),
+  });
+
+  /**
+   * Transactions whose tree measures exactly `target`. Each stays under
+   * `MAX_TX_BYTES` so the embedded bound can never be the reason a body-size
+   * fixture is refused; the last one absorbs the remainder.
+   */
+  const bodyOfExactSize = (target: number): Uint8Array[] => {
+    const per = 8_000;
+    const n = Math.ceil(target / (per + 34));
+    const txs = Array.from({ length: n }, () => new Uint8Array(per));
+    for (let i = 0; i < 4; i++) {
+      const delta = target - utxoTxTreeByteLength(makeBlock(txs).utxoTxTree);
+      if (delta === 0) return txs;
+      txs[n - 1] = new Uint8Array(txs[n - 1]!.length + delta);
+    }
+    throw new Error(`no body fixture of exactly ${target} bytes`);
+  };
+
+  describe('the body bound', () => {
+    it('accepts a body of exactly MAX_BLOCK_BODY_BYTES', () => {
+      const txs = bodyOfExactSize(MAX_BLOCK_BODY_BYTES);
+      const block = makeBlock(txs);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBe(MAX_BLOCK_BODY_BYTES);
+      // No embedded transaction is near its own bound, so this fixture isolates
+      // the body rule from the one in the `utxoTxs` loop.
+      expect(txs.every((t) => t.length <= MAX_TX_BYTES)).toBe(true);
+      // The gate measured what the encoder actually writes. A sizer that
+      // under-reported here would pass a block this node relays and its peers
+      // refuse (TYPES_INTERFACE → Sizing without encoding).
+      expect(encodeUtxoTxTree(block.utxoTxTree).length).toBe(MAX_BLOCK_BODY_BYTES);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+    });
+
+    it('rejects one byte more, and names the body bound', () => {
+      const txs = bodyOfExactSize(MAX_BLOCK_BODY_BYTES);
+      txs[txs.length - 1] = new Uint8Array(txs[txs.length - 1]!.length + 1);
+      const block = makeBlock(txs);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBe(MAX_BLOCK_BODY_BYTES + 1);
+      expect(txs.every((t) => t.length <= MAX_TX_BYTES)).toBe(true);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: false, error: BODY_TOO_LARGE });
+    });
+  });
+
+  describe('the embedded-transaction bound', () => {
+    // Both fixtures are far under the body cap, so the body bound cannot be
+    // credited with either verdict.
+    it('accepts an embedded transaction of exactly MAX_TX_BYTES', () => {
+      const block = makeBlock([new Uint8Array(MAX_TX_BYTES)]);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+    });
+
+    it('rejects one byte more, in a block far under the body cap', () => {
+      const block = makeBlock([new Uint8Array(MAX_TX_BYTES + 1)]);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: false, error: TX_TOO_LARGE });
+    });
+
+    it('weighs each transaction, not their total', () => {
+      // Two transactions summing past the bound are fine; one over it is not.
+      const halves = makeBlock([new Uint8Array(MAX_TX_BYTES), new Uint8Array(MAX_TX_BYTES)]);
+      expect(verifyOrderingBlockStructure(halves)).toEqual({ valid: true });
+    });
+
+    it('refuses an oversized transaction in any position, not only the first', () => {
+      const block = makeBlock([
+        new Uint8Array(10),
+        new Uint8Array(MAX_TX_BYTES + 1),
+        new Uint8Array(10),
+      ]);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: false, error: TX_TOO_LARGE });
     });
   });
 });
