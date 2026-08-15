@@ -149,6 +149,39 @@ export function pruneRefundAuthorContext(rootPostHash: PostId, owner: Uint8Array
   return { reason: 'prune-refund-author', subject: concat(utf8.encode(rootPostHash), owner) };
 }
 
+// The three invite reasons all take the **invitee's** raw public key as subject
+// — 32 bytes, fixed-length, so the injectivity rule holds by construction — and
+// the invitee rather than the recipient is what makes them unique. An invite may
+// not name an existing account and a claim makes the invitee one (NODE_INTERFACE
+// → "Bond transition rules"), so a key is invited at most once and each
+// `(reason, subject)` pair occurs at most once in the whole history — without
+// reading the height at all. The three are mutually exclusive besides: an invite
+// is claimed or cancelled, never both.
+//
+// ⛔ `invite-claim` is the only one that increases karma supply. `bond-settle`
+// and `bond-return` re-mint karma a `BondBox` already held, in the sense
+// `vouch-settle` re-mints an escrow.
+
+/** `invite-claim` — 32 bytes. Mints `INVITE_KARMA_AMOUNT` to the invitee. */
+export function inviteClaimContext(inviteePublicKey: Uint8Array): MintContext {
+  return { reason: 'invite-claim', subject: Uint8Array.from(inviteePublicKey) };
+}
+
+/**
+ * `bond-settle` — 32 bytes: the invitee's key, though the karma mints to the
+ * **inviter**. The subject names the bond, and the invitee is what identifies
+ * one; the inviter may hold several bonds maturing at one height, which would
+ * collide under their own key.
+ */
+export function bondSettleContext(inviteePublicKey: Uint8Array): MintContext {
+  return { reason: 'bond-settle', subject: Uint8Array.from(inviteePublicKey) };
+}
+
+/** `bond-return` — 32 bytes: the cancelled invite's invitee key. See above. */
+export function bondReturnContext(inviteePublicKey: Uint8Array): MintContext {
+  return { reason: 'bond-return', subject: Uint8Array.from(inviteePublicKey) };
+}
+
 // ---------------------------------------------------------------------------
 // Derivation
 // ---------------------------------------------------------------------------

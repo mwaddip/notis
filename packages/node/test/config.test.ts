@@ -183,7 +183,7 @@ describe('config', () => {
       // from mainnet. Both networks build them from the same constants, which
       // is what keeps profile-sourcing them a devnet-only consensus change.
       expect(cfg.vouchCooldownBlocks).toBe(60);
-      expect(cfg.inviteProbationBlocks).toBe(1000);
+      expect(cfg.inviteProbationBlocks).toBe(43200);
       expect(cfg.creditMinerRewardDelay).toBe(720);
       expect(cfg.creditFixedRateBlocks).toBe(1_051_200);
       expect(cfg.creditEpochBlocks).toBe(129_600);
@@ -210,7 +210,7 @@ describe('config', () => {
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
       expect(cfg.karmaStaleThresholdBlocks).toBe(500);
       expect(cfg.vouchCooldownBlocks).toBe(3);
-      expect(cfg.inviteProbationBlocks).toBe(10);
+      expect(cfg.inviteProbationBlocks).toBe(540);
       expect(cfg.creditMinerRewardDelay).toBe(10);
       expect(cfg.creditFixedRateBlocks).toBe(1000);
       expect(cfg.creditEpochBlocks).toBe(100);

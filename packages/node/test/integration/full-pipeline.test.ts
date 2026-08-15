@@ -46,6 +46,7 @@ import type {
   AnyBox,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
+import type { IdentityRecord } from '../../src/store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -89,6 +90,15 @@ async function importBlockCreator() {
 
 async function importPosts() {
   return import('../../src/store/posts.js');
+}
+
+/**
+ * The record store, imported the same way every other module here is: this
+ * suite calls `vi.resetModules()` per case, so a static import would bind a
+ * different instance from the one `initDb` opened.
+ */
+async function importIdentityRecords() {
+  return await import('../../src/store/identity-records.js');
 }
 
 async function importUtxo() {
@@ -208,12 +218,14 @@ interface EngineDeps {
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   getKarmaValue: (owner: Uint8Array) => bigint;
+  getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
   runInTransaction: (fn: () => void) => void;
 }
 
 function makeEngineDeps(
   db: Database.Database,
   utxoModule: Awaited<ReturnType<typeof importUtxo>>,
+  recordsModule: Awaited<ReturnType<typeof importIdentityRecords>>,
 ): EngineDeps {
   return {
     getBox: (id: string) => {
@@ -231,6 +243,9 @@ function makeEngineDeps(
     getKarmaBox: (owner: Uint8Array) => utxoModule.getKarmaBox(owner),
     getKarmaValue: (owner: Uint8Array) =>
       utxoModule.getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+    // The invite-create once-ever bar reads it (NODE_INTERFACE → "Bond
+    // transition rules"), and this suite runs the real engine.
+    getIdentityRecord: (id: Uint8Array) => recordsModule.getIdentityRecord(id),
     runInTransaction: (fn: () => void) => {
       (db.transaction(fn) as () => void)();
     },
@@ -316,7 +331,7 @@ describe('full-pipeline', () => {
 
     // ---- Step 1: Cast like (validateTx + mempool) ----
     const likesSvc = await importLikesService();
-    const deps = makeEngineDeps(db, utxo);
+    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
     const result = likesSvc.castLike(deps, likeTx, 1);
 
     expect(result.castLikeResult).toBe('pending');
@@ -402,7 +417,7 @@ describe('full-pipeline', () => {
     signTransaction(likeTx, liker.privateKey, likerPubHex);
 
     const likesSvc = await importLikesService();
-    const deps = makeEngineDeps(db, utxo);
+    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
     const likeResult = likesSvc.castLike(deps, likeTx, 0);
     expect(likeResult.castLikeResult).toBe('pending');
 
@@ -449,15 +464,16 @@ describe('full-pipeline', () => {
     const karmaBox = makeKarmaBox(100n, inviter.userId, 0);
     utxo.insertBox(karmaBox);
 
-    // Build invite tx with 3 outputs: karma change + invite + bond.
+    // Build invite tx with 3 outputs: karma change + invite + bond. Only the
+    // bond is paid — INVITE_KARMA_AMOUNT is minted at the claim.
     //
     // ⚠ The guard-shape pin rejects a lying invite fixture, and this one has to
-    // stay honest: no stray `inviteeId` key (`InviteBox` has no such field —
-    // the invitee is unknown until commit), and the canonical guard strings
-    // 'hash_preimage_with_bond' / 'bond_dual' (TYPES_INTERFACE → BoxGuard).
-    // Both are box CONTENT, so a fixture that gets either wrong stores boxes
-    // that disagree with every reconstruction of them.
-    const changeVal = 100n - INVITE_KARMA_AMOUNT - INVITE_BOND_KARMA;
+    // stay honest: the canonical guard strings 'invite_dual' / 'block_apply'
+    // (TYPES_INTERFACE → BoxGuard), and one invitee key on both boxes. All of it
+    // is box CONTENT, so a fixture that gets any of it wrong stores boxes that
+    // disagree with every reconstruction of them.
+    const invitee = makeTestIdentity().userId;
+    const changeVal = 100n - INVITE_BOND_KARMA;
     const inviteTx: UtxoTransaction = {
       inputs: [karmaBox.id!],
       outputs: [
@@ -469,21 +485,17 @@ describe('full-pipeline', () => {
         } as KarmaBox,
         {
           boxType: 'invite',
-          value: INVITE_KARMA_AMOUNT,
+          value: 0n,
           inviterId: inviter.userId,
-          secretHash: new Uint8Array(32),
-          guard: 'hash_preimage_with_bond',
+          inviteePublicKey: invitee,
+          guard: 'invite_dual',
         } as InviteBox,
         {
           boxType: 'bond',
           value: INVITE_BOND_KARMA,
           inviterId: inviter.userId,
-          // The invite is output 1 of this transaction ([karma, invite, bond]).
-          inviteOutputIndex: 1,
-          inviteePublicKey: new Uint8Array(0), // unset until claimed
-          probationStartBlock: 0,
-          probationEndBlock: 0,
-          guard: 'bond_dual',
+          inviteePublicKey: invitee,
+          guard: 'block_apply',
         } as BondBox,
       ],
       signatures: {},
@@ -494,7 +506,7 @@ describe('full-pipeline', () => {
 
     // ---- Step 1: Create invite (validateTx + mempool) ----
     const invitesSvc = await importInvitesService();
-    const deps = makeEngineDeps(db, utxo);
+    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
     const result = invitesSvc.createInvite(deps, inviteTx, 0);
 
     expect(result.status).toBe('pending');
@@ -535,15 +547,14 @@ describe('full-pipeline', () => {
   // -------------------------------------------------------------------------
   // 4. The invite pairing through a real block funnel
   //
-  // No flow predicts a box id: a like is a burn transaction rather than a box,
-  // and the invite path names an OUTPUT INDEX instead of an id. So the property
-  // to prove is not exactness of a prediction but that a bond pointing at the
-  // wrong output is REJECTED AT CREATE — which is what pairing by index buys,
-  // and what makes a mispaired bond inexpressible rather than surfacing one
-  // transaction later as a dangling reference.
+  // The pairing is `inviteePublicKey`, carried by both boxes and pinned equal at
+  // creation. No id and no output index is involved, so the property to prove is
+  // that a pair naming two different invitees is REJECTED AT CREATE — which is
+  // what makes a mispaired bond inexpressible rather than a dangling reference
+  // discovered at settlement.
   // -------------------------------------------------------------------------
 
-  it('invite: a bond naming the wrong output index is rejected at create — and the right one still applies', async () => {
+  it('invite: a bond naming a different invitee is rejected at create — and the matching one still applies', async () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
@@ -551,29 +562,27 @@ describe('full-pipeline', () => {
     const inviter = makeTestIdentity();
     const utxo = await importUtxo();
     const invitesSvc = await importInvitesService();
-    const deps = makeEngineDeps(db, utxo);
+    const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
 
-    const secretHash = new Uint8Array(32).fill(0x5a);
-    const total = INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
+    const invitee = makeTestIdentity().userId;
+    const stranger = makeTestIdentity().userId;
 
-    // outputs are [karma, invite, bond] — the invite is at index 1.
-    const buildInviteTx = (inviteOutputIndex: number, karmaIn: KarmaBox): UtxoTransaction => {
+    // outputs are [karma, invite, bond]
+    const buildInviteTx = (bondInvitee: Uint8Array, karmaIn: KarmaBox): UtxoTransaction => {
       const tx: UtxoTransaction = {
         inputs: [karmaIn.id!],
         outputs: [
           {
-            boxType: 'karma', value: karmaIn.value - total, owner: inviter.userId,
-            guard: 'owner_signature',
+            boxType: 'karma', value: karmaIn.value - INVITE_BOND_KARMA,
+            owner: inviter.userId, guard: 'owner_signature',
           },
           {
-            boxType: 'invite', value: INVITE_KARMA_AMOUNT, secretHash,
-            inviterId: inviter.userId, guard: 'hash_preimage_with_bond',
+            boxType: 'invite', value: 0n, inviterId: inviter.userId,
+            inviteePublicKey: invitee, guard: 'invite_dual',
           },
           {
             boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: inviter.userId,
-            inviteOutputIndex,
-            inviteePublicKey: new Uint8Array(0),
-            probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual',
+            inviteePublicKey: bondInvitee, guard: 'block_apply',
           },
         ],
         signatures: {},
@@ -585,25 +594,19 @@ describe('full-pipeline', () => {
 
     // ---- The property: a mispaired bond cannot be created ----
     //
-    // Index 0 is the KARMA output, not the invite. `createInvite` validates the
-    // index against its own outputs, so a wrong value is a rejected transaction
-    // here rather than an "InviteBox not found for bond commit" one
-    // transaction later.
+    // A bond naming someone else would settle against a stranger's likes, and
+    // the claim would start a probation clock no bond is dated by.
     const karmaA = makeKarmaBox(100n, inviter.userId, 0);
     utxo.insertBox(karmaA);
-    expect(() => invitesSvc.createInvite(deps, buildInviteTx(0, karmaA), 0))
-      .toThrow(/inviteOutputIndex must address the InviteBox output/);
+    expect(() => invitesSvc.createInvite(deps, buildInviteTx(stranger, karmaA), 0))
+      .toThrow(/same inviteePublicKey/);
 
-    // Out of range entirely — the same rejection, not a crash on undefined.
-    expect(() => invitesSvc.createInvite(deps, buildInviteTx(7, karmaA), 0))
-      .toThrow(/inviteOutputIndex must address the InviteBox output/);
-
-    // ---- Non-vacuity control: the CORRECT index still applies cleanly ----
+    // ---- Non-vacuity control: the MATCHING pair still applies cleanly ----
     //
-    // Without this the rejection test above would pass just as well against an
-    // implementation that rejected every invite. This is the same fixture and
-    // the same funnel, differing only in the field under test.
-    const correct = buildInviteTx(1, karmaA);
+    // Without this the rejection above would pass just as well against an
+    // implementation that rejected every invite. Same fixture, same funnel,
+    // differing only in the field under test.
+    const correct = buildInviteTx(invitee, karmaA);
     expect(invitesSvc.createInvite(deps, correct, 0).status).toBe('pending');
 
     const bc = await importBlockCreator();
@@ -613,18 +616,16 @@ describe('full-pipeline', () => {
     // Applied: the karma is consumed and both boxes exist.
     expect(deps.getBox(karmaA.id!)).toBeNull();
     const storedBond = db
-      .prepare("SELECT id, tx_id, output_index FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL")
-      .get() as { id: string; tx_id: string; output_index: number };
+      .prepare("SELECT id FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL")
+      .get() as { id: string };
     expect(storedBond).toBeDefined();
 
-    // And the pairing RESOLVES the way the commit path will resolve it: the
-    // bond's own txId plus its `inviteOutputIndex` names the InviteBox that
-    // shipped with it. This is the assertion that the index is meaningful
-    // rather than merely present.
+    // And the pairing RESOLVES the way block application resolves it: the
+    // invitee key names exactly one live pair, with no provenance walk.
     const bondBox = deps.getBox(storedBond.id) as BondBox;
-    const paired = utxo.getBoxByProvenance(bondBox.txId, bondBox.inviteOutputIndex);
-    expect(paired).not.toBeNull();
-    expect(paired!.boxType).toBe('invite');
-    expect((paired as InviteBox).secretHash).toEqual(secretHash);
+    expect(Buffer.from(bondBox.inviteePublicKey).toString('hex'))
+      .toBe(Buffer.from(invitee).toString('hex'));
+    expect(utxo.getBondFor(invitee)!.id).toBe(storedBond.id);
+    expect(utxo.getInviteFor(invitee)!.inviterId).toEqual(inviter.userId);
   });
 });

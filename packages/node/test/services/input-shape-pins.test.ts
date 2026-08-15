@@ -43,7 +43,7 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -83,7 +83,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),

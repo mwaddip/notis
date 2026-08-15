@@ -1,16 +1,11 @@
 import {
   computeTxId,
-  MAX_PENDING_INVITES,
-  INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
+  INVITE_KARMA_AMOUNT,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { InviteBox, BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import {
-  getPendingInviteCount,
-  insertUtxoTx,
-  countPendingInvites,
-} from '../store/index.js';
+import { insertUtxoTx } from '../store/index.js';
 import { materializeOutput, validateTx } from './utxo-engine.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
@@ -18,14 +13,22 @@ import { ClientError } from './client-error.js';
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+//
+// Two steps, not three, and no secret in any of them (NODE_INTERFACE →
+// Invites). The invitee shares their public key out of band; from there each
+// party acts under its own signature.
+//
+// Every rule these three enforce is a consensus rule `validateTx` also enforces
+// — the service layer restates none of them. What it adds is the diagnosis: a
+// client gets "no open invite names this key" rather than "input box not found".
 
 /**
- * Create an invite. The client builds a signed UtxoTransaction that consumes
- * a KarmaBox and produces karma + invite + bond outputs.
+ * Create an invite. The client builds an inviter-signed transaction consuming a
+ * KarmaBox and producing karma + invite + bond outputs.
  *
- * Fixed amounts: INVITE_KARMA_AMOUNT = 25, INVITE_BOND_KARMA = 25.
+ * The inviter pays only the bond: `INVITE_KARMA_AMOUNT` is minted at the claim,
+ * not paid here, so creation conserves value like any other transaction.
  *
- * The service validates the transaction and inserts it into the mempool.
  * The invite is **pending** until the next ordering block is confirmed.
  */
 export function createInvite(
@@ -40,28 +43,15 @@ export function createInvite(
   bondBox: BondBox;
   tx: UtxoTransaction;
 } {
-  // ---- 1. Extract inviter from the consumed KarmaBox input ----
+  // ---- 1. Extract the inviter from the consumed KarmaBox input ----
   const karmaInput = tx.inputs
     .map((id) => deps.getBox(id))
     .find((box): box is KarmaBox => box?.boxType === 'karma');
   if (!karmaInput) {
     throw new ClientError('No karma box input found in transaction');
   }
-  const inviterId = karmaInput.owner;
 
-  // ---- 2. Verify invite count limit (UTXO + mempool) ----
-  // The mempool count is SQL over the gate-metadata columns, so an inviter
-  // cannot hide pending invites past a scan bound any more (audit M-8).
-  const utxoCount = getPendingInviteCount(inviterId);
-  const mempoolCount = countPendingInvites(Buffer.from(inviterId).toString('hex'));
-  const totalPending = utxoCount + mempoolCount;
-  if (totalPending >= MAX_PENDING_INVITES) {
-    throw new ClientError(
-      `Invite limit reached: ${totalPending} pending invites (max ${MAX_PENDING_INVITES})`,
-    );
-  }
-
-  // ---- 3. Verify outputs: exactly 1 karma + 1 invite + 1 bond ----
+  // ---- 2. Verify outputs: exactly 1 karma + 1 invite + 1 bond ----
   const karmaOutputs = tx.outputs.filter((o) => o.boxType === 'karma');
   const inviteOutputs = tx.outputs.filter((o) => o.boxType === 'invite');
   const bondOutputs = tx.outputs.filter((o) => o.boxType === 'bond');
@@ -72,48 +62,46 @@ export function createInvite(
     );
   }
 
-  // ---- 4. Verify fixed amounts ----
+  // ---- 3. Verify the inviter can afford the bond ----
+  //
+  // The whole cost of an invite, and the network's only sybil price. Read as the
+  // inviter's summed balance rather than off this transaction's inputs, so the
+  // diagnosis is "you do not hold enough" rather than "this transaction does not
+  // balance" — conservation says the latter either way.
+  const inviterBalance = deps.getKarmaValue(karmaInput.owner);
+  if (inviterBalance < INVITE_BOND_KARMA) {
+    throw new ClientError(
+      `Insufficient karma to invite: the bond is ${INVITE_BOND_KARMA}, ` +
+      `inviter holds ${inviterBalance}`,
+    );
+  }
+
+  // ---- 4. Verify the named key is not already an account ----
+  //
+  // Consensus-enforced in the invite-create transition; restated here for the
+  // diagnosis, because "that key is already an account" is the one rejection a
+  // well-formed client cannot predict from its own state.
   const inviteOut = inviteOutputs[0] as InviteBox;
   const bondOut = bondOutputs[0] as BondBox;
-
-  if (inviteOut.value !== INVITE_KARMA_AMOUNT) {
+  const inviteeRecord = deps.getIdentityRecord(inviteOut.inviteePublicKey);
+  if (inviteeRecord !== null) {
     throw new ClientError(
-      `InviteBox value must be ${INVITE_KARMA_AMOUNT}, got ${inviteOut.value}`,
-    );
-  }
-  if (bondOut.value !== INVITE_BOND_KARMA) {
-    throw new ClientError(
-      `BondBox value must be ${INVITE_BOND_KARMA}, got ${bondOut.value}`,
+      `${Buffer.from(inviteOut.inviteePublicKey).toString('hex')} is already an ` +
+      `account; an invite may only name a key that is not one`,
     );
   }
 
-  // ---- 4b. The bond must point at THIS transaction's InviteBox ----
-  //
-  // Checked at **create**, not only when the bond is dereferenced at commit
-  // (user decision, 2026-08-06). Unchecked, a wrong pairing surfaces one
-  // transaction later as "InviteBox not found for bond commit" — a dangling
-  // reference rather than a rejected transaction.
-  //
-  // Pairing by output index makes the *scope* structural — a bond can only
-  // address an output of its own transaction — and this check makes the
-  // *target* structural too. Together, a bond paired with anything other than
-  // the invite it shipped with is inexpressible rather than caught late, which
-  // is the whole reason the index form was chosen over re-encoding the id.
-  if (tx.outputs[bondOut.inviteOutputIndex] !== inviteOut) {
-    throw new ClientError(
-      `BondBox.inviteOutputIndex must address the InviteBox output of the same ` +
-      `transaction: got ${bondOut.inviteOutputIndex}, InviteBox is at ` +
-      `${tx.outputs.indexOf(inviteOut)}`,
-    );
-  }
-
-  // ---- 5. Validate transaction (guards, transitions, decay) ----
+  // ---- 5. Validate transaction (shape, conservation, guards, transitions) ----
   const result = validateTx(deps, tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`Invalid invite create transaction: ${result.error}`);
   }
 
   // ---- 6. Insert into mempool ----
+  //
+  // `expiresAtHeight` is this MEMPOOL ENTRY's expiry, never the invite's: an
+  // invite has no deadline and stays claimable until the inviter cancels
+  // (NODE_INTERFACE → Invites).
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
   insertUtxoTx(tx, null, expiresAtHeight);
 
@@ -122,20 +110,14 @@ export function createInvite(
   // `txId` is computed FIRST, before any provenance is attached: it hashes the
   // output *candidates*, so attaching first would feed provenance into the very
   // id it is derived from. `computeTxId` routes outputs through
-  // `canonicalBoxBytes` and so does not observe provenance — which makes
-  // getting this backwards silent rather than an error.
+  // `canonicalBoxBytes` and so does not observe provenance — which makes getting
+  // this backwards silent rather than an error.
   const txId = computeTxId(tx);
 
-  // These two ids are still returned, and they must still equal what block
-  // application will store — so they are materialized exactly the way that path
-  // materializes them, and `tx` here is client-supplied decoded CBOR, so the
-  // strip-before-append in `materializeOutput` is load-bearing.
-  //
-  // They are informational (user decision, 2026-08-06): the client does not
-  // have to *predict* `inviteBox.id` to build the bond. It says which output
-  // index the invite is at, and the node resolves the pair from
-  // `(txId, inviteOutputIndex)` at commit. So these are ids the client can
-  // display or track, not ones it has to get right for the flow to work.
+  // These two ids must equal what block application will store, so they are
+  // materialized exactly the way that path materializes them; `tx` here is
+  // client-supplied decoded CBOR, so the strip-before-append in
+  // `materializeOutput` is load-bearing.
   return {
     status: 'pending',
     txId,
@@ -147,97 +129,17 @@ export function createInvite(
 }
 
 /**
- * Commit to an invite by spending the BondBox to lock in the invitee's identity.
+ * Claim an invite. The invitee builds a transaction consuming the InviteBox that
+ * names their key and producing one KarmaBox of `INVITE_KARMA_AMOUNT`.
  *
- * The invitee builds a tx spending only the BondBox. The bond_dual guard's
- * commit path verifies that the preimage matches the InviteBox's secretHash
- * **and** that the tx carries a valid Ed25519 signature from the committed
- * invitee — the output BondBox's inviteePublicKey (audit H-2), so a commit
- * cannot bind a key the committer does not control. The transition records
- * the invitee's public key and starts probation timers.
+ * **The bond is not an input.** The karma is minted, not moved — this is the
+ * only transaction in the system that may create karma, and the conservation
+ * gate admits a surplus of exactly `INVITE_KARMA_AMOUNT` in this shape and no
+ * other.
  *
- * Known-open: the invite is a bearer instrument — `secretHash` names no
- * invitee — so an observer who learns the secret can still commit under their
- * own key. Binding the invitee at invite creation is deferred to the
- * karma-econ emission-model track.
- *
- * The commit is **pending** until the next ordering block is confirmed.
- * Once committed, the invitee must reveal (claimInvite) to get their karma.
- */
-export function commitInvite(
-  deps: UtxoEngineDeps,
-  tx: UtxoTransaction,
-  currentBlockHeight: number,
-): {
-  status: 'pending';
-  txId: string;
-  expiresAtHeight: number;
-  bondBoxId: string;
-  tx: UtxoTransaction;
-} {
-  // ---- 1. Extract BondBox from inputs ----
-  if (tx.inputs.length !== 1) {
-    throw new ClientError('Commit transaction must have exactly one input (BondBox)');
-  }
-  const bondBoxId = tx.inputs[0]!;
-  const bondBoxInput = deps.getBox(bondBoxId);
-  if (!bondBoxInput || bondBoxInput.boxType !== 'bond') {
-    throw new ClientError(`Bond box not found: ${bondBoxId}`);
-  }
-  const bondIn = bondBoxInput as BondBox;
-
-  // ---- 2. Verify BondBox is unclaimed ----
-  if (bondIn.inviteePublicKey.length > 0) {
-    throw new ClientError('BondBox already committed', 409);
-  }
-
-  // ---- 3. Verify exactly 1 BondBox output ----
-  const bondOutputs = tx.outputs.filter((o) => o.boxType === 'bond');
-  if (tx.outputs.length !== 1 || bondOutputs.length !== 1) {
-    throw new ClientError('Commit transaction must produce exactly 1 BondBox output');
-  }
-  const bondOut = bondOutputs[0] as BondBox;
-
-  // ---- 4. Verify output BondBox has valid commitment shape ----
-  if (bondOut.inviteePublicKey.length !== 32) {
-    throw new ClientError('Commit output BondBox must have 32-byte inviteePublicKey');
-  }
-
-  // ---- 5. Validate transaction (guards, transitions) ----
-  // The bond_dual commit guard verifies a real Ed25519 signature from the
-  // committed invitee — the output BondBox's inviteePublicKey (audit H-2).
-  // That check is consensus-enforced, so the service layer does not repeat it;
-  // an "a signature entry exists" test here would only re-add the weak gate.
-  const result = validateTx(deps, tx, currentBlockHeight);
-  if (!result.valid) {
-    throw new ClientError(`Invalid commit transaction: ${result.error}`);
-  }
-
-  // ---- 6. Insert into mempool ----
-  const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, null, expiresAtHeight);
-
-  // ---- 7. Return result ----
-  const txId = computeTxId(tx);
-
-  return {
-    status: 'pending',
-    txId,
-    expiresAtHeight,
-    bondBoxId,
-    tx,
-  };
-}
-
-/**
- * Claim an invite using a signed UtxoTransaction that includes the preimage
- * secret in `tx.preimages`.
- *
- * The client builds a tx consuming the InviteBox and BondBox, producing a
- * new KarmaBox for the invitee and an updated (claimed) BondBox.
- *
- * validateTx verifies the hash_preimage_with_bond guard via the preimages map.
- * The claim is **pending** until the next ordering block is confirmed.
+ * Block application then writes `invitedAtBlock`, which starts the probation
+ * clock and bars the key from any further invite. The claim is **pending** until
+ * the next ordering block is confirmed.
  */
 export function claimInvite(
   deps: UtxoEngineDeps,
@@ -251,69 +153,43 @@ export function claimInvite(
   karmaBoxId: string;
   tx: UtxoTransaction;
 } {
-  // ---- 1. Extract invite box ID and bond box ID from tx.inputs ----
-  let inviteBoxId: string | undefined;
-  let bondBoxId: string | undefined;
-
-  for (const inputId of tx.inputs) {
-    const box = deps.getBox(inputId);
-    if (box?.boxType === 'invite') inviteBoxId = inputId;
-    if (box?.boxType === 'bond') bondBoxId = inputId;
+  // ---- 1. Extract the InviteBox input ----
+  if (tx.inputs.length !== 1) {
+    throw new ClientError('A claim consumes exactly one input: the InviteBox');
   }
-
-  if (!inviteBoxId) {
-    throw new ClientError('Transaction does not consume an InviteBox');
-  }
-  if (!bondBoxId) {
-    throw new ClientError('Transaction does not consume a BondBox');
-  }
-
-  // ---- 2. Verify invite box exists, is unspent, is type invite ----
+  const inviteBoxId = tx.inputs[0]!;
   const inviteBox = deps.getBox(inviteBoxId);
   if (!inviteBox || inviteBox.boxType !== 'invite') {
     throw new ClientError(`Invite box not found: ${inviteBoxId}`);
   }
+  const invite = inviteBox as InviteBox;
 
-  // ---- 2.5. Verify bond box is committed ----
-  const bondBoxForClaim = deps.getBox(bondBoxId);
-  if (!bondBoxForClaim || bondBoxForClaim.boxType !== 'bond') {
-    throw new ClientError(`Bond box not found: ${bondBoxId}`);
-  }
-  const bondForClaim = bondBoxForClaim as BondBox;
-  if (bondForClaim.inviteePublicKey.length !== 32) {
-    throw new ClientError('BondBox must be committed before reveal');
-  }
-
-  // ---- 3. Verify invitee public key is not already an account ----
+  // ---- 2. Verify the output is the invitee's karma box ----
   const karmaOutput = tx.outputs.find((o): o is KarmaBox => o.boxType === 'karma');
   if (!karmaOutput) {
     throw new ClientError('Transaction must produce a KarmaBox for the invitee');
   }
-  const inviteePubKey = karmaOutput.owner;
-
-  const existingKarma = deps.getKarmaBox(inviteePubKey);
-  if (existingKarma) {
-    throw new ClientError('Public key already associated with an account');
+  if (!Buffer.from(invite.inviteePublicKey).equals(karmaOutput.owner)) {
+    throw new ClientError(
+      'Karma output owner must be the invitee named on the InviteBox',
+      403,
+    );
   }
 
-  // ---- 3.5. Verify karma output owner matches committed bond invitee ----
-  if (!Buffer.from(bondForClaim.inviteePublicKey).equals(karmaOutput.owner)) {
-    throw new ClientError('Karma output owner must match committed invitee public key');
-  }
-
-  // ---- 4. Validate transaction (guards, transitions, decay) ----
-  // This verifies the hash_preimage_with_bond via checkGuards, the bond reveal
-  // transition, and value conservation.
+  // ---- 3. Validate transaction ----
+  //
+  // `validateTx` checks the `invite_dual` guard against the invitee's signature,
+  // the surplus against the conservation carve, and the claim transition.
   const result = validateTx(deps, tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`Invalid invite claim transaction: ${result.error}`);
   }
 
-  // ---- 5. Insert into mempool ----
+  // ---- 4. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
   insertUtxoTx(tx, null, expiresAtHeight);
 
-  // ---- 6. Return result ----
+  // ---- 5. Return result ----
   // txId first, then provenance — see createInvite.
   const txId = computeTxId(tx);
   const karmaBoxId = materializeOutput(
@@ -326,20 +202,19 @@ export function claimInvite(
     status: 'pending',
     txId,
     expiresAtHeight,
-    userId: inviteePubKey,
+    userId: invite.inviteePublicKey,
     karmaBoxId,
     tx,
   };
 }
 
 /**
- * Cancel an unclaimed invite. The client builds a signed UtxoTransaction that
- * consumes the KarmaBox, InviteBox, and BondBox, returning all value to a new
- * KarmaBox for the inviter.
+ * Cancel an open invite. The inviter builds a transaction consuming the
+ * InviteBox and producing **no outputs**; the box holds `0`, so this conserves.
  *
- * validateTx checks the bond_dual guard (inviter_signature path) on the bond box
- * and the owner_signature on the karma box.
- * The cancellation is **pending** until the next ordering block is confirmed.
+ * The bond is not named and could not be spent: block application returns it to
+ * the inviter, resolved by `inviteePublicKey`. The cancellation is **pending**
+ * until the next ordering block is confirmed.
  */
 export function cancelInvite(
   deps: UtxoEngineDeps,
@@ -351,75 +226,42 @@ export function cancelInvite(
   expiresAtHeight: number;
   tx: UtxoTransaction;
 } {
-  // ---- 1. Extract invite box ID from tx.inputs ----
-  let inviteBoxId: string | undefined;
-
-  for (const inputId of tx.inputs) {
-    const box = deps.getBox(inputId);
-    if (box?.boxType === 'invite') {
-      inviteBoxId = inputId;
-      break;
-    }
+  // ---- 1. Extract the InviteBox input ----
+  if (tx.inputs.length !== 1) {
+    throw new ClientError('A cancel consumes exactly one input: the InviteBox');
   }
-
-  if (!inviteBoxId) {
-    throw new ClientError('Transaction does not consume an InviteBox');
-  }
-
-  // ---- 2. Verify invite box exists, is unspent, is type invite ----
+  const inviteBoxId = tx.inputs[0]!;
   const inviteBox = deps.getBox(inviteBoxId);
   if (!inviteBox || inviteBox.boxType !== 'invite') {
-    throw new ClientError(`Invite box not found: ${inviteBoxId}`);
+    // Covers both "never existed" and "already claimed or cancelled": `getBox`
+    // returns null for a spent box.
+    throw new ClientError(`Invite box not found or already spent: ${inviteBoxId}`);
   }
 
-  // ---- 3. Verify inviter matches the invite box's inviterId ----
+  // ---- 2. Verify the signer is the inviter ----
+  //
+  // Consensus-enforced by the `invite_dual` guard's cancel path; restated here
+  // for the 403, which `validateTx` has no vocabulary for.
   const inv = inviteBox as InviteBox;
-  const karmaInput = tx.inputs
-    .map((id) => deps.getBox(id))
-    .find((box): box is KarmaBox => box?.boxType === 'karma');
-  if (!karmaInput) {
-    throw new ClientError('Transaction does not consume a KarmaBox');
-  }
-  if (!Buffer.from(karmaInput.owner).equals(Buffer.from(inv.inviterId))) {
+  const inviterHex = Buffer.from(inv.inviterId).toString('hex');
+  if (!tx.signatures[inviterHex]) {
     throw new ClientError(
-      'Inviter mismatch: karma box owner does not match invite box inviterId',
+      'Inviter mismatch: the cancel carries no signature from the invite\'s inviterId',
       403,
     );
   }
 
-  // ---- 3.5. Verify bond box exists ----
-  let bondBoxId: string | undefined;
-  for (const inputId of tx.inputs) {
-    const box = deps.getBox(inputId);
-    if (box?.boxType === 'bond') {
-      bondBoxId = inputId;
-      break;
-    }
-  }
-  if (!bondBoxId) {
-    throw new ClientError('Transaction does not consume a BondBox');
-  }
-  const bondBox = deps.getBox(bondBoxId);
-  if (!bondBox || bondBox.boxType !== 'bond') {
-    throw new ClientError(`Bond box not found: ${bondBoxId}`);
-  }
-  // Cancel works on both unclaimed and committed BondBoxes.
-  // The inviter reclaim path on bond_dual allows the inviter to reclaim
-  // regardless of commit state.
-
-  // ---- 4. Validate transaction (guards, transitions, decay) ----
-  // This checks owner_signature on the karma box, bond_dual (inviter reclaim path)
-  // on the bond box, and the cancel transition.
+  // ---- 3. Validate transaction ----
   const result = validateTx(deps, tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`Invalid invite cancel transaction: ${result.error}`);
   }
 
-  // ---- 5. Insert into mempool ----
+  // ---- 4. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
   insertUtxoTx(tx, null, expiresAtHeight);
 
-  // ---- 6. Return result ----
+  // ---- 5. Return result ----
   const txId = computeTxId(tx);
 
   return {

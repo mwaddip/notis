@@ -1,9 +1,10 @@
-import { createHash, verify as cryptoVerify } from 'crypto';
+import { verify as cryptoVerify } from 'crypto';
 import {
   BOX_GUARDS,
   computeBoxId,
   computeTxId,
-  INVITE_KARMA_THRESHOLD,
+  INVITE_BOND_KARMA,
+  INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
@@ -19,7 +20,9 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, Invit
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
 import { ed25519PublicKeyToKeyObject } from '@dagsocial/validation';
-import { config } from '../config.js';
+// Type-only: erased at compile time, so the engine gains no runtime edge into
+// the store module graph. Same seam `DecayDeps` uses for the same record.
+import type { IdentityRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // The karma family
@@ -43,28 +46,31 @@ export const KARMA_BOX_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch']
 export interface UtxoEngineDeps {
   /** Return the box if it exists AND is unspent. Return null for spent or missing boxes. */
   getBox: (id: string) => AnyBox | null;
-  /**
-   * Resolve a box by its creating-transaction provenance. Backed by
-   * `UNIQUE(tx_id, output_index)`, so it names at most one box. Used by the bond
-   * commit path to find the InviteBox its bond shipped with.
-   */
-  getBoxByProvenance: (txId: string, index: number) => AnyBox | null;
   insertBox: (box: AnyBox) => void;
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   /**
    * Summed value of every unspent KarmaBox owned by `owner`.
    *
-   * Consensus input, not a convenience read. Two transition rules are
-   * predicates on an identity's *current* karma: the bond settlement unlock
-   * reads the invitee's (NODE_INTERFACE → "Bond transition rules") and the
-   * vouch cast reads the voucher's (ARCHITECTURE → "Vouch boxes"). Summed
-   * rather than `getKarmaBox().value` because multiple unspent karma boxes per
-   * owner is reachable — a faucet grant alongside a mint, or a plain karma
-   * split — and reading one box would let either threshold be evaded, or met,
-   * by how the karma happens to be partitioned.
+   * Consensus input, not a convenience read: the vouch cast is a predicate on
+   * the voucher's *current* karma (ARCHITECTURE → "Vouch boxes"). Summed rather
+   * than `getKarmaBox().value` because multiple unspent karma boxes per owner is
+   * reachable — a faucet grant alongside a mint, or a plain karma split — and
+   * reading one box would let the threshold be evaded, or met, by how the karma
+   * happens to be partitioned.
    */
   getKarmaValue: (owner: Uint8Array) => bigint;
+  /**
+   * The committed per-identity record, or null when the identity has none.
+   *
+   * Consensus input: invite creation rejects an `inviteePublicKey` that already
+   * has one, which is where "an invite may only name a key that is not already
+   * an account" is enforced. **Existence is the whole test** — the record's
+   * contents decide nothing here. Checked at creation rather than at claim so a
+   * second inviter's bond is never locked against an invite that could not have
+   * been claimed.
+   */
+  getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
   /**
    * True while a cooldown row exists for `(voucherId, targetId)`.
    *
@@ -120,111 +126,28 @@ function verifyGuardSignature(
 
 /**
  * Check legal box transitions for a given set of inputs and outputs.
- * Assumes all inputs have the same boxType (pre-checked).
+ * Assumes all inputs have the same boxType (`validateTx` step 3 pins it).
  *
- * Height-aware: the bond commit and settlement rules are predicates on the
- * height the transaction settles at, not on its contents alone
- * (NODE_INTERFACE → "Bond transition rules").
+ * Height-free: no transition is a predicate on the settle height any more
+ * (NODE_INTERFACE → "Bond transition rules"). A bond's probation is dated from
+ * `IdentityRecord.invitedAtBlock` and settled by block application, which this
+ * gate does not govern.
  */
 function checkTransitions(
   inputs: AnyBox[],
   outputs: AnyBoxCandidate[],
-  currentBlockHeight: number,
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
 ): { valid: boolean; error?: string } {
-  // A like transaction (`likeTarget` present) has exactly one legal
-  // shape — the liker's karma boxes in, one karma box out (the arm in the
-  // karma case below). Gated here so the mixed-input shapes (invite claim,
-  // invite cancel) cannot carry a bolted-on `likeTarget` through their own
-  // handlers; the conservation carve independently requires all-karma inputs.
+  // A like transaction (`likeTarget` present) has exactly one legal shape — the
+  // liker's karma boxes in, one karma box out (the arm in the karma case below).
+  // Gated here as well as in the conservation carve, which independently
+  // requires all-karma inputs.
   if (likeTarget !== undefined && inputs.some((b) => b.boxType !== 'karma')) {
     return {
       valid: false,
       error: `likeTarget is only legal on an all-karma burn transaction`,
     };
-  }
-
-  // Handle invite cancel: KarmaBox + InviteBox + BondBox → KarmaBox
-  if (inputs.length === 3) {
-    const hasKarma = inputs.some((b) => b.boxType === 'karma');
-    const hasInvite = inputs.some((b) => b.boxType === 'invite');
-    const hasBond = inputs.some((b) => b.boxType === 'bond');
-    if (hasKarma && hasInvite && hasBond) {
-      const karmaOuts = outputs.filter((o) => o.boxType === 'karma');
-      if (karmaOuts.length === 1 && outputs.length === 1) {
-        // The cancel returns the bond, so its value must land on the inviter —
-        // pinned to BOTH the bond's and the invite's `inviterId`, not merely to
-        // the karma input's owner (audit F-consensus-1, the "cancel absorb"
-        // leg). Same-owner alone let a committed invitee who already held karma
-        // sweep invite + bond into their own box: their signature satisfies
-        // `bond_dual` Path 2, the preimage satisfies the invite guard, and
-        // `karmaOut.owner == karmaIn.owner` is trivially true when both are
-        // theirs. The inviter authorised nothing.
-        const karmaIn = inputs.find((b) => b.boxType === 'karma') as KarmaBox;
-        const bondIn = inputs.find((b) => b.boxType === 'bond') as BondBox;
-        const inviteIn = inputs.find((b) => b.boxType === 'invite') as InviteBox;
-        const karmaOut = karmaOuts[0] as KarmaBox;
-        const karmaInOwner = Buffer.from(karmaIn.owner).toString('hex');
-        if (karmaInOwner !== Buffer.from(karmaOut.owner).toString('hex')) {
-          return { valid: false, error: 'Cancel output karma must go to same owner' };
-        }
-        if (karmaInOwner !== Buffer.from(bondIn.inviterId).toString('hex')) {
-          return {
-            valid: false,
-            error: 'Cancel karma owner must be the bond inviterId',
-          };
-        }
-        if (karmaInOwner !== Buffer.from(inviteIn.inviterId).toString('hex')) {
-          return {
-            valid: false,
-            error: 'Cancel karma owner must be the invite inviterId',
-          };
-        }
-        return { valid: true };
-      }
-      return {
-        valid: false,
-        error: 'Invite cancel must produce exactly 1 KarmaBox output',
-      };
-    }
-  }
-
-  // Handle invite claim (reveal): InviteBox + BondBox(committed) → KarmaBox + BondBox(probation)
-  if (inputs.length === 2) {
-    const hasInvite = inputs.some((b) => b.boxType === 'invite');
-    const hasBond = inputs.some((b) => b.boxType === 'bond');
-    if (hasInvite && hasBond) {
-      const bondIn = inputs.find((b) => b.boxType === 'bond') as BondBox;
-      const karmaOuts = outputs.filter((o) => o.boxType === 'karma');
-      const bondOuts = outputs.filter((o) => o.boxType === 'bond');
-
-      // Bond must already be committed (inviteePublicKey set to 32 bytes)
-      if (bondIn.inviteePublicKey.length === 32 &&
-          bondOuts.length === 1 &&
-          karmaOuts.length === 1 &&
-          outputs.length === 2) {
-        const bondOut = bondOuts[0] as BondBox;
-        const karmaOut = karmaOuts[0] as KarmaBox;
-        // BondOut must preserve commitment fields from commit step
-        if (bondOut.inviteePublicKey.length === 32 &&
-            Buffer.from(bondOut.inviteePublicKey).toString('hex') ===
-              Buffer.from(bondIn.inviteePublicKey).toString('hex') &&
-            bondOut.probationStartBlock === bondIn.probationStartBlock &&
-            bondOut.probationEndBlock === bondIn.probationEndBlock &&
-            bondOut.inviteOutputIndex === bondIn.inviteOutputIndex &&
-            Buffer.from(bondOut.inviterId).toString('hex') ===
-              Buffer.from(bondIn.inviterId).toString('hex') &&
-            Buffer.from(karmaOut.owner).toString('hex') ===
-              Buffer.from(bondIn.inviteePublicKey).toString('hex')) {
-          return { valid: true };
-        }
-      }
-      return {
-        valid: false,
-        error: `Invalid invite reveal: BondBox must be committed and preservation fields must match`,
-      };
-    }
   }
 
   const inputType = inputs[0]!.boxType;
@@ -409,31 +332,81 @@ function checkTransitions(
           };
         }
       } else if (inviteOutputs.length > 0 || bondOutputs.length > 0) {
-        // karma → karma + invite + bond
+        // karma → karma + invite + bond (NODE_INTERFACE → the transition table)
         if (inviteOutputs.length !== 1 || bondOutputs.length !== 1 || vouchOutputs.length > 0) {
           return {
             valid: false,
             error: `Invite creation requires exactly 1 invite + 1 bond output`,
           };
         }
-        // A bond is born uncommitted; committed state is reachable only
-        // through the commit transition. Without this pin an
-        // inviter emits a bond *born committed* with a zeroed window, and the
-        // settlement rule accepts an immediate reclaim to themselves — every
-        // clause satisfied, the expiry leg vacuously true — while the
-        // InviteBox stays live and claimable. The bond, the network's only
-        // sybil cost, would cost nothing. This is what makes the commit-time
-        // window pin mean anything: with it, every committed bond has passed
-        // through the pinned commit path by construction.
+        const inviteOut = inviteOutputs[0] as InviteBox;
         const bondOut = bondOutputs[0] as BondBox;
-        if (bondOut.inviteePublicKey.length !== 0 ||
-            bondOut.probationStartBlock !== 0 ||
-            bondOut.probationEndBlock !== 0) {
+        // An invite holds nothing: the karma it names does not exist until the
+        // claim mints it. Unpinned, an inviter could park value in a box no
+        // conservation rule ever reads out again.
+        if (inviteOut.value !== 0n) {
+          return {
+            valid: false,
+            error: `InviteBox must hold 0 karma, got ${inviteOut.value}`,
+          };
+        }
+        // The bond is the whole cost of an invite, and it is the network's only
+        // sybil price. Conservation alone permits 0n here, which would make that
+        // price free.
+        if (bondOut.value !== INVITE_BOND_KARMA) {
           return {
             valid: false,
             error:
-              `Invite creation must emit an uncommitted bond: ` +
-              `inviteePublicKey empty and both probation fields zero`,
+              `BondBox must hold exactly ${INVITE_BOND_KARMA} karma, ` +
+              `got ${bondOut.value}`,
+          };
+        }
+        // Both boxes carry the karma input's owner as `inviterId`. Without this
+        // the creator could emit a pair naming someone else as inviter: the
+        // cancel path pays that stranger, and the settlement path mints to them.
+        if (Buffer.from(inviteOut.inviterId).toString('hex') !== inputOwnerHex ||
+            Buffer.from(bondOut.inviterId).toString('hex') !== inputOwnerHex) {
+          return {
+            valid: false,
+            error: `Invite and bond inviterId must be the karma input's owner`,
+          };
+        }
+        // One key, both boxes — this is the entire pairing. An invite and a bond
+        // naming different invitees are two unpaired boxes: the claim would
+        // start a probation clock no bond is dated by, and the bond would settle
+        // against a stranger's likes.
+        const inviteeHex = Buffer.from(inviteOut.inviteePublicKey).toString('hex');
+        if (Buffer.from(bondOut.inviteePublicKey).toString('hex') !== inviteeHex) {
+          return {
+            valid: false,
+            error: `Invite and bond must name the same inviteePublicKey`,
+          };
+        }
+        // **An invite may only name a key that is not already an account**, and
+        // "is an account" is *holds an identity record* — not "was invited
+        // before". Enforced here rather than at claim so a second inviter's bond
+        // is never locked against an invite that could not have been claimed.
+        //
+        // ⚠ The weaker "never invited" reading PRINTS KARMA. An established
+        // account that simply had not been invited — every genesis committee
+        // member, every faucet recipient — could be named: the claim mints it
+        // `INVITE_KARMA_AMOUNT` from nothing, and the bond then vests in full
+        // against likes that key had *already* earned, so the whole stake
+        // returns to the inviter at the deadline. The inviter's cost is a
+        // probation-length lock and nothing else.
+        //
+        // Record existence is the right test because every karma receipt writes
+        // one through `insertBox`'s choke point. A key with no record has never
+        // held karma, so it has never posted and never been liked — which is
+        // also what makes the claim the record-CREATING event for every legal
+        // invitee.
+        const inviteeRecord = deps.getIdentityRecord(inviteOut.inviteePublicKey);
+        if (inviteeRecord !== null) {
+          return {
+            valid: false,
+            error:
+              `An invite may not name an existing account: ${inviteeHex} already ` +
+              `holds an identity record`,
           };
         }
       }
@@ -443,130 +416,71 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // InviteBox → KarmaBox (new owner via claim)
+    // InviteBox → KarmaBox (claim, invitee-signed)
+    // InviteBox → ∅        (cancel, inviter-signed)
+    //
+    // Those are the two exits, and neither takes a second input: the claim
+    // needs no bond alongside it, because the karma it produces is MINTED
+    // rather than moved (NODE_INTERFACE → the transition table).
     // ------------------------------------------------------------------
     case 'invite': {
+      // One invite per transaction. With several, only `inputs[0]` would be
+      // read and the rest would ride along — the same bound the unvouch and
+      // the old settlement shape carry, for the same reason.
+      if (inputs.length !== 1) {
+        return { valid: false, error: `An invite transaction must consume exactly one InviteBox` };
+      }
+      const inviteIn = inputs[0] as InviteBox;
+
+      // Cancel. The box holds 0, so this conserves arithmetically; the paired
+      // bond returns to the inviter through block application, which this
+      // transaction neither names nor could spend.
+      if (outputs.length === 0) return { valid: true };
+
+      // Claim.
       const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
       if (karmaOutputs.length !== 1 || outputs.length !== 1) {
         return {
           valid: false,
-          error: `InviteBox can only be spent to create exactly 1 KarmaBox`,
+          error: `An InviteBox is spent to exactly 1 KarmaBox (claim) or to nothing (cancel)`,
+        };
+      }
+      const karmaOut = karmaOutputs[0] as KarmaBox;
+      // The mint lands on the key the box names and on no other. Unpinned, the
+      // inviter's own signature would satisfy `invite_dual` over a claim paying
+      // themselves — karma created from nothing, into the wrong hands.
+      if (Buffer.from(karmaOut.owner).toString('hex') !==
+          Buffer.from(inviteIn.inviteePublicKey).toString('hex')) {
+        return {
+          valid: false,
+          error: `Claim karma output must be owned by the invite's inviteePublicKey`,
+        };
+      }
+      // The amount, pinned independently of the conservation carve — two
+      // layers, the same pattern the like burn set.
+      if (karmaOut.value !== INVITE_KARMA_AMOUNT) {
+        return {
+          valid: false,
+          error:
+            `Claim must mint exactly ${INVITE_KARMA_AMOUNT} karma, ` +
+            `got ${karmaOut.value}`,
         };
       }
       return { valid: true };
     }
 
     // ------------------------------------------------------------------
-    // BondBox → BondBox (commit) OR BondBox(committed) → KarmaBox (settlement)
-    //
-    // Those are the only two shapes. There is no burn, and an uncommitted bond
-    // has no standalone spend at all — its exits are the commit above and the
-    // 3-input cancel handled at the top of this function.
+    // BondBox — consumed by block application only, rejected in guard check
     // ------------------------------------------------------------------
     case 'bond': {
-      // Bond commit: BondBox(unclaimed) → BondBox(committed)
-      const bondOuts = outputs.filter((o) => o.boxType === 'bond');
-      if (bondOuts.length === 1 && outputs.length === 1) {
-        const bondIn = inputs[0] as BondBox;
-        const bondOut = bondOuts[0] as BondBox;
-        // The probation window is pinned at commit. Without both bounds the
-        // committing invitee picks the window freely and locks the inviter's
-        // bond for as long as they like — directly via `probationEndBlock`, or
-        // by future-dating the start under a pinned length. Past-dating the
-        // start stays legal: it only shortens the effective probation, which
-        // favours the inviter's unlock and evades nothing while forfeiture does
-        // not exist. A strict `== currentBlockHeight` would instead break on the
-        // delay between building a commit and its being mined.
-        if (inputs.length === 1 &&
-            bondIn.inviteePublicKey.length === 0 &&
-            bondOut.inviteePublicKey.length === 32 &&
-            bondOut.probationStartBlock > 0 &&
-            bondOut.probationStartBlock <= currentBlockHeight &&
-            bondOut.probationEndBlock - bondOut.probationStartBlock ===
-              config.inviteProbationBlocks &&
-            bondOut.inviteOutputIndex === bondIn.inviteOutputIndex &&
-            Buffer.from(bondOut.inviterId).toString('hex') ===
-              Buffer.from(bondIn.inviterId).toString('hex')) {
-          return { valid: true };
-        }
-        return {
-          valid: false,
-          error:
-            `Invalid bond commit: inviteePublicKey must go from empty to 32 bytes ` +
-            `with a probation window of exactly ${config.inviteProbationBlocks} blocks ` +
-            `starting at or before the settle height`,
-        };
-      }
-
-      // No burn shape. Conservation rejects this first through `validateTx`
-      // (the zero-output exemption is vouch-only), so this
-      // arm is the second of two independent layers rather than the reachable
-      // one — kept because a transition table that *accepts* `bond → ∅` is a
-      // consensus rule waiting to be re-exposed by any future reordering.
-      if (outputs.length === 0) {
-        return {
-          valid: false,
-          error: `Illegal bond transition: bond forfeiture is not implemented; no burn shape exists`,
-        };
-      }
-
-      // Settlement: BondBox(committed) → 1 KarmaBox owned by the inviter.
-      const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
-      if (karmaOutputs.length !== 1 || outputs.length !== 1) {
-        return {
-          valid: false,
-          error: `BondBox can only be spent to create exactly 1 KarmaBox or 1 committed BondBox`,
-        };
-      }
-      // One bond per settlement. With several, only `inputs[0]`'s inviter and
-      // probation would be checked and the rest would ride along — an invitee
-      // committed on two inviters' bonds satisfies both `bond_dual` guards with
-      // one signature, so a second bond could be routed to the first bond's
-      // inviter. The contract's settlement row is singular for this reason.
-      if (inputs.length !== 1) {
-        return {
-          valid: false,
-          error: `Bond settlement must consume exactly one BondBox`,
-        };
-      }
-      const bondIn = inputs[0] as BondBox;
-      if (bondIn.inviteePublicKey.length !== 32) {
-        return {
-          valid: false,
-          error:
-            `Uncommitted BondBox has no standalone spend: its exits are the commit ` +
-            `and cancel shapes`,
-        };
-      }
-      // The bond's value only ever returns to the inviter (NODE_INTERFACE →
-      // "Bond transition rules", audit F-consensus-1). Without this pin the
-      // committed invitee — whose signature satisfies `bond_dual` Path 2 —
-      // signs `bond → own KarmaBox` and takes the deposit outright.
-      const karmaOut = karmaOutputs[0] as KarmaBox;
-      if (Buffer.from(karmaOut.owner).toString('hex') !==
-          Buffer.from(bondIn.inviterId).toString('hex')) {
-        return {
-          valid: false,
-          error: `Bond settlement karma output must be owned by the inviter`,
-        };
-      }
-      // Spend-time unlock: probation expired, or the invitee's karma stands at
-      // the threshold *now*. "Reached the threshold within probation" is a
-      // claim about history that a spend-time check cannot see; the early-unlock
-      // leg is inviter-favourable timing, not a weakening.
-      const probationExpired = currentBlockHeight > bondIn.probationEndBlock;
-      const thresholdMet =
-        deps.getKarmaValue(bondIn.inviteePublicKey) >= INVITE_KARMA_THRESHOLD;
-      if (!probationExpired && !thresholdMet) {
-        return {
-          valid: false,
-          error:
-            `Bond settlement is locked: probation runs to block ` +
-            `${bondIn.probationEndBlock} and the invitee has not reached ` +
-            `${INVITE_KARMA_THRESHOLD} karma`,
-        };
-      }
-      return { valid: true };
+      // Unreachable through `validateTx`: `checkGuards` refuses a `block_apply`
+      // input at step 6, ahead of this. Kept as the second layer, because a
+      // transition table that *accepts* any bond shape is a consensus rule
+      // waiting to be re-exposed by a reordering.
+      return {
+        valid: false,
+        error: `BondBox can only be consumed by block application (not user transactions)`,
+      };
     }
 
     // ------------------------------------------------------------------
@@ -645,7 +559,6 @@ function checkTransitions(
 type FieldType =
   | 'u64'
   | 'bytes32'
-  | 'bytes0or32'
   | 'hex32'
   | 'uint'
   | 'u32'
@@ -665,11 +578,6 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
   bytes32: {
     ok: (v) => v instanceof Uint8Array && v.length === 32,
     expected: 'a 32-byte Uint8Array',
-  },
-  // inviteePublicKey: empty = uncommitted, 32 bytes = committed.
-  bytes0or32: {
-    ok: (v) => v instanceof Uint8Array && (v.length === 0 || v.length === 32),
-    expected: 'a Uint8Array of length 0 or 32',
   },
   /**
    * A 32-byte id carried as **hex text** in memory — `post_lock.targetPostId`,
@@ -1050,21 +958,21 @@ const OUTPUT_SHAPE: Record<
       { boxType: null, value: 'u64', owner: 'bytes32', guard: null },
       { lockedUntilBlock: 'uint' },
     ),
+    // Two rows, one field list — the boxTypes differ and nothing else does.
+    // Which *values* each may carry (an invite always 0, a bond exactly
+    // INVITE_BOND_KARMA) stays in the transition arm, per this table's rule.
     invite: shape({
       boxType: null,
       value: 'u64',
-      secretHash: 'bytes32',
       inviterId: 'bytes32',
+      inviteePublicKey: 'bytes32',
       guard: null,
     }),
     bond: shape({
       boxType: null,
       value: 'u64',
       inviterId: 'bytes32',
-      inviteOutputIndex: 'u32',
-      inviteePublicKey: 'bytes0or32',
-      probationStartBlock: 'uint',
-      probationEndBlock: 'uint',
+      inviteePublicKey: 'bytes32',
       guard: null,
     }),
     post_lock: shape({
@@ -1223,8 +1131,9 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  * **every** box type.
  *
  * Karma and credits are minted or burned only in block-application paths (like
- * payouts, decay, coinbase), never inside a user transaction, so no box type
- * gets a blanket exemption. Two deliberate carve-outs exist:
+ * settlement, decay, coinbase, bond settlement), never inside a user
+ * transaction, so no box type gets a blanket exemption. **Three stated
+ * exceptions and no others** (NODE_INTERFACE → `validateTx` step 5):
  *
  * - **The like burn** — `likeTarget` present ⟺ the transaction burns
  *   exactly `LIKE_KARMA_COST` from karma inputs. This is the biconditional's
@@ -1234,20 +1143,26 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *   exemption so a zero-output unvouch with a bolted-on `likeTarget` cannot
  *   shelter under it.
  *
- * - **VouchBox burn (unvouch)** — the staked karma is escrowed in the
- *   `vouch_cooldowns` table and re-minted to the voucher at maturity by
- *   `processVouchCooldowns` (block-apply). An escrow round-trip, not a burn.
- *   `checkTransitions` *requires* unvouch to have zero outputs, so this is the
- *   shape of every legal unvouch, not a loophole. The escrow living outside the
- *   UTXO set (and therefore outside the AVL+ state root) is a known wart —
- *   modelling it as a maturing box is tracked separately.
+ * - **The invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
+ *   `INVITE_KARMA_AMOUNT` in the *output's* favour. This is the one place a user
+ *   transaction may create karma, and it is a biconditional in both directions:
+ *   a surplus in any other shape falls to the strict equality below, and a claim
+ *   carrying any other surplus is rejected here. The shape is named loosely on
+ *   purpose — one InviteBox in, one karma box out — because `checkTransitions`
+ *   independently pins the output's owner and value; two layers, as the like
+ *   carve set.
  *
- * The BondBox has **no** zero-output exemption, deliberately. Forfeiture is not
- * implemented and no legal transition destroys a bond, so an exemption here
- * would buy nothing but a burn shape — one the *committed invitee* can reach,
- * since their signature satisfies `bond_dual`, letting them torch the inviter's
- * stake out of spite. The karma-econ vesting design owns forfeiture and will
- * define its burn path when it lands.
+ * - **The zero-output spend** of a `VouchBox` (unvouch — the staked karma is
+ *   escrowed in `vouch_cooldowns` and re-minted to the voucher at maturity by
+ *   `processVouchCooldowns`, an escrow round-trip rather than a burn). The
+ *   escrow living outside the UTXO set, and therefore outside the AVL+ state
+ *   root, is a known wart — modelling it as a maturing box is tracked
+ *   separately. A cancelled invite is *also* a zero-output spend but needs no
+ *   exemption: the box holds `0`, so it conserves arithmetically.
+ *
+ * The BondBox has **no** exemption and needs none: a bond is destroyed by the
+ * probation-deadline settlement, which is block application, and this gate
+ * governs transactions (NODE_INTERFACE → "Bond transition rules").
  */
 function checkValueConservation(
   inputBoxes: AnyBox[],
@@ -1289,6 +1204,21 @@ function checkValueConservation(
   const totalInputValue = inputBoxes.reduce((sum, b) => sum + b.value, 0n);
   const totalOutputValue = outputs.reduce((sum, b) => sum + b.value, 0n);
 
+  // Invite-claim carve. The input holds 0, so the whole output is a surplus —
+  // the only karma any transaction may create (ARCHITECTURE → Invite claim).
+  if (inputBoxes.length === 1 && inputType === 'invite' &&
+      outputs.length === 1 && outputs[0]!.boxType === 'karma') {
+    if (totalOutputValue - totalInputValue !== INVITE_KARMA_AMOUNT) {
+      return {
+        valid: false,
+        error:
+          `Claim non-conservation: a claim must mint exactly ${INVITE_KARMA_AMOUNT} ` +
+          `karma (inputs=${totalInputValue}, outputs=${totalOutputValue})`,
+      };
+    }
+    return { valid: true };
+  }
+
   if (totalInputValue !== totalOutputValue) {
     return {
       valid: false,
@@ -1324,8 +1254,8 @@ function checkGuards(
       }
 
       case 'block_apply': {
-        // Settlement-guarded boxes (PostLockBox) are consumable only by block
-        // application — no user transaction spends them.
+        // `PostLockBox` and `BondBox` are consumable only by block application —
+        // no user transaction spends either.
         return {
           valid: false,
           error: `Box with ${box.guard} guard can only be consumed by block application`,
@@ -1355,120 +1285,31 @@ function checkGuards(
         };
       }
 
-      case 'hash_preimage_with_bond': {
-        // Cross-box check: a BondBox input in the same tx is required
-        const bondInput = inputBoxes.find((b): b is BondBox => b.boxType === 'bond');
-        if (!bondInput) {
-          return {
-            valid: false,
-            error: `Invite reveal requires a BondBox input alongside the InviteBox`,
-          };
-        }
-        const preimage = tx.preimages?.[box.id!];
-        if (!preimage) {
-          return {
-            valid: false,
-            error: `Missing preimage for hash-locked box ${box.id}`,
-          };
-        }
-        const expectedHash = (box as InviteBox).secretHash;
-        const computedHash = createHash('blake2b512')
-          .update(Buffer.from(preimage))
-          .digest()
-          .subarray(0, 32);
-        if (Buffer.from(computedHash).toString('hex') !== Buffer.from(expectedHash).toString('hex')) {
-          return {
-            valid: false,
-            error: `Hash preimage mismatch for box ${box.id}`,
-          };
-        }
-        if (bondInput.inviteePublicKey.length === 32) {
-          // Bond is committed — either reveal (invitee signs) or cancel (inviter signs)
-          if (
-            !verifyGuardSignature(tx, txHash, bondInput.inviteePublicKey) &&
-            !verifyGuardSignature(tx, txHash, bondInput.inviterId)
-          ) {
-            return {
-              valid: false,
-              error: `Reveal must be signed by the committed invitee or the inviter`,
-            };
-          }
-        }
-        // If not committed, just the preimage suffices (cancel path)
-        break;
-      }
-
-      case 'bond_dual': {
-        const bondBox = box as BondBox;
-        // Path 1: inviter_signature — inviter reclaims the bond (cancel)
-        if (verifyGuardSignature(tx, txHash, bondBox.inviterId)) {
-          break;
-        }
-        // Path 2: invitee_signature — invitee reveals after commit
-        if (
-          bondBox.inviteePublicKey.length === 32 &&
-          verifyGuardSignature(tx, txHash, bondBox.inviteePublicKey)
-        ) {
-          break;
-        }
-        // Path 3: hash_preimage — invitee commits their identity
-        const bondPreimage = tx.preimages?.[box.id!];
-        if (!bondPreimage) {
-          return {
-            valid: false,
-            error: `Bond box ${box.id} requires inviter signature, committed invitee signature, or preimage for commit`,
-          };
-        }
-        // Look up the paired InviteBox to get the expected secretHash.
+      case 'invite_dual': {
+        // Satisfied by EITHER key the box names, and the shape decides which
+        // (TYPES_INTERFACE → BoxGuard): invitee → claim, inviter → cancel.
         //
-        // Resolved from `(bond.txId, bond.inviteOutputIndex)` rather than from a
-        // stored box id (user decision, 2026-08-06): a box id here would be
-        // circular, since it derives from the very txId that hashes this field.
-        // The pair is confined to one transaction by construction, so this
-        // cannot reach an invite the bond did not ship with; resolving from a
-        // stored box id could name any box in the world.
-        const pairedInviteBox = deps.getBoxByProvenance(
-          bondBox.txId,
-          bondBox.inviteOutputIndex,
-        );
-        if (!pairedInviteBox || pairedInviteBox.boxType !== 'invite') {
+        // The binding is here rather than split across two gates because this
+        // is the layer that holds both the transaction and the box. Accepting
+        // either signature over either shape is not equivalent: an inviter
+        // signing a claim would mint the invitee's karma without them, bar
+        // their key from any further invite and start a probation clock they
+        // never asked for; an invitee signing a cancel would destroy an invite
+        // that is not theirs to withdraw.
+        //
+        // `outputs.length === 0` is the whole discriminant this needs.
+        // `checkTransitions` pins the rest of both shapes at step 7 — a claim
+        // is exactly one karma output owned by the invitee, and nothing else
+        // has zero outputs on an invite input.
+        const inviteBox = box as InviteBox;
+        const isCancel = tx.outputs.length === 0;
+        const signer = isCancel ? inviteBox.inviterId : inviteBox.inviteePublicKey;
+        if (!verifyGuardSignature(tx, txHash, signer)) {
           return {
             valid: false,
-            error:
-              `InviteBox at (${bondBox.txId}, ${bondBox.inviteOutputIndex}) ` +
-              `not found for bond commit`,
-          };
-        }
-        const expectedHash = (pairedInviteBox as InviteBox).secretHash;
-        const computedHash = createHash('blake2b512')
-          .update(Buffer.from(bondPreimage))
-          .digest()
-          .subarray(0, 32);
-        if (Buffer.from(computedHash).toString('hex') !== Buffer.from(expectedHash).toString('hex')) {
-          return {
-            valid: false,
-            error: `Hash preimage mismatch for bond commit on box ${box.id}`,
-          };
-        }
-        // H-2: bind the commit to the key it names. The committed invitee is the
-        // OUTPUT BondBox's inviteePublicKey; require a VALID signature from it.
-        // A non-empty signatures map — or a signature from any other key — no
-        // longer authorizes the commit. (This does NOT stop a front-runner who
-        // commits under their own key; that needs invitee-binding at invite
-        // creation, deferred to the karma-econ emission model.)
-        const committedBondOut = tx.outputs.find(
-          (o): o is BondBox => o.boxType === 'bond',
-        );
-        if (!committedBondOut || committedBondOut.inviteePublicKey.length !== 32) {
-          return {
-            valid: false,
-            error: `Bond commit must produce a committed BondBox output`,
-          };
-        }
-        if (!verifyGuardSignature(tx, txHash, committedBondOut.inviteePublicKey)) {
-          return {
-            valid: false,
-            error: `Bond commit must be signed by the committed invitee`,
+            error: isCancel
+              ? `Invite cancel must be signed by the inviter named on box ${box.id}`
+              : `Invite claim must be signed by the invitee named on box ${box.id}`,
           };
         }
         break;
@@ -1505,13 +1346,13 @@ function checkGuards(
  *    NODE_INTERFACE → "Output shape"). This is the first step that reads
  *    `tx.outputs`, so steps 5–7 dereference output fields under a schema
  *    guarantee.
- * 5. Face-value conservation — sum(in) == sum(out) for every box type (two
+ * 5. Face-value conservation — sum(in) == sum(out) for every box type (three
  *    carve-outs: the like burn — `likeTarget` present ⟺ deficit exactly
- *    LIKE_KARMA_COST — and the zero-output VouchBox spend). The `value` TYPE
- *    bound lives in step 4's schema.
+ *    LIKE_KARMA_COST — the invite-claim surplus of exactly INVITE_KARMA_AMOUNT,
+ *    and the zero-output VouchBox spend). The `value` TYPE bound lives in step
+ *    4's schema.
  * 6. Guard satisfaction (signatures)
- * 7. Legal box transitions (height-aware — bond commit and settlement;
- *    `likeTarget`-aware — the like burn shape)
+ * 7. Legal box transitions (`likeTarget`-aware — the like burn shape)
  *
  * Karma decay is handled by the periodic decay engine, not at transaction
  * validation time.
@@ -1551,25 +1392,19 @@ export function validateTx(
     inputBoxes.push(box);
   }
 
-  // ---- 3. All inputs must be same box_type (except invite+bond claim and invite cancel) ----
-  const isInviteBondClaim =
-    inputBoxes.length === 2 &&
-    inputBoxes.some((b) => b.boxType === 'invite') &&
-    inputBoxes.some((b) => b.boxType === 'bond');
-  const isInviteCancel =
-    inputBoxes.length === 3 &&
-    inputBoxes.some((b) => b.boxType === 'karma') &&
-    inputBoxes.some((b) => b.boxType === 'invite') &&
-    inputBoxes.some((b) => b.boxType === 'bond');
-  if (!isInviteBondClaim && !isInviteCancel) {
-    const inputType = inputBoxes[0]!.boxType;
-    for (const box of inputBoxes) {
-      if (box.boxType !== inputType) {
-        return {
-          valid: false,
-          error: `Mixed input types not allowed: ${inputType} vs ${box.boxType}`,
-        };
-      }
+  // ---- 3. All inputs must be the same box_type ----
+  // No exceptions: every legal shape is single-type. The claim needs no bond
+  // alongside its invite, because the karma it produces is minted rather than
+  // moved, and the cancel names no bond at all (NODE_INTERFACE → the transition
+  // table). `checkTransitions` relies on this — it reads `inputs[0]`'s type as
+  // the type of all of them.
+  const inputType = inputBoxes[0]!.boxType;
+  for (const box of inputBoxes) {
+    if (box.boxType !== inputType) {
+      return {
+        valid: false,
+        error: `Mixed input types not allowed: ${inputType} vs ${box.boxType}`,
+      };
     }
   }
 
@@ -1596,7 +1431,6 @@ export function validateTx(
   const transitionCheck = checkTransitions(
     inputBoxes,
     tx.outputs,
-    currentBlockHeight,
     deps,
     tx.likeTarget,
   );

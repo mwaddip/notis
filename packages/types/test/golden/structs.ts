@@ -182,19 +182,12 @@ const powPreimageCodec: ValueCodec<PowPreimage> = {
 export type BoxContent =
   | { boxType: 'karma'; value: bigint; owner: Uint8Array; decayBurn: boolean | null }
   | { boxType: 'credit'; value: bigint; owner: Uint8Array; lockedUntilBlock: number | null }
-  | { boxType: 'invite'; value: bigint; secretHash: Uint8Array; inviterId: Uint8Array }
+  /** `value` is always 0 — the karma an invite names is minted at the claim. */
+  | { boxType: 'invite'; value: bigint; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
   | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
-  | {
-      boxType: 'bond';
-      value: bigint;
-      inviterId: Uint8Array;
-      inviteOutputIndex: number;
-      /** 0 or 32 bytes — empty = unclaimed, 32 = committed. Encodes as `opt(b32)`. */
-      inviteePublicKey: Uint8Array;
-      probationStartBlock: number;
-      probationEndBlock: number;
-    }
+  /** The same trailing fields as `invite`; the tag is what separates the two. */
+  | { boxType: 'bond'; value: bigint; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
   | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array; targetPostId: string }
   | { boxType: 'vouch'; value: bigint; voucherId: Uint8Array; targetId: Uint8Array };
 
@@ -232,8 +225,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return {
           boxType: 'invite',
           value,
-          secretHash: hex(j.secretHash as string),
           inviterId: hex(j.inviterId as string),
+          inviteePublicKey: hex(j.inviteePublicKey as string),
         };
       case 'genesis_proof':
         return { boxType: 'genesis_proof', value, payload: hex(j.payload as string) };
@@ -242,10 +235,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           boxType: 'bond',
           value,
           inviterId: hex(j.inviterId as string),
-          inviteOutputIndex: j.inviteOutputIndex as number,
           inviteePublicKey: hex(j.inviteePublicKey as string),
-          probationStartBlock: j.probationStartBlock as number,
-          probationEndBlock: j.probationEndBlock as number,
         };
       case 'post_lock':
         return {
@@ -294,7 +284,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           lockedUntilBlock: readOpt(r, readVlqU),
         };
       case 'invite':
-        return { boxType, value, secretHash: readBytesN(r, 32), inviterId: readBytesN(r, 32) };
+        return { boxType, value, inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32) };
       case 'genesis_proof': {
         const payload = readLp(r);
         // The payload bound, read off the layout table like every other row in
@@ -313,21 +303,9 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType, value, payload };
       }
       case 'bond':
-        return {
-          boxType,
-          value,
-          inviterId: readBytesN(r, 32),
-          inviteOutputIndex: readVlqU(r),
-          // `opt(b32)`, and absent decodes to EMPTY rather than to `null`:
-          // empty ↔ absent is the encoder's mapping of a 0-or-32-byte field,
-          // so the reader has to invert it for the re-encode compare to close.
-          // A reader returning `null` here would fail the boundary check on
-          // every unclaimed bond — which is what makes this the vector that
-          // proves the mapping, in both directions, rather than only one.
-          inviteePublicKey: readOpt(r, (rr) => readBytesN(rr, 32)) ?? new Uint8Array(0),
-          probationStartBlock: readVlqU(r),
-          probationEndBlock: readVlqU(r),
-        };
+        // Byte-for-byte the `invite` arm above, and reached only by the tag —
+        // which is the property the two vectors in `boxes.json` exist to hold.
+        return { boxType, value, inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32) };
       case 'post_lock':
         return {
           boxType,

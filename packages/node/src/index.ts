@@ -29,10 +29,10 @@ import {
   getKarmaBoxes,
   getKarmaValue,
   hasActiveVouchCooldown,
+  getIdentityRecord,
   getPost,
   insertPost,
   getBox,
-  getBoxByProvenance,
   getCurrentHeight,
   insertMempoolSubBlock,
   insertUtxoTx,
@@ -212,19 +212,21 @@ async function handleOrderingBlock(block: OrderingBlock, fromPeerId: string): Pr
 net.onTx((tx) => {
   const deps = {
     getBox,
-    getBoxByProvenance,
-    insertBox: () => {},
+      insertBox: () => {},
     consumeBox: () => {},
     getKarmaBox,
     getKarmaBoxes,
-    // Bond settlement's unlock predicate (NODE_INTERFACE → "Bond transition
-    // rules"). Relay validation has to reach the same verdict the block path
-    // will — the store's getKarmaValue is the single implementation all three
-    // paths share.
+    // The vouch cast's minimum-balance gate (ARCHITECTURE → "Vouch boxes").
+    // Relay validation has to reach the same verdict the block path will — the
+    // store's getKarmaValue is the single implementation all three paths share.
     getKarmaValue,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
     hasActiveVouchCooldown,
+    // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
+    // transition rules") — same rule again: a relayed invite naming an existing
+    // account must be refused here as well as at the block path.
+    getIdentityRecord,
     runInTransaction: (fn: () => void) => fn(),
     isSystemBox: (boxId: string) => {
       const sysKey = getSystemKeypair();

@@ -79,12 +79,29 @@ export const VOUCH_MIN_BALANCE = 11n;          // Must have >= this to vouch
 export const VOUCH_COOLDOWN_BLOCKS = 60;       // Blocks before karma returned → profile: vouchCooldownBlocks
 
 // Invites
-export const MAX_PENDING_INVITES = 5;
+//
+// `MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **retired — names
+// reserved, never reuse** (TYPES_INTERFACE → Invites). The concurrent-invite cap
+// needs no successor: an inviter locks `INVITE_BOND_KARMA` out of their own karma
+// per invite, so `K / INVITE_BOND_KARMA` bounds them without a rule. The
+// threshold went with the early-unlock leg it served — a bond settles once, at
+// `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and no karma balance
+// decides it.
 export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;
-export const INVITE_KARMA_AMOUNT = 25n;       // Karma transferred in InviteBox
-export const INVITE_BOND_KARMA = 25n;          // was 10
-export const INVITE_PROBATION_BLOCKS = 1000;   // → profile: inviteProbationBlocks
-export const INVITE_KARMA_THRESHOLD = 20n;
+export const INVITE_KARMA_AMOUNT = 25n;       // Karma MINTED to the invitee at claim
+export const INVITE_BOND_KARMA = 25n;          // Karma the inviter locks at creation
+export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: inviteProbationBlocks
+/**
+ * Likes the invitee must receive per karma of bond returned — the bond vests
+ * `min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES),
+ * value)` at the probation deadline and burns the rest (ARCHITECTURE → Bond
+ * outcomes).
+ *
+ * Kept separate from `LIKES_PER_KARMA_PAYOUT` deliberately: the two share a
+ * value and nothing else, so collapsing them would make a change to the like
+ * dial silently move every bond's vesting.
+ */
+export const INVITE_BOND_VEST_PER_LIKES = 5;
 
 // Genesis
 export const GENESIS_COMMITTEE_KEYS: string[] = []; // → profile: genesisCommitteeKeys

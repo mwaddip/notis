@@ -224,65 +224,50 @@ gateway DoS for the price of one extra signature.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/invites` | `{ tx: UtxoTransaction }` — client-signed create tx | `{ status: "pending", txId, expiresAtHeight, secretHash: hex, inviteBoxId, bondBoxId }` | 400 if insufficient karma, 400 if exceeds `MAX_PENDING_INVITES` |
-| `POST` | `/invites/commit` | `{ tx: UtxoTransaction }` — client-signed commit tx (step 1 of 2) | `{ status: "pending", txId, expiresAtHeight }` | 400 if hash mismatch, missing/invalid committed-invitee signature, or invalid bond state |
-| `POST` | `/invites/claim` | `{ tx: UtxoTransaction }` — client-signed claim tx with preimage (step 2 of 2) | `{ status: "pending", txId, expiresAtHeight, userId, karmaBoxId }` | 400 if hash mismatch, 400 if publicKey already an account |
-| `POST` | `/invites/cancel` | `{ tx: UtxoTransaction }` — client-signed cancel tx | `{ status: "pending", txId, expiresAtHeight }` | 400 if already claimed, 403 if not inviter |
+| Method | Path | Request | Response | Errors |
+|--------|------|---------|----------|--------|
+| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, inviteBoxId, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account |
+| `POST` | `/invites/claim` | `{ tx: UtxoTransaction }` — invitee-signed claim tx | `{ status: "pending", txId, expiresAtHeight, userId, karmaBoxId }` | 400 if no open invite names the signer, 403 if the signature is not the invitee's |
+| `POST` | `/invites/cancel` | `{ tx: UtxoTransaction }` — inviter-signed cancel tx | `{ status: "pending", txId, expiresAtHeight }` | 400 if already claimed, 403 if not the inviter |
+
+**There are two steps, not three, and no secret in any of them.** The invitee
+shares their public key out of band; from then on each party acts under its own
+signature. `/invites/commit` is gone with the instrument it served.
 
 **Create flow:**
 
-1. Verify inviter has ≥ `karmaAmount + bondAmount` available karma
-2. Verify inviter has < `MAX_PENDING_INVITES` outstanding unclaimed invites
-3. Generate random secret `s`, compute `secretHash = blake2b512(s).subarray(0,32)`
-4. Build UTXO transaction: consume karma box → new karma box (balance - N - D) +
-   InviteBox (N, hash-locked) + BondBox (D, inviter-owned, with zeroed
-   inviteePublicKey/probation fields)
-5. Insert into mempool: `insertUtxoTx(tx, null, expiresAtHeight)`
-6. Return `{ status: "pending", txId, expiresAtHeight, secretHash, inviteBoxId, bondBoxId }`
-   — inviter communicates `s` to invitee out of band
+1. Verify the inviter holds ≥ `INVITE_BOND_KARMA` available karma. The bond is
+   the whole cost — `INVITE_KARMA_AMOUNT` is minted at claim, not paid here
+2. Verify the named `inviteePublicKey` has **no `IdentityRecord` at all**
+3. Build the transaction: consume a karma box → karma box (`balance −
+   INVITE_BOND_KARMA`) + InviteBox (value `0`) + BondBox (`INVITE_BOND_KARMA`),
+   both new boxes carrying the inviter's id and the invitee's key
+4. `insertUtxoTx(tx, null, expiresAtHeight)`; return the two box ids
 
-**Commit flow** (step 1 of 2 — binds the invitee to the bond):
+**Claim flow:**
 
-1. Verify `blake2b512(secret).subarray(0,32) === inviteBox.secretHash`
-2. Build UTXO transaction: spend the uncommitted BondBox → committed BondBox
-   (set `inviteePublicKey` to the invitee's key, plus `probationStartBlock` /
-   `probationEndBlock`)
-3. The `bond_dual` commit guard verifies a **valid Ed25519 signature from the
-   committed invitee** — the output BondBox's `inviteePublicKey` (audit H-2).
-   This runs in `checkGuards`/`validateTx`, so it holds on every path (local,
-   gossip relay, reorg). Revealing `s` no longer authorizes a commit by itself,
-   and a commit cannot bind a key the committer does not control.
-4. Insert into mempool: `insertUtxoTx(tx, null, expiresAtHeight)`; return
-   `{ status: "pending", txId, expiresAtHeight }`
-
-> **Known-open (deferred).** The invite is a bearer instrument — `s` identifies
-> the holder, not a pre-named invitee — so an observer who learns `s` can still
-> commit under their *own* key. The guard authenticates the committer; it does
-> not bind the invite to a specific invitee. Closing that front-run needs the
-> invitee bound at invite creation (e.g. `secretHash = H(s ‖ inviteePubkey)`),
-> deferred to the karma-econ emission-model design.
-
-**Claim flow** (step 2 of 2 — requires the bond already committed):
-
-1. Verify the BondBox is committed (`inviteePublicKey` is 32 bytes) — a reveal
-   before commit is rejected
-2. Verify `publicKey` is not already associated with an existing account
-3. Build UTXO transaction: consume the InviteBox and the committed BondBox;
-   create the invitee's KarmaBox (value N, `owner = publicKey`, which must equal
-   the committed `inviteePublicKey`) — account now exists
-4. `validateTx` verifies the `hash_preimage_with_bond` guard (preimage `s` +
-   committed-bond cross-input) and the transitions
-5. Insert into mempool: `insertUtxoTx(tx, null, expiresAtHeight)`; return
-   `{ status: "pending", txId, expiresAtHeight }`
+1. Verify an open InviteBox names the signer as `inviteePublicKey`
+2. Build the transaction: consume that InviteBox → one KarmaBox, `owner =
+   inviteePublicKey`, value `INVITE_KARMA_AMOUNT`. The bond is **not** an input
+3. `validateTx` checks the `invite_dual` guard against the invitee's signature and
+   the surplus against the conservation carve. Block application then writes
+   `invitedAtBlock`, which starts the probation clock. The key becomes an account
+   in the same step, which is what bars any further invite naming it
+4. `insertUtxoTx(tx, null, expiresAtHeight)`
 
 **Cancel flow:**
 
-1. Verify invite is unclaimed
-2. Verify signature matches inviter's key
-3. Build UTXO transaction: consume InviteBox + BondBox, create new KarmaBox
-   returning both values to inviter
-4. Insert into mempool: `insertUtxoTx(tx, null, expiresAtHeight)`
-5. Return `{ status: "pending", txId, expiresAtHeight }`
+1. Verify the invite is still open and the signer is `invite.inviterId`
+2. Build the transaction: consume the InviteBox, **no outputs**. The box holds
+   `0`, so this conserves
+3. Block application returns the paired bond to the inviter, resolved by
+   `inviteePublicKey`. The cancel transaction does not name the bond and cannot
+   spend it
+4. `insertUtxoTx(tx, null, expiresAtHeight)`
+
+**An invite has no deadline.** It stays claimable until the inviter cancels, and
+the bond stays locked for exactly that long — so `expiresAtHeight` on these
+responses is the **mempool** entry's expiry, never the invite's.
 
 ### Vouches
 
@@ -662,16 +647,26 @@ Full read-only validation. Performs all checks without modifying state:
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
 5. Value conservation: `sum(input values) == sum(output values)` for **every** box
-   type. The single exception is the deliberate **zero-output VouchBox spend**
-   (unvouch — the staked karma is escrowed off-UTXO in `vouch_cooldowns` and
-   re-minted to the voucher at maturity; an escrow round-trip, not a burn).
-   There is **no BondBox exception**: bond forfeiture is not implemented and no
-   legal transition destroys a bond (see "Bond transition rules" below) — the
-   karma-econ vesting design owns forfeiture, and will define its burn path when
-   it lands. All other user transactions — including karma, like, and vouch
-   *cast* — conserve value; karma/credit mint and burn happen only in
-   block-application paths (like rewards, decay, coinbase), never inside a user
-   transaction. The `value` **type** bound (non-negative `bigint` base units
+   type, with **three stated exceptions and no others**:
+   - the **like deficit** — `likeTarget` present ⟺ the sums differ by exactly
+     `LIKE_KARMA_COST`, a burn;
+   - the **invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
+     `INVITE_KARMA_AMOUNT` in the *output's* favour. This is the one place a user
+     transaction may create karma, and it is a biconditional in both directions: a
+     surplus in any other shape is invalid, and a claim carrying any other surplus
+     is invalid;
+   - the **zero-output spend** of a `VouchBox` (unvouch — the staked karma is
+     escrowed off-UTXO in `vouch_cooldowns` and re-minted at maturity, an escrow
+     round-trip rather than a burn) or of an `InviteBox` (cancel — the box holds
+     `0`, so this conserves arithmetically and is listed here only because the
+     gate rejects zero-output shapes structurally).
+
+   There is **no BondBox exception, and none is needed**: a bond is destroyed by
+   the probation-deadline settlement, which is block application, and this gate
+   governs transactions (see "Bond transition rules" below). Every other user
+   transaction conserves; karma and credit mint and burn otherwise happen only in
+   block-application paths (like settlement, decay, coinbase, bond settlement),
+   never inside a user transaction. The `value` **type** bound (non-negative `bigint` base units
    `< 2⁶⁴` — a negative value could otherwise balance the sums while minting
    into a sibling box) is pinned by step 4's schema; conservation owns the
    **sums**. `assertValidBoxValue` remains at the JSON→tx boundary as the
@@ -734,8 +729,8 @@ schema for its `boxType`**:
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
 - **`guard` equals the boxType's canonical guard.** `karma`/`credit`/`vouch` →
-  `owner_signature`, `invite` → `hash_preimage_with_bond`, `bond` →
-  `bond_dual`, `post_lock` → `block_apply`, `genesis_proof` → `unspendable` —
+  `owner_signature`, `invite` → `invite_dual`, `bond` → `block_apply`,
+  `post_lock` → `block_apply`, `genesis_proof` → `unspendable` —
   the same constants `rowToBox` fabricates on read. One table, engine-owned;
   `rowToBox` and the check must never disagree.
 - **Field types are pinned** (field-type pin). Every present field's runtime
@@ -744,14 +739,11 @@ schema for its `boxType`**:
     (post_lock — the read-poison field)**. The bound is absorbed from
     `checkOutputValues`, which retired with this pin (one owner per rule;
     `json-to-tx`'s `assertValidBoxValue` stays as the HTTP-edge twin).
-  - 32-byte `Uint8Array`: `owner` (karma, credit, post_lock), `secretHash`
-    (invite), `inviterId` (invite, bond), `voucherId`, `targetId` (vouch).
-  - `inviteePublicKey` (bond): `Uint8Array` of length 0 **or** 32. Which of
-    the two a given transition demands (uncommitted vs committed) stays a
-    transition-arm rule — the schema pins the type, not the state.
-  - Non-negative safe integer, and never `-0`: `inviteOutputIndex` (bond,
-    additionally `≤ 0xFFFFFFFF` — it is a u32 output position),
-    `probationStartBlock`, `probationEndBlock` (bond), `lockedUntilBlock`
+  - 32-byte `Uint8Array`: `owner` (karma, credit, post_lock), `inviterId` and
+    `inviteePublicKey` (invite, bond), `voucherId`, `targetId` (vouch). The
+    empty state went with the commit transition, so `inviteePublicKey`'s length
+    is no longer a transition-arm question and `bytes0or32` has no user.
+  - Non-negative safe integer, and never `-0`: `lockedUntilBlock`
     (credit, when present). `-0` is called out because it is JSON- and
     CBOR-reachable and breaks byte round-trips: cbor-x encodes it as a float
     where the store's JSON round-trip returns integer `0`.
@@ -957,8 +949,9 @@ The checks:
    are total.
 5. `signatures`: a plain object; every key a 64-char lowercase-hex string
    (an Ed25519 public key), every value a `Uint8Array` of length 64. An
-   empty map is legal — the uncommitted-bond cancel path is guard-satisfied
-   by preimage alone. Extra well-formed keys are shape-legal (guards only
+   empty map is shape-legal; whether any transition can be *guard*-satisfied
+   with no signature is the guard layer's question, not this gate's.
+   Extra well-formed keys are shape-legal (guards only
    look up, nothing iterates; the like path's exactly-one-signature rule is
    `castLike`/gate-metadata policy, unchanged).
 6. `preimages`: absent, or a plain **non-empty** object with 64-char
@@ -1054,96 +1047,93 @@ node's* mempool entry and are NOT listed here.
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
 owner** — see "Karma transition rules" below. Consolidating several of your
 own karma boxes stays legal; that is the legitimate multi-input case.
-| KarmaBox | KarmaBox + InviteBox + BondBox | Invite create: same owner, value conserved, **and the BondBox output is uncommitted** — `inviteePublicKey` empty, both probation fields `0` |
+| KarmaBox | KarmaBox + InviteBox + BondBox | Invite create: karma outputs same owner, value conserved; `invite.value == 0`; `bond.value == INVITE_BOND_KARMA`; both new boxes carry the same `inviterId` (= the karma input owner) and the same `inviteePublicKey`; that key holds **no `IdentityRecord`** |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; no active cooldown for `(voucherId, targetId)` |
 | VouchBox | — (unvouch) | **Exactly one VouchBox input**, zero outputs, voucher-signed. The staked karma escrows to `vouch_cooldowns` and is re-minted to `voucherId` at maturity — a round trip, not a burn |
-| BondBox (uncommitted) | BondBox (committed) | Commit: paired invite's preimage + committed-invitee signature (H-2); preservation fields unchanged; probation window pinned — see bond rules below |
-| InviteBox + BondBox (committed) | KarmaBox + BondBox | Claim (reveal): preimage + committed-invitee signature; karma output owner = committed invitee; bond preservation fields unchanged |
-| KarmaBox + InviteBox + BondBox | KarmaBox | Cancel: inviter signature; output karma owner = input karma owner = `bond.inviterId` = `invite.inviterId` |
-| BondBox (committed) | KarmaBox | Settlement: karma output owner = `bond.inviterId`, AND (settle height > `probationEndBlock` OR invitee's summed unspent karma ≥ `INVITE_KARMA_THRESHOLD`) |
+| InviteBox | KarmaBox | Claim: **exactly one InviteBox input**, invitee-signed; one karma output, owner = `invite.inviteePublicKey`, value == `INVITE_KARMA_AMOUNT`. The input holds `0`, so the whole output is a **surplus** — the only karma surplus any transaction may carry |
+| InviteBox | — (cancel) | **Exactly one InviteBox input**, zero outputs, inviter-signed. The box holds `0`, so this conserves; the paired bond returns to the inviter through block application, not through this transaction |
 | CreditBox | CreditBox(+CreditBox) | Any owner, value conserved |
 | PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
+| BondBox | KarmaBox / — | Block application only: settlement at the probation deadline, or return to the inviter when the paired invite is cancelled — **no user transaction can spend a `BondBox`** |
 
 There is **no other legal bond or invite shape**. In particular:
 
-- **No standalone spend of an InviteBox.** The reveal guard
-  (`hash_preimage_with_bond`) requires a BondBox input in the same
-  transaction, so `InviteBox → KarmaBox` alone is guard-unreachable; the
-  legal exits for an invite are the claim and cancel shapes above. (The
-  previous table listed the standalone spend as a legal row with its rules
-  "handled at service layer" — both halves of that were wrong.)
-- **No standalone spend of an uncommitted BondBox.** Its exits are the
-  commit and cancel shapes. A standalone spend would strand the paired
-  invite: the claim shape needs a bond input, so an invite whose bond is
-  gone can never be claimed.
-- **No bond burn.** `BondBox → ∅` is illegal — see the bond rules below.
+- **An InviteBox has exactly two exits**, claim and cancel, separated by
+  which of the two keys named in the box signed. Neither takes a second
+  input: the claim needs no bond alongside it, because the karma it
+  produces is minted rather than moved.
+- **A BondBox has no user-transaction shape at all.** It is created as an
+  output of invite creation — which needs no guard, since a guard governs
+  spending — and every later movement is block application's.
+- **A karma surplus outside the claim shape is invalid**, and a claim
+  whose surplus is not exactly `INVITE_KARMA_AMOUNT` is invalid. The
+  biconditional is stated on the conservation gate, in the shape the like
+  carve already set.
 
-### Bond transition rules (P2-B phase 1)
+### Bond transition rules
 
-- **The bond's value only ever returns to `bond.inviterId`.** Every shape
-  that releases bond value (cancel, settlement) pins the receiving karma
-  box's owner to the inviter. This is the rule that closes audit
-  F-consensus-1: before it, a committed invitee could sign
-  `bond → own KarmaBox` (or absorb invite + bond through the cancel shape)
-  and take the deposit.
-- **Settlement unlock is a spend-time predicate.** The invitee's *current*
-  summed unspent karma ≥ `INVITE_KARMA_THRESHOLD`, or probation has
-  expired (`settle height > probationEndBlock`). The historical form in
-  ARCHITECTURE's bond-outcomes table ("reached the threshold within
-  probation") is deliberately NOT the consensus rule — a spend-time check
-  cannot see history, and the early-unlock leg is strictly
-  inviter-favorable timing. Karma is summed across boxes, not per-box:
-  multiple unspent karma boxes per owner is reachable (faucet grant +
-  mint, or a karma split).
-- **Forfeiture is not implemented, and no burn shape exists.**
-  "Invitee karma < minimum during probation → burned" is a claim about
-  history; enforcing it requires per-block bond scanning, and the
-  karma-economics vesting design (design track §1.2) replaces bond
-  settlement wholesale — the scanner would be built for deletion. Until
-  that track lands: no legal transition destroys a bond, and value
-  conservation has **no BondBox zero-output exception**. A voluntary burn
-  was also considered and rejected: no flow needs it, and allowing it
-  would let the committed invitee (whose signature satisfies `bond_dual`)
-  torch the inviter's stake out of spite.
-- **The probation window is pinned at commit:** `probationStartBlock > 0`,
-  `probationStartBlock ≤ apply height`, and
-  `probationEndBlock − probationStartBlock == INVITE_PROBATION_BLOCKS`.
-  Without these, the committing invitee chooses the window freely and can
-  lock the inviter's bond forever — via `probationEndBlock` directly, or
-  by future-dating `probationStartBlock` under a pinned length. A strict
-  `probationStartBlock == apply height` is NOT required: it would break on
-  the delay between building the commit and its being mined. Past-dating
-  the start is permitted and harmless: it only *shortens* the effective
-  probation (at the limit, already-expired at commit), which strictly
-  favors the inviter's unlock and evades nothing while forfeiture does not
-  exist; the vesting design replaces these mechanics before forfeiture
-  becomes real.
-- **Engine inputs these rules need:** `checkTransitions` becomes
-  height-aware (the settle height already flows into `validateTx`), and
-  the deps gain an invitee-karma-sum read — the store's `getKarmaValue`
-  (see §Store), which is the one implementation every path shares.
-- **Known residual — claim-time invite↔bond pairing is unenforced**
-  (audit F-consensus-5). The claim shape accepts *any* committed bond
-  alongside the invite. It cannot be enforced under current fields: after
-  commit, the bond's provenance (`txId`) points at the commit transaction,
-  so `(bond.txId, bond.inviteOutputIndex)` no longer resolves the invite
-  it shipped with. The fix is the committed bond carrying the invite's
-  **box id** — safe there (the invite's id is fixed by the create tx
-  before the commit tx exists, so no circularity), but it is a
-  consensus-format change and belongs in the P2-C break bundle. Impact of
-  the gap with this phase's rules in force: crossed pairs strand value
-  recoverable only by the inviter's own cancels — a griefing wart, not
-  theft.
-- **A bond is born uncommitted, and committed state is reachable only
-  through the commit transition** (P2-B phase 2). Invite creation must emit
-  `inviteePublicKey` empty and both probation fields `0`. Without that, an
-  inviter can emit a bond that is *born committed* with a zeroed window, and
-  the settlement rule above accepts an immediate reclaim to themselves —
-  every clause satisfied, the expiry leg vacuously true — while the InviteBox
-  stays live and claimable. The bond, the network's only sybil cost, would
-  cost nothing. This is the invariant that makes the commit-time window pin
-  mean anything: with it, every committed bond has passed through the pinned
-  commit path by construction.
+- **A bond is never spent, only settled.** Creation, the probation clock,
+  forfeiture and the cancellation return are all block application's, so
+  the guard is `block_apply` and no signature satisfies it. This is what
+  closes audit F-consensus-1 by construction rather than by a rule: there
+  is no shape in which any party — inviter or invitee — can direct a
+  bond's value anywhere.
+- **The bond's value only ever reaches `bond.inviterId` or the burn.**
+  Settlement mints the vested part to the inviter and destroys the rest;
+  cancellation returns the whole of it. No path pays a bond to the
+  invitee.
+- **Settlement happens once, at the deadline, and reads only likes.**
+  `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS` is the
+  height; the vested amount is
+  `min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES), bond.value)`,
+  and the remainder
+  burns regardless of what the invitee did otherwise. No karma balance is
+  read, at that height or any other — the earlier spend-time predicate
+  measured what an invitee *held*, which the invite's own mint satisfied
+  before they had done anything.
+- **The probation clock starts at the claim, not at creation.** An invite
+  that is never claimed never starts one, so an inviter's bond is locked
+  for exactly as long as they leave the invite open. `invitedAtBlock` is
+  written by block application when the claim applies, which is the same
+  event that mints the karma — one height, recorded once, read by the
+  settlement sweep.
+- **Forfeiture needs no conservation exception.** A bond is destroyed by
+  settlement, which is block application, and the gate governs
+  transactions. The `BondBox` zero-output exception this section once
+  required is not needed and must not be added.
+- **An invite and a bond are paired by `inviteePublicKey`, and nothing
+  else is needed.** A key is invited at most once, so it identifies
+  exactly one live pair — no box id, no output index, no provenance walk.
+  This is what closes audit **F-consensus-5**, whose root cause was that
+  the commit transition re-created the bond and broke the `(txId, index)`
+  reference; with no commit, a bond is created once and the pairing it
+  was born with is the pairing it dies with.
+- ⛔ **An invite may only name a key that is not already an account**, and
+  *"is an account"* means **holds an `IdentityRecord`** — not "was
+  invited before". Invite creation is where this is enforced, rather than
+  the claim, so a second inviter's bond is never locked against an invite
+  that could not have been claimed.
+
+  **The weaker "never invited" reading prints karma.** An established
+  account that simply had not been invited — every genesis committee
+  member, every faucet recipient — could be named: the claim mints it
+  `INVITE_KARMA_AMOUNT` from nothing, and the bond then vests in full
+  against likes that key had *already* earned, so the whole stake returns
+  to the inviter at the deadline. The inviter's cost is a
+  probation-length lock and nothing else.
+
+  Record existence is the right test because **every karma receipt writes
+  one**, through `insertBox`'s choke point. A key with no record has
+  never held karma, so it has never posted and never been liked — which
+  is also what makes the claim the record-*creating* event for every
+  legal invitee, and `lifetimeLikesReceived` necessarily `0` at that
+  point. Being barred costs an uninvited party one key generation, since
+  the identity carries nothing.
+- **Engine inputs these rules need:** the invite-create arm reads
+  `getIdentityRecord` for the uniqueness check, and block application
+  gains a settlement sweep keyed on `invitedAtBlock` — the same shape as
+  `getMaturedVouchCooldowns`. `checkTransitions` needs no karma-sum read
+  and no settle height.
 
 ### Karma transition rules (P2-B phase 4)
 
@@ -1331,6 +1321,25 @@ forms, so a mirror implementation derives the same ids:
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
 | `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo`, author leg |
+| `invite-claim` | `inviteePublicKey` | raw | 32 | invite claim → `mintKarma(invitee, INVITE_KARMA_AMOUNT)` |
+| `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
+| `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
+
+⛔ **`invite-claim` is the only row on this table that increases karma supply.**
+`bond-settle` and `bond-return` re-mint karma that a `BondBox` already held, in the
+same sense `vouch-settle` re-mints an escrow — a synthetic txId for a box that
+block application creates, not a new unit of karma. `ARCHITECTURE` → "Karma supply
+changes" names this table as authoritative, so the distinction has to be readable
+here rather than inferred.
+
+**Why `(height, reason, subject)` cannot repeat for these three.** All three take
+the invitee's public key as subject; an invite may not name an existing account
+and a claim makes the invitee one, so a key is invited at most once ever
+(→ "Bond transition rules"), so each `(reason, subject)` pair occurs at most once
+in the whole history — a stronger property than this table requires, and it holds
+without reading the height at all. The three are mutually exclusive besides: an
+invite is claimed or cancelled, never both, so a key that carries `bond-settle`
+can never carry `bond-return`.
 
 **Retired by P2-D — names reserved, never reuse:** `author-reward` and `liker-refund`
 (the epoch tally's reasons, superseded by `like-payout`), and `prune-refund-liker` (with
@@ -1540,29 +1549,22 @@ kept here as the record of what closed, and where the reasoning lives.
 
 ### What G3 changed that was NOT on this list
 
-**`BondBox.inviteBoxId` → `inviteOutputIndex`** (user decision, 2026-08-06). A
-box id in a **content** field is circular under the provenance derivation: the id
-derives from the creating `txId`, and a content field is inside the bytes
-`computeTxId` hashes. Measured: no fixed point exists. Spec G §3.1's
-"no circularity" argument covers *provenance* fields and does not reach this.
+**A bond names no box at all.** A box id in a **content** field is circular under
+the provenance derivation: the id derives from the creating `txId`, and a content
+field sits inside the bytes `computeTxId` hashes. Measured: no fixed point exists.
+Spec G §3.1's "no circularity" argument covers *provenance* fields and does not
+reach this.
 
-The index form is not a workaround for the hash cycle. The bond and its invite
-are always outputs of one transaction, so pairing by position makes a bond that
-names *someone else's* invite inexpressible — the old field could name any box in
-the world and was checked only when dereferenced, one transaction later. Two
-things carry it:
+The pairing needs no reference of either kind. **An address may be invited only
+once**, so `inviteePublicKey` — which the invite and the bond both carry, pinned
+equal at creation — names exactly one live pair. That is what an id or an index
+was for, obtained from a field the boxes need anyway. It also makes a bond that
+names *someone else's* invite inexpressible, which the index form achieved
+structurally and the original id form did not achieve at all.
 
-- `invites.ts` rejects at **create** if `inviteOutputIndex` does not address the
-  InviteBox output of the same transaction. Scope is structural, target is
-  checked; together a mispaired bond cannot be built.
-- the commit path resolves via `getBoxByProvenance(bond.txId, inviteOutputIndex)`,
-  backed by the `UNIQUE(tx_id, output_index)` index that already existed. Both
-  `checkTransitions` preservation checks compare the index.
-
-**The demo UI stops predicting an id for invites entirely** — it states an output
-index it already knows. That is stronger than the "exact prediction" Spec G aimed
-at: prediction became *unnecessary*. The unlike path still genuinely predicts, and
-is now the only flow that does.
+**The demo UI predicts no id for invites** — with nothing to reference, there is
+nothing to predict. The unlike path still genuinely predicts, and is the only flow
+that does.
 
 ### A frozen golden cannot defend a property
 
@@ -1953,12 +1955,14 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping) |
 | `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing (full boxes, keyed on `id` — the contract previously said `{ boxId, value }[]`, which was never the implementation) |
-| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (bond settlement's unlock predicate), and the single implementation every validation path shares since P2-B phase 1b. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE` |
+| `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE` |
 | `getCreditBox(owner)` | `(Uint8Array) => CreditBox \| null` — single box |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC` (the contract previously said `{ boxId, value, lockedUntilBlock? }[]`, which was never the implementation) |
 | `getUnlockedCreditBoxes(owner, blockHeight)` | `(Uint8Array, number) => CreditBox[]` |
-| `getPendingInvites(inviterId)` | `(UserId) => InviteBox[]` — unclaimed, unexpired |
-| `getPendingInviteCount(inviterId)` | `(UserId) => number` |
+| `getOpenInvites(inviterId)` | `(UserId) => InviteBox[]` — created, neither claimed nor cancelled. An invite has no expiry, so "open" is the whole of it |
+| `getInviteFor(inviteePublicKey)` | `(UserId) => InviteBox \| null` — the at-most-one live invite naming this key |
+| `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the paired bond; the claim, cancel and settlement paths all resolve through this |
+| `getBondsInvitedAt(invitedAtBlock)` | `(number) => BondBox[]` — bonds whose invitee's record carries exactly this `invitedAtBlock`. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxes(inviterId)` | `(UserId) => BondBox[]` — active bonds |
 | `getLikersForPost(postId)` | `(string) => string[]` — hex user IDs who liked; reads `like_records` (P2-D), `ORDER BY liker_id` so the listing is a function of state, not row order (N4a ratification) |
 | `getUnspentPostLockBoxes()` | `() => PostLockBox[]` |
@@ -2016,8 +2020,7 @@ bootstrap sorts by boxId at the prover boundary (M-12), so the SQL order never
 reaches the tree. That sort is what makes this column safe to keep.
 
 Consensus reads its heights elsewhere — locks from `lockedUntilBlock`, bond
-probation from `probationStartBlock`/`probationEndBlock`, the decay clock from
-the identity record below. During the migration window `createdAtBlock` is
+probation and the decay clock both from the identity record below. During the migration window `createdAtBlock` is
 still a *box field* (`TYPES_INTERFACE.md` → Migration window) and `decay.ts`
 still reads it, so the column does reach consensus transitively until phase D
 moves the clock. Closing that is exactly what phase D is for; phase G then
@@ -2031,11 +2034,43 @@ clock has to live in committed state (Spec G D4).
 
 ```
 IdentityRecord {
-  lastActivityBlock: number   // u32 — bumped when a non-decay karma box is created for the owner
-  lastDecayBlock: number      // u32 — bumped when decay fires
-  likeCarry: bigint           // < LIKES_PER_KARMA_PAYOUT — outstanding like accrual (P2-D)
+  lastActivityBlock: number     // u32 — bumped when a non-decay karma box is created for the owner
+  lastDecayBlock: number        // u32 — bumped when decay fires
+  likeCarry: bigint             // < LIKES_PER_KARMA_PAYOUT — outstanding like accrual (P2-D)
+  invitedAtBlock: number        // u32 — height the invite claim applied; 0 = never invited
+  lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
 }
 ```
+
+**The record's existence is the invite bar; `invitedAtBlock` is the probation
+clock and nothing else.** An invite may only name a key holding no record at all,
+so the field decides one thing: the paired bond settles at
+`invitedAtBlock + INVITE_PROBATION_BLOCKS`. A bond therefore carries no probation
+fields of its own.
+
+⚠ **`0` is a reachable value here, not a safe sentinel.** Every identity that
+received karma without being invited carries it — genesis committee members and
+faucet recipients — so *"never invited"* and *"invited at block 0"* are not
+distinguishable by the value alone. **Any sweep keyed on this field must exclude
+`0` explicitly**, and there is exactly one height where it matters: when
+`settleHeight == INVITE_PROBATION_BLOCKS`, the target `invitedAtBlock` is `0` and
+an unguarded query matches every never-invited identity in the table.
+
+**`lifetimeLikesReceived` is monotonic, and that is the point.** Per-block like
+settlement increments it; **nothing decrements it, prune included.** Deriving the
+count by joining live posts instead would let a third party burn someone else's
+bond: Alice invites Bob, Bob replies in Carol's thread and earns likes, Carol
+prunes her thread, and Alice's stake forfeits. That is precisely what *"you may
+destroy your own stake, never someone else's"* forbids — the rule that also makes
+prune return other authors' post bonds. Likes carry economic weight now, so they
+fall under it.
+
+⛔ **Two fields on this record can be silently destroyed by a careless writer.**
+The record is a full-row upsert and the type forces every field *present*, so a
+writer passing `0` compiles and passes typecheck while erasing a probation clock
+or a like history. **Every writer other than the one that owns a field carries the
+stored value through unchanged** — `invitedAtBlock` is owned by the claim path,
+`lifetimeLikesReceived` by like settlement, and `likeCarry` by settlement too.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
 the raw `identityId`.** Records and boxes share one 32-byte AVL keyspace, and
@@ -2046,8 +2081,10 @@ is what makes the two kinds provably disjoint.
 
 **Table:** `identity_records (identity_id BLOB PRIMARY KEY, last_activity_block
 INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, like_carry INTEGER NOT NULL
-DEFAULT 0)`. The SQL table keys on the raw 32 bytes; the AVL key is derived. Both
-are total functions of the identity, so the two representations cannot drift.
+DEFAULT 0, invited_at_block INTEGER NOT NULL DEFAULT 0, lifetime_likes_received
+INTEGER NOT NULL DEFAULT 0)`. The SQL table keys on
+the raw 32 bytes; the AVL key is derived. Both are total functions of the
+identity, so the two representations cannot drift.
 
 ⚠ **`likeCarry` enters the record's AVL value encoding as an always-present field** —
 conditional presence would reopen the key-set-exactness fork (contract 1a: cbor-x
@@ -2073,18 +2110,27 @@ changes ⇒ covered by the standing fresh-chain deploy gate.
 | 2 | `lastActivityBlock` | `vlqU` |
 | 3 | `lastDecayBlock` | `vlqU` |
 | 4 | `likeCarry` | `vlqU64` |
+| 5 | `invitedAtBlock` | `vlqU` |
+| 6 | `lifetimeLikesReceived` | `vlqU64` |
 
 **The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where
 `enum8(boxType)` is field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One
 encoder, one byte string, no composition step where a caller could disagree about ordering.
 
-**Domains, and where they are established.** `lastActivityBlock` and `lastDecayBlock` are `u32` block
+**Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock` and
+`invitedAtBlock` are `u32` block
 heights; `vlqU` is total *by sentinel*, so an out-of-domain height cannot panic the encoder — it
 **collides**, exactly as `createdAt` did in the header before 1f. `likeCarry` is `vlqU64` and
 `writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`. Per spec §2.5 the domain belongs upstream of the
 encoder: `likeCarry` is written **only** by per-block like settlement and is bounded by
 `LIKES_PER_KARMA_PAYOUT`, so the producer establishes it. **A domain check at the encoder would be
 the band-aid; if this field ever gains a second writer, that writer owns the domain.**
+
+`lifetimeLikesReceived` is `vlqU64` on the same rule and from the same single writer, but its
+domain argument is different: it is unbounded by design and bounded only by `2⁶⁴`. One like per
+block for the life of the chain does not approach that, and the field is a **count**, never an
+amount — a saturating or wrapping write here would silently re-price every bond that settles
+afterwards.
 
 ⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
 NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A

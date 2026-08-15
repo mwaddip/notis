@@ -27,7 +27,7 @@ import {
   insertPost,
   insertStump,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
   hasPendingLike,
   insertMempoolSubBlock,
@@ -103,7 +103,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => {
         insertBox(box);
       },

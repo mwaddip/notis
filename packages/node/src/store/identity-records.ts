@@ -50,6 +50,47 @@ export interface IdentityRecord {
    * consensus path.
    */
   likeCarry: bigint;
+  /**
+   * u32 — the height an invite claim applied for this identity. `0` = never
+   * invited.
+   *
+   * **The probation clock, and only that.** The paired bond settles at
+   * `invitedAtBlock + INVITE_PROBATION_BLOCKS`, which is the whole of what this
+   * field decides — a bond therefore carries no probation fields of its own
+   * (NODE_INTERFACE → Identity Records). It is **not** the invite bar: an invite
+   * may only name a key that is not already an account, and *that* test is the
+   * existence of this record, not the value of this field.
+   *
+   * `0` stays reachable and stays meaningful — every identity that received
+   * karma without being invited carries it, genesis and faucet recipients
+   * included — so the settlement sweep must exclude it explicitly rather than
+   * treat it as an ordinary height.
+   *
+   * Written ONLY by block application when a claim applies. Every other writer
+   * of this record carries the stored value through unchanged.
+   */
+  invitedAtBlock: number;
+  /**
+   * Likes this identity has received over its whole life — the bond settlement's
+   * only input, `min(floor(n / INVITE_BOND_VEST_PER_LIKES), bond.value)`.
+   *
+   * **Monotonic: incremented by per-block like settlement and decremented by
+   * nothing, prune included.** That is the whole reason it is a committed
+   * counter rather than a count over `like_records`. Those records die with the
+   * post, so a join through them would let a *third party* destroy value: Bob
+   * replies in Carol's thread and earns likes, Carol prunes her own thread, and
+   * Alice — who bonded for Bob and did nothing at all — loses karma at
+   * settlement. Design track §1.4.1 forbids exactly that ("you may destroy your
+   * own stake, never someone else's"), which is also why prune returns other
+   * authors' post bonds.
+   *
+   * `bigint` for the same two reasons `likeCarry` is: the value is consensus
+   * input to bigint arithmetic, and the row boundary (`safeIntegers`) hands back
+   * bigint — so no `Number()` coercion can appear in a settlement path. It takes
+   * `vlqU64`, which throws outside `[0, 2⁶⁴)` rather than colliding on a
+   * sentinel.
+   */
+  lifetimeLikesReceived: bigint;
 }
 
 /**
@@ -75,18 +116,25 @@ export function identityRecordKey(identityId: UserId): string {
 export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
   const row = getDb()
     .prepare(
-      `SELECT last_activity_block, last_decay_block, like_carry
+      `SELECT last_activity_block, last_decay_block, like_carry, invited_at_block,
+              lifetime_likes_received
        FROM identity_records WHERE identity_id = ?`,
     )
     .safeIntegers()
     .get(Buffer.from(identityId)) as
-      { last_activity_block: bigint; last_decay_block: bigint; like_carry: bigint }
+      {
+        last_activity_block: bigint; last_decay_block: bigint;
+        like_carry: bigint; invited_at_block: bigint;
+        lifetime_likes_received: bigint;
+      }
       | undefined;
   if (!row) return null;
   return {
     lastActivityBlock: Number(row.last_activity_block),
     lastDecayBlock: Number(row.last_decay_block),
     likeCarry: row.like_carry,
+    invitedAtBlock: Number(row.invited_at_block),
+    lifetimeLikesReceived: row.lifetime_likes_received,
   };
 }
 
@@ -106,7 +154,8 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
 export function getAllIdentityRecords(): Array<{ identityId: UserId; record: IdentityRecord }> {
   const rows = getDb()
     .prepare(
-      `SELECT identity_id, last_activity_block, last_decay_block, like_carry
+      `SELECT identity_id, last_activity_block, last_decay_block, like_carry,
+              invited_at_block, lifetime_likes_received
        FROM identity_records ORDER BY identity_id`,
     )
     .safeIntegers()
@@ -115,6 +164,8 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       last_activity_block: bigint;
       last_decay_block: bigint;
       like_carry: bigint;
+      invited_at_block: bigint;
+      lifetime_likes_received: bigint;
     }>;
   return rows.map((row) => ({
     identityId: new Uint8Array(row.identity_id),
@@ -122,6 +173,8 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       lastActivityBlock: Number(row.last_activity_block),
       lastDecayBlock: Number(row.last_decay_block),
       likeCarry: row.like_carry,
+      invitedAtBlock: Number(row.invited_at_block),
+      lifetimeLikesReceived: row.lifetime_likes_received,
     },
   }));
 }
@@ -146,14 +199,17 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO identity_records
-         (identity_id, last_activity_block, last_decay_block, like_carry)
-       VALUES (?, ?, ?, ?)`,
+         (identity_id, last_activity_block, last_decay_block, like_carry,
+          invited_at_block, lifetime_likes_received)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(
       Buffer.from(identityId),
       record.lastActivityBlock,
       record.lastDecayBlock,
       record.likeCarry,
+      record.invitedAtBlock,
+      record.lifetimeLikesReceived,
     );
   recordIdentityRecordPut(identityRecordKey(identityId), identityId, record, replaced);
 }

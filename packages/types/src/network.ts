@@ -166,7 +166,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: '9644b4276b9d22c792a500eca6f7558b9f21ee8e75d23f8a848696a96139693b03',
+  genesisStateRoot: 'ec50b959ea5284dbf993f7c289a7c26c8b38979c0530fe0bf7c1f13dd428892b03',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 
@@ -175,9 +175,15 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 // postPowTargetBits is the value that harness wanted but could not override without
 // desynchronising the challenge endpoint from the verifier — the exact defect the profile
 // removes. The remaining durations are compressed roughly two orders of magnitude,
-// preserving mainnet's orderings (probation < bootstrap < stale threshold,
+// preserving mainnet's orderings (bootstrap < stale threshold < probation,
 // epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
 // that is not timescale; see orderingBlockPowTargetBits below.
+//
+// ⚠ **A ratio is not a derivation once the neighbour a value must clear is itself
+// unprincipled.** `karmaStaleThresholdBlocks` is harness-pinned rather than derived, so a
+// probation length picked by dividing mainnet's lands wherever the arithmetic falls —
+// which is why `inviteProbationBlocks` below states the PROPERTY it has to hold and not
+// the ratio that happens to produce it.
 const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'devnet',
   magic: MAGIC_DEVNET,
@@ -199,7 +205,15 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   karmaDecayIntervalBlocks: 3, // (harness)
   karmaStaleThresholdBlocks: 500, // (harness)
   vouchCooldownBlocks: 3, // shortest wait that still spans block boundaries
-  inviteProbationBlocks: 10, // 1000 ÷ 100
+  // **Above `karmaStaleThresholdBlocks`, so decay fires during probation as it does on
+  // mainnet** (43200 > 40320). Not a ratio: what has to hold is that a devnet run can
+  // reach a block where the decay writer and the probation reader touch the same identity
+  // record. Under that height they never coincide, and every `putIdentityRecord` writer
+  // that carried `invitedAtBlock` or `lifetimeLikesReceived` through would be untested on
+  // the one network the suite actually runs — the fields are REQUIRED on the type, so a
+  // writer passing `0` instead of the stored value compiles and silently moves a
+  // probation deadline or forfeits a bond that had vested.
+  inviteProbationBlocks: 540,
   creditMinerRewardDelay: 10, // 720 ÷ 72 — small enough to spend, large enough to observe immaturity
   bootstrapPeriodBlocks: 100, // 10000 ÷ 100
 
@@ -214,7 +228,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // Testnet and devnet seed byte-identical karma and credit boxes — same system
   // keypair, same values — so the proof box is the whole difference between
   // these two roots.
-  genesisStateRoot: 'ab0e17abc32dada484e7374df5183f5ff0346cacc6ad3e02ec2de3cdb1fadc7503',
+  genesisStateRoot: '0efe4301ae44bf9ed30b92ceab2db77bf0cd38d1a8d725f1972da18d2ab347a703',
   treasuryPubKey: '',
 } satisfies NetworkProfile);
 

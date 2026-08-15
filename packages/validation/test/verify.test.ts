@@ -678,8 +678,8 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
     ['karma', karmaOut],
     ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
-    ['invite', { boxType: 'invite', value: 5n, secretHash: new Uint8Array(32), inviterId: new Uint8Array(32), guard: 'hash_preimage_with_bond' }],
-    ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteOutputIndex: 1, inviteePublicKey: new Uint8Array(0), probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }],
+    ['invite', { boxType: 'invite', value: 0n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32), guard: 'invite_dual' }],
+    ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32), guard: 'block_apply' }],
     ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32), targetPostId: '00'.repeat(32), guard: 'block_apply' }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32), guard: 'owner_signature' }],
   ];

@@ -17,7 +17,6 @@ import type {
 import { initDb, getDb, closeDb } from '../../src/store/db.js';
 import {
   getBox,
-  getBoxByProvenance,
   getCreditBoxes,
   getUnlockedCreditBoxes,
   getKarmaBox,
@@ -25,6 +24,7 @@ import {
   insertBox,
   consumeBox,
 } from '../../src/store/utxo.js';
+import { getIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getPendingEntries } from '../../src/store/mempool.js';
 import { sendCredits } from '../../src/services/credits.js';
@@ -48,11 +48,11 @@ function signTxId(
 /** The real store wired as engine deps — what server.ts hands the route. */
 const engineDeps: UtxoEngineDeps = {
   getBox,
-  getBoxByProvenance,
   insertBox,
   consumeBox,
   getKarmaBox,
   getKarmaValue,
+  getIdentityRecord,
   hasActiveVouchCooldown,
   runInTransaction: (fn) => fn(),
 };

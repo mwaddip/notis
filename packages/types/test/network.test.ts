@@ -139,17 +139,38 @@ describe('NETWORK_PROFILES', () => {
   });
 
   it('devnet compresses the remaining durations, preserving mainnet orderings', () => {
-    const devnet = NETWORK_PROFILES.devnet;
+    const { mainnet, devnet } = NETWORK_PROFILES;
     expect(devnet.vouchCooldownBlocks).toBe(3);
-    expect(devnet.inviteProbationBlocks).toBe(10);
+    expect(devnet.inviteProbationBlocks).toBe(540);
     expect(devnet.creditMinerRewardDelay).toBe(10);
     expect(devnet.bootstrapPeriodBlocks).toBe(100);
     expect(devnet.creditFixedRateBlocks).toBe(1000);
     expect(devnet.creditEpochBlocks).toBe(100);
-    // Orderings mainnet also satisfies: probation < bootstrap < stale, epoch < fixed-rate
-    expect(devnet.inviteProbationBlocks).toBeLessThan(devnet.bootstrapPeriodBlocks);
-    expect(devnet.bootstrapPeriodBlocks).toBeLessThan(devnet.karmaStaleThresholdBlocks);
-    expect(devnet.creditEpochBlocks).toBeLessThan(devnet.creditFixedRateBlocks);
+
+    // Every ordering asserted on BOTH profiles, so "devnet mirrors mainnet" is
+    // checked rather than assumed: a compression that quietly reorders the
+    // windows fails here and not on the network it would have broken.
+    for (const p of [mainnet, devnet]) {
+      expect(p.bootstrapPeriodBlocks).toBeLessThan(p.karmaStaleThresholdBlocks);
+      expect(p.creditEpochBlocks).toBeLessThan(p.creditFixedRateBlocks);
+    }
+  });
+
+  it('probation outlasts the stale threshold on every profile', () => {
+    // The load-bearing one, and it is a property rather than an ordering
+    // preference: decay must be able to fire *during* a probation window, or no
+    // run on that network ever reaches a block where the decay writer and the
+    // probation reader touch one identity record. `invitedAtBlock` and
+    // `lifetimeLikesReceived` are required fields, so a writer that passes `0`
+    // instead of the stored value compiles — devnet is where that regression
+    // becomes observable, and only above this threshold.
+    for (const p of Object.values(NETWORK_PROFILES)) {
+      expect(p.inviteProbationBlocks, p.networkType)
+        .toBeGreaterThan(p.karmaStaleThresholdBlocks);
+      // And long enough to span whole decay intervals rather than one boundary.
+      expect(p.inviteProbationBlocks, p.networkType)
+        .toBeGreaterThan(p.karmaDecayIntervalBlocks);
+    }
   });
 
   it('devnet keeps mainnet economics — genesis allocations are not compressed', () => {

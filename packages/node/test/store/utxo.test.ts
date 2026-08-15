@@ -34,8 +34,9 @@ async function importUtxoFresh() {
     getCreditBox: (owner: Uint8Array) => CreditBox | null;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
     getUnlockedCreditBoxes: (owner: Uint8Array, blockHeight: number) => CreditBox[];
-    getPendingInvites: (inviterId: Uint8Array) => InviteBox[];
-    getPendingInviteCount: (inviterId: Uint8Array) => number;
+    getOpenInvites: (inviterId: Uint8Array) => InviteBox[];
+    getInviteFor: (inviteePublicKey: Uint8Array) => InviteBox | null;
+    getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
     getBondBoxes: (inviterId: Uint8Array) => BondBox[];
     insertBox: (box: AnyBox) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
@@ -85,10 +86,10 @@ function makeCreditBox(overrides: Partial<CreditBox> = {}): CreditBox {
 function makeInviteBox(overrides: Partial<InviteBox> = {}): InviteBox {
   const candidate = {
     boxType: 'invite' as const,
-    value: 50n,
-    secretHash: bytes(32),
+    value: 0n,
     inviterId: uid('alice-inviter'),
-    guard: 'hash_preimage_with_bond' as const,
+    inviteePublicKey: bytes(32),
+    guard: 'invite_dual' as const,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -99,11 +100,8 @@ function makeBondBox(overrides: Partial<BondBox> = {}): BondBox {
     boxType: 'bond' as const,
     value: 10n,
     inviterId: uid('alice-inviter'),
-    inviteOutputIndex: 0,
-    inviteePublicKey: new Uint8Array(0),
-    probationStartBlock: 0,
-    probationEndBlock: 0,
-    guard: 'bond_dual' as const,
+    inviteePublicKey: bytes(32),
+    guard: 'block_apply' as const,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -211,8 +209,8 @@ describe('utxo store', () => {
 
     initDb(':memory:');
 
-    const secretHash = bytes(32);
-    const box = makeInviteBox({ value: 30n, secretHash, inviterId: uid('inviter-alice') });
+    const invitee = bytes(32);
+    const box = makeInviteBox({ inviteePublicKey: invitee, inviterId: uid('inviter-alice') });
     Object.assign(box, fixtureProvenance(box, 1));
     box.id = computeBoxId(box);
     insertBox(box);
@@ -220,10 +218,10 @@ describe('utxo store', () => {
     const result = getBox(box.id!) as InviteBox;
     expect(result).not.toBeNull();
     expect(result.boxType).toBe('invite');
-    expect(result.value).toBe(30n);
-    expect(result.secretHash).toEqual(secretHash);
+    expect(result.value).toBe(0n);
     expect(result.inviterId).toEqual(uid('inviter-alice'));
-    expect(result.guard).toBe('hash_preimage_with_bond');
+    expect(result.inviteePublicKey).toEqual(invitee);
+    expect(result.guard).toBe('invite_dual');
   });
 
   it('insertBox + getBox round-trip for BondBox', async () => {
@@ -238,8 +236,6 @@ describe('utxo store', () => {
       value: 10n,
       inviterId: uid('inviter-bob'),
       inviteePublicKey: inviteePk,
-      probationStartBlock: 100,
-      probationEndBlock: 1100,
     });
     Object.assign(box, fixtureProvenance(box, 1));
     box.id = computeBoxId(box);
@@ -251,9 +247,7 @@ describe('utxo store', () => {
     expect(result.value).toBe(10n);
     expect(result.inviterId).toEqual(uid('inviter-bob'));
     expect(result.inviteePublicKey).toEqual(inviteePk);
-    expect(result.probationStartBlock).toBe(100);
-    expect(result.probationEndBlock).toBe(1100);
-    expect(result.guard).toBe('bond_dual');
+    expect(result.guard).toBe('block_apply');
   });
 
   // --- getBox returns null for unknown id -----------------------------------
@@ -319,67 +313,82 @@ describe('utxo store', () => {
     expect(none).toBeNull();
   });
 
-  // --- getPendingInvites returns unclaimed invite boxes ---------------------
+  // --- getOpenInvites returns the inviter's live invites ---------------------
 
-  it('getPendingInvites returns unclaimed (unspent) invite boxes for an inviter', async () => {
+  it('getOpenInvites returns unspent invite boxes for an inviter', async () => {
+    // An invite has no expiry, so unspent IS open — there is no third state to
+    // filter on (NODE_INTERFACE → Store).
     const { initDb } = await importDbFresh();
-    const { insertBox, getPendingInvites, consumeBox } = await importUtxoFresh();
+    const { insertBox, getOpenInvites, consumeBox } = await importUtxoFresh();
     const { computeBoxId } = await importTypes();
 
     initDb(':memory:');
 
-    const inv1 = makeInviteBox({ value: 20n, inviterId: uid('alice') });
+    const inv1 = makeInviteBox({ inviterId: uid('alice'), inviteePublicKey: uid('inv-1') });
     Object.assign(inv1, fixtureProvenance(inv1, 1));
     inv1.id = computeBoxId(inv1);
     insertBox(inv1);
 
-    const inv2 = makeInviteBox({ value: 30n, inviterId: uid('alice') });
+    const inv2 = makeInviteBox({ inviterId: uid('alice'), inviteePublicKey: uid('inv-2') });
     Object.assign(inv2, fixtureProvenance(inv2, 1));
     inv2.id = computeBoxId(inv2);
     insertBox(inv2);
 
-    const inv3 = makeInviteBox({ value: 40n, inviterId: uid('bob') });
+    const inv3 = makeInviteBox({ inviterId: uid('bob'), inviteePublicKey: uid('inv-3') });
     Object.assign(inv3, fixtureProvenance(inv3, 1));
     inv3.id = computeBoxId(inv3);
     insertBox(inv3);
 
-    // Consume inv1
+    // inv1 claimed or cancelled — either way the box is spent and the invite
+    // is no longer open.
     consumeBox(inv1.id!, 7);
 
-    const aliceInvites = getPendingInvites(uid('alice'));
+    const aliceInvites = getOpenInvites(uid('alice'));
     expect(aliceInvites).toHaveLength(1);
-    expect(aliceInvites[0]!.value).toBe(30n);
+    expect(aliceInvites[0]!.inviteePublicKey).toEqual(uid('inv-2'));
 
-    const bobInvites = getPendingInvites(uid('bob'));
+    const bobInvites = getOpenInvites(uid('bob'));
     expect(bobInvites).toHaveLength(1);
-    expect(bobInvites[0]!.value).toBe(40n);
+    expect(bobInvites[0]!.inviteePublicKey).toEqual(uid('inv-3'));
   });
 
-  // --- getPendingInviteCount returns correct count --------------------------
+  // --- getInviteFor / getBondFor resolve a pair by the invitee key -----------
 
-  it('getPendingInviteCount returns the correct count', async () => {
+  it('getInviteFor and getBondFor resolve the pair naming a key', async () => {
+    // The invitee key IS the pairing: an address is invited once ever, so it
+    // names exactly one live pair, and no box id or output index is needed.
     const { initDb } = await importDbFresh();
-    const { insertBox, getPendingInviteCount, consumeBox } = await importUtxoFresh();
+    const { insertBox, getInviteFor, getBondFor, consumeBox } = await importUtxoFresh();
     const { computeBoxId } = await importTypes();
 
     initDb(':memory:');
 
-    expect(getPendingInviteCount(uid('alice'))).toBe(0);
+    const invitee = uid('the-invitee');
+    const other = uid('someone-else');
 
-    const inv1 = makeInviteBox({ inviterId: uid('alice') });
-    Object.assign(inv1, fixtureProvenance(inv1, 1));
-    inv1.id = computeBoxId(inv1);
-    insertBox(inv1);
+    const invite = makeInviteBox({ inviterId: uid('alice'), inviteePublicKey: invitee });
+    Object.assign(invite, fixtureProvenance(invite, 1));
+    invite.id = computeBoxId(invite);
+    insertBox(invite);
 
-    const inv2 = makeInviteBox({ inviterId: uid('alice') });
-    Object.assign(inv2, fixtureProvenance(inv2, 1));
-    inv2.id = computeBoxId(inv2);
-    insertBox(inv2);
+    const bond = makeBondBox({ inviterId: uid('alice'), inviteePublicKey: invitee });
+    Object.assign(bond, fixtureProvenance(bond, 1));
+    bond.id = computeBoxId(bond);
+    insertBox(bond);
 
-    expect(getPendingInviteCount(uid('alice'))).toBe(2);
+    expect(getInviteFor(invitee)!.id).toBe(invite.id);
+    expect(getBondFor(invitee)!.id).toBe(bond.id);
 
-    consumeBox(inv1.id!, 5);
-    expect(getPendingInviteCount(uid('alice'))).toBe(1);
+    // A key with no pair resolves to nothing rather than to someone else's.
+    expect(getInviteFor(other)).toBeNull();
+    expect(getBondFor(other)).toBeNull();
+
+    // Both reads are unspent-only: the claim consumes the invite and leaves the
+    // bond live until its deadline, which is exactly the state the settlement
+    // sweep runs against.
+    consumeBox(invite.id!, 7);
+    expect(getInviteFor(invitee)).toBeNull();
+    expect(getBondFor(invitee)!.id).toBe(bond.id);
   });
 
   // --- getBondBoxes returns active bonds ------------------------------------

@@ -140,6 +140,12 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
     lastActivityBlock: genesisHeight,
     lastDecayBlock: 0,
     likeCarry: 0n,
+    // The system identity was never invited, and genesis is the one event that
+    // could not have been a claim — a claim is a user transaction and the first
+    // block is height 1. It has received no likes either: genesis mints boxes,
+    // and only per-block like settlement moves the counter.
+    invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n,
   });
   return box;
 }

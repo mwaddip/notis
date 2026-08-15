@@ -200,6 +200,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
+    const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
     const cooldowns = await importVouchCooldowns();
     const mempool = await importMempool();
@@ -214,7 +215,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
 
     const engineDeps = {
       getBox: utxo.getBox,
-      getBoxByProvenance: utxo.getBoxByProvenance,
+      getIdentityRecord: identityRecords.getIdentityRecord,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
       getKarmaBox: utxo.getKarmaBox,
@@ -290,6 +291,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     let db = await importDb();
     db.initDb(FORK_DB);
     let utxo = await importUtxo();
+    const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
     const cooldowns = await importVouchCooldowns();
     const mempool = await importMempool();
@@ -316,7 +318,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     // Pool the transfer, then mine it — the consensus path.
     const engineDeps = {
       getBox: utxo.getBox,
-      getBoxByProvenance: utxo.getBoxByProvenance,
+      getIdentityRecord: identityRecords.getIdentityRecord,
       insertBox: utxo.insertBox,
       consumeBox: utxo.consumeBox,
       getKarmaBox: utxo.getKarmaBox,

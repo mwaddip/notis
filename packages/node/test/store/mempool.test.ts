@@ -105,10 +105,10 @@ function inviteTx(inviterHex: string) {
     outputs: [
       {
         boxType: 'invite',
-        value: 25n,
+        value: 0n,
         inviterId: bytes(inviterHex),
-        secretHash: new Uint8Array(32),
-        guard: 'hash_preimage_with_bond',
+        inviteePublicKey: new Uint8Array(32).fill(0x11),
+        guard: 'invite_dual',
       },
     ],
     signatures: {},

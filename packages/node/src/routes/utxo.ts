@@ -36,7 +36,7 @@ export interface UtxoDeps {
   getKarmaBoxes(owner: Uint8Array): KarmaBox[];
   getCreditBox(owner: Uint8Array): CreditBox | null;
   getCreditBoxes(owner: Uint8Array): CreditBox[];
-  getPendingInvites(inviterId: Uint8Array): InviteBox[];
+  getOpenInvites(inviterId: Uint8Array): InviteBox[];
   getBondBoxes(inviterId: Uint8Array): BondBox[];
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
@@ -305,34 +305,29 @@ export function createRouter(deps: UtxoDeps): Router {
     res.json({ txId: outcome.txId, amount: FAUCET_AMOUNT.toString() });
   });
 
-  // GET /invites/:userId — get pending invites and bonds for a user
+  // GET /invites/:userId — the open invites and bonds an inviter holds
   router.get('/invites/:userId', (req, res) => {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const pending = deps.getPendingInvites(userIdBytes);
+    // "open" is the whole of an invite's life apart from claimed and cancelled:
+    // it has no expiry, so nothing else can end one.
+    const open = deps.getOpenInvites(userIdBytes);
     const bonds = deps.getBondBoxes(userIdBytes);
 
     res.json({
-      pending: pending.map((inv) => ({
+      open: open.map((inv) => ({
         id: inv.id,
         value: inv.value.toString(),
-        secretHash: Buffer.from(inv.secretHash).toString('hex'),
         inviterId: Buffer.from(inv.inviterId).toString('hex'),
+        inviteePublicKey: Buffer.from(inv.inviteePublicKey).toString('hex'),
         guard: inv.guard,
       })),
       bonds: bonds.map((b) => ({
         id: b.id,
         value: b.value.toString(),
         inviterId: Buffer.from(b.inviterId).toString('hex'),
-        inviteePublicKey:
-          b.inviteePublicKey.length > 0
-            ? Buffer.from(b.inviteePublicKey).toString('hex')
-            : null,
-        probationStartBlock:
-          b.probationStartBlock > 0 ? b.probationStartBlock : null,
-        probationEndBlock:
-          b.probationEndBlock > 0 ? b.probationEndBlock : null,
+        inviteePublicKey: Buffer.from(b.inviteePublicKey).toString('hex'),
         guard: b.guard,
       })),
     });

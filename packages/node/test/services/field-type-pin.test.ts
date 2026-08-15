@@ -34,6 +34,8 @@ import {
   encodeTx,
   decodeTx,
   POST_LOCK_THREAD_COST,
+  INVITE_BOND_KARMA,
+  INVITE_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type { AnyBox, AnyBoxCandidate, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -52,7 +54,7 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -106,7 +108,7 @@ describe('field-type pin', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
@@ -176,7 +178,8 @@ describe('field-type pin', () => {
       ['karma missing owner', { boxType: 'karma', value: 10n, guard: 'owner_signature' }],
       ['karma missing value', { boxType: 'karma', owner: karmaOwner32, guard: 'owner_signature' }],
       ['vouch missing voucherId', { boxType: 'vouch', value: 1n, targetId: karmaOwner32, guard: 'owner_signature' }],
-      ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32, inviteOutputIndex: 0, probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' }],
+      ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32, guard: 'block_apply' }],
+      ['invite missing inviteePublicKey', { boxType: 'invite', value: 0n, inviterId: karmaOwner32, guard: 'invite_dual' }],
       ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, owner: karmaOwner32, targetPostId: 'a'.repeat(64), guard: 'block_apply' }],
       // -- wrong-typed fields, one per FieldType --
       ['karma value as number', { ...honest('karma'), value: 10 }],
@@ -198,15 +201,15 @@ describe('field-type pin', () => {
       ['post_lock targetPostId uppercase', { ...honest('post_lock'), targetPostId: 'A'.repeat(64) }],
       ['post_lock targetPostId 63 chars', { ...honest('post_lock'), targetPostId: 'a'.repeat(63) }],
       ['post_lock targetPostId empty', { ...honest('post_lock'), targetPostId: '' }],
-      ['bond inviteOutputIndex above u32', { ...honest('bond'), inviteOutputIndex: 0x1_0000_0000 }],
-      ['bond inviteOutputIndex as string', { ...honest('bond'), inviteOutputIndex: '0' }],
-      ['bond inviteOutputIndex NaN', { ...honest('bond'), inviteOutputIndex: Number.NaN }],
+      // `bytes32`, not `bytes0or32`: the empty case went with the commit
+      // transition, so a zero-length key is out of domain on both types now.
+      ['bond inviteePublicKey empty', { ...honest('bond'), inviteePublicKey: new Uint8Array(0) }],
       ['bond inviteePublicKey 1 byte', { ...honest('bond'), inviteePublicKey: new Uint8Array(1) }],
       ['bond inviteePublicKey 31 bytes', { ...honest('bond'), inviteePublicKey: new Uint8Array(31) }],
       ['bond inviteePublicKey 33 bytes', { ...honest('bond'), inviteePublicKey: new Uint8Array(33) }],
-      ['bond probationStartBlock as string (the class-4c coercion)', { ...honest('bond'), probationStartBlock: '25' }],
-      ['bond probationEndBlock fractional', { ...honest('bond'), probationEndBlock: 1.5 }],
-      ['invite secretHash 31 bytes', { ...honest('invite'), secretHash: new Uint8Array(31) }],
+      ['bond inviteePublicKey as hex string', { ...honest('bond'), inviteePublicKey: 'aa'.repeat(32) }],
+      ['invite inviteePublicKey empty', { ...honest('invite'), inviteePublicKey: new Uint8Array(0) }],
+      ['invite inviteePublicKey 31 bytes', { ...honest('invite'), inviteePublicKey: new Uint8Array(31) }],
       ['invite inviterId as string', { ...honest('invite'), inviterId: 'aa'.repeat(32) }],
       ['vouch voucherId 31 bytes', { ...honest('vouch'), voucherId: new Uint8Array(31) }],
       ['vouch targetId as string', { ...honest('vouch'), targetId: 'cc'.repeat(32) }],
@@ -231,9 +234,9 @@ describe('field-type pin', () => {
         case 'credit':
           return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature' };
         case 'invite':
-          return { boxType, value: 10n, secretHash: bytes32(0xaa), inviterId: karmaOwner32, guard: 'hash_preimage_with_bond' };
+          return { boxType, value: 0n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa), guard: 'invite_dual' };
         case 'bond':
-          return { boxType, value: 10n, inviterId: karmaOwner32, inviteOutputIndex: 0, inviteePublicKey: new Uint8Array(0), probationStartBlock: 0, probationEndBlock: 0, guard: 'bond_dual' };
+          return { boxType, value: 10n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa), guard: 'block_apply' };
         case 'post_lock':
           return { boxType, value: 10n, originalValue: 10n, owner: karmaOwner32, targetPostId: 'a'.repeat(64), guard: 'block_apply' };
         case 'vouch':
@@ -288,9 +291,9 @@ describe('field-type pin', () => {
         case 'credit':
           return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', lockedUntilBlock: 5 };
         case 'invite':
-          return { boxType, value: 10n, secretHash: bytes32(0xaa), inviterId: bytes32(1), guard: 'hash_preimage_with_bond' };
+          return { boxType, value: 0n, inviterId: bytes32(1), inviteePublicKey: bytes32(2), guard: 'invite_dual' };
         case 'bond':
-          return { boxType, value: 10n, inviterId: bytes32(1), inviteOutputIndex: 1, inviteePublicKey: bytes32(2), probationStartBlock: 3, probationEndBlock: 1003, guard: 'bond_dual' };
+          return { boxType, value: 10n, inviterId: bytes32(1), inviteePublicKey: bytes32(2), guard: 'block_apply' };
         case 'post_lock':
           return { boxType, value: 10n, originalValue: 10n, owner: bytes32(1), targetPostId: 'a'.repeat(64), guard: 'block_apply' };
         case 'vouch':
@@ -306,14 +309,11 @@ describe('field-type pin', () => {
     const WRONG: Record<string, Record<string, unknown>> = {
       karma: { value: 10, owner: new Uint8Array(31), decayBurn: 1 },
       credit: { value: -1n, owner: 'aa'.repeat(32), lockedUntilBlock: -1 },
-      invite: { value: 1n << 64n, secretHash: new Uint8Array(33), inviterId: 7 },
+      invite: { value: 1n << 64n, inviterId: 7, inviteePublicKey: new Uint8Array(33) },
       bond: {
         value: Number.NaN,
         inviterId: new Uint8Array(0),
-        inviteOutputIndex: 0x1_0000_0000,
         inviteePublicKey: new Uint8Array(16),
-        probationStartBlock: '3',
-        probationEndBlock: -0,
       },
       post_lock: { value: 'x', originalValue: 5, owner: null, targetPostId: false },
       vouch: { value: [], voucherId: true, targetId: new Uint8Array(64) },
@@ -337,20 +337,16 @@ describe('field-type pin', () => {
       }
     });
 
-    it('-0 is rejected where 0 is accepted (bond probation fields)', () => {
-      const zero = { ...honestCandidate('bond'), inviteePublicKey: new Uint8Array(0), probationStartBlock: 0, probationEndBlock: 0 };
+    it('-0 is rejected where 0 is accepted (credit lockedUntilBlock)', () => {
+      // `uint` is the one numeric FieldType left on any box arm, and `-0` is
+      // JSON- and CBOR-reachable: cbor-x encodes it as a float where the store's
+      // JSON round-trip returns integer 0, so the two would not round-trip.
+      const zero = { ...honestCandidate('credit'), lockedUntilBlock: 0 };
       expect(checkOutputShape([zero] as unknown as AnyBoxCandidate[]).valid).toBe(true);
-      const negZero = { ...zero, probationStartBlock: -0 };
+      const negZero = { ...zero, lockedUntilBlock: -0 };
       const r = checkOutputShape([negZero] as unknown as AnyBoxCandidate[]);
       expect(r.valid).toBe(false);
-      expect(r.error).toMatch(/field 'probationStartBlock'.*got -0/);
-    });
-
-    it('u32 boundary: inviteOutputIndex 0xFFFFFFFF accepted, 0x100000000 rejected', () => {
-      const atMax = { ...honestCandidate('bond'), inviteOutputIndex: 0xffffffff };
-      expect(checkOutputShape([atMax] as unknown as AnyBoxCandidate[]).valid).toBe(true);
-      const over = { ...honestCandidate('bond'), inviteOutputIndex: 0x1_0000_0000 };
-      expect(checkOutputShape([over] as unknown as AnyBoxCandidate[]).valid).toBe(false);
+      expect(r.error).toMatch(/field 'lockedUntilBlock'.*got -0/);
     });
 
     it('u64 boundary: value 2^64−1 accepted, 2^64 rejected', () => {
@@ -367,26 +363,21 @@ describe('field-type pin', () => {
   // -------------------------------------------------------------------------
 
   describe('accept controls (honest typed outputs through validateTx)', () => {
-    function seedInviteBondPair(inviter: TestIdentity, secret: Uint8Array) {
-      const secretHash = new Uint8Array(
-        createHash('blake2b512').update(secret).digest().subarray(0, 32),
-      );
+    /** The pair as invite creation emits it: one tx, one invitee key on both. */
+    function seedInviteBondPair(inviter: TestIdentity, invitee: TestIdentity) {
       const invite = {
         boxType: 'invite' as const,
-        value: 25n,
-        secretHash,
+        value: 0n,
         inviterId: inviter.userId,
-        guard: 'hash_preimage_with_bond' as const,
+        inviteePublicKey: invitee.userId,
+        guard: 'invite_dual' as const,
       };
       const bond = {
         boxType: 'bond' as const,
-        value: 25n,
+        value: INVITE_BOND_KARMA,
         inviterId: inviter.userId,
-        inviteOutputIndex: 0,
-        inviteePublicKey: new Uint8Array(0),
-        probationStartBlock: 0,
-        probationEndBlock: 0,
-        guard: 'bond_dual' as const,
+        inviteePublicKey: invitee.userId,
+        guard: 'block_apply' as const,
       };
       const [seededInvite, seededBond] = seedAsOneTx([invite, bond]);
       storeInsertBox(seededInvite!);
@@ -394,27 +385,21 @@ describe('field-type pin', () => {
       return { seededInvite: seededInvite!, seededBond: seededBond! };
     }
 
-    it('honest bond commit (typed numbers, inviteePublicKey 32 bytes) validates', () => {
+    it('honest invite claim (typed 32-byte key, minted karma) validates', () => {
       const inviter = makeTestIdentity();
       const invitee = makeTestIdentity();
-      const secret = new Uint8Array(32).fill(7);
-      const { seededBond } = seedInviteBondPair(inviter, secret);
+      const { seededInvite } = seedInviteBondPair(inviter, invitee);
 
-      const bondOut = {
-        boxType: 'bond',
-        value: 25n,
-        inviterId: inviter.userId,
-        inviteOutputIndex: 0,
-        inviteePublicKey: invitee.userId,
-        probationStartBlock: 25,
-        probationEndBlock: 25 + config.inviteProbationBlocks,
-        guard: 'bond_dual',
+      const karmaOut = {
+        boxType: 'karma',
+        value: INVITE_KARMA_AMOUNT,
+        owner: invitee.userId,
+        guard: 'owner_signature',
       };
       const tx: UtxoTransaction = {
-        inputs: [seededBond.id!],
-        outputs: [bondOut] as unknown as UtxoTransaction['outputs'],
+        inputs: [seededInvite.id!],
+        outputs: [karmaOut] as unknown as UtxoTransaction['outputs'],
         signatures: {},
-        preimages: { [seededBond.id!]: secret },
         protocolVersion: 1,
       };
       const hash = Buffer.from(computeTxId(tx), 'hex');

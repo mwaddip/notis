@@ -76,13 +76,15 @@ describe('serializeBox', () => {
     expect((thrown as ReaderError).code).toBe('invalid-tag');
   });
 
+  // The two b32 fields are filled differently on purpose: they are adjacent
+  // same-width fields, so equal values would make a transposition invisible.
   it('roundtrips an InviteBox', () => {
     const box = seedProvenance<InviteBox>({
       boxType: 'invite' as const,
-      value: 10n,
-      secretHash: new Uint8Array(32).fill(0x22),
+      value: 0n,
       inviterId: new Uint8Array(32).fill(0x33),
-      guard: 'hash_preimage_with_bond' as const,
+      inviteePublicKey: new Uint8Array(32).fill(0x22),
+      guard: 'invite_dual' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
@@ -123,48 +125,20 @@ describe('serializeBox', () => {
     expect(Buffer.from(serializeBox(box)).equals(Buffer.from(serializeBox(oneByte)))).toBe(false);
   });
 
-  // Two arms, because `inviteePublicKey` is `opt(b32)` and they encode
-  // differently: empty → `00`, committed → `01 ‖ 32 bytes`. A 32-zero-byte key
-  // is the COMMITTED arm carrying an implausible value, not the unclaimed one,
-  // so a single fixture spelled that way covers one arm twice.
-  //
-  // Unclaimed is the shape production creates: `checkTransitions` rejects an
-  // invite-create whose bond output has a non-empty key, because a
-  // pre-committed bond would let the inviter reclaim immediately and make the
-  // network's only sybil cost free (NODE_INTERFACE → Bond transition rules).
-  //
-  // `probationStartBlock`/`probationEndBlock` differ (100/140) for the same
-  // reason `post_lock` below uses unequal values: they are adjacent `vlqU`
-  // fields, and equal values make a transposition of the pair invisible.
-  it('roundtrips a BondBox — unclaimed, the production create shape', () => {
+  // Byte-for-byte the invite arm's trailing fields, under the other tag — the
+  // pair is one layout with two tags (TYPES_INTERFACE → Layout — Boxes), so a
+  // reader that walked one arm as the other would round-trip the fields and
+  // fail only on the discriminant. Both b32 fields differ for the same reason
+  // as the invite above.
+  it('roundtrips a BondBox', () => {
     const box = seedProvenance<BondBox>({
       boxType: 'bond' as const,
       value: 5n,
       inviterId: new Uint8Array(32).fill(0x33),
-      inviteOutputIndex: 2,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 100,
-      probationEndBlock: 140,
-      guard: 'bond_dual' as const,
+      inviteePublicKey: new Uint8Array(32).fill(0x99),
+      guard: 'block_apply' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
-  });
-
-  it('roundtrips a BondBox — committed, the opt(b32) present arm', () => {
-    const box = seedProvenance<BondBox>({
-      boxType: 'bond' as const,
-      value: 5n,
-      inviterId: new Uint8Array(32).fill(0x33),
-      inviteOutputIndex: 2,
-      inviteePublicKey: new Uint8Array(32).fill(0x99),
-      probationStartBlock: 100,
-      probationEndBlock: 140,
-      guard: 'bond_dual' as const,
-    });
-    const back = deserializeBoxWithId(box.id, serializeBox(box));
-    expect(back).toEqual(box);
-    // The distinguishing assertion: the two arms are not the same bytes.
-    expect((back as BondBox).inviteePublicKey.length).toBe(32);
   });
 
   it('roundtrips a PostLockBox', () => {
@@ -303,49 +277,34 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
 
   it('invite', () => {
     const box: InviteBox = {
-      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0x22),
-      inviterId: new Uint8Array(32).fill(0x33), guard: 'hash_preimage_with_bond',
+      boxType: 'invite', value: 0n, inviterId: new Uint8Array(32).fill(0x33),
+      inviteePublicKey: new Uint8Array(32).fill(0x22), guard: 'invite_dual',
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
       '02' +            // enum8(invite) = 2
-      '0a' +            // vlqU64(10)
-      '22'.repeat(32) + // b32(secretHash)
-      '33'.repeat(32) + // b32(inviterId)   ← differs from secretHash on purpose
+      '00' +            // vlqU64(0) — an invite always holds 0
+      '33'.repeat(32) + // b32(inviterId)
+      '22'.repeat(32) + // b32(inviteePublicKey)  ← differs from inviterId on purpose
       PROV,
     );
   });
 
-  it('bond — unclaimed, opt(b32) absent', () => {
+  // The bond's tail is byte-for-byte the invite's, so the two vectors sit
+  // adjacent: the tag byte and the value are the whole of the difference, and a
+  // reader that lost the tag would read one as the other.
+  it('bond', () => {
     const box: BondBox = {
       boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteOutputIndex: 2, inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 100, probationEndBlock: 140, guard: 'bond_dual',
+      inviteePublicKey: new Uint8Array(32).fill(0x22), guard: 'block_apply',
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
-      '04' +            // enum8(bond) = 4 — 3 is the reserved `like` gap
+      '04' +            // enum8(bond) = 4 — 3 is genesis_proof
       '05' +            // vlqU64(5)
       '33'.repeat(32) + // b32(inviterId)
-      '02' +            // vlqU(inviteOutputIndex)
-      '00' +            // optBytesN(inviteePublicKey) ABSENT — empty means unclaimed
-      '64' +            // vlqU(probationStartBlock = 100)
-      '8c01' +          // vlqU(probationEndBlock = 140) — two bytes, 140 ≥ 128
+      '22'.repeat(32) + // b32(inviteePublicKey)
       PROV,
-    );
-  });
-
-  it('bond — committed, opt(b32) present', () => {
-    const box: BondBox = {
-      boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteOutputIndex: 2, inviteePublicKey: new Uint8Array(32).fill(0x99),
-      probationStartBlock: 100, probationEndBlock: 140, guard: 'bond_dual',
-      txId: TXID, index: INDEX,
-    };
-    expect(hexOf(serializeBox(box))).toBe(
-      '04' + '05' + '33'.repeat(32) + '02' +
-      '01' + '99'.repeat(32) + // present ‖ b32(inviteePublicKey)
-      '64' + '8c01' + PROV,
     );
   });
 
@@ -411,13 +370,12 @@ describe('boxId is a total function of the AVL value', () => {
       guard: 'owner_signature', lockedUntilBlock: 20,
     })],
     ['invite', seedProvenance<InviteBox>({
-      boxType: 'invite', value: 10n, secretHash: new Uint8Array(32).fill(0x22),
-      inviterId: new Uint8Array(32).fill(0x33), guard: 'hash_preimage_with_bond',
+      boxType: 'invite', value: 0n, inviterId: new Uint8Array(32).fill(0x33),
+      inviteePublicKey: new Uint8Array(32).fill(0x22), guard: 'invite_dual',
     })],
     ['bond', seedProvenance<BondBox>({
       boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteOutputIndex: 2, inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 100, probationEndBlock: 140, guard: 'bond_dual',
+      inviteePublicKey: new Uint8Array(32).fill(0x99), guard: 'block_apply',
     })],
     ['post_lock', seedProvenance<PostLockBox>({
       boxType: 'post_lock', value: 5n, originalValue: 9n,

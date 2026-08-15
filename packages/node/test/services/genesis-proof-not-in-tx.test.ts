@@ -13,7 +13,7 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance as storeGetBoxByProvenance,
+  getIdentityRecord as storeGetIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -92,7 +92,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
     const db = getDb();
     deps = {
       getBox: storeGetBox,
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => storeInsertBox(box),
       consumeBox: (id: string, atBlock: number) => storeConsumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),

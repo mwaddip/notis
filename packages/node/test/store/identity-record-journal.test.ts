@@ -75,7 +75,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     // Bootstrap / non-block path: writes, records nothing.
-    putIdentityRecord(uidBytes(), { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n });
+    putIdentityRecord(uidBytes(), { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
 
     beginBlockJournal(1);
     expect(finishBlockJournal().mutations).toEqual([]);
@@ -89,7 +89,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const id = uidBytes();
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     expect(j.mutations).toHaveLength(1);
@@ -97,7 +97,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     expect(m.kind).toBe('record');
     expect(m.key).toBe(identityRecordKey(id));
     expect(Buffer.from(m.identityId).equals(Buffer.from(id))).toBe(true);
-    expect(m.record).toEqual({ lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n });
+    expect(m.record).toEqual({ lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     // Absent, not undefined — the key did not exist.
     expect('replaced' in m).toBe(false);
   });
@@ -110,15 +110,15 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const id = uidBytes();
     // Pre-block state, written outside the journal.
-    putIdentityRecord(id, { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
 
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     const m = j.mutations[0] as RecordMutation;
-    expect(m.record).toEqual({ lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n });
-    expect(m.replaced).toEqual({ lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n });
+    expect(m.record).toEqual({ lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(m.replaced).toEqual({ lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('the AVL key is the domain-tagged hash, not the raw identity bytes', async () => {
@@ -147,7 +147,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
 
     beginBlockJournal(1);
     deleteIdentityRecord(id);
@@ -169,7 +169,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
       owner: uidBytes(), guard: 'owner_signature',
       txId: 'cd'.repeat(32), index: 0,
     } as never);
-    putIdentityRecord(uidBytes(), { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n });
+    putIdentityRecord(uidBytes(), { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     // One log, not parallel arrays: application order is preserved across kinds.
@@ -186,17 +186,17 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 3, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 3, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
 
     beginBlockJournal(7);
-    putIdentityRecord(id, { lastActivityBlock: 9, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 9, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     insertBlockJournal(finishBlockJournal());
 
     const loaded = getBlockJournal(7)!;
     const m = loaded.mutations[0] as RecordMutation;
     expect(m.kind).toBe('record');
-    expect(m.record).toEqual({ lastActivityBlock: 9, lastDecayBlock: 1, likeCarry: 0n });
-    expect(m.replaced).toEqual({ lastActivityBlock: 3, lastDecayBlock: 1, likeCarry: 0n });
+    expect(m.record).toEqual({ lastActivityBlock: 9, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(m.replaced).toEqual({ lastActivityBlock: 3, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     // identityId must survive as addressable bytes for the SQL row.
     expect(Buffer.from(m.identityId).equals(Buffer.from(id))).toBe(true);
   });
@@ -212,7 +212,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const id = uidBytes();
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     expect(getIdentityRecord(id)).not.toBeNull();
@@ -228,11 +228,11 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    const pre: IdentityRecord = { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n };
+    const pre: IdentityRecord = { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
     putIdentityRecord(id, pre);
 
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     revertRecords(j, putIdentityRecord, deleteIdentityRecord);
@@ -247,13 +247,13 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    const preBlock: IdentityRecord = { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n };
+    const preBlock: IdentityRecord = { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
     putIdentityRecord(id, preBlock);
 
     // The load-bearing case: activity bump then decay, at the same height.
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n });   // write 1
-    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 40, likeCarry: 0n });  // write 2
+    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });   // write 1
+    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 40, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });  // write 2
     const j = finishBlockJournal();
 
     expect(j.mutations).toHaveLength(2);
@@ -262,6 +262,8 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     expect((j.mutations[0] as RecordMutation).replaced).toEqual(preBlock);
     expect((j.mutations[1] as RecordMutation).replaced).toEqual({
       lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
     });
 
     revertRecords(j, putIdentityRecord, deleteIdentityRecord);
@@ -280,8 +282,8 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const id = uidBytes();
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 4, lastDecayBlock: 0, likeCarry: 0n });
-    putIdentityRecord(id, { lastActivityBlock: 4, lastDecayBlock: 4, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 4, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 4, lastDecayBlock: 4, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     revertRecords(j, putIdentityRecord, deleteIdentityRecord);
@@ -297,14 +299,14 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const a = uidBytes();
     const b = uidBytes();
-    const preA: IdentityRecord = { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n };
+    const preA: IdentityRecord = { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
     putIdentityRecord(a, preA);
     // b has no pre-block record.
 
     beginBlockJournal(1);
-    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 1, likeCarry: 0n });
-    putIdentityRecord(b, { lastActivityBlock: 21, lastDecayBlock: 0, likeCarry: 0n });
-    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 20, likeCarry: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(b, { lastActivityBlock: 21, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 20, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     revertRecords(j, putIdentityRecord, deleteIdentityRecord);
@@ -329,12 +331,12 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    const preBlock: IdentityRecord = { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n };
+    const preBlock: IdentityRecord = { lastActivityBlock: 5, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
     putIdentityRecord(id, preBlock);
 
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n });
-    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 40, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 40, lastDecayBlock: 40, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     insertBlockJournal(finishBlockJournal());
 
     revertBlock(1);
@@ -356,7 +358,7 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const id = uidBytes();
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     insertBlockJournal(finishBlockJournal());
 
     revertBlock(1);
@@ -374,11 +376,11 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    const pre: IdentityRecord = { lastActivityBlock: 7, lastDecayBlock: 3, likeCarry: 0n };
+    const pre: IdentityRecord = { lastActivityBlock: 7, lastDecayBlock: 3, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
     putIdentityRecord(id, pre);
 
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 99, lastDecayBlock: 3, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 99, lastDecayBlock: 3, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     insertBlockJournal(finishBlockJournal());
 
     revertBlock(1);
@@ -397,13 +399,13 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
 
     const a = uidBytes();
     const b = uidBytes();
-    const preA: IdentityRecord = { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n };
+    const preA: IdentityRecord = { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
     putIdentityRecord(a, preA);
 
     beginBlockJournal(1);
-    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 1, likeCarry: 0n });
-    putIdentityRecord(b, { lastActivityBlock: 21, lastDecayBlock: 0, likeCarry: 0n });
-    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 20, likeCarry: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(b, { lastActivityBlock: 21, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 20, lastDecayBlock: 20, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     insertBlockJournal(finishBlockJournal());
 
     revertBlock(1);
@@ -422,9 +424,9 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     insertBlockJournal(finishBlockJournal());
 
     revertBlock(1);
@@ -445,9 +447,9 @@ describe('identity records in the block journal (Spec G phase B2)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     beginBlockJournal(1);
-    putIdentityRecord(id, { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
     const j = finishBlockJournal();
 
     // revertBlock refuses to run while a journal is open; that guard is what

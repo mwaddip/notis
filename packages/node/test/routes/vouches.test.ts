@@ -50,11 +50,11 @@ import {
   closeDb,
   getDb,
   getBox as storeGetBox,
-  getBoxByProvenance,
   getKarmaBox,
   getKarmaBoxes,
   insertBox,
   consumeBox,
+  getIdentityRecord,
   hasActiveVouchCooldown,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
@@ -124,12 +124,12 @@ describe('vouch routes — the JSON edge', () => {
           .get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance,
-      insertBox: (box: AnyBox) => insertBox(box),
+          insertBox: (box: AnyBox) => insertBox(box),
       consumeBox: (id: string, atBlock: number) => consumeBox(id, atBlock),
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
+      getIdentityRecord,
       hasActiveVouchCooldown,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

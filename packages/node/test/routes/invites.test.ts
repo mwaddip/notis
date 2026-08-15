@@ -9,17 +9,17 @@ import {
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { createHash, generateKeyPairSync, createPrivateKey } from 'crypto';
+import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
-  getBoxByProvenance as storeGetBoxByProvenance, getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
+  getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
+import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   createInvite,
   claimInvite,
   cancelInvite,
-  commitInvite,
 } from '../../src/services/invites.js';
 import {
   generateKeyPair,
@@ -60,7 +60,7 @@ async function request(
         const r = db.prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?').get(id) as { spent_at_block: number | null } | undefined;
         return r && r.spent_at_block === null ? box : null;
       },
-      getBoxByProvenance: storeGetBoxByProvenance,
+      getIdentityRecord: storeGetIdentityRecord,
       insertBox: (box: AnyBox) => { storeInsertBox(box); },
       consumeBox: (id: string, atBlock: number) => {
         db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
@@ -73,7 +73,6 @@ async function request(
       createInvite,
       claimInvite,
       cancelInvite,
-      commitInvite,
       getCurrentHeight,
     };
     const app = express();
@@ -134,50 +133,68 @@ describe('invites routes', () => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
   });
 
-  it('POST /invites creates invite and returns 201 with pending', async () => {
+  /** Seed a karma box for the inviter. */
+  function seedKarma(value: bigint, nonce: number): KarmaBox {
     const karma = seedProvenance<KarmaBox>({
       boxType: 'karma',
-      value: 100n,
+      value,
       owner: inviterId,
       guard: 'owner_signature',
-    }, 1);
-    const karmaId = karma.id;
+    }, 1, nonce);
     storeInsertBox(karma);
+    return karma;
+  }
+
+  /** Seed an invite and its bond as the two outputs of one transaction. */
+  function seedPair(label: string, invitee: Uint8Array): { invite: InviteBox; bond: BondBox } {
+    const inviteCandidate = {
+      boxType: 'invite' as const,
+      value: 0n,
+      inviterId,
+      inviteePublicKey: invitee,
+      guard: 'invite_dual' as const,
+    };
+    const bondCandidate = {
+      boxType: 'bond' as const,
+      value: INVITE_BOND_KARMA,
+      inviterId,
+      inviteePublicKey: invitee,
+      guard: 'block_apply' as const,
+    };
+    const [invite, bond] = seedAsOneTx([inviteCandidate, bondCandidate], 1, labelNonce(label));
+    storeInsertBox(invite!);
+    storeInsertBox(bond!);
+    return { invite: invite as InviteBox, bond: bond as BondBox };
+  }
+
+  it('POST /invites creates invite and returns 201 with pending', async () => {
+    const karma = seedKarma(100n, 1);
+    const invitee = generateKeyPair().publicKey;
 
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: 50n,
+      value: 100n - INVITE_BOND_KARMA,
       owner: inviterId,
       guard: 'owner_signature',
     };
-
-    const secretHash = new Uint8Array(32).fill(0x99);
     const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash,
+      value: 0n,
       inviterId,
-      guard: 'hash_preimage_with_bond',
+      inviteePublicKey: invitee,
+      guard: 'invite_dual',
     };
-
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
-      inviteOutputIndex: 1,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual',
+      inviteePublicKey: invitee,
+      guard: 'block_apply',
     };
 
     const tx: UtxoTransaction = {
-      inputs: [karmaId],
-      outputs: [
-        newKarma,
-        inviteBox,
-        bondBox,
-      ],
+      inputs: [karma.id!],
+      outputs: [newKarma, inviteBox, bondBox],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
@@ -191,8 +208,9 @@ describe('invites routes', () => {
     expect(typeof body.expiresAtHeight).toBe('number');
     expect(typeof body.inviteBoxId).toBe('string');
     expect(typeof body.bondBoxId).toBe('string');
-    expect(typeof body.secretHash).toBe('string');
-    expect((body.secretHash as string).length).toBe(64);
+    // No secret in any of it — the response carries nothing the inviter has to
+    // pass on out of band beyond what they already knew.
+    expect(body.secretHash).toBeUndefined();
   });
 
   it('POST /invites with missing tx returns 400', async () => {
@@ -200,268 +218,49 @@ describe('invites routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('POST /invites/commit commits to BondBox and returns 201 with pending', async () => {
-    const secret = new Uint8Array(32).fill(0x66);
-    const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
-
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash,
-      inviterId,
-      guard: 'hash_preimage_with_bond',
-    };
-    // Invite and bond are seeded as outputs 0 and 1 of ONE synthetic
-    // transaction: the bond resolves its invite from
-    // `(bond.txId, bond.inviteOutputIndex)`, so seeding them independently
-    // would leave the bond addressing a transaction with no invite at that
-    // index — the mispairing the index form makes inexpressible.
-    const bondCandidate = {
-      boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual' as const,
-    };
-    // `label` gives this pair its own provenance. All four call sites in this
-    // file pass identical values, so without it they derive ONE txId and land
-    // two bonds on one `(txId, index)` — latent today only because each test
-    // re-inits `:memory:` and seeds a single pair.
-    const [seededInvite, seededBond] = seedAsOneTx(
-      [inviteBox, bondCandidate],
-      1,
-      labelNonce('routes-invites-1'),
-    );
-    const inviteBoxId = seededInvite!.id!;
-    const bondBoxId = seededBond!.id!;
-    storeInsertBox(seededInvite!);
-    storeInsertBox(seededBond!);
-
-    const newKp = generateKeyPair();
-    const inviteePubKey = newKp.publicKey;
-    const inviteePubKeyHex = Buffer.from(inviteePubKey).toString('hex');
-    const inviteePrivKeyObj = createPrivateKey({
-      key: Buffer.from(newKp.secretKey),
-      format: 'der',
-      type: 'pkcs8',
-    });
-
-    // `checkTransitions` requires the output bond to preserve the input's
-    // `inviteOutputIndex`, which the seeded pair above put at 0.
-    const bondOut: CandidateOf<BondBox> = {
-      boxType: 'bond',
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: inviteePubKey,
-      probationStartBlock: 5,
-      probationEndBlock: 5 + config.inviteProbationBlocks,
-      guard: 'bond_dual',
-    };
-
-    const tx: UtxoTransaction = {
-      inputs: [bondBoxId],
-      outputs: [bondOut],
-      signatures: {},
-      preimages: { [bondBoxId]: secret },
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(tx, inviteePrivKeyObj, inviteePubKeyHex);
-
-    // NODE_INTERFACE → Bond transition rules pins
-    // `probationStartBlock <= settle height`. This suite seeds
-    // boxes straight into the store and stores no ordering block, so the real
-    // `getCurrentHeight` returns 0 and no window could satisfy both that bound
-    // and `probationStartBlock > 0`. A bond box cannot exist on-chain at height
-    // 0 — reaching it takes a confirmed invite-create — so the honest fixture is
-    // a height at which this bond could actually be sitting there.
-    const res = await request('/commit', 'POST', { tx: txToJson(tx) }, {
-      getCurrentHeight: () => 5,
-    });
-    expect(res.status).toBe(201);
-    const body = res.data as Record<string, unknown>;
-    expect(body.status).toBe('pending');
-    expect(typeof body.txId).toBe('string');
-    expect(typeof body.expiresAtHeight).toBe('number');
-    expect(typeof body.bondBoxId).toBe('string');
-  });
-
-  it('POST /invites/commit with missing tx returns 400', async () => {
-    const res = await request('/commit', 'POST', {});
-    expect(res.status).toBe(400);
+  it('POST /invites/commit is gone', async () => {
+    // The route died with the instrument it served: two steps, not three.
+    const res = await request('/commit', 'POST', { tx: {} });
+    expect(res.status).toBe(404);
   });
 
   it('POST /invites/claim claims an invite and returns 201 with pending', async () => {
-    const secret = new Uint8Array(32).fill(0x55);
-    const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
-
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash,
-      inviterId,
-      guard: 'hash_preimage_with_bond',
-    };
-    // Invite and bond are seeded as outputs 0 and 1 of ONE synthetic
-    // transaction: the bond resolves its invite from
-    // `(bond.txId, bond.inviteOutputIndex)`, so seeding them independently
-    // would leave the bond addressing a transaction with no invite at that
-    // index — the mispairing the index form makes inexpressible.
-    const bondCandidate = {
-      boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual' as const,
-    };
-    // `label` gives this pair its own provenance. All four call sites in this
-    // file pass identical values, so without it they derive ONE txId and land
-    // two bonds on one `(txId, index)` — latent today only because each test
-    // re-inits `:memory:` and seeds a single pair.
-    const [seededInvite, seededBond] = seedAsOneTx(
-      [inviteBox, bondCandidate],
-      1,
-      labelNonce('routes-invites-2'),
-    );
-    const inviteBoxId = seededInvite!.id!;
-    const bondBoxId = seededBond!.id!;
-    storeInsertBox(seededInvite!);
-    storeInsertBox(seededBond!);
-
-    const newKp = generateKeyPair();
-    const inviteePubKey = newKp.publicKey;
-    const inviteePubKeyHex = Buffer.from(inviteePubKey).toString('hex');
-    const inviteePrivKeyObj = createPrivateKey({
-      key: Buffer.from(newKp.secretKey),
-      format: 'der',
-      type: 'pkcs8',
+    const inviteeKp = generateKeyPair();
+    const inviteeHex = Buffer.from(inviteeKp.publicKey).toString('hex');
+    const inviteePriv = createPrivateKey({
+      key: Buffer.from(inviteeKp.secretKey), format: 'der', type: 'pkcs8',
     });
-
-    // Simulate committed BondBox
-    const db = getDb();
-    db.prepare(
-      'UPDATE utxo_boxes SET extra_data = ? WHERE id = ?',
-    ).run(
-      JSON.stringify({
-        inviterId: Buffer.from(inviterId).toString('hex'),
-        inviteOutputIndex: 1,
-        inviteePublicKey: Array.from(inviteePubKey),
-        probationStartBlock: 3,
-        probationEndBlock: 3 + config.inviteProbationBlocks,
-      }),
-      bondBoxId,
-    );
-
-    const karmaOut: CandidateOf<KarmaBox> = {
-      boxType: 'karma',
-      value: INVITE_KARMA_AMOUNT,
-      owner: inviteePubKey,
-      guard: 'owner_signature',
-    };
-
-    const bondOut: CandidateOf<BondBox> = {
-      boxType: 'bond',
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 1,
-      inviteePublicKey: inviteePubKey,
-      probationStartBlock: 3,
-      probationEndBlock: 3 + config.inviteProbationBlocks,
-      guard: 'bond_dual',
-    };
+    const { invite } = seedPair('route-claim', inviteeKp.publicKey);
 
     const tx: UtxoTransaction = {
-      inputs: [inviteBoxId, bondBoxId],
-      outputs: [
-        karmaOut,
-        bondOut,
-      ],
+      inputs: [invite.id!],
+      outputs: [{
+        boxType: 'karma',
+        value: INVITE_KARMA_AMOUNT,
+        owner: inviteeKp.publicKey,
+        guard: 'owner_signature',
+      } as CandidateOf<KarmaBox>],
       signatures: {},
-      preimages: { [inviteBoxId]: secret },
       protocolVersion: PROTOCOL_VERSION,
     };
-    signTransaction(tx, inviteePrivKeyObj, inviteePubKeyHex);
+    signTransaction(tx, inviteePriv, inviteeHex);
 
     const res = await request('/claim', 'POST', { tx: txToJson(tx) });
     expect(res.status).toBe(201);
     const body = res.data as Record<string, unknown>;
     expect(body.status).toBe('pending');
-    expect(typeof body.txId).toBe('string');
-    expect(typeof body.expiresAtHeight).toBe('number');
-    expect(typeof body.userId).toBe('string');
+    expect(body.userId).toBe(inviteeHex);
     expect(typeof body.karmaBoxId).toBe('string');
   });
 
-  it('POST /invites/cancel cancels an unclaimed invite and returns 200 with pending', async () => {
-    const secret = new Uint8Array(32).fill(0x33);
-    const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
-
-    const blockHeight = 10;
-
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash,
-      inviterId,
-      guard: 'hash_preimage_with_bond',
-    };
-    // Invite and bond are seeded as outputs 0 and 1 of ONE synthetic
-    // transaction: the bond resolves its invite from
-    // `(bond.txId, bond.inviteOutputIndex)`, so seeding them independently
-    // would leave the bond addressing a transaction with no invite at that
-    // index — the mispairing the index form makes inexpressible.
-    const bondCandidate = {
-      boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual' as const,
-    };
-    // `label` gives this pair its own provenance. All four call sites in this
-    // file pass identical values, so without it they derive ONE txId and land
-    // two bonds on one `(txId, index)` — latent today only because each test
-    // re-inits `:memory:` and seeds a single pair.
-    const [seededInvite, seededBond] = seedAsOneTx(
-      [inviteBox, bondCandidate],
-      1,
-      labelNonce('routes-invites-3'),
-    );
-    const inviteBoxId = seededInvite!.id!;
-    const bondBoxId = seededBond!.id!;
-    storeInsertBox(seededInvite!);
-    storeInsertBox(seededBond!);
-
-    const karmaIn = seedProvenance<KarmaBox>({
-      boxType: 'karma',
-      value: 200n,
-      owner: inviterId,
-      guard: 'owner_signature',
-    }, 1);
-    const karmaInId = karmaIn.id;
-    storeInsertBox(karmaIn);
-
-    const totalValue = 200n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-    const newKarma: CandidateOf<KarmaBox> = {
-      boxType: 'karma',
-      value: totalValue,
-      owner: inviterId,
-      guard: 'owner_signature',
-    };
+  it('POST /invites/cancel cancels an open invite and returns 200 with pending', async () => {
+    const invitee = generateKeyPair().publicKey;
+    const { invite } = seedPair('route-cancel', invitee);
 
     const tx: UtxoTransaction = {
-      inputs: [karmaInId, inviteBoxId, bondBoxId],
-      outputs: [newKarma],
+      inputs: [invite.id!],
+      outputs: [],
       signatures: {},
-      preimages: { [inviteBoxId]: secret },
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, inviterPrivKeyObj, inviterPubKeyHex);
@@ -471,85 +270,23 @@ describe('invites routes', () => {
     const body = res.data as Record<string, unknown>;
     expect(body.status).toBe('pending');
     expect(typeof body.txId).toBe('string');
-    expect(typeof body.expiresAtHeight).toBe('number');
   });
 
-  it('POST /invites/cancel with wrong inviter returns 403', async () => {
-    const secret = new Uint8Array(32).fill(0x44);
-    const secretHash = createHash('blake2b512').update(Buffer.from(secret)).digest().subarray(0, 32);
-
-    const blockHeight = 20;
-
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: INVITE_KARMA_AMOUNT,
-      secretHash,
-      inviterId,
-      guard: 'hash_preimage_with_bond',
-    };
-    // Invite and bond are seeded as outputs 0 and 1 of ONE synthetic
-    // transaction: the bond resolves its invite from
-    // `(bond.txId, bond.inviteOutputIndex)`, so seeding them independently
-    // would leave the bond addressing a transaction with no invite at that
-    // index — the mispairing the index form makes inexpressible.
-    const bondCandidate = {
-      boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteOutputIndex: 0,
-      inviteePublicKey: new Uint8Array(0),
-      probationStartBlock: 0,
-      probationEndBlock: 0,
-      guard: 'bond_dual' as const,
-    };
-    // `label` gives this pair its own provenance. All four call sites in this
-    // file pass identical values, so without it they derive ONE txId and land
-    // two bonds on one `(txId, index)` — latent today only because each test
-    // re-inits `:memory:` and seeds a single pair.
-    const [seededInvite, seededBond] = seedAsOneTx(
-      [inviteBox, bondCandidate],
-      1,
-      labelNonce('routes-invites-4'),
-    );
-    const inviteBoxId = seededInvite!.id!;
-    const bondBoxId = seededBond!.id!;
-    storeInsertBox(seededInvite!);
-    storeInsertBox(seededBond!);
-
-    const wrongKp = generateKeyPair();
-    const wrongPubKey = wrongKp.publicKey;
-    const wrongPubKeyHex = Buffer.from(wrongPubKey).toString('hex');
-    const wrongPrivKeyObj = createPrivateKey({
-      key: Buffer.from(wrongKp.secretKey),
-      format: 'der',
-      type: 'pkcs8',
+  it('POST /invites/cancel with the wrong signer returns 403', async () => {
+    const inviteeKp = generateKeyPair();
+    const inviteeHex = Buffer.from(inviteeKp.publicKey).toString('hex');
+    const inviteePriv = createPrivateKey({
+      key: Buffer.from(inviteeKp.secretKey), format: 'der', type: 'pkcs8',
     });
-
-    const wrongKarma = seedProvenance<KarmaBox>({
-      boxType: 'karma',
-      value: 200n,
-      owner: wrongPubKey,
-      guard: 'owner_signature',
-    }, 1);
-    const wrongKarmaId = wrongKarma.id;
-    storeInsertBox(wrongKarma);
-
-    const totalValue = 200n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-    const newKarma: CandidateOf<KarmaBox> = {
-      boxType: 'karma',
-      value: totalValue,
-      owner: wrongPubKey,
-      guard: 'owner_signature',
-    };
+    const { invite } = seedPair('route-cancel-403', inviteeKp.publicKey);
 
     const tx: UtxoTransaction = {
-      inputs: [wrongKarmaId, inviteBoxId, bondBoxId],
-      outputs: [newKarma],
+      inputs: [invite.id!],
+      outputs: [],
       signatures: {},
-      preimages: { [inviteBoxId]: secret },
       protocolVersion: PROTOCOL_VERSION,
     };
-    signTransaction(tx, wrongPrivKeyObj, wrongPubKeyHex);
+    signTransaction(tx, inviteePriv, inviteeHex);
 
     const res = await request('/cancel', 'POST', { tx: txToJson(tx) });
     expect(res.status).toBe(403);
@@ -588,25 +325,25 @@ describe('invites routes', () => {
     it('control — an intentional rejection still returns its message with 400', async () => {
       const res = await request('/', 'POST', { tx: EMPTY_TX }, {
         createInvite: () => {
-          throw new ClientError('Invite limit reached: 5 pending invites (max 5)');
+          throw new ClientError('Insufficient karma to invite: the bond is 25, inviter holds 3');
         },
       });
 
       expect(res.status).toBe(400);
       expect((res.data as Record<string, unknown>).error).toBe(
-        'Invite limit reached: 5 pending invites (max 5)',
+        'Insufficient karma to invite: the bond is 25, inviter holds 3',
       );
     });
 
-    it('carries a 409 on the typed error instead of sniffing the message', async () => {
-      const res = await request('/commit', 'POST', { tx: EMPTY_TX }, {
-        commitInvite: () => {
-          throw new ClientError('BondBox already committed', 409);
+    it('carries a typed status on the error instead of sniffing the message', async () => {
+      const res = await request('/cancel', 'POST', { tx: EMPTY_TX }, {
+        cancelInvite: () => {
+          throw new ClientError('not the inviter', 403);
         },
       });
 
-      expect(res.status).toBe(409);
-      expect((res.data as Record<string, unknown>).error).toBe('BondBox already committed');
+      expect(res.status).toBe(403);
+      expect((res.data as Record<string, unknown>).error).toBe('not the inviter');
     });
 
     it('maps a full mempool to 503 with a generic body', async () => {
