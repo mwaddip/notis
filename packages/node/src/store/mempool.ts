@@ -10,7 +10,13 @@ import type {
   VouchBox,
   AnyBox,
 } from '@dagsocial/types';
-import { encodeTx, decodeTx, computeTxId, computePruneEntryId } from '@dagsocial/types';
+import {
+  MAX_TX_BYTES,
+  encodeTx,
+  decodeTx,
+  computeTxId,
+  computePruneEntryId,
+} from '@dagsocial/types';
 import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
@@ -44,6 +50,42 @@ export class PendingSpendConflictError extends ClientError {
   constructor(public readonly boxId: string) {
     super(`Input ${boxId} is already spent by a pending transaction`, 409);
     this.name = 'PendingSpendConflictError';
+  }
+}
+
+/**
+ * Thrown by `insertUtxoTx` for a transaction above `MAX_TX_BYTES`.
+ *
+ * ⛔ **The bound is consensus and this node calls no function that checks it.**
+ * `verifyTxStructure` is where the rule lives (VALIDATION_INTERFACE → the
+ * transaction size bound), and node's only entry into that namespace is the
+ * whole object it hands `NetNode` — so the live call site is net's gossip
+ * validator, and a transaction submitted to this node's own HTTP API reaches no
+ * such check. Without this one it is admitted, drawn into a block by the
+ * creator, and refused by this node's own `applyOrderingBlock`: work mined and
+ * then thrown away by the miner that mined it.
+ *
+ * Admission is the choke point rather than each route, so a route added later
+ * inherits the rule instead of needing it added — the same reason the gate
+ * metadata is lifted here (audit M-8).
+ *
+ * **`encodeTx(tx).length` is the measure**, because that is the encoding these
+ * bytes will ride in a block under: `insertUtxoTx` stores this node's own
+ * re-encoding, not the bytes a submitter sent, so measuring the re-encoding
+ * measures exactly the future cost.
+ *
+ * A `ClientError`, so the refusal reaches the submitter as its own message: an
+ * over-size transaction is an intentional rejection, not a fault. 413, because
+ * the request is well formed and too large.
+ */
+export class TxTooLargeError extends ClientError {
+  constructor(public readonly encodedBytes: number) {
+    super(
+      `Transaction is ${encodedBytes} bytes, above the ${MAX_TX_BYTES}-byte ` +
+        'limit — no block can carry it',
+      413,
+    );
+    this.name = 'TxTooLargeError';
   }
 }
 
@@ -151,9 +193,11 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
  * where stripping them and computing the real id is stated. Block application
  * materializes the same outputs through the same call, so the pool's prediction
  * and the block's result cannot disagree.
+ *
+ * `txId` is a parameter rather than a second `computeTxId` call, so the id this
+ * row is keyed on and the ids of the boxes it promises come from one hash.
  */
-function outputBoxIds(tx: UtxoTransaction): string[] {
-  const txId = computeTxId(tx);
+function outputBoxIds(tx: UtxoTransaction, txId: string): string[] {
   return (tx.outputs ?? []).map((out, i) => materializeOutput(out, txId, i).id!);
 }
 
@@ -164,17 +208,23 @@ export function insertUtxoTx(
   const db = getDb();
   assertCapacity(db);
 
+  // Before the conflict gate: the size bound is a property of the transaction
+  // alone, so it needs no pool state and settles the verdict without running
+  // one query per input.
+  const cbor = encodeTx(tx);
+  if (cbor.length > MAX_TX_BYTES) throw new TxTooLargeError(cbor.length);
+
   const inputs = tx.inputs ?? [];
   const conflict = hasPendingSpend(inputs);
   if (conflict !== null) throw new PendingSpendConflictError(conflict);
 
-  const cbor = encodeTx(tx);
+  const txId = computeTxId(tx);
   const meta = gateMetadata(tx);
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
-                          tx_inputs, tx_output_ids)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          tx_inputs, tx_output_ids, tx_id)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(cbor),
     expiresAtHeight,
@@ -183,7 +233,8 @@ export function insertUtxoTx(
     meta.inviteInviter,
     meta.vouchVoucher,
     JSON.stringify(inputs),
-    JSON.stringify(outputBoxIds(tx)),
+    JSON.stringify(outputBoxIds(tx, txId)),
+    txId,
   );
   return Number(result.lastInsertRowid);
 }
@@ -365,16 +416,84 @@ export function resolvePendingTip(box: AnyBox): AnyBox | null {
   }
 }
 
-export function getPendingEntries(limit: number): PoolEntry[] {
+/**
+ * Pending entries in FIFO order, at most `limit` of them, starting after
+ * `afterRowid`.
+ *
+ * `afterRowid` is a **keyset** cursor, not an offset: `rowid` is the table's
+ * own b-tree key, so each page is a range scan from where the last one ended
+ * rather than a re-walk of everything before it. That is also what makes the
+ * page sequence correct across the deletes that run between pages — an offset
+ * would skip a row for every row removed behind the cursor.
+ */
+export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
   const db = getDb();
   const rows = db.prepare(
     `SELECT rowid, entry_type, utxo_tx_cbor, prune_entry_cbor,
             expires_at_height, created_at
      FROM mempool
+     WHERE rowid > ?
      ORDER BY rowid ASC
      LIMIT ?`,
-  ).all(limit) as MempoolRow[];
+  ).all(afterRowid, limit) as MempoolRow[];
   return rows.map(rowToEntry);
+}
+
+/**
+ * How many rows one page of `iteratePendingEntries` reads.
+ *
+ * It bounds memory per page and nothing else — the iterator pages until the
+ * pool is exhausted or its consumer stops, so no value here can under-serve a
+ * caller. That is what the shape is for: the block creator fills to a **byte**
+ * budget, and the number of transactions that buys depends on their sizes, so
+ * no count expresses it (MEMPOOL_INTERFACE → "The fill budget is bytes;
+ * `getPendingEntries` is a count").
+ */
+const PENDING_PAGE_SIZE = 256;
+
+/**
+ * Every pending entry, in FIFO order, drawn a page at a time.
+ *
+ * A consumer takes what it needs and stops; nothing beyond the last page it
+ * pulled is ever read. Each page is a completed query rather than one held-open
+ * cursor, so a consumer may write to the pool between entries — which a cursor
+ * would refuse for as long as it stayed open.
+ */
+export function* iteratePendingEntries(): Generator<PoolEntry> {
+  let afterRowid = 0;
+  for (;;) {
+    const page = getPendingEntries(PENDING_PAGE_SIZE, afterRowid);
+    if (page.length === 0) return;
+    for (const entry of page) yield entry;
+    if (page.length < PENDING_PAGE_SIZE) return;
+    afterRowid = page[page.length - 1]!.rowid;
+  }
+}
+
+/**
+ * Delete the pooled transaction whose id is `txId`. Returns the number of rows
+ * removed — 0 when the pool never held it, which is the ordinary case for a
+ * block that arrived from a peer carrying work this node never saw.
+ *
+ * ⛔ **Keyed, never scanned** (MEMPOOL_INTERFACE → "Confirmed-entry cleanup is
+ * bounded by the pool, not by a literal"). This is the whole of how a block
+ * arriving from a peer clears what it confirmed, so any bound that misses a row
+ * leaves it pending: it holds a pool slot, the creator rebuilds it into a later
+ * block, and apply refuses that block. Unbounding a scan is not the alternative
+ * either — matching by recomputed `TxId` decodes and re-hashes every pool row
+ * for every applied transaction, which measures 27 s per applied block against
+ * a full pool where this measures 7.5 ms (2026-08-15, 10,000 entries of 975
+ * bytes, 2,026 applied).
+ *
+ * The stored id is safe to key cleanup on and would **not** be safe to commit a
+ * block to. A stale or absent `tx_id` leaves a row pending, which the expiry
+ * reclaims; a stale id in `utxoTxIds` would be a block this node's own applier
+ * rejects. The creator therefore keeps deriving the ids it commits from the
+ * bytes it commits.
+ */
+export function removeUtxoTxEntry(txId: string): number {
+  const db = getDb();
+  return db.prepare('DELETE FROM mempool WHERE tx_id = ?').run(txId).changes;
 }
 
 export function purgeExpired(currentHeight: number): number {

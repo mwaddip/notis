@@ -18,6 +18,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -69,7 +70,7 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  maxSubBlocksPerBlock: 1000,
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',
@@ -2168,6 +2169,42 @@ describe('block-apply funnel totality', () => {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
     expect(getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner)).toHaveLength(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // Confirmed-entry cleanup on the received-block path
+  // -----------------------------------------------------------------------
+
+  it("a peer's block clears a confirmed transaction sitting deep in the pool", async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const mempool = await importMempoolFresh();
+    const blockApply = await importBlockApply();
+
+    // ⛔ The pool has to be deeper than the literal the cleanup scan carried
+    // (1000), or the fixture cannot tell a keyed delete from a bounded one:
+    // every entry a shallow pool holds is inside any bound.
+    const DEPTH = 1_100;
+    for (let i = 0; i < DEPTH; i++) mempool.insertUtxoTx(fillerTx(`deep_${i}`), 5000);
+
+    const author = makeTestIdentity();
+    const { tx: postTx } = await seedPostTx(author, 'confirmed by a peer');
+    const deepRowid = mempool.insertUtxoTx(postTx, 5000);
+    expect(deepRowid).toBeGreaterThan(1000);
+
+    // ⛔ The RECEIVED-block path, not `mineNextBlock`. `finalizeBlock` evicts by
+    // `minedRowids` regardless of position, so a locally produced block clears
+    // this row whatever the cleanup does — a test that mined here would pass
+    // without exercising anything.
+    const block = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    const after = mempool.getPendingEntries(DEPTH + 10);
+    expect(after.some((e) => e.rowid === deepRowid)).toBe(false);
+    // …and only that row: the block confirmed one transaction, so the cleanup
+    // is keyed rather than a sweep.
+    expect(after).toHaveLength(DEPTH);
   });
 });
 

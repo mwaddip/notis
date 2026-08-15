@@ -5,7 +5,7 @@ import type { AddressInfo } from 'net';
 import { initDb, closeDb } from '../src/store/db.js';
 import { createApp } from '../src/server.js';
 import type { Config } from '../src/config.js';
-import { profileFor } from '@dagsocial/types';
+import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -21,7 +21,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     networkType: 'testnet',
     profile: profileFor('testnet'),
     nodeRole: 'server',
-    maxSubBlocksPerBlock: 1000,
+    blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
     orderingBlockPowTargetBits: 3072,
     creditTreasuryPct: 10,
     treasuryPubKey: '',

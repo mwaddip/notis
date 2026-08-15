@@ -326,11 +326,12 @@ function migrateVouchCooldowns(database: Database.Database): void {
 }
 
 /**
- * The two JSON array columns a pooled transaction's own fields are lifted into
- * at insert — `tx_inputs`, the box ids it spends, and `tx_output_ids`, the ids
- * of the boxes it creates. Together they are the pending view the admission
- * path resolves against: confirmed set ∪ pending outputs − pending inputs.
- * Same principle as the like/invite/vouch gate columns above — the queries stay
+ * The columns a pooled transaction's own fields are lifted into at insert —
+ * `tx_inputs`, the box ids it spends; `tx_output_ids`, the ids of the boxes it
+ * creates; and `tx_id`, its own `TxId`. The first two are the pending view the
+ * admission path resolves against: confirmed set ∪ pending outputs − pending
+ * inputs. The third is how an applied block finds the row it confirmed. Same
+ * principle as the like/invite/vouch gate columns above — the queries stay
  * plain SQL over every row rather than a decode-scan of the first N.
  *
  * ALTERs rather than columns in a CREATE TABLE, because every mempool CREATE
@@ -343,7 +344,10 @@ function migrateVouchCooldowns(database: Database.Database): void {
  *
  * Rows written before a column existed hold NULL, and `json_each` reads NULL as
  * zero rows rather than raising — such an entry matches no conflict query, and
- * serves no pending output.
+ * serves no pending output. A NULL `tx_id` matches no cleanup either, which
+ * leaves the row to expire; the alternative is decoding every legacy blob at
+ * startup to backfill an id for a pool that drains within
+ * `MEMPOOL_EXPIRY_BLOCKS` anyway.
  */
 function migrateMempoolTxColumns(database: Database.Database): void {
   const cols = database.prepare("PRAGMA table_info('mempool')").all() as Array<{ name: string }>;
@@ -351,6 +355,7 @@ function migrateMempoolTxColumns(database: Database.Database): void {
 
   if (!has('tx_inputs')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_inputs TEXT`);
   if (!has('tx_output_ids')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_output_ids TEXT`);
+  if (!has('tx_id')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_id TEXT`);
 }
 
 /**
@@ -377,6 +382,13 @@ function migrateDropValidationCounters(database: Database.Database): void {
  * the JSON text cannot resolve `json_each(...) WHERE value = ?`. It earns its
  * place as the covering index the scan reads, which is also what confines the
  * scan to rows that carry inputs at all.
+ *
+ * `idx_mempool_tx_id` is a lookup, and it is the one carrying a measured cost.
+ * Block application removes each confirmed transaction through it; matching by
+ * recomputed `TxId` over the pool instead measures 27 s per applied block
+ * against a full pool where this measures 7.5 ms (2026-08-15). See
+ * MEMPOOL_INTERFACE → "Confirmed-entry cleanup is bounded by the pool, not by a
+ * literal".
  */
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
@@ -392,6 +404,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(tx_inputs) WHERE tx_inputs IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_output_ids
       ON mempool(tx_output_ids) WHERE tx_output_ids IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_tx_id
+      ON mempool(tx_id) WHERE tx_id IS NOT NULL;
   `);
 }
 
