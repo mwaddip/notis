@@ -1574,10 +1574,22 @@ the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`
 and `utxoTxs` are opaque byte arrays, so nothing here depends on the transaction codec.
 
 ⛔ **The equivalence is the contract, not an implementation detail** — a test pins
-`utxoTxTreeByteLength(t) === encodeUtxoTxTree(t).length`, including the empty tree. Two ways of
-computing one number diverge silently otherwise, and the direction that matters is the one where the
-sizer under-reports: a block that measures legal here and encodes larger is a block this node relays
-and its peers reject.
+`utxoTxTreeByteLength(t) === encodeUtxoTxTree(t).length`. Two ways of computing one number diverge
+silently otherwise, and the direction that matters is the one where the sizer under-reports: a block
+that measures legal here and encodes larger is a block this node relays and its peers reject.
+
+**Its domain is the encoder's success domain, and that domain includes the sentinel branches.**
+`writeArr` and `writeLp` are total by sentinel (`### Totality`) — handed a non-array section or a
+non-byte-view element they write a sentinel prefix and continue — so those trees *do* encode, do have
+a length, and are owed equality. **They are also the only inputs on which under-reporting is
+possible**, because a sizer that reads such a field at face value sees a smaller number than the
+sentinel the encoder writes. Where a field reaches a *throwing* writer instead, the tree has no
+encoding at all: there is no length to agree on, and the sizer does not mirror the throw — mirroring
+would buy symmetry and hand every caller a panic source, including the one on the relay path.
+
+⚠ **The empty tree is not the interesting case and should not be cited as one.** It is four `vlqU(0)`
+counts, so a sizer that assumes every count prefix is one byte wide passes it. The cases that
+discriminate are the VLQ width boundaries and the sentinel branches above.
 
 ### Export table
 
@@ -1902,8 +1914,10 @@ carries about 47 % more posts. That is a bound on the resource behaving as inten
 improves and the storage guarantee does not move. A transaction *count* would have had to be revised;
 this does not.
 
-`MAX_BLOCK_BODY_BYTES` is 1.05 TB/yr of archival growth at 60 s blocks, or about 2,030 max-size post
-transactions per block. `MAX_TX_BYTES` admits roughly 148 credit inputs at the current encoding and
+`MAX_BLOCK_BODY_BYTES` is 1.05 TB/yr of archival growth at 60 s blocks, or about 2,026 max-size post
+transactions per block. **A transaction costs `32 + vlqU(len) + len` in the body** — the fixed-width
+`utxoTxIds` entry plus the `lp` prefix `arr(utxoTxs, lp)` writes before each one, so 34 bytes of
+framing at present transaction sizes, not 32. `MAX_TX_BYTES` admits roughly 148 credit inputs at the current encoding and
 288 under the positional one — far past any single consolidation a wallet builds. Its job is to keep
 a transaction from being valid, poolable and unminable at once: without it, one larger than the block
 budget occupies a mempool slot that no block can ever drain.
