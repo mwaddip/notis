@@ -434,10 +434,13 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Prune settlement — consumes the PostLockBox, merge-mints the author
-  // refund, and deletes the subtree's like-records (P2-D N3b: no liker leg —
-  // a like's karma was burned at cast and nothing is refunded); revert
-  // restores the settled rows and the records exactly. (Extends the Phase B
+  // Prune settlement — consumes every PostLockBox in the subtree, merge-mints
+  // a refund to the owners other than the pruning author, whose own lock burns
+  // (ARCHITECTURE → "Prune lifecycle"), and deletes the subtree's like-records
+  // (P2-D N3b: no liker leg — a like's karma was burned at cast and nothing is
+  // refunded); revert restores the settled rows and the records exactly.
+  // A mixed subtree, so the round-trip covers both legs: the reply author's
+  // merge-mint and the pruner's mintless burn. (Extends the Phase B
   // block-apply revert test with digest + re-apply identity.)
   // -----------------------------------------------------------------------
 
@@ -446,6 +449,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
+    const replier = makeTestIdentity();
     const liker = makeTestIdentity();
     const utxo = await importUtxo();
     const posts = await importPosts();
@@ -457,11 +461,20 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const post = makePost(author.userId, 'prune round-trip victim');
     const postId = computePostId(post);
     posts.insertPost(post, encodePost(post));
+    const reply: Post = {
+      ...makePost(replier.userId, 'somebody else in the same thread'),
+      parentRefs: [postId],
+    };
+    const replyId = computePostId(reply);
+    posts.insertPost(reply, encodePost(reply));
 
-    // Everything the UTXO leg touches, seeded before bootstrap: the author's
-    // karma (merge target) and the post's lock box.
+    // Everything the UTXO leg touches, seeded before bootstrap: each user's
+    // karma and each post's lock box. Only the replier's karma is a merge
+    // target — the author's lock mints nothing to merge into.
     const authorKarma = makeKarmaBox(20n, author.userId, 0);
     utxo.insertBox(authorKarma);
+    const replierKarma = makeKarmaBox(5n, replier.userId, 0);
+    utxo.insertBox(replierKarma);
     const lockBox = seedProvenance<PostLockBox>({
       boxType: 'post_lock',
       value: 30n,
@@ -471,13 +484,25 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       guard: 'block_apply',
     }, 1);
     utxo.insertBox(lockBox);
+    const replyLockBox = seedProvenance<PostLockBox>({
+      boxType: 'post_lock',
+      value: 40n,
+      originalValue: 40n,
+      owner: replier.userId,
+      targetPostId: replyId,
+      guard: 'block_apply',
+    }, 2);
+    utxo.insertBox(replyLockBox);
 
     const handle = await activateProver();
     const blockApply = await importBlockApply();
 
-    // Block 1 confirms the post — prune authorization reads block_topology.
+    // Block 1 confirms both posts — prune authorization reads block_topology.
     const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [{ postId, parentRefs: [], author: hex(author.userId) }],
+      subBlockEntries: [
+        { postId, parentRefs: [], author: hex(author.userId) },
+        { postId: replyId, parentRefs: [postId], author: hex(replier.userId) },
+      ],
     });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
     // A like applied at block 1 — seeded with no journal open, so the
@@ -487,18 +512,23 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     const classBlock = await makeApplicableBlock({
       height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
+      pruneEntries: [makePruneEntry(postId, [postId, replyId], author)],
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // Settled: lock + the author's pre-existing karma consumed; the liker got
-    // nothing (the burn is unrecoverable); the like-record died with the post.
+    // Settled: both locks consumed. The replier's pre-existing karma is
+    // merge-consumed into a 5 + 40 refund; the pruning author's 30 burned with
+    // its consume, leaving their standing 20 untouched. The liker got nothing
+    // (the burn is unrecoverable); the like-record died with the post.
     expect(utxo.getBox(lockBox.id!)).toBeNull();
-    expect(utxo.getBox(authorKarma.id!)).toBeNull();
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(50n);
+    expect(utxo.getBox(replyLockBox.id!)).toBeNull();
+    expect(utxo.getBox(replierKarma.id!)).toBeNull();
+    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(45n);
+    expect(utxo.getBox(authorKarma.id!)).not.toBeNull();
+    expect(utxo.getKarmaBox(author.userId)!.value).toBe(20n);
     expect(utxo.getKarmaBox(liker.userId)).toBeNull();
     expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
-    // Both consumptions and the record deletion are in the journal the revert
+    // Every consumption and the record deletion are in the journal the revert
     // below replays.
     const journalStore = (await import('../../src/store/journal.js')) as {
       getBlockJournal: (h: number) => import('../../src/store/journal.js').BlockJournal | null;
@@ -508,7 +538,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       saved.mutations
         .filter((m) => m.kind === 'box' && m.op === 'remove')
         .map((m) => (m as { boxId: string }).boxId),
-    ).toEqual(expect.arrayContaining([lockBox.id, authorKarma.id]));
+    ).toEqual(expect.arrayContaining([lockBox.id, replyLockBox.id, replierKarma.id]));
     expect(saved.likeRecordDeletions).toEqual([
       { targetPostId: postId, likerId: liker.userId, appliedAtBlock: 1 },
     ]);
@@ -516,8 +546,10 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     await assertRoundTrip(db, handle, pre, classBlock);
 
     // The re-applied block leaves the same settled state again.
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(50n);
+    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(45n);
+    expect(utxo.getKarmaBox(author.userId)!.value).toBe(20n);
     expect(utxo.getBox(lockBox.id!)).toBeNull();
+    expect(utxo.getBox(replyLockBox.id!)).toBeNull();
     expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
   });
 

@@ -833,8 +833,9 @@ function applyMutationPhase(
   //   2. Verify Ed25519 author signature over (rootPostHash || subtreeMerkleRoot)
   //   3. Verify postId set against block_topology (deterministic, no DAG walk)
   //   4. Verify Merkle root from entry.subtreePostIds
-  //   5. Settle UTXO — consume PostLockBoxes, mint prune-refund-author karma,
-  //      delete the subtree's like-records (journalled)
+  //   5. Settle UTXO — consume PostLockBoxes, mint prune-refund-author karma
+  //      to every owner but the pruning author, delete the subtree's
+  //      like-records (journalled)
   //   6. Prune DAG content, insert simplified Stump for historical record
   for (const entry of block.subBlockTree.pruneEntries) {
     // 1. Authorship binding (H-3)
@@ -911,7 +912,7 @@ function applyMutationPhase(
 
     // 5. Settle UTXO — deterministic from post IDs
     try {
-      settlePruneUtxo(entry.rootPostHash, entry.subtreePostIds, height);
+      settlePruneUtxo(entry.rootPostHash, entry.authorId, entry.subtreePostIds, height);
     } catch (err) {
       console.error(`Block ${height}: prune settlement failed for ${entry.rootPostHash}: ${String(err)}`);
       return false;

@@ -67,14 +67,14 @@ async function importLikes() {
 
 async function importSettlePruneUtxo() {
   const mod = await import('../../src/services/settle-prune-utxo.js');
-  // ⚠ Hand-maintained mirror of the real arity. `tsconfig.json` has
-  // `include: ["src"]`, so nothing type-checks this cast against the function
-  // it describes — when `settlePruneUtxo` gained `rootPostHash`, this signature
-  // and every call below had to be updated by hand, and only the test run would
-  // have caught a miss. Change the source signature, change this too.
+  // Hand-maintained mirror of the real arity — and `tsconfig.test.json` does
+  // check it: a signature that drifts from the source fails `pnpm typecheck`
+  // with TS2352 before any test runs. Change the source signature, change this
+  // too.
   return mod as {
     settlePruneUtxo: (
       rootPostHash: string,
+      authorId: Uint8Array,
       postIds: string[],
       blockHeight: number,
     ) => void;
@@ -312,22 +312,27 @@ describe('settlePruneUtxo', () => {
     vi.resetModules();
   });
 
-  it('consumes PostLockBox and mints refund karma for author', async () => {
+  it("consumes a reply author's PostLockBox and merge-mints their refund", async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
     const rootPostId = 'a'.repeat(64);
-    const authorId = makeUserId('author1');
+    const replyPostId = 'b'.repeat(64);
+    const pruner = makeUserId('pruner1');
+    const replier = makeUserId('replier1');
 
-    // Insert a PostLockBox for the author, plus pre-existing karma the refund
-    // mint will merge in (seeded outside the journal, like any pre-block state)
-    const lockBox = makePostLockBox(100n, authorId, rootPostId, 1);
+    // The reply's lock belongs to someone other than the pruner, so it
+    // returns; plus pre-existing karma the refund mint will merge in (seeded
+    // outside the journal, like any pre-block state)
+    const lockBox = makePostLockBox(100n, replier, replyPostId, 1);
     utxo.insertBox(lockBox);
-    const oldKarma = makeKarmaBox(40n, authorId, 1);
+    const oldKarma = makeKarmaBox(40n, replier, 1);
     utxo.insertBox(oldKarma);
 
-    const journal = await journaled(10, () => settlePruneUtxo(rootPostId, [rootPostId], 10));
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(rootPostId, pruner, [rootPostId, replyPostId], 10),
+    );
 
     // PostLockBox consumed
     expect(removedIds(journal)).toContain(lockBox.id);
@@ -352,7 +357,9 @@ describe('settlePruneUtxo', () => {
   it('handles empty postId list', async () => {
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
-    const journal = await journaled(5, () => settlePruneUtxo('0'.repeat(64), [], 5));
+    const journal = await journaled(5, () =>
+      settlePruneUtxo('0'.repeat(64), makeUserId('pruner-empty'), [], 5),
+    );
     expect(journal.mutations.length).toBe(0);
   });
 
@@ -362,14 +369,16 @@ describe('settlePruneUtxo', () => {
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
     const rootPostId = 'c'.repeat(64);
-    const authorId = makeUserId('author2');
+    const replier = makeUserId('replier2');
 
     // Insert a PostLockBox and spend it beforehand
-    const lockBox = makePostLockBox(50n, authorId, rootPostId, 1);
+    const lockBox = makePostLockBox(50n, replier, rootPostId, 1);
     utxo.insertBox(lockBox);
     utxo.consumeBox(lockBox.id!, 5); // Already spent at block 5
 
-    const journal = await journaled(10, () => settlePruneUtxo(rootPostId, [rootPostId], 10));
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(rootPostId, makeUserId('pruner2'), [rootPostId], 10),
+    );
 
     // Already-spent box should not be re-consumed, and no refund karma minted
     // (getPostLockBox returns only unspent boxes, so it returns null)
@@ -386,15 +395,17 @@ describe('settlePruneUtxo', () => {
     const postId1 = 'ab'.repeat(32);
     const postId2 = 'cd'.repeat(32);
     const authorId = makeUserId('author3');
+    const pruner = makeUserId('pruner3');
 
-    // Two PostLockBoxes for the same author on two posts
+    // Two PostLockBoxes for the same author on two posts, neither of them the
+    // pruner's — aggregation is what is under test, not the burn rule.
     const lb1 = makePostLockBox(100n, authorId, postId1, 1);
     const lb2 = makePostLockBox(50n, authorId, postId2, 1);
     utxo.insertBox(lb1);
     utxo.insertBox(lb2);
 
     const journal = await journaled(10, () =>
-      settlePruneUtxo(postId1, [postId1, postId2], 10),
+      settlePruneUtxo(postId1, pruner, [postId1, postId2], 10),
     );
 
     // Both lock boxes consumed
@@ -415,7 +426,9 @@ describe('settlePruneUtxo', () => {
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
     const postId = 'e'.repeat(64);
-    const journal = await journaled(10, () => settlePruneUtxo(postId, [postId], 10));
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(postId, makeUserId('pruner4'), [postId], 10),
+    );
     expect(journal.mutations.length).toBe(0);
   });
 
@@ -425,16 +438,127 @@ describe('settlePruneUtxo', () => {
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
     const rootPostId = 'f'.repeat(64);
+    // Not the pruner's, so a lost `value > 0n` guard would show as BOTH a
+    // consume and a mint — the zero-value guard is the only thing keeping this
+    // journal empty.
     const authorId = makeUserId('author4');
 
     const lockBox = makePostLockBox(0n, authorId, rootPostId, 1);
     utxo.insertBox(lockBox);
 
-    const journal = await journaled(10, () => settlePruneUtxo(rootPostId, [rootPostId], 10));
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(rootPostId, makeUserId('pruner5'), [rootPostId], 10),
+    );
 
     // Zero-value box is skipped (lockBox.value > 0 check)
     expect(removedIds(journal)).not.toContain(lockBox.id);
     expect(journal.mutations.length).toBe(0);
+  });
+
+  // ARCHITECTURE → "Prune lifecycle": destroying your own post costs you its
+  // bond. The consume is the burn — no mint, and karma supply is the sum of
+  // live boxes — so the assertions below pin the consume as well as the
+  // absence of a mint. A test that only checked "no karma appeared" would pass
+  // just as well against a settlement that never found the box.
+  it("consumes the pruning author's own lock and mints nothing — the burn", async () => {
+    const { getDb } = await importDb();
+    const utxo = await importUtxo();
+    const { settlePruneUtxo } = await importSettlePruneUtxo();
+
+    const rootPostId = 'a1'.repeat(32);
+    const pruner = makeUserId('self-pruner');
+
+    const lockBox = makePostLockBox(100n, pruner, rootPostId, 1);
+    utxo.insertBox(lockBox);
+    // Pre-existing karma: a mint would merge-consume this box and replace it.
+    // Untouched, it proves no mint ran rather than merely that none was visible.
+    const oldKarma = makeKarmaBox(40n, pruner, 1);
+    utxo.insertBox(oldKarma);
+
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(rootPostId, pruner, [rootPostId], 10),
+    );
+
+    // The lock is gone — consumed, journalled, and spent in the table.
+    expect(removedIds(journal)).toContain(lockBox.id);
+    const db = getDb();
+    expect(boxIsSpent(db, lockBox.id!)).toBe(true);
+
+    // Nothing was created, and the standing karma box was never merged.
+    expect(insertedIds(journal)).toEqual([]);
+    expect(removedIds(journal)).not.toContain(oldKarma.id);
+    expect(boxIsSpent(db, oldKarma.id!)).toBe(false);
+    expect(karmaRows(db).map((r) => r.value)).toEqual([40]);
+  });
+
+  // The case that distinguishes this rule from a plain "stop refunding": one
+  // subtree holding both the pruner's own bond and someone else's.
+  it("a mixed subtree burns the pruner's lock and returns only the other author's", async () => {
+    const { getDb } = await importDb();
+    const utxo = await importUtxo();
+    const { settlePruneUtxo } = await importSettlePruneUtxo();
+
+    const rootId = 'a2'.repeat(32);
+    const replyId = 'b2'.repeat(32);
+    const pruner = makeUserId('mixed-pruner');
+    const replier = makeUserId('mixed-replier');
+
+    const ownLock = makePostLockBox(100n, pruner, rootId, 1);
+    const otherLock = makePostLockBox(50n, replier, replyId, 1);
+    utxo.insertBox(ownLock);
+    utxo.insertBox(otherLock);
+
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(rootId, pruner, [rootId, replyId], 10),
+    );
+
+    // Both locks are consumed — the burn and the return differ only in the mint.
+    expect(removedIds(journal)).toEqual(
+      expect.arrayContaining([ownLock.id, otherLock.id]),
+    );
+    const db = getDb();
+    expect(boxIsSpent(db, ownLock.id!)).toBe(true);
+    expect(boxIsSpent(db, otherLock.id!)).toBe(true);
+
+    // Exactly one karma box exists, holding the reply author's 50 and owned by
+    // them. The pruner's 100 left supply.
+    expect(insertedIds(journal).length).toBe(1);
+    const row = db
+      .prepare("SELECT value, owner FROM utxo_boxes WHERE id = ? AND box_type = 'karma'")
+      .get(insertedIds(journal)[0]!) as { value: number; owner: Buffer };
+    expect(row.value).toBe(50);
+    expect(Buffer.from(row.owner).equals(Buffer.from(replier))).toBe(true);
+    expect(karmaRows(db).map((r) => r.value)).toEqual([50]);
+  });
+
+  // "…on the root and on their own replies downstream" — the burn is keyed on
+  // each lock's owner, not on the subtree's root.
+  it("burns the pruning author's own reply lock, not just the root's", async () => {
+    const { getDb } = await importDb();
+    const utxo = await importUtxo();
+    const { settlePruneUtxo } = await importSettlePruneUtxo();
+
+    const rootId = 'a3'.repeat(32);
+    const ownReplyId = 'b3'.repeat(32);
+    const pruner = makeUserId('deep-pruner');
+
+    const rootLock = makePostLockBox(70n, pruner, rootId, 1);
+    const replyLock = makePostLockBox(30n, pruner, ownReplyId, 1);
+    utxo.insertBox(rootLock);
+    utxo.insertBox(replyLock);
+
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(rootId, pruner, [rootId, ownReplyId], 10),
+    );
+
+    expect(removedIds(journal)).toEqual(
+      expect.arrayContaining([rootLock.id, replyLock.id]),
+    );
+    const db = getDb();
+    expect(boxIsSpent(db, rootLock.id!)).toBe(true);
+    expect(boxIsSpent(db, replyLock.id!)).toBe(true);
+    expect(insertedIds(journal)).toEqual([]);
+    expect(karmaRows(db)).toEqual([]);
   });
 
   // N3b: the subtree's like-records die with the prune, and every doomed row
@@ -456,7 +580,7 @@ describe('settlePruneUtxo', () => {
     likes.insertLikeRecord(replyId, likerA, 7);
 
     const journal = await journaled(10, () =>
-      settlePruneUtxo(rootId, [rootId, replyId], 10),
+      settlePruneUtxo(rootId, makeUserId('pruner-likes'), [rootId, replyId], 10),
     );
 
     // Records died with the prune
@@ -484,7 +608,9 @@ describe('settlePruneUtxo', () => {
     likes.insertLikeRecord(prunedId, liker, 2);
     likes.insertLikeRecord(otherId, liker, 4);
 
-    const journal = await journaled(10, () => settlePruneUtxo(prunedId, [prunedId], 10));
+    const journal = await journaled(10, () =>
+      settlePruneUtxo(prunedId, makeUserId('pruner-likes2'), [prunedId], 10),
+    );
 
     // The unrelated post's record survives, unjournalled; the subtree row is
     // the exact deletion set.
@@ -534,11 +660,13 @@ describe('settlePruneUtxo — refund provenance', () => {
     vi.resetModules();
   });
 
-  // The load-bearing case for `rootPostHash`. `block-apply.ts` calls settlement
-  // once per prune entry, so two entries in one block are two calls at one
-  // height. An author refunded by both would, on a subject of just the owner,
-  // derive the same mintTxId twice at index 0 — tripping
-  // UNIQUE(tx_id, output_index) and rejecting a legitimate block.
+  // The load-bearing case for `rootPostHash`, and it survives the narrower
+  // refund set. `block-apply.ts` calls settlement once per prune entry, so two
+  // entries in one block are two calls at one height — and one user can have
+  // replies in two subtrees that two *different* people prune in that block.
+  // Refunded by both, on a subject of just the owner they would derive the same
+  // mintTxId twice at index 0 — tripping UNIQUE(tx_id, output_index) and
+  // rejecting a legitimate block.
   it('two prune entries at one height refunding the same author both apply', async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
@@ -546,6 +674,8 @@ describe('settlePruneUtxo — refund provenance', () => {
 
     const rootA = 'a'.repeat(64);
     const rootB = 'b'.repeat(64);
+    const prunerA = makeUserId('pruner-of-subtree-A');
+    const prunerB = makeUserId('pruner-of-subtree-B');
     const authorId = makeUserId('author-in-both-subtrees');
 
     utxo.insertBox(makePostLockBox(100n, authorId, rootA, 1));
@@ -553,8 +683,8 @@ describe('settlePruneUtxo — refund provenance', () => {
 
     // One journal, one height, two entries — exactly the loop in block-apply.
     const journal = await journaled(10, () => {
-      settlePruneUtxo(rootA, [rootA], 10);
-      settlePruneUtxo(rootB, [rootB], 10);
+      settlePruneUtxo(rootA, prunerA, [rootA], 10);
+      settlePruneUtxo(rootB, prunerB, [rootB], 10);
     });
 
     // Second mint merges the first, so the survivor holds 100 + 50.
@@ -585,13 +715,14 @@ describe('settlePruneUtxo — refund provenance', () => {
     const { settlePruneUtxo } = await importSettlePruneUtxo();
 
     const root = 'c'.repeat(64);
+    const pruner = makeUserId('pruner-liked');
     const authorId = makeUserId('author-liked');
     const likerId = makeUserId('liker-liked');
 
     utxo.insertBox(makePostLockBox(100n, authorId, root, 1));
     likes.insertLikeRecord(root, likerId, 3);
 
-    await journaled(10, () => settlePruneUtxo(root, [root], 10));
+    await journaled(10, () => settlePruneUtxo(root, pruner, [root], 10));
 
     // Exactly one mint: the author's — an exact-set assertion, so any stray
     // second mint fails it regardless of what it would be derived from.
@@ -617,7 +748,7 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     vi.resetModules();
   });
 
-  it('full lifecycle: create posts, prune, verify author refund', async () => {
+  it("full lifecycle: create posts, prune, verify the reply author's refund", async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
     const topology = await importTopology();
@@ -626,11 +757,13 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     const rootId = 'a'.repeat(64);
     const replyId = 'b'.repeat(64);
     const authorId = makeUserId('author1');
+    const replier = makeUserId('replier1');
 
-    // 1. Seed block_topology: root has no parents, reply has root as parent
+    // 1. Seed block_topology: root has no parents, reply has root as parent —
+    //    and the reply is somebody else's, the shape the prune rule turns on
     const authorHex = Buffer.from(authorId).toString('hex');
     topology.insertBlockTopology(rootId, [], authorHex, 1);
-    topology.insertBlockTopology(replyId, [rootId], authorHex, 2);
+    topology.insertBlockTopology(replyId, [rootId], Buffer.from(replier).toString('hex'), 2);
 
     // 2. Verify subtree includes both posts
     const subtree = topology.getSubtreeTopology(rootId);
@@ -638,20 +771,21 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
 
     // 3. Seed UTXO: PostLockBox for each post
     const lb1 = makePostLockBox(50n, authorId, rootId, 1);
-    const lb2 = makePostLockBox(50n, authorId, replyId, 1);
+    const lb2 = makePostLockBox(50n, replier, replyId, 1);
     utxo.insertBox(lb1);
     utxo.insertBox(lb2);
 
-    // 4. Apply settlement
+    // 4. Apply settlement, pruned by the root's author
     const journal = await journaled(10, () =>
-      settlePruneUtxo(rootId, [rootId, replyId], 10),
+      settlePruneUtxo(rootId, authorId, [rootId, replyId], 10),
     );
 
     // 5. Verify PostLockBoxes consumed
     expect(removedIds(journal)).toContain(lb1.id);
     expect(removedIds(journal)).toContain(lb2.id);
 
-    // 6. Verify karma refunded: author gets 50+50=100
+    // 6. Verify karma: the reply author gets their 50 back, the pruning author
+    //    gets nothing — their own 50 burned with the consume
     const db = getDb();
     const createdBoxes = insertedIds(journal).map(
       (boxId) =>
@@ -664,11 +798,14 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
         } | undefined,
     ).filter(Boolean);
 
-    const authorBox = createdBoxes.find(
-      (b) => b && Buffer.from(b.owner).equals(Buffer.from(authorId)),
+    const replierBox = createdBoxes.find(
+      (b) => b && Buffer.from(b.owner).equals(Buffer.from(replier)),
     );
-    expect(authorBox).toBeDefined();
-    expect(authorBox!.value).toBe(100);
+    expect(replierBox).toBeDefined();
+    expect(replierBox!.value).toBe(50);
+    expect(
+      createdBoxes.find((b) => b && Buffer.from(b.owner).equals(Buffer.from(authorId))),
+    ).toBeUndefined();
 
     // 7. Verify all original boxes are marked spent
     expect(boxIsSpent(db, lb1.id!)).toBe(true);

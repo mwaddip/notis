@@ -634,9 +634,6 @@ Stump {
 No validator attestation is needed — the author's signature authorizes the
 prune, and the settlement is deterministically computable from UTXO state.
 
-> ⚠ **AHEAD OF CODE.** `settlePruneUtxo` refunds every lock in the subtree,
-> the pruning author's own included.
-
 **Destroying your own post costs you its bond; destroying someone else's reply
 returns theirs.** `PostLockBox.owner` against the entry's `authorId` decides
 which, from committed state alone — no `block_topology` read. Refunding the
