@@ -327,21 +327,42 @@ export function createOrderingBlock(): OrderingBlock | null {
     coinbaseOutputs,
   };
 
-  // 5. Spend what the mandatory sections left, in mempool order, drawing from
-  //    the pool a page at a time. The first transaction that does not fit ends
-  //    the fill: reaching past it for a smaller one behind it is a priority
-  //    rule, and the pool is FIFO with no priority (MEMPOOL_INTERFACE → FIFO
-  //    ordering).
+  // 5. Spend what the mandatory sections left. Karma-side entries are offered
+  //    the budget first, then credit entries in descending fee rate
+  //    (MEMPOOL_INTERFACE → Ordering). Within each class the first transaction
+  //    that does not fit ends that class's fill: reaching past it for a smaller
+  //    one behind it is a priority rule the pool's order already settled.
+  //
+  //    ⚠ **This order is a node's own assembly preference and no validator
+  //    enforces it.** It is the reference implementation of the coinbase's
+  //    inclusion bonus, not a rule: a miner who rewrites this loop to fill
+  //    credits first forfeits the quarter of the block's income that scales
+  //    with karma-side actors, which is what makes including them rational
+  //    rather than altruistic. A *consensus* rule removing that revenue would
+  //    make inclusion free; an incentive paying for it makes inclusion
+  //    profitable, and only the second survives a miner who re-implements this.
+  //
+  //    ⛔ **The pool's stored `tx_fee` orders this loop and never feeds the
+  //    coinbase.** `predictIncome` below resolves every input itself, because
+  //    the applier computes the block's fees from its own resolution of the
+  //    body — a stored fee that has gone stale, or the zero an unpriceable
+  //    entry carries, would make this node emit a coinbase its own applier
+  //    rejects. Ordering by a stale number costs nothing; summing one costs the
+  //    block.
   let spent = utxoTxTreeByteLength(utxoTxTree);
-  for (const entry of iteratePendingEntries()) {
-    if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
-    const cost = entryByteCost(entry.utxoTxCbor);
-    if (spent + cost > budget) break;
-    spent += cost;
-    utxoTxIds.push(computeTxId(decodeTx(entry.utxoTxCbor)));
-    utxoTxCbors.push(entry.utxoTxCbor);
-    includedRowids.push(entry.rowid);
-  }
+  const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
+    for (const entry of iteratePendingEntries({ klass })) {
+      if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
+      const cost = entryByteCost(entry.utxoTxCbor);
+      if (spent + cost > budget) return;
+      spent += cost;
+      utxoTxIds.push(computeTxId(decodeTx(entry.utxoTxCbor)));
+      utxoTxCbors.push(entry.utxoTxCbor);
+      includedRowids.push(entry.rowid);
+    }
+  };
+  offerBudgetTo('karma');
+  offerBudgetTo('credit');
 
   // 6. The real coinbase, from the transactions the fill actually selected.
   //    Replacing the worst-case seed can only shrink the body, so the trim

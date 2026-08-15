@@ -214,6 +214,12 @@ function classCaps(): { credit: number; karma: number } {
  * — all of which bid nothing and belong to the class that does not order by
  * price. Filtering on `entry_type` as well would leave prune entries counted by
  * neither class and therefore bounded by nothing.
+ *
+ * ⚠ **The eviction query below filters on `entry_type` and this one must not.**
+ * They are asking different questions and the difference is deliberate: this
+ * one bounds the table, so it has to reach every row; that one picks something
+ * to delete, so it must reach only transactions. Harmonising them breaks
+ * whichever one is changed to match the other.
  */
 function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number {
   const test = poolClass === 'credit' ? 'IS NOT NULL' : 'IS NULL';
@@ -239,6 +245,12 @@ function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number 
  * producer and verifier must agree is a chain split.
  *
  * `rowid` breaks a tie, so equal bids are displaced in arrival order.
+ *
+ * ⚠ **`entry_type` is filtered here and deliberately not in `classCount`.** This
+ * query names a row to delete, so it must reach only transactions — a prune
+ * entry is a mandatory block section and is never an eviction candidate. The
+ * count above bounds the table and must reach every row. Same column, two
+ * questions.
  */
 function cheapestCreditEntry(
   db: ReturnType<typeof getDb>,
@@ -654,15 +666,92 @@ export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
  */
 const PENDING_PAGE_SIZE = 256;
 
+const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_cbor, prune_entry_cbor,
+                       expires_at_height, created_at`;
+
 /**
- * Every pending entry, in FIFO order, drawn a page at a time.
+ * The karma-side class in FIFO order, paged by the keyset cursor above.
+ *
+ * Nothing here bids, so arrival is the only basis for prioritisation there is
+ * (MEMPOOL_INTERFACE → Ordering). Prune entries are in this class and are
+ * yielded with it; the block creator draws them through `drainMempoolPrunes`
+ * as a mandatory section and skips them here.
+ */
+function* iterateKarmaFifo(): Generator<PoolEntry> {
+  const db = getDb();
+  let afterRowid = 0;
+  for (;;) {
+    const rows = db.prepare(
+      `SELECT ${ENTRY_COLUMNS} FROM mempool
+        WHERE tx_fee IS NULL AND rowid > ?
+        ORDER BY rowid ASC
+        LIMIT ?`,
+    ).all(afterRowid, PENDING_PAGE_SIZE) as MempoolRow[];
+    if (rows.length === 0) return;
+    for (const row of rows) yield rowToEntry(row);
+    if (rows.length < PENDING_PAGE_SIZE) return;
+    afterRowid = rows[rows.length - 1]!.rowid;
+  }
+}
+
+/**
+ * The credit class in descending fee rate.
+ *
+ * ⛔ **The `rowid` keyset the FIFO iterator uses cannot page this**, because
+ * `rowid` is not the ordering key here: a page boundary in rate order has no
+ * expression in the table's own b-tree. So the order is settled first over ids
+ * alone — no blob leaves the database for it — and bodies are then fetched a
+ * page at a time and re-sequenced. Ordering the whole class costs a few tens of
+ * kilobytes rather than the pool's full weight, and the memory bound the paging
+ * exists for is kept.
+ *
+ * The same `REAL` division as the eviction query, safe for the same reason and
+ * unsafe to copy for the same one: this is a node's own assembly preference and
+ * no validator recomputes it.
+ */
+function* iterateCreditByRate(): Generator<PoolEntry> {
+  const db = getDb();
+  const ordered = db.prepare(
+    `SELECT rowid FROM mempool
+      WHERE entry_type = 'utxo_tx' AND tx_fee IS NOT NULL AND tx_bytes > 0
+      ORDER BY CAST(tx_fee AS REAL) / tx_bytes DESC, rowid ASC`,
+  ).all() as Array<{ rowid: number }>;
+
+  for (let i = 0; i < ordered.length; i += PENDING_PAGE_SIZE) {
+    const page = ordered.slice(i, i + PENDING_PAGE_SIZE).map((r) => r.rowid);
+    const rows = db.prepare(
+      `SELECT ${ENTRY_COLUMNS} FROM mempool
+        WHERE rowid IN (${page.map(() => '?').join(',')})`,
+    ).all(...page) as MempoolRow[];
+    // SQL answers in table order; the rate order is this loop's to restore. A
+    // row missing from the answer was deleted between the two queries, which is
+    // a skip rather than a fault.
+    const byRowid = new Map(rows.map((row) => [row.rowid, row]));
+    for (const rowid of page) {
+      const row = byRowid.get(rowid);
+      if (row) yield rowToEntry(row);
+    }
+  }
+}
+
+/**
+ * Pending entries, drawn a page at a time.
  *
  * A consumer takes what it needs and stops; nothing beyond the last page it
  * pulled is ever read. Each page is a completed query rather than one held-open
  * cursor, so a consumer may write to the pool between entries — which a cursor
  * would refuse for as long as it stayed open.
+ *
+ * With no class named, every entry in FIFO order — the whole-pool view, for
+ * consumers that are not assembling a block. Named, the class's own ordering
+ * (MEMPOOL_INTERFACE → Ordering).
  */
-export function* iteratePendingEntries(): Generator<PoolEntry> {
+export function* iteratePendingEntries(
+  opts: { klass?: PoolClass } = {},
+): Generator<PoolEntry> {
+  if (opts.klass === 'karma') return yield* iterateKarmaFifo();
+  if (opts.klass === 'credit') return yield* iterateCreditByRate();
+
   let afterRowid = 0;
   for (;;) {
     const page = getPendingEntries(PENDING_PAGE_SIZE, afterRowid);
