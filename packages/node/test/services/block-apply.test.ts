@@ -8,6 +8,7 @@ import {
 } from 'vitest';
 import {
   computePostId,
+  computeTxId,
   encodePost,
   encodeOrderingBlock,
   decodeOrderingBlock,
@@ -24,6 +25,7 @@ import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   Post,
   KarmaBox,
+  CreditBox,
   VouchBox,
   PostLockBox,
   BlockHeader,
@@ -45,6 +47,8 @@ import {
   changeBoxOf,
   hex,
   makeApplicableBlock,
+  makeCreditBox,
+  makeCreditTx,
   makeKarmaBox,
   makeLikeTx,
   makePost,
@@ -556,6 +560,202 @@ describe('block-apply journal recording', () => {
     const journal = await importJournalStore();
     const saved = journal.getBlockJournal(1);
     expect(saved).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // 9b. The coinbase carries the block's income (MINING_INTERFACE → Coinbase
+  // Application): `computeBlockReward(height) + fees`, where `fees` is the
+  // deficit the block's credit transactions left.
+  //
+  // The sum is taken inside the mutation phase's embedded-transaction loop,
+  // which is where an input resolves in dependency order — the chained case
+  // below is what makes that placement necessary rather than tidy.
+  // -----------------------------------------------------------------------
+
+  describe('the coinbase equals emission plus fees', () => {
+    /** The miner-only coinbase for a block whose transactions left `fees`. */
+    function incomeSplit(miner: TestIdentity, reward: bigint, fees: bigint) {
+      return [{ owner: miner.userId, value: reward + fees, isTreasury: false }];
+    }
+
+    it('accepts a coinbase claiming the fees of the block it carries', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const utxo = await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+
+      const sender = makeTestIdentity();
+      const miner = makeTestIdentity();
+      const boxA = makeCreditBox(1000n, sender.userId, 0, 1);
+      const boxB = makeCreditBox(500n, sender.userId, 0, 2);
+      utxo.insertBox(boxA);
+      utxo.insertBox(boxB);
+
+      const reward = computeBlockReward(1);
+      const block = await makeApplicableBlock({
+        miner,
+        utxoTxs: [makeCreditTx(sender, [boxA], 100n), makeCreditTx(sender, [boxB], 50n)],
+        coinbaseSplit: incomeSplit(miner, reward, 150n),
+      });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(true);
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(reward + 150n);
+    });
+
+    it('rejects a coinbase claiming more than emission plus fees', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const utxo = await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+
+      const sender = makeTestIdentity();
+      const miner = makeTestIdentity();
+      const box = makeCreditBox(1000n, sender.userId, 0, 1);
+      utxo.insertBox(box);
+
+      const block = await makeApplicableBlock({
+        miner,
+        utxoTxs: [makeCreditTx(sender, [box], 100n)],
+        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 101n),
+      });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(false);
+      expect(utxo.getCreditBoxes(miner.userId)).toHaveLength(0);
+    });
+
+    it('rejects a coinbase that leaves the fees unclaimed', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const utxo = await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+
+      const sender = makeTestIdentity();
+      const miner = makeTestIdentity();
+      const box = makeCreditBox(1000n, sender.userId, 0, 1);
+      utxo.insertBox(box);
+
+      // Under-claiming is a rejection, not a donation: otherwise one block has
+      // more than one valid encoding.
+      const block = await makeApplicableBlock({
+        miner,
+        utxoTxs: [makeCreditTx(sender, [box], 100n)],
+        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 0n),
+      });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    });
+
+    // The placement test. `B` spends a box `A` creates in the same block, so
+    // its input does not exist in the confirmed set when the block arrives —
+    // only the embedded loop's dependency ordering resolves it. A fee sum taken
+    // before that loop counts A's deficit and misses B's, and this block, which
+    // is valid, would be refused for over-claiming.
+    it('claims the fees of a transaction spending a box the same block creates', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const utxo = await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+
+      const sender = makeTestIdentity();
+      const miner = makeTestIdentity();
+      const boxA = makeCreditBox(1000n, sender.userId, 0, 1);
+      utxo.insertBox(boxA);
+
+      // A: 1000 → 900, fee 100. B spends A's only output: 900 → 850, fee 50.
+      const txA = makeCreditTx(sender, [boxA], 100n);
+      const aOutput = materializeOutput(
+        txA.outputs[0] as never,
+        computeTxId(txA),
+        0,
+      ) as CreditBox;
+      const txB = makeCreditTx(sender, [aOutput], 50n);
+
+      const block = await makeApplicableBlock({
+        miner,
+        utxoTxs: [txA, txB],
+        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 150n),
+      });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(true);
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(computeBlockReward(1) + 150n);
+      // B's output survives, so the chain really applied rather than the block
+      // passing on A alone.
+      expect(utxo.getCreditBoxes(sender.userId)[0]!.value).toBe(850n);
+    });
+
+    // The attribution guard. A karma-side deficit is not a fee, and an unvouch
+    // is the shape that catches a classifier keyed on outputs alone: it has NO
+    // outputs, so `outputs.every(isCredit)` is vacuously true and the whole
+    // staked value would be counted as a fee.
+    it('does not count a zero-output karma-side spend as a fee', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const utxo = await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+
+      const voucher = makeTestIdentity();
+      const target = makeTestIdentity();
+      const miner = makeTestIdentity();
+      const vouchBox = seedProvenance(
+        {
+          boxType: 'vouch' as const,
+          value: VOUCH_KARMA_AMOUNT,
+          voucherId: voucher.userId,
+          targetId: target.userId,
+          guard: 'owner_signature' as const,
+        },
+        1,
+      );
+      utxo.insertBox(vouchBox);
+
+      const unvouch: UtxoTransaction = {
+        inputs: [vouchBox.id!],
+        outputs: [],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(unvouch, voucher.privateKey, hex(voucher.userId));
+
+      // The coinbase claims the emission and nothing else — the staked karma is
+      // escrowed, not a fee, and it is not on the credit ledger at all.
+      const block = await makeApplicableBlock({
+        miner,
+        utxoTxs: [unvouch],
+        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 0n),
+      });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(true);
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(computeBlockReward(1));
+    });
+
+    // One block, one encoding. Without this, `[]` and `[{value: 0}]` are both
+    // valid wherever the total is right, with different `utxoTxRoot` and
+    // different block hashes. The total here IS right, so the zero-value clause
+    // is the only gate that can refuse it.
+    it('rejects a zero-value coinbase output beside a correct total', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+
+      const miner = makeTestIdentity();
+      const block = await makeApplicableBlock({
+        miner,
+        coinbaseSplit: [
+          { owner: miner.userId, value: computeBlockReward(1), isTreasury: false },
+          { owner: makeTestIdentity().userId, value: 0n, isTreasury: true },
+        ],
+      });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    });
   });
 
   // -----------------------------------------------------------------------

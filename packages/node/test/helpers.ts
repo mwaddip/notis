@@ -29,6 +29,7 @@ import type {
   InviteBox,
   Post,
   KarmaBox,
+  CreditBox,
   BlockHeader,
   OrderingBlock,
   PruneEntry,
@@ -412,6 +413,56 @@ export function makeKarmaBox(
   const box: KarmaBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
   box.id = computeBoxId(box);
   return box;
+}
+
+export function makeCreditBox(
+  value: bigint,
+  owner: Uint8Array,
+  seedHeight: number,
+  nonce = 0,
+): CreditBox {
+  const candidate = {
+    boxType: 'credit' as const,
+    value,
+    owner,
+    guard: 'owner_signature' as const,
+  };
+  const box: CreditBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
+  box.id = computeBoxId(box);
+  return box;
+}
+
+/**
+ * A signed credit transfer that leaves `fee` unspent — the deficit the block
+ * carrying it claims in its coinbase (MINING_INTERFACE → Coinbase Application).
+ *
+ * The change goes back to the spender, so the only value that leaves the
+ * transaction's own arithmetic is the fee. `inputs` are boxes, not ids, because
+ * the sum has to be taken over what they actually hold: a fee stated against a
+ * mis-stated input total is a fixture that tests the wrong number.
+ */
+export function makeCreditTx(
+  spender: TestIdentity,
+  inputs: CreditBox[],
+  fee: bigint,
+  recipient?: Uint8Array,
+): UtxoTransaction {
+  const total = inputs.reduce((sum, b) => sum + b.value, 0n);
+  const tx: UtxoTransaction = {
+    inputs: inputs.map((b) => b.id!),
+    outputs: [
+      {
+        boxType: 'credit',
+        value: total - fee,
+        owner: recipient ?? spender.userId,
+        guard: 'owner_signature',
+      } as CreditBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, spender.privateKey, hex(spender.userId));
+  return tx;
 }
 
 /**

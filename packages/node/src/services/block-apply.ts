@@ -406,26 +406,17 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     return false;
   }
 
-  // 5. Verify coinbase reward matches emission schedule
-  const expectedReward = computeBlockReward(block.header.height);
-  const totalCoinbase = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
-  if (totalCoinbase !== expectedReward) {
-    console.warn(
-      `Rejected block height=${block.header.height}: coinbase value ${totalCoinbase} != expected ${expectedReward}`,
-    );
-    abortBlockJournal();
-    return false;
-  }
-
-  // 5b. Verify coinbase maturity locks
+  // 5. Verify coinbase maturity locks
   //
-  // The value check above says nothing about *when* the credits become
-  // spendable, and each output's `lockedUntilBlock` travels into `mintCredits`
-  // below exactly as the producer wrote it — so an unchecked `0` mints a
-  // coinbase spendable in the block that created it, bypassing the 720-block
-  // maturity delay entirely. The lock is a pure function of height (MINING
-  // contract, invariant 3); the gossip validator's `>= height` bound is both
-  // weaker than that and absent from the sync/reorg path.
+  // The coinbase's *value* is checked in the mutation phase, because it equals
+  // the block's income and the fee term is not known until every embedded
+  // transaction has resolved (MINING_INTERFACE → Coinbase Application). The
+  // lock is not: it is a pure function of height, so it settles here, and it
+  // has to settle somewhere — each output's `lockedUntilBlock` travels into
+  // `mintCredits` exactly as the producer wrote it, so an unchecked `0` mints a
+  // coinbase spendable in the block that created it, bypassing the maturity
+  // delay entirely (MINING invariant 3). The gossip validator's `>= height`
+  // bound is both weaker than that and absent from the sync/reorg path.
   const expectedLock = block.header.height + config.creditMinerRewardDelay;
   for (const out of block.utxoTxTree.coinbaseOutputs) {
     if (out.lockedUntilBlock !== expectedLock) {
@@ -501,6 +492,23 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   const appliedHash = validation.blockHash(block.header);
   console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
   return true;
+}
+
+/**
+ * Whether a transaction sits on the credit ledger, and therefore whether its
+ * deficit is a fee (MINING_INTERFACE → Coinbase Application).
+ *
+ * Stateless, and sound without reading a single input: the transition table
+ * admits only `credit → credit`, so all-credit outputs imply credit inputs
+ * (NODE_INTERFACE → the credit transition rules).
+ *
+ * ⛔ **The length test is not defensive.** `[].every(…)` is `true`, and a
+ * zero-output transaction is a karma-side unvouch — the whole staked karma
+ * would be counted as a fee and minted into the coinbase.
+ */
+export function isCreditSideTx(tx: UtxoTransaction): boolean {
+  const outs = tx.outputs ?? [];
+  return outs.length > 0 && outs.every((o) => o.boxType === 'credit');
 }
 
 /**
@@ -1051,6 +1059,14 @@ function applyMutationPhase(
   const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
   const likesPerPost = new Map<string, number>(); // post id → likes this block
 
+  // The block's fee income, accumulated as each credit-side transaction is
+  // applied (MINING_INTERFACE → Coinbase Application). It is summed here rather
+  // than ahead of the loop because that is the only place an input is
+  // guaranteed to resolve: a transaction may spend a box an earlier transaction
+  // in this same block creates, and until the loop has applied that one, the
+  // confirmed set this phase reads through does not hold the output.
+  let fees = 0n;
+
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
   //
@@ -1194,6 +1210,17 @@ function applyMutationPhase(
         }
       }
 
+      // Before `applyTx` consumes them. Every input is present (tested at the
+      // top of this iteration) and `validateTx` has just passed for this
+      // transaction, so the deficit is the one the conservation gate admitted
+      // and it cannot be negative (NODE_INTERFACE → `validateTx` step 5).
+      if (isCreditSideTx(item.tx)) {
+        let inputSum = 0n;
+        for (const inputId of item.tx.inputs) inputSum += getBox(inputId)!.value;
+        const outputSum = item.tx.outputs.reduce((sum, o) => sum + o.value, 0n);
+        fees += inputSum - outputSum;
+      }
+
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
 
@@ -1264,6 +1291,40 @@ function applyMutationPhase(
     }
     queue.length = 0;
     queue.push(...remaining);
+  }
+
+  // 11a. The coinbase carries the block's income (MINING_INTERFACE → Coinbase
+  // Application): the scheduled emission plus the fees the body just yielded.
+  //
+  // It sits after the loop because `fees` is a property of what the body
+  // applied, and inside this phase because the phase is the one derivation both
+  // the applier and the creator's speculative run share — so a creator whose
+  // own coinbase does not equal its income declines to produce the block
+  // instead of mining one every peer will refuse.
+  //
+  // The mints already ran (§7). They can, because the coinbase's values are in
+  // the block and need no fee term; a rejection here unwinds them with
+  // everything else through the funnel's transaction.
+  const emission = computeBlockReward(height);
+  const income = emission + fees;
+  const totalCoinbase = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
+  if (totalCoinbase !== income) {
+    console.warn(
+      `Rejected block height=${height}: coinbase value ${totalCoinbase} != ` +
+      `income ${income} (emission ${emission} + fees ${fees})`,
+    );
+    return false;
+  }
+  // One block, one encoding. A zero-value output changes `utxoTxRoot` and the
+  // block hash while changing nothing about what is paid, so `[]` and
+  // `[{value: 0}]` would otherwise both be valid bodies for one block. Second,
+  // because the total is the substantive rule and an under- or over-claiming
+  // coinbase should be named as that rather than as an encoding fault.
+  for (const out of block.utxoTxTree.coinbaseOutputs) {
+    if (out.value === 0n) {
+      console.warn(`Rejected block height=${height}: zero-value coinbase output`);
+      return false;
+    }
   }
 
   // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like
