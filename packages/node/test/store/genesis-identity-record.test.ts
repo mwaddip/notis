@@ -84,6 +84,7 @@ describe('genesis identity record (Spec G phase D)', () => {
       lastDecayBlock: 0,
       likeCarry: 0n,
       invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
     });
   });
 
@@ -100,6 +101,7 @@ describe('genesis identity record (Spec G phase D)', () => {
       lastDecayBlock: 0,
       likeCarry: 0n,
       invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
     });
   });
 
@@ -118,6 +120,7 @@ describe('genesis identity record (Spec G phase D)', () => {
       lastDecayBlock: 0,
       likeCarry: 0n,
       invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
     });
   });
 

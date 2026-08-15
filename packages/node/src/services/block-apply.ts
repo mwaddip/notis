@@ -72,9 +72,8 @@ import {
   hasLikeRecord,
   insertLikeRecord,
   getLikeRecordCount,
-  getLikesReceivedCount,
   getBondFor,
-  getMaturedBonds,
+  getBondsInvitedAt,
   getPostLockBox,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
@@ -149,23 +148,37 @@ function returnBond(inviteePublicKey: Uint8Array, height: number): void {
  * Settle every bond whose probation deadline is this block — once, at the
  * deadline, reading only likes (ARCHITECTURE → Bond outcomes).
  *
- * Vested is `min(floor(inviteeLifetimeLikes / INVITE_BOND_VEST_PER_LIKES),
- * bond.value)`: the inviter is minted that much and the remainder **burns**.
- * Nothing else is consulted — not the invitee's balance, not whether they are
- * still active, not when the likes arrived. A single evaluation is
- * arithmetically identical to accumulated instalments because the vested amount
- * is a pure function of a lifetime count, which is what lets a `BondBox` stay
- * byte-identical from creation to here.
+ * Vested is `min(floor(IdentityRecord.lifetimeLikesReceived /
+ * INVITE_BOND_VEST_PER_LIKES), bond.value)`: the inviter is minted that much and
+ * the remainder **burns**. Nothing else is consulted — not the invitee's
+ * balance, not whether they are still active, not when the likes arrived. A
+ * single evaluation is arithmetically identical to accumulated instalments
+ * because the vested amount is a pure function of a lifetime count, which is what
+ * lets a `BondBox` stay byte-identical from creation to here.
  *
- * All arithmetic is `bigint`; a float intermediate is a consensus fork.
+ * ⚠ **The count comes from the identity record, never from a scan of
+ * `like_records`.** Those records die with the post on prune, so a count derived
+ * from them would let a third party lower it: an invitee who replies in someone
+ * else's thread earns likes that the *thread's author* could then destroy by
+ * pruning, taking karma off an inviter who did nothing. The record's counter is
+ * monotonic and no prune path touches it.
+ *
+ * The deadline is computed here rather than in the store, so `getBondsInvitedAt`
+ * stays free of network parameters. All arithmetic is `bigint`; a float
+ * intermediate is a consensus fork.
  */
 function processMaturedBonds(height: number): void {
+  // `<= 0` and not `< 0`: `0` is the never-invited sentinel, so at exactly
+  // `height == INVITE_PROBATION_BLOCKS` this lands on it and every identity that
+  // never claimed would match at once. `getBondsInvitedAt` refuses the same
+  // value in SQL — the same rule in two places, and either alone suffices.
+  const invitedAt = height - config.inviteProbationBlocks;
+  if (invitedAt <= 0) return;
+
   const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
-  for (const bond of getMaturedBonds(height)) {
+  for (const bond of getBondsInvitedAt(invitedAt)) {
     if (!bond.id) continue;
-    const likes = BigInt(
-      getLikesReceivedCount(Buffer.from(bond.inviteePublicKey).toString('hex')),
-    );
+    const likes = getIdentityRecord(bond.inviteePublicKey)?.lifetimeLikesReceived ?? 0n;
     const earned = likes / VEST_PER_LIKES;
     const vested = earned < bond.value ? earned : bond.value;
     consumeBox(bond.id, height);
@@ -1226,6 +1239,10 @@ function applyMutationPhase(
             lastDecayBlock: after?.lastDecayBlock ?? 0,
             likeCarry: after?.likeCarry ?? 0n,
             invitedAtBlock: height,
+            // Carried through, not reset. A key can receive likes before it is
+            // ever invited, and zeroing the count here would hand the inviter a
+            // bond that vests from nothing.
+            lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
           });
         }
       }
@@ -1289,7 +1306,8 @@ function applyMutationPhase(
   for (const authorHex of [...likesPerAuthor.keys()].sort()) {
     const author = new Uint8Array(Buffer.from(authorHex, 'hex'));
     const record = getIdentityRecord(author);
-    const total = (record?.likeCarry ?? 0n) + BigInt(likesPerAuthor.get(authorHex)!);
+    const received = BigInt(likesPerAuthor.get(authorHex)!);
+    const total = (record?.likeCarry ?? 0n) + received;
     const paid = (total / PAYOUT_X) * (PAYOUT_X - 1n);
     const carry = total % PAYOUT_X;
     if (paid > 0n) {
@@ -1313,6 +1331,11 @@ function applyMutationPhase(
       // Carried through: the claim path owns it, and an author being paid for
       // likes in the same block they claimed is reachable.
       invitedAtBlock: after?.invitedAtBlock ?? 0,
+      // This settlement is the counter's ONLY writer, and it only ever adds.
+      // Nothing subtracts — prune deletes the like-records behind these likes
+      // and must not reach this field, or a pruning author would be able to
+      // lower a count somebody else's bond settles against.
+      lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
     });
   }
 

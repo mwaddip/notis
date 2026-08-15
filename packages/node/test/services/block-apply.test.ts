@@ -1420,6 +1420,7 @@ describe('block-apply mint provenance', () => {
         lastDecayBlock: 4,
         likeCarry: 0n,
         invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
       });
       const afterAdjacency = utxo.getKarmaBox(idle.userId)!.value;
 
@@ -1431,6 +1432,7 @@ describe('block-apply mint provenance', () => {
         lastDecayBlock: 4,
         likeCarry: 0n,
         invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
       });
       expect(utxo.getKarmaBox(idle.userId)!.value).toBe(afterAdjacency);
 
@@ -1445,6 +1447,7 @@ describe('block-apply mint provenance', () => {
         lastDecayBlock: 7,
         likeCarry: 0n,
         invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
       });
     } finally {
       vi.doUnmock('../../src/config.js');

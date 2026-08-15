@@ -6,7 +6,6 @@ import {
   recordBoxRemove,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
-import { config } from '../config.js';
 import { BOX_GUARDS } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -482,31 +481,27 @@ export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
 }
 
 /**
- * Bonds whose probation deadline is exactly `height` — the settlement sweep's
- * feed, in the `getMaturedVouchCooldowns` shape.
+ * Every live bond whose invitee's claim applied at exactly `invitedAtBlock`.
  *
- * The deadline is `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and
- * the bond carries neither half: the height lives on the invitee's record and
- * the length on the network profile. So the join runs the other way — resolve
- * the identities claimed at `height − probation`, then take their bonds.
+ * **Takes the claim height, not the settle height**, so this function knows
+ * nothing about `INVITE_PROBATION_BLOCKS`: the caller subtracts, and no network
+ * parameter reaches the store. `processMaturedBonds` is the caller and it is the
+ * one place the deadline is computed.
  *
- * ⚠ **`0` means *never invited*, and at `height == INVITE_PROBATION_BLOCKS` the
- * subtraction lands on it** — so without a guard every uninvited identity that
- * holds a record matches at once, and every open invite's bond settles for free
- * in one block. **Two guards hold that shut and either alone suffices**: the
- * early return here and the `invited_at_block > 0` predicate in the SQL. They
- * are the same rule written twice rather than two independent checks, which is
- * why `invite-block-apply.test.ts` has to remove both before its case fails.
+ * The join runs through the identity record because a bond carries neither half
+ * of its own deadline — the height lives on the invitee's record and the length
+ * on the profile. `inviteePublicKey` is the only pairing either side needs.
  *
- * Equality rather than `<=` follows the contract's "at the deadline". The two
- * are not observably different in-protocol — a settled bond is consumed, so a
- * widened comparison would match nothing a later block could still act on — but
- * equality is what NODE_INTERFACE states and what a mirror implementation would
- * be written against.
+ * ⚠ **`0` means *never invited*, and the caller's subtraction lands on it at
+ * exactly `height == INVITE_PROBATION_BLOCKS`** — so unguarded, every uninvited
+ * identity that holds a record matches at once and every open invite's bond
+ * settles for free in one block. **Two guards hold that shut and either alone
+ * suffices**: the `invited_at_block > 0` predicate here and the caller's early
+ * return. They are the same rule written twice rather than two independent
+ * checks, which is why `invite-block-apply.test.ts` has to remove both before
+ * its case fails.
  */
-export function getMaturedBonds(height: number): BondBox[] {
-  const invitedAt = height - config.inviteProbationBlocks;
-  if (invitedAt <= 0) return [];
+export function getBondsInvitedAt(invitedAtBlock: number): BondBox[] {
   const rows = getDb()
     .prepare(
       `SELECT b.* FROM utxo_boxes b
@@ -519,7 +514,7 @@ export function getMaturedBonds(height: number): BondBox[] {
        ORDER BY b.id`,
     )
     .safeIntegers()
-    .all(invitedAt) as UtxoRow[];
+    .all(invitedAtBlock) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as BondBox);
 }
 
@@ -610,7 +605,9 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
  * settlement-owned, and zeroing it here would confiscate accrued likes on
  * every karma receipt. `invitedAtBlock` likewise — the claim path owns it, and
  * this hook fires on the claim's OWN karma output, so a bump that reset it would
- * erase the height the very same transaction is being recorded for.
+ * erase the height the very same transaction is being recorded for. And
+ * `lifetimeLikesReceived`: this hook fires on the like PAYOUT's minted box, so a
+ * reset here would destroy the very count that payout was made against.
  *
  * With no journal open — genesis, bootstrap, any non-block path — this records
  * nothing, consistent with every other choke-point hook. Consensus only reads
@@ -626,6 +623,7 @@ function bumpActivityClock(owner: Uint8Array): void {
     lastDecayBlock: existing?.lastDecayBlock ?? 0,
     likeCarry: existing?.likeCarry ?? 0n,
     invitedAtBlock: existing?.invitedAtBlock ?? 0,
+    lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
   });
 }
 

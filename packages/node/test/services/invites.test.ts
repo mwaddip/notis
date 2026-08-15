@@ -321,6 +321,7 @@ describe('invites service', () => {
       lastDecayBlock: 0,
       likeCarry: 0n,
       invitedAtBlock: 3,
+      lifetimeLikesReceived: 0n,
     });
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
@@ -336,6 +337,7 @@ describe('invites service', () => {
       lastDecayBlock: 0,
       likeCarry: 0n,
       invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
     });
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);

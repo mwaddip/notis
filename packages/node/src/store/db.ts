@@ -102,12 +102,19 @@ const MIGRATIONS = [
   // rules — the once-ever invite bar and the bond's probation deadline
   // (NODE_INTERFACE → Identity Records). Committed state, always-present in the
   // AVL value encoding for the same reason like_carry is.
+  //
+  // lifetime_likes_received: likes this identity has received, ever. Incremented
+  // by per-block like settlement and decremented by nothing — prune deletes
+  // like_records and must not reach this column, because a bond settling on a
+  // count that a THIRD PARTY can lower would let a pruning author destroy an
+  // inviter's stake.
   `CREATE TABLE IF NOT EXISTS identity_records (
     identity_id BLOB PRIMARY KEY,
     last_activity_block INTEGER NOT NULL,
     last_decay_block INTEGER NOT NULL,
     like_carry INTEGER NOT NULL DEFAULT 0,
-    invited_at_block INTEGER NOT NULL DEFAULT 0
+    invited_at_block INTEGER NOT NULL DEFAULT 0,
+    lifetime_likes_received INTEGER NOT NULL DEFAULT 0
   )`,
 
   // Like-records (NODE_INTERFACE → "Like-records"): (liker, targetPostId) pairs,

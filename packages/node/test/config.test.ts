@@ -210,7 +210,7 @@ describe('config', () => {
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
       expect(cfg.karmaStaleThresholdBlocks).toBe(500);
       expect(cfg.vouchCooldownBlocks).toBe(3);
-      expect(cfg.inviteProbationBlocks).toBe(432);
+      expect(cfg.inviteProbationBlocks).toBe(540);
       expect(cfg.creditMinerRewardDelay).toBe(10);
       expect(cfg.creditFixedRateBlocks).toBe(1000);
       expect(cfg.creditEpochBlocks).toBe(100);

@@ -40,6 +40,7 @@ const NEVER_ACTIVE: IdentityRecord = {
   lastDecayBlock: 0,
   likeCarry: 0n,
   invitedAtBlock: 0,
+  lifetimeLikesReceived: 0n,
 };
 
 /**
@@ -194,12 +195,14 @@ export function applyKarmaDecay(
     // decay that zeroed it would silently confiscate accrued likes.
     // `invitedAtBlock` the same: block application's claim path owns it, and a
     // decay that reset it would both un-bar the address and move the paired
-    // bond's settlement deadline.
+    // bond's settlement deadline. `lifetimeLikesReceived` too — it is monotonic,
+    // and a decay that reset it would forfeit a bond the invitee had earned.
     deps.putIdentityRecord(owner, {
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: currentHeight,
       likeCarry: record?.likeCarry ?? 0n,
       invitedAtBlock: record?.invitedAtBlock ?? 0,
+      lifetimeLikesReceived: record?.lifetimeLikesReceived ?? 0n,
     });
 
     journal.push({ owner, consumedBoxIds, newBoxId: boxId, burnAmount });

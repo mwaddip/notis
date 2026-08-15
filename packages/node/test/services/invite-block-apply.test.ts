@@ -31,6 +31,8 @@ import type {
 } from '@dagsocial/types';
 import {
   makeKarmaBox,
+  makeLikeTx,
+  makePost,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
@@ -77,9 +79,9 @@ async function importAvl() {
 
 describe('the invite at block application', () => {
   beforeEach(async () => {
-    // The probation length reaches the store's `getMaturedBonds` through the
-    // config singleton, so the mock has to be in place before any module in the
-    // graph is imported.
+    // The probation length reaches `processMaturedBonds` through the config
+    // singleton, so the mock has to be in place before any module in the graph
+    // is imported.
     vi.doMock('../../src/config.js', async () => {
       const actual = await vi.importActual<typeof import('../../src/config.js')>(
         '../../src/config.js',
@@ -288,44 +290,40 @@ describe('the invite at block application', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * Claim at height 1, give the invitee `likes` received likes, then mine to the
-   * deadline and return what the inviter holds.
+   * Claim, set the invitee's lifetime like count, mine to the deadline, and
+   * return what the inviter holds.
    *
-   * Likes are `like_records` against posts the invitee authored in
-   * `block_topology` — the two tables `getLikesReceivedCount` joins, and the
-   * same authorship authority prune authorization reads.
+   * The count is written on the identity record, which is where the settlement
+   * reads it and where per-block like settlement writes it. `earnLikes` below is
+   * the end-to-end case that proves those two agree; these seed it directly, for
+   * the same reason `invitedAtBlock` is seeded rather than mined for — the
+   * arithmetic under test is the vesting, not the counter's writer.
    */
-  async function claimThenSettle(likes: number, bondValue = INVITE_BOND_KARMA) {
+  async function claimThenSettle(likes: bigint, bondValue = INVITE_BOND_KARMA) {
     const seeded = await seedPair(bondValue);
     const { utxo, inviter, invitee, invite, bond } = seeded;
     const mempool = await importMempool();
     const records = await importRecords();
-    const likeStore = await importLikes();
-    const topology = await importTopology();
 
     mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
     const claimBlock = await mineOne();
     expect(claimBlock).not.toBeNull();
     const invitedAtBlock = claimBlock!.header.height;
-    expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
 
-    const inviteeHex = Buffer.from(invitee.userId).toString('hex');
-    for (let i = 0; i < likes; i++) {
-      const postId = i.toString(16).padStart(2, '0').repeat(32);
-      topology.insertBlockTopology(postId, [], inviteeHex, invitedAtBlock);
-      likeStore.insertLikeRecord(postId, new Uint8Array(32).fill(i + 1), invitedAtBlock);
-    }
+    const claimed = records.getIdentityRecord(invitee.userId)!;
+    expect(claimed.invitedAtBlock).toBe(invitedAtBlock);
+    records.putIdentityRecord(invitee.userId, { ...claimed, lifetimeLikesReceived: likes });
 
     const deadline = invitedAtBlock + PROBATION;
-    const heights: number[] = [];
-    while (heights.at(-1) !== deadline) {
+    let height = invitedAtBlock;
+    while (height !== deadline) {
       const block = await mineOne();
       expect(block).not.toBeNull();
-      heights.push(block!.header.height);
+      height = block!.header.height;
       // Before the deadline the bond is untouched — the sweep is keyed on one
       // height, not on "past the deadline".
-      if (block!.header.height < deadline) {
-        expect(utxo.getBox(bond.id!), `height ${block!.header.height}`).not.toBeNull();
+      if (height < deadline) {
+        expect(utxo.getBox(bond.id!), `height ${height}`).not.toBeNull();
       }
     }
 
@@ -334,9 +332,9 @@ describe('the invite at block application', () => {
 
   it('the sweep vests one karma per five likes and burns the rest', async () => {
     // 40 likes → floor(40 / 5) = 8 vested out of a 25-karma bond; 17 burn.
-    const { utxo, bond, inviterKarma } = await claimThenSettle(40);
+    const { utxo, bond, inviterKarma } = await claimThenSettle(40n);
 
-    const expected = BigInt(Math.floor(40 / INVITE_BOND_VEST_PER_LIKES));
+    const expected = 40n / BigInt(INVITE_BOND_VEST_PER_LIKES);
     expect(expected).toBe(8n);
     expect(inviterKarma).toBe(expected);
     // The bond is consumed whole; the unvested part is destroyed rather than
@@ -346,7 +344,7 @@ describe('the invite at block application', () => {
   });
 
   it('an invitee nobody liked forfeits the bond entirely', async () => {
-    const { utxo, bond, inviter, inviterKarma } = await claimThenSettle(0);
+    const { utxo, bond, inviter, inviterKarma } = await claimThenSettle(0n);
 
     expect(inviterKarma).toBe(0n);
     expect(utxo.getBox(bond.id!)).toBeNull();
@@ -358,7 +356,7 @@ describe('the invite at block application', () => {
   it('vesting is capped at the bond — extra likes mint nothing more', async () => {
     // 5 × 25 = 125 likes fully vests a 25-karma bond; 200 would vest 40 without
     // the `min`, minting 15 karma out of nothing.
-    const { utxo, bond, inviterKarma } = await claimThenSettle(200);
+    const { utxo, bond, inviterKarma } = await claimThenSettle(200n);
 
     expect(inviterKarma).toBe(bond.value);
     expect(inviterKarma).toBe(INVITE_BOND_KARMA);
@@ -366,7 +364,7 @@ describe('the invite at block application', () => {
   });
 
   it('the sweep fires once, at the deadline, and not on later blocks', async () => {
-    const { utxo, inviter, inviterKarma } = await claimThenSettle(40);
+    const { utxo, inviter, inviterKarma } = await claimThenSettle(40n);
 
     // Two more blocks past the deadline: the bond is gone, so there is nothing
     // for a re-firing sweep to consume — and the inviter's balance must not
@@ -383,9 +381,10 @@ describe('the invite at block application', () => {
     // identity that never claimed matches at once. Every open invite's bond
     // would settle for free, in one block, on a schedule nobody chose.
     //
-    // ⚠ `getMaturedBonds` holds this shut TWICE — an early return and a SQL
-    // predicate, the same rule in two languages — so this case only fails when
-    // both are removed. Measured: weakening either alone leaves it green.
+    // ⚠ The rule is held shut TWICE — `processMaturedBonds`' early return and
+    // `getBondsInvitedAt`'s SQL predicate, the same rule in two languages — so
+    // this case only fails when both are removed. Measured: weakening either
+    // alone leaves it green.
     const { utxo, inviter, invitee, bond } = await seedPair();
     const records = await importRecords();
 
@@ -399,6 +398,7 @@ describe('the invite at block application', () => {
       lastDecayBlock: 0,
       likeCarry: 0n,
       invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
     });
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(0);
 
@@ -416,38 +416,114 @@ describe('the invite at block application', () => {
     expect(utxo.getBondFor(invitee.userId)!.id).toBe(bond.id);
   });
 
-  it('likes on someone else s posts do not vest this bond', async () => {
-    // `getLikesReceivedCount` joins through `block_topology.author`, so the
-    // count is the invitee's own received likes and not every like in the
-    // chain. Without the join the bond would vest on the network's activity.
-    const seeded = await seedPair();
-    const { utxo, inviter, invitee, invite, bond } = seeded;
+  // -------------------------------------------------------------------------
+  // The counter, and what may not lower it
+  // -------------------------------------------------------------------------
+
+  /**
+   * Author a post as `author`, then have `liker` like it — through the real
+   * pipeline, so per-block like settlement is what moves the counter.
+   *
+   * The like targets a post the same block confirms: apply rejects a like on an
+   * unconfirmed target, and topology lands before the transaction loop, so
+   * confirm-and-like-in-one-block is the valid shape.
+   */
+  async function earnOneLike(author: TestIdentity, liker: TestIdentity, nonce: number) {
+    const posts = await import('../../src/store/posts.js');
     const mempool = await importMempool();
-    const likeStore = await importLikes();
-    const topology = await importTopology();
+    const utxo = await importUtxo();
+    const types = await import('@dagsocial/types');
+
+    const post = makePost(author.userId, `post ${nonce}`);
+    const postId = types.computePostId(post);
+    posts.insertPost(post, types.encodePost(post));
+    mempool.insertSubBlock(postId, 1000);
+
+    const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
+    utxo.insertBox(karma);
+    mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), null, 1000);
+
+    const block = await mineOne();
+    expect(block).not.toBeNull();
+    return postId;
+  }
+
+  it('per-block like settlement is what moves the counter, and settlement reads it', async () => {
+    // End to end: no fixture writes the count. If the settlement's reader and
+    // the settlement's writer disagreed about the field, nothing else in this
+    // suite would see it.
+    //
+    // Likes are earned BEFORE the claim, which is both reachable — a key can
+    // receive likes long before anyone invites it — and the sharper order: the
+    // claim path rewrites this record, so a claim that zeroed the counter
+    // instead of carrying it through would forfeit a bond the invitee had
+    // already earned, and this is the only case that would see it.
+    const { utxo, inviter, invitee, invite, bond } = await seedPair();
+    const mempool = await importMempool();
     const records = await importRecords();
+
+    // Five real likes on the invitee's own posts → floor(5 / 5) = 1 karma.
+    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
+      await earnOneLike(invitee, makeTestIdentity(), i);
+    }
+    const earned = BigInt(INVITE_BOND_VEST_PER_LIKES);
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(earned);
 
     mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
     const claimBlock = await mineOne();
     const invitedAtBlock = claimBlock!.header.height;
+    // Carried through the claim, not reset.
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(earned);
 
-    // 40 likes, every one of them on a stranger's post.
-    const strangerHex = Buffer.from(makeTestIdentity().userId).toString('hex');
-    for (let i = 0; i < 40; i++) {
-      const postId = i.toString(16).padStart(2, '0').repeat(32);
-      topology.insertBlockTopology(postId, [], strangerHex, invitedAtBlock);
-      likeStore.insertLikeRecord(postId, new Uint8Array(32).fill(i + 1), invitedAtBlock);
-    }
-
-    const deadline = records.getIdentityRecord(invitee.userId)!.invitedAtBlock + PROBATION;
     let height = invitedAtBlock;
-    while (height !== deadline) {
+    while (height < invitedAtBlock + PROBATION) {
       const block = await mineOne();
       expect(block).not.toBeNull();
       height = block!.header.height;
     }
 
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(0n);
     expect(utxo.getBox(bond.id!)).toBeNull();
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(1n);
   });
+
+  it('destroying the like-records does not lower the count a bond settles on', async () => {
+    // ⚠ The defect the counter exists to close. Deleting every row of
+    // `like_records` is exactly what prune settlement does to that table, and it
+    // is a THIRD PARTY's action: the thread's author prunes, and under a count
+    // derived from those rows the inviter — who did nothing — loses karma.
+    // Design track §1.4.1 forbids destroying someone else's stake.
+    const { utxo, inviter, invitee, invite, bond } = await seedPair();
+    const mempool = await importMempool();
+    const records = await importRecords();
+    const db = await importDb();
+
+    const postIds: string[] = [];
+    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
+      postIds.push(await earnOneLike(invitee, makeTestIdentity(), 100 + i));
+    }
+    const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
+    expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
+
+    mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
+    const invitedAtBlock = (await mineOne())!.header.height;
+
+    // Every like-record gone — the state prune leaves behind.
+    db.getDb().prepare('DELETE FROM like_records').run();
+    const likeStore = await importLikes();
+    for (const postId of postIds) expect(likeStore.getLikeRecordCount(postId)).toBe(0);
+
+    // The counter is untouched, and the bond still vests on it.
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(earned);
+
+    let height = invitedAtBlock;
+    while (height < invitedAtBlock + PROBATION) {
+      const block = await mineOne();
+      expect(block).not.toBeNull();
+      height = block!.header.height;
+    }
+
+    expect(utxo.getBox(bond.id!)).toBeNull();
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(1n);
+  });
+
 });

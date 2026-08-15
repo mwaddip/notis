@@ -711,6 +711,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
         lastDecayBlock: 4,
         likeCarry: 0n,
         invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
       });
       // The lookup above recorded proof directions; drop them so the digest
       // comparisons below see the same prover state the block left behind.
@@ -728,6 +729,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
         lastDecayBlock: 4,
         likeCarry: 0n,
         invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
       });
     } finally {
       vi.doUnmock('../../src/config.js');
