@@ -23,6 +23,7 @@ import {
   rollbackBlockTopology,
   MempoolFullError,
   PendingSpendConflictError,
+  TxTooLargeError,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
@@ -312,12 +313,18 @@ export function revertBlock(height: number): PruneEntry[] {
  * the chain switch too). Dropped entries are lost from the local pool only; the
  * ledger state is already reverted, and peers still hold the txs.
  *
- * Two refusals qualify, for that one reason:
+ * Three refusals qualify, for that one reason:
  *
  * - `MempoolFullError` — the pool is at its cap.
  * - `PendingSpendConflictError` — an entry admitted since spends one of this
  *   tx's inputs. Both are valid now that the block is reverted and only one can
  *   be, so the incumbent keeps its place.
+ * - `TxTooLargeError` — the transaction re-encodes above `MAX_TX_BYTES`. The
+ *   reverted block carried it, so its bytes as they arrived were inside the
+ *   bound; what the pool measures is this node's own re-encoding, and the two
+ *   measures differ by design (VALIDATION_INTERFACE → the transaction size
+ *   bound). A transaction only this node's encoder finds over-size is one no
+ *   block it produces could carry anyway.
  *
  * ⛔ **The conflict gate is not opted out of here.** Admitting both would leave
  * the pool holding two spends of one box, which is the composition a block is
@@ -334,6 +341,12 @@ function reinsert(insert: () => void, label: string): void {
     }
     if (err instanceof PendingSpendConflictError) {
       console.warn(`Reorg re-insertion dropped, input spent by a pending entry: ${label}`);
+      return;
+    }
+    if (err instanceof TxTooLargeError) {
+      console.warn(
+        `Reorg re-insertion dropped, above the transaction size limit: ${label}`,
+      );
       return;
     }
     throw err;

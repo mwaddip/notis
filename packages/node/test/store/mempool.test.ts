@@ -777,4 +777,55 @@ describe('mempool store', () => {
       expect(config.maxMempoolEntries).toBe(10000);
     });
   });
+
+  describe('transaction size bound', () => {
+    /**
+     * A transaction whose `encodeTx` is exactly `bytes` long.
+     *
+     * The padding rides a signature value, the one field with no length rule of
+     * its own — inputs are fixed-width hex, so a transaction built out of them
+     * moves in 66-byte steps and can straddle the bound without landing on it.
+     * `insertUtxoTx` verifies no signature, so this measures size and nothing
+     * else.
+     */
+    async function txOfEncodedSize(bytes: number) {
+      const { encodeTx } = await import('@dagsocial/types');
+      const build = (pad: string) => ({
+        inputs: [],
+        outputs: [],
+        signatures: { [LIKER_A]: pad },
+        protocolVersion: 1,
+      });
+      let pad = 'a'.repeat(Math.max(0, bytes - encodeTx(build('') as any).length));
+      while (encodeTx(build(pad) as any).length < bytes) pad += 'a';
+      while (encodeTx(build(pad) as any).length > bytes) pad = pad.slice(0, -1);
+      const tx = build(pad);
+      expect(encodeTx(tx as any).length).toBe(bytes);
+      return tx;
+    }
+
+    it('refuses a transaction over MAX_TX_BYTES at admission', async () => {
+      const { MAX_TX_BYTES } = await import('@dagsocial/types');
+      const mem = await importMempoolFresh();
+
+      // ⛔ The assertion is that ADMISSION refuses it. "No block contains it"
+      // also holds because block structure validation rejects such a block, so
+      // a test aimed there would pass for a reason this check does not provide.
+      const over = await txOfEncodedSize(MAX_TX_BYTES + 1);
+      expect(() => mem.insertUtxoTx(over as any, 1000)).toThrow(
+        (mem as any).TxTooLargeError,
+      );
+      expect(() => mem.insertUtxoTx(over as any, 1000)).toThrow(/above the .* limit/i);
+
+      // …and it is not in the pool, so nothing downstream can draw it into a
+      // block this node would then refuse.
+      expect(mem.getPendingEntries(10)).toHaveLength(0);
+
+      // Control at the bound itself: one byte decides it, not the shape of the
+      // fixture.
+      const at = await txOfEncodedSize(MAX_TX_BYTES);
+      expect(() => mem.insertUtxoTx(at as any, 1000)).not.toThrow();
+      expect(mem.getPendingEntries(10)).toHaveLength(1);
+    });
+  });
 });

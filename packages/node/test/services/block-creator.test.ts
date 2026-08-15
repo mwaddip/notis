@@ -22,8 +22,9 @@ import {
 import {
   computeBoxId,
   computePostId,
+  MAX_BLOCK_BODY_BYTES,
   PROTOCOL_VERSION,
-  LIKE_KARMA_COST, computeTxId } from '@dagsocial/types';
+  LIKE_KARMA_COST, computeTxId, utxoTxTreeByteLength } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
   Post,
@@ -49,7 +50,7 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  maxSubBlocksPerBlock: 1000,
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   // Mining
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -631,5 +632,154 @@ describe('block-creator', () => {
     expect(next).not.toBeNull();
     expect(next!.header.height).toBe(2);
     expect(next!.header.prevBlockHash).toBe(blockHash(block!.header));
+  });
+
+  // -----------------------------------------------------------------------
+  // The fill budget is bytes
+  // -----------------------------------------------------------------------
+
+  describe('block body budget', () => {
+    /**
+     * Fill a pool with distinct, identically-sized transactions and return
+     * their rowids in insertion order.
+     *
+     * `fillerTx` bodies are the same length whatever the label — one 64-hex
+     * input, no outputs — so a per-entry byte cost measured on one is exact for
+     * all of them, which is what lets a budget be aimed at a chosen entry
+     * count instead of guessed at.
+     */
+    async function fillPool(count: number, tag: string): Promise<number[]> {
+      const mempool = await importMempoolFresh();
+      const rowids: number[] = [];
+      for (let i = 0; i < count; i++) {
+        rowids.push(mempool.insertUtxoTx(fillerTx(`${tag}_${i}`), 5000));
+      }
+      return rowids;
+    }
+
+    it('stops at the budget and leaves the rest of the pool pending', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+
+      const POOL = 40;
+      const rowids = await fillPool(POOL, 'budget');
+
+      // Pass one, at the production budget, to learn what this body costs. The
+      // reserve is the mandatory sections — prune entries and coinbase outputs
+      // — measured on the tree the creator actually built, not predicted here.
+      bc.startBlockCreator(testConfig);
+      const full = bc.getCurrentTemplate();
+      expect(full).not.toBeNull();
+      expect(full!.utxoTxTree.utxoTxIds).toHaveLength(POOL);
+
+      const reserved = utxoTxTreeByteLength({
+        ...full!.utxoTxTree,
+        utxoTxIds: [],
+        utxoTxs: [],
+      });
+      const perTx =
+        (utxoTxTreeByteLength(full!.utxoTxTree) - reserved) / POOL;
+      expect(Number.isInteger(perTx)).toBe(true);
+
+      // Pass two, at a budget that binds mid-pool. Every count prefix in the
+      // body is one byte wide below 128 entries, so the arithmetic is exact
+      // and KEEP is the number that must land.
+      const KEEP = 12;
+      const budget = reserved + KEEP * perTx;
+      bc.startBlockCreator({ ...testConfig, blockBodyBudgetBytes: budget });
+      const bound = bc.getCurrentTemplate();
+      expect(bound).not.toBeNull();
+
+      // ⛔ Both halves, or this asserts only that a block was produced: the
+      // measured body against the budget, and *which* entries stayed behind.
+      expect(utxoTxTreeByteLength(bound!.utxoTxTree)).toBeLessThanOrEqual(budget);
+      expect(bound!.utxoTxTree.utxoTxIds).toHaveLength(KEEP);
+      expect(bound!.utxoTxTree.utxoTxs).toHaveLength(KEEP);
+      // One more would have overrun it — the budget is what bound the fill, not
+      // the pool running out.
+      expect(reserved + (KEEP + 1) * perTx).toBeGreaterThan(budget);
+
+      // The pool is untouched until a block is finalized, and the entries the
+      // body did not claim are the tail of it in FIFO order.
+      const pending = mempool.getPendingEntries(POOL + 10);
+      expect(pending.map((e) => e.rowid)).toEqual(rowids);
+      const nonce = solveHeaderPow(bound!.header);
+      expect(bc.submitMinedBlock(nonce, bound!.header.height)).not.toBeNull();
+      expect(
+        mempool.getPendingEntries(POOL + 10).map((e) => e.rowid),
+      ).toEqual(rowids.slice(KEEP));
+    });
+
+    it('fills past any fixed count when the budget still has room', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const bc = await importBlockCreator();
+
+      // ⛔ Deeper than the count this creator used to draw (1000) and than any
+      // single page it reads. An under-fetch is the silent failure here: it
+      // produces short blocks while every test passes and every block
+      // validates, so the pool has to be deep enough to expose one.
+      const POOL = 1_100;
+      await fillPool(POOL, 'page');
+
+      bc.startBlockCreator(testConfig);
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      expect(template!.utxoTxTree.utxoTxIds).toHaveLength(POOL);
+      expect(utxoTxTreeByteLength(template!.utxoTxTree))
+        .toBeLessThanOrEqual(MAX_BLOCK_BODY_BYTES);
+    });
+
+    it('clamps a budget above MAX_BLOCK_BODY_BYTES rather than honouring it', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const bc = await importBlockCreator();
+      const { encodeTx } = await import('@dagsocial/types');
+
+      // Pool rows written directly. The subject is what the creator fills to,
+      // and admission runs one conflicting-spend query per input per insert —
+      // over the ~150-input transactions a 2 MB body needs, building this
+      // through `insertUtxoTx` costs minutes and measures the admission path.
+      const bigTx = (label: string): UtxoTransaction => ({
+        inputs: Array.from({ length: 148 }, (_, i) =>
+          createHash('blake2b512').update(`${label}/${i}`).digest()
+            .subarray(0, 32).toString('hex'),
+        ),
+        outputs: [],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      });
+      const ins = db.getDb().prepare(
+        `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height)
+         VALUES ('utxo_tx', ?, 5000)`,
+      );
+      let pooled = 0;
+      db.getDb().transaction(() => {
+        for (let i = 0; i < 300; i++) {
+          const cbor = encodeTx(bigTx(`big_${i}`));
+          expect(cbor.length).toBeLessThanOrEqual(10_000);   // a minable size
+          ins.run(Buffer.from(cbor));
+          pooled++;
+        }
+      })();
+
+      bc.startBlockCreator({
+        ...testConfig,
+        blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES * 2,
+      });
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+
+      // The consensus bound held, not the config's ask — and it bound: the pool
+      // had more to give. The lower bound is what stops this passing on a body
+      // that stopped early for some other reason; the fill only ends one
+      // transaction short of the cap.
+      const measured = utxoTxTreeByteLength(template!.utxoTxTree);
+      expect(measured).toBeLessThanOrEqual(MAX_BLOCK_BODY_BYTES);
+      expect(measured).toBeGreaterThan(MAX_BLOCK_BODY_BYTES - 10_000);
+      expect(template!.utxoTxTree.utxoTxIds.length).toBeLessThan(pooled);
+    });
   });
 });

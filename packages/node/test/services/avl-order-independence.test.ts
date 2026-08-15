@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { MAX_BLOCK_BODY_BYTES } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
@@ -47,7 +48,7 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  maxSubBlocksPerBlock: 1000,
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',

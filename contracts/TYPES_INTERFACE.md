@@ -1561,6 +1561,36 @@ Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxConte
 itself a consensus change. The consensus change is node's: the two leaf preimages stop being JSON.
 See `NODE_INTERFACE` → C7.
 
+### Sizing without encoding
+
+`utxoTxTreeByteLength(t)` returns the byte length `encodeUtxoTxTree(t)` produces, computed from the
+structure and allocating nothing. It is the measure `MAX_BLOCK_BODY_BYTES` is checked against.
+
+**It is arithmetic rather than a call to the encoder because both consumers are on paths where
+allocating the body is the wrong cost.** `verifyOrderingBlockStructure` runs on the gossip relay path
+and would allocate a whole body per arriving block; node's block creator needs a per-entry delta while
+filling, and re-encoding the candidate after each addition is quadratic. The terms are all knowable:
+the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖ `arr(coinbaseOutputs)`,
+and `utxoTxs` are opaque byte arrays, so nothing here depends on the transaction codec.
+
+⛔ **The equivalence is the contract, not an implementation detail** — a test pins
+`utxoTxTreeByteLength(t) === encodeUtxoTxTree(t).length`. Two ways of computing one number diverge
+silently otherwise, and the direction that matters is the one where the sizer under-reports: a block
+that measures legal here and encodes larger is a block this node relays and its peers reject.
+
+**Its domain is the encoder's success domain, and that domain includes the sentinel branches.**
+`writeArr` and `writeLp` are total by sentinel (`### Totality`) — handed a non-array section or a
+non-byte-view element they write a sentinel prefix and continue — so those trees *do* encode, do have
+a length, and are owed equality. **They are also the only inputs on which under-reporting is
+possible**, because a sizer that reads such a field at face value sees a smaller number than the
+sentinel the encoder writes. Where a field reaches a *throwing* writer instead, the tree has no
+encoding at all: there is no length to agree on, and the sizer does not mirror the throw — mirroring
+would buy symmetry and hand every caller a panic source, including the one on the relay path.
+
+⚠ **The empty tree is not the interesting case and should not be cited as one.** It is four `vlqU(0)`
+counts, so a sizer that assumes every count prefix is one byte wide passes it. The cases that
+discriminate are the VLQ width boundaries and the sentinel branches above.
+
 ### Export table
 
 > ✅ **RESOLVED — the code has moved. Verified 2026-08-11.** This read `AHEAD OF CODE` until
@@ -1597,6 +1627,7 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeSubBlockTree(bytes)` | `(Uint8Array) => SubBlockTree` | CBOR decode |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
+| `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
 | `subBlockEntryBytes(e)` | `(SubBlockEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'subblock'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
 | `coinbaseOutputBytes(o)` | `(CoinbaseOutput) => Uint8Array` | One output's positional bytes. Both the tree codec's element writer and the `'coinbase'` Merkle leaf preimage |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Length-prefixed wire framing: `u32BE(len)‖headerCbor ‖ … ‖ validatorSignature(64)` |
@@ -1849,6 +1880,47 @@ which is a format bound.
 payload plus headroom. Its *home* is not provisional. The three profile payloads are ~35 bytes, so
 nothing approaches it; `network.test.ts` is what checks them, because they are compile-time constants
 and the seeder that writes one deliberately does not measure it.
+
+### Size caps
+
+```typescript
+export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTxTree
+export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction
+```
+
+Consensus bounds on **weight**, checked in `@dagsocial/validation` — the body by
+`verifyOrderingBlockStructure`, the transaction by `verifyTxStructure` — so an oversized object is
+refused before relay rather than after storage. Distinct in kind from `### Content limits` above,
+which are format bounds a codec enforces on one field; these bound whole structures and no codec
+consults them.
+
+**The block bound is what makes validity and availability agree.** Three limits stand in a fixed
+order, and the *relation* is the rule rather than any individual number:
+
+```
+MAX_BLOCK_BODY_BYTES (2,000,000)  <  MAX_SERVE_BODY_BYTES (4 MiB)  <  MAX_STREAM_BYTES (8 MiB)
+```
+
+The upper two are net's (`NET_INTERFACE` → Validation (and untrusted-input safety)). A single legal
+block always fits in a
+response the requester will accept, and a multi-block response truncates rather than overflowing.
+Invert any pair and a block becomes valid but unservable — accepted by consensus, unreachable by a
+peer syncing from history.
+
+⛔ **Both are denominated in bytes, and neither is retuned when the transaction encoding changes.**
+`### Layout — UtxoTransaction` specifies a positional form the codec does not implement; under it a
+max-size post transaction is 639 bytes rather than 953 (measured 2026-08-15), so the same 2,000,000
+carries about 47 % more posts. That is a bound on the resource behaving as intended — capacity
+improves and the storage guarantee does not move. A transaction *count* would have had to be revised;
+this does not.
+
+`MAX_BLOCK_BODY_BYTES` is 1.05 TB/yr of archival growth at 60 s blocks, or about 2,026 max-size post
+transactions per block. **A transaction costs `32 + vlqU(len) + len` in the body** — the fixed-width
+`utxoTxIds` entry plus the `lp` prefix `arr(utxoTxs, lp)` writes before each one, so 34 bytes of
+framing at present transaction sizes, not 32. `MAX_TX_BYTES` admits roughly 148 credit inputs at the current encoding and
+288 under the positional one — far past any single consolidation a wallet builds. Its job is to keep
+a transaction from being valid, poolable and unminable at once: without it, one larger than the block
+budget occupies a mempool slot that no block can ever drain.
 
 ### State format
 

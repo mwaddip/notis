@@ -52,8 +52,10 @@ import { encode, decode } from 'cbor-x';
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   type StructCodec,
+  arrByteLength,
   decodeStruct,
   encodeStruct,
+  lpByteLength,
   readArr,
   readBool,
   readBytesN,
@@ -62,6 +64,8 @@ import {
   readLpUtf8,
   readVlqU,
   readVlqU64,
+  vlqU64ByteLength,
+  vlqUByteLength,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
@@ -255,6 +259,26 @@ function readPruneEntry(r: ByteReader): PruneEntry {
   };
 }
 
+/**
+ * The width `writePruneEntry` produces (TYPES_INTERFACE → Sizing without
+ * encoding). Four fixed-width fields and a `u8` tag around one count-prefixed
+ * array of `b32` ids — the entry's only variable term, and the reason an entry
+ * has no constant size.
+ *
+ * `trigger` is a byte on every input: `enum8` writes `0xff` for a value outside
+ * its table rather than throwing.
+ */
+function pruneEntryByteLength(e: PruneEntry): number {
+  return (
+    32 +                                        // rootPostHash      b32
+    arrByteLength(e.subtreePostIds, () => 32) + // subtreePostIds    arr(ids, b32)
+    32 +                                        // subtreeMerkleRoot b32
+    32 +                                        // authorId          b32
+    64 +                                        // authorSignature   b64
+    1                                           // trigger           enum8
+  );
+}
+
 // ---------------------------------------------------------------------------
 // UTXO transaction tree
 // ---------------------------------------------------------------------------
@@ -281,6 +305,23 @@ function readCoinbaseOutput(r: ByteReader): CoinbaseOutput {
     lockedUntilBlock: readVlqU(r),
     isTreasury: readBool(r),
   };
+}
+
+/**
+ * The width `writeCoinbaseOutput` produces. Two of its four fields are variable
+ * — a `vlqU` over the full u64 and one over a `number` — so an output's size
+ * follows its *values*, not just its shape: a 1-base-unit reward and a
+ * 5,000,000-credit one differ by six bytes.
+ *
+ * `isTreasury` is a byte on every input, per `writeBool`'s `0xff`.
+ */
+function coinbaseOutputByteLength(o: CoinbaseOutput): number {
+  return (
+    32 +                                  // owner            b32
+    vlqU64ByteLength(o.value) +           // value            vlqU64
+    vlqUByteLength(o.lockedUntilBlock) +  // lockedUntilBlock vlqU
+    1                                     // isTreasury       u8
+  );
 }
 
 /**
@@ -324,6 +365,36 @@ export function encodeUtxoTxTree(t: UtxoTxTree): Uint8Array {
 
 export function decodeUtxoTxTree(bytes: Uint8Array): UtxoTxTree {
   return decodeStruct(UTXO_TX_TREE, bytes);
+}
+
+/**
+ * The byte length `encodeUtxoTxTree` produces, computed from the structure and
+ * allocating nothing (TYPES_INTERFACE → Sizing without encoding). The measure
+ * `MAX_BLOCK_BODY_BYTES` is checked against.
+ *
+ * ⛔ **The equivalence with `encodeUtxoTxTree(t).length` is the contract** —
+ * `test/utxo-tx-tree-size.test.ts` is what holds two ways of computing one
+ * number together, and it is exact over every tree the encoder encodes. That
+ * includes the branches where a writer sentinels rather than throws, which are
+ * inside the encoder's success domain and are where a sizer assuming
+ * well-formed fields would report *fewer* bytes than the encoder writes.
+ *
+ * Where a writer throws, the tree has no encoding at all and this returns a
+ * number rather than propagating — the contract puts the body check inside
+ * `verifyOrderingBlockStructure`, which runs over peer-supplied bodies on the
+ * gossip relay path.
+ *
+ * `utxoTxs` stays opaque here as it does in the codec above — element lengths
+ * are read, contents never — so nothing in this measurement depends on the
+ * transaction codec.
+ */
+export function utxoTxTreeByteLength(t: UtxoTxTree): number {
+  return (
+    arrByteLength(t.utxoTxIds, () => 32) +
+    arrByteLength(t.utxoTxs, lpByteLength) +
+    arrByteLength(t.pruneEntries, pruneEntryByteLength) +
+    arrByteLength(t.coinbaseOutputs, coinbaseOutputByteLength)
+  );
 }
 
 // ---------------------------------------------------------------------------

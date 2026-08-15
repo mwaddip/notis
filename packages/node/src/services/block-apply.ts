@@ -60,8 +60,7 @@ import {
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
-  getPendingEntries,
-  removeEntry,
+  removeUtxoTxEntry,
   insertBlockTopology,
   getSubtreeTopology,
   getTopologyAuthor,
@@ -967,7 +966,6 @@ function applyMutationPhase(
       );
     },
   };
-  const pendingEntries = getPendingEntries(1000);
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
   // rejects the block"): every declared `utxoTxId` must be proven to be the id
@@ -1237,13 +1235,12 @@ function applyMutationPhase(
         );
       }
 
-      // Remove from local mempool if present
-      const mempoolEntry = pendingEntries.find((e) => {
-        if (e.entryType !== 'utxo_tx' || !e.utxoTxCbor) return false;
-        const et = decodeTx(e.utxoTxCbor);
-        return computeTxId(et) === item.txId;
-      });
-      if (mempoolEntry) removeEntry(mempoolEntry.rowid);
+      // Remove from the local mempool if present. This is the whole of the
+      // cleanup for a block that arrived from a peer — a block this node mined
+      // is cleaned by rowid in `finalizeBlock`, which reaches every included
+      // entry wherever it sits (MEMPOOL_INTERFACE → "Confirmed-entry cleanup is
+      // bounded by the pool, not by a literal").
+      removeUtxoTxEntry(item.txId);
 
       // Box mutations are journaled by the store choke point; the tx itself
       // is kept for mempool re-insertion on reorg.

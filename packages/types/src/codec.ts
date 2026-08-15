@@ -62,6 +62,35 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  */
 export const VLQ_SENTINEL = 0xffff_ffff_ffff_ffffn;
 
+/**
+ * Base-128 digit count for a `bigint` — `encodeVlqBigInt`'s loop
+ * (`wire/src/vlq.ts`), counted rather than run.
+ */
+function vlqBigIntWidth(value: bigint): number {
+  let n = 1;
+  for (let v = value; v >= 0x80n; v >>= 7n) n++;
+  return n;
+}
+
+/**
+ * What a sentinelled field costs on the wire: `VLQ_SENTINEL`'s own width.
+ *
+ * **The `…ByteLength` mirrors below never under-report.** Each returns what its
+ * writer produces, sentinel branches included — those are inside the encoder's
+ * *success* domain, so a sizer that assumed a well-formed field would report
+ * fewer bytes than the encoder writes, and a body measuring legal here while
+ * encoding larger is one this node relays and its peers reject
+ * (TYPES_INTERFACE → Sizing without encoding).
+ *
+ * Where a writer **throws** there is no width to mirror, and the mirrors return
+ * this same maximum rather than throwing. A struct that cannot encode has no
+ * length to under-report against, and the contract puts the body check inside
+ * `verifyOrderingBlockStructure` (`@dagsocial/validation`), which runs on the
+ * gossip relay path — a throwing sizer would leave gate ordering as the only
+ * thing between untrusted bytes and a panic.
+ */
+const VLQ_SENTINEL_BYTE_LENGTH = vlqBigIntWidth(VLQ_SENTINEL);
+
 /** True for the values the `vlqU` writer encodes faithfully. */
 function isEncodableVlqU(n: unknown): n is number {
   return typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
@@ -235,6 +264,20 @@ export function readVlqU(r: ByteReader): number {
   return r.readVlqU();
 }
 
+/**
+ * The width `writeVlqU` produces — exact on both of its branches, so an
+ * out-of-domain value costs the sentinel rather than its own digits.
+ *
+ * Arithmetic and not bitwise for the reason the writer states: `&`/`>>>` coerce
+ * to 32 bits and would mis-count every value at or above 2^32.
+ */
+export function vlqUByteLength(value: number): number {
+  if (!isEncodableVlqU(value)) return VLQ_SENTINEL_BYTE_LENGTH;
+  let n = 1;
+  for (let v = value; v >= 0x80; v = Math.floor(v / 128)) n++;
+  return n;
+}
+
 /** `vlqS(x)` — ZigZag VLQ from a `number`. Total: sentinel, never throws. */
 export function writeVlqS(w: ByteWriter, value: number): void {
   if (isEncodableVlqS(value)) {
@@ -284,6 +327,21 @@ export function writeVlqU64OrThrow(w: ByteWriter, value: bigint): void {
  */
 export function readVlqU64(r: ByteReader): bigint {
   return r.readVlqBigInt();
+}
+
+/**
+ * The width `writeVlqU64OrThrow` produces.
+ *
+ * ⚠ **Total where that writer throws**, per `VLQ_SENTINEL_BYTE_LENGTH`. The
+ * bound is `VLQ_SENTINEL` itself, which *is* the u64 maximum — so the value
+ * that marks "out of domain" everywhere else in this file is here the largest
+ * in-domain one, and doubles as the width returned for anything past it.
+ */
+export function vlqU64ByteLength(value: bigint): number {
+  if (typeof value !== 'bigint' || value < 0n || value > VLQ_SENTINEL) {
+    return VLQ_SENTINEL_BYTE_LENGTH;
+  }
+  return vlqBigIntWidth(value);
 }
 
 /**
@@ -381,6 +439,22 @@ export function readLp(r: ByteReader): Uint8Array {
 }
 
 /**
+ * The width `writeLp` produces — a non-byte-view costs its sentinel length
+ * prefix and no payload.
+ *
+ * ⛔ **This is the mirror the under-report warning is about.** `UtxoTxTree`
+ * carries `arr(utxoTxs, lp)` and `verifyOrderingBlockStructure` checks that
+ * array's length alignment but not its element types, so a non-`Uint8Array`
+ * element reaches the encoder and takes ten bytes there. Sizing it as
+ * `vlqU(x.length) ‖ x.length` off whatever `.length` a foreign object happens to
+ * expose is the divergence, and it is silent in the dangerous direction.
+ */
+export function lpByteLength(bytes: Uint8Array): number {
+  if (!isBytes(bytes)) return VLQ_SENTINEL_BYTE_LENGTH;
+  return vlqUByteLength(bytes.length) + bytes.length;
+}
+
+/**
  * `lpUtf8(s)` — `vlqU(utf8ByteLength) ‖ utf8Bytes`.
  *
  * Total by the same sentinel-the-length route. The type check is not
@@ -433,6 +507,22 @@ export function writeArr<T>(w: ByteWriter, items: T[], f: (w: ByteWriter, x: T) 
  */
 export function readArr<T>(r: ByteReader, f: (r: ByteReader) => T): T[] {
   return r.readArray(f);
+}
+
+/**
+ * The width `writeArr` produces, given a per-element sizer — a non-array costs
+ * its sentinel count and no elements.
+ *
+ * The count prefix is `vlqU` and therefore variable: a 128-element array's
+ * prefix is not the width of a 127-element one, and neither is a 16,384-element
+ * array's. `vlqUByteLength` is what keeps that from being a constant `1` on a
+ * body holding thousands of transactions.
+ */
+export function arrByteLength<T>(items: T[], sizeOf: (x: T) => number): number {
+  if (!Array.isArray(items)) return VLQ_SENTINEL_BYTE_LENGTH;
+  let total = vlqUByteLength(items.length);
+  for (const item of items) total += sizeOf(item);
+  return total;
 }
 
 /**

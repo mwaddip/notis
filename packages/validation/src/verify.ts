@@ -3,10 +3,12 @@ import {
   PROTOCOL_VERSION,
   MAX_CONTENT_BYTES,
   MAX_PARENT_REFS,
+  MAX_TX_BYTES,
+  MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
-import { encodeHeader } from '@dagsocial/types';
+import { encodeHeader, encodeTx, utxoTxTreeByteLength } from '@dagsocial/types';
 import type { Post, BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
@@ -632,6 +634,34 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
     const chars = verifyContentCharacters(tx.post.content);
     if (!chars.valid) return chars;
   }
+  // The weight bound, last and after every shape check above
+  // (VALIDATION_INTERFACE → The size bound measures `encodeTx`, and runs last).
+  // The measure is the re-encoding rather than the bytes the transaction arrived
+  // as: node's `insertUtxoTx` re-encodes on the way into the mempool, so this is
+  // the form that will occupy a block, and it is one number on every node where
+  // a received-bytes measure would not be. `verifyOrderingBlockStructure` weighs
+  // an *embedded* transaction as it arrived, and that asymmetry is deliberate —
+  // each measures the bytes its own object costs.
+  //
+  // ⛔ `encodeTx` is `cbor-x` over a peer-supplied object and it throws on
+  // values every check above admits: a `symbol` or `function` anywhere in the
+  // tree (`Unknown type`), a getter or `Proxy` trap that throws, and nesting
+  // past a depth near 2000 (`RangeError`). The last is reachable from the one
+  // production caller — net's `tx` topic validator hands this function
+  // `decodeTx(raw)`, and a ~2 KB payload of nested arrays decodes at a depth the
+  // re-encode overflows on (measured against cbor-x 1.6.4, 2026-08-15). The
+  // no-panic rule (Postconditions — No-panic M-5) decides the shape: a
+  // transaction that cannot be encoded cannot be stored, mined or relayed, so
+  // the throw is a rejection and not an escape.
+  let encoded: Uint8Array;
+  try {
+    encoded = encodeTx(tx);
+  } catch {
+    return { valid: false, error: 'Transaction is not encodable' };
+  }
+  if (encoded.length > MAX_TX_BYTES) {
+    return { valid: false, error: `Transaction too large (max ${MAX_TX_BYTES} bytes)` };
+  }
   return { valid: true };
 }
 
@@ -769,9 +799,28 @@ export function verifyOrderingBlockStructure(
   // `decodeBlocks` under `requestBlocks`, `decodeOrderingBlock` again under
   // `appendBlocks`), so a swap is refused there; this pin is what keeps the
   // store write safe independently of that.
+  //
+  // Each element carries the same `MAX_TX_BYTES` weight bound `verifyTxStructure`
+  // puts on a transaction that arrives on its own, because `TYPES_INTERFACE` →
+  // Size caps labels that constant consensus and a rule enforced on the relay
+  // path alone binds users and not miners: this function is the only place a
+  // transaction reaching a node *inside a block* is weighed. `verifyTxStructure`
+  // has one production caller, net's `tx` topic validator, and `packages/node`
+  // invokes it zero times — established by enumerating every `validation.<name>`
+  // call in `packages/node/src` (five, all in `block-apply.ts`, none of them this
+  // function) plus the absence of any dynamic `validation[…]` access, 2026-08-15.
+  // Node hands net the whole namespace as its `NetValidators`, so the call site
+  // stays net's. That search would miss a caller reaching it under a local alias.
+  //
+  // The measure is the as-arrived byte length, matching how the body bound below
+  // weighs the same array and deliberately unlike `verifyTxStructure`'s
+  // re-encoding.
   for (const tx of block.utxoTxTree.utxoTxs) {
     if (!isBytes(tx)) {
       return { valid: false, error: 'Ordering block utxoTx must be a byte view' };
+    }
+    if (tx.length > MAX_TX_BYTES) {
+      return { valid: false, error: `Ordering block utxoTx too large (max ${MAX_TX_BYTES} bytes)` };
     }
   }
   if (!Array.isArray(block.utxoTxTree?.coinbaseOutputs)) {
@@ -828,6 +877,26 @@ export function verifyOrderingBlockStructure(
     if (typeof out.isTreasury !== 'boolean') {
       return { valid: false, error: 'Coinbase output invalid isTreasury' };
     }
+  }
+  // The body weight bound, refused here rather than at apply because this is
+  // what net runs before relay (VALIDATION_INTERFACE → The body size bound).
+  //
+  // ⛔ It runs after every check above and that position is the only safe one.
+  // `utxoTxTreeByteLength` is total on a section of any type — a non-array
+  // sections its own count, a non-byte-view element sentinels its length prefix
+  // — but its per-element sizers read a **property** off each entry, so
+  // `pruneEntries: [null]` and `coinbaseOutputs: [null]` are TypeErrors rather
+  // than lengths. The prune loop types the first and the coinbase loop directly
+  // above types the second, which puts the earliest total position at the end of
+  // that loop.
+  //
+  // The bound holds a relation and not a number — `MAX_BLOCK_BODY_BYTES` <
+  // `MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES` (`TYPES_INTERFACE` → Size caps).
+  if (utxoTxTreeByteLength(block.utxoTxTree) > MAX_BLOCK_BODY_BYTES) {
+    return {
+      valid: false,
+      error: `Ordering block body too large (max ${MAX_BLOCK_BODY_BYTES} bytes)`,
+    };
   }
   return { valid: true };
 }

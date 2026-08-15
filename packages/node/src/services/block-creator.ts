@@ -10,6 +10,7 @@ import {
   CREDIT_TAIL_REWARD,
   CREDIT_TREASURY_PCT,
   EMPTY_STATE_ROOT,
+  MAX_BLOCK_BODY_BYTES,
   decodeTx,
   computeTxId,
   leafHash,
@@ -17,6 +18,7 @@ import {
   serializePruneEntry,
   coinbaseOutputBytes,
   hexToBuf,
+  utxoTxTreeByteLength,
 } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
@@ -44,11 +46,10 @@ import {
   failStopIfCorruptChain,
 } from './corrupt-state.js';
 import {
-  getPendingEntries,
+  iteratePendingEntries,
   purgeExpired,
   removeEntry,
   drainMempoolPrunes,
-  type PoolEntry,
 } from '../store/mempool.js';
 import {
   getOrderingBlock,
@@ -94,6 +95,45 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
       leafHash('coinbase', coinbaseOutputBytes(o))),
   ];
   return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
+}
+
+// ---------------------------------------------------------------------------
+// Body sizing
+//
+// Every number here comes from `utxoTxTreeByteLength`. The framing a
+// transaction costs inside a body is the encoder's arithmetic and moves when
+// the encoding does (TYPES_INTERFACE → Sizing without encoding); restating it
+// in this file would put a second copy of the layout where nothing compares the
+// two, which is the reason that export exists at all.
+// ---------------------------------------------------------------------------
+
+/** An empty body: four count prefixes and nothing else. */
+const EMPTY_BODY_BYTES = utxoTxTreeByteLength({
+  utxoTxIds: [],
+  utxoTxs: [],
+  pruneEntries: [],
+  coinbaseOutputs: [],
+});
+
+/** A well-formed stand-in, so the probe below measures a real `b32` entry. */
+const PROBE_TX_ID = '0'.repeat(64);
+
+/**
+ * What one transaction costs inside the body — its fixed-width `utxoTxIds`
+ * entry and the length-prefixed body beside it.
+ *
+ * The difference between a one-entry body and an empty one is exactly that
+ * entry's contribution, because every other term of the sum is unchanged.
+ */
+function entryByteCost(cbor: Uint8Array): number {
+  return (
+    utxoTxTreeByteLength({
+      utxoTxIds: [PROBE_TX_ID],
+      utxoTxs: [cbor],
+      pruneEntries: [],
+      coinbaseOutputs: [],
+    }) - EMPTY_BODY_BYTES
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -266,32 +306,81 @@ export function createOrderingBlock(): OrderingBlock | null {
   // 1. Purge expired mempool entries
   purgeExpired(currentHeight);
 
-  // 2. Get pending entries from mempool
-  const entries = getPendingEntries(config.maxSubBlocksPerBlock);
+  // 2. The mandatory sections, before a single transaction is offered the
+  //    budget. Neither prune entries nor coinbase outputs are the miner's to
+  //    trim (MEMPOOL_INTERFACE → "The fill budget is bytes; `getPendingEntries`
+  //    is a count"), and both can be built without knowing the transaction set:
+  //    the drain reads the pool alone, and the coinbase reads the height and
+  //    the payout keys.
+  const MAX_PRUNES_PER_BLOCK = 32;
+  const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
+  const coinbaseOutputs = buildCoinbaseOutputs(newHeight);
 
-  // 3. One entry type carries user work: transactions. A post is one of them
+  // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
+  //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
+  //    the clamp stands here as well as at load: `loadConfig` guards the
+  //    environment, and this guards every `Config` assembled without it
+  //    (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Nothing is
+  //    enforced here beyond the fill — an oversized block is refused by
+  //    `verifyOrderingBlockStructure`, on this node and on every peer.
+  const budget = Math.min(config.blockBodyBudgetBytes, MAX_BLOCK_BODY_BYTES);
+
+  // 4. One entry type carries user work: transactions. A post is one of them
   //    (NODE_INTERFACE → Post transactions), so there is no second list to
   //    resolve, no batch to regroup, and no entry whose content might not have
   //    arrived — the payload is inside the transaction.
-  const utxoTxEntries = entries.filter(
-    (e) => e.entryType === 'utxo_tx' && e.utxoTxCbor !== null,
-  );
+  //
+  //    Bodies ride in `utxoTxs` in the same order as `utxoTxIds` — the
+  //    alignment `verifyOrderingBlockStructure` checks, and the reason a
+  //    syncing node holds the whole post rather than a claim about it (audit
+  //    H-3). The ids are derived from the bytes that ride beside them rather
+  //    than read off the pool row, because that derivation is the property
+  //    block application re-checks and rejects on.
+  const utxoTxIds: string[] = [];
+  const utxoTxCbors: Uint8Array[] = [];
+  const includedRowids: number[] = [];
+  const utxoTxTree: UtxoTxTree = {
+    utxoTxIds,
+    utxoTxs: utxoTxCbors,
+    pruneEntries,
+    coinbaseOutputs,
+  };
 
-  // 4. Transactions → utxoTxIds, in mempool order.
-  const utxoTxIds = utxoTxEntries.map((e) => computeTxId(decodeTx(e.utxoTxCbor!)));
+  // 5. Spend what the mandatory sections left, in mempool order, drawing from
+  //    the pool a page at a time. The first transaction that does not fit ends
+  //    the fill: reaching past it for a smaller one behind it is a priority
+  //    rule, and the pool is FIFO with no priority (MEMPOOL_INTERFACE → FIFO
+  //    ordering).
+  let spent = utxoTxTreeByteLength(utxoTxTree);
+  for (const entry of iteratePendingEntries()) {
+    if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
+    const cost = entryByteCost(entry.utxoTxCbor);
+    if (spent + cost > budget) break;
+    spent += cost;
+    utxoTxIds.push(computeTxId(decodeTx(entry.utxoTxCbor)));
+    utxoTxCbors.push(entry.utxoTxCbor);
+    includedRowids.push(entry.rowid);
+  }
+
+  // 6. The sizer has the last word. `spent` is exact per entry and blind to the
+  //    two array count prefixes, which widen with the entry COUNT rather than
+  //    with any one entry, so the assembled body can measure a few bytes above
+  //    what the accumulator tracked — at most one entry's worth. What
+  //    `utxoTxTreeByteLength` returns over the finished tree is the number
+  //    `verifyOrderingBlockStructure` measures, and a body above the budget is
+  //    one every peer refuses.
+  while (utxoTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
+    utxoTxIds.pop();
+    utxoTxCbors.pop();
+    includedRowids.pop();
+  }
 
   // 11. Always produce a block — miners need coinbase rewards even when
   //     there is no user work.  The block will be empty but still carries
   //     credit emission.
 
   // 12. Track confirmed rowids for finalizeBlock cleanup
-  confirmedRowids = new Set<number>();
-  for (const e of utxoTxEntries) {
-    confirmedRowids.add(e.rowid);
-  }
-
-  // 13. Compute coinbase
-  const coinbaseOutputs = buildCoinbaseOutputs(newHeight);
+  confirmedRowids = new Set<number>(includedRowids);
 
   // 14. Difficulty — fixed by the height schedule, and enforced at apply
   const powTargetBits = expectedTarget(newHeight);
@@ -319,23 +408,6 @@ export function createOrderingBlock(): OrderingBlock | null {
       new UnhashableStoredHeaderError('createOrderingBlock', currentHeight),
     );
   }
-
-  // Transaction bodies, in the same order as `utxoTxIds` — the alignment
-  // `verifyOrderingBlockStructure` checks and the reason a syncing node holds the
-  // whole post rather than a claim about it (audit H-3).
-  const utxoTxCbors: Uint8Array[] = utxoTxEntries.map((e) => e.utxoTxCbor!);
-
-  // Drain queued prune entries for block inclusion
-  const MAX_PRUNES_PER_BLOCK = 32;
-  const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
-
-  // 17. Build the one body tree
-  const utxoTxTree: UtxoTxTree = {
-    utxoTxIds,
-    utxoTxs: utxoTxCbors,
-    pruneEntries,
-    coinbaseOutputs,
-  };
 
   // 18. Compute the Merkle root
   const utxoTxRoot = computeUtxoTxRoot(utxoTxTree);

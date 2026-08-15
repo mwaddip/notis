@@ -80,8 +80,10 @@ export {
   insertUtxoTx,
   insertMempoolPrune,
   getPendingEntries,
+  iteratePendingEntries,
   purgeExpired,
   removeEntry,
+  removeUtxoTxEntry,
   drainMempoolPrunes,
   removeMempoolPrunes,
   hasPendingLike,
@@ -93,6 +95,7 @@ export {
   resolvePendingTip,
   MempoolFullError,
   PendingSpendConflictError,
+  TxTooLargeError,
 } from './mempool.js';
 export type { PoolEntry } from './mempool.js';
 

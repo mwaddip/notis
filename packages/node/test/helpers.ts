@@ -491,7 +491,7 @@ export function lockBoxOf(tx: UtxoTransaction): AnyBox {
  * A missing field also fails QUIETLY rather than at the type checker, because
  * `block-creator.ts` is the only consumer that reads config off its argument
  * (`startBlockCreator` assigns it to the module-level `config`), and it reads
- * exactly three: `maxSubBlocksPerBlock`, `creditTreasuryPct`, `treasuryPubKey`.
+ * exactly three: `blockBodyBudgetBytes`, `creditTreasuryPct`, `treasuryPubKey`.
  * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
  * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
  * imports the `src/config.js` singleton, which no test mocks, so an incomplete

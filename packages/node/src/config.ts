@@ -3,6 +3,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
+  MAX_BLOCK_BODY_BYTES,
   MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
@@ -29,10 +30,17 @@ export interface Config {
   nodeRole: 'server' | 'miner';
   /** Base path where the demo UI is served (e.g., "/testnet/" or "/"). */
   publicUrl: string;
-  // Reserved, never to be reused: `postPowTargetBits`, `challengeWindowBlocks`.
-  // Post PoW and its challenge handshake are gone; consensus PoW is the ordering
-  // block's alone.
-  maxSubBlocksPerBlock: number;
+  // Reserved, never to be reused: `postPowTargetBits`, `challengeWindowBlocks`,
+  // `maxSubBlocksPerBlock`. Post PoW and its challenge handshake are gone;
+  // consensus PoW is the ordering block's alone.
+  /**
+   * Body bytes this node fills the blocks it **produces** to
+   * (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Local, because a
+   * miner may legitimately publish smaller blocks — but never above
+   * `MAX_BLOCK_BODY_BYTES`, which is consensus and is checked in
+   * `@dagsocial/validation`.
+   */
+  blockBodyBudgetBytes: number;
   /** Hard mempool bound — inserts are rejected at the cap, never evicted (audit M-8). */
   maxMempoolEntries: number;
   // Mining
@@ -79,9 +87,8 @@ export function loadConfig(): Readonly<Config> {
     profile,
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
     publicUrl: process.env['PUBLIC_URL'] ?? '/',
-    maxSubBlocksPerBlock: parseInt(
-      process.env['MAX_SUB_BLOCKS_PER_BLOCK'] ?? '1000',
-      10,
+    blockBodyBudgetBytes: parseBlockBodyBudget(
+      process.env['BLOCK_BODY_BUDGET_BYTES'],
     ),
     maxMempoolEntries: parseInt(
       process.env['MAX_MEMPOOL_ENTRIES'] ?? '10000',
@@ -130,6 +137,41 @@ export function loadConfig(): Readonly<Config> {
   assertProofHistoryCoversReorgDepth(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * `BLOCK_BODY_BUDGET_BYTES`, never above `MAX_BLOCK_BODY_BYTES`.
+ *
+ * **Clamping, and it is the only value in this file that clamps.** The budget
+ * is a local preference over a consensus ceiling, so a value above the ceiling
+ * has one legal reading — as much as the rules allow — and a node cannot raise
+ * its own bound by asking. The two asserts below refuse instead, because a
+ * below-floor PoW target and a too-short proof history name no legal value they
+ * were reaching for.
+ *
+ * ⚠ **This is the environment's entry point, not the field's.** A `Config`
+ * assembled directly — every test fixture — never passes through here, so the
+ * producer clamps again where it spends the budget (`block-creator.ts`). That
+ * one is total over both routes.
+ *
+ * A string denoting no positive number is refused rather than clamped or
+ * defaulted: `parseInt` yields `NaN`, every comparison against `NaN` is false,
+ * and a budget nothing fits inside produces empty blocks for as long as the
+ * node runs — a node that stays up and carries no user work, which is the
+ * silence `assertOrderingTargetAboveFloor` exists to prevent one field over.
+ * Written as a negated `>` so the check is total on the parse.
+ */
+function parseBlockBodyBudget(raw: string | undefined): number {
+  if (raw === undefined) return MAX_BLOCK_BODY_BYTES;
+  const parsed = parseInt(raw, 10);
+  if (!(parsed > 0)) {
+    throw new Error(
+      `Invalid BLOCK_BODY_BUDGET_BYTES "${raw}" — must be a positive byte ` +
+        'count; a budget no transaction fits inside produces empty blocks ' +
+        'silently, for as long as the node runs',
+    );
+  }
+  return Math.min(parsed, MAX_BLOCK_BODY_BYTES);
 }
 
 /**

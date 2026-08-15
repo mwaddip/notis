@@ -35,6 +35,7 @@ import {
   encodePost,
   computePostId,
   decodeTx,
+  MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import type {
   Post,
@@ -59,7 +60,7 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  maxSubBlocksPerBlock: 1000,
+  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
   treasuryPubKey: '',

@@ -729,8 +729,9 @@ verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?: string }
 ```
 
 Checks: `tx` is an object, `inputs` is a non-empty array, `outputs` is a
-non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs, and
-`protocolVersion` is a number. That is the whole list.
+non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs,
+`protocolVersion` is a number, and **the encoded transaction is at most
+`MAX_TX_BYTES`**. That is the whole list.
 
 **It does not check `likeTarget`**, and this contract wrongly said it did until
 2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
@@ -742,6 +743,29 @@ layer is how a later reader deletes the real check as redundant.
 
 Also does NOT check UTXO conservation, guard satisfaction, or the like
 biconditional (`likeTarget` ⟺ deficit) — those are Stage 2 (stateful) checks.
+
+#### The size bound measures `encodeTx`, and runs last
+
+`encodeTx(tx).length > MAX_TX_BYTES` rejects. **The measure is the re-encoding, not the bytes the
+transaction arrived as**, and the reason is that node's `insertUtxoTx` re-encodes on the way into the
+mempool — so a node's own canonical encoding, never the received bytes, is what will occupy a block.
+Measuring the re-encoding measures the future cost exactly, and it is the same number on every node
+where a received-bytes measure would not be.
+
+⚠ **A block's embedded transactions are bounded differently, and the asymmetry is deliberate.**
+`verifyOrderingBlockStructure` weighs `utxoTxs` as they arrived, because those opaque bytes are what
+the node stores and re-serves. Each check measures the bytes its own object actually costs; neither
+is the other's approximation.
+
+⛔ **It runs after every shape check, and the encode is total.** This package's no-panic rule
+(`Postconditions` — No-panic (M-5)) binds here as everywhere: `encodeTx` is `cbor-x` over a
+peer-supplied object, so it is called only once the shape checks have passed and its throw is turned
+into a rejection rather than allowed out. A size bound that panics on the input it exists to refuse
+would be worse than no bound.
+
+**Why not compute it arithmetically**, as `utxoTxTreeByteLength` does for the body: that tree is a
+positional struct whose terms are all knowable, while a transaction is `cbor-x`, so an arithmetic
+sizer would have to reimplement a third-party encoder's rules and would rot silently against it.
 
 #### `genesis_proof` may not be a transaction output
 
@@ -826,7 +850,8 @@ has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char st
 `powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (2304), `coinbaseOutputs` is
 an array with each output having a 32-byte `owner`, a `bigint` `value` in
 `[0, 2⁶⁴)`, a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
-and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view.
+and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
+**of at most `MAX_TX_BYTES`**. Last, the encoded body is at most `MAX_BLOCK_BODY_BYTES`.
 
 > ⚠ **The `< 2⁶⁴` bound lives HERE, not in node — corrected 2026-08-10.** This
 > passage used to route it to node's apply-time `checkOutputValues` "matching the
@@ -854,6 +879,42 @@ be `Uint8Array`, not merely length-bearing — a CBOR payload can put any type
 in any field, and the consumers of these fields call `Buffer.from(...)` and
 `createHash().update(...)`, which throw on a number or object. Structure
 validation is the layer that guarantees they never see one.
+
+#### Each embedded transaction is bounded too
+
+`utxoTxs[i].length > MAX_TX_BYTES` rejects, checked in the same loop that types the elements.
+
+⛔ **Without it, `MAX_TX_BYTES` would not be a consensus bound at all.** `verifyTxStructure` carries
+the same limit but has exactly one production caller — net's gossip `tx` validator — and
+`@dagsocial/node` calls it zero times. So that check alone bounds transactions arriving by gossip and
+nothing arriving inside a block: a miner could mine a transaction no peer could have relayed, and
+every node would accept the block. A bound that binds users and not miners is an asymmetry with no
+purpose.
+
+**The measure here is the as-arrived byte length**, matching how the body bound weighs the same
+array, and deliberately unlike `verifyTxStructure`'s re-encoding. It needs no decode — the elements
+are already opaque bytes.
+
+#### The body size bound — `utxoTxTreeByteLength` ≤ `MAX_BLOCK_BODY_BYTES`
+
+`utxoTxTreeByteLength(block.utxoTxTree) > MAX_BLOCK_BODY_BYTES` rejects. **This is where the bound
+belongs rather than in node's apply path**, because this function is what net runs *before relay*
+(`NET_INTERFACE` → Stage 1 (net package, stateless)): enforced at apply instead, an oversized block is forwarded to
+every peer first and refused second, which is the amplification the bound exists to prevent.
+
+⛔ **It runs after every shape check above, and that order is load-bearing.** The sizer reads
+`utxoTxs` element lengths, the prune-entry fields and the coinbase array; run before those are typed,
+it reads a length off whatever a peer put there. The checks above are what make it total — the same
+relationship the `pruneEntries` paragraph describes for `Buffer.from` and `createHash`.
+
+**The measure is the bytes as they arrived.** `utxoTxs` are opaque, so a received block weighs what
+the peer actually put in it — which is what this node stores and re-serves. See the transaction bound
+under `verifyTxStructure`, which measures a re-encoding instead and says why the two differ.
+
+⚠ **The bound holds a three-way relation, not a number** — `MAX_BLOCK_BODY_BYTES` <
+`MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES` (`TYPES_INTERFACE` → Size caps). Moving this constant
+above net's serve limit makes a block legal here and impossible to serve, which is worse than having
+no bound: the block propagates by gossip and no syncing peer can ever fetch it.
 
 Structure-only: `author` is checked for shape here, not truth — binding it to
 the real post (when content is locally present) and to prune authorization is

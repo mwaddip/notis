@@ -363,18 +363,37 @@ function headersResponseCodec(maxHeaders: number): StructCodec<BlockHeader[]> {
   return lpItemsCodec('headersResponse', encodeHeader, decodeHeader, maxHeaders);
 }
 
+/** An already-encoded item is its own encoding: `lpItemsCodec`'s identity pairing. */
+const identityBytes = (bytes: Uint8Array): Uint8Array => bytes;
+
 /**
- * Frame a `Blocks` (17) response.
+ * `blocksResponseCodec`'s wire form over items the caller has already encoded.
  *
- * Throws only for a block *we* hold that has no encoding — a corrupt local
- * store, not a peer's doing. The serve arm's own `catch` turns that into zero
- * bytes, which is the same answer it gives for every other local failure.
+ * The same `lpItemsCodec` with the per-item encode spent, so it writes the byte
+ * sequence `blocksResponseCodec` writes and `decodeBlocks` reads — `arr(blocks,
+ * lp)`, one length-prefixed span per block. Identity is a codec here rather than
+ * a write-only special case: `arr(bytes, lp)` reads back as the same
+ * `Uint8Array[]` it wrote.
  */
-export function encodeBlocks(magic: number, blocks: OrderingBlock[]): Uint8Array {
+function encodedBlocksResponseCodec(maxBlocks: number): StructCodec<Uint8Array[]> {
+  return lpItemsCodec('blocksResponse', identityBytes, identityBytes, maxBlocks);
+}
+
+/**
+ * Frame a `Blocks` (17) response from blocks the serve loop has already encoded.
+ *
+ * It takes bytes because `serveBlocksResponse` must weigh each block against
+ * `MAX_SERVE_BODY_BYTES` as it assembles the response, and a block's weight is
+ * its encoding — so encoding here as well would spend that work twice over a
+ * body of up to `MAX_SERVE_BODY_BYTES` (NET_INTERFACE → `GetHeaders` /
+ * `GetBlocks` responses). The serve loop owns the encode and the throw a corrupt
+ * local row produces; this function frames what it is given.
+ */
+export function encodeBlocks(magic: number, blocks: Uint8Array[]): Uint8Array {
   return encodeFrame(
     magic,
     MSG_BLOCKS,
-    encodeStruct(blocksResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), blocks),
+    encodeStruct(encodedBlocksResponseCodec(MAX_CHAIN_RESPONSE_ITEMS), blocks),
   );
 }
 

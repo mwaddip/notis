@@ -35,7 +35,7 @@ import {
   encodeHeaders,
 } from '../src/sync-codec.js';
 import { decodeFrame } from '../src/frame.js';
-import { MAX_CHAIN_RESPONSE_ITEMS } from '../src/msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { mergeUint8Arrays } from '../src/util.js';
 
 const MAGIC = 0x54444147;
@@ -50,8 +50,11 @@ function bodyOf(frame: Uint8Array, expectedCode: number): Uint8Array {
 /** Response bodies, for the assertions that are about the codec rather than the frame. */
 const headersBody = (headers: BlockHeader[]): Uint8Array =>
   bodyOf(encodeHeaders(MAGIC, headers), MSG_HEADERS);
+/** `encodeBlocks` frames what the serve loop already encoded, so fixtures encode first. */
+const blocksFrame = (blocks: OrderingBlock[]): Uint8Array =>
+  encodeBlocks(MAGIC, blocks.map(encodeOrderingBlock));
 const blocksBody = (blocks: OrderingBlock[]): Uint8Array =>
-  bodyOf(encodeBlocks(MAGIC, blocks), MSG_BLOCKS);
+  bodyOf(blocksFrame(blocks), MSG_BLOCKS);
 
 // ---------------------------------------------------------------------------
 // Mock data helpers
@@ -136,6 +139,37 @@ function makeChain(n: number): Map<number, OrderingBlock> {
   let prev = '00'.repeat(32);
   for (let h = 1; h <= n; h++) {
     const block = makeMockOrderingBlock(h, prev);
+    store.set(h, block);
+    prev = mockBlockHash(block.header);
+  }
+  return store;
+}
+
+/**
+ * A block carrying `payloadBytes` of transaction body.
+ *
+ * Weight goes into `utxoTxs`, with the aligned `utxoTxIds` entry a transaction
+ * also costs, because that is where a real block carries it: the elements are
+ * opaque byte arrays to every layer that moves a block, so a serve loop weighing
+ * one weighs exactly this.
+ */
+function makeHeavyBlock(
+  height: number,
+  prevBlockHash: string,
+  payloadBytes: number,
+): OrderingBlock {
+  const block = makeMockOrderingBlock(height, prevBlockHash);
+  block.utxoTxTree.utxoTxIds = ['ab'.repeat(32)];
+  block.utxoTxTree.utxoTxs = [new Uint8Array(payloadBytes)];
+  return block;
+}
+
+/** A chain 1..n whose blocks each carry `payloadBytes` of body. */
+function makeHeavyChain(n: number, payloadBytes: number): Map<number, OrderingBlock> {
+  const store = new Map<number, OrderingBlock>();
+  let prev = '00'.repeat(32);
+  for (let h = 1; h <= n; h++) {
+    const block = makeHeavyBlock(h, prev, payloadBytes);
     store.set(h, block);
     prev = mockBlockHash(block.header);
   }
@@ -451,7 +485,7 @@ describe('response item caps', () => {
   it('refuses more blocks than the requested range', () => {
     const store = makeChain(5);
     const blocks = [1, 2, 3, 4, 5].map((h) => store.get(h)!);
-    const frame = encodeBlocks(MAGIC, blocks);
+    const frame = blocksFrame(blocks);
 
     expect(receiveBlocks(frame, 1, 3)).toBeNull();
     expect(receiveBlocks(frame, 1, 5)).toHaveLength(5);
@@ -654,6 +688,55 @@ describe('serve: GetBlocks', () => {
     expect(receiveBlocks(frame, 1, MAX_CHAIN_RESPONSE_ITEMS)).toHaveLength(
       MAX_CHAIN_RESPONSE_ITEMS,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — the blocks response is bounded by bytes as well as by count
+//
+// The two bounds answer different questions and neither replaces the other:
+// `MAX_CHAIN_RESPONSE_ITEMS` bounds how many blocks we assemble, and says
+// nothing about their weight. Blocks are bounded individually by
+// `MAX_BLOCK_BODY_BYTES`, so a count-only response reaches far past what the
+// requester will read off a stream — and only when blocks are full, which is
+// why no assertion above this one can see it.
+// ---------------------------------------------------------------------------
+
+describe('serve: GetBlocks byte bound', () => {
+  it('stops before the response exceeds MAX_SERVE_BODY_BYTES', () => {
+    // Three of these fit in the store and two in a response: the third would
+    // carry the total past 4 MiB, so the loop stops before adding it.
+    const store = makeHeavyChain(3, 1_500_000);
+
+    const frame = serveBlocks({ startHeight: 1, endHeight: 3 }, store);
+    const blocks = receiveBlocks(frame, 1, 3);
+
+    expect(blocks!.map((b) => b.header.height)).toEqual([1, 2]);
+    expect(bodyOf(frame, MSG_BLOCKS).length).toBeLessThan(MAX_SERVE_BODY_BYTES);
+  });
+
+  it('serves the whole range when the response stays under the bound', () => {
+    // The truncation above has to be attributable to the byte bound and to
+    // nothing else. Same fixture shape, same block count, weight below the line:
+    // if some other limit were doing the work, this would truncate too.
+    const store = makeHeavyChain(3, 1_000_000);
+
+    const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 3 }, store), 1, 3);
+    expect(blocks!.map((b) => b.header.height)).toEqual([1, 2, 3]);
+  });
+
+  it('always includes the first block, however heavy it is', () => {
+    // `MAX_BLOCK_BODY_BYTES` sits below `MAX_SERVE_BODY_BYTES`, so a legal block
+    // can never be this large and the clause is defensive. What it decides is
+    // whether an out-of-domain block still moves or wedges sync behind it: a
+    // loop that dropped it would re-serve the same truncated answer forever.
+    const store = new Map<number, OrderingBlock>();
+    const first = makeHeavyBlock(1, '00'.repeat(32), MAX_SERVE_BODY_BYTES + 1);
+    store.set(1, first);
+    store.set(2, makeMockOrderingBlock(2, mockBlockHash(first.header)));
+
+    const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 2 }, store), 1, 2);
+    expect(blocks!.map((b) => b.header.height)).toEqual([1]);
   });
 });
 

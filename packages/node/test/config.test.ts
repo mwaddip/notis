@@ -7,6 +7,7 @@ import {
   AVL_KEY_LENGTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
+  MAX_BLOCK_BODY_BYTES,
   MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
@@ -15,7 +16,7 @@ const TEST_KEYS = [
   'PORT',
   'DB_PATH',
   'CHALLENGE_WINDOW_BLOCKS',
-  'MAX_SUB_BLOCKS_PER_BLOCK',
+  'BLOCK_BODY_BUDGET_BYTES',
   'MAX_MEMPOOL_ENTRIES',
   'NETWORK_TYPE',
   'MINING_SECRET',
@@ -59,7 +60,7 @@ describe('config', () => {
 
       expect(cfg.port).toBe(3000);
       expect(cfg.dbPath).toBe('dagsocial.db');
-      expect(cfg.maxSubBlocksPerBlock).toBe(1000);
+      expect(cfg.blockBodyBudgetBytes).toBe(MAX_BLOCK_BODY_BYTES);
       expect(cfg.maxMempoolEntries).toBe(10000);
       expect(cfg.networkType).toBe('testnet');
       // toEqual, not toBe: vi.resetModules() gives the dynamically imported
@@ -75,7 +76,7 @@ describe('config', () => {
       process.env['PORT'] = '8080';
       process.env['DB_PATH'] = '/tmp/test.db';
       process.env['CHALLENGE_WINDOW_BLOCKS'] = '5';
-      process.env['MAX_SUB_BLOCKS_PER_BLOCK'] = '500';
+      process.env['BLOCK_BODY_BUDGET_BYTES'] = '500';
       process.env['MAX_MEMPOOL_ENTRIES'] = '25';
       process.env['NETWORK_TYPE'] = 'mainnet';
       process.env['MINING_SECRET'] = 'sekret';
@@ -85,7 +86,7 @@ describe('config', () => {
 
       expect(cfg.port).toBe(8080);
       expect(cfg.dbPath).toBe('/tmp/test.db');
-      expect(cfg.maxSubBlocksPerBlock).toBe(500);
+      expect(cfg.blockBodyBudgetBytes).toBe(500);
       expect(cfg.maxMempoolEntries).toBe(25);
       expect(cfg.networkType).toBe('mainnet');
       expect(cfg.miningSecret).toBe('sekret');
@@ -95,14 +96,14 @@ describe('config', () => {
   describe('3. numeric parsing', () => {
     it('parses numeric strings correctly', async () => {
       process.env['PORT'] = '3001';
-      process.env['MAX_SUB_BLOCKS_PER_BLOCK'] = '2000';
+      process.env['BLOCK_BODY_BUDGET_BYTES'] = '2000';
 
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
 
       expect(typeof cfg.port).toBe('number');
       expect(cfg.port).toBe(3001);
-      expect(cfg.maxSubBlocksPerBlock).toBe(2000);
+      expect(cfg.blockBodyBudgetBytes).toBe(2000);
     });
   });
 
@@ -526,6 +527,47 @@ describe('config', () => {
       delete process.env['MAX_PROOF_HISTORY'];
       const { loadConfig } = await import('../src/config.js');
       expect(loadConfig().maxProofHistory).toBeGreaterThanOrEqual(MAX_REORG_DEPTH);
+    });
+  });
+
+  describe('13. block body budget is clamped to the consensus bound', () => {
+    function importWithBudget(value: string) {
+      process.env['BLOCK_BODY_BUDGET_BYTES'] = value;
+      return import('../src/config.js');
+    }
+
+    // A node cannot raise its own consensus bound: above the ceiling, the ask
+    // is read as "as much as the rules allow" rather than refused, because that
+    // is the one legal value it names.
+    it('clamps a budget above MAX_BLOCK_BODY_BYTES', async () => {
+      const { loadConfig } = await importWithBudget(String(MAX_BLOCK_BODY_BYTES + 1));
+      expect(loadConfig().blockBodyBudgetBytes).toBe(MAX_BLOCK_BODY_BYTES);
+    });
+
+    // The bound itself is admissible — the clamp is `min`, not `<`.
+    it('honours a budget sitting exactly on MAX_BLOCK_BODY_BYTES', async () => {
+      const { loadConfig } = await importWithBudget(String(MAX_BLOCK_BODY_BYTES));
+      expect(loadConfig().blockBodyBudgetBytes).toBe(MAX_BLOCK_BODY_BYTES);
+    });
+
+    it('honours a smaller budget — a miner may publish smaller blocks', async () => {
+      const { loadConfig } = await importWithBudget('64000');
+      expect(loadConfig().blockBodyBudgetBytes).toBe(64_000);
+    });
+
+    // Refused rather than clamped or defaulted: `parseInt` answers `NaN`, every
+    // comparison against it is false, and a budget nothing fits inside builds
+    // empty blocks for as long as the node runs.
+    it('refuses a non-numeric budget', async () => {
+      await expect(importWithBudget('plenty')).rejects.toThrow(
+        /BLOCK_BODY_BUDGET_BYTES/,
+      );
+    });
+
+    it('refuses a zero or negative budget', async () => {
+      await expect(importWithBudget('0')).rejects.toThrow(/BLOCK_BODY_BUDGET_BYTES/);
+      vi.resetModules();
+      await expect(importWithBudget('-1')).rejects.toThrow(/BLOCK_BODY_BUDGET_BYTES/);
     });
   });
 });

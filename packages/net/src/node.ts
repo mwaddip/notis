@@ -9,7 +9,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, decodeOrderingBlock } from '@dagsocial/types';
+import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock } from '@dagsocial/types';
 import { blockHash, blockWork } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
 import type {
@@ -38,7 +38,7 @@ import {
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -321,11 +321,22 @@ export class LazySyncStore implements SyncStore {
 // re-implements those loops stays green through a change to the response wire
 // format, which is the one thing a protocol suite exists to notice.
 //
-// Both are bounded twice: by what the peer asked for, and by
+// Both are bounded by what the peer asked for and by
 // `MAX_CHAIN_RESPONSE_ITEMS`. `endHeight` and `maxCount` are peer-chosen and
-// each loop reads the store once per height into an in-memory array, so the
-// second bound is what keeps the size of that array — and of the bytes we then
-// hold — off the peer's control panel.
+// each loop reads the store once per height into an in-memory array, so that
+// second bound is what keeps the *length* of that array off the peer's control
+// panel.
+//
+// A count bounds a length and says nothing about a weight, so the blocks loop
+// carries a second, independent bound: it accumulates encoded bytes and stops
+// before exceeding `MAX_SERVE_BODY_BYTES` (NET_INTERFACE → Validation (and
+// untrusted-input safety)). Blocks are bounded individually by
+// `MAX_BLOCK_BODY_BYTES`, and 400 of those is far past what any requester will
+// read off a stream.
+//
+// The headers loop is bounded by count alone, because a header cannot be heavy:
+// four fixed-width fields and five VLQs put its ceiling at 157 bytes, so 400 of
+// them reach ~61 KiB — 1.5% of `MAX_SERVE_BODY_BYTES`.
 //
 // `ourHeight` clamps both loops to our own tip: we cannot serve what we do not
 // have, so this never truncates a legitimate request, and a peer asking for
@@ -353,14 +364,27 @@ export function serveHeadersResponse(
   return encodeHeaders(magic, headers);
 }
 
-/** Frame a `Blocks` (17) response: our chain across an inclusive height range. */
+/**
+ * Frame a `Blocks` (17) response: our chain across an inclusive height range.
+ *
+ * Each block is encoded once, here: the encoding is both what the response
+ * carries and what the byte bound weighs, and `encodeBlocks` frames the result
+ * rather than re-deriving it.
+ *
+ * The byte bound is `handleModifierRequestMsg`'s — accumulate, stop before
+ * exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block**, so a
+ * block too large to share a response with anything still moves on its own
+ * instead of wedging sync behind it. A truncated response costs the requester
+ * one round trip; it re-asks for the remainder on the next `SyncInfo` round.
+ */
 export function serveBlocksResponse(
   magic: number,
   request: GetBlocksMsg,
   ourHeight: number,
   getBlock: (height: number) => OrderingBlock | null,
 ): Uint8Array {
-  const blocks: OrderingBlock[] = [];
+  const blocks: Uint8Array[] = [];
+  let bodyBytes = 0;
   const endHeight = Math.min(request.endHeight, ourHeight);
   for (
     let h = request.startHeight;
@@ -368,7 +392,11 @@ export function serveBlocksResponse(
     h++
   ) {
     const block = getBlock(h);
-    if (block) blocks.push(block);
+    if (!block) continue;
+    const data = encodeOrderingBlock(block);
+    if (blocks.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
+    bodyBytes += data.length;
+    blocks.push(data);
   }
   return encodeBlocks(magic, blocks);
 }
