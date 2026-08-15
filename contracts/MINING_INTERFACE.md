@@ -55,8 +55,8 @@ computeBlockReward(height):
 
 **Coinbase split:** see "Coinbase Application → The slices" below. It is taken over
 block **income**, not over the reward; the treasury's share is per income term; and
-the miner floor absorbs every remainder. **A treasury key is required** — a node
-configured without one does not start.
+the miner floor absorbs every remainder. On a profile with no `treasuryPubKey` the
+treasury share and the unearned bonus are **not minted**, never redirected to the miner.
 
 ## Ordering Block (extended)
 
@@ -338,9 +338,20 @@ percentages of one income do not sum back to it under truncation. That routes bo
 rounding and storage rent's treasury exemption to miners, which is where rent belongs
 (ARCHITECTURE → UTXO conservation).
 
-⛔ **A treasury key is required.** With none configured, the treasury's slice and the
-unearned bonus would both fall to the miner — who would then recover their own forfeit,
-and the bonus would price nothing. A node without one must not start.
+⛔ **Neither the treasury slice nor the unearned bonus may fall to the miner.** A miner
+who recovered their own forfeit would face a delay rather than a cost, and the bonus
+would price nothing.
+
+**On a profile with no `treasuryPubKey`, both are simply not minted**, and income is
+reduced by exactly that amount. The forfeit becomes a burn instead of a lock; from the
+miner's side the incentive is identical, because they do not receive it either way.
+
+⚠ **This keys on the PROFILE, never on local config.** `treasuryPubKey` is profile
+data, so "this network has no treasury" is network-wide and every node computes the
+same coinbase; a config-sourced answer would let two nodes on one network disagree
+about a consensus value. All three profiles carry `''` today, so the burn is the live
+path and the keyed path is the one a test has to reach deliberately. **Mainnet pins a
+real key**; devnet and testnet burning is intended.
 
 ### On block receipt (relay node):
 1. Verify PoW
@@ -419,7 +430,9 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 1. Coinbase value per block matches `computeBlockReward(height) + fees` exactly, and
    **no coinbase output carries `value === 0`** at any height
 2. The coinbase's split matches the slice table above — verified **per output**, not
-   only as a sum. A treasury key is configured, or the node does not start
+   only as a sum. On a profile with no treasury key, the treasury share and the
+   unearned bonus are not minted and income is reduced by exactly that amount —
+   the value is a function of the **profile**, never of local config
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
    output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip

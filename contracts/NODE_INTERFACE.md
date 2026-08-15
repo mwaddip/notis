@@ -1845,10 +1845,10 @@ else:
 ```
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
-The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. A
-`treasuryPubKey` is **required**, not optional: without one the treasury's share and
-the unearned inclusion bonus would both fall to the miner, who would then recover
-their own forfeit.
+The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. On a
+profile carrying no `treasuryPubKey`, the treasury's share and the unearned inclusion
+bonus are **not minted at all** — never redirected to the miner, who would otherwise
+recover their own forfeit.
 
 > ⚠ **VIOLATED — the lock has no spend-time enforcement, so it is decorative.**
 > Measured 2026-08-07, **re-verified 2026-08-11 by reading every `lockedUntilBlock` occurrence
