@@ -34,6 +34,7 @@ import {
   computePostId, postFieldBytes, computeBoxId, computeTxId,
   computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS,
   PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE, u32BE,
+  INVITE_KARMA_AMOUNT, INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
@@ -290,6 +291,7 @@ const MIRRORED_OTHER = [
 const MIRRORED_BUILDERS = [
   'selectBoxes', 'buildVouchTx', 'buildUnvouchTx',
   'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
+  'buildCreateInviteTx', 'buildClaimInviteTx', 'buildCancelInviteTx',
   'recordPendingKarmaChange', 'applyPendingKarmaChange',
 ] as const;
 
@@ -302,6 +304,7 @@ const MIRRORED_CONSTS = [
   'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
+  'INVITE_KARMA_AMOUNT', 'INVITE_BOND_KARMA',
   'pendingKarmaChange',
 ] as const;
 
@@ -313,8 +316,10 @@ const RETURNED = [
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
   'jsonBigint', 'buildVouchTx', 'buildUnvouchTx',
   'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
+  'buildCreateInviteTx', 'buildClaimInviteTx', 'buildCancelInviteTx',
   'recordPendingKarmaChange', 'applyPendingKarmaChange', 'pendingKarmaChange',
   'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
+  'INVITE_KARMA_AMOUNT', 'INVITE_BOND_KARMA',
 ] as const;
 
 /** The shape `GET /karma` returns, and what the page's builders select from. */
@@ -351,6 +356,16 @@ interface UiCrypto {
     pubKeyHex: string,
   ) => Record<string, unknown>;
   buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+  buildCreateInviteTx: (
+    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
+    pubKeyHex: string,
+    inviteePubKeyHex: string,
+  ) => Record<string, unknown>;
+  buildClaimInviteTx: (
+    inviteBoxId: string,
+    inviteePubKeyHex: string,
+  ) => Record<string, unknown>;
+  buildCancelInviteTx: (inviteBoxId: string) => Record<string, unknown>;
   buildPostTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     lockAmount: bigint,
@@ -368,6 +383,8 @@ interface UiCrypto {
   pendingKarmaChange: Map<string, { boxId: string; value: bigint }>;
   VOUCH_KARMA_AMOUNT: bigint;
   VOUCH_MIN_BALANCE: bigint;
+  INVITE_KARMA_AMOUNT: bigint;
+  INVITE_BOND_KARMA: bigint;
 }
 
 /**
@@ -1149,8 +1166,6 @@ const AUDIT_VOCABULARY: readonly string[] = [
 const AUDIT_ALLOW: Record<string, string> = {
   attachFeedHandlers:
     'hashes a server-issued challenge before Ed25519 signing — it takes no layout decision',
-  'createInviteBtn#click':
-    'hashes 32 random bytes into an invite secretHash — it takes no layout decision',
 };
 
 interface Scope { name: string; start: number; end: number; }
@@ -1332,6 +1347,134 @@ describe('demo UI vouch builders ↔ the id the node derives', () => {
     // maturity, so a change output here would be the same karma twice.
     const decoded = overTheWire(ui.buildUnvouchTx('ab'.repeat(32)));
     expect(decoded.inputs).toEqual(['ab'.repeat(32)]);
+    expect(decoded.outputs).toEqual([]);
+  });
+});
+
+describe('demo UI invite builders ↔ the id the node derives', () => {
+  // The page is the only producer of these three shapes, and each is rejected
+  // outright if it carries a field the box schema does not declare or a value
+  // the transition arm does not admit. The txId assertions pin the same hex-vs-
+  // byte boundary the vouch group pins, one level up from `canonicalBoxBytes`;
+  // the shape assertions pin what `checkTransitions` and the conservation carve
+  // require of each shape.
+
+  const INVITER_HEX = Buffer.from(GOLDEN_AUTHOR).toString('hex');
+  const INVITEE_HEX = 'd4'.repeat(32);
+  const INVITE_BOX_ID = 'e5'.repeat(32);
+
+  /** What `fetchKarmaBox()` hands a builder. */
+  const karmaState = (values: bigint[]) => ({
+    total: values.reduce((sum, v) => sum + v, 0n),
+    boxes: values.map((value, i) => ({ boxId: String(i).padStart(2, '0').repeat(32), value })),
+  });
+
+  /** The tx as it arrives server-side: through the page's own bigint replacer. */
+  const overTheWire = (tx: Record<string, unknown>) =>
+    jsonToTx(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
+
+  it('the page mirrors the two invite amounts by hand, so nothing but this compares them', () => {
+    // A drifted bond builds a create `checkTransitions` rejects; a drifted mint
+    // builds a claim the conservation carve rejects.
+    expect(ui.INVITE_BOND_KARMA).toBe(INVITE_BOND_KARMA);
+    expect(ui.INVITE_KARMA_AMOUNT).toBe(INVITE_KARMA_AMOUNT);
+  });
+
+  it('a create the page builds hashes to the same txId the node derives', () => {
+    const tx = ui.buildCreateInviteTx(
+      karmaState([INVITE_BOND_KARMA + 1n]), INVITER_HEX, INVITEE_HEX,
+    );
+    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
+  });
+
+  it('a claim the page builds hashes to the same txId the node derives', () => {
+    const tx = ui.buildClaimInviteTx(INVITE_BOX_ID, INVITEE_HEX);
+    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
+  });
+
+  it('a cancel the page builds hashes to the same txId the node derives', () => {
+    const tx = ui.buildCancelInviteTx(INVITE_BOX_ID);
+    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
+  });
+
+  it('the create deducts the bond and only the bond', () => {
+    // `INVITE_KARMA_AMOUNT` is minted at the claim, so it never leaves the
+    // inviter's balance (ARCHITECTURE → Invite creation). Selecting exactly
+    // bond + mint is what makes the difference visible: paying both would leave
+    // no change at all.
+    const funded = INVITE_BOND_KARMA + INVITE_KARMA_AMOUNT;
+    const decoded = overTheWire(
+      ui.buildCreateInviteTx(karmaState([funded]), INVITER_HEX, INVITEE_HEX),
+    );
+    const [change, invite, bond] = decoded.outputs as [KarmaBox, InviteBox, BondBox];
+
+    expect(change.value).toBe(funded - INVITE_BOND_KARMA);
+    expect(change.value).not.toBe(0n);
+    // Creation conserves like any other transaction — the invite holds nothing.
+    expect(change.value + invite.value + bond.value).toBe(funded);
+  });
+
+  it('the create carries the shape consensus pins', () => {
+    // NODE_INTERFACE → the transition table's invite-create row: one karma +
+    // one invite + one bond, the invite holding 0, the bond holding exactly
+    // `INVITE_BOND_KARMA`, both new boxes carrying the karma input's owner as
+    // `inviterId` and one and the same `inviteePublicKey`.
+    const decoded = overTheWire(
+      ui.buildCreateInviteTx(karmaState([40n, 30n]), INVITER_HEX, INVITEE_HEX),
+    );
+    const [change, invite, bond] = decoded.outputs as [KarmaBox, InviteBox, BondBox];
+
+    expect(decoded.outputs).toHaveLength(3);
+    expect(invite.value).toBe(0n);
+    expect(bond.value).toBe(INVITE_BOND_KARMA);
+    expect(Buffer.from(change.owner).toString('hex')).toBe(INVITER_HEX);
+    expect(Buffer.from(invite.inviterId).toString('hex')).toBe(INVITER_HEX);
+    expect(Buffer.from(bond.inviterId).toString('hex')).toBe(INVITER_HEX);
+    expect(Buffer.from(invite.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);
+    expect(Buffer.from(bond.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);
+    // Either key satisfies the invite; nothing user-signed satisfies the bond.
+    expect(invite.guard).toBe('invite_dual');
+    expect(bond.guard).toBe('block_apply');
+    expect(decoded.protocolVersion).toBe(PROTOCOL_VERSION);
+
+    // The first box covers the bond on its own, so the second is not selected
+    // and its value is not in the sum.
+    expect(decoded.inputs).toEqual([karmaState([40n, 30n]).boxes[0]!.boxId]);
+    expect(change.value + invite.value + bond.value).toBe(40n);
+
+    // The per-boxType output shape is CLOSED — a key it does not declare is a
+    // rejection, not a spare field. `invite` and `bond` declare exactly
+    // `boxType`, `value`, `inviterId`, `inviteePublicKey` and `guard`.
+    for (const box of [invite, bond] as unknown as Array<Record<string, unknown>>) {
+      for (const dead of [
+        'secretHash', 'inviteOutputIndex', 'probationStartBlock', 'probationEndBlock',
+      ]) {
+        expect(box[dead], dead).toBeUndefined();
+      }
+    }
+    expect(decoded.preimages).toBeUndefined();
+  });
+
+  it('the claim mints the whole output and names no bond', () => {
+    // The InviteBox holds 0, so the entire karma output is a **surplus** — the
+    // only karma any transaction may create, and it is admitted in this shape
+    // alone. A change output or a bond input would break it.
+    const decoded = overTheWire(ui.buildClaimInviteTx(INVITE_BOX_ID, INVITEE_HEX));
+    const [minted] = decoded.outputs as [KarmaBox];
+
+    expect(decoded.inputs).toEqual([INVITE_BOX_ID]);
+    expect(decoded.outputs).toHaveLength(1);
+    expect(minted.boxType).toBe('karma');
+    expect(minted.value).toBe(INVITE_KARMA_AMOUNT);
+    expect(Buffer.from(minted.owner).toString('hex')).toBe(INVITEE_HEX);
+    expect(minted.guard).toBe('owner_signature');
+  });
+
+  it('the cancel spends one invite and produces nothing', () => {
+    // Zero outputs is the shape: the bond returns through block application, so
+    // a karma output here would be the inviter's stake returned twice.
+    const decoded = overTheWire(ui.buildCancelInviteTx(INVITE_BOX_ID));
+    expect(decoded.inputs).toEqual([INVITE_BOX_ID]);
     expect(decoded.outputs).toEqual([]);
   });
 });

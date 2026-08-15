@@ -9,7 +9,9 @@ import {
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { generateKeyPairSync, createPrivateKey } from 'crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { generateKeyPairSync, createPrivateKey, sign as cryptoSign, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
   getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
@@ -24,6 +26,7 @@ import {
 import {
   generateKeyPair,
   computeBoxId,
+  computeTxId,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   PROTOCOL_VERSION,
@@ -38,12 +41,59 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/invites.js';
 import type { InvitesDeps } from '../../src/routes/invites.js';
+import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { config } from '../../src/config.js';
 import { MempoolFullError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
+import { extractDeclaration } from '../unit/extract-declaration.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-invites.sqlite';
+
+const INDEX_HTML = fileURLToPath(new URL('../../public/index.html', import.meta.url));
+
+interface UiBuilders {
+  jsonBigint: (key: string, value: unknown) => unknown;
+  buildCreateInviteTx: (
+    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
+    pubKeyHex: string,
+    inviteePubKeyHex: string,
+  ) => Record<string, unknown>;
+  buildClaimInviteTx: (
+    inviteBoxId: string,
+    inviteePubKeyHex: string,
+  ) => Record<string, unknown>;
+  buildCancelInviteTx: (inviteBoxId: string) => Record<string, unknown>;
+}
+
+/**
+ * The page's three invite builders and its bigint replacer, lifted by name from
+ * `public/index.html` — the same extraction the crypto mirrors use.
+ *
+ * Lifted rather than restated: a builder copied into a test asserts agreement
+ * between the test and itself, and the page is served statically with no
+ * bundler, so nothing else ties the two together. The page is the only producer
+ * of these three shapes.
+ */
+function loadUiBuilders(): UiBuilders {
+  const html = readFileSync(INDEX_HTML, 'utf8');
+  const lift = (header: string): string => extractDeclaration(html, header, 'index.html');
+  return new Function(
+    [
+      lift('const PROTOCOL_VERSION ='),
+      lift('const INVITE_KARMA_AMOUNT ='),
+      lift('const INVITE_BOND_KARMA ='),
+      lift('function jsonBigint('),
+      lift('function selectBoxes('),
+      lift('function buildCreateInviteTx('),
+      lift('function buildClaimInviteTx('),
+      lift('function buildCancelInviteTx('),
+      'return { jsonBigint, buildCreateInviteTx, buildClaimInviteTx, buildCancelInviteTx };',
+    ].join('\n\n'),
+  )() as UiBuilders;
+}
+
+const ui = loadUiBuilders();
 
 async function request(
   path: string,
@@ -290,6 +340,115 @@ describe('invites routes', () => {
 
     const res = await request('/cancel', 'POST', { tx: txToJson(tx) });
     expect(res.status).toBe(403);
+  });
+
+  // ---------------------------------------------------------------------------
+  // The bodies the demo UI's three invite buttons actually send.
+  //
+  // ⚠ A builder that emits a shape these routes reject is invisible to every
+  // test above: each of them constructs its own transaction, so it asserts the
+  // route against itself. Only a lifted builder makes the page the subject.
+  // ---------------------------------------------------------------------------
+
+  describe('the page builders, lifted from index.html', () => {
+    /** `fetchKarmaBox()`'s return shape, over boxes that are really in the store. */
+    const karmaState = (...boxes: KarmaBox[]) => ({
+      total: boxes.reduce((sum, b) => sum + b.value, 0n),
+      boxes: boxes.map((b) => ({ boxId: b.id!, value: b.value })),
+    });
+
+    /**
+     * Serialize as the page does — through its own bigint replacer — then sign
+     * the txId the node derives from the decoded result. That the page's own
+     * `computeTxId` agrees on that hash is pinned in `ui-crypto-mirror`; here
+     * the subject is the body, so the signature is taken as given.
+     */
+    function signedBody(
+      uiTx: Record<string, unknown>,
+      priv: ReturnType<typeof createPrivateKey>,
+      pubHex: string,
+    ): Record<string, unknown> {
+      const wire = JSON.parse(JSON.stringify(uiTx, ui.jsonBigint)) as Record<string, unknown>;
+      const sig = cryptoSign(null, Buffer.from(computeTxId(jsonToTx(wire)), 'hex'), priv);
+      return { ...wire, signatures: { [pubHex]: Buffer.from(sig).toString('hex') } };
+    }
+
+    function inviteeKeys(): { pub: Uint8Array; hex: string; priv: KeyObject } {
+      const kp = generateKeyPair();
+      return {
+        pub: kp.publicKey,
+        hex: Buffer.from(kp.publicKey).toString('hex'),
+        priv: createPrivateKey({
+          key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8',
+        }),
+      };
+    }
+
+    it('POST /invites accepts what the Create Invite button sends', async () => {
+      // Funded with bond + mint, so the two readings are distinguishable: a
+      // builder deducting both leaves a zero change output — which still
+      // balances, and so would still be accepted here. The change assertion
+      // below is what separates them.
+      const funded = INVITE_BOND_KARMA + INVITE_KARMA_AMOUNT;
+      const karma = seedKarma(funded, labelNonce('ui-create'));
+      const invitee = inviteeKeys();
+
+      const body = signedBody(
+        ui.buildCreateInviteTx(karmaState(karma), inviterPubKeyHex, invitee.hex),
+        inviterPrivKeyObj,
+        inviterPubKeyHex,
+      );
+
+      const res = await request('/', 'POST', { tx: body });
+      expect(res.status, JSON.stringify(res.data)).toBe(201);
+      const data = res.data as Record<string, unknown>;
+      expect(data.status).toBe('pending');
+      expect(typeof data.inviteBoxId).toBe('string');
+      expect(typeof data.bondBoxId).toBe('string');
+
+      const [change, invite, bond] = jsonToTx(body).outputs as [KarmaBox, InviteBox, BondBox];
+      expect(change.value).toBe(funded - INVITE_BOND_KARMA);
+      expect(invite.value).toBe(0n);
+      expect(bond.value).toBe(INVITE_BOND_KARMA);
+    });
+
+    it('POST /invites/claim accepts what the Claim button sends', async () => {
+      const invitee = inviteeKeys();
+      const { invite } = seedPair('ui-claim', invitee.pub);
+
+      const body = signedBody(
+        ui.buildClaimInviteTx(invite.id!, invitee.hex),
+        invitee.priv,
+        invitee.hex,
+      );
+
+      const res = await request('/claim', 'POST', { tx: body });
+      expect(res.status, JSON.stringify(res.data)).toBe(201);
+      const data = res.data as Record<string, unknown>;
+      expect(data.status).toBe('pending');
+      // The mint landed on the invitee, and the surplus was admitted: the
+      // InviteBox held 0 and the karma output holds INVITE_KARMA_AMOUNT.
+      expect(data.userId).toBe(invitee.hex);
+      const [minted] = jsonToTx(body).outputs as [KarmaBox];
+      expect(minted.value).toBe(INVITE_KARMA_AMOUNT);
+    });
+
+    it('POST /invites/cancel accepts what the Cancel button sends', async () => {
+      const invitee = inviteeKeys();
+      const { invite } = seedPair('ui-cancel', invitee.pub);
+
+      const body = signedBody(
+        ui.buildCancelInviteTx(invite.id!),
+        inviterPrivKeyObj,
+        inviterPubKeyHex,
+      );
+
+      const res = await request('/cancel', 'POST', { tx: body });
+      expect(res.status, JSON.stringify(res.data)).toBe(200);
+      expect((res.data as Record<string, unknown>).status).toBe('pending');
+      // Zero outputs is the shape — the bond is neither named nor spent here.
+      expect(jsonToTx(body).outputs).toEqual([]);
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -277,31 +277,21 @@ hr{border:none;border-top:1px solid var(--border);margin:6px 0}
     <div id="creditTransferResult"></div>
 
     <h3>Invites</h3>
-    <h4>Create (fixed: 25 karma + 25 bond)</h4>
+    <h4>Create (bond: 25 karma)</h4>
+    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Invitee public key (hex):</div>
     <div class="row">
+      <input id="inviteePublicKeyInput" placeholder="Invitee public key (hex)" style="flex:1;font-size:11px">
       <button id="createInviteBtn" class="small">Create Invite</button>
     </div>
     <div id="inviteResult"></div>
 
-    <h4>Redeem</h4>
+    <h4>Claim</h4>
     <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Invite Box ID:</div>
     <div class="row">
       <input id="inviteBoxIdInput" placeholder="Invite Box ID" style="flex:1;font-size:11px">
+      <button id="claimInviteBtn" class="small">Claim</button>
     </div>
-    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Bond Box ID:</div>
-    <div class="row" style="margin-top:2px">
-      <input id="bondBoxIdForClaimInput" placeholder="Bond Box ID" style="flex:1;font-size:11px">
-    </div>
-    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Inviter ID (hex):</div>
-    <div class="row" style="margin-top:2px">
-      <input id="inviterIdForClaimInput" placeholder="Inviter ID (hex)" style="flex:1;font-size:11px">
-    </div>
-    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Secret (hex):</div>
-    <div class="row" style="margin-top:2px">
-      <input id="inviteSecretInput" placeholder="Secret (hex)" style="flex:1;font-size:11px">
-      <button id="redeemInviteBtn" class="small">Redeem</button>
-    </div>
-    <div id="redeemResult"></div>
+    <div id="claimResult"></div>
 
     <h4>Cancel Invite</h4>
     <div class="row">
@@ -361,12 +351,6 @@ const VOUCH_KARMA_AMOUNT = 1n;
  * owns the verdict, and its message is what the button shows on a refusal.
  */
 const VOUCH_MIN_BALANCE = 11n;
-/**
- * Per-network, so it is served rather than known: `loadStatus()` overwrites it
- * from `/status` (NODE_INTERFACE → Status). The mainnet value is the default,
- * so a node that does not answer leaves the UI on the widest window.
- */
-let INVITE_PROBATION_BLOCKS = 1000;
 /** Credits are 8-decimal: 10⁸ base units (10⁻⁸ credit) per displayed credit. */
 const CREDIT_SCALE = 100000000n;
 
@@ -557,7 +541,7 @@ function b32Hex(value, n) {
 
 /**
  * A fixed-width byte field in EITHER form. This page's tx builders carry keys
- * as hex strings (`pubKeyHex`, `secretHashHex`); @dagsocial/types holds the
+ * as hex strings (`pubKeyHex`, `inviteePubKeyHex`); @dagsocial/types holds the
  * same fields as `Uint8Array`. Both must reach the same 32 bytes, or one box
  * takes two ids. The TS side is stricter per field because its types are; this
  * is the one deliberate widening, and the mirror test is where the two forms
@@ -978,18 +962,24 @@ async function fetchCreditBoxes() {
   }
 }
 
-/** Fetch pending invite and bond boxes for the active identity. */
+/**
+ * The open invites and bonds the active identity holds as inviter.
+ *
+ * An invite has no expiry, so **open is the whole of its life** apart from
+ * claimed and cancelled — which is why the endpoint names the arm `open`
+ * (NODE_INTERFACE → UTXO queries).
+ */
 async function fetchInviteState() {
-  if (!userId) return { pending: [], bonds: [] };
+  if (!userId) return { open: [], bonds: [] };
   try {
     const res = await fetch(API + '/invites/' + encodeURIComponent(userId));
-    if (!res.ok) return { pending: [], bonds: [] };
-    const data = await res.json(); // { pending: InviteBox[], bonds: BondBox[] }
-    for (const b of data.pending) b.value = BigInt(b.value);
+    if (!res.ok) return { open: [], bonds: [] };
+    const data = await res.json(); // { open: InviteBox[], bonds: BondBox[] }
+    for (const b of data.open) b.value = BigInt(b.value);
     for (const b of data.bonds) b.value = BigInt(b.value);
     return data;
   } catch {
-    return { pending: [], bonds: [] };
+    return { open: [], bonds: [] };
   }
 }
 
@@ -1059,55 +1049,51 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
   };
 }
 
-/** Build an invite-create tx: karma boxes → karma + invite + bond. */
-function buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex) {
-  const totalDeducted = INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-  const selected = selectBoxes(karmaBox.boxes, totalDeducted);
+/**
+ * Build an invite-create tx: karma boxes → karma(change) + invite + bond.
+ *
+ * **The inviter pays only the bond.** `INVITE_KARMA_AMOUNT` is minted at the
+ * claim and never leaves their balance, so creation conserves value like any
+ * other transaction (ARCHITECTURE → Invite creation).
+ *
+ * The invitee's key is supplied out of band and there is no secret anywhere in
+ * the flow: each party proves who they are with an ordinary Ed25519 signature.
+ * Both new boxes carry the inviter's id and that same key — the pair IS the
+ * pairing, and `checkTransitions` rejects a create whose two boxes disagree.
+ */
+function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
+  const selected = selectBoxes(karmaBox.boxes, INVITE_BOND_KARMA);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-  const newKarmaValue = selectedTotal - totalDeducted;
 
   const karmaOutput = {
     boxType: 'karma',
-    value: newKarmaValue,
+    value: selectedTotal - INVITE_BOND_KARMA,
     owner: pubKeyHex,
     guard: 'owner_signature',
   };
 
+  // An invite holds nothing: the karma it names does not exist until the claim
+  // mints it, and `checkTransitions` pins the value at 0 (TYPES_INTERFACE →
+  // InviteBox). `invite_dual` is satisfied by either named key — the invitee's
+  // signature claims, the inviter's cancels.
   const inviteOutput = {
     boxType: 'invite',
-    value: INVITE_KARMA_AMOUNT,
-    secretHash: secretHashHex,
+    value: 0n,
     inviterId: pubKeyHex,
-    guard: 'hash_preimage_with_bond',
+    inviteePublicKey: inviteePubKeyHex,
+    guard: 'invite_dual',
   };
 
-  // The invite is output index 1 of this transaction, and that is all the bond
-  // needs to say (user decision, 2026-08-06). The node resolves the invite from
-  // `(txId, inviteOutputIndex)` at commit.
-  //
-  // A bond naming the InviteBox's *id* instead would be **circular**: the id
-  // derives from the txId, and a bond content field is inside the bytes
-  // `computeTxId` hashes, so no fixed point exists. A position the client
-  // already knows has no such dependency, and costs the client nothing — this
-  // flow computes no box id at all.
-  const INVITE_OUTPUT_INDEX = 1;
-
+  // The bond is the whole cost of an invite and the network's only sybil price.
+  // `block_apply` admits no user transaction at all: block application settles
+  // it at the probation deadline, or returns it when the invite is cancelled
+  // (TYPES_INTERFACE → BondBox).
   const bondOutput = {
     boxType: 'bond',
     value: INVITE_BOND_KARMA,
     inviterId: pubKeyHex,
-    inviteOutputIndex: INVITE_OUTPUT_INDEX,
-    // **Empty = unclaimed, and only empty.** `validateTx`'s invite-create arm
-    // requires `inviteePublicKey.length === 0`, because a bond born committed
-    // would let the inviter reclaim immediately and make the bond — the
-    // network's only sybil cost — free. `'00'.repeat(32)` is not unclaimed
-    // here: 32 zero bytes are a committed key that happens to be zero, and an
-    // invite carrying them is rejected with "Invite creation must emit an
-    // uncommitted bond".
-    inviteePublicKey: '',
-    probationStartBlock: 0,
-    probationEndBlock: 0,
-    guard: 'bond_dual',
+    inviteePublicKey: inviteePubKeyHex,
+    guard: 'block_apply',
   };
 
   return {
@@ -1119,96 +1105,45 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex) {
 }
 
 /**
- * Build an invite-claim tx: invite + bond → karma(invitee) + bond(claimed).
- * @param {Object} inviteBox - { id, value, inviterId, secretHash }
- * @param {Object} bondBox - { id, value }
- * @param {string} inviteePubKeyHex
- * @param {string} secretHex - raw hex preimage for hash_preimage guard
+ * Build an invite-claim tx: one InviteBox → one KarmaBox of
+ * `INVITE_KARMA_AMOUNT`, owned by the invitee, who signs.
+ *
+ * ⛔ **This transaction does not balance, and must not be made to.** The invite
+ * holds `0`, so the whole output is a **surplus** — the only karma any
+ * transaction may create — and the conservation gate admits it in this shape and
+ * no other (ARCHITECTURE → Invite claim).
+ *
+ * **The bond is not an input.** Nothing user-signed can spend one; block
+ * application settles it at the probation deadline the claim starts.
  */
-function buildClaimInviteTx(inviteBox, bondBox, inviteePubKeyHex, secretHex) {
-
+function buildClaimInviteTx(inviteBoxId, inviteePubKeyHex) {
   const karmaOutput = {
     boxType: 'karma',
-    value: inviteBox.value,
+    value: INVITE_KARMA_AMOUNT,
     owner: inviteePubKeyHex,
     guard: 'owner_signature',
   };
 
-  const bondOutput = {
-    boxType: 'bond',
-    value: bondBox.value,
-    // Preserved verbatim from the input bond — `checkTransitions` requires it
-    // to match, and it still addresses the invite in the bond's ORIGINAL
-    // creating transaction, not this one.
-    inviteOutputIndex: bondBox.inviteOutputIndex ?? 0,
-    inviteePublicKey: inviteePubKeyHex,
-    probationStartBlock: bondBox.probationStartBlock,
-    probationEndBlock: bondBox.probationEndBlock,
-    guard: 'bond_dual',
-  };
-
   return {
-    inputs: [inviteBox.id, bondBox.id],
-    outputs: [karmaOutput, bondOutput],
-    signatures: {},
-    preimages: { [inviteBox.id]: secretHex },
-    protocolVersion: PROTOCOL_VERSION,
-  };
-}
-
-/**
- * Build a commit tx: BondBox(unclaimed) → BondBox(committed).
- * Called as step 1 of the two-step redeem. The preimage proves knowledge
- * of the secret without publishing it on-chain yet.
- * @param {Object} bondBox - { id, value, inviterId, inviteOutputIndex }
- * @param {string} inviteePubKeyHex
- * @param {string} secretHex - raw hex preimage for bond_dual's hash_preimage path
- */
-function buildCommitTx(bondBox, inviteePubKeyHex, secretHex) {
-  const now = currentBlockHeight;
-
-  const bondOutput = {
-    boxType: 'bond',
-    value: bondBox.value,
-    inviterId: bondBox.inviterId,
-    inviteOutputIndex: bondBox.inviteOutputIndex ?? 0,
-    inviteePublicKey: inviteePubKeyHex,
-    probationStartBlock: now,
-    probationEndBlock: now + INVITE_PROBATION_BLOCKS,
-    guard: 'bond_dual',
-  };
-
-  return {
-    inputs: [bondBox.id],
-    outputs: [bondOutput],
-    signatures: {},
-    preimages: { [bondBox.id]: secretHex },
-    protocolVersion: PROTOCOL_VERSION,
-  };
-}
-
-/**
- * Build an invite-cancel tx: karma + invite + bond → karma (refund to inviter).
- * @param {Object} karmaBox - { total, boxes }
- * @param {Object} inviteBox - { id, value }
- * @param {Object} bondBox - { id, value }
- * @param {string} pubKeyHex - inviter's public key
- */
-function buildCancelInviteTx(karmaBox, inviteBox, bondBox, pubKeyHex) {
-  // Refund: consolidate all karma boxes + invite value + bond value
-  const allKarmaBoxIds = karmaBox.boxes.map(b => b.boxId);
-  const totalRefund = karmaBox.total + inviteBox.value + bondBox.value;
-
-  const karmaOutput = {
-    boxType: 'karma',
-    value: totalRefund,
-    owner: pubKeyHex,
-    guard: 'owner_signature',
-  };
-
-  return {
-    inputs: [...allKarmaBoxIds, inviteBox.id, bondBox.id],
+    inputs: [inviteBoxId],
     outputs: [karmaOutput],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+}
+
+/**
+ * Build an invite-cancel tx: one InviteBox → nothing. The inviter signs.
+ *
+ * **Zero outputs is the shape, not an omission.** The box holds `0`, so this
+ * conserves, and the bond returns to the inviter through block application,
+ * resolved by `inviteePublicKey` — this transaction neither names the bond nor
+ * could spend it (ARCHITECTURE → Invite cancellation).
+ */
+function buildCancelInviteTx(inviteBoxId) {
+  return {
+    inputs: [inviteBoxId],
+    outputs: [],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
@@ -2233,7 +2168,6 @@ async function loadStatus() {
     // it hides the debug surfaces, which is the safe failure direction.
     networkType = s.networkType || 'mainnet';
     currentBlockHeight = s.blockHeight || 0;
-    INVITE_PROBATION_BLOCKS = s.inviteProbationBlocks || 1000;
 
     bar.innerHTML = `
       <div><span>Network:</span> <strong style="color:${networkType === 'testnet' ? 'var(--inkMute)' : networkType === 'devnet' ? 'var(--clay)' : 'var(--greenText)'}">${esc(networkType)}</strong></div>
@@ -2421,36 +2355,39 @@ document.getElementById('creditTransferBtn').addEventListener('click', async () 
 document.getElementById('createInviteBtn').addEventListener('click', async () => {
   const btn = document.getElementById('createInviteBtn');
   const result = document.getElementById('inviteResult');
+  // Lowercased before the shape test because `b32Hex` accepts lowercase only —
+  // the two forms decode to the same bytes, so accepting both there would make
+  // the hex boundary non-injective. Refusing them here instead of at the encoder
+  // is what turns a pasted uppercase key into an accepted invite.
+  const inviteeHex = document.getElementById('inviteePublicKeyInput').value.trim().toLowerCase();
+
+  if (!/^[0-9a-f]{64}$/.test(inviteeHex)) {
+    result.innerHTML = '<span class="result-msg err">Invitee public key must be 64 hex characters (an Ed25519 public key)</span>';
+    return;
+  }
 
   btn.disabled = true;
   result.innerHTML = '<span class="result-msg">Creating invite...</span>';
 
   try {
-    // 1. Fetch karma box
     const karmaBox = await fetchKarmaBox();
     if (!karmaBox) {
       result.innerHTML = '<span class="result-msg err">No karma box found</span>';
       return;
     }
-    const totalNeeded = INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA;
-    if (karmaBox.total < totalNeeded) {
-      result.innerHTML = `<span class="result-msg err">Insufficient karma: need ${totalNeeded}, have ${karmaBox.total}</span>`;
+    // Advisory — `createInvite` owns the verdict, and it also owns the one
+    // rejection this page cannot predict: the named key already being an
+    // account. The bond is the whole cost; the claim mints the rest.
+    if (karmaBox.total < INVITE_BOND_KARMA) {
+      result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_KARMA}, you hold ${karmaBox.total}</span>`;
       return;
     }
 
-    // 2. Generate random secret and compute secretHash
-    const secretBytes = crypto.getRandomValues(new Uint8Array(32));
-    const secretHex = buf2hex(secretBytes);
-    const secretHash = blake2b(secretBytes, null, 64).slice(0, 32);
-    const secretHashHex = buf2hex(secretHash);
-
-    // 3. Build and sign tx
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildCreateInviteTx(karmaBox, pubKeyHex, secretHashHex);
+    const tx = buildCreateInviteTx(karmaBox, pubKeyHex, inviteeHex);
     const { signature } = await signTxId(tx);
     tx.signatures[pubKeyHex] = signature;
 
-    // 4. Submit
     const res = await fetch(API + '/invites', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2460,16 +2397,12 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     if (res.ok) {
       result.innerHTML = `
         <span class="result-msg ok">Invite created!</span>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Invite Box ID:</div>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Invite Box ID (the invitee claims this):</div>
         <pre>${esc(data.inviteBoxId)}</pre>
         <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Bond Box ID:</div>
         <pre>${esc(data.bondBoxId)}</pre>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Inviter ID:</div>
-        <pre>${esc(pubKeyHex)}</pre>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Secret (share with invitee):</div>
-        <pre>${esc(secretHex)}</pre>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Secret Hash (for verification):</div>
-        <pre>${esc(secretHashHex)}</pre>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Invitee:</div>
+        <pre>${esc(inviteeHex)}</pre>
       `;
       loadStatus();
       loadIdentityStatus();
@@ -2483,108 +2416,47 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
   }
 });
 
-document.getElementById('redeemInviteBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('redeemInviteBtn');
-  const result = document.getElementById('redeemResult');
+document.getElementById('claimInviteBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('claimInviteBtn');
+  const result = document.getElementById('claimResult');
   const inviteBoxId = document.getElementById('inviteBoxIdInput').value.trim();
-  const bondBoxId = document.getElementById('bondBoxIdForClaimInput').value.trim();
-  const inviterId = document.getElementById('inviterIdForClaimInput').value.trim();
-  const secretHex = document.getElementById('inviteSecretInput').value.trim();
 
-  if (!inviteBoxId || !bondBoxId || !inviterId || !secretHex) {
-    result.innerHTML = '<span class="result-msg err">All fields are required</span>';
+  if (!inviteBoxId) {
+    result.innerHTML = '<span class="result-msg err">Invite Box ID is required</span>';
     return;
   }
 
   btn.disabled = true;
+  result.innerHTML = '<span class="result-msg">Claiming invite...</span>';
 
   try {
+    // One step and one signature — the invitee's. The id is the whole of what
+    // the inviter passes on: no secret exists, and the bond is not this
+    // transaction's to name.
     const inviteePubKeyHex = buf2hex(pubKeyRaw);
+    const tx = buildClaimInviteTx(inviteBoxId, inviteePubKeyHex);
+    const { signature } = await signTxId(tx);
+    tx.signatures[inviteePubKeyHex] = signature;
 
-    const inviteBox = { id: inviteBoxId, value: INVITE_KARMA_AMOUNT, inviterId };
-
-    // ---- Step 1: Commit ----
-    result.innerHTML = '<span class="result-msg">Committing...</span>';
-
-    const bondBox = {
-      id: bondBoxId,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      // The invite is output 1 of the bond's creating transaction — the position
-      // `buildCreateInviteTx` put it at. Carried, not predicted.
-      inviteOutputIndex: 1,
-    };
-
-    const commitTx = buildCommitTx(bondBox, inviteePubKeyHex, secretHex);
-    const { signature: commitSig } = await signTxId(commitTx);
-    commitTx.signatures[inviteePubKeyHex] = commitSig;
-
-    const commitRes = await fetch(API + '/invites/commit', {
+    const res = await fetch(API + '/invites/claim', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tx: commitTx }, jsonBigint),
+      body: JSON.stringify({ tx }, jsonBigint),
     });
-    const commitData = await commitRes.json();
-    if (!commitRes.ok) {
-      result.innerHTML = `<span class="result-msg err">Commit failed: ${esc(commitData.error || 'unknown error')}</span>`;
-      return;
+    const data = await res.json();
+    if (res.ok) {
+      result.innerHTML = `
+        <span class="result-msg ok">Invite claimed!</span>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">User ID:</div>
+        <pre>${esc(data.userId)}</pre>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Karma Box ID:</div>
+        <pre>${esc(data.karmaBoxId)}</pre>
+      `;
+      loadStatus();
+      loadIdentityStatus();
+    } else {
+      result.innerHTML = `<span class="result-msg err">${esc(data.reason || data.error || 'claim failed')}</span>`;
     }
-
-    // Persist probation timers set during commit (block height at commit time)
-    bondBox.probationStartBlock = currentBlockHeight;
-    bondBox.probationEndBlock = currentBlockHeight + INVITE_PROBATION_BLOCKS;
-
-    // Store secret for reveal step (survives page refresh)
-    sessionStorage.setItem('reveal_' + inviteBoxId, JSON.stringify({
-      secretHex,
-      bondBoxId,
-      inviterId,
-      inviteePubKeyHex,
-      bondInviteBoxId: inviteBoxId,
-    }));
-
-    // ---- Step 2: Wait then reveal ----
-    result.innerHTML = '<span class="result-msg">Committed — waiting for block inclusion...</span>';
-
-    // Poll for block height change (or use fixed delay)
-    const startHeight = currentBlockHeight;
-    const checkReveal = async () => {
-      await loadStatus(); // refreshes currentBlockHeight
-      if (currentBlockHeight > startHeight) {
-        // Block advanced — proceed to reveal
-        result.innerHTML = '<span class="result-msg">Revealing...</span>';
-
-        const revealTx = buildClaimInviteTx(inviteBox, bondBox, inviteePubKeyHex, secretHex);
-        const { signature: revealSig } = await signTxId(revealTx);
-        revealTx.signatures[inviteePubKeyHex] = revealSig;
-
-        const revealRes = await fetch(API + '/invites/claim', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tx: revealTx }, jsonBigint),
-        });
-        const revealData = await revealRes.json();
-        if (revealRes.ok) {
-          sessionStorage.removeItem('reveal_' + inviteBoxId);
-          result.innerHTML = `
-            <span class="result-msg ok">Invite claimed!</span>
-            <div style="font-size:11px;color:var(--inkMute);margin:4px 0">User ID:</div>
-            <pre>${esc(revealData.userId)}</pre>
-            <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Karma Box ID:</div>
-            <pre>${esc(revealData.karmaBoxId)}</pre>
-          `;
-          loadStatus();
-          loadIdentityStatus();
-        } else {
-          result.innerHTML = `<span class="result-msg err">Reveal failed: ${esc(revealData.error || 'unknown error')}</span>`;
-        }
-      } else {
-        // Not yet — poll again in 5 seconds
-        setTimeout(checkReveal, 5000);
-      }
-    };
-
-    setTimeout(checkReveal, 3000); // Start polling after 3s
   } catch (e) {
     result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
   } finally {
@@ -2606,41 +2478,19 @@ document.getElementById('cancelInviteBtn').addEventListener('click', async () =>
   result.innerHTML = '<span class="result-msg">Cancelling invite...</span>';
 
   try {
-    // Fetch karma box and invite state to build the cancel tx
-    const karmaBox = await fetchKarmaBox();
-    if (!karmaBox) {
-      result.innerHTML = '<span class="result-msg err">No karma box found</span>';
-      return;
-    }
-
+    // Resolved against the signer's own open invites first: only the inviter
+    // may cancel, and "not one of yours" is a clearer answer than the 403 a
+    // signature check gives. `cancelInvite` owns the verdict either way.
     const inviteState = await fetchInviteState();
-    const invBox = inviteState.pending.find(b => b.id === inviteBoxId);
-    if (!invBox) {
-      result.innerHTML = `<span class="result-msg err">Invite ${inviteBoxId.slice(0, 16)}... not found in your pending invites</span>`;
+    if (!inviteState.open.some(b => b.id === inviteBoxId)) {
+      result.innerHTML = `<span class="result-msg err">Invite ${inviteBoxId.slice(0, 16)}... is not one of your open invites</span>`;
       return;
     }
 
-    // Find the matching bond box (same inviterId, unclaimed).
-    //
-    // Unclaimed is *absence*, and only absence: `GET /invites/:userId` sends
-    // `inviteePublicKey: null` when the stored key is empty and its hex
-    // otherwise, so the falsy test below admits exactly the empty case.
-    // `'00'.repeat(32)` is not unclaimed — under `optB32Either` those 32 zero
-    // bytes are a **committed**
-    // bond whose invitee key happens to be zero, so treating them as free would
-    // pick a bond already spoken for and build a cancel the node refuses. The
-    // write side reads the same way (see `buildCreateInviteTx`'s bond output).
-    const bondBox = inviteState.bonds.find(b =>
-      b.inviterId === invBox.inviterId && !b.inviteePublicKey
-    );
-
+    // The bond is not named: it returns to the inviter through block
+    // application, and no user transaction can spend one.
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildCancelInviteTx(
-      karmaBox,
-      { id: invBox.id, value: invBox.value },
-      { id: bondBox?.id || '00'.repeat(32), value: bondBox?.value ?? 0n },
-      pubKeyHex,
-    );
+    const tx = buildCancelInviteTx(inviteBoxId);
     const { signature } = await signTxId(tx);
     tx.signatures[pubKeyHex] = signature;
 
@@ -2667,18 +2517,6 @@ document.getElementById('cancelInviteBtn').addEventListener('click', async () =>
 // ===========================================================================
 // Init
 // ===========================================================================
-
-// Check for in-progress reveals from a previous page load
-const revealKeys = Object.keys(sessionStorage).filter(k => k.startsWith('reveal_'));
-if (revealKeys.length > 0) {
-  const key = revealKeys[0];
-  const stored = JSON.parse(sessionStorage.getItem(key));
-  document.getElementById('inviteBoxIdInput').value = stored.inviteBoxId || key.replace('reveal_', '');
-  document.getElementById('bondBoxIdForClaimInput').value = stored.bondBoxId;
-  document.getElementById('inviterIdForClaimInput').value = stored.inviterId;
-  document.getElementById('inviteSecretInput').value = stored.secretHex;
-  document.getElementById('redeemResult').innerHTML = '<span class="result-msg">Committed invite pending reveal — click Redeem to continue</span>';
-}
 
 await loadIdentities();
 
