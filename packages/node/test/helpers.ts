@@ -536,17 +536,21 @@ export function lockBoxOf(tx: UtxoTransaction): AnyBox {
  * `(cfg: typeof testConfig) => void` mentions `Config` nowhere and checks the
  * argument against its own shape. Every call site must be declared `Config`, or
  * the fixture is only ever compared to itself. Probe rather than argument:
- * change one `Config` field's type (`creditTreasuryPct: number → bigint`) and
+ * change one `Config` field's type (`blockBodyBudgetBytes: number → bigint`) and
  * every call site should fail.
  *
  * A missing field also fails QUIETLY rather than at the type checker, because
  * `block-creator.ts` is the only consumer that reads config off its argument
  * (`startBlockCreator` assigns it to the module-level `config`), and it reads
- * exactly three: `blockBodyBudgetBytes`, `creditTreasuryPct`, `treasuryPubKey`.
+ * exactly one: `blockBodyBudgetBytes`, which is a local preference over a
+ * consensus ceiling and so is a node's own to set. Everything the applier
+ * re-derives — the coinbase's slices, the treasury key, the maturity lock —
+ * reads the `src/config.js` singleton and the network profile instead, because
+ * a creator reading a local value would build blocks its own network refuses.
  * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
  * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
- * imports the `src/config.js` singleton, which no test mocks, so an incomplete
- * fixture is simply never observed.
+ * imports that singleton too, which no test mocks, so an incomplete fixture is
+ * simply never observed.
  *
  * Note what this design does with a newly *required* field: it fills it with the
  * value production runs with, silently and correctly, rather than failing the

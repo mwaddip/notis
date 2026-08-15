@@ -53,7 +53,6 @@ const testConfig = makeTestConfig({
   blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   // Mining
   orderingBlockPowTargetBits: 3072,
-  creditTreasuryPct: 10,
   treasuryPubKey: '',
   // Net settings
   bootstrapPeers: [] as string[],

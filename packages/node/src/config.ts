@@ -1,5 +1,4 @@
 import {
-  COINBASE_TREASURY_PCT,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
@@ -46,7 +45,6 @@ export interface Config {
   // Mining
   miningSecret: string;          // bearer token for mining API, required non-empty on a miner
   orderingBlockPowTargetBits: number;
-  creditTreasuryPct: number;
   treasuryPubKey: string;  // hex-encoded 32-byte key, empty = no treasury
   /** Blocks before a coinbase output is spendable. Apply-time consensus check (MINING invariant 3). */
   creditMinerRewardDelay: number;
@@ -97,7 +95,6 @@ export function loadConfig(): Readonly<Config> {
     // Mining
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
-    creditTreasuryPct: COINBASE_TREASURY_PCT,
     treasuryPubKey: profile.treasuryPubKey,
     creditMinerRewardDelay: profile.creditMinerRewardDelay,
     creditFixedRateBlocks: profile.creditFixedRateBlocks,
