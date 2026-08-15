@@ -1841,8 +1841,11 @@ if height <= CREDIT_FIXED_RATE_BLOCKS (1,051,200):
     reward = CREDIT_INITIAL_REWARD (100)
 else:
     epochs = floor((height - CREDIT_FIXED_RATE_BLOCKS - 1) / CREDIT_EPOCH_BLOCKS) + 1
-    reward = max(CREDIT_INITIAL_REWARD - epochs * CREDIT_REWARD_REDUCTION, CREDIT_TAIL_REWARD)
+    reward = max(CREDIT_INITIAL_REWARD - epochs * CREDIT_REWARD_REDUCTION, 0)
 ```
+
+Emission terminates: block 7,401,600 is the last that pays, and the reward is 0 above it.
+The schedule and its totals are `MINING_INTERFACE → Emission Schedule`.
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
 The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. On a

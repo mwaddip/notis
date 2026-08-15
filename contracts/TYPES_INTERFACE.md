@@ -1805,9 +1805,9 @@ an override parameter is the same defect as the environment read, reached by a d
 door.
 
 ⚠ **Values are not pinned here.** `devnet`'s compressed timings and both public networks'
-difficulty belong to the constants-pinning session, together with the two figures already
-flagged open below (`KARMA_STALE_THRESHOLD_BLOCKS`'s duration, and `CREDIT_TAIL_REWARD`'s
-removal). **Do not read any number in this contract as decided.**
+difficulty belong to the constants-pinning session, together with the figure already
+flagged open below (`KARMA_STALE_THRESHOLD_BLOCKS`'s duration). **Do not read any number in
+this contract as decided.**
 
 ### Domain tags are network-agnostic — deliberately
 
@@ -1842,7 +1842,7 @@ header `networkType` field was rejected 2026-08-10 (see the Block header section
 Constants split by kind: **amount** constants are `bigint`; **count / block /
 threshold / percentage / bits** constants stay `number`.
 - **Credit amounts → `bigint`, rescaled ×10⁸** (base units of 10⁻⁸ credit):
-  `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`, `CREDIT_TAIL_REWARD`,
+  `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`,
   `GENESIS_CREDITS_PER_MEMBER`, and the node/UI faucet credit amounts.
 - **Karma amounts → `bigint` literals, NOT rescaled** (karma is indivisible):
   `KARMA_POSTING_MINIMUM`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
@@ -2060,7 +2060,6 @@ export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;     // consensus — ~2 years
 export const CREDIT_INITIAL_REWARD = 100n * 10n ** 8n; // consensus — 100 credits/block, base units
 export const CREDIT_EPOCH_BLOCKS = 129_600;            // consensus — ~90 days, reduction interval
 export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // consensus — 2 credits reduced per epoch
-export const CREDIT_TAIL_REWARD = 2n * 10n ** 8n;      // ⚠ TO BE DELETED — see below
 export const CREDIT_MINER_REWARD_DELAY = 720;          // consensus — blocks before coinbase spendable
 export const COINBASE_TREASURY_PCT = 5;      // consensus — per income TERM: of emission and of fees, never of rent
 export const COINBASE_MINER_FLOOR_PCT = 35;  // consensus — guaranteed, and takes every remainder
@@ -2076,18 +2075,13 @@ export const MIN_FEE_RATE_PER_BYTE = 0n;     // policy — relay floor, base uni
 
 > ⚠ **Every value in this block was shown pre-P0 until 2026-08-06.** The BigInt rescale
 > updated the Denomination prose above and left these literals at their unscaled values
-> (`100`, `2`, `2`) — and the literals are what people copy. Same defect in the Invite,
+> (`100`, `2`) — and the literals are what people copy. Same defect in the Invite,
 > Vouch and Genesis blocks, now corrected.
 
-> ⚠ **`CREDIT_TAIL_REWARD` is being removed.** Emission **terminates** — the authoritative
-> docs state credits are "issued on a schedule that tapers toward a fixed cap … instead of
-> inflating forever," with the perpetual security budget coming from **fees and storage
-> rent**, which are recycled rather than minted. The reward function must end
-> `return max(reward, 0)`; today it floors at `CREDIT_TAIL_REWARD` and mints 2 credits per
-> block indefinitely. Note the constant equals exactly what decay epoch 49 already pays, so
-> the "tail" was never a distinct phase — only a floor stopping the curve reaching zero.
-> **`MINING_INTERFACE.md`'s emission table and its total-supply figure both change; do not
-> copy any current total-supply number.**
+> **The curve reaches zero, and there is no constant holding it up.** `computeBlockReward`
+> ends `return max(reward, 0)`, so the decay's last step is to nothing rather than to a
+> floor. There is no tail rate: the schedule and its end height are
+> `MINING_INTERFACE → Emission Schedule`.
 
 ### Ordering block PoW
 

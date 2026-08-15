@@ -1065,11 +1065,8 @@ tradeable — validators may sell them to users.
 > **The reward is `computeBlockReward(height)`** — a fixed-rate period, then linear decay
 > per epoch, specified in `MINING_INTERFACE.md`. **Emission terminates** (decision
 > 2026-08-06, Ergo shape, decay to zero, no tail); the perpetual security budget comes from
-> **fees and storage rent**, which are recycled rather than minted.
->
-> ⚠ **The code does not yet terminate** — it floors at `CREDIT_TAIL_REWARD` and mints
-> forever. Phase 2. **Every total-supply figure currently in the repo is wrong**, including
-> `MINING_INTERFACE.md`'s ~453.9M.
+> **fees and storage rent**, which are recycled rather than minted. The schedule, its end
+> height and its emission total are `MINING_INTERFACE → Emission Schedule`.
 
 ### Separation from users
 
@@ -1641,12 +1638,10 @@ forever. A node rejects objects with an unsupported protocol version.
   > the network admits members who earn likes, and shrinks when it admits members who do
   > not — on top of decay and the like burn, which run against everyone.
 - Total credit supply = genesis + ordering block rewards - future sinks
-  > ⚠ **QUALIFIED — true in shape, but "total" is currently unbounded. Verified 2026-08-11.**
-  > The reward function has **no terminus**: `block-creator.ts` floors it at
-  > `CREDIT_TAIL_REWARD` (`2n * 10n ** 8n`, i.e. 2 credits) and mints that per block forever,
-  > while `MINING_INTERFACE.md` states a fixed ~453.9M total. Emission is
-  > decided to **terminate** (Ergo shape, decay to zero, no tail — design track §5.7), and
-  > every current total-supply figure in the repo is wrong until that lands.
+  > The reward term is bounded: emission terminates, totalling 422,640,000 credits
+  > (`MINING_INTERFACE → Emission Schedule`). Genesis credits sit on top of that and sinks
+  > pull the other way, so the supply is bounded above by `genesis + 422,640,000` and is not
+  > equal to it.
 - Every UTXO transaction conserves value, with a closed set of stated exceptions.
   **NODE_INTERFACE's `validateTx` step 5 is the authoritative enumeration** — derive from
   it, never maintain a parallel list here. This is the same rule the mint-reason table
