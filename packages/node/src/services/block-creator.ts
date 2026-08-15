@@ -7,7 +7,6 @@ import {
   PROTOCOL_VERSION,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
-  CREDIT_TAIL_REWARD,
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   decodeTx,
@@ -263,6 +262,12 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
 
 /**
  * Compute the block reward at a given height using Ergo-style linear decay.
+ *
+ * The decay's last step is to nothing: epoch 49 is the last that pays, and
+ * every height above it yields 0 (MINING_INTERFACE → Emission Schedule, which
+ * holds the end height and the emission total). Above the terminus the coinbase
+ * carries whatever the other income terms yield, and a block with none of them
+ * carries no coinbase outputs at all.
  */
 export function computeBlockReward(height: number): bigint {
   if (height <= 0) return 0n;
@@ -273,7 +278,7 @@ export function computeBlockReward(height: number): bigint {
     (height - nodeConfig.creditFixedRateBlocks - 1) / nodeConfig.creditEpochBlocks,
   ) + 1;
   const reward = CREDIT_INITIAL_REWARD - BigInt(epochs) * CREDIT_REWARD_REDUCTION;
-  return reward > CREDIT_TAIL_REWARD ? reward : CREDIT_TAIL_REWARD;
+  return reward > 0n ? reward : 0n;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,9 +398,10 @@ export function createOrderingBlock(): OrderingBlock | null {
     utxoTxTree.coinbaseOutputs = buildCoinbaseOutputs(newHeight, trimmed.fees, trimmed.actors, currentMinerPubkey ?? validatorId);
   }
 
-  // 11. Always produce a block — miners need coinbase rewards even when
-  //     there is no user work.  The block will be empty but still carries
-  //     credit emission.
+  // 11. Always produce a block — a block with no user work still pays its
+  //     miner the scheduled emission. Above the terminus it pays nothing, and
+  //     an empty body there carries no coinbase outputs; the block is produced
+  //     either way, because the chain advancing is not conditional on income.
 
   // 12. Track confirmed rowids for finalizeBlock cleanup
   confirmedRowids = new Set<number>(includedRowids);
