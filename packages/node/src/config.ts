@@ -1,4 +1,5 @@
 import {
+  MIN_FEE_RATE_PER_BYTE,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
@@ -40,8 +41,25 @@ export interface Config {
    * `@dagsocial/validation`.
    */
   blockBodyBudgetBytes: number;
-  /** Hard mempool bound — inserts are rejected at the cap, never evicted (audit M-8). */
+  /**
+   * Pool bound, applied **per class**: credit entries hold
+   * `MEMPOOL_CREDIT_SHARE_PCT` of it and karma-side entries the rest
+   * (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
+   */
   maxMempoolEntries: number;
+  /**
+   * Relay floor in base units per encoded byte — the rate beneath which this
+   * node refuses a credit transaction (MEMPOOL_INTERFACE → Fee floor).
+   *
+   * ⚠ **Policy, and the only reason it may be read from the environment.**
+   * Every consensus value in this file comes from the network profile, because
+   * two nodes disagreeing about one is a fork. This is the opposite: two nodes
+   * may hold different floors and both are correct, and an operator raising
+   * theirs under load is the case the seam exists for. Ships at zero, because
+   * eviction already displaces a non-paying entry the moment a paying one
+   * arrives.
+   */
+  minFeeRatePerByte: bigint;
   // Mining
   miningSecret: string;          // bearer token for mining API, required non-empty on a miner
   orderingBlockPowTargetBits: number;
@@ -92,6 +110,7 @@ export function loadConfig(): Readonly<Config> {
       process.env['MAX_MEMPOOL_ENTRIES'] ?? '10000',
       10,
     ),
+    minFeeRatePerByte: parseFeeFloor(process.env['MIN_FEE_RATE_PER_BYTE']),
     // Mining
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
@@ -134,6 +153,35 @@ export function loadConfig(): Readonly<Config> {
   assertProofHistoryCoversReorgDepth(cfg);
 
   return Object.freeze(cfg);
+}
+
+/**
+ * `MIN_FEE_RATE_PER_BYTE`, defaulting to the shipped floor of zero.
+ *
+ * Refused rather than clamped when it names no non-negative integer: a floor
+ * this node cannot read is a relay policy nobody chose, and silently running
+ * at zero would look identical to an operator who meant to raise it. Negative
+ * is refused for the same reason it is not expressible — a floor beneath zero
+ * admits a transaction paying nothing while reporting that it cleared a bar.
+ */
+function parseFeeFloor(raw: string | undefined): bigint {
+  if (raw === undefined) return MIN_FEE_RATE_PER_BYTE;
+  let parsed: bigint;
+  try {
+    parsed = BigInt(raw);
+  } catch {
+    throw new Error(
+      `Invalid MIN_FEE_RATE_PER_BYTE "${raw}" — must be a non-negative integer ` +
+        'in base units per byte',
+    );
+  }
+  if (parsed < 0n) {
+    throw new Error(
+      `Invalid MIN_FEE_RATE_PER_BYTE "${raw}" — a floor beneath zero would ` +
+        'admit a transaction paying nothing and report that it cleared a bar',
+    );
+  }
+  return parsed;
 }
 
 /**

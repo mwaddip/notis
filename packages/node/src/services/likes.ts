@@ -4,9 +4,9 @@ import {
   getPost,
   hasLikeRecord,
   hasPendingLike,
-  insertUtxoTx,
 } from '../store/index.js';
 import { validateTx } from './utxo-engine.js';
+import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
 
@@ -88,7 +88,7 @@ export function castLike(
 
   // ---- 5. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   // ---- 6. Return pending result ----
   return {

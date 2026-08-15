@@ -4,11 +4,11 @@ import {
   getCreditBoxes,
   insertBox,
   consumeBox,
-  insertUtxoTx,
 } from '../store/index.js';
 
 import { ClientError } from './client-error.js';
 import { validateTx } from './utxo-engine.js';
+import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { MINT_OUTPUT_INDEX, mintTxIdFor } from '../mint-provenance.js';
 import type { MintContext } from '../mint-provenance.js';
@@ -91,9 +91,10 @@ export interface CreditTransferResult {
  * Pool a client-built, client-signed credit transfer.
  *
  * Receives a pre-built, signed UtxoTransaction from the client and does what
- * every other tx route does: `validateTx`, then `insertUtxoTx`. Credits move
- * at block application on every node, not when the HTTP call returns —
- * signature verification stays inside `validateTx`'s guard check.
+ * every other tx route does: `validateTx`, then `admitTx`. Credits move at
+ * block application on every node, not when the HTTP call returns — signature
+ * verification stays inside `validateTx`'s guard check, and the fee floor
+ * inside `admitTx`'s.
  *
  * Building the transfer server-side and applying it with
  * `consumeBox`/`insertBox` directly — no block, no open journal — bypasses
@@ -123,7 +124,7 @@ export function sendCredits(
   }
 
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   return {
     status: 'pending',

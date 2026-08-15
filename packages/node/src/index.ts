@@ -15,6 +15,7 @@ import {
 import { NetNode } from '@dagsocial/net';
 import * as validation from '@dagsocial/validation';
 import { validateTx } from './services/utxo-engine.js';
+import { admitTx } from './services/admit-tx.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { applyOrderingBlock } from './services/block-apply.js';
@@ -32,7 +33,6 @@ import {
   insertPost,
   getBox,
   getCurrentHeight,
-  insertUtxoTx,
   MempoolFullError,
   PendingSpendConflictError,
   getOrderingBlock,
@@ -216,7 +216,7 @@ net.onTx((tx) => {
   }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   try {
-    insertUtxoTx(tx, expiresAtHeight);
+    admitTx(tx, expiresAtHeight);
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);

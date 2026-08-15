@@ -389,7 +389,7 @@ function outputBoxIds(tx: UtxoTransaction, txId: string): string[] {
  * unpriceable credit transaction occupy a slot that nothing is allowed to
  * reclaim.
  */
-function bidOf(tx: UtxoTransaction): bigint | null {
+export function bidOf(tx: UtxoTransaction): bigint | null {
   if (!isCreditSideTx(tx)) return null;
 
   let inputSum = 0n;

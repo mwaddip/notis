@@ -50,7 +50,8 @@ export interface PostServiceDeps {
   getCurrentHeight: () => number;
 
   // Mutations
-  insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
+  /** Admission — the relay policy above the pool, never the store directly. */
+  admitTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
 
   // UTXO validation
   validateTx: (
@@ -162,7 +163,7 @@ export function createPost(
   deps.insertPost(postId, post, rawCbor);
 
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-  deps.insertUtxoTx(tx, expiresAtHeight);
+  deps.admitTx(tx, expiresAtHeight);
 
   return {
     postId,

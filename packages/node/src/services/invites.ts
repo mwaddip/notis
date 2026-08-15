@@ -5,8 +5,8 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { InviteBox, BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { insertUtxoTx } from '../store/index.js';
 import { materializeOutput, validateTx } from './utxo-engine.js';
+import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
 
@@ -103,7 +103,7 @@ export function createInvite(
   // invite has no deadline and stays claimable until the inviter cancels
   // (NODE_INTERFACE → Invites).
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   // ---- 7. Return result ----
   //
@@ -187,7 +187,7 @@ export function claimInvite(
 
   // ---- 4. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   // ---- 5. Return result ----
   // txId first, then provenance — see createInvite.
@@ -259,7 +259,7 @@ export function cancelInvite(
 
   // ---- 4. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   // ---- 5. Return result ----
   const txId = computeTxId(tx);

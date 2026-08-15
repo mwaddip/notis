@@ -73,7 +73,7 @@ async function request(
       getAncestors,
       getSubtree,
       getCurrentHeight,
-      insertUtxoTx,
+      admitTx: insertUtxoTx,
       validateTx: (tx: UtxoTransaction, height: number) => {
         return validateTx(
           {
