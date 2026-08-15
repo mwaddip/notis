@@ -138,30 +138,39 @@ describe('NETWORK_PROFILES', () => {
     expect(devnet.orderingBlockPowTargetBits).toBeLessThan(mainnet.orderingBlockPowTargetBits);
   });
 
-  it('devnet compresses the remaining durations, and diverges on one ordering', () => {
+  it('devnet compresses the remaining durations, preserving mainnet orderings', () => {
     const { mainnet, devnet } = NETWORK_PROFILES;
     expect(devnet.vouchCooldownBlocks).toBe(3);
-    expect(devnet.inviteProbationBlocks).toBe(432); // 43200 ÷ 100
+    expect(devnet.inviteProbationBlocks).toBe(540);
     expect(devnet.creditMinerRewardDelay).toBe(10);
     expect(devnet.bootstrapPeriodBlocks).toBe(100);
     expect(devnet.creditFixedRateBlocks).toBe(1000);
     expect(devnet.creditEpochBlocks).toBe(100);
 
-    // Orderings both profiles satisfy, asserted on both so "devnet mirrors
-    // mainnet" is checked rather than assumed.
-    expect(devnet.bootstrapPeriodBlocks).toBeLessThan(devnet.karmaStaleThresholdBlocks);
-    expect(mainnet.bootstrapPeriodBlocks).toBeLessThan(mainnet.karmaStaleThresholdBlocks);
-    expect(devnet.creditEpochBlocks).toBeLessThan(devnet.creditFixedRateBlocks);
-    expect(mainnet.creditEpochBlocks).toBeLessThan(mainnet.creditFixedRateBlocks);
+    // Every ordering asserted on BOTH profiles, so "devnet mirrors mainnet" is
+    // checked rather than assumed: a compression that quietly reorders the
+    // windows fails here and not on the network it would have broken.
+    for (const p of [mainnet, devnet]) {
+      expect(p.bootstrapPeriodBlocks).toBeLessThan(p.karmaStaleThresholdBlocks);
+      expect(p.creditEpochBlocks).toBeLessThan(p.creditFixedRateBlocks);
+    }
+  });
 
-    // The ordering the two profiles do NOT share. Each duration is compressed by
-    // the ratio its own line in `network.ts` states, and probation's ÷100 puts
-    // devnet's between bootstrap and the stale threshold where mainnet's is the
-    // longest of the three. Pinned on both sides, so restoring the agreement —
-    // or losing another ordering — has to come through this test.
-    expect(mainnet.inviteProbationBlocks).toBeGreaterThan(mainnet.karmaStaleThresholdBlocks);
-    expect(devnet.inviteProbationBlocks).toBeGreaterThan(devnet.bootstrapPeriodBlocks);
-    expect(devnet.inviteProbationBlocks).toBeLessThan(devnet.karmaStaleThresholdBlocks);
+  it('probation outlasts the stale threshold on every profile', () => {
+    // The load-bearing one, and it is a property rather than an ordering
+    // preference: decay must be able to fire *during* a probation window, or no
+    // run on that network ever reaches a block where the decay writer and the
+    // probation reader touch one identity record. `invitedAtBlock` and
+    // `lifetimeLikesReceived` are required fields, so a writer that passes `0`
+    // instead of the stored value compiles — devnet is where that regression
+    // becomes observable, and only above this threshold.
+    for (const p of Object.values(NETWORK_PROFILES)) {
+      expect(p.inviteProbationBlocks, p.networkType)
+        .toBeGreaterThan(p.karmaStaleThresholdBlocks);
+      // And long enough to span whole decay intervals rather than one boundary.
+      expect(p.inviteProbationBlocks, p.networkType)
+        .toBeGreaterThan(p.karmaDecayIntervalBlocks);
+    }
   });
 
   it('devnet keeps mainnet economics — genesis allocations are not compressed', () => {

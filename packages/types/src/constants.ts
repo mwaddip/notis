@@ -93,14 +93,13 @@ export const INVITE_BOND_KARMA = 25n;          // Karma the inviter locks at cre
 export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: inviteProbationBlocks
 /**
  * Likes the invitee must receive per karma of bond returned — the bond vests
- * `min(floor(inviteeLifetimeLikes / INVITE_BOND_VEST_PER_LIKES), value)` at the
- * probation deadline and burns the rest (ARCHITECTURE → Bond outcomes).
+ * `min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES),
+ * value)` at the probation deadline and burns the rest (ARCHITECTURE → Bond
+ * outcomes).
  *
- * ⚠ **AHEAD OF CONTRACT.** `TYPES_INTERFACE` → Invites states the divisor as a
- * bare `5` and lists no constant for it. Named here because a bare literal in a
- * consensus path is unfindable, and kept separate from `LIKES_PER_KARMA_PAYOUT`
- * deliberately: the two share a value and nothing else, so collapsing them would
- * make a change to the like dial silently move every bond's vesting.
+ * Kept separate from `LIKES_PER_KARMA_PAYOUT` deliberately: the two share a
+ * value and nothing else, so collapsing them would make a change to the like
+ * dial silently move every bond's vesting.
  */
 export const INVITE_BOND_VEST_PER_LIKES = 5;
 
