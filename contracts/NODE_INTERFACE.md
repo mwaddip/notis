@@ -655,7 +655,7 @@ Full read-only validation. Performs all checks without modifying state:
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
 5. Value conservation: `sum(input values) == sum(output values)` for **every** box
-   type, with **three stated exceptions and no others**:
+   type, with **four stated exceptions and no others**:
    - the **like deficit** — `likeTarget` present ⟺ the sums differ by exactly
      `LIKE_KARMA_COST`, a burn;
    - the **invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
@@ -667,7 +667,22 @@ Full read-only validation. Performs all checks without modifying state:
      escrowed off-UTXO in `vouch_cooldowns` and re-minted at maturity, an escrow
      round-trip rather than a burn) or of an `InviteBox` (cancel — the box holds
      `0`, so this conserves arithmetically and is listed here only because the
-     gate rejects zero-output shapes structurally).
+     gate rejects zero-output shapes structurally);
+   - the **transaction fee** — a transaction whose inputs are `credit` boxes may
+     leave a deficit of any size, zero included. The block carrying it claims the
+     difference in its coinbase (MINING_INTERFACE → Coinbase Application). A
+     *surplus* on credit inputs stays invalid: a deficit is a fee, a surplus is a
+     mint, and the invite claim above is the only mint a user transaction may
+     perform.
+     > **The key is structural, not incidental.** Step 3 pins every input to one
+     > `boxType` and the transition table admits only `credit → credit`, so the
+     > ledger a transaction sits on is a property of the transaction. This
+     > exception therefore cannot collide with the two karma ones: the like arm
+     > additionally requires all-karma inputs, and the claim arm requires
+     > `invite → karma`.
+     > **No amount is checked here.** A zero-fee transaction is valid consensus —
+     > the price is each node's relay policy (MEMPOOL_INTERFACE → Fee floor), and
+     > what makes paying rational is the block creator's fill order, not this gate.
 
    There is **no BondBox exception, and none is needed**: a bond is destroyed by
    the probation-deadline settlement, which is block application, and this gate

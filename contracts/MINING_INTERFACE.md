@@ -300,18 +300,50 @@ validator key), stores it, broadcasts it, and applies coinbase mints.
 
 ## Coinbase Application
 
+The coinbase carries the block's **income**, not a fixed reward: `emission(height)`
+plus the deficits the block's credit transactions left unclaimed (ARCHITECTURE → UTXO
+conservation). Storage rent becomes a third term, and nothing in this rule is revisited
+when it arrives — that is the point of stating it income-shaped.
+
 ### On block creation (miner):
-1. `reward = computeBlockReward(height)`
-2. Split into miner + treasury outputs
-3. Include `CoinbaseOutput[]` in block
-4. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
+1. Fill the body **first** — the fees and the actor count are properties of what was included
+2. `income = computeBlockReward(height) + fees`
+3. Split into miner + treasury outputs per the slice table below
+4. Include `CoinbaseOutput[]` in block
+5. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
+
+### The slices
+
+| Slice | Share | Destination |
+|---|---|---|
+| Treasury | `COINBASE_TREASURY_PCT` | Per **term** — of emission and of fees, never of storage rent |
+| Miner floor | `COINBASE_MINER_FLOOR_PCT` | Guaranteed, plus every remainder |
+| Backer pool | `COINBASE_BACKER_PCT` | **AHEAD OF CODE** — nothing stakes and nothing links, so this share falls to the miner floor |
+| Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder to the treasury |
+
+`actors` is the count of **distinct owners of the karma boxes** spent by the block's
+karma-side transactions, excluding the block's own validator.
+
+⛔ **Never derived from `tx.signatures`.** Producing a signature is free, so a
+signature-keyed count is inflated by appending keys that hold nothing. Every karma-side
+operation spends a box that names its actor, and creating any of those boxes cost karma.
+
+**The miner floor takes the remainder**, so the outputs sum to exactly the income: four
+percentages of one income do not sum back to it under truncation. That routes both the
+rounding and storage rent's treasury exemption to miners, which is where rent belongs
+(ARCHITECTURE → UTXO conservation).
+
+⛔ **A treasury key is required.** With none configured, the treasury's slice and the
+unearned bonus would both fall to the miner — who would then recover their own forfeit,
+and the bonus would price nothing. A node without one must not start.
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify `sum(coinbaseOutputs.map(o => o.value)) === computeBlockReward(height)`
-3. Verify treasury split matches `CREDIT_TREASURY_PCT`
-4. For each output, mint credits
-5. Coinbase outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — the UTXO engine enforces this during transaction validation
+2. Verify `sum(coinbaseOutputs.map(o => o.value)) === computeBlockReward(height) + fees`
+3. Verify the **split**, not only the total — a block paying the whole income to the miner sums correctly and forfeits nothing
+4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes
+5. For each output, mint credits
+6. Coinbase outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — the UTXO engine enforces this during transaction validation
 
 ## Config
 
@@ -378,8 +410,10 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 
 ## Invariants
 
-1. Coinbase value per block matches `computeBlockReward(height)` exactly
-2. Treasury split matches `CREDIT_TREASURY_PCT` when treasury key is configured
+1. Coinbase value per block matches `computeBlockReward(height) + fees` exactly, and
+   **no coinbase output carries `value === 0`** at any height
+2. The coinbase's split matches the slice table above — verified **per output**, not
+   only as a sum. A treasury key is configured, or the node does not start
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
    output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip
