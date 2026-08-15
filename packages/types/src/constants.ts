@@ -130,7 +130,6 @@ export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;    // ~2 years at 60s blocks 
 export const CREDIT_INITIAL_REWARD = 100n * 10n ** 8n; // 100 credits per block in fixed-rate period
 export const CREDIT_EPOCH_BLOCKS = 129_600;            // ~90 days — reward reduction interval → profile: creditEpochBlocks
 export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // 2 credits reduced per epoch
-export const CREDIT_TAIL_REWARD = 2n * 10n ** 8n;      // 2 credits flat reward after emission ends
 export const CREDIT_MINER_REWARD_DELAY = 720;          // Blocks before coinbase is spendable (~12h) → profile: creditMinerRewardDelay
 export const MEMPOOL_EXPIRY_BLOCKS = 720;               // Blocks before mempool entries expire (~12h)
 

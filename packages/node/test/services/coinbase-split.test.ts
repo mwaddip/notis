@@ -139,13 +139,14 @@ describe('splitCoinbase', () => {
     }
   });
 
-  // ⚠ **AHEAD OF CODE, and reachable only by calling this function.** No block
-  // reaches income 0 while `computeBlockReward` floors at `CREDIT_TAIL_REWARD`
-  // — devnet's height 5,900 pays 2e8, not 0, and the first zero-reward height
-  // is 5,901 under the emission termination that has not landed. So the rule
-  // that no coinbase output may carry zero cannot be exercised through a block
-  // at income 0; what CAN be exercised is that the split leaves nothing to pay,
-  // which is what makes the empty output list the only legal encoding there.
+  // The split's half of the zero-income coinbase: nothing left to pay, which is
+  // what makes the empty output list the only legal encoding under the rule that
+  // no coinbase output may carry zero (MINING_INTERFACE → Coinbase Application,
+  // invariant 1). The block's half — that a block at the emission terminus
+  // carries that empty list and applies — is `emission-terminus.test.ts`. Income
+  // reaches 0 there at devnet height 5,901, which is the height that makes this
+  // function's zero case a shape a real block takes rather than only an argument
+  // it can be called with.
   it('leaves nothing for either slice at zero income', () => {
     const s = splitCoinbase(0n, 0n, 0);
     expect(s.treasury).toBe(0n);

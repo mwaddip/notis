@@ -16,20 +16,22 @@ API endpoints (template + submit). Depends on:
 
 ## Emission Schedule
 
-Ergo-style linear decay with flat tail. At 60-second blocks:
+Ergo-style linear decay **to zero — there is no tail**. At 60-second blocks:
 
 | Parameter | Blocks | Duration |
 |-----------|--------|----------|
 | Fixed-rate period | 1,051,200 | ~2 years |
 | Epoch (reduction interval) | 129,600 | ~90 days |
-| Tail period | 9,132,672 | ~17.4 years |
-| **Total** | **16,663,872** | **~31.7 years** |
+| Decay phase | 6,350,400 | 49 epochs, ~12.07 years |
+| **Total** | **7,401,600** | **~14.07 years** |
+
+Block 7,401,600 is the last that pays. Above it the reward is 0 and the coinbase carries
+whatever the other income terms yield — fees, and storage rent when it arrives.
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `CREDIT_INITIAL_REWARD` | 100 | Credits per block in fixed-rate period |
 | `CREDIT_REWARD_REDUCTION` | 2 | Credits reduced per epoch |
-| `CREDIT_TAIL_REWARD` | 2 | Flat reward after emission ends |
 | `CREDIT_MINER_REWARD_DELAY` | 720 | Blocks before coinbase can be spent (~12h) |
 | `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
 | `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
@@ -46,12 +48,16 @@ computeBlockReward(height):
     return CREDIT_INITIAL_REWARD                    // 100
   epochs = floor((height - CREDIT_FIXED_RATE_BLOCKS - 1) / CREDIT_EPOCH_BLOCKS) + 1
   reward = CREDIT_INITIAL_REWARD - epochs × CREDIT_REWARD_REDUCTION
-  if reward <= CREDIT_TAIL_REWARD:
-    return CREDIT_TAIL_REWARD                       // 2
-  return reward
+  return max(reward, 0)
 ```
 
-**Total supply:** ~453.9M credits (triangular decay area + tail).
+**Emission total: 422,640,000 credits** — the fixed-rate period (`1,051,200 × 100`) plus
+the decay triangle (`129,600 × Σ(k=1..49)(100 − 2k)`). This is a ceiling on emission and
+nothing else.
+
+⚠ **It is not the total supply**, which `ARCHITECTURE → UTXO conservation` defines as
+genesis credits plus ordering block rewards, less sinks. Emission bounds the second term
+alone; genesis credits sit on top of it and sinks pull the other way.
 
 **Coinbase split:** see "Coinbase Application → The slices" below. It is taken over
 block **income**, not over the reward; the treasury's share is per income term; and

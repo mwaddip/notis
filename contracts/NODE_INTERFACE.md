@@ -1700,8 +1700,10 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     later step references stay stable.)*
 7. Standalone UTXO entries → `utxoTxIds` (likes included — no sidecar diversion)
 8. Batch-linked UTXO entries → `utxoTxIds`
-12. Always produce a block — miners need coinbase rewards even when there
-    is no user work.  Empty blocks carry credit emission.
+12. Always produce a block, whatever its coinbase comes to. An empty block below
+    the emission terminus carries that height's emission; above it
+    (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
+    carries **no coinbase outputs at all** — no output may hold `value === 0`.
     ⚠ **One exception, and only one (P2-B phase 1c): a body its own mutation
     phase rejects.** See step 15b — the creator produces nothing and evicts
     the included mempool entries. Mining over a body the node itself will not
@@ -1841,8 +1843,11 @@ if height <= CREDIT_FIXED_RATE_BLOCKS (1,051,200):
     reward = CREDIT_INITIAL_REWARD (100)
 else:
     epochs = floor((height - CREDIT_FIXED_RATE_BLOCKS - 1) / CREDIT_EPOCH_BLOCKS) + 1
-    reward = max(CREDIT_INITIAL_REWARD - epochs * CREDIT_REWARD_REDUCTION, CREDIT_TAIL_REWARD)
+    reward = max(CREDIT_INITIAL_REWARD - epochs * CREDIT_REWARD_REDUCTION, 0)
 ```
+
+Emission terminates: block 7,401,600 is the last that pays, and the reward is 0 above it.
+The schedule and its totals are `MINING_INTERFACE → Emission Schedule`.
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
 The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. On a
