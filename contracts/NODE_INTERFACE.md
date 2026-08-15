@@ -734,9 +734,12 @@ ahead of the table lookup: the verdict would be identical either way, but an
 assigned tag refused by protocol rule is not an *unknown* one, and a test
 asserting rejection must be able to assert which rule rejected.
 
-`CANONICAL_GUARD` keeps all seven types even though the output schema carries
-six: its other obligation is agreement with `rowToBox`, and a genesis-seeded
-proof box is rebuilt from its row like any other.
+`CANONICAL_GUARD` keeps all nine types even though the output schema carries
+six: its other obligation is agreement with `rowToBox`, and the genesis-seeded
+proof and emission boxes are rebuilt from their rows like any other. The
+`emission` and `treasury` types join `genesis_proof` in being barred from both
+transaction positions — block application is their only producer and their only
+spender.
 
 ### Output shape — the closed per-boxType schema (guard-shape pin + field-type pin)
 
@@ -1543,8 +1546,8 @@ them as CBOR *text* (`7840` + 64 ASCII) where the node writes a *byte string*
 (`5820` + 32 raw), giving a different box id. Latent only because the vouch flow
 POSTs to `/vouches` and never builds the box client-side.
 
-That gap survived because the mirror covered **karma and credit only** — five of
-seven box types were never encoded through both implementations and compared. So
+That gap survived because the mirror covered **karma and credit only** — the other
+box types were never encoded through both implementations and compared. So
 the enforceable rule is coverage, not documentation: with every box type in the
 mirror, a missing `binaryFields` entry fails mechanically instead of waiting for
 someone to notice the list is a manual copy of a type definition.
@@ -1709,8 +1712,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     the included mempool entries. Mining over a body the node itself will not
     apply wastes PoW on a block that cannot be accepted anywhere.
 13. Track confirmed mempool rowids for cleanup
-14. Build coinbase outputs (credit emission with Ergo-style decay,
-    treasury split if configured)
+14. Build coinbase outputs — the **miner's slice only**. The treasury's accrues to the
+    `TreasuryBox` and the released emission comes out of the `EmissionBox`; both
+    successors are derived here too, and neither rides in the block
 15. Adjust difficulty at epoch boundaries (credit epochs, not like epochs)
 15b. Compute `stateRoot` — the **post-block** digest (see "Post-block
     stateRoot" below). Never the creator's current (pre-block) digest.
@@ -1850,10 +1854,15 @@ Emission terminates: block 7,401,600 is the last that pays, and the reward is 0 
 The schedule and its totals are `MINING_INTERFACE → Emission Schedule`.
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
-The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. On a
-profile carrying no `treasuryPubKey`, the treasury's share and the unearned inclusion
-bonus are **not minted at all** — never redirected to the miner, who would otherwise
-recover their own forfeit.
+The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices, and carries
+the **miner's slice alone**. The treasury's share and the unearned inclusion bonus accrue to
+the `TreasuryBox` — never redirected to the miner, who would otherwise recover their own
+forfeit, and never a coinbase output on any network.
+
+**Emission is released from a box, not minted.** Genesis holds the whole schedule in an
+`EmissionBox` (TYPES_INTERFACE → EmissionBox) and each block spends it to a successor
+`computeBlockReward(height)` smaller, so what remains to be emitted is state an observer
+reads. Above the terminus no emission box exists and nothing is released.
 
 > ⚠ **VIOLATED — the lock has no spend-time enforcement, so it is decorative.**
 > Measured 2026-08-07, **re-verified 2026-08-11 by reading every `lockedUntilBlock` occurrence
@@ -2962,7 +2971,9 @@ read behind one.
 ### The genesis state root is checked fail-stop, once, where it is built
 
 `seedGenesisState` computes the height-0 AVL+ root over the boxes it seeded and compares it to
-the profile's `genesisStateRoot`. **A mismatch throws and the node does not start**
+the profile's `genesisStateRoot`. Its set is the proof box and the `EmissionBox` on every
+network, plus the system karma and faucet credit boxes on the faucet-bearing ones. **A mismatch
+throws and the node does not start**
 (`assertGenesisRoot`, exported so it is reachable without a boot). Refusal rather than a
 warning follows `loadConfig`'s below-floor ordering target: proceeding silently means running a
 chain that forks from every honest peer at height 1, discovered later and somewhere else.
@@ -3171,7 +3182,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `POST_POW_TARGET_BITS` | **profile** | Difficulty differs per network |
 | `KARMA_DECAY_INTERVAL_BLOCKS` | **profile** | Timescale differs per network |
 | `KARMA_STALE_THRESHOLD_BLOCKS` | **profile** | Timescale differs per network |
-| `TREASURY_PUBKEY` | **profile** | Genesis data — a different chain has a different treasury |
+| `TREASURY_PUBKEY` | **deleted outright** | The treasury is a box no key can spend, so there is no key to place anywhere |
 | `KARMA_DECAY_AMOUNT` | universal constant | Economics. Devnet decays *often*, not *harder* |
 | `KARMA_MINIMUM` | universal constant | Economics |
 | `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | universal constant | Economics — the coinbase split |
@@ -3199,7 +3210,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`KARMA_MINIMUM`~~ | **removed** | ~~`10`~~ | → universal constant `KARMA_MINIMUM` (`@dagsocial/types`) |
 | ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`. Closed MINING invariants 4, 5 and 7 — `expectedTarget(height)` now sources the profile, and its unused `height` parameter is the seam a real retarget will need |
 | ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
-| ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | → profile field `treasuryPubKey` — genesis data, so a different chain has a different treasury |
+| ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
 | `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |
 | ~~`POST_POW_TARGET_BITS`~~ | **removed** | ~~`20`~~ | → profile field `postPowTargetBits`. The `advertised` class is retired with it: the challenge endpoint and the verifier now read the same field, so a node can no longer report a difficulty it does not enforce (A6) |
