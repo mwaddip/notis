@@ -23,6 +23,12 @@ const TEST_KEYS = [
   'NODE_ROLE',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
+  //
+  // ⚠ These are ENVIRONMENT VARIABLE names, and an entry does not track the
+  // constant a live read of it once reached — `CREDIT_TREASURY_PCT` is the
+  // string an operator may still carry in a `.env`, which is the only thing
+  // that makes asserting it inert worth anything. Renaming one to follow a
+  // constant leaves the guard pointed at a variable nobody has ever set.
   'POST_POW_TARGET_BITS',
   'ORDERING_BLOCK_POW_TARGET_BITS',
   'KARMA_DECAY_INTERVAL_BLOCKS',
@@ -303,7 +309,7 @@ describe('config', () => {
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);
       expect(cfg.karmaDecayAmount).toBe(5n);
       expect(cfg.karmaMinimum).toBe(10n);
-      expect(cfg.creditTreasuryPct).toBe(10);
+      expect(cfg.creditTreasuryPct).toBe(5);
       expect(cfg.treasuryPubKey).toBe('');
       expect(cfg.avlKeyLength).toBe(32);
     });

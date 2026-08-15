@@ -1,5 +1,5 @@
 import {
-  CREDIT_TREASURY_PCT,
+  COINBASE_TREASURY_PCT,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
@@ -97,7 +97,7 @@ export function loadConfig(): Readonly<Config> {
     // Mining
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
-    creditTreasuryPct: CREDIT_TREASURY_PCT,
+    creditTreasuryPct: COINBASE_TREASURY_PCT,
     treasuryPubKey: profile.treasuryPubKey,
     creditMinerRewardDelay: profile.creditMinerRewardDelay,
     creditFixedRateBlocks: profile.creditFixedRateBlocks,

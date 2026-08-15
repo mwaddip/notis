@@ -15,6 +15,13 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_REORG_DEPTH,
   NETWORK_PROFILES,
+  COINBASE_TREASURY_PCT,
+  COINBASE_MINER_FLOOR_PCT,
+  COINBASE_BACKER_PCT,
+  COINBASE_BONUS_PCT,
+  INCLUSION_BONUS_K,
+  MEMPOOL_CREDIT_SHARE_PCT,
+  MIN_FEE_RATE_PER_BYTE,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -108,5 +115,91 @@ describe('MAX_REORG_DEPTH', () => {
     for (const profile of Object.values(NETWORK_PROFILES)) {
       expect(Object.hasOwn(profile, 'maxReorgDepth')).toBe(false);
     }
+  });
+});
+
+/**
+ * The coinbase slices and the dials the fee market turns.
+ *
+ * MINING_INTERFACE → Coinbase Application states the slice table and the bonus
+ * curve; MEMPOOL_INTERFACE → Eviction, inside the credit class only and → Fee
+ * floor state the pool's two classes and the relay floor. Each is a bare
+ * `export const` with no arithmetic relationship the compiler can see, so the
+ * relationships between them are asserted here or nowhere.
+ */
+describe('coinbase slices', () => {
+  // The load-bearing one. `sum(coinbaseOutputs) === income` is exact at apply,
+  // and four independent percentages of one income are not required by any type
+  // to add up to it — a retune that moves one and forgets another produces a
+  // coinbase no height can satisfy.
+  it('sums to exactly 100', () => {
+    expect(
+      COINBASE_TREASURY_PCT +
+        COINBASE_MINER_FLOOR_PCT +
+        COINBASE_BACKER_PCT +
+        COINBASE_BONUS_PCT,
+    ).toBe(100);
+  });
+
+  // Every slice is a percentage of income taken by integer division, so a
+  // negative one is a mint and a >100 one is a slice larger than the income it
+  // is cut from. Neither is expressible in `number`.
+  it('holds four percentages inside [0, 100]', () => {
+    for (const pct of [
+      COINBASE_TREASURY_PCT,
+      COINBASE_MINER_FLOOR_PCT,
+      COINBASE_BACKER_PCT,
+      COINBASE_BONUS_PCT,
+    ]) {
+      expect(Number.isSafeInteger(pct)).toBe(true);
+      expect(pct).toBeGreaterThanOrEqual(0);
+      expect(pct).toBeLessThanOrEqual(100);
+    }
+  });
+
+  // The floor is what the miner is guaranteed regardless of what they include,
+  // and the bonus is what they forfeit by including nothing. A zero floor makes
+  // an empty block worth only its treasury slice; a zero bonus prices inclusion
+  // at nothing and the whole curve stops paying for anything.
+  it('guarantees the miner a floor and leaves a bonus to earn', () => {
+    expect(COINBASE_MINER_FLOOR_PCT).toBeGreaterThan(0);
+    expect(COINBASE_BONUS_PCT).toBeGreaterThan(0);
+  });
+});
+
+describe('the inclusion bonus curve', () => {
+  // `pool × actors / (actors + K)`. At K = 0 the quotient is 0/0 at zero actors
+  // and 1 everywhere else — a step, not a curve, and the marginal actor is worth
+  // nothing past the first.
+  it('has a positive knee', () => {
+    expect(INCLUSION_BONUS_K).toBeGreaterThan(0n);
+  });
+
+  // It is added to a `BigInt(actors)` and divides a bigint pool. A `number` here
+  // is a TypeError at the first block that carries an actor, not a rounding
+  // difference.
+  it('is a bigint, because it denominates the divisor of a bigint pool', () => {
+    expect(typeof INCLUSION_BONUS_K).toBe('bigint');
+  });
+});
+
+describe('mempool policy dials', () => {
+  // The credit class exists to bound credit entries, and the karma-side class is
+  // whatever is left. At 100 the pool goes all-credit under a flood, which is
+  // the state the two classes exist to prevent; at 0 no credit transaction is
+  // ever poolable and the fee market has no venue.
+  it('leaves both classes a share of the pool', () => {
+    expect(Number.isSafeInteger(MEMPOOL_CREDIT_SHARE_PCT)).toBe(true);
+    expect(MEMPOOL_CREDIT_SHARE_PCT).toBeGreaterThan(0);
+    expect(MEMPOOL_CREDIT_SHARE_PCT).toBeLessThan(100);
+  });
+
+  // Base units per encoded byte, compared against a bigint rate. Zero is the
+  // shipped default and a legitimate value — the seam exists so an operator can
+  // raise it — but a negative floor would admit a transaction paying nothing and
+  // report it as having cleared a bar.
+  it('carries a non-negative bigint fee floor', () => {
+    expect(typeof MIN_FEE_RATE_PER_BYTE).toBe('bigint');
+    expect(MIN_FEE_RATE_PER_BYTE).toBeGreaterThanOrEqual(0n);
   });
 });
