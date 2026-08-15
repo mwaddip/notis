@@ -419,20 +419,29 @@ function migrateDropValidationCounters(database: Database.Database): void {
  * |---|---|---|
  * | cheapest credit resident (per insert at capacity) | 0.636 ms | **0.001 ms** |
  * | credit-class count (per insert) | 0.302 ms | 0.070 ms |
- * | the fill's ordering pass (per block) | 2.84 ms | 3.17 ms |
+ * | the fill's ordering pass (per block) | 2.65 ms | **2.29 ms** |
+ * | write maintenance | 0.0082 ms/row | 0.0076 ms/row |
  *
- * ⚠ **It makes the ordering pass slightly worse, and that is the right trade.**
- * A full-class sort reads every row, so a non-covering index traversal loses to
- * a plain scan and an in-memory sort; the loss is 0.33 ms once per block
- * against 0.635 ms saved on every arriving transaction. The trade turns
- * positive at one credit insert per block and is overwhelming under the flood
- * the index exists for.
+ * **The ordering pass is faster with the index and not despite it**, but only
+ * because `iterateCreditByRate` declines to order *through* it — see the unary
+ * `+` there. Asked to satisfy the ORDER BY as well, the same query measures
+ * 2.88 ms: a full-class read pays a random row lookup per entry on a
+ * non-covering traversal, and an in-memory sort beats that. Confining the scan
+ * to credit rows is the part worth having.
  *
- * ⛔ **The karma-class count is served by no index here and is not meant to
- * be.** A partial index on `tx_fee IS NOT NULL` cannot answer `IS NULL`, and
- * that count measures 0.300 ms with or without any of these — the same as the
- * `COUNT(*)` it replaced, so the two-class capacity gate costs the pool
- * nothing it was not already paying.
+ * **Write maintenance is below measurement resolution** — 3,000 raw inserts and
+ * deletes differ by less than the run-to-run spread, and the indexed insert
+ * measured marginally *faster*, which is noise rather than an effect. Index
+ * cost here is a read-path question only.
+ *
+ * ⛔ **Two indexes are deliberately absent.** The karma-class count is served by
+ * none: a partial index on `tx_fee IS NOT NULL` cannot answer `IS NULL`, and
+ * that count measures 0.300 ms with or without any shape — the same as the
+ * `COUNT(*)` it replaced, so the two-class capacity gate costs the pool nothing
+ * it was not already paying. An index on `tx_fee` alone would take the
+ * credit-class count from 0.070 ms to 0.032 ms; at 3.8% of a ~1 ms insert that
+ * is below what earns a permanent schema object, and it is not a write-cost
+ * argument — write cost was measured and is nil for both.
  */
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
