@@ -341,7 +341,8 @@ invites, vouches, credits, faucet, prune).
    no topology row exists — an unconfirmed root is not prunable), verify
    signature, verify topology via block_topology CTE, verify Merkle root,
    settle UTXO deterministically (consume the subtree's PostLockBoxes, mint
-   `prune-refund-author` karma, and delete the subtree's like-records —
+   `prune-refund-author` karma **to every lock owner except `entry.authorId`**,
+   and delete the subtree's like-records —
    journalled, so a reverted prune restores them; P2-D), insert the Stump
    derived from the verified entry
    (**unconditional** — a node holding no DAG content records the same
@@ -1320,7 +1321,7 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
 | `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` |
-| `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo`, author leg |
+| `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
 | `invite-claim` | `inviteePublicKey` | raw | 32 | invite claim → `mintKarma(invitee, INVITE_KARMA_AMOUNT)` |
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
 | `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
@@ -1375,11 +1376,24 @@ Three things about them that are decided, not open:
   Phase A test-pinned the property over the whole `MintReason` union, so it re-checks
   automatically when the types phase edits the set.
 
-**The author leg describes today's settlement and is still expected to be retired** —
-karma-economics burns the pruner's own bond rather than refunding it (design track
-§1.4.1). The liker leg is **already gone**: P2-D deleted `prune-refund-liker` with
+**`prune-refund-author` is NOT retired, and the reasoning that expected it to be
+was wrong in an instructive way.** Burning the pruner's own bond retires the
+*pruner's* refund, not the reason: a subtree holds replies by other people, and
+*"you may destroy your own stake, never someone else's"* means those owners are
+still paid. So the reason survives with a **narrower set** — every lock owner in
+the subtree except `entry.authorId`.
+
+⛔ **Its `rootPostHash` subject survives with it, and the collision it prevents is
+still reachable.** `MAX_PRUNES_PER_BLOCK` is 32, so one block can carry prunes by
+**different authors** whose subtrees each contain a reply by the same third party.
+That owner is minted once per entry at one height; without `rootPostHash` in the
+subject the two derive the same `mintTxId`, trip `UNIQUE(tx_id, output_index)`,
+and a legitimate block is rejected. **Narrowing the refund set did not narrow the
+collision.**
+
+The liker leg is **already gone**: P2-D deleted `prune-refund-liker` with
 `LikeBox`, since a like's karma is burned at cast and deliberately unrecoverable.
-Retiring a `MintReason` pre-network costs nothing; retired names stay reserved.
+Retired names stay reserved.
 
 Every encoding above is **fixed-length**, so the rule holds by construction
 rather than by inspection.
