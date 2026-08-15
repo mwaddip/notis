@@ -1476,6 +1476,19 @@ describe('validateAndApplyTx', () => {
       });
     });
 
+    // The upper end of "a deficit of any size". A credit spend must create at
+    // least one credit output, but `checkOutputValues` bounds an output's value
+    // as non-negative rather than positive, so that output may carry 0 — and
+    // the whole input becomes the fee. This is what makes the size genuinely
+    // unbounded above rather than bounded at `Σ inputs − 1`.
+    it('accepts a deficit equal to the entire input, via a zero-value output', () => {
+      const box = creditIn(1000n, 118);
+      const tx = buildSignedTx([box.id!], [creditOut(0n)], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.error).toBeUndefined();
+      expect(result.valid).toBe(true);
+    });
+
     // The zero-deficit end of "zero included". A fee-paying chain must not make
     // the free transfer illegal — no amount is checked at this gate, the price
     // is relay policy (MEMPOOL_INTERFACE → Fee floor).
