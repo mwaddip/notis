@@ -29,6 +29,7 @@ import type {
   InviteBox,
   Post,
   KarmaBox,
+  CreditBox,
   BlockHeader,
   OrderingBlock,
   PruneEntry,
@@ -414,6 +415,56 @@ export function makeKarmaBox(
   return box;
 }
 
+export function makeCreditBox(
+  value: bigint,
+  owner: Uint8Array,
+  seedHeight: number,
+  nonce = 0,
+): CreditBox {
+  const candidate = {
+    boxType: 'credit' as const,
+    value,
+    owner,
+    guard: 'owner_signature' as const,
+  };
+  const box: CreditBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
+  box.id = computeBoxId(box);
+  return box;
+}
+
+/**
+ * A signed credit transfer that leaves `fee` unspent — the deficit the block
+ * carrying it claims in its coinbase (MINING_INTERFACE → Coinbase Application).
+ *
+ * The change goes back to the spender, so the only value that leaves the
+ * transaction's own arithmetic is the fee. `inputs` are boxes, not ids, because
+ * the sum has to be taken over what they actually hold: a fee stated against a
+ * mis-stated input total is a fixture that tests the wrong number.
+ */
+export function makeCreditTx(
+  spender: TestIdentity,
+  inputs: CreditBox[],
+  fee: bigint,
+  recipient?: Uint8Array,
+): UtxoTransaction {
+  const total = inputs.reduce((sum, b) => sum + b.value, 0n);
+  const tx: UtxoTransaction = {
+    inputs: inputs.map((b) => b.id!),
+    outputs: [
+      {
+        boxType: 'credit',
+        value: total - fee,
+        owner: recipient ?? spender.userId,
+        guard: 'owner_signature',
+      } as CreditBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, spender.privateKey, hex(spender.userId));
+  return tx;
+}
+
 /**
  * Build a signed like transaction — the burn shape a real client submits
  * (NODE_INTERFACE → Per-block like settlement): the liker's karma box is
@@ -485,17 +536,21 @@ export function lockBoxOf(tx: UtxoTransaction): AnyBox {
  * `(cfg: typeof testConfig) => void` mentions `Config` nowhere and checks the
  * argument against its own shape. Every call site must be declared `Config`, or
  * the fixture is only ever compared to itself. Probe rather than argument:
- * change one `Config` field's type (`creditTreasuryPct: number → bigint`) and
+ * change one `Config` field's type (`blockBodyBudgetBytes: number → bigint`) and
  * every call site should fail.
  *
  * A missing field also fails QUIETLY rather than at the type checker, because
  * `block-creator.ts` is the only consumer that reads config off its argument
  * (`startBlockCreator` assigns it to the module-level `config`), and it reads
- * exactly three: `blockBodyBudgetBytes`, `creditTreasuryPct`, `treasuryPubKey`.
+ * exactly one: `blockBodyBudgetBytes`, which is a local preference over a
+ * consensus ceiling and so is a node's own to set. Everything the applier
+ * re-derives — the coinbase's slices, the treasury key, the maturity lock —
+ * reads the `src/config.js` singleton and the network profile instead, because
+ * a creator reading a local value would build blocks its own network refuses.
  * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
  * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
- * imports the `src/config.js` singleton, which no test mocks, so an incomplete
- * fixture is simply never observed.
+ * imports that singleton too, which no test mocks, so an incomplete fixture is
+ * simply never observed.
  *
  * Note what this design does with a newly *required* field: it fills it with the
  * value production runs with, silently and correctly, rather than failing the
@@ -696,13 +751,14 @@ export async function makeApplicableBlock(
      *  suite's apply measures. Listed in the order given — dependency order
      *  is the apply loop's job. */
     utxoTxs?: UtxoTransaction[];
-    /** Split the coinbase across these owners instead of paying the miner
-     *  alone — the shape a node with `creditTreasuryPct > 0` produces. The
-     *  shares must sum to the scheduled emission or apply rejects the block. */
+    /** Replace the coinbase outright. The default is the one the block's own
+     *  body requires — `splitCoinbase` over the emission, the fees the embedded
+     *  transactions leave, and the actors they carry — so a test states this
+     *  only to deviate from it deliberately. */
     coinbaseSplit?: Array<{ owner: Uint8Array; value: bigint; isTreasury: boolean }>;
   } = {},
 ): Promise<OrderingBlock> {
-  const { computeUtxoTxRoot, computeBlockReward } = await import(
+  const { computeUtxoTxRoot, buildCoinbaseOutputs, predictIncome } = await import(
     '../src/services/block-creator.js'
   );
   const { expectedTarget } = await import('../src/services/difficulty.js');
@@ -725,15 +781,23 @@ export async function makeApplicableBlock(
   const miner = opts.miner ?? makeTestIdentity();
   const lockedUntilBlock = opts.lockedUntilBlock ?? height + config.creditMinerRewardDelay;
   const embeddedTxs = opts.utxoTxs ?? [];
+  const txCbors = embeddedTxs.map((tx) => encodeTx(tx));
+
+  // The coinbase this body requires, built the way the creator builds it — the
+  // helper's contract is a block that passes every apply check, and since the
+  // coinbase became the block's income that is a function of the body rather
+  // than of the height alone. A test that wants a wrong coinbase says so.
+  const { fees, actors } = predictIncome(txCbors, miner.userId);
   const utxoTxTree = {
     utxoTxIds: embeddedTxs.map((tx) => computeTxId(tx)),
-    utxoTxs: embeddedTxs.map((tx) => encodeTx(tx)),
+    utxoTxs: txCbors,
     pruneEntries: opts.pruneEntries ?? [],
-    coinbaseOutputs: (
-      opts.coinbaseSplit ?? [
-        { owner: miner.userId, value: computeBlockReward(height), isTreasury: false },
-      ]
-    ).map((share) => ({ ...share, lockedUntilBlock })),
+    coinbaseOutputs: opts.coinbaseSplit
+      ? opts.coinbaseSplit.map((share) => ({ ...share, lockedUntilBlock }))
+      : buildCoinbaseOutputs(height, fees, actors, miner.userId).map((out) => ({
+          ...out,
+          lockedUntilBlock,
+        })),
   };
 
   const header = {

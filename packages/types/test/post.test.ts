@@ -31,7 +31,7 @@ import {
   CREDIT_REWARD_REDUCTION,
   CREDIT_TAIL_REWARD,
   CREDIT_MINER_REWARD_DELAY,
-  CREDIT_TREASURY_PCT,
+  COINBASE_TREASURY_PCT,
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '../src/constants.js';
@@ -436,7 +436,7 @@ describe('constants', () => {
     expect(CREDIT_REWARD_REDUCTION).toBe(2n * 10n ** 8n);
     expect(CREDIT_TAIL_REWARD).toBe(2n * 10n ** 8n);
     expect(CREDIT_MINER_REWARD_DELAY).toBe(720);
-    expect(CREDIT_TREASURY_PCT).toBe(10);
+    expect(COINBASE_TREASURY_PCT).toBe(5);
     expect(ORDERING_BLOCK_POW_TARGET_FLOOR).toBe(2304);
   });
 });

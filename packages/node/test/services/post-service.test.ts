@@ -18,7 +18,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
     encodePost: () => new Uint8Array(10),
     insertPost: () => {},
     getCurrentHeight: () => 100,
-    insertUtxoTx: () => 1,
+    admitTx: () => 1,
     // ⛔ The mock returns the txId the REAL `computeTxId` gives the fixture, not
     // a placeholder. `createPost` derives the post id from whatever `validateTx`
     // hands back, so a stand-in string here would let the assertions below pass
@@ -202,7 +202,7 @@ describe('PostService', () => {
     let pooled = 0;
     const deps = mockDeps({
       insertPost: (postId: string) => { stored.push({ postId }); },
-      insertUtxoTx: () => { pooled += 1; return 1; },
+      admitTx: () => { pooled += 1; return 1; },
     });
     const tx = makePostTx();
 

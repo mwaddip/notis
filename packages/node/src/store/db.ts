@@ -133,7 +133,9 @@ const MIGRATIONS = [
   //
   // The like_/invite_/vouch_ columns are gate metadata (audit M-8): populated by
   // insertUtxoTx from the tx outputs so the correctness gates are plain SQL over
-  // every row, not a decode-scan of the first 1000.
+  // every row, not a decode-scan of the first 1000. `tx_fee` and `tx_bytes` are
+  // the same principle for the pool's two classes and its ordering
+  // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
   `CREATE TABLE IF NOT EXISTS mempool (
     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
     entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
@@ -144,7 +146,9 @@ const MIGRATIONS = [
     like_target TEXT,
     like_liker TEXT,
     invite_inviter TEXT,
-    vouch_voucher TEXT
+    vouch_voucher TEXT,
+    tx_fee INTEGER,
+    tx_bytes INTEGER
   )`,
 
   // System config (persistent node-level keypairs, etc.)
@@ -334,13 +338,20 @@ function migrateVouchCooldowns(database: Database.Database): void {
  * principle as the like/invite/vouch gate columns above — the queries stay
  * plain SQL over every row rather than a decode-scan of the first N.
  *
- * ALTERs rather than columns in a CREATE TABLE, because every mempool CREATE
- * TABLE in this file is superseded: `migrateVerifiablePrune` drops and recreates
- * the table on a fresh database, and returns early on one that already ran it.
- * One ALTER pass is the single statement that reaches both.
+ * **The ALTER pass is what reaches an EXISTING database; the base `CREATE TABLE`
+ * is what a fresh one gets.** Both are needed and neither is redundant:
+ * `initDb` runs `MIGRATIONS` before any `migrate*` function, and the base
+ * mempool table already carries `prune_entry_cbor` — the very column
+ * `migrateVerifiablePrune` tests before deciding to act — so on a fresh database
+ * that migration returns early and the base table is the one that **survives**.
+ * It drops and recreates only on a database predating that column. A column
+ * added to the base table alone would therefore never reach an existing
+ * database, and one added to the ALTER pass alone leaves a fresh schema that
+ * does not describe itself.
  *
  * Each column is guarded on its own, so a database that gained one before the
- * other still gains the one it lacks.
+ * other still gains the one it lacks — and so the pass is a no-op on the fresh
+ * database whose base table already declared them.
  *
  * Rows written before a column existed hold NULL, and `json_each` reads NULL as
  * zero rows rather than raising — such an entry matches no conflict query, and
@@ -356,6 +367,13 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   if (!has('tx_inputs')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_inputs TEXT`);
   if (!has('tx_output_ids')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_output_ids TEXT`);
   if (!has('tx_id')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_id TEXT`);
+  // The pool's class and its price. `tx_fee` NULL means karma-side — nothing it
+  // could bid — and a number means credit-side, zero included
+  // (MEMPOOL_INTERFACE → Eviction, inside the credit class only). A row written
+  // before these existed holds NULL for both, so it reads as karma-side and is
+  // never evicted; the pool drains within `MEMPOOL_EXPIRY_BLOCKS` regardless.
+  if (!has('tx_fee')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_fee INTEGER`);
+  if (!has('tx_bytes')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_bytes INTEGER`);
 }
 
 /**
@@ -389,6 +407,41 @@ function migrateDropValidationCounters(database: Database.Database): void {
  * against a full pool where this measures 7.5 ms (2026-08-15). See
  * MEMPOOL_INTERFACE → "Confirmed-entry cleanup is bounded by the pool, not by a
  * literal".
+ *
+ * `idx_mempool_fee_rate` is an **expression** index over the same division the
+ * eviction query orders by, and it is the second one with a measured cost. Once
+ * the credit class is full every arriving credit transaction compares itself
+ * against the cheapest resident, so that query runs per insert on exactly the
+ * path a flood takes. Measured 2026-08-15 at `maxMempoolEntries = 10,000` —
+ * 10,000 rows, 5,000 of them credit:
+ *
+ * | query | no index | this index |
+ * |---|---|---|
+ * | cheapest credit resident (per insert at capacity) | 0.636 ms | **0.001 ms** |
+ * | credit-class count (per insert) | 0.302 ms | 0.070 ms |
+ * | the fill's ordering pass (per block) | 2.65 ms | **2.29 ms** |
+ * | write maintenance | 0.0082 ms/row | 0.0076 ms/row |
+ *
+ * **The ordering pass is faster with the index and not despite it**, but only
+ * because `iterateCreditByRate` declines to order *through* it — see the unary
+ * `+` there. Asked to satisfy the ORDER BY as well, the same query measures
+ * 2.88 ms: a full-class read pays a random row lookup per entry on a
+ * non-covering traversal, and an in-memory sort beats that. Confining the scan
+ * to credit rows is the part worth having.
+ *
+ * **Write maintenance is below measurement resolution** — 3,000 raw inserts and
+ * deletes differ by less than the run-to-run spread, and the indexed insert
+ * measured marginally *faster*, which is noise rather than an effect. Index
+ * cost here is a read-path question only.
+ *
+ * ⛔ **Two indexes are deliberately absent.** The karma-class count is served by
+ * none: a partial index on `tx_fee IS NOT NULL` cannot answer `IS NULL`, and
+ * that count measures 0.300 ms with or without any shape — the cost of an
+ * unfiltered `COUNT(*)` over the same table, so bounding the pool per class is
+ * no dearer than bounding it whole. An index on `tx_fee` alone would take the
+ * credit-class count from 0.070 ms to 0.032 ms; at 3.8% of a ~1 ms insert that
+ * is below what earns a permanent schema object, and it is not a write-cost
+ * argument — write cost was measured and is nil for both.
  */
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
@@ -406,6 +459,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(tx_output_ids) WHERE tx_output_ids IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_id
       ON mempool(tx_id) WHERE tx_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_fee_rate
+      ON mempool(CAST(tx_fee AS REAL) / tx_bytes) WHERE tx_fee IS NOT NULL;
   `);
 }
 

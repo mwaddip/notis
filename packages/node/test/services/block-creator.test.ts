@@ -53,7 +53,6 @@ const testConfig = makeTestConfig({
   blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   // Mining
   orderingBlockPowTargetBits: 3072,
-  creditTreasuryPct: 10,
   treasuryPubKey: '',
   // Net settings
   bootstrapPeers: [] as string[],
@@ -78,6 +77,7 @@ type BlockCreatorModule = {
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
+  worstCaseCoinbaseOutputs: (height: number) => OrderingBlock['utxoTxTree']['coinbaseOutputs'];
 };
 
 async function importDb(): Promise<DbModule> {
@@ -666,22 +666,40 @@ describe('block-creator', () => {
       const POOL = 40;
       const rowids = await fillPool(POOL, 'budget');
 
-      // Pass one, at the production budget, to learn what this body costs. The
-      // reserve is the mandatory sections — prune entries and coinbase outputs
-      // — measured on the tree the creator actually built, not predicted here.
+      // Pass one, at the production budget, to learn what this body costs.
+      //
+      // ⚠ The reserve is measured against the **worst-case** coinbase, not the
+      // one the finished template carries. The coinbase's value is the block's
+      // income, so it cannot be built until the fill has chosen a body; the
+      // fill runs against the largest encoding a coinbase could take and the
+      // real one — smaller — replaces it afterwards. Measuring the finished
+      // body's coinbase here models a creator that reserves what it ends up
+      // carrying, and predicts one transaction more than fits.
       bc.startBlockCreator(testConfig);
       const full = bc.getCurrentTemplate();
       expect(full).not.toBeNull();
       expect(full!.utxoTxTree.utxoTxIds).toHaveLength(POOL);
 
-      const reserved = utxoTxTreeByteLength({
+      // What the finished body carries, which is what `perTx` must be derived
+      // from — every term but the transactions is unchanged between the two.
+      const carried = utxoTxTreeByteLength({
         ...full!.utxoTxTree,
         utxoTxIds: [],
         utxoTxs: [],
       });
-      const perTx =
-        (utxoTxTreeByteLength(full!.utxoTxTree) - reserved) / POOL;
+      const perTx = (utxoTxTreeByteLength(full!.utxoTxTree) - carried) / POOL;
       expect(Number.isInteger(perTx)).toBe(true);
+
+      // What the FILL budgeted against, which is what decides how many fit.
+      const reserved = utxoTxTreeByteLength({
+        ...full!.utxoTxTree,
+        utxoTxIds: [],
+        utxoTxs: [],
+        coinbaseOutputs: bc.worstCaseCoinbaseOutputs(1),
+      });
+      // The seed really is larger than what the block ends up carrying — were
+      // it not, this test would pass while measuring the wrong reserve.
+      expect(reserved).toBeGreaterThan(carried);
 
       // Pass two, at a budget that binds mid-pool. Every count prefix in the
       // body is one byte wide below 128 entries, so the arithmetic is exact
@@ -780,6 +798,143 @@ describe('block-creator', () => {
       expect(measured).toBeLessThanOrEqual(MAX_BLOCK_BODY_BYTES);
       expect(measured).toBeGreaterThan(MAX_BLOCK_BODY_BYTES - 10_000);
       expect(template!.utxoTxTree.utxoTxIds.length).toBeLessThan(pooled);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Fill order — karma-side first, then credits by fee rate
+  // (MEMPOOL_INTERFACE → Ordering). A node's assembly preference, not a rule:
+  // what makes it rational is the coinbase's inclusion bonus, which a miner
+  // filling credits first forfeits.
+  // -------------------------------------------------------------------------
+
+  describe('fill order', () => {
+    /**
+     * A credit box in the store and a signed transfer spending it, leaving
+     * `fee` behind. `padding` widens the transaction without changing the fee,
+     * which is how a rate is told apart from a total.
+     */
+    async function seedCreditSpend(
+      label: string,
+      value: bigint,
+      fee: bigint,
+      padding = 1,
+    ): Promise<UtxoTransaction> {
+      const utxo = await importUtxo();
+      const owner = createHash('blake2b512').update(`${label}_o`).digest().subarray(0, 32);
+      const candidate = {
+        boxType: 'credit' as const,
+        value,
+        owner: new Uint8Array(owner),
+        guard: 'owner_signature' as const,
+      };
+      const box = seedProvenance(candidate, 1, labelNonceOf(label));
+      utxo.insertBox(box);
+
+      const out = value - fee;
+      const share = out / BigInt(padding);
+      const outputs = Array.from({ length: padding }, (_, i) => ({
+        ...candidate,
+        value: i === 0 ? out - share * BigInt(padding - 1) : share,
+      }));
+      return {
+        inputs: [box.id!],
+        outputs,
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      } as UtxoTransaction;
+    }
+
+    function labelNonceOf(label: string): number {
+      return createHash('blake2b512').update(label).digest().readUInt16BE(0);
+    }
+
+    /** The ids the template carries, in body order. */
+    function idsIn(block: OrderingBlock): string[] {
+      return block.utxoTxTree.utxoTxIds;
+    }
+
+    it('offers the budget to karma-side entries before credit transactions', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+
+      // The payer arrives FIRST, so arrival order cannot explain the outcome.
+      const payer = await seedCreditSpend('payer', 10_000n, 9_000n);
+      mempool.insertUtxoTx(payer, 5000);
+      mempool.insertUtxoTx(fillerTx('karma_side') as UtxoTransaction, 5000);
+
+      // A budget that admits exactly one of the two. Both costs are measured
+      // rather than assumed, and the larger one sets the budget so that
+      // whichever class is served first is what lands.
+      const { encodeTx } = await import('@dagsocial/types');
+      const { entryByteCost } = mempool as unknown as {
+        entryByteCost: (cbor: Uint8Array) => number;
+      };
+      const payerCost = entryByteCost(encodeTx(payer));
+      const karmaCost = entryByteCost(encodeTx(fillerTx('karma_side') as UtxoTransaction));
+      const reserved = utxoTxTreeByteLength({
+        utxoTxIds: [], utxoTxs: [], pruneEntries: [],
+        coinbaseOutputs: bc.worstCaseCoinbaseOutputs(1),
+      });
+
+      bc.startBlockCreator({
+        ...testConfig,
+        blockBodyBudgetBytes: reserved + Math.max(payerCost, karmaCost),
+      });
+      const block = bc.getCurrentTemplate();
+      expect(block).not.toBeNull();
+
+      expect(idsIn(block!)).toHaveLength(1);
+      expect(idsIn(block!)[0]).toBe(computeTxId(fillerTx('karma_side') as UtxoTransaction));
+      // And the payer really would have fitted — otherwise this passes because
+      // it was too big, not because karma went first.
+      expect(reserved + payerCost).toBeLessThanOrEqual(
+        reserved + Math.max(payerCost, karmaCost),
+      );
+    });
+
+    it('orders credit transactions by fee rate, not by arrival', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+
+      // Inserted cheapest-first, so FIFO would reverse the expected answer.
+      const cheap = await seedCreditSpend('cheap', 10_000n, 1n);
+      const mid = await seedCreditSpend('mid', 10_000n, 50n);
+      const rich = await seedCreditSpend('rich', 10_000n, 500n);
+      mempool.insertUtxoTx(cheap, 5000);
+      mempool.insertUtxoTx(mid, 5000);
+      mempool.insertUtxoTx(rich, 5000);
+
+      bc.startBlockCreator(testConfig);
+      const block = bc.getCurrentTemplate();
+      expect(idsIn(block!)).toEqual([
+        computeTxId(rich),
+        computeTxId(mid),
+        computeTxId(cheap),
+      ]);
+    });
+
+    it('ranks a fat transaction by rate, so an equal fee over more bytes loses', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+
+      // Identical fees; only the byte cost differs.
+      const fat = await seedCreditSpend('fat', 10_000n, 600n, 14);
+      const lean = await seedCreditSpend('lean', 10_000n, 600n, 1);
+      mempool.insertUtxoTx(fat, 5000);
+      mempool.insertUtxoTx(lean, 5000);
+
+      bc.startBlockCreator(testConfig);
+      const block = bc.getCurrentTemplate();
+      // Both fit at the default budget, so this asserts the ORDER rather than
+      // which one survived a trim — the leaner rate is offered first.
+      expect(idsIn(block!)).toEqual([computeTxId(lean), computeTxId(fat)]);
     });
   });
 });

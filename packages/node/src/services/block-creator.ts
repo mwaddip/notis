@@ -8,7 +8,6 @@ import {
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   CREDIT_TAIL_REWARD,
-  CREDIT_TREASURY_PCT,
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   decodeTx,
@@ -30,6 +29,7 @@ import type {
   UtxoTxTree,
   CoinbaseOutput,
   Post,
+  AnyBox,
 } from '@dagsocial/types';
 // The process config, distinct from the injected `config` below. The two
 // emission values read off it are re-checked by the applier against the same
@@ -39,7 +39,17 @@ import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
 import { expectedTarget } from './difficulty.js';
 import { getNet } from './net-instance.js';
-import { applyOrderingBlock, computePostBlockStateRoot } from './block-apply.js';
+import {
+  applyOrderingBlock,
+  computePostBlockStateRoot,
+} from './block-apply.js';
+import {
+  countKarmaActors,
+  isCreditSideTx,
+  splitCoinbase,
+  type EmbeddedTx,
+} from './coinbase-split.js';
+import { materializeOutput } from './utxo-engine.js';
 import {
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
@@ -50,11 +60,13 @@ import {
   purgeExpired,
   removeEntry,
   drainMempoolPrunes,
+  entryByteCost,
 } from '../store/mempool.js';
 import {
   getOrderingBlock,
   getCurrentHeight,
   getPost,
+  getBox,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -100,41 +112,10 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
 // ---------------------------------------------------------------------------
 // Body sizing
 //
-// Every number here comes from `utxoTxTreeByteLength`. The framing a
-// transaction costs inside a body is the encoder's arithmetic and moves when
-// the encoding does (TYPES_INTERFACE → Sizing without encoding); restating it
-// in this file would put a second copy of the layout where nothing compares the
-// two, which is the reason that export exists at all.
+// `entryByteCost` lives in `store/mempool.ts`, which records it per entry so a
+// transaction can be priced by the resource it consumes. This file spends that
+// number against the budget; the pool divides a fee by it.
 // ---------------------------------------------------------------------------
-
-/** An empty body: four count prefixes and nothing else. */
-const EMPTY_BODY_BYTES = utxoTxTreeByteLength({
-  utxoTxIds: [],
-  utxoTxs: [],
-  pruneEntries: [],
-  coinbaseOutputs: [],
-});
-
-/** A well-formed stand-in, so the probe below measures a real `b32` entry. */
-const PROBE_TX_ID = '0'.repeat(64);
-
-/**
- * What one transaction costs inside the body — its fixed-width `utxoTxIds`
- * entry and the length-prefixed body beside it.
- *
- * The difference between a one-entry body and an empty one is exactly that
- * entry's contribution, because every other term of the sum is unchanged.
- */
-function entryByteCost(cbor: Uint8Array): number {
-  return (
-    utxoTxTreeByteLength({
-      utxoTxIds: [PROBE_TX_ID],
-      utxoTxs: [cbor],
-      pruneEntries: [],
-      coinbaseOutputs: [],
-    }) - EMPTY_BODY_BYTES
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -306,15 +287,15 @@ export function createOrderingBlock(): OrderingBlock | null {
   // 1. Purge expired mempool entries
   purgeExpired(currentHeight);
 
-  // 2. The mandatory sections, before a single transaction is offered the
-  //    budget. Neither prune entries nor coinbase outputs are the miner's to
-  //    trim (MEMPOOL_INTERFACE → "The fill budget is bytes; `getPendingEntries`
-  //    is a count"), and both can be built without knowing the transaction set:
-  //    the drain reads the pool alone, and the coinbase reads the height and
-  //    the payout keys.
+  // 2. The prune entries, which the drain reads off the pool alone. The
+  //    coinbase cannot be built here: its value is the block's income and its
+  //    split is scaled by the actors the body carries, so it depends on what
+  //    the fill selects — which in turn depends on the budget the coinbase
+  //    leaves. The budget is seeded with the largest encoding a coinbase could
+  //    take, and the real one replaces it once the fill is done.
   const MAX_PRUNES_PER_BLOCK = 32;
   const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
-  const coinbaseOutputs = buildCoinbaseOutputs(newHeight);
+  const coinbaseOutputs = worstCaseCoinbaseOutputs(newHeight);
 
   // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
   //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
@@ -346,33 +327,70 @@ export function createOrderingBlock(): OrderingBlock | null {
     coinbaseOutputs,
   };
 
-  // 5. Spend what the mandatory sections left, in mempool order, drawing from
-  //    the pool a page at a time. The first transaction that does not fit ends
-  //    the fill: reaching past it for a smaller one behind it is a priority
-  //    rule, and the pool is FIFO with no priority (MEMPOOL_INTERFACE → FIFO
-  //    ordering).
+  // 5. Spend what the mandatory sections left. Karma-side entries are offered
+  //    the budget first, then credit entries in descending fee rate
+  //    (MEMPOOL_INTERFACE → Ordering). Within each class the first transaction
+  //    that does not fit ends that class's fill: reaching past it for a smaller
+  //    one behind it is a priority rule the pool's order already settled.
+  //
+  //    ⚠ **This order is a node's own assembly preference and no validator
+  //    enforces it.** It is the reference implementation of the coinbase's
+  //    inclusion bonus, not a rule: a miner who rewrites this loop to fill
+  //    credits first forfeits the quarter of the block's income that scales
+  //    with karma-side actors, which is what makes including them rational
+  //    rather than altruistic. A *consensus* rule removing that revenue would
+  //    make inclusion free; an incentive paying for it makes inclusion
+  //    profitable, and only the second survives a miner who re-implements this.
+  //
+  //    ⛔ **The pool's stored `tx_fee` orders this loop and never feeds the
+  //    coinbase.** `predictIncome` below resolves every input itself, because
+  //    the applier computes the block's fees from its own resolution of the
+  //    body — a stored fee that has gone stale, or the zero an unpriceable
+  //    entry carries, would make this node emit a coinbase its own applier
+  //    rejects. Ordering by a stale number costs nothing; summing one costs the
+  //    block.
   let spent = utxoTxTreeByteLength(utxoTxTree);
-  for (const entry of iteratePendingEntries()) {
-    if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
-    const cost = entryByteCost(entry.utxoTxCbor);
-    if (spent + cost > budget) break;
-    spent += cost;
-    utxoTxIds.push(computeTxId(decodeTx(entry.utxoTxCbor)));
-    utxoTxCbors.push(entry.utxoTxCbor);
-    includedRowids.push(entry.rowid);
-  }
+  const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
+    for (const entry of iteratePendingEntries({ klass })) {
+      if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
+      const cost = entryByteCost(entry.utxoTxCbor);
+      if (spent + cost > budget) return;
+      spent += cost;
+      utxoTxIds.push(computeTxId(decodeTx(entry.utxoTxCbor)));
+      utxoTxCbors.push(entry.utxoTxCbor);
+      includedRowids.push(entry.rowid);
+    }
+  };
+  offerBudgetTo('karma');
+  offerBudgetTo('credit');
 
-  // 6. The sizer has the last word. `spent` is exact per entry and blind to the
+  // 6. The real coinbase, from the transactions the fill actually selected.
+  //    Replacing the worst-case seed can only shrink the body, so the trim
+  //    below has less to do than it was given room for, never more.
+  const filled = predictIncome(utxoTxCbors, validatorId);
+  utxoTxTree.coinbaseOutputs = buildCoinbaseOutputs(newHeight, filled.fees, filled.actors, currentMinerPubkey ?? validatorId);
+
+  // 7. The sizer has the last word. `spent` is exact per entry and blind to the
   //    two array count prefixes, which widen with the entry COUNT rather than
   //    with any one entry, so the assembled body can measure a few bytes above
   //    what the accumulator tracked — at most one entry's worth. What
   //    `utxoTxTreeByteLength` returns over the finished tree is the number
   //    `verifyOrderingBlockStructure` measures, and a body above the budget is
   //    one every peer refuses.
+  //
+  //    It terminates with the coinbase in the loop, because popping a
+  //    transaction can only remove a fee and can only remove an actor, so the
+  //    income can only fall and the coinbase's encoding can only shrink or
+  //    hold — monotone downward, never oscillating. The split moves value
+  //    between the two outputs without changing their total, so it cannot widen
+  //    the encoding on its own; an output count that changes does so by a slice
+  //    reaching zero, which only removes an output.
   while (utxoTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
     utxoTxIds.pop();
     utxoTxCbors.pop();
     includedRowids.pop();
+    const trimmed = predictIncome(utxoTxCbors, validatorId);
+    utxoTxTree.coinbaseOutputs = buildCoinbaseOutputs(newHeight, trimmed.fees, trimmed.actors, currentMinerPubkey ?? validatorId);
   }
 
   // 11. Always produce a block — miners need coinbase rewards even when
@@ -538,37 +556,127 @@ function finalizeBlock(block: OrderingBlock): void {
 // Coinbase
 // ---------------------------------------------------------------------------
 
-function buildCoinbaseOutputs(height: number): CoinbaseOutput[] {
-  const reward = computeBlockReward(height);
-  const outputs: CoinbaseOutput[] = [];
+/**
+ * The largest encoding any coinbase can take, used to seed the fill's budget
+ * before the real one is known.
+ *
+ * Two outputs is the maximum the split produces, and `value` is bounded by its
+ * own encoder at `2^64 − 1`, so no real coinbase encodes wider than this. Over-
+ * reserving costs at most a transaction's place in a block that was within a
+ * few bytes of the budget; under-reserving would put the assembled body over a
+ * budget every peer measures.
+ */
+export function worstCaseCoinbaseOutputs(height: number): CoinbaseOutput[] {
+  const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
+  const widest = { owner: new Uint8Array(32), value: 2n ** 64n - 1n, lockedUntilBlock };
+  return [
+    { ...widest, isTreasury: false },
+    { ...widest, isTreasury: true },
+  ];
+}
 
-  const treasuryPct = config.creditTreasuryPct;
-  let treasuryAmount = 0n;
-  let minerAmount = reward;
+/**
+ * The fees and the actor count a body of these transactions will yield.
+ *
+ * ⚠ **A prediction, not the rule.** The rule is the applier's, which sums the
+ * same quantities while walking the transactions in dependency order
+ * (`block-apply` → the coinbase carries the block's income). This runs before
+ * the body has been applied and cannot use that walk, because the coinbase it
+ * feeds has to exist before the mutation phase can run at all.
+ *
+ * A wrong prediction cannot produce a bad block: the coinbase check lives in
+ * the mutation phase, and `computePostBlockStateRoot` runs that phase over this
+ * body, so a coinbase that does not match its income makes the speculation
+ * `body-rejected` and this node declines to produce rather than mining a block
+ * every peer refuses.
+ *
+ * Inputs resolve against the confirmed set **and this block's own outputs**,
+ * because a transaction may spend a box an earlier one here creates. Order does
+ * not matter to either quantity — a sum and a set are both commutative — so
+ * this agrees with the applier's dependency-ordered walk without reproducing
+ * it. An input that resolves to neither leaves the body unappliable, which the
+ * speculation above is what catches.
+ */
+export function predictIncome(
+  txCbors: Uint8Array[],
+  validator: Uint8Array,
+): { fees: bigint; actors: number } {
+  const txs = txCbors.map((cbor) => decodeTx(cbor));
 
-  if (treasuryPct > 0 && config.treasuryPubKey.length === 64) {
-    treasuryAmount = (reward * BigInt(treasuryPct)) / 100n;
-    minerAmount = reward - treasuryAmount;
+  const ownOutputs = new Map<string, AnyBox>();
+  for (const tx of txs) {
+    const txId = computeTxId(tx);
+    (tx.outputs ?? []).forEach((out, index) => {
+      const box = materializeOutput(out as AnyBox, txId, index);
+      if (box.id) ownOutputs.set(box.id, box);
+    });
   }
+  const resolve = (boxId: string): AnyBox | null =>
+    getBox(boxId) ?? ownOutputs.get(boxId) ?? null;
+
+  let fees = 0n;
+  const embedded: EmbeddedTx[] = [];
+  for (const tx of txs) {
+    const inputBoxes = (tx.inputs ?? [])
+      .map(resolve)
+      .filter((box): box is AnyBox => box !== null);
+    embedded.push({ tx, inputBoxes });
+
+    if (!isCreditSideTx(tx)) continue;
+    if (inputBoxes.length !== (tx.inputs ?? []).length) continue;
+    const inputSum = inputBoxes.reduce((sum, box) => sum + box.value, 0n);
+    const outputSum = tx.outputs.reduce((sum, out) => sum + out.value, 0n);
+    fees += inputSum - outputSum;
+  }
+
+  return { fees, actors: countKarmaActors(embedded, validator) };
+}
+
+/**
+ * The coinbase for a block of this income and this many karma-side actors
+ * (MINING_INTERFACE → Coinbase Application).
+ *
+ * ⛔ **Every value here is consensus and none of it comes from the injected
+ * config.** The applier recomputes this same split and compares it output by
+ * output, so a creator reading a local value would build coinbases its own
+ * network refuses. The percentages are universal constants and the treasury key
+ * is profile data — "this network has no treasury" is a property of the
+ * network, which is what stops two nodes on one network disagreeing about it.
+ * Same rule, and the same reason, as the maturity lock below.
+ */
+export function buildCoinbaseOutputs(
+  height: number,
+  fees: bigint,
+  actors: number,
+  minerOwner: Uint8Array,
+): CoinbaseOutput[] {
+  const split = splitCoinbase(computeBlockReward(height), fees, actors);
+  const outputs: CoinbaseOutput[] = [];
 
   // The applier rejects any coinbase whose lock is not exactly this
   // (MINING invariant 3), so it reads the singleton, not the injected config.
   const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
 
-  // Miner output — use external miner's pubkey if provided, else validator key
-  outputs.push({
-    owner: currentMinerPubkey ?? validatorId,
-    value: minerAmount,
-    lockedUntilBlock,
-    isTreasury: false,
-  });
-
-  // Treasury output (if configured)
-  if (treasuryAmount > 0n) {
-    const treasuryKey = new Uint8Array(Buffer.from(config.treasuryPubKey, 'hex'));
+  // Skipped at zero, because no coinbase output may carry a zero value.
+  if (split.miner > 0n) {
     outputs.push({
-      owner: treasuryKey,
-      value: treasuryAmount,
+      owner: minerOwner,
+      value: split.miner,
+      lockedUntilBlock,
+      isTreasury: false,
+    });
+  }
+
+  // On a profile with no treasury key the treasury's share and the forfeited
+  // bonus are simply not minted, and the block's income is smaller by exactly
+  // that much. They are never handed to the miner: a miner who recovered their
+  // own forfeit would make the inclusion bonus a delay rather than a cost, and
+  // the bonus would price nothing.
+  const treasuryKeyHex = nodeConfig.profile.treasuryPubKey;
+  if (treasuryKeyHex.length === 64 && split.treasury > 0n) {
+    outputs.push({
+      owner: new Uint8Array(Buffer.from(treasuryKeyHex, 'hex')),
+      value: split.treasury,
       lockedUntilBlock,
       isTreasury: true,
     });

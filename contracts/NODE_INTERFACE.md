@@ -655,7 +655,7 @@ Full read-only validation. Performs all checks without modifying state:
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
 5. Value conservation: `sum(input values) == sum(output values)` for **every** box
-   type, with **three stated exceptions and no others**:
+   type, with **four stated exceptions and no others**:
    - the **like deficit** — `likeTarget` present ⟺ the sums differ by exactly
      `LIKE_KARMA_COST`, a burn;
    - the **invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
@@ -667,7 +667,28 @@ Full read-only validation. Performs all checks without modifying state:
      escrowed off-UTXO in `vouch_cooldowns` and re-minted at maturity, an escrow
      round-trip rather than a burn) or of an `InviteBox` (cancel — the box holds
      `0`, so this conserves arithmetically and is listed here only because the
-     gate rejects zero-output shapes structurally).
+     gate rejects zero-output shapes structurally);
+   - the **transaction fee** — a transaction whose inputs are `credit` boxes may
+     leave a deficit of any size, zero included. The block carrying it claims the
+     difference in its coinbase (MINING_INTERFACE → Coinbase Application). A
+     *surplus* on credit inputs stays invalid: a deficit is a fee, a surplus is a
+     mint, and the invite claim above is the only mint a user transaction may
+     perform.
+     > **The key is structural, not incidental.** Step 3 pins every input to one
+     > `boxType` and the transition table admits only `credit → credit`, so the
+     > ledger a transaction sits on is a property of the transaction. This
+     > exception therefore cannot collide with the two karma ones: the like arm
+     > additionally requires all-karma inputs, and the claim arm requires
+     > `invite → karma`.
+     > **No amount is checked here.** A zero-fee transaction is valid consensus —
+     > the price is each node's relay policy (MEMPOOL_INTERFACE → Fee floor), and
+     > what makes paying rational is the block creator's fill order, not this gate.
+     > **A whole-input deficit is expressible, and the encoding is worth knowing.**
+     > An output `value` is a **non-negative** `bigint` (step 4's schema, `u64`), so
+     > `credit(X) → credit(0)` pays the entire input as fee. What the transition
+     > rules refuse is the zero-**length** output list — a constraint on the output
+     > list's shape, not on the fee's size. **The two are independent, and reading
+     > the first as bounding the second is wrong.**
 
    There is **no BondBox exception, and none is needed**: a bond is destroyed by
    the probation-deadline settlement, which is block application, and this gate
@@ -1824,7 +1845,10 @@ else:
 ```
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
-If `treasuryPubKey` is configured, `CREDIT_TREASURY_PCT` (10%) goes to treasury.
+The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. On a
+profile carrying no `treasuryPubKey`, the treasury's share and the unearned inclusion
+bonus are **not minted at all** — never redirected to the miner, who would otherwise
+recover their own forfeit.
 
 > ⚠ **VIOLATED — the lock has no spend-time enforcement, so it is decorative.**
 > Measured 2026-08-07, **re-verified 2026-08-11 by reading every `lockedUntilBlock` occurrence
@@ -3145,7 +3169,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `TREASURY_PUBKEY` | **profile** | Genesis data — a different chain has a different treasury |
 | `KARMA_DECAY_AMOUNT` | universal constant | Economics. Devnet decays *often*, not *harder* |
 | `KARMA_MINIMUM` | universal constant | Economics |
-| `CREDIT_TREASURY_PCT` | universal constant | Economics |
+| `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | universal constant | Economics — the coinbase split |
 | `CREDIT_INITIAL_REWARD` | universal constant | Economics — separately, it is read and never used (A5) |
 | `AVL_KEY_LENGTH` | universal constant | Format. No network has a reason to differ |
 
@@ -3169,7 +3193,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`KARMA_STALE_THRESHOLD_BLOCKS`~~ | **removed** | ~~`20160`~~ | → profile field `karmaStaleThresholdBlocks`. Value corrected to `40320` by P2-A (60s blocks) |
 | ~~`KARMA_MINIMUM`~~ | **removed** | ~~`10`~~ | → universal constant `KARMA_MINIMUM` (`@dagsocial/types`) |
 | ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`. Closed MINING invariants 4, 5 and 7 — `expectedTarget(height)` now sources the profile, and its unused `height` parameter is the seam a real retarget will need |
-| ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `CREDIT_TREASURY_PCT` (`@dagsocial/types`) |
+| ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | → profile field `treasuryPubKey` — genesis data, so a different chain has a different treasury |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
 | `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |

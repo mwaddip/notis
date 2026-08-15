@@ -399,7 +399,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     maxSubBlocksPerBlock: 1000,
     miningSecret: '',
     orderingBlockPowTargetBits: 3072,
-    creditTreasuryPct: 10,
     treasuryPubKey: '',
     bootstrapPeers: [],
     listenAddrs: '/ip4/127.0.0.1/tcp/0',

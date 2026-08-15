@@ -4,7 +4,7 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { CandidateOf, KarmaBox, UtxoTransaction } from '@dagsocial/types';
-import { insertUtxoTx, resolvePendingTip } from '../store/mempool.js';
+import { resolvePendingTip } from '../store/mempool.js';
 import { getSystemKeypair, ensureSystemKarmaBox, signWithSystemKey } from '../store/system.js';
 import {
   hasFaucetGrantRecord,
@@ -12,6 +12,7 @@ import {
   recordFaucetGrant,
 } from '../store/faucet-grants.js';
 import { validateTx } from './utxo-engine.js';
+import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
 
@@ -168,7 +169,7 @@ export function faucetGrant(
 
     // ---- 6. Insert into mempool and record the grant ----
     const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-    insertUtxoTx(tx, expiresAtHeight);
+    admitTx(tx, expiresAtHeight);
     recordFaucetGrant(userIdBytes, 'karma', txId, currentHeight);
 
     granted = {

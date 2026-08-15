@@ -720,9 +720,11 @@ describe('validateAndApplyTx', () => {
   // ---------------------------------------------------------------------------
   // 13. Value conservation (audit C-1, L-11)
   //
-  // sum(inputs) == sum(outputs) for every box type. The sole exception is a
-  // BondBox burn (zero outputs). Karma/credits are minted or burned only in
-  // block-application paths, never inside a user transaction.
+  // sum(inputs) == sum(outputs) for every box type, with the four exceptions
+  // NODE_INTERFACE → `validateTx` step 5 enumerates: the like burn, the
+  // invite-claim surplus, the zero-output vouch spend, and a credit deficit as
+  // a fee (section 16). Every other mint or burn happens in a
+  // block-application path, never inside a user transaction.
   // ---------------------------------------------------------------------------
   describe('value conservation (audit C-1, L-11)', () => {
     it('rejects self-signed K(v) -> K(v) + K(2) (mints karma from nothing)', () => {
@@ -1419,6 +1421,191 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toContain('block_apply guard');
       expect(result.error).toContain('can only be consumed by block application');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 16. The transaction fee — a credit deficit is legal, a credit surplus is a
+  // mint (NODE_INTERFACE → `validateTx` step 5, the fourth exception).
+  //
+  // The arm is keyed on the input ledger, and the tests below demonstrate the
+  // key is disjoint rather than assuming it: a karma deficit must still reach
+  // strict equality, and a like must still reach the like gate. Both assert the
+  // message they did NOT get, because "rejected" alone would pass for either
+  // arm and the collision is precisely what a shared check would hide.
+  // ---------------------------------------------------------------------------
+  describe('the credit-deficit fee carve', () => {
+    function creditIn(value: bigint, seed: number, owner = ownerPubKey): Stored<CreditBox> {
+      const box = seedProvenance<CreditBox>(
+        {
+          boxType: 'credit' as const,
+          value,
+          owner,
+          guard: 'owner_signature' as const,
+        },
+        seed,
+      );
+      storeInsertBox(box);
+      return box;
+    }
+
+    function creditOut(value: bigint, owner = ownerPubKey): CandidateOf<CreditBox> {
+      return {
+        boxType: 'credit',
+        value,
+        owner,
+        guard: 'owner_signature',
+      };
+    }
+
+    // "A deficit of any size, zero included" — so the size is swept rather than
+    // sampled at one value, and the whole-balance-but-one case is included
+    // because it is the largest a transaction can pay and still have an output.
+    it('accepts a credit deficit of any size', () => {
+      const cases: [bigint, bigint][] = [
+        [1000n, 999n],   // a 1-unit fee
+        [1000n, 900n],   // an ordinary fee
+        [1000n, 1n],     // very nearly the whole balance
+      ];
+      cases.forEach(([inValue, outValue], i) => {
+        const box = creditIn(inValue, 100 + i);
+        const tx = buildSignedTx([box.id!], [creditOut(outValue)], ownerPrivKey, ownerPubKey);
+        const result = validateTx(deps, tx, 10);
+        expect(result.error).toBeUndefined();
+        expect(result.valid).toBe(true);
+      });
+    });
+
+    // The upper end of "a deficit of any size". A credit spend must create at
+    // least one credit output, but `checkOutputValues` bounds an output's value
+    // as non-negative rather than positive, so that output may carry 0 — and
+    // the whole input becomes the fee. This is what makes the size genuinely
+    // unbounded above rather than bounded at `Σ inputs − 1`.
+    it('accepts a deficit equal to the entire input, via a zero-value output', () => {
+      const box = creditIn(1000n, 118);
+      const tx = buildSignedTx([box.id!], [creditOut(0n)], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.error).toBeUndefined();
+      expect(result.valid).toBe(true);
+    });
+
+    // The zero-deficit end of "zero included". A fee-paying chain must not make
+    // the free transfer illegal — no amount is checked at this gate, the price
+    // is relay policy (MEMPOOL_INTERFACE → Fee floor).
+    it('accepts a credit transaction that leaves no deficit at all', () => {
+      const box = creditIn(1000n, 110);
+      const tx = buildSignedTx(
+        [box.id!],
+        [creditOut(400n), creditOut(600n)],
+        ownerPrivKey, ownerPubKey,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.error).toBeUndefined();
+      expect(result.valid).toBe(true);
+    });
+
+    // A deficit is a fee; a surplus is a mint, and the invite claim is the only
+    // mint a user transaction may perform.
+    it('rejects a credit transaction whose outputs exceed its inputs', () => {
+      const box = creditIn(1000n, 111);
+      const tx = buildSignedTx([box.id!], [creditOut(1001n)], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Credit non-conservation: outputs exceed inputs');
+      expect(result.error).toContain('inputs=1000');
+      expect(result.error).toContain('outputs=1001');
+    });
+
+    // Multi-owner credit inputs are an ordinary multi-party payment — credits
+    // are exempt from the karma same-owner rule by name — so the carve must
+    // hold for them too rather than only for a self-spend.
+    it('accepts a deficit on credit inputs from two different owners', () => {
+      const { publicKey: secondPub, privateKey: secondPriv } = generateKeyPairSync('ed25519');
+      const secondRaw = rawPublicKey(secondPub);
+      const mine = creditIn(600n, 112);
+      const theirs = creditIn(400n, 113, secondRaw);
+
+      const tx: UtxoTransaction = {
+        inputs: [mine.id!, theirs.id!],
+        outputs: [creditOut(950n)],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      const hash = computeTxHash(tx);
+      tx.signatures[Buffer.from(ownerPubKey).toString('hex')] = signHash(hash, ownerPrivKey);
+      tx.signatures[Buffer.from(secondRaw).toString('hex')] = signHash(hash, secondPriv);
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.error).toBeUndefined();
+      expect(result.valid).toBe(true);
+    });
+
+    // --- the arms do not collide -------------------------------------------
+
+    // Same arithmetic shape as the accepted case above — a deficit — on the
+    // other ledger. It must reach strict equality, and the assertion that it is
+    // NOT the credit message is what proves the key discriminated rather than
+    // the check happening to reject for its own reasons.
+    it('leaves a karma deficit with no likeTarget to strict equality', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 114);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [{ boxType: 'karma', value: 90n, owner: ownerPubKey, guard: 'owner_signature' }],
+        ownerPrivKey, ownerPubKey,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Value non-conservation');
+      expect(result.error).not.toContain('Credit non-conservation');
+    });
+
+    // A like carries a deficit the fee arm would accept if it ever saw one, so
+    // the ordering inside the gate is load-bearing: the like carve runs first
+    // and refuses non-karma inputs there.
+    it('leaves a like on credit inputs to the like gate, deficit and all', () => {
+      const box = creditIn(1000n, 115);
+      const tx = buildSignedTx(
+        [box.id!],
+        [creditOut(900n)],
+        ownerPrivKey, ownerPubKey, 1, 'ab'.repeat(32),
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('likeTarget is only legal on an all-karma burn transaction');
+      expect(result.error).not.toContain('Credit non-conservation');
+    });
+
+    // The exemption the conservation table has forgotten before. A rewrite of
+    // the arms is exactly what drops it, so it is asserted beside them.
+    it('leaves the zero-output vouch exemption intact', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+        guard: 'owner_signature',
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 116);
+      storeInsertBox(seeded);
+
+      const tx = buildSignedTx([seeded.id!], [], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.error).toBeUndefined();
+      expect(result.valid).toBe(true);
+    });
+
+    // The whole input as a fee would be a zero-output credit spend, and the
+    // carve does not reach it: the transition table requires at least one
+    // credit output. Pinned because the carve makes conservation say yes, so
+    // without this the refusal looks like the carve's and would move with it.
+    it('refuses a zero-output credit spend at the transition, not at conservation', () => {
+      const box = creditIn(1000n, 117);
+      const tx = buildSignedTx([box.id!], [], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('CreditBox can only be spent to create CreditBox outputs');
+      expect(result.error).not.toContain('non-conservation');
     });
   });
 });

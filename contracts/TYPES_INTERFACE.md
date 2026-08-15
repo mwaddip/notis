@@ -1852,8 +1852,11 @@ threshold / percentage / bits** constants stay `number`.
   `GENESIS_KARMA_PER_MEMBER`.
 - **Stay `number`:** all `*_BLOCKS`, `*_TARGET_BITS`/`*_FLOOR`,
   `LIKES_PER_KARMA_PAYOUT` (a count), `POST_LOCK_UNLOCK_PER_LIKES`, `MAX_*`,
-  `CREDIT_MINER_REWARD_DELAY` (a block count, NOT an amount), `CREDIT_TREASURY_PCT`
-  (percentage). The exhaustive per-constant classification rides in the dispatch prompt.
+  `CREDIT_MINER_REWARD_DELAY` (a block count, NOT an amount), and every coinbase
+  percentage — `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`,
+  `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `MEMPOOL_CREDIT_SHARE_PCT`.
+  **`INCLUSION_BONUS_K` is the exception and is `bigint`**: it is a denominator in
+  the bonus curve, which computes in base units. The exhaustive per-constant classification rides in the dispatch prompt.
   (`LIKE_COST`, `LIKE_THRESHOLD`, `LIKE_MAX_AUTHOR_REWARD`, `LIKE_FREE_THRESHOLD` and
   `EPOCH_BLOCKS` were deleted by P2-D.)
 
@@ -2059,8 +2062,17 @@ export const CREDIT_EPOCH_BLOCKS = 129_600;            // consensus — ~90 days
 export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // consensus — 2 credits reduced per epoch
 export const CREDIT_TAIL_REWARD = 2n * 10n ** 8n;      // ⚠ TO BE DELETED — see below
 export const CREDIT_MINER_REWARD_DELAY = 720;          // consensus — blocks before coinbase spendable
-export const CREDIT_TREASURY_PCT = 10;                 // consensus — percent of each reward to treasury
+export const COINBASE_TREASURY_PCT = 5;      // consensus — per income TERM: of emission and of fees, never of rent
+export const COINBASE_MINER_FLOOR_PCT = 35;  // consensus — guaranteed, and takes every remainder
+export const COINBASE_BACKER_PCT = 35;       // consensus — AHEAD OF CODE, falls to the miner floor
+export const COINBASE_BONUS_PCT = 25;        // consensus — the inclusion bonus pool
+export const INCLUSION_BONUS_K = 5n;         // consensus — the bonus curve's knee
+export const MEMPOOL_CREDIT_SHARE_PCT = 50;  // policy — credit share of the pool
+export const MIN_FEE_RATE_PER_BYTE = 0n;     // policy — relay floor, base units per IN-BLOCK byte
 ```
+
+> The four `COINBASE_*_PCT` values **must sum to 100** — four independent `export const`s
+> carry no relationship the compiler can see, so the sum is asserted in the types suite.
 
 > ⚠ **Every value in this block was shown pre-P0 until 2026-08-06.** The BigInt rescale
 > updated the Denomination prose above and left these literals at their unscaled values

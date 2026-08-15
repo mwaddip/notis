@@ -21,6 +21,7 @@ import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
 import { getDb } from './store/db.js';
 import { validateTx, KARMA_BOX_TYPES } from './services/utxo-engine.js';
+import { admitTx } from './services/admit-tx.js';
 import { createAdminRouter } from './routes/admin.js';
 import { registerProofEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
@@ -217,7 +218,7 @@ export function createApp(config: Config): express.Express {
       getLikersForPost: store.getLikersForPost,
       getAncestors: store.getAncestors,
       getSubtree: store.getSubtree,
-      insertUtxoTx: store.insertUtxoTx,
+      admitTx,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
       getBox: store.getBoxWithPending,

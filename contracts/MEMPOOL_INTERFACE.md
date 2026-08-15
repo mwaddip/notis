@@ -482,10 +482,41 @@ escaping `MempoolFullError` would roll back the switch and strand the node on
 the lighter chain — mempool pressure escalated into a consensus-liveness
 failure.
 
-Rejection, not eviction: eviction needs fee-based prioritization to decide
-*what* to evict, and there are no fees yet — that remains deferred to the fee
-market. `purgeExpired` still reclaims space every block, so a full pool
-drains on its own as entries expire or confirm.
+### Eviction, inside the credit class only
+
+The pool is capped **per class**. Credit entries occupy at most
+`MEMPOOL_CREDIT_SHARE_PCT` of `maxMempoolEntries`; karma-side entries hold the
+rest. When the credit class is full, an arriving transaction bidding above its
+cheapest resident **displaces** that resident; one bidding below is rejected.
+The karma-side class rejects at its cap and never evicts.
+
+**Fee-ordered eviction over a single pool would be worse than none.** Every
+karma-side operation bids zero — posts, likes, invites, vouches — so paying
+traffic would evict all of them, and the coinbase's inclusion bonus
+(MINING_INTERFACE → Coinbase Application) would then pay for work that could no
+longer reach the pool at all. The class boundary is what keeps the bonus
+reachable.
+
+`purgeExpired` still reclaims space every block, so a full pool also drains on
+its own as entries expire or confirm.
+
+### Fee floor
+
+A node refuses a credit transaction whose fee rate — deficit in base units per
+**in-block byte** — falls below `MIN_FEE_RATE_PER_BYTE`. This is **relay policy,
+not consensus**: a zero-fee transaction is valid and a miner may mine one.
+
+⚠ **The denominator is the in-block cost, not the bare encoded length.** A
+transaction occupies its length-prefixed body *and* its fixed-width `utxoTxIds`
+entry, and the block budget spends both — so that is the resource a bid is
+measured against. An operator computing a floor from the encoded size alone
+arrives at a number stricter than they intended, because the real denominator is
+larger.
+
+⛔ **The floor sits above `insertUtxoTx`, never inside it.** The reorg caller
+re-inserts transactions the chain has already accepted, and an operator raises
+the floor precisely under load — applied at the store, the floor would
+permanently drop confirmed history. Re-insertion bypasses it.
 
 ### No replacement semantics
 
@@ -496,10 +527,17 @@ arrives after the invite, both are in the pool and the cancel will fail at
 apply time (invite already consumed). This is acceptable for now; replacement
 semantics (RBF) require fees and are deferred.
 
-### FIFO ordering
+### Ordering — FIFO in the karma class, fee rate in the credit class
 
-Entries are ordered by `rowid ASC` (insertion order). No priority queue.
-Without fees, there's no basis for prioritization beyond arrival time.
+Karma-side entries are ordered by `rowid ASC` (insertion order): nothing bids, so
+there is no basis for prioritization beyond arrival time. Credit entries are
+ordered by descending fee rate.
+
+**The block creator offers the byte budget to karma-side entries first**, then
+fills the remainder with credit entries in rate order. That is a node's assembly
+preference and no validator enforces it — a miner who fills credits first
+forfeits the coinbase's inclusion bonus, which is what makes the order rational
+rather than a rule.
 
 ### CBOR storage
 
@@ -526,7 +564,9 @@ table was removed during the mempool migration.
 - Batch-linked entries share a `batch_id` and are included atomically in
   the same ordering block
 - Confirmed entries are removed by rowid after block finalization
-- FIFO ordering (by insertion) — no priority, no reordering
-- Size-capped with rejection (`MempoolFullError` → 503); no replacement, no
-  fee-based eviction
+- FIFO ordering within the karma-side class; fee-rate ordering within the credit
+  class
+- Size-capped **per class**. The karma-side class rejects at its cap
+  (`MempoolFullError` → 503); the credit class displaces its cheapest resident
+  for a higher bidder and rejects a lower one. **No replacement** on either
 - Mempool is a node-local data structure — it is NOT gossiped

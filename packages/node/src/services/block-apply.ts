@@ -34,6 +34,12 @@ import {
   clearTemplate,
   rebuildTemplate,
 } from './block-creator.js';
+import {
+  countKarmaActors,
+  isCreditSideTx,
+  splitCoinbase,
+  type EmbeddedTx,
+} from './coinbase-split.js';
 import { postsOf, postIdsOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
@@ -406,26 +412,17 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     return false;
   }
 
-  // 5. Verify coinbase reward matches emission schedule
-  const expectedReward = computeBlockReward(block.header.height);
-  const totalCoinbase = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
-  if (totalCoinbase !== expectedReward) {
-    console.warn(
-      `Rejected block height=${block.header.height}: coinbase value ${totalCoinbase} != expected ${expectedReward}`,
-    );
-    abortBlockJournal();
-    return false;
-  }
-
-  // 5b. Verify coinbase maturity locks
+  // 5. Verify coinbase maturity locks
   //
-  // The value check above says nothing about *when* the credits become
-  // spendable, and each output's `lockedUntilBlock` travels into `mintCredits`
-  // below exactly as the producer wrote it — so an unchecked `0` mints a
-  // coinbase spendable in the block that created it, bypassing the 720-block
-  // maturity delay entirely. The lock is a pure function of height (MINING
-  // contract, invariant 3); the gossip validator's `>= height` bound is both
-  // weaker than that and absent from the sync/reorg path.
+  // The coinbase's *value* is checked in the mutation phase, because it equals
+  // the block's income and the fee term is not known until every embedded
+  // transaction has resolved (MINING_INTERFACE → Coinbase Application). The
+  // lock is not: it is a pure function of height, so it settles here, and it
+  // has to settle somewhere — each output's `lockedUntilBlock` travels into
+  // `mintCredits` exactly as the producer wrote it, so an unchecked `0` mints a
+  // coinbase spendable in the block that created it, bypassing the maturity
+  // delay entirely (MINING invariant 3). The gossip validator's `>= height`
+  // bound is both weaker than that and absent from the sync/reorg path.
   const expectedLock = block.header.height + config.creditMinerRewardDelay;
   for (const out of block.utxoTxTree.coinbaseOutputs) {
     if (out.lockedUntilBlock !== expectedLock) {
@@ -1051,6 +1048,21 @@ function applyMutationPhase(
   const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
   const likesPerPost = new Map<string, number>(); // post id → likes this block
 
+  // The block's income, accumulated as each transaction is applied
+  // (MINING_INTERFACE → Coinbase Application). Both quantities are gathered
+  // here rather than ahead of the loop because this is the only place an input
+  // is guaranteed to resolve: a transaction may spend a box an earlier
+  // transaction in this same block creates, and until the loop has applied that
+  // one, the confirmed set this phase reads through does not hold the output.
+  //
+  // `appliedTxs` carries each transaction with its FIRST input box, which is
+  // all `actorOf` reads, and reading it is sound only because `validateTx` has
+  // passed by the time it is recorded — step 3's boxType pin is what makes the
+  // first input speak for the transaction rather than being the producer's
+  // choice.
+  let fees = 0n;
+  const appliedTxs: EmbeddedTx[] = [];
+
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
   //
@@ -1194,6 +1206,21 @@ function applyMutationPhase(
         }
       }
 
+      // Before `applyTx` consumes them. Every input is present (tested at the
+      // top of this iteration) and `validateTx` has just passed for this
+      // transaction, so the deficit is the one the conservation gate admitted
+      // and it cannot be negative (NODE_INTERFACE → `validateTx` step 5).
+      const firstInput = item.tx.inputs[0];
+      if (firstInput !== undefined) {
+        appliedTxs.push({ tx: item.tx, inputBoxes: [getBox(firstInput)!] });
+      }
+      if (isCreditSideTx(item.tx)) {
+        let inputSum = 0n;
+        for (const inputId of item.tx.inputs) inputSum += getBox(inputId)!.value;
+        const outputSum = item.tx.outputs.reduce((sum, o) => sum + o.value, 0n);
+        fees += inputSum - outputSum;
+      }
+
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
 
@@ -1264,6 +1291,91 @@ function applyMutationPhase(
     }
     queue.length = 0;
     queue.push(...remaining);
+  }
+
+  // 11a. The coinbase carries the block's income (MINING_INTERFACE → Coinbase
+  // Application): the scheduled emission plus the fees the body just yielded.
+  //
+  // It sits after the loop because `fees` is a property of what the body
+  // applied, and inside this phase because the phase is the one derivation both
+  // the applier and the creator's speculative run share — so a creator whose
+  // own coinbase does not equal its income declines to produce the block
+  // instead of mining one every peer will refuse.
+  //
+  // The mints already ran (§7). They can, because the coinbase's values are in
+  // the block and need no fee term; a rejection here unwinds them with
+  // everything else through the funnel's transaction.
+  const emission = computeBlockReward(height);
+  const actors = countKarmaActors(appliedTxs, block.header.validatorId);
+  const split = splitCoinbase(emission, fees, actors);
+
+  // ⚠ **The income and the minted total are different numbers, and only a
+  // keyed profile makes them coincide.** With no `treasuryPubKey` on this
+  // network, the treasury's share and the forfeited bonus are not minted at
+  // all and the block's minted total is smaller by exactly that much — never
+  // redirected to the miner, whose slice is the same either way (MINING_
+  // INTERFACE → Coinbase Application). Read off the profile rather than any
+  // local setting, so every node on one network computes one answer.
+  const treasuryKeyHex = config.profile.treasuryPubKey;
+  const treasuryIsMinted = treasuryKeyHex.length === 64;
+  const expectedMinted = split.miner + (treasuryIsMinted ? split.treasury : 0n);
+
+  const totalCoinbase = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
+  if (totalCoinbase !== expectedMinted) {
+    console.warn(
+      `Rejected block height=${height}: coinbase value ${totalCoinbase} != ` +
+      `expected ${expectedMinted} (emission ${emission} + fees ${fees}, ` +
+      `treasury ${treasuryIsMinted ? split.treasury : 0n} of ${split.treasury})`,
+    );
+    return false;
+  }
+
+  // One block, one encoding. A zero-value output changes `utxoTxRoot` and the
+  // block hash while changing nothing about what is paid. After the total,
+  // because that is the substantive rule and a coinbase claiming the wrong
+  // amount must be named as that rather than as an encoding fault.
+  for (const out of block.utxoTxTree.coinbaseOutputs) {
+    if (out.value === 0n) {
+      console.warn(`Rejected block height=${height}: zero-value coinbase output`);
+      return false;
+    }
+  }
+
+  // The split, not only the sum. A block paying the whole income to its miner
+  // sums correctly and forfeits nothing, so a total-only check is the vacuous
+  // one here — the forfeit is the entire mechanism the bonus prices inclusion
+  // with. The treasury side is pinned by amount *and* owner: an output flagged
+  // `isTreasury` but paid to the producer's own key would recover the forfeit
+  // under the treasury's name.
+  //
+  // Only the treasury side is pinned. Which key the miner pays their own slice
+  // to, and across how many outputs, is the producer's business and is
+  // committed to in `utxoTxRoot` like everything else.
+  let treasuryPaid = 0n;
+  for (const out of block.utxoTxTree.coinbaseOutputs) {
+    if (!out.isTreasury) continue;
+    if (!treasuryIsMinted) {
+      console.warn(
+        `Rejected block height=${height}: treasury coinbase output on a network ` +
+        `with no treasury key`,
+      );
+      return false;
+    }
+    if (Buffer.from(out.owner).toString('hex') !== treasuryKeyHex) {
+      console.warn(
+        `Rejected block height=${height}: treasury coinbase output is not paid ` +
+        `to the network's treasury key`,
+      );
+      return false;
+    }
+    treasuryPaid += out.value;
+  }
+  if (treasuryPaid !== (treasuryIsMinted ? split.treasury : 0n)) {
+    console.warn(
+      `Rejected block height=${height}: coinbase pays ${treasuryPaid} to the ` +
+      `treasury, expected ${treasuryIsMinted ? split.treasury : 0n}`,
+    );
+    return false;
   }
 
   // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like

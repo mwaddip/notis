@@ -23,7 +23,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     nodeRole: 'server',
     blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
     orderingBlockPowTargetBits: 3072,
-    creditTreasuryPct: 10,
     treasuryPubKey: '',
     bootstrapPeers: [],
     listenAddrs: '/ip4/127.0.0.1/tcp/0',

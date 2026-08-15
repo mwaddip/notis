@@ -67,7 +67,7 @@ function mockDeps(store: MockStore, overrides?: Partial<PostServiceDeps>): PostS
     encodePost,
     insertPost: () => {},
     getCurrentHeight: () => 100,
-    insertUtxoTx: () => 1,
+    admitTx: () => 1,
     // The REAL derivation, not a placeholder — see post-service.test.ts.
     validateTx: (tx: UtxoTransaction) => ({ valid: true, txId: computeTxId(tx) }),
     getBox: () =>

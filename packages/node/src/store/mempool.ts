@@ -12,24 +12,87 @@ import type {
 } from '@dagsocial/types';
 import {
   MAX_TX_BYTES,
+  MEMPOOL_CREDIT_SHARE_PCT,
   encodeTx,
   decodeTx,
   computeTxId,
   computePruneEntryId,
+  utxoTxTreeByteLength,
 } from '@dagsocial/types';
+import { isCreditSideTx } from '../services/coinbase-split.js';
 import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
- * Thrown by every mempool insert when the pool is at `MAX_MEMPOOL_ENTRIES`.
- * Rejection, not eviction: eviction needs fee-based prioritization and there
- * are no fees yet (audit M-8). Routes map this to 503; the gossip relay and
- * reorg re-insertion drop the entry and log.
+ * Which half of the pool an entry occupies (MEMPOOL_INTERFACE → Eviction,
+ * inside the credit class only). A credit-side transaction can bid; nothing
+ * else in the system can, which is why the two are capped apart.
+ */
+export type PoolClass = 'credit' | 'karma';
+
+/**
+ * Thrown when the entry's **class** is full — the pool as a whole may have room.
+ *
+ * The karma-side class rejects at its cap and never evicts: every entry in it
+ * bids zero, so there is nothing to order by and nothing that deserves to
+ * displace anything. The credit class rejects only a transaction bidding at or
+ * below its cheapest resident; a higher bid displaces that resident instead
+ * (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
+ *
+ * Routes map this to 503; the gossip relay and reorg re-insertion drop the
+ * entry and log.
  */
 export class MempoolFullError extends Error {
-  constructor(public readonly cap: number) {
-    super(`Mempool full: at capacity (${cap} entries)`);
+  constructor(
+    public readonly cap: number,
+    public readonly poolClass: PoolClass = 'karma',
+  ) {
+    super(`Mempool full: ${poolClass} class at capacity (${cap} entries)`);
     this.name = 'MempoolFullError';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Entry sizing
+//
+// Every number here comes from `utxoTxTreeByteLength`. The framing a
+// transaction costs inside a body is the encoder's arithmetic and moves when
+// the encoding does (TYPES_INTERFACE → Sizing without encoding); restating it
+// here would put a second copy of the layout where nothing compares the two,
+// which is the reason that export exists at all.
+// ---------------------------------------------------------------------------
+
+/** An empty body: four count prefixes and nothing else. */
+const EMPTY_BODY_BYTES = utxoTxTreeByteLength({
+  utxoTxIds: [],
+  utxoTxs: [],
+  pruneEntries: [],
+  coinbaseOutputs: [],
+});
+
+/** A well-formed stand-in, so the probe below measures a real `b32` entry. */
+const PROBE_TX_ID = '0'.repeat(64);
+
+/**
+ * What one transaction costs **inside a block body** — its fixed-width
+ * `utxoTxIds` entry and the length-prefixed body beside it.
+ *
+ * The difference between a one-entry body and an empty one is exactly that
+ * entry's contribution, because every other term of the sum is unchanged.
+ *
+ * This, not the bare encoded length, is what a fee is divided by: the block
+ * budget is what 3a made scarce, and a transaction should be ranked by the
+ * resource it actually consumes. The block creator spends the same number
+ * against the same budget.
+ */
+export function entryByteCost(cbor: Uint8Array): number {
+  return (
+    utxoTxTreeByteLength({
+      utxoTxIds: [PROBE_TX_ID],
+      utxoTxs: [cbor],
+      pruneEntries: [],
+      coinbaseOutputs: [],
+    }) - EMPTY_BODY_BYTES
+  );
 }
 
 /**
@@ -126,13 +189,121 @@ function rowToEntry(row: MempoolRow): PoolEntry {
 }
 
 /**
- * Reject the insert when the pool is already at the configured cap. Checked by
- * every insert path — an unbounded pool was a disk-DoS lever (audit M-8).
+ * The two class caps. Credit entries hold `MEMPOOL_CREDIT_SHARE_PCT` of the
+ * bound and karma-side entries hold the remainder, so a credit flood cannot
+ * take the whole pool (MEMPOOL_INTERFACE → Eviction, inside the credit class
+ * only).
+ *
+ * The karma cap takes the remainder rather than its own percentage, for the
+ * same reason the miner floor does: two truncated shares of one bound do not
+ * add back to it, and a pool that admits fewer entries than its own cap says is
+ * a bound nobody can reason about.
  */
-function assertCapacity(db: ReturnType<typeof getDb>): void {
+function classCaps(): { credit: number; karma: number } {
   const cap = config.maxMempoolEntries;
-  const row = db.prepare('SELECT COUNT(*) AS n FROM mempool').get() as { n: number };
-  if (row.n >= cap) throw new MempoolFullError(cap);
+  const credit = Math.floor((cap * MEMPOOL_CREDIT_SHARE_PCT) / 100);
+  return { credit, karma: cap - credit };
+}
+
+/**
+ * How many entries each class currently holds.
+ *
+ * ⛔ **`tx_fee` alone decides, and the two counts partition the table.** Only a
+ * credit-side transaction ever sets it, so `IS NULL` catches karma-side
+ * transactions, prune entries and rows written before the column existed alike
+ * — all of which bid nothing and belong to the class that does not order by
+ * price. Filtering on `entry_type` as well would leave prune entries counted by
+ * neither class and therefore bounded by nothing.
+ *
+ * ⚠ **The eviction query below filters on `entry_type` and this one must not.**
+ * They are asking different questions and the difference is deliberate: this
+ * one bounds the table, so it has to reach every row; that one picks something
+ * to delete, so it must reach only transactions. Harmonising them breaks
+ * whichever one is changed to match the other.
+ */
+function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number {
+  const test = poolClass === 'credit' ? 'IS NOT NULL' : 'IS NULL';
+  const row = db.prepare(
+    `SELECT COUNT(*) AS n FROM mempool WHERE tx_fee ${test}`,
+  ).get() as { n: number };
+  return row.n;
+}
+
+/**
+ * The cheapest credit entry in the pool, or `null` when the class is empty.
+ *
+ * ⚠ **The `REAL` is deliberate and it is safe HERE and nowhere else in this
+ * package.** Ordering the pool is node-local relay policy that no validator
+ * ever recomputes (MEMPOOL_INTERFACE → Ordering): two nodes may hold different
+ * entries in a different order and both are correct. The integer alternative —
+ * a rate scaled by a constant and stored — overflows: `tx_fee` alone can reach
+ * the whole credit supply, and any scaling of it exceeds SQLite's signed 64-bit
+ * INTEGER. Storing the fee and the byte cost apart, and dividing only to
+ * compare, has no such ceiling.
+ *
+ * ⛔ **Do not copy this into a consensus path.** A float intermediate anywhere
+ * producer and verifier must agree is a chain split.
+ *
+ * `rowid` breaks a tie, so equal bids are displaced in arrival order.
+ *
+ * ⚠ **`entry_type` is filtered here and deliberately not in `classCount`.** This
+ * query names a row to delete, so it must reach only transactions — a prune
+ * entry is a mandatory block section and is never an eviction candidate. The
+ * count above bounds the table and must reach every row. Same column, two
+ * questions.
+ */
+function cheapestCreditEntry(
+  db: ReturnType<typeof getDb>,
+): { rowid: number; fee: bigint; bytes: number } | null {
+  const row = db.prepare(
+    `SELECT rowid, tx_fee, tx_bytes FROM mempool
+      WHERE entry_type = 'utxo_tx' AND tx_fee IS NOT NULL AND tx_bytes > 0
+      ORDER BY CAST(tx_fee AS REAL) / tx_bytes ASC, rowid ASC
+      LIMIT 1`,
+  ).get() as { rowid: number; tx_fee: number | bigint; tx_bytes: number } | undefined;
+  if (!row) return null;
+  return { rowid: row.rowid, fee: BigInt(row.tx_fee), bytes: row.tx_bytes };
+}
+
+/**
+ * Make room for an arriving entry, or refuse it.
+ *
+ * Karma-side rejects at its cap: nothing in that class bids, so there is no
+ * basis on which one entry deserves another's slot. The credit class compares
+ * the arrival against its cheapest resident and displaces it when the arrival
+ * pays more per byte — cross-multiplied, because THIS comparison decides
+ * whether a transaction is dropped and the float above is only an ordering.
+ *
+ * Checked by every insert path — an unbounded pool is a disk-DoS lever
+ * (audit M-8).
+ */
+function assertCapacity(
+  db: ReturnType<typeof getDb>,
+  poolClass: PoolClass,
+  fee: bigint | null,
+  bytes: number,
+): void {
+  const caps = classCaps();
+
+  if (poolClass === 'karma' || fee === null) {
+    if (classCount(db, 'karma') >= caps.karma) throw new MempoolFullError(caps.karma, 'karma');
+    return;
+  }
+
+  if (classCount(db, 'credit') < caps.credit) return;
+
+  const cheapest = cheapestCreditEntry(db);
+  // A full class with nothing rankable in it — every resident predates the
+  // columns, or a zero byte cost no encoder produces. Refuse rather than evict
+  // blind: the arrival has not been shown to be worth more than anything.
+  if (!cheapest) throw new MempoolFullError(caps.credit, 'credit');
+
+  // `fee / bytes > cheapest.fee / cheapest.bytes`, without the division.
+  const arriving = fee * BigInt(cheapest.bytes);
+  const resident = cheapest.fee * BigInt(bytes);
+  if (arriving <= resident) throw new MempoolFullError(caps.credit, 'credit');
+
+  db.prepare('DELETE FROM mempool WHERE rowid = ?').run(cheapest.rowid);
 }
 
 interface GateMetadata {
@@ -201,18 +372,57 @@ function outputBoxIds(tx: UtxoTransaction, txId: string): string[] {
   return (tx.outputs ?? []).map((out, i) => materializeOutput(out, txId, i).id!);
 }
 
+/**
+ * What a transaction bids, and therefore which class it lands in.
+ *
+ * `null` means karma-side: nothing it could bid, so it is neither ordered by
+ * price nor evictable. A credit-side transaction always yields a number, zero
+ * included — a zero-fee transfer is valid consensus and holds a credit slot
+ * until a paying one displaces it (MEMPOOL_INTERFACE → Fee floor).
+ *
+ * ⛔ **The class is decided by `isCreditSideTx` alone, never by whether the fee
+ * could be computed.** Inputs resolve against the confirmed set and pending
+ * outputs — chaining onto one's own pending change is ordinary here — but an
+ * input resolving to neither means only that this node cannot price the entry,
+ * not that it changed ledgers. Such an entry bids `0`, which puts it first in
+ * line to be evicted; folding it into the karma class instead would let an
+ * unpriceable credit transaction occupy a slot that nothing is allowed to
+ * reclaim.
+ */
+export function bidOf(tx: UtxoTransaction): bigint | null {
+  if (!isCreditSideTx(tx)) return null;
+
+  let inputSum = 0n;
+  for (const boxId of tx.inputs ?? []) {
+    const box = getBox(boxId) ?? findPendingOutput(boxId);
+    if (!box) return 0n;
+    inputSum += box.value;
+  }
+  const outputSum = (tx.outputs ?? []).reduce((sum, out) => sum + out.value, 0n);
+  // `validateTx` admits no credit surplus, but admission is not the only caller
+  // — reorg re-insertion arrives here directly — so a surplus bids nothing
+  // rather than being stored as a negative the ordering would read as cheapest.
+  return outputSum > inputSum ? 0n : inputSum - outputSum;
+}
+
 export function insertUtxoTx(
   tx: UtxoTransaction,
   expiresAtHeight: number,
 ): number {
   const db = getDb();
-  assertCapacity(db);
 
   // Before the conflict gate: the size bound is a property of the transaction
   // alone, so it needs no pool state and settles the verdict without running
   // one query per input.
   const cbor = encodeTx(tx);
   if (cbor.length > MAX_TX_BYTES) throw new TxTooLargeError(cbor.length);
+
+  // The class and the price, before the capacity gate that spends them. The
+  // byte cost is what this entry would occupy in a block, not the bare encoding
+  // — the budget is the resource being rationed.
+  const fee = bidOf(tx);
+  const bytes = entryByteCost(cbor);
+  assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
 
   const inputs = tx.inputs ?? [];
   const conflict = hasPendingSpend(inputs);
@@ -223,8 +433,8 @@ export function insertUtxoTx(
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
-                          tx_inputs, tx_output_ids, tx_id)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(cbor),
     expiresAtHeight,
@@ -235,6 +445,11 @@ export function insertUtxoTx(
     JSON.stringify(inputs),
     JSON.stringify(outputBoxIds(tx, txId)),
     txId,
+    // `tx_fee` NULL is the karma class; a number is the credit class. One
+    // column carries the class and the price because they are one fact — an
+    // entry that can bid is an entry on the credit ledger.
+    fee === null ? null : fee,
+    bytes,
   );
   return Number(result.lastInsertRowid);
 }
@@ -451,15 +666,107 @@ export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
  */
 const PENDING_PAGE_SIZE = 256;
 
+const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_cbor, prune_entry_cbor,
+                       expires_at_height, created_at`;
+
 /**
- * Every pending entry, in FIFO order, drawn a page at a time.
+ * The karma-side class in FIFO order, paged by the keyset cursor above.
+ *
+ * Nothing here bids, so arrival is the only basis for prioritisation there is
+ * (MEMPOOL_INTERFACE → Ordering). Prune entries are in this class and are
+ * yielded with it; the block creator draws them through `drainMempoolPrunes`
+ * as a mandatory section and skips them here.
+ */
+function* iterateKarmaFifo(): Generator<PoolEntry> {
+  const db = getDb();
+  let afterRowid = 0;
+  for (;;) {
+    const rows = db.prepare(
+      `SELECT ${ENTRY_COLUMNS} FROM mempool
+        WHERE tx_fee IS NULL AND rowid > ?
+        ORDER BY rowid ASC
+        LIMIT ?`,
+    ).all(afterRowid, PENDING_PAGE_SIZE) as MempoolRow[];
+    if (rows.length === 0) return;
+    for (const row of rows) yield rowToEntry(row);
+    if (rows.length < PENDING_PAGE_SIZE) return;
+    afterRowid = rows[rows.length - 1]!.rowid;
+  }
+}
+
+/**
+ * The credit class in descending fee rate.
+ *
+ * ⛔ **The `rowid` keyset the FIFO iterator uses cannot page this**, because
+ * `rowid` is not the ordering key here: a page boundary in rate order has no
+ * expression in the table's own b-tree. So the order is settled first over ids
+ * alone — no blob leaves the database for it — and bodies are then fetched a
+ * page at a time and re-sequenced. Ordering the whole class costs a few tens of
+ * kilobytes rather than the pool's full weight, and the memory bound the paging
+ * exists for is kept.
+ *
+ * The same `REAL` division as the eviction query, safe for the same reason and
+ * unsafe to copy for the same one: this is a node's own assembly preference and
+ * no validator recomputes it.
+ *
+ * ⚠ **The id list is safe to hold across the body fetches, and that is not a
+ * TOCTOU gap.** The only consumer is the block creator's fill, which is
+ * synchronous and writes nothing to the pool while it runs — `purgeExpired`
+ * has already finished and `finalizeBlock` has not begun. Neither a
+ * transaction nor a defensive re-check is needed; the missing-row skip below
+ * exists so the loop is total, not because a row is expected to vanish.
+ */
+function* iterateCreditByRate(): Generator<PoolEntry> {
+  const db = getDb();
+  // ⚠ **The unary `+` is load-bearing, not a typo.** It makes the ORDER BY term
+  // non-indexable, so `idx_mempool_fee_rate` confines the scan to credit rows
+  // without being asked to satisfy the ordering as well — which it can only do
+  // by a random row lookup per entry. This pass reads the whole
+  // class, so an in-memory sort wins: 2.29 ms against 2.88 ms for the same
+  // query without the `+`, and 2.65 ms with no index at all (2026-08-15, a
+  // 10,000-row pool of which 5,000 are credit). Removing it costs half a
+  // millisecond per block and nothing will fail.
+  const ordered = db.prepare(
+    `SELECT rowid FROM mempool
+      WHERE entry_type = 'utxo_tx' AND tx_fee IS NOT NULL AND tx_bytes > 0
+      ORDER BY +CAST(tx_fee AS REAL) / tx_bytes DESC, rowid ASC`,
+  ).all() as Array<{ rowid: number }>;
+
+  for (let i = 0; i < ordered.length; i += PENDING_PAGE_SIZE) {
+    const page = ordered.slice(i, i + PENDING_PAGE_SIZE).map((r) => r.rowid);
+    const rows = db.prepare(
+      `SELECT ${ENTRY_COLUMNS} FROM mempool
+        WHERE rowid IN (${page.map(() => '?').join(',')})`,
+    ).all(...page) as MempoolRow[];
+    // SQL answers in table order; the rate order is this loop's to restore. A
+    // row missing from the answer was deleted between the two queries, which is
+    // a skip rather than a fault.
+    const byRowid = new Map(rows.map((row) => [row.rowid, row]));
+    for (const rowid of page) {
+      const row = byRowid.get(rowid);
+      if (row) yield rowToEntry(row);
+    }
+  }
+}
+
+/**
+ * Pending entries, drawn a page at a time.
  *
  * A consumer takes what it needs and stops; nothing beyond the last page it
  * pulled is ever read. Each page is a completed query rather than one held-open
  * cursor, so a consumer may write to the pool between entries — which a cursor
  * would refuse for as long as it stayed open.
+ *
+ * With no class named, every entry in FIFO order — the whole-pool view, for
+ * consumers that are not assembling a block. Named, the class's own ordering
+ * (MEMPOOL_INTERFACE → Ordering).
  */
-export function* iteratePendingEntries(): Generator<PoolEntry> {
+export function* iteratePendingEntries(
+  opts: { klass?: PoolClass } = {},
+): Generator<PoolEntry> {
+  if (opts.klass === 'karma') return yield* iterateKarmaFifo();
+  if (opts.klass === 'credit') return yield* iterateCreditByRate();
+
   let afterRowid = 0;
   for (;;) {
     const page = getPendingEntries(PENDING_PAGE_SIZE, afterRowid);
@@ -522,7 +829,10 @@ export function insertMempoolPrune(
   expiresAtHeight: number,
 ): number {
   const db = getDb();
-  assertCapacity(db);
+  // A prune entry bids nothing and is not a transaction, so it is bounded by
+  // the karma-side cap — the class for everything the fee market does not
+  // price.
+  assertCapacity(db, 'karma', null, 0);
   const cbor = Buffer.from(cborEncode(entry));
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, prune_entry_cbor, expires_at_height)

@@ -31,7 +31,11 @@ Ergo-style linear decay with flat tail. At 60-second blocks:
 | `CREDIT_REWARD_REDUCTION` | 2 | Credits reduced per epoch |
 | `CREDIT_TAIL_REWARD` | 2 | Flat reward after emission ends |
 | `CREDIT_MINER_REWARD_DELAY` | 720 | Blocks before coinbase can be spent (~12h) |
-| `CREDIT_TREASURY_PCT` | 10 | Percent of each reward to treasury |
+| `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
+| `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
+| `COINBASE_BACKER_PCT` | 35 | Backer pool. **AHEAD OF CODE** — nothing stakes, so it falls to the miner floor |
+| `COINBASE_BONUS_PCT` | 25 | The inclusion bonus pool |
+| `INCLUSION_BONUS_K` | 5n | The bonus curve's knee — at `K` actors the miner earns half the pool. `bigint`, because the curve computes in base units |
 
 **Reward function:**
 
@@ -49,9 +53,10 @@ computeBlockReward(height):
 
 **Total supply:** ~453.9M credits (triangular decay area + tail).
 
-**Treasury split:** `treasuryAmount = floor(reward × CREDIT_TREASURY_PCT / 100)`,
-`minerAmount = reward - treasuryAmount`. Treasury output is omitted if no
-treasury public key is configured.
+**Coinbase split:** see "Coinbase Application → The slices" below. It is taken over
+block **income**, not over the reward; the treasury's share is per income term; and
+the miner floor absorbs every remainder. On a profile with no `treasuryPubKey` the
+treasury share and the unearned bonus are **not minted**, never redirected to the miner.
 
 ## Ordering Block (extended)
 
@@ -300,18 +305,61 @@ validator key), stores it, broadcasts it, and applies coinbase mints.
 
 ## Coinbase Application
 
+The coinbase carries the block's **income**, not a fixed reward: `emission(height)`
+plus the deficits the block's credit transactions left unclaimed (ARCHITECTURE → UTXO
+conservation). Storage rent becomes a third term, and nothing in this rule is revisited
+when it arrives — that is the point of stating it income-shaped.
+
 ### On block creation (miner):
-1. `reward = computeBlockReward(height)`
-2. Split into miner + treasury outputs
-3. Include `CoinbaseOutput[]` in block
-4. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
+1. Fill the body **first** — the fees and the actor count are properties of what was included
+2. `income = computeBlockReward(height) + fees`
+3. Split into miner + treasury outputs per the slice table below
+4. Include `CoinbaseOutput[]` in block
+5. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
+
+### The slices
+
+| Slice | Share | Destination |
+|---|---|---|
+| Treasury | `COINBASE_TREASURY_PCT` | Per **term** — of emission and of fees, never of storage rent |
+| Miner floor | `COINBASE_MINER_FLOOR_PCT` | Guaranteed, plus every remainder |
+| Backer pool | `COINBASE_BACKER_PCT` | **AHEAD OF CODE** — nothing stakes and nothing links, so this share falls to the miner floor |
+| Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder to the treasury |
+
+`actors` is the count of **distinct owners of the karma boxes** spent by the block's
+karma-side transactions, excluding the block's own validator.
+
+⛔ **Never derived from `tx.signatures`.** Producing a signature is free, so a
+signature-keyed count is inflated by appending keys that hold nothing. Every karma-side
+operation spends a box that names its actor, and creating any of those boxes cost karma.
+
+**The miner floor takes the remainder**, so the outputs sum to exactly the income: four
+percentages of one income do not sum back to it under truncation. That routes both the
+rounding and storage rent's treasury exemption to miners, which is where rent belongs
+(ARCHITECTURE → UTXO conservation).
+
+⛔ **Neither the treasury slice nor the unearned bonus may fall to the miner.** A miner
+who recovered their own forfeit would face a delay rather than a cost, and the bonus
+would price nothing.
+
+**On a profile with no `treasuryPubKey`, both are simply not minted**, and income is
+reduced by exactly that amount. The forfeit becomes a burn instead of a lock; from the
+miner's side the incentive is identical, because they do not receive it either way.
+
+⚠ **This keys on the PROFILE, never on local config.** `treasuryPubKey` is profile
+data, so "this network has no treasury" is network-wide and every node computes the
+same coinbase; a config-sourced answer would let two nodes on one network disagree
+about a consensus value. All three profiles carry `''` today, so the burn is the live
+path and the keyed path is the one a test has to reach deliberately. **Mainnet pins a
+real key**; devnet and testnet burning is intended.
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify `sum(coinbaseOutputs.map(o => o.value)) === computeBlockReward(height)`
-3. Verify treasury split matches `CREDIT_TREASURY_PCT`
-4. For each output, mint credits
-5. Coinbase outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — the UTXO engine enforces this during transaction validation
+2. Verify `sum(coinbaseOutputs.map(o => o.value))` equals the **minted total** the slice table yields for this height, fee sum and actor count. That is `emission + fees` on a keyed profile, and that **less the treasury share and the unearned bonus** on an unkeyed one, where neither is minted. ⚠ **Income and minted total are not the same number**, and only the keyed profile makes them coincide
+3. Verify the **split**, not only the total — a block paying the whole income to the miner sums correctly and forfeits nothing
+4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes
+5. For each output, mint credits
+6. Coinbase outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — the UTXO engine enforces this during transaction validation
 
 ## Config
 
@@ -336,7 +384,8 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 | `creditMinerRewardDelay` | profile | **yes** | Blocks before a coinbase output is spendable |
 | `treasuryPubKey` | profile | **yes** | Treasury key — genesis data, differs per chain |
 | `CREDIT_INITIAL_REWARD` | constant | no | Credits per block in the fixed-rate period, base units of 10⁻⁸ |
-| `CREDIT_TREASURY_PCT` | constant | no | Percent to treasury |
+| `COINBASE_TREASURY_PCT` | constant | no | Percent of emission and of fees to treasury |
+| `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | constant | no | The rest of the coinbase split |
 
 > ✅ **RESOLVED — the bypass is closed. All five are profile-sourced. Verified 2026-08-11.**
 > This read `PARTLY IMPLEMENTED` until Phase 9.
@@ -365,7 +414,7 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 > re-derive the count from this section.**
 >
 > **Note which two did *not* become per-network.** `CREDIT_INITIAL_REWARD` and
-> `CREDIT_TREASURY_PCT` are *economics*, and the split in `ARCHITECTURE §Network Identity`
+> `COINBASE_TREASURY_PCT` are *economics*, and the split in `ARCHITECTURE §Network Identity`
 > is normative: compress time, never economics. Devnet mines fast; it does not mine rich.
 > A test chain that pays a different reward is a test chain that cannot catch a reward bug.
 
@@ -378,8 +427,14 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 
 ## Invariants
 
-1. Coinbase value per block matches `computeBlockReward(height)` exactly
-2. Treasury split matches `CREDIT_TREASURY_PCT` when treasury key is configured
+1. Coinbase value per block matches the **minted total** exactly — stated once at
+   "On block receipt" step 2, and not restated here, because this file has already
+   carried two copies of this rule that disagreed. **No coinbase output carries
+   `value === 0`** at any height
+2. The coinbase's split matches the slice table above — verified **per output**, not
+   only as a sum. On a profile with no treasury key, the treasury share and the
+   unearned bonus are not minted and income is reduced by exactly that amount —
+   the value is a function of the **profile**, never of local config
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
    output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip

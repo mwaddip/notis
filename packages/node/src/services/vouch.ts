@@ -9,10 +9,10 @@ import {
   hasAnyActiveVouch,
   hasActiveVouchCooldown,
   hasPendingVouch,
-  insertUtxoTx,
 } from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
 import { validateTx } from './utxo-engine.js';
+import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
 
@@ -65,7 +65,7 @@ export function castVouch(
   }
 
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   const txId = computeTxId(tx);
   return { status: 'pending', txId, expiresAtHeight, tx };
@@ -110,7 +110,7 @@ export function initiateUnvouch(
   }
 
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, expiresAtHeight);
+  admitTx(tx, expiresAtHeight);
 
   const txId = computeTxId(tx);
   // Advisory only — the cooldown row is written at apply time from the same

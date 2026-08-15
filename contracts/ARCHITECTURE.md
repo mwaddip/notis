@@ -1363,7 +1363,8 @@ a fourth.
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_LOCK_*`,
 `VOUCH_KARMA_AMOUNT`, `INVITE_*`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
-`CREDIT_TREASURY_PCT`, `CREDIT_INITIAL_REWARD`).
+`COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
+`CREDIT_INITIAL_REWARD`).
 
 **The split is normative: compress time, never economics.** Every per-network parameter is a
 place where devnet and mainnet behave differently, which is precisely where a defect hides
@@ -1646,10 +1647,17 @@ forever. A node rejects objects with an unsupported protocol version.
   > while `MINING_INTERFACE.md` states a fixed ~453.9M total. Emission is
   > decided to **terminate** (Ergo shape, decay to zero, no tail — design track §5.7), and
   > every current total-supply figure in the repo is wrong until that lands.
-- Every UTXO transaction conserves value, with exactly **one stated exception: the like
-  transaction burns `LIKE_KARMA_COST`** — `likeTarget` present ⟺ that exact deficit (the
-  biconditional; NODE_INTERFACE → legal transitions). All other mints and burns happen
-  only in block-application paths, never inside a user transaction.
+- Every UTXO transaction conserves value, with a closed set of stated exceptions.
+  **NODE_INTERFACE's `validateTx` step 5 is the authoritative enumeration** — derive from
+  it, never maintain a parallel list here. This is the same rule the mint-reason table
+  above carries and for the same reason: this entry read *"exactly one stated exception"*
+  while that list already held three. All other mints and burns happen only in
+  block-application paths, never inside a user transaction.
+  > **The exceptions span both ledgers, and that is what keeps each shape exact.** The
+  > like burn and the invite-claim surplus move **karma**; a transaction fee is a
+  > **credit** deficit. A karma deficit is a like ⟺ `likeTarget`; a credit deficit is a
+  > fee. Were a fee ever charged on a karma-moving operation, the two would collide in a
+  > single check.
   > Conservation is **enforced** since P2-B (`checkValueConservation` per transaction,
   > full re-validation at apply; the unvouch and `sendCredits` violations closed in its
   > phases 2–3) — this entry's previous `⚠ UNENFORCED` marker had outlived its defect.
@@ -2153,5 +2161,7 @@ fresh. Namespacing keeps the option open to split into separate stores later
 - **View keys / private content:** Reader spending credits to unlock content
 - **Parameter governance:** Karma decay, like thresholds, emission schedule
   adjustable by future governance
-- **Fee market:** Replacement semantics, priority fees, fee-based eviction
-  (a flat reject-at-cap mempool bound ships already — audit M-8)
+- **Replacement semantics (RBF):** superseding a pooled entry with a higher-paying
+  one. Priority fees and fee-based eviction **ship** (MEMPOOL_INTERFACE → Eviction,
+  inside the credit class only); replacement does not — a pooled entry is still
+  never replaced or updated

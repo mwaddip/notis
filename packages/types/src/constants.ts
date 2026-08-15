@@ -133,7 +133,75 @@ export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // 2 credits reduced per 
 export const CREDIT_TAIL_REWARD = 2n * 10n ** 8n;      // 2 credits flat reward after emission ends
 export const CREDIT_MINER_REWARD_DELAY = 720;          // Blocks before coinbase is spendable (~12h) → profile: creditMinerRewardDelay
 export const MEMPOOL_EXPIRY_BLOCKS = 720;               // Blocks before mempool entries expire (~12h)
-export const CREDIT_TREASURY_PCT = 10;                 // Percent of each reward to treasury
+
+/**
+ * The coinbase's four slices, as percentages of the block's **income** —
+ * `computeBlockReward(height)` plus the deficits its credit transactions left
+ * (MINING_INTERFACE → Coinbase Application). Storage rent becomes a third
+ * income term without any of these moving.
+ *
+ * They sum to 100, and nothing in the type system says so: four independent
+ * `number`s carry no arithmetic relationship a compiler can check, while
+ * `sum(coinbaseOutputs) === income` is exact at apply. The suite asserts the
+ * sum, so a retune that moves one and forgets another fails there rather than
+ * at the first height no coinbase can satisfy.
+ *
+ * ⚠ Provisional, all four. TYPES_INTERFACE → Protocol Constants holds the
+ * values a live network sets; these are what the reference implementation
+ * ships with.
+ */
+export const COINBASE_TREASURY_PCT = 5;      // Taken per income TERM — of emission and of fees, never of rent
+export const COINBASE_MINER_FLOOR_PCT = 35;  // Guaranteed, and takes every remainder the divisions leave
+export const COINBASE_BACKER_PCT = 35;       // Scaled by the migrated fraction — nothing stakes, so it falls to the floor
+export const COINBASE_BONUS_PCT = 25;        // Earned by including karma-side work; the rest locks in the treasury
+
+/**
+ * The inclusion bonus curve's knee: `pool × actors / (actors + K)`, where
+ * `actors` counts the distinct owners of the karma boxes a block's karma-side
+ * transactions spend (MINING_INTERFACE → Coinbase Application).
+ *
+ * At `K` actors the miner earns half the pool; the curve is uncapped, so the
+ * marginal actor never stops paying and no count is worth zero. A `K` of 0
+ * would make it a step instead — 0 at no actors and the whole pool at one.
+ *
+ * Bigint because it divides a bigint pool. ⚠ Provisional.
+ */
+export const INCLUSION_BONUS_K = 5n;
+
+/**
+ * The share of `maxMempoolEntries` credit entries may occupy; karma-side
+ * entries hold the remainder (MEMPOOL_INTERFACE → Eviction, inside the credit
+ * class only).
+ *
+ * The classes are what keep the bonus reachable: every karma-side operation
+ * bids zero, so fee-ordered eviction over one pool would displace all of them
+ * and leave the coinbase paying for work that can no longer reach the pool.
+ * Neither 0 nor 100 is a class boundary — one starves the fee market of a
+ * venue, the other is the all-credit pool the boundary exists to prevent.
+ *
+ * ⚠ Provisional, and unlike the block's byte budget it mirrors no ceiling: an
+ * idle pool slot costs nothing, so no measurement forces this number.
+ */
+export const MEMPOOL_CREDIT_SHARE_PCT = 50;
+
+/**
+ * Relay policy: the fee rate beneath which a node refuses a credit transaction
+ * (MEMPOOL_INTERFACE → Fee floor).
+ *
+ * ⚠ **Base units per IN-BLOCK byte, not per encoded byte.** The denominator is
+ * what the transaction occupies inside a block body — its `utxoTxIds` entry and
+ * its length-prefixed body, which is ~34 bytes more than the bare encoding —
+ * because the block budget is the resource a fee competes for. An operator
+ * setting this from an encoded size lands stricter than they intended.
+ *
+ * **Not consensus.** A zero-fee transaction is valid and a miner may mine one
+ * (NODE_INTERFACE → `validateTx`). Zero is the shipped default and a decision
+ * rather than an omission — eviction already displaces a non-paying entry the
+ * moment a paying one arrives, so a nonzero default would refuse traffic the
+ * pool can absorb. What ships is the seam, so an operator can raise it under
+ * load without a code change and without reorg re-insertion inheriting it.
+ */
+export const MIN_FEE_RATE_PER_BYTE = 0n;
 
 // Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
 // (VALIDATION_INTERFACE → orderingPowTarget). Post PoW is not in these units.

@@ -23,6 +23,12 @@ const TEST_KEYS = [
   'NODE_ROLE',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
+  //
+  // ⚠ These are ENVIRONMENT VARIABLE names, and an entry does not track the
+  // constant a live read of it once reached — `CREDIT_TREASURY_PCT` is the
+  // string an operator may still carry in a `.env`, which is the only thing
+  // that makes asserting it inert worth anything. Renaming one to follow a
+  // constant leaves the guard pointed at a variable nobody has ever set.
   'POST_POW_TARGET_BITS',
   'ORDERING_BLOCK_POW_TARGET_BITS',
   'KARMA_DECAY_INTERVAL_BLOCKS',
@@ -277,9 +283,12 @@ describe('config', () => {
   // Expected values are baked literals rather than reads of the same constants,
   // so a silent constant change fails here too.
   //
-  // ⚠ Ten are set below and nine are asserted — `CREDIT_INITIAL_REWARD` has no
-  // matching `expect`, so it is the one variable this section names without
-  // covering.
+  // ⚠ Ten are set below and eight are asserted. `CREDIT_INITIAL_REWARD` has no
+  // matching `expect`; `CREDIT_TREASURY_PCT` has no `Config` field left to
+  // assert against, since the coinbase's percentages are read straight from
+  // `@dagsocial/types` and nothing plumbs them. Both are still set here, which
+  // is what this section is for — the guard is that an operator's stale `.env`
+  // changes nothing, and that holds whether or not a field survives to name.
   describe('7. consensus env reads are dead (P2-A)', () => {
     it('ignores every formerly-readable consensus variable', async () => {
       process.env['NETWORK_TYPE'] = 'testnet';
@@ -303,7 +312,6 @@ describe('config', () => {
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);
       expect(cfg.karmaDecayAmount).toBe(5n);
       expect(cfg.karmaMinimum).toBe(10n);
-      expect(cfg.creditTreasuryPct).toBe(10);
       expect(cfg.treasuryPubKey).toBe('');
       expect(cfg.avlKeyLength).toBe(32);
     });

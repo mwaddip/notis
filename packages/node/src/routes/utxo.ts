@@ -8,8 +8,9 @@ import {
 import type { CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, NetworkType, UtxoTransaction } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import { validateTx } from '../services/utxo-engine.js';
+import { admitTx } from '../services/admit-tx.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
-import { insertUtxoTx, resolvePendingTip } from '../store/mempool.js';
+import { resolvePendingTip } from '../store/mempool.js';
 import { getUnlockedCreditBoxes } from '../store/utxo.js';
 import {
   hasFaucetGrantRecord,
@@ -114,7 +115,7 @@ export function createRouter(deps: UtxoDeps): Router {
   });
 
   // POST /credits/transfer — pool a client-built, client-signed credit
-  // transfer: jsonToTx → validateTx + insertUtxoTx in the service → broadcast
+  // transfer: jsonToTx → validateTx + admitTx in the service → broadcast
   // → pending response, the path every other tx route takes. Credits move when
   // the transaction is mined.
   router.post('/credits/transfer', (req, res) => {
@@ -271,7 +272,7 @@ export function createRouter(deps: UtxoDeps): Router {
 
         // Insert into mempool and record the grant
         const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-        insertUtxoTx(tx, expiresAtHeight);
+        admitTx(tx, expiresAtHeight);
         recordFaucetGrant(toBytes, 'credit', txId, currentHeight);
 
         outcome = { ok: true, txId, tx };
