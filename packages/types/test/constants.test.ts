@@ -194,7 +194,8 @@ describe('mempool policy dials', () => {
     expect(MEMPOOL_CREDIT_SHARE_PCT).toBeLessThan(100);
   });
 
-  // Base units per encoded byte, compared against a bigint rate. Zero is the
+  // Base units per IN-BLOCK byte — `entryByteCost`, not the bare encoding —
+  // compared against a bigint rate. Zero is the
   // shipped default and a legitimate value — the seam exists so an operator can
   // raise it — but a negative floor would admit a transaction paying nothing and
   // report it as having cleared a bar.

@@ -185,8 +185,14 @@ export const INCLUSION_BONUS_K = 5n;
 export const MEMPOOL_CREDIT_SHARE_PCT = 50;
 
 /**
- * Relay policy: the fee rate, in base units per encoded byte, beneath which a
- * node refuses a credit transaction (MEMPOOL_INTERFACE → Fee floor).
+ * Relay policy: the fee rate beneath which a node refuses a credit transaction
+ * (MEMPOOL_INTERFACE → Fee floor).
+ *
+ * ⚠ **Base units per IN-BLOCK byte, not per encoded byte.** The denominator is
+ * what the transaction occupies inside a block body — its `utxoTxIds` entry and
+ * its length-prefixed body, which is ~34 bytes more than the bare encoding —
+ * because the block budget is the resource a fee competes for. An operator
+ * setting this from an encoded size lands stricter than they intended.
  *
  * **Not consensus.** A zero-fee transaction is valid and a miner may mine one
  * (NODE_INTERFACE → `validateTx`). Zero is the shipped default and a decision

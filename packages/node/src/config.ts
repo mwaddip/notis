@@ -48,8 +48,10 @@ export interface Config {
    */
   maxMempoolEntries: number;
   /**
-   * Relay floor in base units per encoded byte — the rate beneath which this
-   * node refuses a credit transaction (MEMPOOL_INTERFACE → Fee floor).
+   * Relay floor in base units per **in-block** byte — the rate beneath which
+   * this node refuses a credit transaction (MEMPOOL_INTERFACE → Fee floor).
+   * The denominator is `entryByteCost`, what the transaction occupies inside a
+   * block body, which is ~34 bytes more than its bare encoding.
    *
    * ⚠ **Policy, and the only reason it may be read from the environment.**
    * Every consensus value in this file comes from the network profile, because

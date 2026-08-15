@@ -18,8 +18,8 @@ export class FeeBelowFloorError extends ClientError {
     public readonly floor: bigint,
   ) {
     super(
-      `Fee rate below this node's floor: ${fee} over ${bytes} bytes, ` +
-      `floor ${floor} per byte`,
+      `Fee rate below this node's floor: ${fee} over ${bytes} in-block bytes, ` +
+      `floor ${floor} per in-block byte`,
       402,
     );
     this.name = 'FeeBelowFloorError';
@@ -57,6 +57,9 @@ export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
     // against a price. Charging it the floor would close the network to posts
     // and likes the moment an operator raised one.
     if (fee !== null) {
+      // The in-block cost, not the bare encoding: the floor prices the block
+      // budget a transaction competes for, and `entryByteCost` is the same
+      // number the creator spends against it.
       const bytes = entryByteCost(encodeTx(tx));
       // `fee / bytes >= floor`, without the division.
       if (fee < floor * BigInt(bytes)) {
