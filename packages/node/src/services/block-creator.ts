@@ -42,10 +42,10 @@ import { getNet } from './net-instance.js';
 import {
   applyOrderingBlock,
   computePostBlockStateRoot,
-  isCreditSideTx,
 } from './block-apply.js';
 import {
   countKarmaActors,
+  isCreditSideTx,
   splitCoinbase,
   type EmbeddedTx,
 } from './coinbase-split.js';
@@ -60,6 +60,7 @@ import {
   purgeExpired,
   removeEntry,
   drainMempoolPrunes,
+  entryByteCost,
 } from '../store/mempool.js';
 import {
   getOrderingBlock,
@@ -111,41 +112,10 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
 // ---------------------------------------------------------------------------
 // Body sizing
 //
-// Every number here comes from `utxoTxTreeByteLength`. The framing a
-// transaction costs inside a body is the encoder's arithmetic and moves when
-// the encoding does (TYPES_INTERFACE → Sizing without encoding); restating it
-// in this file would put a second copy of the layout where nothing compares the
-// two, which is the reason that export exists at all.
+// `entryByteCost` lives in `store/mempool.ts`, which records it per entry so a
+// transaction can be priced by the resource it consumes. This file spends that
+// number against the budget; the pool divides a fee by it.
 // ---------------------------------------------------------------------------
-
-/** An empty body: four count prefixes and nothing else. */
-const EMPTY_BODY_BYTES = utxoTxTreeByteLength({
-  utxoTxIds: [],
-  utxoTxs: [],
-  pruneEntries: [],
-  coinbaseOutputs: [],
-});
-
-/** A well-formed stand-in, so the probe below measures a real `b32` entry. */
-const PROBE_TX_ID = '0'.repeat(64);
-
-/**
- * What one transaction costs inside the body — its fixed-width `utxoTxIds`
- * entry and the length-prefixed body beside it.
- *
- * The difference between a one-entry body and an empty one is exactly that
- * entry's contribution, because every other term of the sum is unchanged.
- */
-function entryByteCost(cbor: Uint8Array): number {
-  return (
-    utxoTxTreeByteLength({
-      utxoTxIds: [PROBE_TX_ID],
-      utxoTxs: [cbor],
-      pruneEntries: [],
-      coinbaseOutputs: [],
-    }) - EMPTY_BODY_BYTES
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Module-level state

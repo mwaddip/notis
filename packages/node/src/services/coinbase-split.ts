@@ -29,6 +29,27 @@ export interface EmbeddedTx {
 }
 
 /**
+ * Whether a transaction sits on the credit ledger — so whether its deficit is a
+ * fee (MINING_INTERFACE → Coinbase Application), and which pool class it
+ * belongs to (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
+ *
+ * Stateless, and sound without reading a single input: the transition table
+ * admits only `credit → credit`, so all-credit outputs imply credit inputs
+ * (NODE_INTERFACE → the credit transition rules). That is what lets the pool
+ * classify an entry at insert without a UTXO lookup, and lets the applier
+ * classify one before resolving it.
+ *
+ * ⛔ **The length test is not defensive.** `[].every(…)` is `true`, and a
+ * zero-output transaction is a karma-side unvouch — its whole staked karma
+ * would read as a fee, and in the pool it would land in the wrong class and
+ * become evictable.
+ */
+export function isCreditSideTx(tx: UtxoTransaction): boolean {
+  const outs = tx.outputs ?? [];
+  return outs.length > 0 && outs.every((o) => o.boxType === 'credit');
+}
+
+/**
  * The actor of a karma-side transaction, read from the box it spends.
  *
  * ⛔ **Never from `tx.signatures`.** Producing a signature is free, so a

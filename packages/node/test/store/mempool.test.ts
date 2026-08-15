@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { computeBoxId } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 // Dynamic import pattern — fresh modules per test
@@ -161,6 +162,58 @@ function pruneEntry(rootPostHash: string) {
 function txWithInput(label: string): unknown {
   const id = createHash('blake2b512').update(label).digest().subarray(0, 32).toString('hex');
   return { inputs: [id], outputs: [], signatures: {}, protocolVersion: 1 };
+}
+
+/**
+ * A credit-side entry — all-credit outputs, which is what the pool classifies
+ * on. Its input names no box the store holds, so the pool cannot price it and
+ * it bids `0`: the cheapest possible credit entry, and the first evicted.
+ */
+function creditTxWithInput(label: string): unknown {
+  const id = createHash('blake2b512').update(label).digest().subarray(0, 32).toString('hex');
+  return {
+    inputs: [id],
+    outputs: [
+      { boxType: 'credit', value: 1n, owner: new Uint8Array(32), guard: 'owner_signature' },
+    ],
+    signatures: {},
+    protocolVersion: 1,
+  };
+}
+
+/**
+ * A credit entry that really bids: its input is a credit box seeded into the
+ * UTXO store, so the pool resolves it and records `input − output` as the fee.
+ * `padding` widens the transaction, which is how a test separates a fee from a
+ * fee RATE — the same fee over more bytes is a worse bid.
+ */
+function seededCreditTx(
+  label: string,
+  inputValue: bigint,
+  outputValue: bigint,
+  padding = 1,
+): { tx: unknown; box: Record<string, unknown> } {
+  const owner = createHash('blake2b512').update(`${label}_owner`).digest().subarray(0, 32);
+  const box = {
+    boxType: 'credit' as const,
+    value: inputValue,
+    owner: new Uint8Array(owner),
+    guard: 'owner_signature' as const,
+    txId: createHash('blake2b512').update(`${label}_tx`).digest().subarray(0, 32).toString('hex'),
+    index: 0,
+  };
+  const id = computeBoxId(box as never);
+  const share = outputValue / BigInt(padding);
+  const outputs = Array.from({ length: padding }, (_, i) => ({
+    boxType: 'credit' as const,
+    value: i === 0 ? outputValue - share * BigInt(padding - 1) : share,
+    owner: new Uint8Array(owner),
+    guard: 'owner_signature' as const,
+  }));
+  return {
+    tx: { inputs: [id], outputs, signatures: {}, protocolVersion: 1 },
+    box: { ...box, id },
+  };
 }
 
 describe('mempool store', () => {
@@ -719,7 +772,9 @@ describe('mempool store', () => {
   // transaction that creates it, and `finalizeBlock` clears those by rowid.
 
   // -------------------------------------------------------------------------
-  // Size cap — reject, never evict
+  // Size cap — per class. The karma-side class rejects and never evicts; the
+  // credit class displaces its cheapest resident for a higher bidder
+  // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
   // -------------------------------------------------------------------------
 
   describe('size cap', () => {
@@ -739,35 +794,183 @@ describe('mempool store', () => {
       return mem as any;
     }
 
-    it('rejects every entry type at the cap and accepts below it', async () => {
-      const mem = await importCapped(3);
+    it('rejects every karma-side insert path at that class’s cap', async () => {
+      // 6 entries, 50/50: three karma-side slots, three credit slots. Every
+      // fixture below is karma-side — `txWithInput` has no outputs, a like has
+      // a karma output, a prune entry is not a transaction at all — so the
+      // three of them fill that class exactly, and the credit class stays
+      // untouched throughout.
+      const mem = await importCapped(6);
 
-      // Control: inserts below the cap succeed.
       expect(() => mem.insertUtxoTx(txWithInput('sb_1') as any, 100)).not.toThrow();
       expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100)).not.toThrow();
       expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_1), 100)).not.toThrow();
 
-      // At the cap (3 entries), each insert path rejects.
+      // At the class cap, each insert path rejects — including the prune path,
+      // which is bounded by nothing if the class counts filter on `entry_type`.
       expect(() => mem.insertUtxoTx(txWithInput('sb_2') as any, 100)).toThrow(mem.MempoolFullError);
       expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, 100)).toThrow(
         mem.MempoolFullError,
       );
-      expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_2), 100), ).toThrow(
+      expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_2), 100)).toThrow(
         mem.MempoolFullError,
       );
 
-      // Rejection, not eviction: the pool still holds exactly the cap.
+      // Rejection, not eviction: nothing karma-side ever loses its slot, which
+      // is the whole reason the classes are capped apart.
       expect(mem.getPendingEntries(100)).toHaveLength(3);
+
+      // And the pool is not full — a credit transaction still gets in, so the
+      // rejection above was the class's bound and not the pool's.
+      expect(() => mem.insertUtxoTx(creditTxWithInput('c_1') as any, 100)).not.toThrow();
+      expect(mem.getPendingEntries(100)).toHaveLength(4);
     });
 
-    it('accepts again once entries expire — a full pool drains itself', async () => {
-      const mem = await importCapped(2);
+    it('names the class that was full, not just the cap', async () => {
+      const mem = await importCapped(2);   // one slot each
+      mem.insertUtxoTx(txWithInput('k_1') as any, 100);
+      try {
+        mem.insertUtxoTx(txWithInput('k_2') as any, 100);
+        expect.unreachable('the karma class was full');
+      } catch (err) {
+        expect(err).toBeInstanceOf(mem.MempoolFullError);
+        expect((err as { poolClass: string }).poolClass).toBe('karma');
+      }
+    });
+
+    it('accepts again once entries expire — a full class drains itself', async () => {
+      const mem = await importCapped(4);   // two karma slots
       mem.insertUtxoTx(txWithInput('sb_expiring') as any, 10);
       mem.insertUtxoTx(txWithInput('sb_live') as any, 900);
       expect(() => mem.insertUtxoTx(txWithInput('sb_blocked') as any, 900)).toThrow(mem.MempoolFullError);
 
       mem.purgeExpired(50);
       expect(() => mem.insertUtxoTx(txWithInput('sb_after_purge') as any, 900)).not.toThrow();
+    });
+
+    it('bounds a credit flood to its share, leaving the karma class free', async () => {
+      const mem = await importCapped(10);   // five credit slots, five karma
+      for (let i = 0; i < 20; i++) {
+        try {
+          mem.insertUtxoTx(creditTxWithInput(`flood_${i}`) as any, 100);
+        } catch {
+          // Every arrival bids 0, so none can displace another — the class
+          // fills and then refuses, which is what bounds the flood.
+        }
+      }
+      expect(mem.getPendingEntries(100)).toHaveLength(5);
+
+      // The karma class never saw the flood.
+      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('after_flood') as any, 100)).not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Credit-class eviction
+  // -------------------------------------------------------------------------
+
+  describe('credit-class eviction', () => {
+    const originalCap = process.env['MAX_MEMPOOL_ENTRIES'];
+
+    afterEach(() => {
+      if (originalCap === undefined) delete process.env['MAX_MEMPOOL_ENTRIES'];
+      else process.env['MAX_MEMPOOL_ENTRIES'] = originalCap;
+    });
+
+    /** A capped pool with the seeded input boxes already in the UTXO store. */
+    async function importCappedWithBoxes(cap: number, boxes: Record<string, unknown>[]) {
+      process.env['MAX_MEMPOOL_ENTRIES'] = String(cap);
+      vi.resetModules();
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(':memory:');
+      const utxo = await import('../../src/store/utxo.js');
+      for (const box of boxes) utxo.insertBox(box as never);
+      const mem = await import('../../src/store/mempool.js');
+      return mem as any;
+    }
+
+    it('displaces the cheapest resident for a higher bidder', async () => {
+      const rich = seededCreditTx('rich', 1000n, 100n);      // fee 900
+      const poor = seededCreditTx('poor', 1000n, 990n);      // fee 10
+      const mid = seededCreditTx('mid', 1000n, 500n);        // fee 500
+      const mem = await importCappedWithBoxes(4, [rich.box, poor.box, mid.box]);
+
+      mem.insertUtxoTx(rich.tx as any, 100);
+      mem.insertUtxoTx(poor.tx as any, 100);
+      expect(mem.getPendingEntries(100)).toHaveLength(2);
+
+      // Two credit slots are full; `mid` outbids `poor` and takes its place.
+      mem.insertUtxoTx(mid.tx as any, 100);
+      const fees = mem.getPendingEntries(100).map((e: { rowid: number }) => e.rowid);
+      expect(fees).toHaveLength(2);
+
+      const db = (await import('../../src/store/db.js')).getDb();
+      const held = (db.prepare('SELECT tx_fee FROM mempool ORDER BY tx_fee DESC')
+        .all() as Array<{ tx_fee: number }>).map((r) => Number(r.tx_fee));
+      expect(held).toEqual([900, 500]);
+    });
+
+    it('refuses a bid at or below the cheapest resident', async () => {
+      const a = seededCreditTx('a', 1000n, 900n);     // fee 100
+      const b = seededCreditTx('b', 1000n, 910n);     // fee 90
+      const low = seededCreditTx('low', 1000n, 999n); // fee 1
+      const mem = await importCappedWithBoxes(4, [a.box, b.box, low.box]);
+
+      mem.insertUtxoTx(a.tx as any, 100);
+      mem.insertUtxoTx(b.tx as any, 100);
+      expect(() => mem.insertUtxoTx(low.tx as any, 100)).toThrow(mem.MempoolFullError);
+
+      // Rejected, not admitted-then-evicted: both residents survive.
+      expect(mem.getPendingEntries(100)).toHaveLength(2);
+    });
+
+    // ⛔ The whole point of two classes. Fee-ordered eviction over one pool
+    // wipes every zero-bidding operation — posts, likes, invites, vouches —
+    // and the coinbase's inclusion bonus then pays for work that can no longer
+    // reach the pool at all.
+    it('never evicts a karma-side entry, however high the bid', async () => {
+      const rich = seededCreditTx('rich', 10_000n, 1n);   // fee 9999
+      const cheap = seededCreditTx('cheap', 1000n, 999n); // fee 1
+      const mem = await importCappedWithBoxes(4, [rich.box, cheap.box]);
+
+      mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100);
+      mem.insertUtxoTx(txWithInput('post_like') as any, 100);
+      mem.insertUtxoTx(cheap.tx as any, 100);
+      mem.insertUtxoTx(creditTxWithInput('zero_bid') as any, 100);
+
+      // Credit class full at two; the rich arrival displaces a credit entry.
+      mem.insertUtxoTx(rich.tx as any, 100);
+
+      const db = (await import('../../src/store/db.js')).getDb();
+      const karma = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NULL')
+        .get() as { n: number };
+      const credit = db.prepare('SELECT COUNT(*) AS n FROM mempool WHERE tx_fee IS NOT NULL')
+        .get() as { n: number };
+      expect(karma.n).toBe(2);    // both survived
+      expect(credit.n).toBe(2);
+    });
+
+    // The rate is per in-block byte, not per transaction: a fat transaction
+    // paying the same total is a worse bid, because bytes are what the block
+    // budget rations.
+    it('ranks by rate, so the same fee over more bytes is the cheaper entry', async () => {
+      const lean = seededCreditTx('lean', 1000n, 400n, 1);    // fee 600, 1 output
+      const fat = seededCreditTx('fat', 1000n, 400n, 12);     // fee 600, 12 outputs
+      const mem = await importCappedWithBoxes(2, [lean.box, fat.box]);
+
+      mem.insertUtxoTx(fat.tx as any, 100);
+      const db = (await import('../../src/store/db.js')).getDb();
+      const fatBytes = (db.prepare('SELECT tx_bytes FROM mempool').get() as { tx_bytes: number }).tx_bytes;
+
+      mem.insertUtxoTx(lean.tx as any, 100);
+      const rows = db.prepare('SELECT tx_fee, tx_bytes FROM mempool').all() as
+        Array<{ tx_fee: number; tx_bytes: number }>;
+
+      // One credit slot, and the leaner of two equal fees is what holds it.
+      expect(rows).toHaveLength(1);
+      expect(Number(rows[0]!.tx_fee)).toBe(600);
+      expect(rows[0]!.tx_bytes).toBeLessThan(fatBytes);
     });
 
     it('defaults to 10000 entries when MAX_MEMPOOL_ENTRIES is unset', async () => {

@@ -36,6 +36,7 @@ import {
 } from './block-creator.js';
 import {
   countKarmaActors,
+  isCreditSideTx,
   splitCoinbase,
   type EmbeddedTx,
 } from './coinbase-split.js';
@@ -497,23 +498,6 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   const appliedHash = validation.blockHash(block.header);
   console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
   return true;
-}
-
-/**
- * Whether a transaction sits on the credit ledger, and therefore whether its
- * deficit is a fee (MINING_INTERFACE → Coinbase Application).
- *
- * Stateless, and sound without reading a single input: the transition table
- * admits only `credit → credit`, so all-credit outputs imply credit inputs
- * (NODE_INTERFACE → the credit transition rules).
- *
- * ⛔ **The length test is not defensive.** `[].every(…)` is `true`, and a
- * zero-output transaction is a karma-side unvouch — the whole staked karma
- * would be counted as a fee and minted into the coinbase.
- */
-export function isCreditSideTx(tx: UtxoTransaction): boolean {
-  const outs = tx.outputs ?? [];
-  return outs.length > 0 && outs.every((o) => o.boxType === 'credit');
 }
 
 /**
