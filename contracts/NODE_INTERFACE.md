@@ -1700,8 +1700,10 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     later step references stay stable.)*
 7. Standalone UTXO entries → `utxoTxIds` (likes included — no sidecar diversion)
 8. Batch-linked UTXO entries → `utxoTxIds`
-12. Always produce a block — miners need coinbase rewards even when there
-    is no user work.  Empty blocks carry credit emission.
+12. Always produce a block, whatever its coinbase comes to. An empty block below
+    the emission terminus carries that height's emission; above it
+    (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
+    carries **no coinbase outputs at all** — no output may hold `value === 0`.
     ⚠ **One exception, and only one (P2-B phase 1c): a body its own mutation
     phase rejects.** See step 15b — the creator produces nothing and evicts
     the included mempool entries. Mining over a body the node itself will not
