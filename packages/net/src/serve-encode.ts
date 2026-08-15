@@ -1,5 +1,5 @@
-import { encodeOrderingBlock, encodeSubBlock } from '@dagsocial/types';
-import type { OrderingBlock, SubBlock } from '@dagsocial/types';
+import { encodeOrderingBlock } from '@dagsocial/types';
+import type { OrderingBlock } from '@dagsocial/types';
 import type { NetValidators } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -43,28 +43,14 @@ function encodeServable<T>(
   try {
     return encodeItem(candidate);
   } catch (err) {
-    // `verifyPostFieldDomains` stops at `timestamp`, so the verdict above never
-    // reaches `post.powNonce` or `post.signature`, both of which `POST` writes
-    // with writers that are not total. Until `@dagsocial/validation` pins them,
-    // the throw becomes the same verdict rather than leaving the serve path.
+    // A stored row can still be out of domain in a way the verdict above does
+    // not reach — `verifyOrderingBlockStructure` checks `utxoTxs` length
+    // alignment but not element types, and `writeLp` sentinels rather than
+    // throwing there. The throw becomes the same verdict rather than leaving the
+    // serve path.
     console.error(`[net] cannot serve ${kind} ${subject}: encode failed — ${String(err)}`);
     return null;
   }
-}
-
-/** Encode a stored sub-block for a peer, or `null` if this node cannot serve it. */
-export function encodeServableSubBlock(
-  value: unknown,
-  validators: NetValidators,
-  subject: string,
-): Uint8Array | null {
-  return encodeServable<SubBlock>(
-    'sub-block',
-    value,
-    (sb) => validators.verifySubBlockStructure(sb),
-    encodeSubBlock,
-    subject,
-  );
 }
 
 /** Encode a stored ordering block for a peer, or `null` if this node cannot serve it. */

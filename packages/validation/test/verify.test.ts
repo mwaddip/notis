@@ -2,14 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { createHash, sign, createPrivateKey, verify as cryptoVerify } from 'crypto';
 import { readFileSync } from 'fs';
 import {
-  verifyPoW,
-  verifyPostSignature,
   verifyValidatorSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyContentCharacters,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyBlockChainLink,
@@ -22,8 +19,8 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, signingHash, postPowPreimage, powNonceBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeSubBlock, decodeSubBlock, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
-import type { Post, SubBlock, SubBlockEntry, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput, AnyBoxCandidate } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import type { Post, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -49,163 +46,6 @@ function mustHash(header: BlockHeader): string {
 }
 
 // ---------------------------------------------------------------------------
-// verifyPoW
-// ---------------------------------------------------------------------------
-
-describe('verifyPoW', () => {
-  it('accepts a valid PoW solution', () => {
-    const input = Buffer.from('test input');
-    let nonce = 0;
-    const targetBits = 4;
-    // Find a valid nonce
-    while (nonce < 100000) {
-      if (verifyPoW(input, nonce, targetBits)) break;
-      nonce++;
-    }
-    expect(verifyPoW(input, nonce, targetBits)).toBe(true);
-  });
-
-  it('rejects an invalid PoW solution', () => {
-    const input = Buffer.from('test input');
-    expect(verifyPoW(input, 0, 20)).toBe(false);
-  });
-
-  it('verifies the same solution consistently', () => {
-    const input = Buffer.from('hello world');
-    let nonce = 0;
-    while (nonce < 100000 && !verifyPoW(input, nonce, 4)) nonce++;
-    for (let i = 0; i < 5; i++) {
-      expect(verifyPoW(input, nonce, 4)).toBe(true);
-    }
-  });
-
-  // Frozen vectors for `blake2b512(input ‖ vlqU(nonce))[0..32]` — the byte-level
-  // pin on this function.
-  //
-  // Hand-derived from TYPES_INTERFACE → Serialization ("Layout — Post" and the
-  // `vlqU` primitive), never regenerated from `powNonceBytes` or `verifyPoW`: a
-  // pin taken from the code it pins holds just as firmly over a wrong layout.
-  //
-  // `zeroBits` is each frozen hash's own leading-zero count, so the pair of
-  // `verifyPoW` assertions binds the predicate to that exact hash rather than to
-  // a target it could clear by luck.
-  const POW_INPUT = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
-  const POW_VECTORS = [
-    {
-      name: 'nonce 0 — the one-byte tail',
-      nonce: 0,
-      tail: '00',
-      hash: '10b36dad94a527c35dfd73b25f2c57aecb89a1e2ae439f0480e3851b9e7d5c2c',
-      zeroBits: 3,
-    },
-    {
-      name: 'nonce 846843 — a three-byte tail',
-      nonce: 846843,
-      tail: 'fbd733',
-      hash: '00000ccb03e1c855ef30382d081a3d8a12123ad21b7d1dabfd4e2e0acaa869a4',
-      zeroBits: 20,
-    },
-    {
-      name: 'nonce MAX_SAFE_INTEGER — the widest in-domain tail',
-      nonce: Number.MAX_SAFE_INTEGER,
-      tail: 'ffffffffffffff0f',
-      hash: '0bee307f3941808713bce4d8af5e84598ab3622b2fecfc6883e9e904c1bc84f5',
-      zeroBits: 4,
-    },
-  ];
-
-  for (const v of POW_VECTORS) {
-    it(`pins the PoW hash at ${v.name}`, () => {
-      expect(Buffer.from(powNonceBytes(v.nonce)).toString('hex')).toBe(v.tail);
-      const hash = createHash('blake2b512')
-        .update(Buffer.concat([POW_INPUT, Buffer.from(powNonceBytes(v.nonce))]))
-        .digest()
-        .subarray(0, 32);
-      expect(hash.toString('hex')).toBe(v.hash);
-      expect(verifyPoW(POW_INPUT, v.nonce, v.zeroBits)).toBe(true);
-      expect(verifyPoW(POW_INPUT, v.nonce, v.zeroBits + 1)).toBe(false);
-    });
-  }
-
-  it('does not accept a solution encoded as a fixed-width tail', () => {
-    // A post nonce is `vlqU` and an ordering-block nonce is `encodeLE64`
-    // (VALIDATION_INTERFACE → Invariants). Two encodings, no shared code — so a
-    // nonce is a solution under one of them, not under both.
-    const nonce = 846843;
-    const wide = Buffer.alloc(8);
-    wide.writeBigUInt64LE(BigInt(nonce));
-    const wideHash = createHash('blake2b512')
-      .update(Buffer.concat([POW_INPUT, wide]))
-      .digest()
-      .subarray(0, 32);
-    expect(verifyPoW(POW_INPUT, nonce, 20)).toBe(true);
-    expect(wideHash[0]).not.toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// verifyPostSignature
-// ---------------------------------------------------------------------------
-
-describe('verifyPostSignature', () => {
-  it('accepts a valid Ed25519 signature', () => {
-    const kp = generateKeyPair();
-    const post: Post = {
-      content: 'hello',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: Date.now(),
-      signature: new Uint8Array(64), // placeholder
-    };
-    // Sign the post
-    const sig = sign(null, signingHash(post), createPrivateKey({ key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8' }));
-    post.signature = new Uint8Array(sig);
-    expect(verifyPostSignature(post, kp.publicKey)).toBe(true);
-  });
-
-  it('rejects a signature with wrong public key', () => {
-    const kp1 = generateKeyPair();
-    const kp2 = generateKeyPair();
-    const post: Post = {
-      content: 'hello',
-      author: kp1.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: Date.now(),
-      signature: new Uint8Array(64),
-    };
-    const sig = sign(null, signingHash(post), createPrivateKey({ key: Buffer.from(kp1.secretKey), format: 'der', type: 'pkcs8' }));
-    post.signature = new Uint8Array(sig);
-    expect(verifyPostSignature(post, kp2.publicKey)).toBe(false);
-  });
-
-  it('rejects a tampered signature', () => {
-    const kp = generateKeyPair();
-    const post: Post = {
-      content: 'hello',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: Date.now(),
-      signature: new Uint8Array(64),
-    };
-    const sig = sign(null, signingHash(post), createPrivateKey({ key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8' }));
-    // Tamper with one byte
-    const tampered = new Uint8Array(sig);
-    tampered[0] = (tampered[0]! + 1) % 256;
-    post.signature = tampered;
-    expect(verifyPostSignature(post, kp.publicKey)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // verifyValidatorSignature
 // ---------------------------------------------------------------------------
 
@@ -219,7 +59,6 @@ describe('verifyValidatorSignature', () => {
     protocolVersion: 1,
     height: 7,
     prevBlockHash: 'ab'.repeat(32),
-    subBlockRoot: '11'.repeat(32),
     utxoTxRoot: '22'.repeat(32),
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32),
@@ -527,65 +366,6 @@ describe('verifyParentRefsCount', () => {
 });
 
 // ---------------------------------------------------------------------------
-// verifySubBlockStructure
-// ---------------------------------------------------------------------------
-
-describe('verifySubBlockStructure', () => {
-  // A UserId is 32 raw bytes — an Ed25519 public key, never a display string.
-  // Stated as a typed constant so the fixtures cannot drift back: the test tree
-  // is type-checked (`tsconfig.test.json`), so a `string` here does not compile.
-  const TEST_USER: Uint8Array = new Uint8Array(32).fill(1);
-
-  const makeBasePost = (): Post => ({
-    content: 'test',
-    author: TEST_USER,
-    parentRefs: [],
-    challenge: new Uint8Array(32),
-    powNonce: 0,
-    protocolVersion: 1,
-    timestamp: Date.now(),
-    signature: new Uint8Array(64),
-  });
-
-  it('accepts a valid sub-block', () => {
-    const sb: SubBlock = {
-      subBlockId: computePostId(makeBasePost()),
-      post: makeBasePost(),
-      producerId: TEST_USER,
-      protocolVersion: 1,
-    };
-    expect(verifySubBlockStructure(sb)).toEqual({ valid: true });
-  });
-
-  it('T2b pin: accepts a sub-block without the retired likeBoxes field', () => {
-    // Two-sided pin, after-leg. Before-leg is a dated measurement, taken on the
-    // tree that still carried the sidecar field (2026-08-08): this exact shape
-    // was rejected with
-    // { valid: false, error: 'Sub-block likeBoxes must be an array' }.
-    // No `as SubBlock` cast, deliberately — with `producerId` as real bytes this
-    // object IS a complete `SubBlock`, which is precisely the claim. `likeBoxes`
-    // is retired, so nothing is missing, and the compiler proves that rather
-    // than being told to assume it.
-    const sb: SubBlock = {
-      subBlockId: 'ab'.repeat(32),
-      post: makeBasePost(),
-      producerId: TEST_USER,
-      protocolVersion: 1,
-    };
-    expect(verifySubBlockStructure(sb)).toEqual({ valid: true });
-  });
-
-  it('rejects sub-block missing post', () => {
-    const sb = {
-      subBlockId: 'abc',
-      producerId: 'user1',
-      protocolVersion: 1,
-    } as unknown as SubBlock;
-    expect(verifySubBlockStructure(sb).valid).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // verifyTxStructure
 // ---------------------------------------------------------------------------
 
@@ -680,7 +460,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
     ['invite', { boxType: 'invite', value: 0n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32), guard: 'invite_dual' }],
     ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32), guard: 'block_apply' }],
-    ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32), targetPostId: '00'.repeat(32), guard: 'block_apply' }],
+    ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32), guard: 'block_apply' }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32), guard: 'owner_signature' }],
   ];
 
@@ -756,7 +536,6 @@ describe('verifyOrderingBlockStructure', () => {
       protocolVersion: 1,
       height: 1,
       prevBlockHash: '0'.repeat(64),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: new Uint8Array(32).fill(1),
@@ -764,14 +543,10 @@ describe('verifyOrderingBlockStructure', () => {
       powTargetBits: 3072,
       createdAt: Date.now(),
     },
-    subBlockTree: {
-      subBlockEntries: [],
-      pruneEntries: [],
-    },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
-      coinbaseOutputs: [],
+      pruneEntries: [], coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
   });
@@ -819,69 +594,29 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
   });
 
-  // There is no alignment case to pin here, because there is no second list to
-  // be misaligned with: the committed topology is `subBlockEntries` and
-  // `pruneEntries` alone (TYPES_INTERFACE → Layout — Block).
+  // ⛔ There is one committed body, so the only presence case left is the tree
+  // itself. `pruneEntries` moved inside it, and its `?.` is what makes a block
+  // carrying no `utxoTxTree` a verdict rather than a TypeError — the failure
+  // direction `VALIDATION_INTERFACE`'s no-panic rule forbids.
   //
-  // What the two cases below pin is the half that is load-bearing without it —
-  // `subBlockEntries` is present and is an array, and a block carrying no
-  // `subBlockTree` at all is a verdict rather than a TypeError.
+  // The `SubBlockEntry` postId/author domain pins that used to live here are
+  // gone with the struct. Their successor is the `post` clause in
+  // `verifyTxStructure` (below): a post's fields are pinned on the transaction
+  // that carries them, which is also the thing that hashes them.
 
-  it('rejects a block whose subBlockTree has no subBlockEntries array', () => {
-    const block = makeValidBlock();
-    (block.subBlockTree as { subBlockEntries?: unknown }).subBlockEntries = undefined;
+  it('rejects a block with no utxoTxTree at all — a rejection, not a TypeError', () => {
+    const block = { ...makeValidBlock(), utxoTxTree: undefined } as unknown as OrderingBlock;
     const result = verifyOrderingBlockStructure(block);
     expect(result.valid).toBe(false);
-    expect(result.error).toBe('Ordering block missing subBlockTree.subBlockEntries');
+    expect(result.error).toBe('Ordering block missing utxoTxTree.pruneEntries');
   });
 
-  it('rejects a block with no subBlockTree at all — a rejection, not a TypeError', () => {
-    // Previously caught by the `subBlockRefs` presence check's `?.`. With that
-    // check gone the optional chain moved to this one; without it the entry
-    // loop below would throw instead of returning a verdict, which is the
-    // failure direction `VALIDATION_INTERFACE`'s no-panic rule forbids.
-    const block = { ...makeValidBlock(), subBlockTree: undefined } as unknown as OrderingBlock;
+  it('rejects a block whose utxoTxTree has no pruneEntries array', () => {
+    const block = makeValidBlock();
+    (block.utxoTxTree as { pruneEntries?: unknown }).pruneEntries = undefined;
     const result = verifyOrderingBlockStructure(block);
     expect(result.valid).toBe(false);
-    expect(result.error).toBe('Ordering block missing subBlockTree.subBlockEntries');
-  });
-
-  it('rejects subBlockEntries with invalid postId', () => {
-    const block = makeValidBlock();
-    block.subBlockTree.subBlockEntries = [
-      { postId: 'too-short', parentRefs: [], author: 'cc'.repeat(32) },
-    ];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid postId');
-  });
-
-  it('accepts a subBlockEntry with a 64-char author (control for the author check)', () => {
-    const block = makeValidBlock();
-    block.subBlockTree.subBlockEntries = [
-      { postId: 'aa'.repeat(32), parentRefs: [], author: 'cc'.repeat(32) },
-    ];
-    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
-  });
-
-  it('rejects subBlockEntries with a missing author', () => {
-    const block = makeValidBlock();
-    block.subBlockTree.subBlockEntries = [
-      { postId: 'aa'.repeat(32), parentRefs: [] } as unknown as SubBlockEntry,
-    ];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid author');
-  });
-
-  it('rejects subBlockEntries with a wrong-length author', () => {
-    const block = makeValidBlock();
-    block.subBlockTree.subBlockEntries = [
-      { postId: 'aa'.repeat(32), parentRefs: [], author: 'too-short' },
-    ];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid author');
+    expect(result.error).toBe('Ordering block missing utxoTxTree.pruneEntries');
   });
 
   it('rejects block with utxoTxs misaligned with utxoTxIds', () => {
@@ -897,7 +632,7 @@ describe('verifyOrderingBlockStructure', () => {
       utxoTxTree: {
         utxoTxs: [],
         likeBoxIds: [],
-        coinbaseOutputs: [],
+        pruneEntries: [], coinbaseOutputs: [],
       },
     } as unknown as OrderingBlock;
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
@@ -1143,7 +878,7 @@ describe('verifyOrderingBlockStructure', () => {
   /** The valid block, carrying one prune entry with `over` applied to it. */
   const blockWithPrune = (over: Record<string, unknown> = {}): OrderingBlock => {
     const block = makeValidBlock();
-    block.subBlockTree.pruneEntries = [
+    block.utxoTxTree.pruneEntries = [
       { ...makeValidPruneEntry(), ...over } as unknown as PruneEntry,
     ];
     return block;
@@ -1160,7 +895,7 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('rejects a block with no pruneEntries field at all', () => {
     const block = makeValidBlock();
-    delete (block.subBlockTree as unknown as Record<string, unknown>).pruneEntries;
+    delete (block.utxoTxTree as unknown as Record<string, unknown>).pruneEntries;
     const result = verifyOrderingBlockStructure(block);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('pruneEntries');
@@ -1168,13 +903,13 @@ describe('verifyOrderingBlockStructure', () => {
 
   it('rejects a non-array pruneEntries', () => {
     const block = makeValidBlock();
-    (block.subBlockTree as unknown as Record<string, unknown>).pruneEntries = 'nope';
+    (block.utxoTxTree as unknown as Record<string, unknown>).pruneEntries = 'nope';
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
   });
 
   it('rejects a prune entry that is not an object', () => {
     const block = makeValidBlock();
-    (block.subBlockTree as unknown as Record<string, unknown>).pruneEntries = [42];
+    (block.utxoTxTree as unknown as Record<string, unknown>).pruneEntries = [42];
     const result = verifyOrderingBlockStructure(block);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('pruneEntry is not an object');
@@ -1309,17 +1044,17 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   const kp = generateKeyPair();
 
   /**
-   * A block whose body carries `entries` / `pruneEntries` / `utxoTxIds`, with a
+   * A block whose one body carries `pruneEntries` / `utxoTxIds`, with a
    * genuinely mined and signed header.
    *
-   * `subBlockRoot` and `utxoTxRoot` are producer-chosen 64-hex strings here,
-   * not recomputed: `verifyOrderingBlockStructure` does not recompute them
-   * (that is apply-time, in `@dagsocial/node`), and the header commits only to
-   * the root strings it declares. So nothing about a poisoned entry is visible
-   * to PoW or to the signature.
+   * `utxoTxRoot` is a producer-chosen 64-hex string here, not recomputed:
+   * `verifyOrderingBlockStructure` does not recompute it (that is apply-time, in
+   * `@dagsocial/node`), and the header commits only to the root string it
+   * declares. So nothing about a poisoned entry is visible to PoW or to the
+   * signature.
    */
   const makeBlock = (
-    body: Partial<OrderingBlock['subBlockTree']> & { utxoTxIds?: string[] } = {},
+    body: Partial<OrderingBlock['utxoTxTree']> = {},
     headerOver: Partial<BlockHeader> = {},
     /**
      * Header fields substituted **after** mining and signing, for values that
@@ -1332,12 +1067,10 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     postSolve: Partial<BlockHeader> = {},
   ): OrderingBlock => {
     const { utxoTxIds = [], ...tree } = body;
-    const subBlockEntries = tree.subBlockEntries ?? [];
     const solved = solve({
       protocolVersion: 1,
       height: 42,
       prevBlockHash: '11'.repeat(32),
-      subBlockRoot: '22'.repeat(32),
       utxoTxRoot: '33'.repeat(32),
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: kp.publicKey,
@@ -1352,21 +1085,15 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     const validatorSignature = signHeader(solved, kp);
     return {
       header: { ...solved, ...postSolve },
-      subBlockTree: {
-        subBlockEntries,
+      utxoTxTree: {
+        utxoTxIds,
+        utxoTxs: utxoTxIds.map(() => new Uint8Array(1)),
         pruneEntries: tree.pruneEntries ?? [],
+        coinbaseOutputs: tree.coinbaseOutputs ?? [],
       },
-      utxoTxTree: { utxoTxIds, utxoTxs: utxoTxIds.map(() => new Uint8Array(1)), coinbaseOutputs: [] },
       validatorSignature,
     };
   };
-
-  const entry = (over: Partial<SubBlockEntry> = {}): SubBlockEntry => ({
-    postId: GOOD,
-    parentRefs: [],
-    author: 'cd'.repeat(32),
-    ...over,
-  });
 
   const prune = (over: Partial<PruneEntry> = {}): PruneEntry => ({
     rootPostHash: GOOD,
@@ -1391,24 +1118,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
 
   const CASES: Array<{ name: string; poison: string; block: () => OrderingBlock; error: string }> = [
     {
-      name: 'subBlockEntry.parentRefs — the placeholder-write path',
-      poison: NON_HEX_64,
-      block: () => makeBlock({ subBlockEntries: [entry({ parentRefs: [NON_HEX_64] })] }),
-      error: 'parentRef must be 64 lowercase hex',
-    },
-    {
-      name: 'subBlockEntry.postId — the placeholder row id',
-      poison: NON_HEX_64,
-      block: () => makeBlock({ subBlockEntries: [entry({ postId: NON_HEX_64 })] }),
-      error: 'invalid postId',
-    },
-    {
-      name: 'subBlockEntry.author — the consensus-carried authorship claim (H-3)',
-      poison: NON_HEX_64,
-      block: () => makeBlock({ subBlockEntries: [entry({ author: NON_HEX_64 })] }),
-      error: 'invalid author',
-    },
-    {
       name: 'pruneEntry.rootPostHash',
       poison: NON_HEX_64,
       block: () => makeBlock({ pruneEntries: [prune({ rootPostHash: NON_HEX_64 })] }),
@@ -1431,10 +1140,10 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     // representations — the malleability the fixed-width encoding exists to
     // close, arriving from the codec side.
     {
-      name: 'subBlockEntry.parentRefs in uppercase hex',
+      name: 'pruneEntry.subtreePostIds in uppercase hex',
       poison: UPPER_HEX_64,
-      block: () => makeBlock({ subBlockEntries: [entry({ parentRefs: [UPPER_HEX_64] })] }),
-      error: 'parentRef must be 64 lowercase hex',
+      block: () => makeBlock({ pruneEntries: [prune({ subtreePostIds: [UPPER_HEX_64] })] }),
+      error: 'subtreePostId must be 64 lowercase hex',
     },
   ];
 
@@ -1453,14 +1162,12 @@ describe('ordering-block hex domains — the pin has teeth', () => {
    */
   const HEADER_CASES: Array<{ name: string; poison: string; over: Partial<BlockHeader>; error: string }> = [
     { name: 'header.prevBlockHash', poison: NON_HEX_64, over: { prevBlockHash: NON_HEX_64 }, error: 'invalid prevBlockHash' },
-    { name: 'header.subBlockRoot', poison: NON_HEX_64, over: { subBlockRoot: NON_HEX_64 }, error: 'missing subBlockRoot' },
     { name: 'header.utxoTxRoot', poison: NON_HEX_64, over: { utxoTxRoot: NON_HEX_64 }, error: 'missing utxoTxRoot' },
     { name: 'header.prevBlockHash in uppercase hex', poison: UPPER_HEX_64, over: { prevBlockHash: UPPER_HEX_64 }, error: 'invalid prevBlockHash' },
   ];
 
   it('has a control block that this function accepts', () => {
     const control = makeBlock({
-      subBlockEntries: [entry({ parentRefs: [GOOD] })],
       pruneEntries: [prune()],
       utxoTxIds: [GOOD],
     });
@@ -1640,42 +1347,56 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   // -------------------------------------------------------------------------
 
   describe('the parentRefs bound comes from MAX_PARENT_REFS', () => {
+    // ⛔ The carrier moved, the rule did not. These pinned
+    // `SubBlockEntry.parentRefs`; a post's refs now ride inside the transaction
+    // that creates it, so `verifyTxStructure` is where the bound is enforced —
+    // and it is the same `verifyParentRefsCount`, reading the same constant.
+
     /** N distinct well-formed refs, so the count rule is the only thing under test. */
     const refs = (n: number): string[] =>
       Array.from({ length: n }, (_, i) => i.toString(16).padStart(2, '0').repeat(32));
 
+    const postTx = (parentRefs: string[]): UtxoTransaction => ({
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
+      signatures: {},
+      protocolVersion: 1,
+      post: {
+        content: 'hello',
+        author: new Uint8Array(32).fill(7),
+        parentRefs,
+        protocolVersion: 1,
+        timestamp: 1_700_000_000_000,
+      },
+    });
+
     it('accepts exactly MAX_PARENT_REFS refs', () => {
-      const block = makeBlock({ subBlockEntries: [entry({ parentRefs: refs(MAX_PARENT_REFS) })] });
-      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+      expect(verifyTxStructure(postTx(refs(MAX_PARENT_REFS)))).toEqual({ valid: true });
     });
 
     it('rejects one more than MAX_PARENT_REFS', () => {
-      const block = makeBlock({
-        subBlockEntries: [entry({ parentRefs: refs(MAX_PARENT_REFS + 1) })],
-      });
-      const result = verifyOrderingBlockStructure(block);
+      const result = verifyTxStructure(postTx(refs(MAX_PARENT_REFS + 1)));
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('invalid parentRefs');
+      expect(result.error).toContain('Too many parent refs');
     });
 
     // The point of the two above: they are written against the constant, so if
     // `MAX_PARENT_REFS` moves the boundary moves with it and no edit is needed
-    // here. A literal in the source would leave this path — the one that feeds
-    // `insertPostPlaceholder` — pinned to the constant's old reading while the
-    // post path tracked the new one, and this test would not notice.
-    it('tracks the constant rather than the number 8', () => {
+    // here. A literal in the source would leave this path pinned to the
+    // constant's old reading while the post path tracked the new one, and this
+    // test would not notice.
+    it('tracks the constant rather than a literal', () => {
       const atBound = refs(MAX_PARENT_REFS);
-      const overBound = refs(MAX_PARENT_REFS + 1);
       expect(atBound).toHaveLength(MAX_PARENT_REFS);
-      expect(
-        verifyOrderingBlockStructure(makeBlock({ subBlockEntries: [entry({ parentRefs: atBound })] }))
-          .valid,
-      ).toBe(true);
-      expect(
-        verifyOrderingBlockStructure(
-          makeBlock({ subBlockEntries: [entry({ parentRefs: overBound })] }),
-        ).valid,
-      ).toBe(false);
+      expect(verifyTxStructure(postTx(atBound)).valid).toBe(true);
+      expect(verifyTxStructure(postTx(refs(MAX_PARENT_REFS + 1))).valid).toBe(false);
+    });
+
+    it('a transaction with NO post skips the whole clause', () => {
+      // The biconditional's other half: the post checks must not fire on an
+      // ordinary transaction, or every like and invite would pay for them.
+      const { post: _post, ...noPost } = postTx([]);
+      expect(verifyTxStructure(noPost as UtxoTransaction)).toEqual({ valid: true });
     });
   });
 
@@ -1691,8 +1412,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     const put = (over: Partial<OrderingBlock>, headerOver: Partial<BlockHeader> = {}): OrderingBlock => ({
       ...template,
       header: { ...template.header, ...headerOver },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       ...over,
     });
 
@@ -1710,32 +1430,24 @@ describe('ordering-block hex domains — the pin has teeth', () => {
         const shapes: Array<{ block: OrderingBlock; conforms: boolean }> = [
           { block: put({}, { stateRoot: bad as string }), conforms: isHex(bad, 66) },
           { block: put({}, { prevBlockHash: bad as string }), conforms: isHex(bad, 64) },
-          { block: put({}, { subBlockRoot: bad as string }), conforms: isHex(bad, 64) },
           { block: put({}, { utxoTxRoot: bad as string }), conforms: isHex(bad, 64) },
           { block: put({}, { validatorId: bad as Uint8Array }), conforms: isBytesOf(bad, 32) },
           { block: put({ validatorSignature: bad as Uint8Array }), conforms: isBytesOf(bad, 64) },
           {
             block: put({
-              utxoTxTree: { utxoTxIds: [bad as string], utxoTxs: [new Uint8Array(1)], coinbaseOutputs: [] },
+              utxoTxTree: { utxoTxIds: [bad as string], utxoTxs: [new Uint8Array(1)], pruneEntries: [], coinbaseOutputs: [] },
             }),
             conforms: isHex(bad, 64),
           },
           {
             block: put({
-              subBlockTree: {
-                subBlockEntries: [{ postId: bad, parentRefs: [bad], author: bad } as unknown as SubBlockEntry],
-                pruneEntries: [],
-              },
-            }),
-            conforms: isHex(bad, 64),
-          },
-          {
-            block: put({
-              subBlockTree: {
-                subBlockEntries: [],
+              utxoTxTree: {
+                utxoTxIds: [],
+                utxoTxs: [],
                 pruneEntries: [
                   { ...prune(), rootPostHash: bad, subtreePostIds: [bad] } as unknown as PruneEntry,
                 ],
+                coinbaseOutputs: [],
               },
             }),
             conforms: isHex(bad, 64),
@@ -1745,6 +1457,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
               utxoTxTree: {
                 utxoTxIds: [],
                 utxoTxs: [],
+                pruneEntries: [],
                 coinbaseOutputs: [
                   { owner: bad, value: 1n, lockedUntilBlock: 42, isTreasury: false } as unknown as CoinbaseOutput,
                 ],
@@ -1780,7 +1493,6 @@ describe('verifyBlockChainLink', () => {
       protocolVersion: 1,
       height,
       prevBlockHash: prevHash,
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: new Uint8Array(32).fill(1),
@@ -1788,14 +1500,10 @@ describe('verifyBlockChainLink', () => {
       powTargetBits: 3072,
       createdAt: Date.now(),
     },
-    subBlockTree: {
-      subBlockEntries: [],
-      pruneEntries: [],
-    },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
-      coinbaseOutputs: [],
+      pruneEntries: [], coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
   });
@@ -1995,13 +1703,30 @@ describe('verifyContentCharacters — version-independent table (M-4)', () => {
 // M-6 — integer guards on nonces and targetBits
 // ---------------------------------------------------------------------------
 
-describe('integer guards on nonce and targetBits (M-6)', () => {
-  const input = Buffer.from('m-6 fixture');
-  let goodNonce = 0;
-  while (goodNonce < 100000 && !verifyPoW(input, goodNonce, 4)) goodNonce++;
+describe('integer guards on the header nonce and targetBits (M-6)', () => {
+  // ⛔ **`isU64Safe` did NOT retire with post PoW, and this is the reason.**
+  // These guards used to be pinned on `verifyPoW`. The ordering-block header's
+  // `powNonce` is the same shape the argument was about — a `vlqU` field, written
+  // by a total-by-sentinel writer, and a search variable an attacker varies
+  // against a target — so the totality argument moved onto `HEADER_DOMAIN`
+  // rather than going away with the function that used to carry it.
+  //
+  // What closes it is the pin here PLUS `verifyOrderingBlockPoW` encoding the
+  // nonce as a fixed 8-byte LE, which has no sentinel at all. `computePowHash`
+  // runs the whole header domain first, so the two cannot be reached out of order.
 
-  it('has a valid baseline solution to degrade from', () => {
-    expect(verifyPoW(input, goodNonce, 4)).toBe(true);
+  const kp = generateKeyPair();
+  const baseHeader = (over: Partial<BlockHeader> = {}): BlockHeader => ({
+    protocolVersion: 1,
+    height: 1,
+    prevBlockHash: '11'.repeat(32),
+    utxoTxRoot: '33'.repeat(32),
+    stateRoot: EMPTY_STATE_ROOT,
+    validatorId: kp.publicKey,
+    powNonce: 0,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    createdAt: 1_700_000_000_000,
+    ...over,
   });
 
   const badNumbers: [string, number][] = [
@@ -2014,28 +1739,41 @@ describe('integer guards on nonce and targetBits (M-6)', () => {
     ['past u64', 2 ** 64],
   ];
 
+  it('has an in-domain baseline to degrade from', () => {
+    expect(verifyHeaderFieldDomains(baseHeader())).toEqual({ valid: true });
+  });
+
   for (const [name, bad] of badNumbers) {
-    it(`rejects a ${name} nonce`, () => {
-      expect(verifyPoW(input, bad, 4)).toBe(false);
+    it(`rejects a ${name} powNonce, without throwing`, () => {
+      expect(() => verifyOrderingBlockPoW(baseHeader({ powNonce: bad }))).not.toThrow();
+      expect(verifyOrderingBlockPoW(baseHeader({ powNonce: bad }))).toBe(false);
+      expect(verifyHeaderFieldDomains(baseHeader({ powNonce: bad })).valid).toBe(false);
     });
 
-    it(`rejects a ${name} targetBits`, () => {
-      expect(verifyPoW(input, goodNonce, bad)).toBe(false);
+    it(`rejects a ${name} powTargetBits, without throwing`, () => {
+      expect(() => verifyOrderingBlockPoW(baseHeader({ powTargetBits: bad }))).not.toThrow();
+      expect(verifyOrderingBlockPoW(baseHeader({ powTargetBits: bad }))).toBe(false);
+      expect(verifyHeaderFieldDomains(baseHeader({ powTargetBits: bad })).valid).toBe(false);
     });
   }
 
-  it('rejects a targetBits wider than the 256-bit digest', () => {
-    // A bit walk over `targetBits` indexes past the end of the digest here,
-    // where `undefined & mask` coerces to 0 — which mis-accepts an all-zero
-    // digest only (unreachable in practice), unlike the NaN/Infinity cases
-    // above, where a walk of zero iterations accepts any hash at all.
-    expect(verifyPoW(input, goodNonce, 257)).toBe(false);
-    expect(verifyPoW(input, goodNonce, 1_000_000)).toBe(false);
+  it('the sentinel is unreachable: two out-of-domain nonces do not share a verdict', () => {
+    // ⛔ Assert the MECHANISM. Under `vlqU` alone, NaN and -1 both encode to the
+    // all-ones sentinel — so without the domain pin a header holding either
+    // would produce the same `blockHash`, and a solution for one would be a
+    // solution for the other. `blockHash` returns null for both instead, which
+    // is what makes the collision unreachable rather than merely unlikely.
+    expect(blockHash(baseHeader({ powNonce: NaN }))).toBeNull();
+    expect(blockHash(baseHeader({ powNonce: -1 }))).toBeNull();
+    expect(blockHash(baseHeader())).not.toBeNull();
   });
 
-  it('still evaluates a satisfiable target at full digest width', () => {
-    expect(verifyPoW(input, goodNonce, 256)).toBe(false);
-    expect(verifyPoW(input, goodNonce, 0)).toBe(true);
+  it('rejects a powTargetBits past the scaled domain', () => {
+    // 65536 is 256 whole bits in units of 1/256 — the widest the digest can
+    // express. Past it there is no target to expand, so refusing out of domain
+    // IS the bound.
+    expect(verifyHeaderFieldDomains(baseHeader({ powTargetBits: 65536 })).valid).toBe(true);
+    expect(verifyHeaderFieldDomains(baseHeader({ powTargetBits: 65537 })).valid).toBe(false);
   });
 });
 
@@ -2088,31 +1826,18 @@ const MALFORMED: unknown[] = [
 describe('no-panic on malformed input (M-5)', () => {
   const kp = generateKeyPair();
 
-  const makeGoodPost = (): Post => {
-    const post: Post = {
-      content: 'hello',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: 1_700_000_000_000,
-      signature: new Uint8Array(64),
-    };
-    const sig = sign(
-      null,
-      signingHash(post),
-      createPrivateKey({ key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8' }),
-    );
-    post.signature = new Uint8Array(sig);
-    return post;
-  };
+  const makeGoodPost = (): Post => ({
+    content: 'hello',
+    author: kp.publicKey,
+    parentRefs: [],
+    protocolVersion: 1,
+    timestamp: 1_700_000_000_000,
+  });
 
   const makeHeader = (over: Partial<BlockHeader> = {}): BlockHeader => ({
     protocolVersion: 1,
     height: 1,
     prevBlockHash: '0'.repeat(64),
-    subBlockRoot: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32),
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(1),
@@ -2126,35 +1851,17 @@ describe('no-panic on malformed input (M-5)', () => {
   const goodInput = Buffer.from('pow input');
   const goodBlock: OrderingBlock = {
     header: makeHeader(),
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+    utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
     validatorSignature: new Uint8Array(64),
   };
 
   // --- the fuzz sweep: every argument position of every exported verify fn ---
 
-  it('verifyPoW survives every malformed argument', () => {
-    for (const bad of MALFORMED) {
-      expect(() => verifyPoW(bad as any, 0, 4)).not.toThrow();
-      expect(() => verifyPoW(goodInput, bad as any, 4)).not.toThrow();
-      expect(() => verifyPoW(goodInput, 0, bad as any)).not.toThrow();
-      expect(() => verifyPoW(bad as any, bad as any, bad as any)).not.toThrow();
-    }
-  });
-
-  it('verifyPostSignature survives every malformed argument', () => {
-    for (const bad of MALFORMED) {
-      expect(() => verifyPostSignature(bad as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature(goodPost, bad as any)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, content: bad } as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, author: bad } as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, parentRefs: bad } as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, challenge: bad } as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, signature: bad } as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, protocolVersion: bad } as any, kp.publicKey)).not.toThrow();
-      expect(() => verifyPostSignature({ ...goodPost, timestamp: bad } as any, kp.publicKey)).not.toThrow();
-    }
-  });
+  // ⛔ `verifyPoW`, `verifyPostSignature` and `verifySubBlockStructure` are gone,
+  // and the post's no-panic obligation went WITH its payload rather than away:
+  // `verifyTxStructure` below now sweeps every post field, because that is where
+  // an attacker-supplied post reaches a throwing encoder (`postFieldBytes` inside
+  // `computeTxId`).
 
   it('verifyValidatorSignature survives every malformed argument', () => {
     for (const bad of MALFORMED) {
@@ -2190,16 +1897,23 @@ describe('no-panic on malformed input (M-5)', () => {
     }
   });
 
-  it('verifySubBlockStructure survives every malformed argument', () => {
-    for (const bad of MALFORMED) {
-      expect(() => verifySubBlockStructure(bad as any)).not.toThrow();
-    }
-  });
-
   it('verifyTxStructure survives every malformed argument', () => {
     for (const bad of MALFORMED) {
       expect(() => verifyTxStructure(bad as any)).not.toThrow();
       expect(() => verifyTxStructure({ inputs: bad, outputs: bad, protocolVersion: 1 } as any)).not.toThrow();
+      // ⛔ The post payload, field by field — the sweep `verifyPostSignature`
+      // used to carry. `post: null` is the sharpest of these: it is the one
+      // value where a property read before `isObject` would throw, which is why
+      // `verifyPostFieldDomains` runs first inside the clause.
+      const withPost = (post: unknown) =>
+        ({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma' }], signatures: {}, protocolVersion: 1, post });
+      expect(() => verifyTxStructure(withPost(bad) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost(null) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodPost, content: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodPost, author: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodPost, parentRefs: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodPost, protocolVersion: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodPost, timestamp: bad }) as any)).not.toThrow();
     }
   });
 
@@ -2210,20 +1924,14 @@ describe('no-panic on malformed input (M-5)', () => {
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          subBlockTree: { subBlockEntries: [bad], pruneEntries: [bad] },
+          utxoTxTree: { ...goodBlock.utxoTxTree, pruneEntries: bad },
         } as any),
       ).not.toThrow();
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          subBlockTree: { subBlockEntries: [], pruneEntries: bad },
-        } as any),
-      ).not.toThrow();
-      expect(() =>
-        verifyOrderingBlockStructure({
-          ...goodBlock,
-          subBlockTree: {
-            subBlockEntries: [],
+          utxoTxTree: {
+            ...goodBlock.utxoTxTree,
             pruneEntries: [
               {
                 rootPostHash: bad,
@@ -2240,7 +1948,7 @@ describe('no-panic on malformed input (M-5)', () => {
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          utxoTxTree: { utxoTxIds: [], utxoTxs: [], likeBoxIds: [], coinbaseOutputs: [bad] },
+          utxoTxTree: { utxoTxIds: [], utxoTxs: [], likeBoxIds: [], pruneEntries: [], coinbaseOutputs: [bad] },
         } as any),
       ).not.toThrow();
       // The id is aligned deliberately: with an empty `utxoTxIds` the length
@@ -2249,7 +1957,7 @@ describe('no-panic on malformed input (M-5)', () => {
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad], coinbaseOutputs: [] },
+          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad], pruneEntries: [], coinbaseOutputs: [] },
         } as any),
       ).not.toThrow();
     }
@@ -2284,23 +1992,29 @@ describe('no-panic on malformed input (M-5)', () => {
   // --- the specific throw sites named in the audit ---
 
   it('rejects a public key that is not 32 bytes (createPublicKey)', () => {
-    expect(verifyPostSignature(goodPost, new Uint8Array(31))).toBe(false);
-    expect(verifyPostSignature(goodPost, new Uint8Array(33))).toBe(false);
-    expect(verifyPostSignature(goodPost, new Uint8Array(0))).toBe(false);
-    expect(verifyPostSignature(goodPost, 'not-a-key' as any)).toBe(false);
+    // The SPKI-envelope mechanics survive in the transaction/validator signature
+    // path unchanged; `verifyValidatorSignature` is where they are now reachable.
+    const h = makeHeader();
+    expect(verifyValidatorSignature({ ...h, validatorId: new Uint8Array(31) }, new Uint8Array(64))).toBe(false);
+    expect(verifyValidatorSignature({ ...h, validatorId: new Uint8Array(33) }, new Uint8Array(64))).toBe(false);
+    expect(verifyValidatorSignature({ ...h, validatorId: new Uint8Array(0) }, new Uint8Array(64))).toBe(false);
+    expect(verifyValidatorSignature({ ...h, validatorId: 'not-a-key' as any }, new Uint8Array(64))).toBe(false);
     // 32 bytes that are not a valid curve point must still reject cleanly.
-    expect(verifyPostSignature(goodPost, new Uint8Array(32).fill(0xff))).toBe(false);
+    expect(verifyValidatorSignature({ ...h, validatorId: new Uint8Array(32).fill(0xff) }, new Uint8Array(64))).toBe(false);
   });
 
-  it('rejects a post whose shape would throw inside signingHash', () => {
-    expect(verifyPostSignature({ ...goodPost, parentRefs: 'nope' } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature({ ...goodPost, parentRefs: [Symbol('x')] } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature({ ...goodPost, challenge: undefined } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature({ ...goodPost, author: undefined } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature({ ...goodPost, author: 42 } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature({ ...goodPost, content: 42 } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature({ ...goodPost, signature: 'abc' } as any, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature(null as any, kp.publicKey)).toBe(false);
+  it('rejects a post whose shape would throw inside postFieldBytes', () => {
+    // The successor to "would throw inside signingHash": the encoder a malformed
+    // post reaches is now `postFieldBytes`, via `computeTxId`, and
+    // `verifyTxStructure` is the gate in front of it.
+    const tx = (post: unknown) =>
+      ({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma' }], signatures: {}, protocolVersion: 1, post });
+    expect(verifyTxStructure(tx({ ...goodPost, parentRefs: 'nope' }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodPost, parentRefs: [Symbol('x')] }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodPost, author: undefined }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodPost, author: 42 }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodPost, content: 42 }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx(null) as any).valid).toBe(false);
   });
 
   it('rejects non-string content instead of throwing in Buffer.byteLength', () => {
@@ -2336,7 +2050,7 @@ describe('no-panic on malformed input (M-5)', () => {
   // --- the happy path is unchanged ---
 
   it('leaves the happy path intact', () => {
-    expect(verifyPostSignature(goodPost, kp.publicKey)).toBe(true);
+    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma' } as never], signatures: {}, protocolVersion: 1, post: goodPost })).toEqual({ valid: true });
     expect(verifyContentLimits('hello')).toEqual({ valid: true });
     expect(verifyContentCharacters('hello')).toEqual({ valid: true });
     expect(verifyParentRefsCount([])).toEqual({ valid: true });
@@ -2360,117 +2074,78 @@ describe('no-panic on malformed input (M-5)', () => {
 // ---------------------------------------------------------------------------
 
 describe('integer guards on protocolVersion and timestamp (M-6)', () => {
-  const kp = generateKeyPair();
-  const priv = createPrivateKey({
-    key: Buffer.from(kp.secretKey),
-    format: 'der',
-    type: 'pkcs8',
+  // ⛔ The GATE moved, the guard did not. These pinned `verifyPostSignature`,
+  // which no longer exists — a post carries no signature of its own. The same
+  // numeric domain is now enforced by `verifyPostFieldDomains`, reached through
+  // `verifyTxStructure`'s post clause, and it protects the same encoder:
+  // `postFieldBytes` is inside the `computeTxId` preimage.
+
+  /** A well-formed post payload — every field in domain. */
+  const goodPost = (over: Partial<Post> = {}): Post => ({
+    content: 'guard me',
+    author: new Uint8Array(32).fill(7),
+    parentRefs: [],
+    protocolVersion: 1,
+    timestamp: 1_700_000_000_000,
+    ...over,
   });
 
-  /** A correctly signed post — the signature covers the *stated* fields. */
-  const signedPost = (over: Partial<Post> = {}): Post => {
-    const post: Post = {
-      content: 'guard me',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32).fill(7),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: 1_700_000_000_000,
-      signature: new Uint8Array(64),
-      ...over,
-    };
-    post.signature = new Uint8Array(sign(null, signingHash(post), priv));
-    return post;
-  };
+  const postTx = (post: Post): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
+    signatures: {},
+    protocolVersion: 1,
+    post,
+  });
 
-  const OUT_OF_DOMAIN = [
+  const OUT_OF_DOMAIN: Array<[string, number]> = [
     ['NaN', NaN],
     ['Infinity', Infinity],
     ['-Infinity', -Infinity],
     ['negative', -1],
     ['fractional', 1.5],
-    ['above the safe range', Number.MAX_SAFE_INTEGER + 2],
-    ['not a number', '1700000000000'],
-  ] as const;
+    ['past MAX_SAFE_INTEGER', Number.MAX_SAFE_INTEGER + 1],
+  ];
 
   it.each(OUT_OF_DOMAIN)('rejects a %s timestamp without throwing', (_label, value) => {
-    // Signed over the malformed field, so only the guard can reject it.
-    const post = signedPost({ timestamp: value as number });
-    let result: boolean | undefined;
+    let result: { valid: boolean } | undefined;
     expect(() => {
-      result = verifyPostSignature(post, kp.publicKey);
+      result = verifyTxStructure(postTx(goodPost({ timestamp: value })));
     }).not.toThrow();
-    expect(result).toBe(false);
+    expect(result!.valid).toBe(false);
   });
 
   it.each(OUT_OF_DOMAIN)('rejects a %s protocolVersion without throwing', (_label, value) => {
-    const post = signedPost({ protocolVersion: value as number });
-    let result: boolean | undefined;
+    let result: { valid: boolean } | undefined;
     expect(() => {
-      result = verifyPostSignature(post, kp.publicKey);
+      result = verifyTxStructure(postTx(goodPost({ protocolVersion: value })));
     }).not.toThrow();
-    expect(result).toBe(false);
+    expect(result!.valid).toBe(false);
   });
 
   it('keeps the encoder sentinel out of reach: NaN and -1 no longer share a verdict path', () => {
-    // Both encode to the same all-ones sentinel bytes in `signingHash`, so
-    // before the guard a signature over one validated the other. Both are now
-    // rejected outright.
-    const withNaN = signedPost({ timestamp: NaN });
-    const withNegative = { ...withNaN, timestamp: -1 };
-    expect(signingHash(withNaN)).toEqual(signingHash(withNegative as Post));
-    expect(verifyPostSignature(withNaN, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature(withNegative as Post, kp.publicKey)).toBe(false);
+    // ⛔ Assert the MECHANISM, not only the verdict. Both values encode to the
+    // same all-ones sentinel in `postFieldBytes` — asserted here, because that
+    // collision is the whole reason the guard exists — so without the guard a
+    // transaction over one would hash identically to a transaction over the
+    // other. Both are rejected before that encoder is reached.
+    const withNaN = goodPost({ timestamp: NaN });
+    const withNegative = goodPost({ timestamp: -1 });
+    expect(postFieldBytes(withNaN)).toEqual(postFieldBytes(withNegative));
+    expect(verifyTxStructure(postTx(withNaN)).valid).toBe(false);
+    expect(verifyTxStructure(postTx(withNegative)).valid).toBe(false);
   });
 
   it('accepts a well-formed post (guard does not regress the happy path)', () => {
-    expect(verifyPostSignature(signedPost(), kp.publicKey)).toBe(true);
-    // Boundary values inside the domain still verify.
-    expect(verifyPostSignature(signedPost({ timestamp: 0 }), kp.publicKey)).toBe(true);
+    expect(verifyTxStructure(postTx(goodPost())).valid).toBe(true);
+    // Boundary values inside the domain still pass.
+    expect(verifyTxStructure(postTx(goodPost({ timestamp: 0 }))).valid).toBe(true);
     expect(
-      verifyPostSignature(signedPost({ timestamp: Number.MAX_SAFE_INTEGER }), kp.publicKey),
+      verifyTxStructure(postTx(goodPost({ timestamp: Number.MAX_SAFE_INTEGER }))).valid,
     ).toBe(true);
-    expect(verifyPostSignature(signedPost({ protocolVersion: 0 }), kp.publicKey)).toBe(true);
+    expect(verifyTxStructure(postTx(goodPost({ protocolVersion: 0 }))).valid).toBe(true);
   });
 });
-
-// ---------------------------------------------------------------------------
-// Fixed-width field domains — the b32 precondition
-// ---------------------------------------------------------------------------
-//
-// `author` and `challenge` are `b32`, `parentRefs` is `arr(refs, b32)`
-// (TYPES_INTERFACE → Layout — Post). A fixed-width writer's wire domain IS its
-// encodable domain, so it has no unreachable sentinel and must throw rather
-// than pad or truncate — padding would map a malformed id onto a well-formed
-// one's encoding. The domain has to be established before that writer is
-// reachable.
-//
-// The pin is only meaningful if it fires, and the most direct evidence for that
-// — a genuinely signed post that is out of domain — cannot be built: such a post
-// has no encoding, so `signingHash` is unreachable and it **cannot be signed at
-// all**.
-//
-// What stands in for it, per case:
-//
-//  1. **Build well-formed, sign, then poison.** The honest twin is kept and
-//     asserted `{ valid: true }`, so the two objects differ in exactly the one
-//     field under test and "the prior checks passed" is a measurement rather
-//     than a hope. `signatureIsGenuine` still runs — on the twin — because a
-//     silently broken builder would make every "rejects X" case below pass for
-//     the wrong reason.
-//  2. **Assert the error label, never just `valid: false`.** `verifyPostFieldDomains`
-//     returns at its first failure, so the label is positional evidence:
-//     `'Post challenge must be exactly 32 bytes'` can only be reached with
-//     content, author and every parentRef already in domain.
-//  3. **Assert the writer's own throw, with its width or char count in it.**
-//     That is what ties the rejection to the reason the rule exists — this post
-//     has no encoding — and it names the specific malformed value that reached
-//     the writer, so a case cannot quietly start testing a different one.
-//
-// `verifyPostSignature` returning `false` rather than throwing is the third
-// leg: it proves the domain gate runs *before* `signingHash`, since reaching
-// `signingHash` on these fixtures would panic.
 
 describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   const kp = generateKeyPair();
@@ -2484,32 +2159,28 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   /**
    * A post signed over its own stated fields.
    *
-   * Every field passed here must be **in domain**: `signingHash` encodes the
-   * post, and a 31-byte author or a non-hex ref has no encoding, so this helper
-   * throws rather than producing the fixture. That is the whole reason
-   * `signedThenPoisoned` exists below.
+   * ⚠ **A post has no signature of its own** — the creating transaction is
+   * signed over its `TxId` and the signer is the author. The helper keeps its
+   * name because what it builds is unchanged in the way that matters here: a
+   * post every field of which is in domain, which is the fixture the poison
+   * cases below are cut from.
    */
-  const signedPost = (over: Partial<Post> = {}): Post => {
-    const post: Post = {
-      content: 'pin the domain',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32).fill(9),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: 1_700_000_000_000,
-      signature: new Uint8Array(64),
-      ...over,
-    };
-    post.signature = new Uint8Array(sign(null, signingHash(post), priv));
-    return post;
-  };
-
-  const subBlockOf = (post: Post): SubBlock => ({
-    subBlockId: computePostId(post),
-    post,
-    producerId: new Uint8Array(32).fill(3),
+  const signedPost = (over: Partial<Post> = {}): Post => ({
+    content: 'pin the domain',
+    author: kp.publicKey,
+    parentRefs: [],
     protocolVersion: 1,
+    timestamp: 1_700_000_000_000,
+    ...over,
+  });
+
+  /** The post's carrier — the transaction whose `TxId` preimage contains it. */
+  const postTx = (post: Post): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
+    signatures: {},
+    protocolVersion: 1,
+    post,
   });
 
   /**
@@ -2518,8 +2189,20 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
    * — so its job has changed from "prove the malformed post is otherwise
    * flawless" to "prove the builder these fixtures are cut from is sound".
    */
-  const signatureIsGenuine = (post: Post): boolean =>
-    cryptoVerify(null, signingHash(post), pubKeyObj, Buffer.from(post.signature));
+  /**
+   * The payload really is encodable — which is what "the builder is sound" means
+   * now. `postFieldBytes` throws on an out-of-domain `author` or ref, so a
+   * successful encode is the same evidence a genuine signature used to be: the
+   * twin a poisoned fixture is cut from is not itself broken.
+   */
+  const payloadIsEncodable = (post: Post): boolean => {
+    try {
+      postFieldBytes(post);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   /**
    * Build well-formed, sign, **then** poison — the only route to the domain
@@ -2531,10 +2214,8 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
    * asserted against an object that differs in exactly one field, and it is
    * what stops a case from passing because the base fixture was broken.
    *
-   * The signature is genuine over the *pre-poison* bytes and does not cover the
-   * poisoned field. These tests want that — they assert the **domain** rule
-   * rejects, and a signature covering a 31-byte author is not a thing that can
-   * exist.
+   * The twin encodes; the poisoned post does not. These tests assert the
+   * **domain** rule rejects before that encoder is reached.
    */
   const signedThenPoisoned = (
     over: Record<string, unknown>,
@@ -2550,14 +2231,12 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   it('TEETH: a post with a non-hex parentRef passes every other Stage-1 check and is now rejected', () => {
     // 64 characters, count within MAX_PARENT_REFS, a string — so it satisfies
     // `verifyParentRefsCount` and any bare `typeof ref === 'string'` guard.
-    // Under `arr(refs, b32)` it has no encoding at all, which is why the poison
-    // goes on *after* the signature.
+    // Under `arr(refs, b32)` it has no encoding at all.
     const { honest, post } = signedThenPoisoned({ parentRefs: ['z'.repeat(64)] });
-    const sb = { ...subBlockOf(honest), post };
 
-    // The builder is sound: the twin this post is cut from is signed, genuine
-    // and in domain, so nothing below is passing on a broken fixture.
-    expect(signatureIsGenuine(honest)).toBe(true);
+    // The builder is sound: the twin this post is cut from is in domain and
+    // encodable, so nothing below is passing on a broken fixture.
+    expect(payloadIsEncodable(honest)).toBe(true);
     expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
 
     // Everything Stage 1 checks besides the domain still says yes:
@@ -2568,51 +2247,43 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     // …and the encoder refuses it outright, naming the ref it choked on. This
     // is the reason the pin must run first: there is no preimage to check
     // anything else against.
-    expect(() => postPowPreimage(post)).toThrow(
+    expect(() => postFieldBytes(post)).toThrow(
       'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
     );
 
-    // The pin is the only thing that rejects it — at all three entry points.
+    // The pin is the only thing that rejects it — at both entry points.
     expect(verifyPostFieldDomains(post)).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(verifySubBlockStructure(sb)).toEqual({
+    expect(verifyTxStructure(postTx(post))).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    // `false`, and — the load-bearing half — *without throwing*. Reaching
-    // `signingHash` on this post would panic, so returning a verdict at all
-    // proves the domain gate ran ahead of the crypto.
-    expect(() => verifyPostSignature(post, kp.publicKey)).not.toThrow();
-    expect(verifyPostSignature(post, kp.publicKey)).toBe(false);
-    expect(verifyPostSignature(honest, kp.publicKey)).toBe(true);
+    // …and the honest twin passes the same gate, so the verdict is about the ref.
+    expect(verifyTxStructure(postTx(honest))).toEqual({ valid: true });
   });
 
-  it('TEETH: `verifySubBlockStructure` rejected nothing about the post before — now it gates gossip', () => {
-    // This sub-block satisfies every check that does not look inside the post:
-    // post present, subBlockId present, protocolVersion a number, producerId
-    // present. The caller is `net`'s `runStage1SubBlock`, which runs this
-    // function before it builds `postPowPreimage`.
+  it('TEETH: `verifyTxStructure` gated nothing about a post before — now it gates gossip', () => {
+    // ⛔ The successor to the `verifySubBlockStructure` teeth demonstration. The
+    // caller moved from `net`'s sub-block topic to its `tx` topic, and the check
+    // it runs before anything hashes the payload is this one — `computeTxId`
+    // reaches `postFieldBytes`, which throws on a 31-byte author.
     const { honest, post } = signedThenPoisoned({ author: new Uint8Array(31).fill(4) });
-    const sb = { ...subBlockOf(honest), post };
-    expect(sb.post).toBeTruthy();
-    expect(sb.subBlockId).toBeTruthy();
-    expect(typeof sb.protocolVersion).toBe('number');
-    expect(sb.producerId).toBeTruthy();
-    // Those four checks are exactly what the honest twin also passes, and the
-    // author width is the only difference between the two sub-blocks — so the
-    // verdict below can only be the post-domain leg.
-    expect(verifySubBlockStructure({ ...sb, post: honest })).toEqual({ valid: true });
-    expect(verifySubBlockStructure(sb)).toEqual({
+
+    // Every check that does not look inside the post still passes: the
+    // transaction has inputs, outputs, a protocolVersion, and a post that is
+    // present and an object.
+    expect(verifyTxStructure(postTx(honest))).toEqual({ valid: true });
+    expect(verifyTxStructure(postTx(post))).toEqual({
       valid: false,
       error: 'Post author must be exactly 32 bytes',
     });
-    // It reaches that verdict without encoding the post — which it could not
-    // do. This is the relay path, inside a topic validator whose catch arm
-    // bans the *forwarding* peer, so a throw here is the wrong penalty class.
-    expect(() => postPowPreimage(post)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
-    expect(() => verifySubBlockStructure(sb)).not.toThrow();
+    // It reaches that verdict WITHOUT encoding the post — which it could not do.
+    // This is the relay path, inside a topic validator whose catch arm bans the
+    // *forwarding* peer, so a throw here is the wrong penalty class.
+    expect(() => postFieldBytes(post)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
+    expect(() => verifyTxStructure(postTx(post))).not.toThrow();
   });
 
   // -------------------------------------------------------------------------
@@ -2623,7 +2294,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     const { honest, post } = signedThenPoisoned({ author: new Uint8Array(n).fill(4) });
     // The twin differs in the author width and nothing else, and it is signed,
     // genuine and accepted — so the verdict below is about the width.
-    expect(signatureIsGenuine(honest)).toBe(true);
+    expect(payloadIsEncodable(honest)).toBe(true);
     expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
     // `author` is the second rule in the chain, so this label also reports that
     // `isObject` and the content-type rule passed.
@@ -2634,97 +2305,14 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     // …and the width in the writer's own message is this case's `n`, so the
     // rejection is tied to the value the test is named for rather than to some
     // other malformed field drifting into the fixture.
-    expect(() => postPowPreimage(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
+    expect(() => postFieldBytes(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
   });
 
-  it.each([0, 1, 31, 33, 64])('rejects a %i-byte challenge', (n) => {
-    const { honest, post } = signedThenPoisoned({ challenge: new Uint8Array(n).fill(5) });
-    expect(signatureIsGenuine(honest)).toBe(true);
-    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
-    // `challenge` is the fourth rule, so reaching this label is positive
-    // evidence that content, author *and* every parentRef were in domain —
-    // `verifyPostFieldDomains` returns at its first failure.
-    expect(verifyPostFieldDomains(post)).toEqual({
-      valid: false,
-      error: 'Post challenge must be exactly 32 bytes',
-    });
-    // The writer message is width-only and does not name the field, but the
-    // author here is the honest 32-byte key, so `challenge` is the only `b32`
-    // in this post that can be `n` bytes wide.
-    expect(() => postPowPreimage(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
-  });
+  // Reserved, never to be reused: the `challenge` width cases. `challenge` was a
+  // node-issued random field whose only job was PoW anti-precomputation, and it
+  // is gone with post PoW. `author` above is the surviving `b32` in a post, and
+  // it carries the same argument.
 
-  it('the widths it rejects encoded faithfully before this phase, and have no encoding now — a domain pin, not a collision fix', () => {
-    // BOTH halves, because the pair is the claim.
-    //
-    // A length-prefixed `author` encodes 31 and 32 bytes to *different*
-    // preimages, so nothing collides at any width — which is why an injectivity
-    // check never had reason to look at this field, and why `b32` gives it a
-    // domain rather than taking away an ambiguity. Under `b32`, fixed-width,
-    // 31 bytes has no encoding at all.
-    //
-    // A *collision* fix would have to move the honest 32-byte case too: a
-    // colliding pair is repaired by changing what both members encode to. It
-    // does not move, and that asymmetry is the evidence.
-    const { honest: full, post: short } = signedThenPoisoned({
-      author: new Uint8Array(31).fill(4),
-    });
-
-    // Half one — the out-of-domain width has no encoding, and the writer says
-    // which width it refused.
-    expect(() => postPowPreimage(short)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
-
-    // Half two — the honest width is untouched. It still encodes, and it still
-    // encodes *faithfully*: the 32 author bytes cross the preimage unchanged,
-    // at the offset the layout fixes them at (field 2, straight after
-    // `lpUtf8(content)`; the content is 14 bytes so its VLQ length prefix is a
-    // single byte).
-    const bytes = postPowPreimage(full);
-    const authorAt = 1 + Buffer.byteLength(full.content, 'utf8');
-    expect(Buffer.from(bytes.subarray(authorAt, authorAt + 32))).toEqual(Buffer.from(full.author));
-
-    expect(verifyPostFieldDomains(short).valid).toBe(false);
-    expect(verifyPostFieldDomains(full).valid).toBe(true);
-  });
-
-  // -------------------------------------------------------------------------
-  // parentRefs: 64 LOWERCASE hex
-  // -------------------------------------------------------------------------
-
-  it('rejects an uppercase-hex parentRef — hex→bytes must stay injective', () => {
-    // 'AB…' and 'ab…' decode to the same 32 bytes, so accepting both would let
-    // two distinct in-memory posts share one preimage. That is the malleability
-    // the M-1 encoding exists to close, arriving through the codec boundary —
-    // and under `b32` the upper spelling has no encoding at all, so the
-    // collision is removed rather than merely rejected. The domain check is
-    // what keeps that unencodable state from ever reaching the writer.
-    const lower = 'ab'.repeat(32);
-    const upper = lower.toUpperCase();
-    expect(Buffer.from(upper, 'hex').equals(Buffer.from(lower, 'hex'))).toBe(true);
-
-    // Lowercase is in domain, so it goes through the honest builder and is
-    // signable — the control that makes the rejection below about the case.
-    const good = signedPost({ parentRefs: [lower] });
-    expect(verifyPostFieldDomains(good)).toEqual({ valid: true });
-    expect(signatureIsGenuine(good)).toBe(true);
-
-    const { post } = signedThenPoisoned({ parentRefs: [upper] });
-    expect(verifyPostFieldDomains(post)).toEqual({
-      valid: false,
-      error: 'Post parentRef must be 64 lowercase hex characters',
-    });
-    // 64 characters, and still refused — so it is the alphabet, not the width.
-    expect(() => postPowPreimage(post)).toThrow(
-      'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
-    );
-  });
-
-  // The third column is the writer's own message, which carries the *character
-  // count* it saw. That is what separates the width cases from the alphabet
-  // cases here: `verifyPostFieldDomains` gives all six the same label, so
-  // without it a case could silently start failing for the wrong reason —
-  // '65 hex chars' passing because the ref went missing, say — and nothing
-  // would show.
   it.each([
     ['empty', '', '0 chars'],
     ['63 hex chars', 'a'.repeat(63), '63 chars'],
@@ -2739,7 +2327,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(() => postPowPreimage(post)).toThrow(
+    expect(() => postFieldBytes(post)).toThrow(
       `writeHexNOrThrow: expected 64 lowercase hex chars, got ${seenByWriter}`,
     );
   });
@@ -2758,7 +2346,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(() => postPowPreimage(post)).toThrow(
+    expect(() => postFieldBytes(post)).toThrow(
       'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
     );
 
@@ -2776,14 +2364,15 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   it('accepts a well-formed post: 32/32 bytes and real computePostId refs', () => {
     // Every honest parentRef is a `computePostId` output, i.e. the hex string
     // `.toString('hex')` produces — lowercase, 64 chars, by construction.
-    const parent = signedPost({ content: 'parent' });
-    const parentId = computePostId(parent);
+    // A parent's id comes from the transaction that created it, so the honest
+    // ref is a `computePostId(txId, 0)` output — still lowercase 64-hex by
+    // construction, which is the property this pins.
+    const parentId = computePostId(computeTxId(postTx(signedPost({ content: 'parent' }))), 0);
     expect(parentId).toMatch(/^[0-9a-f]{64}$/);
 
     const child = signedPost({ content: 'child', parentRefs: [parentId] });
     expect(verifyPostFieldDomains(child)).toEqual({ valid: true });
-    expect(verifyPostSignature(child, kp.publicKey)).toBe(true);
-    expect(verifySubBlockStructure(subBlockOf(child))).toEqual({ valid: true });
+    expect(verifyTxStructure(postTx(child))).toEqual({ valid: true });
   });
 
   it('accepts the full MAX_PARENT_REFS-wide honest case', () => {
@@ -2799,14 +2388,14 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     // three checks at the bound, plus a tripwire that self-adjusts if the bound
     // moves up.
     const refs = Array.from({ length: MAX_PARENT_REFS }, (_, i) =>
-      computePostId(signedPost({ content: `parent ${i}` })),
+      computePostId(computeTxId(postTx(signedPost({ content: `parent ${i}` }))), 0),
     );
     expect(refs).toHaveLength(MAX_PARENT_REFS);
     expect(new Set(refs).size).toBe(MAX_PARENT_REFS);
     const post = signedPost({ parentRefs: refs });
     expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
     expect(verifyPostFieldDomains(post)).toEqual({ valid: true });
-    expect(verifyPostSignature(post, kp.publicKey)).toBe(true);
+    expect(verifyTxStructure(postTx(post))).toEqual({ valid: true });
   });
 
   // -------------------------------------------------------------------------
@@ -2825,249 +2414,28 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     }
   });
 
-  it('verifySubBlockStructure stays total now that it reaches into the post', () => {
+  it('verifyTxStructure stays total now that it reaches into the post', () => {
     for (const bad of MALFORMED) {
-      expect(() => verifySubBlockStructure({ ...subBlockOf(signedPost()), post: bad } as unknown as SubBlock)).not.toThrow();
+      expect(() => verifyTxStructure(postTx(bad as unknown as Post))).not.toThrow();
+      // ⚠ `undefined` is the ABSENCE case and must stay valid — presence is
+      // `!== undefined`, matching the `computeTxId` tail rule, so a transaction
+      // with no post is an ordinary transaction and not a malformed one. Every
+      // other malformed value is a present post and is rejected.
+      const expected = bad === undefined;
+      expect(verifyTxStructure(postTx(bad as unknown as Post)).valid).toBe(expected);
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// The three SubBlock domain pins
+// Reserved, never to be reused: the `verifySubBlockStructure` teeth suite.
 //
-// `SUB_BLOCK` is `b32(subBlockId) ‖ postBytes ‖ b32(producerId) ‖
-// vlqU(protocolVersion)`. Each field around the embedded post carries its own
-// pin, and the two failure modes are different, so both are demonstrated below
-// — a test that only chases panics can see one of them:
-//
-//   - `b32` is fixed-width, so it has no unreachable sentinel and the writer
-//     THROWS.
-//   - `vlqU` is total by sentinel, so it does not throw — it COLLIDES, mapping
-//     the whole out-of-domain set onto one encoding, and onto bytes our own
-//     `readVlqU` refuses.
-//
-// Neither is reachable from an *arriving gossip message*: `decodeSubBlock`
-// establishes all three domains before `verifySubBlockStructure` sees the
-// object — `readHexN` yields lowercase hex, `readBytesN(32)` yields 32 bytes,
-// and `readVlqU` throws past `MAX_SAFE_INTEGER`. The pins are the stated
-// rejection for every path that builds a `SubBlock` some other way — including
-// `net`'s serve path, where `encodeServableSubBlock` runs this function over a
-// store read and declines to serve rather than reaching `encodeSubBlock`.
-// ---------------------------------------------------------------------------
-
-describe('the SubBlock domain pins have teeth (spec §2.5)', () => {
-  const kp = generateKeyPair();
-  const priv = createPrivateKey({
-    key: Buffer.from(kp.secretKey),
-    format: 'der',
-    type: 'pkcs8',
-  });
-
-  const signedPost = (): Post => {
-    const post: Post = {
-      content: 'pin the sub-block',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32).fill(9),
-      powNonce: 0,
-      protocolVersion: PROTOCOL_VERSION,
-      timestamp: 1_700_000_000_000,
-      signature: new Uint8Array(64),
-    };
-    post.signature = new Uint8Array(sign(null, signingHash(post), priv));
-    return post;
-  };
-
-  const POST = signedPost();
-
-  /** In domain in all four fields, so every rejection below is about the poison. */
-  const goodSubBlock = (): SubBlock => ({
-    subBlockId: computePostId(POST),
-    post: POST,
-    producerId: kp.publicKey,
-    protocolVersion: PROTOCOL_VERSION,
-  });
-
-  const poison = (over: Record<string, unknown>): SubBlock =>
-    ({ ...goodSubBlock(), ...over }) as unknown as SubBlock;
-
-  const hexOf = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
-
-  /** The truthiness test the two `b32` rows carried, run on the poison itself. */
-  const wasAccepted = (sb: SubBlock, field: 'subBlockId' | 'producerId'): boolean =>
-    Boolean((sb as unknown as Record<string, unknown>)[field]);
-
-  it('the honest sub-block is accepted, encodes, and round-trips', () => {
-    const sb = goodSubBlock();
-    expect(sb.subBlockId).toMatch(/^[0-9a-f]{64}$/);
-    expect(sb.producerId).toBeInstanceOf(Uint8Array);
-    expect(sb.producerId.length).toBe(32);
-    expect(verifySubBlockStructure(sb)).toEqual({ valid: true });
-    expect(decodeSubBlock(encodeSubBlock(sb))).toEqual(sb);
-  });
-
-  // -------------------------------------------------------------------------
-  // subBlockId — `writeHexNOrThrow(…, 32)`
-  // -------------------------------------------------------------------------
-
-  describe('subBlockId: 64 lowercase hex', () => {
-    const OUT_OF_DOMAIN: unknown[] = [
-      'x',                            // the contract's own example
-      '',                             // falsy, so the old check caught this one
-      'z'.repeat(64),                 // right width, wrong alphabet
-      'ab'.repeat(31),                // 62 characters
-      'ab'.repeat(33),                // 66 — `stateRoot`'s width, not this one
-      1,
-      new Uint8Array(32).fill(7),     // 32 bytes, but this row is hex
-      { length: 64 },
-    ];
-
-    it('MUTATION: without the pin each of these reaches the writer, which throws', () => {
-      for (const v of OUT_OF_DOMAIN) {
-        expect(() => encodeSubBlock(poison({ subBlockId: v }))).toThrow(
-          'writeHexNOrThrow: expected 64 lowercase hex chars',
-        );
-      }
-    });
-
-    it('the pin refuses every one of them, and all but the empty string were accepted before', () => {
-      for (const v of OUT_OF_DOMAIN) {
-        const sb = poison({ subBlockId: v });
-        expect(wasAccepted(sb, 'subBlockId')).toBe(v !== '');
-        expect(verifySubBlockStructure(sb)).toEqual({
-          valid: false,
-          error: 'Sub-block subBlockId must be 64 lowercase hex characters',
-        });
-      }
-    });
-
-    it('uppercase hex is refused, and that is malleability rather than width', () => {
-      // `'AB…'` and `'ab…'` name the same 32 bytes, so admitting both would make
-      // the hex→bytes conversion non-injective at the codec boundary — the M-1
-      // class, arriving from the codec side. The honest twin differs only in
-      // case, which is what makes this a rule about the alphabet.
-      const lower = computePostId(POST);
-      const upper = lower.toUpperCase();
-      expect(upper).toHaveLength(64);
-      expect(upper.toLowerCase()).toBe(lower);
-      expect(verifySubBlockStructure(poison({ subBlockId: lower }))).toEqual({ valid: true });
-      expect(verifySubBlockStructure(poison({ subBlockId: upper }))).toEqual({
-        valid: false,
-        error: 'Sub-block subBlockId must be 64 lowercase hex characters',
-      });
-      expect(() => encodeSubBlock(poison({ subBlockId: upper }))).toThrow(
-        'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
-      );
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // producerId — `writeBytesNOrThrow(…, 32)`
-  // -------------------------------------------------------------------------
-
-  describe('producerId: exactly 32 bytes', () => {
-    const OUT_OF_DOMAIN: unknown[] = [
-      'user1',                                    // what this test tree carried until T2b
-      Buffer.alloc(32).toString('hex'),           // 64 characters, zero bytes
-      new Uint8Array(0),
-      new Uint8Array(31).fill(7),
-      new Uint8Array(33).fill(7),
-      new Uint32Array(8),                         // 32 bytes of memory, 8 elements
-      new ArrayBuffer(32),                        // a buffer, not a view
-      { length: 32 },
-      Array.from({ length: 32 }, () => 0),
-    ];
-
-    it('MUTATION: without the pin each of these reaches the writer, which throws', () => {
-      for (const v of OUT_OF_DOMAIN) {
-        expect(() => encodeSubBlock(poison({ producerId: v }))).toThrow(
-          'writeBytesNOrThrow: expected 32 bytes',
-        );
-      }
-    });
-
-    it('the pin refuses every one of them, and every one was truthy', () => {
-      for (const v of OUT_OF_DOMAIN) {
-        const sb = poison({ producerId: v });
-        expect(wasAccepted(sb, 'producerId')).toBe(true);
-        expect(verifySubBlockStructure(sb)).toEqual({
-          valid: false,
-          error: 'Sub-block producerId must be exactly 32 bytes',
-        });
-      }
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // protocolVersion — `writeVlqU`, the row that collides instead of throwing
-  // -------------------------------------------------------------------------
-
-  describe('protocolVersion: isU64Safe', () => {
-    const OUT_OF_DOMAIN: Array<[string, number]> = [
-      ['NaN', NaN],
-      ['-1', -1],
-      ['1.5', 1.5],
-      ['2^60', 2 ** 60],
-    ];
-
-    it('MUTATION: without the pin all four encode — to ONE encoding, which our own reader refuses', () => {
-      const encodings = OUT_OF_DOMAIN.map(([, v]) =>
-        hexOf(encodeSubBlock(poison({ protocolVersion: v }))),
-      );
-      expect(new Set(encodings).size).toBe(1);
-      expect(encodings[0]).not.toBe(hexOf(encodeSubBlock(goodSubBlock())));
-      // A genuine collision and not the encoder ignoring the field: two
-      // in-domain versions still produce two encodings.
-      expect(hexOf(encodeSubBlock(poison({ protocolVersion: 1 }))))
-        .not.toBe(hexOf(encodeSubBlock(poison({ protocolVersion: 2 }))));
-      // The sentinel overflows `readVlqU`, so the bytes we just wrote are bytes
-      // we cannot read back — the same shape as the `utxoTxs` and `isTreasury`
-      // rows closed in #32.
-      for (const [, v] of OUT_OF_DOMAIN) {
-        expect(() => decodeSubBlock(encodeSubBlock(poison({ protocolVersion: v })))).toThrow();
-      }
-    });
-
-    it('the pin refuses all four, and `typeof === \'number\'` accepted all four', () => {
-      for (const [, v] of OUT_OF_DOMAIN) {
-        expect(typeof v).toBe('number');
-        expect(verifySubBlockStructure(poison({ protocolVersion: v }))).toEqual({
-          valid: false,
-          error: 'Sub-block protocolVersion must be a non-negative safe integer',
-        });
-      }
-    });
-
-    it('is a domain pin and not a version check — 0 and 2 are accepted here', () => {
-      // `verifyProtocolVersion` is the membership test and it is a separate
-      // function, run separately on the relay path by `net`'s
-      // `runStage1SubBlock`. Pinning membership here would restate that rule.
-      for (const v of [0, 2, Number.MAX_SAFE_INTEGER]) {
-        expect(verifySubBlockStructure(poison({ protocolVersion: v }))).toEqual({ valid: true });
-        expect(verifyProtocolVersion(v)).toBe(false);
-      }
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Totality (M-5) — the pins are checks, not new panics
-  // -------------------------------------------------------------------------
-
-  it('stays total on every malformed value in all three fields', () => {
-    for (const bad of MALFORMED) {
-      for (const field of ['subBlockId', 'producerId', 'protocolVersion']) {
-        expect(() => verifySubBlockStructure(poison({ [field]: bad }))).not.toThrow();
-      }
-      // A verdict as well as a non-throw for the two `b32` rows, which have no
-      // in-domain member in this list. `protocolVersion` is deliberately not
-      // asserted here: `0` is in the list and is a perfectly encodable version,
-      // and this function is the domain check, not the membership check.
-      expect(verifySubBlockStructure(poison({ subBlockId: bad })).valid).toBe(false);
-      expect(verifySubBlockStructure(poison({ producerId: bad })).valid).toBe(false);
-    }
-  });
-});
-
+// Its three domain pins — `subBlockId` hex-32, `protocolVersion` isU64Safe,
+// `producerId` 32 bytes — described fields that cease to exist. A transaction
+// has a `TxId`, its own `protocolVersion`, and a signer rather than a producer.
+// The part of that suite with a successor is the POST-domain leg, and it moved
+// to `verifyTxStructure` above, where the same `verifyPostFieldDomains` runs in
+// front of the same encoder.
 // ---------------------------------------------------------------------------
 // The header encoders establish their own domain
 //
@@ -3100,7 +2468,6 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     protocolVersion: 1,
     height: 42,
     prevBlockHash: '11'.repeat(32),
-    subBlockRoot: '22'.repeat(32),
     utxoTxRoot: '33'.repeat(32),
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: kp.publicKey,
@@ -3159,7 +2526,6 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     writeVlqU(w, h.protocolVersion);
     writeVlqU(w, h.height);
     hexOrFiller(h.prevBlockHash, 32);
-    hexOrFiller(h.subBlockRoot, 32);
     hexOrFiller(h.utxoTxRoot, 32);
     hexOrFiller(h.stateRoot, 33);
     if (h.validatorId instanceof Uint8Array && h.validatorId.length === 32) {
@@ -3240,8 +2606,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
   const blockOf = (h: BlockHeader, sig: Uint8Array): OrderingBlock => ({
     header: h,
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+    utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
     validatorSignature: sig,
   });
 
@@ -3298,7 +2663,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   ];
 
   const NUMERIC_FIELDS = ['protocolVersion', 'height', 'powNonce', 'powTargetBits', 'createdAt'] as const;
-  const HEX32_FIELDS = ['prevBlockHash', 'subBlockRoot', 'utxoTxRoot'] as const;
+  const HEX32_FIELDS = ['prevBlockHash', 'utxoTxRoot'] as const;
 
   for (const field of NUMERIC_FIELDS) {
     for (const [name, bad] of BAD_NUMBERS) {
@@ -3349,7 +2714,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     }
     reasons.add(verifyHeaderFieldDomains(header({ stateRoot: 'nope' })).error!);
     reasons.add(verifyHeaderFieldDomains(header({ validatorId: 'nope' as unknown as Uint8Array })).error!);
-    expect(reasons.size).toBe(10);
+    // NINE, not ten — `subBlockRoot` is gone from the header.
+    expect(reasons.size).toBe(9);
   });
 
   // -------------------------------------------------------------------------
@@ -3578,7 +2944,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
       // `HEADER_DOMAIN`, so a poison fails both or neither.
       const poisons: Partial<BlockHeader>[] = [
         { prevBlockHash: 'zz'.repeat(32) },
-        { subBlockRoot: 'AB'.repeat(32) },
+        { utxoTxRoot: 'AB'.repeat(32) },
         { utxoTxRoot: '' },
         { stateRoot: '00'.repeat(32) },
         { validatorId: new Uint8Array(31) },
@@ -3623,7 +2989,6 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
         typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= 65536,
       createdAt: (v) => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0,
       prevBlockHash: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
-      subBlockRoot: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
       utxoTxRoot: (v) => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v),
       stateRoot: (v) => typeof v === 'string' && /^[0-9a-f]{66}$/.test(v),
       validatorId: (v) => v instanceof Uint8Array && v.length === 32,

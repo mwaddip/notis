@@ -22,10 +22,11 @@ import {
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
 } from '@dagsocial/types';
-import type { AnyBox, KarmaBox, CreditBox, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, CreditBox, Post, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 import {
   fixtureProvenance,
+  makePost,
   makeTestIdentity,
   seedAsOneTx,
   seedProvenance,
@@ -116,12 +117,16 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
     return box;
   }
 
-  function signedTx(inputs: string[], outputs: unknown[]): UtxoTransaction {
+  // `post` rides here rather than at the call sites because a `PostLockBox`
+  // output without it fails the engine's post biconditional (NODE_INTERFACE →
+  // Post transactions).
+  function signedTx(inputs: string[], outputs: unknown[], post?: Post): UtxoTransaction {
     const tx: UtxoTransaction = {
       inputs,
       outputs: outputs as UtxoTransaction['outputs'],
       signatures: {},
       protocolVersion: 1,
+      ...(post ? { post } : {}),
     };
     const hash = Buffer.from(computeTxId(tx), 'hex');
     tx.signatures[Buffer.from(ownerPubKey).toString('hex')] = new Uint8Array(
@@ -157,7 +162,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'owner_signature',
     };
     const r = validateTx(
@@ -182,7 +186,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
       note: 'x',
     };
@@ -203,10 +206,13 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
     };
-    const tx = signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lock]);
+    const tx = signedTx(
+      [karma.id!],
+      [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
+      makePost(ownerPubKey, 'honest lock payload'),
+    );
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
@@ -288,7 +294,6 @@ describe('guard-shape pin: id integrity of accepted outputs', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
     };
     const tx = signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lyingLock]);

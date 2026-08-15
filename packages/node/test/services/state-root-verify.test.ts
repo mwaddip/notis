@@ -47,7 +47,7 @@ async function importAvl() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };
 }

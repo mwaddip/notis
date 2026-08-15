@@ -1,6 +1,5 @@
 import { getDb } from './db.js';
-import { computePostId } from '@dagsocial/types';
-import type { Post, Stump } from '@dagsocial/types';
+import type { Post, PostId, Stump } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -11,11 +10,8 @@ interface PostRow {
   content: string;
   author: Buffer;             // 32-byte Ed25519 public key
   parent_refs: string;        // JSON array
-  challenge: Buffer;
-  pow_nonce: number;
   protocol_version: number;
   timestamp: number;
-  signature: Buffer;
   raw_cbor: Buffer;
   status: string;
   block_height: number | null;
@@ -54,8 +50,14 @@ export type PostStatus = 'pending' | 'confirmed' | 'pruned';
  *
  * Required rather than optional, so a caller that has no status fails to
  * compile instead of reporting one it never had.
+ *
+ * ⛔ **`id` is carried, not derived.** A post's id comes from the transaction
+ * that created it (`computePostId(txId, index)` takes no `Post`), so the stored
+ * row is the only party that knows it. A reader that tried to recompute it from
+ * the fields would be reaching for a function that cannot exist.
  */
 export interface StoredPost extends Post {
+  id: PostId;
   status: PostStatus;
 }
 
@@ -65,14 +67,12 @@ export interface StoredPost extends Post {
 
 function rowToPost(row: PostRow): StoredPost {
   return {
+    id: row.id,
     content: row.content,
     author: new Uint8Array(row.author),
     parentRefs: JSON.parse(row.parent_refs) as string[],
-    challenge: new Uint8Array(row.challenge),
-    powNonce: row.pow_nonce,
     protocolVersion: row.protocol_version,
     timestamp: row.timestamp,
-    signature: new Uint8Array(row.signature),
     // The one narrowing cast on this path — the column is TEXT, and the
     // schema's three-value domain is what `PostStatus` states. Same shape as
     // `rowToStump`'s `trigger`.
@@ -97,82 +97,41 @@ function rowToStump(row: StumpRow): Stump {
 // ---------------------------------------------------------------------------
 
 /**
- * Insert a new post into dag_posts with status='pending', and insert a row
- * into dag_parent_refs for each parentId in post.parentRefs.
+ * Insert a new post into dag_posts with status='pending', and a row into
+ * dag_parent_refs for each parentId in post.parentRefs.
  *
- * If a placeholder row already exists for this post ID (created by
- * insertPostPlaceholder during block application), the placeholder is
- * atomically upgraded with the real content instead of inserting.
+ * ⛔ **`postId` is a PARAMETER and is not derivable from `post`.** A post's id
+ * comes from the transaction that created it — `computePostId(txId, index)` takes
+ * no `Post` (TYPES_INTERFACE → Hashing functions) — so the caller, which holds
+ * that transaction, is the only party that can name the row.
  *
- * All writes are wrapped in a single transaction so a crash leaves no
- * orphaned rows or half-upgraded placeholders.
+ * All writes are wrapped in a single transaction so a crash leaves no orphaned
+ * rows.
  */
-export function insertPost(post: Post, rawCbor: Uint8Array): void {
+export function insertPost(postId: PostId, post: Post, rawCbor: Uint8Array): void {
   const db = getDb();
-  const postId = computePostId(post);
 
   db.transaction(() => {
-    // Check if a placeholder exists (status='pending' with empty content)
-    const existing = db.prepare(
-      "SELECT status, content FROM dag_posts WHERE id = ?",
-    ).get(postId) as { status: string; content: string } | undefined;
+    db.prepare(
+      `INSERT INTO dag_posts
+         (id, content, author, parent_refs,
+          protocol_version, timestamp, raw_cbor, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+    ).run(
+      postId,
+      post.content,
+      Buffer.from(post.author),
+      JSON.stringify(post.parentRefs),
+      post.protocolVersion,
+      post.timestamp,
+      Buffer.from(rawCbor),
+    );
 
-    if (existing && existing.content === '') {
-      // Upgrade placeholder to real content. parent_refs and dag_parent_refs
-      // were already populated by insertPostPlaceholder.
-      // Preserve confirmed status if block already applied before content arrived.
-      const newStatus = existing.status === 'confirmed' ? 'confirmed' : 'pending';
-      db.prepare(
-        `UPDATE dag_posts SET
-           content = ?,
-           author = ?,
-           challenge = ?,
-           pow_nonce = ?,
-           protocol_version = ?,
-           timestamp = ?,
-           signature = ?,
-           raw_cbor = ?,
-           status = ?
-         WHERE id = ?`,
-      ).run(
-        post.content,
-        Buffer.from(post.author),
-        Buffer.from(post.challenge),
-        post.powNonce,
-        post.protocolVersion,
-        post.timestamp,
-        Buffer.from(post.signature),
-        Buffer.from(rawCbor),
-        newStatus,
-        postId,
-      );
-    } else {
-      // Normal insert — post not yet in DB
-      db.prepare(
-        `INSERT INTO dag_posts
-           (id, content, author, parent_refs, challenge, pow_nonce,
-            protocol_version, timestamp, signature, raw_cbor, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      ).run(
-        postId,
-        post.content,
-        Buffer.from(post.author),
-        JSON.stringify(post.parentRefs),
-        Buffer.from(post.challenge),
-        post.powNonce,
-        post.protocolVersion,
-        post.timestamp,
-        Buffer.from(post.signature),
-        Buffer.from(rawCbor),
-      );
-
-      // Insert parent refs
-      const insertRef = db.prepare(
-        'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
-      );
-      for (const parentId of post.parentRefs) {
-        insertRef.run(postId, parentId);
-      }
+    const insertRef = db.prepare(
+      'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
+    );
+    for (const parentId of post.parentRefs) {
+      insertRef.run(postId, parentId);
     }
   })();
 }
@@ -355,35 +314,11 @@ export function getParentRefs(postId: string): string[] {
   return rows.map((r) => r.parent_id);
 }
 
-/**
- * Insert a placeholder post row for a post whose content hasn't arrived yet.
- * Used during block application when a block confirms a sub-block whose post
- * we don't have locally. The placeholder fields (empty content, zero/blank
- * buffers) are filled in later when the actual post content arrives via gossip.
- */
-export function insertPostPlaceholder(postId: string, parentRefs: string[]): void {
-  const db = getDb();
-  db.prepare(
-    `INSERT OR IGNORE INTO dag_posts
-     (id, content, author, parent_refs, challenge, pow_nonce,
-      protocol_version, timestamp, signature, raw_cbor, status)
-     VALUES (?, '', ?, ?, ?, 0, 1, 0, ?, ?, 'pending')`,
-  ).run(
-    postId,
-    Buffer.alloc(32),                 // author placeholder
-    JSON.stringify(parentRefs),
-    Buffer.alloc(32),                 // challenge placeholder
-    Buffer.alloc(64),                 // signature placeholder
-    Buffer.from([]),                  // raw_cbor empty
-  );
-  // Insert parent refs for DAG walking
-  const insertRef = db.prepare(
-    'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
-  );
-  for (const parentId of parentRefs) {
-    insertRef.run(postId, parentId);
-  }
-}
+// Reserved, never to be reused: `insertPostPlaceholder`. A placeholder existed
+// because a block committed a post's TOPOLOGY (`SubBlockEntry`) while its content
+// arrived separately. A post is now a transaction, so a node holding the block
+// body holds the content — there is no state in which a confirmed post has no
+// content, and nothing left for a content sweep to resolve.
 
 /**
  * Return all descendant posts of the given root post, using a recursive CTE

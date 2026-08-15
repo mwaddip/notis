@@ -5,8 +5,6 @@ export {
   MAX_PARENT_REFS,
   MAX_GENESIS_PROOF_PAYLOAD_BYTES,
   AVL_KEY_LENGTH,
-  POST_POW_TARGET_BITS,
-  CHALLENGE_WINDOW_BLOCKS,
   KARMA_POSTING_MINIMUM,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
@@ -65,17 +63,19 @@ export { base58Encode, base58Decode } from './base58.js';
 export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 
 // Posts
-// `powNonceBytes` is exported for the reason `subBlockEntryBytes` is: another
-// package builds the same preimage and must not hold a second statement of its
-// layout. `@dagsocial/validation`'s `verifyPoW` appends this tail to
-// `postPowPreimage` — see TYPES_INTERFACE → Hashing functions.
-export { signingHash, computePostId, verifyPostId, getPostDiscriminator, buildProfileContent, postPowPreimage, powNonceBytes } from './post.js';
+//
+// `postFieldBytes` is exported for the reason `coinbaseOutputBytes` is: it is a
+// preimage layout other packages build against, and a second statement of it is
+// free to drift. Reserved, never to be reused: `signingHash`, `postPowPreimage`,
+// `powNonceBytes`, `verifyPostId` — the first three existed only for post PoW,
+// and the last cannot exist once a post's id is not a function of the post.
+export { postFieldBytes, computePostId, getPostDiscriminator, buildProfileContent } from './post.js';
 export type { Post, PostId } from './post.js';
 
 // UTXO
 //
 // `BOX_TYPE_TAGS` and `BOX_GUARDS` are the two box-type mappings, exported for
-// the reason `powNonceBytes` above is: other packages need them and a second
+// the reason `postFieldBytes` above is: other packages need them and a second
 // statement of either is free to drift. `BOX_TYPE_TAGS` is the numbering inside
 // every box's id preimage, which the demo UI mirrors and cannot import;
 // `BOX_GUARDS` is the guard each type fixes, which is *not* in the bytes and so
@@ -125,24 +125,24 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger 
 
 // Blocks
 //
-// `subBlockEntryBytes` and `coinbaseOutputBytes` are the two block elements
-// whose wire bytes are also Merkle leaf preimages (`'subblock'` under
-// `subBlockRoot`, `'coinbase'` under `utxoTxRoot`). They are exported for the
-// same reason `serializePruneEntry` is: node builds those leaves and must not
-// hold a second statement of either layout. The `leafHash` domain tag is the
-// caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
+// `coinbaseOutputBytes` is a block element whose wire bytes are also a Merkle
+// leaf preimage (`'coinbase'` under `utxoTxRoot`). It is exported for the same
+// reason `serializePruneEntry` is: node builds those leaves and must not hold a
+// second statement of the layout. The `leafHash` domain tag is the caller's —
+// see TYPES_INTERFACE → Layout — Merkle leaf preimages.
+//
+// Reserved, never to be reused: the struct names `SubBlock`, `SubBlockTree` and
+// `SubBlockEntry`, the functions `subBlockEntryBytes` and `subBlockFromPost`,
+// the header field `subBlockRoot`, the body field `subBlockRefs`, and the leaf
+// domain `'subblock'` — a leaf domain sits inside a consensus preimage, so reuse
+// would make two different trees share a byte string.
 export {
   EMPTY_STATE_ROOT,
   coinbaseOutputBytes,
-  subBlockEntryBytes,
-  subBlockFromPost,
 } from './block.js';
 export type {
-  SubBlock,
-  SubBlockEntry,
   OrderingBlock,
   BlockHeader,
-  SubBlockTree,
   UtxoTxTree,
   CoinbaseOutput,
 } from './block.js';
@@ -215,12 +215,8 @@ export {
   decodePost,
   encodeStump,
   decodeStump,
-  encodeSubBlock,
-  decodeSubBlock,
   encodeHeader,
   decodeHeader,
-  encodeSubBlockTree,
-  decodeSubBlockTree,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
   encodeOrderingBlock,

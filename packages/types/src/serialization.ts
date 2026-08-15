@@ -33,24 +33,19 @@
  * ## What is `cbor-x`, and why that is not an oversight
  *
  * `encodeStump` and `encodeTx`. Neither is reachable from a block struct —
- * `SubBlockTree` commits `PruneEntry`, not `Stump`, and `UtxoTxTree` carries
- * transactions as `arr(utxoTxs, lp)`, opaque length-prefixed bytes. So neither
- * is a consensus preimage: transaction identity comes from `computeTxId`, which
- * is positional, and no committed root covers the stump codec.
+ * `UtxoTxTree` commits `PruneEntry`, not `Stump`, and carries transactions as
+ * `arr(utxoTxs, lp)`, opaque length-prefixed bytes. So neither is a consensus
+ * preimage: transaction identity comes from `computeTxId`, which is positional,
+ * and no committed root covers the stump codec.
  *
  * ⚠ **`TYPES_INTERFACE` → Layout — Stump specifies a positional form for
  * `Stump` that this file does not implement**, and its Serialization section
  * records the same gap for `encodeTx`. Nothing here closes either.
  *
- * ## `encodePost` moved, and the contract is why
- *
- * `SubBlock`'s layout row is `b32(subBlockId) ‖ postBytes ‖ b32(producerId) ‖
- * vlqU(protocolVersion)` — `postBytes` with no `lp` around it, so the post
- * encoding has to be self-delimiting and positional or the reader cannot find
- * where it ends. `TYPES_INTERFACE` → Layout — Post already defines exactly that
- * sequence ("Wire codec `encodePost` = fields 1–6 ‖ `vlqU(powNonce)` ‖
- * `b64(signature)`"), so the post codec is not an addition to this phase's
- * scope — it is the row the `SubBlock` line names.
+ * ⚠ **`encodeTx` is the codec a post's payload crosses the wire under.** A post
+ * rides `UtxoTransaction.post`, and `utxoTxs` carries CBOR — so the positional
+ * `POST` codec below is the *id-preimage* statement of a post's layout, and
+ * cbor-x is what a block body actually transports.
  */
 
 import { encode, decode } from 'cbor-x';
@@ -79,12 +74,8 @@ import type { UtxoTransaction } from './utxo.js';
 import { TRIGGER, serializePruneEntry, type PruneEntry, type Stump } from './stump.js';
 import {
   coinbaseOutputBytes,
-  subBlockEntryBytes,
-  type SubBlock,
-  type SubBlockEntry,
   type BlockHeader,
   type CoinbaseOutput,
-  type SubBlockTree,
   type UtxoTxTree,
   type OrderingBlock,
 } from './block.js';
@@ -94,33 +85,27 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Fields 1–6 (the `postFieldBytes` sequence) ‖ `vlqU(powNonce)` ‖
- * `b64(signature)`.
+ * Fields 1–5 — **exactly the `postFieldBytes` sequence, with nothing after it.**
  *
- * The first six fields are deliberately the id preimage's, in the id preimage's
- * order, so `encodePost` is `postFieldBytes` with a two-field tail rather than a
- * second encoding of a post. The two that follow are the two the preimage
- * excludes: the miner varies `powNonce`, and `signature` is never in any
- * preimage.
+ * The wire form and the id-preimage form are now the same bytes. A post has no
+ * signature of its own (the creating transaction is signed over its `TxId`) and
+ * no nonce to vary, so the two-field tail that used to distinguish them has no
+ * members left. `postFieldBytes` stays the normative statement of the layout in
+ * `post.ts`; this codec exists for the read half.
  *
- * ## Totality — two rows have no domain upstream
+ * ## Totality
  *
- * `content` (`lpUtf8`), `protocolVersion`, `timestamp` and `powNonce` (`vlqU`)
- * are total by sentinel. `author`, `challenge` and every `parentRefs` entry are
- * fixed-width and throw, and their domain is `verifyPostFieldDomains`
- * (`@dagsocial/validation`) — 32 bytes, 32 bytes, 64 lowercase hex.
+ * `content` (`lpUtf8`), `protocolVersion` and `timestamp` (`vlqU`) are total by
+ * sentinel. `author` and every `parentRefs` entry are fixed-width and throw, and
+ * their domain is `verifyPostFieldDomains` (`@dagsocial/validation`) — 32 bytes
+ * and 64 lowercase hex.
  *
- * ⚠ **`signature` and `powNonce` are the exception, and it is not discharged.**
- * `verifyPostFieldDomains` stops after `timestamp`, deliberately: it is the
- * *signable* post's domain, and a post being signed has no signature yet. So
- * `b64(signature)` — a throwing writer — has no width check anywhere in the
- * repo (`verifyPostSignature` pins `isBytes` only, and says outright that a
- * wrong *length* is left to `crypto.verify`), and `powNonce` has none either,
- * so it collides on the sentinel instead. It is the same shape
- * `verifyPostFieldDomains` closes for the signable fields, one struct over, and
- * closing it belongs in `@dagsocial/validation`, upstream of the encoder — the
- * rule TYPES_INTERFACE → Totality states for every throwing writer. **The
- * contract does not yet book this pair as an outstanding obligation.**
+ * ⛔ **Both throwing rows are now reachable from `computeTxId`**, because
+ * `txIdBytes` writes `postFieldBytes` for a post-bearing transaction. The
+ * obligation `verifyPostFieldDomains` discharges therefore extends to every path
+ * that hashes such a transaction — `validateTx` runs it before the id is taken,
+ * and block apply's embedded-tx path is the call site TYPES_INTERFACE → Totality
+ * books for the same reason it books the output fields.
  */
 const POST: StructCodec<Post> = {
   name: 'post',
@@ -128,22 +113,16 @@ const POST: StructCodec<Post> = {
     writeLpUtf8(w, p.content);
     writeBytesNOrThrow(w, p.author, 32);
     writeArr(w, p.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
-    writeBytesNOrThrow(w, p.challenge, 32);
     writeVlqU(w, p.protocolVersion);
     writeVlqU(w, p.timestamp);
-    writeVlqU(w, p.powNonce);
-    writeBytesNOrThrow(w, p.signature, 64);
   },
   read(r) {
     return {
       content: readLpUtf8(r),
       author: readBytesN(r, 32),
       parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
-      challenge: readBytesN(r, 32),
       protocolVersion: readVlqU(r),
       timestamp: readVlqU(r),
-      powNonce: readVlqU(r),
-      signature: readBytesN(r, 64),
     };
   },
 };
@@ -178,17 +157,17 @@ export function decodeStump(bytes: Uint8Array): Stump {
 // ---------------------------------------------------------------------------
 
 /**
- * Ten fields. `protocolVersion` is **first** so it can be read before any
+ * Nine fields. `protocolVersion` is **first** so it can be read before any
  * version-dependent dispatch exists to need it (TYPES_INTERFACE → Layout —
  * Block); there is exactly one
  * version today, and this pins the seam without building the version-keyed rule
  * table, which does not exist. Do not write code here that assumes it does.
  *
- * ⚠ **`validatorId` is `b32` from BYTES; its three table-neighbours are `b32`
+ * ⚠ **`validatorId` is `b32` from BYTES; its two table-neighbours are `b32`
  * from HEX.** `UserId = Uint8Array` (`identity.ts`), so `validatorId` takes
- * `writeBytesNOrThrow` while `prevBlockHash` / `subBlockRoot` / `utxoTxRoot`
- * take `writeHexNOrThrow`, even though the contract's table writes all four as
- * `b32` and its totality note groups them as "`b32` ×4". Reading the row off its
+ * `writeBytesNOrThrow` while `prevBlockHash` / `utxoTxRoot`
+ * take `writeHexNOrThrow`, even though the contract's table writes all three as
+ * `b32` and its totality note groups them. Reading the row off its
  * neighbours rather than off the field's schema type gives a writer that throws
  * on **every** block — the `bond.inviteePublicKey` failure exactly, which is why
  * `TYPES_INTERFACE` → Layout — Boxes requires each writer to be checked against
@@ -198,8 +177,8 @@ export function decodeStump(bytes: Uint8Array): Stump {
  *
  * ## Totality
  *
- * Five throwing rows (`b32` ×4, `b33` ×1) and five `vlqU`, which are total by
- * sentinel and therefore **collide rather than throw**. All ten are pinned by
+ * Four throwing rows (`b32` ×3, `b33` ×1) and five `vlqU`, which are total by
+ * sentinel and therefore **collide rather than throw**. All nine are pinned by
  * `verifyHeaderFieldDomains`, which is the only header domain in the
  * repo and which `blockHash` / `computePowHash` run internally — so the two
  * functions that reach this encoder establish their own precondition rather than
@@ -211,7 +190,6 @@ const HEADER: StructCodec<BlockHeader> = {
     writeVlqU(w, h.protocolVersion);
     writeVlqU(w, h.height);
     writeHexNOrThrow(w, h.prevBlockHash, 32);
-    writeHexNOrThrow(w, h.subBlockRoot, 32);
     writeHexNOrThrow(w, h.utxoTxRoot, 32);
     writeHexNOrThrow(w, h.stateRoot, 33);
     writeBytesNOrThrow(w, h.validatorId, 32);
@@ -224,7 +202,6 @@ const HEADER: StructCodec<BlockHeader> = {
       protocolVersion: readVlqU(r),
       height: readVlqU(r),
       prevBlockHash: readHexN(r, 32),
-      subBlockRoot: readHexN(r, 32),
       utxoTxRoot: readHexN(r, 32),
       stateRoot: readHexN(r, 33),
       validatorId: readBytesN(r, 32),
@@ -244,31 +221,8 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-block tree — arr(subBlockEntries) ‖ arr(pruneEntries)
+// Prune entry — a committed leaf of the one block body
 // ---------------------------------------------------------------------------
-
-/**
- * `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)` — all three hex.
- *
- * **The write half delegates to `subBlockEntryBytes` rather than restating the
- * layout**, for the same reason `writePruneEntry` below does: those
- * bytes are the Merkle leaf preimage committed under `subBlockRoot`, so an
- * entry's wire form and its committed form must be the same bytes. The layout,
- * the writer choice per row (`author` is hex where the header's `validatorId` is
- * bytes) and the domain that makes each throwing writer unreachable all live
- * with the struct, in `block.ts`.
- */
-function writeSubBlockEntry(w: ByteWriter, e: SubBlockEntry): void {
-  w.writeBytes(subBlockEntryBytes(e));
-}
-
-function readSubBlockEntry(r: ByteReader): SubBlockEntry {
-  return {
-    postId: readHexN(r, 32),
-    parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
-    author: readHexN(r, 32),
-  };
-}
 
 /**
  * `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖ `b32(subtreeMerkleRoot)` ‖
@@ -276,8 +230,8 @@ function readSubBlockEntry(r: ByteReader): SubBlockEntry {
  *
  * **The write half delegates to `serializePruneEntry` rather than restating the
  * layout**, and that is the whole point of doing it this way: those bytes are
- * the Merkle leaf preimage committed under `subBlockRoot`, so an entry's wire
- * form and its committed form must be the same bytes. Two statements of one
+ * the `'prune'` Merkle leaf preimage committed under `utxoTxRoot`, so an entry's
+ * wire form and its committed form must be the same bytes. Two statements of one
  * layout is the drift class this format exists to close — the same reason
  * `boxRecordBytes` delegates its content half to `canonicalBoxBytes`.
  *
@@ -299,41 +253,6 @@ function readPruneEntry(r: ByteReader): PruneEntry {
     authorSignature: readBytesN(r, 64),
     trigger: TRIGGER.read(r),
   };
-}
-
-/**
- * Two arrays, and **`subBlockRefs` is not one of them** (TYPES_INTERFACE →
- * Layout — Block).
- *
- * It is absent from the struct, not merely from the committed bytes.
- * `computeSubBlockRoot` builds its leaves from `subBlockEntries` and
- * `pruneEntries` alone, so a `subBlockRefs` field here would be uncommitted:
- * refs naming entirely different post ids would ride an unchanged
- * `subBlockRoot` and an unchanged `blockHash` into mempool eviction and mempool
- * injection. It is also exactly `subBlockEntries.map(e => e.postId)` for any
- * honest block, so consumers derive it — `subBlockIdsOf` in node — and the two
- * JSON routes emit the field, leaving the HTTP response shape unchanged.
- */
-const SUB_BLOCK_TREE: StructCodec<SubBlockTree> = {
-  name: 'subBlockTree',
-  write(w, t) {
-    writeArr(w, t.subBlockEntries, writeSubBlockEntry);
-    writeArr(w, t.pruneEntries, writePruneEntry);
-  },
-  read(r) {
-    return {
-      subBlockEntries: readArr(r, readSubBlockEntry),
-      pruneEntries: readArr(r, readPruneEntry),
-    };
-  },
-};
-
-export function encodeSubBlockTree(t: SubBlockTree): Uint8Array {
-  return encodeStruct(SUB_BLOCK_TREE, t);
-}
-
-export function decodeSubBlockTree(bytes: Uint8Array): SubBlockTree {
-  return decodeStruct(SUB_BLOCK_TREE, bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,27 +284,35 @@ function readCoinbaseOutput(r: ByteReader): CoinbaseOutput {
 }
 
 /**
- * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(coinbaseOutputs)`.
+ * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖
+ * `arr(coinbaseOutputs)`.
+ *
+ * **The block's one committed body.** Field order here is the same order
+ * `computeUtxoTxRoot` lays its leaves in, and that order is normative
+ * (TYPES_INTERFACE → OrderingBlock) — the wire form and the committed form walk
+ * the sections in step rather than each choosing for itself.
  *
  * `utxoTxs` stays opaque: transactions cross as length-prefixed bytes, so this
- * tree does not depend on the transaction codec and `encodeTx` is not forced by
- * this phase. `writeLp` is total — a non-byte-view sentinels its *length prefix*
- * and writes no payload — and `verifyOrderingBlockStructure` checks the array's
- * length alignment but **not its element types**, so that sentinel is reachable
- * on the encode side. Another gate finding; `readLp` rejects it on decode
- * because the sentinel length overflows `readVlqU`.
+ * tree does not depend on the transaction codec. `writeLp` is total — a
+ * non-byte-view sentinels its *length prefix* and writes no payload — and
+ * `verifyOrderingBlockStructure` checks the array's length alignment but **not
+ * its element types**, so that sentinel is reachable on the encode side. Another
+ * gate finding; `readLp` rejects it on decode because the sentinel length
+ * overflows `readVlqU`.
  */
 const UTXO_TX_TREE: StructCodec<UtxoTxTree> = {
   name: 'utxoTxTree',
   write(w, t) {
     writeArr(w, t.utxoTxIds, (ww, id) => writeHexNOrThrow(ww, id, 32));
     writeArr(w, t.utxoTxs, writeLp);
+    writeArr(w, t.pruneEntries, writePruneEntry);
     writeArr(w, t.coinbaseOutputs, writeCoinbaseOutput);
   },
   read(r) {
     return {
       utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
       utxoTxs: readArr(r, readLp),
+      pruneEntries: readArr(r, readPruneEntry),
       coinbaseOutputs: readArr(r, readCoinbaseOutput),
     };
   },
@@ -400,63 +327,11 @@ export function decodeUtxoTxTree(bytes: Uint8Array): UtxoTxTree {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-block
-// ---------------------------------------------------------------------------
-
-/**
- * `b32(subBlockId)` ‖ `postBytes` ‖ `b32(producerId)` ‖ `vlqU(protocolVersion)`.
- *
- * `postBytes` carries no length prefix because it does not need one: every field
- * of `POST` above is either fixed-width, length-prefixed or a VLQ, so the post
- * is self-delimiting and the reader continues straight into `producerId`.
- *
- * ⚠ **`producerId` is bytes, `subBlockId` is hex** — `producerId` is `UserId`
- * (`= post.author`) and `subBlockId` is a `PostId` string. Third instance of the
- * same trap in this file.
- *
- * ⚠ **This is the weakest-gated struct in the phase, and by some distance.**
- * `verifySubBlockStructure` checks `sb.subBlockId` and `sb.producerId` for
- * **truthiness only** — no type, no width, no alphabet — while both feed
- * throwing fixed-width writers, and it checks `protocolVersion` with `typeof
- * === 'number'` only, where `vlqU` needs `isU64Safe` or it collides. Only the
- * embedded post is properly gated, by `verifyPostFieldDomains` (and only as far
- * as `timestamp` — see `POST`). Reported to main; the fix is a
- * `verifySubBlockStructure` tightening in `@dagsocial/validation`, which is
- * outside this phase's seam grant.
- */
-const SUB_BLOCK: StructCodec<SubBlock> = {
-  name: 'subBlock',
-  write(w, sb) {
-    writeHexNOrThrow(w, sb.subBlockId, 32);
-    POST.write(w, sb.post);
-    writeBytesNOrThrow(w, sb.producerId, 32);
-    writeVlqU(w, sb.protocolVersion);
-  },
-  read(r) {
-    return {
-      subBlockId: readHexN(r, 32),
-      post: POST.read(r),
-      producerId: readBytesN(r, 32),
-      protocolVersion: readVlqU(r),
-    };
-  },
-};
-
-export function encodeSubBlock(sb: SubBlock): Uint8Array {
-  return encodeStruct(SUB_BLOCK, sb);
-}
-
-export function decodeSubBlock(bytes: Uint8Array): SubBlock {
-  return decodeStruct(SUB_BLOCK, bytes);
-}
-
-// ---------------------------------------------------------------------------
 // Ordering block — the nested framing
 // ---------------------------------------------------------------------------
 
 /**
- * `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖
- * `b64(validatorSignature)`.
+ * `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`.
  *
  * The length prefixes are `vlqU` — the same primitive as every other count and
  * length in the format, rather than a fourth integer convention living in one
@@ -469,6 +344,9 @@ export function decodeSubBlock(bytes: Uint8Array): SubBlock {
  * exhaustion and the compare over the whole frame, which is what makes the three
  * distinct rejections distinct: a truncated section, a section whose length
  * overruns its parent, and trailing bytes after the signature.
+ *
+ * **Two sections, not three.** A post is a transaction, so the body it used to
+ * ride is gone and `pruneEntries` moved inside `utxoTxTree` (`block.ts`).
  *
  * A nested `CodecError` is a `ReaderError`, so it propagates through the outer
  * `decodeStruct`'s step-1 catch unchanged rather than being re-wrapped as a
@@ -483,14 +361,12 @@ const ORDERING_BLOCK: StructCodec<OrderingBlock> = {
   name: 'orderingBlock',
   write(w, b) {
     writeLp(w, encodeStruct(HEADER, b.header));
-    writeLp(w, encodeStruct(SUB_BLOCK_TREE, b.subBlockTree));
     writeLp(w, encodeStruct(UTXO_TX_TREE, b.utxoTxTree));
     writeBytesNOrThrow(w, b.validatorSignature, 64);
   },
   read(r) {
     return {
       header: decodeStruct(HEADER, readLp(r)),
-      subBlockTree: decodeStruct(SUB_BLOCK_TREE, readLp(r)),
       utxoTxTree: decodeStruct(UTXO_TX_TREE, readLp(r)),
       validatorSignature: readBytesN(r, 64),
     };

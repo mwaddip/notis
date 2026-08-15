@@ -1,53 +1,75 @@
 import { describe, it, expect } from 'vitest';
-import {
-  createPost,
-  PostServiceError,
-  PostValidationError,
-} from '../../src/services/post-service.js';
+import { createPost, PostServiceError } from '../../src/services/post-service.js';
 import type { PostServiceDeps } from '../../src/services/post-service.js';
-import type { StoredPost } from '../../src/store/posts.js';
 import type { Post, UtxoTransaction, AnyBox, KarmaBox } from '@dagsocial/types';
-import { PROTOCOL_VERSION, encodePost, computePostId } from '@dagsocial/types';
+import type { StoredPost } from '../../src/store/posts.js';
+import { PROTOCOL_VERSION, computePostId, computeTxId, encodePost } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
-// Mock deps factory
+// Validate, don't trust — what that means once ids are provenance-derived
 // ---------------------------------------------------------------------------
+//
+// ⛔ **This file's original subject is GONE, and its replacement is the sharper
+// half.** It used to pin `verifyParentHash`: decode the parent's stored bytes,
+// recompute its id, and refuse a mismatch. **That check has no possible
+// implementation now** — a post's id comes from the transaction that created it
+// (`computePostId(txId, index)` takes no `Post`), so the parent's own bytes make
+// no claim that could be checked against the ref naming them.
+//
+// This is not a hole opening. It is the same move Spec G made for boxes: the
+// binding left the content and went to the transaction, where it is **stronger**
+// because the transaction is signed and its inputs cannot be reused. What the
+// service can still check about a parent is **existence**, and what it must
+// still refuse to trust is a client-supplied id — which is now structural rather
+// than a check, because the request has nowhere to put one.
+//
+// The surviving recomputation lives where the binding does: `createPost` derives
+// the post id from `computeTxId`, and block apply checks each declared
+// `utxoTxId` byte-for-byte against `computeTxId(tx)` before anything reads it.
 
 interface MockStore {
-  posts: Map<string, Uint8Array>; // id -> raw CBOR bytes
+  /** Ids the store holds a post for. Presence is all a parent ref can be checked for. */
+  posts: Set<string>;
 }
 
-function mockDeps(
-  store: MockStore,
-  overrides?: Partial<PostServiceDeps>,
-): PostServiceDeps {
+const BOX_1 = '11'.repeat(32);
+const BOX_2 = '22'.repeat(32);
+
+function makeStore(): MockStore {
+  return { posts: new Set() };
+}
+
+function makeStoredParent(id: string): StoredPost {
   return {
-    verifyPost: () => ({ valid: true }),
-    getActiveChallenge: () => ({
-      challenge: new Uint8Array(32).fill(0xcc),
-      expiresAtBlock: 9999,
-      userId: new Uint8Array(32),
-    }),
+    id,
+    content: `stored-parent:${id}`,
+    author: new Uint8Array(32),
+    parentRefs: [],
+    protocolVersion: PROTOCOL_VERSION,
+    timestamp: 0,
+    status: 'confirmed',
+  };
+}
+
+function mockDeps(store: MockStore, overrides?: Partial<PostServiceDeps>): PostServiceDeps {
+  return {
+    verifyPost: (deps, post) => {
+      // The parent-existence leg of the real `verifyPost`, which is the only
+      // parent rule left. Mirrored here rather than stubbed `valid: true`, so
+      // these tests measure the rule rather than the mock.
+      for (const ref of post.parentRefs) {
+        if (!deps.getPost(ref)) return { valid: false, error: `Parent post not found: ${ref}` };
+      }
+      return { valid: true };
+    },
     getKarmaBoxes: () => [{ value: 100n }],
-    // The dep is `(id) => StoredPost | Stump | null`. A `{id, content}` object
-    // is neither — it satisfies no branch of the union. What these tests
-    // actually need is presence, so they get a real `StoredPost` and read its
-    // identity from the store key.
-    getPost: (id: string): StoredPost | null =>
-      store.posts.has(id) ? makeStoredParent(id) : null,
-    getPostRaw: (id: string) => {
-      const raw = store.posts.get(id);
-      return raw ?? null;
-    },
-    encodePost: (post: Post) => {
-      return encodePost(post);
-    },
+    getPost: (id: string) => (store.posts.has(id) ? makeStoredParent(id) : null),
+    encodePost,
     insertPost: () => {},
     getCurrentHeight: () => 100,
-    consumeChallenge: () => {},
-    insertMempoolSubBlock: () => 1,
     insertUtxoTx: () => 1,
-    validateTx: () => ({ valid: true, txId: 'tx-1' }),
+    // The REAL derivation, not a placeholder — see post-service.test.ts.
+    validateTx: (tx: UtxoTransaction) => ({ valid: true, txId: computeTxId(tx) }),
     getBox: () =>
       ({
         boxType: 'karma',
@@ -59,235 +81,104 @@ function mockDeps(
   };
 }
 
-function makeStore(): MockStore {
-  return {
-    posts: new Map(),
-  };
-}
-
-/**
- * A real `StoredPost` standing in for a stored parent. `getPost` is
- * contractually `(id) => StoredPost | Stump | null`, so the mock has to return
- * one of those; the `id` is carried in `content` because a `Post` has no id
- * field — its identity is `computePostId(post)`.
- */
-function makeStoredParent(id: string): StoredPost {
-  return {
-    content: `stored-parent:${id}`,
-    author: new Uint8Array(32),
-    parentRefs: [],
-    challenge: new Uint8Array(32).fill(0xcc),
-    powNonce: 0,
-    protocolVersion: PROTOCOL_VERSION,
-    timestamp: 0,
-    signature: new Uint8Array(64),
-    status: 'confirmed',
-  };
-}
-
 function makePost(overrides?: Partial<Post>): Post {
   return {
     content: 'hello world',
     author: new Uint8Array(32),
     parentRefs: [],
-    challenge: new Uint8Array(32).fill(0xcc),
-    powNonce: 42,
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: Date.now(),
-    signature: new Uint8Array(64),
+    timestamp: 1_700_000_000_000,
     ...overrides,
   };
 }
 
-function makeKarmaLockTx(): UtxoTransaction {
+function makePostTx(post: Post = makePost(), input: string = BOX_1): UtxoTransaction {
   return {
-    inputs: ['box-1'],
+    inputs: [input],
     outputs: [
+      { boxType: 'karma', value: 75n, owner: new Uint8Array(32), guard: 'owner_signature' } as KarmaBox,
       {
-        boxType: 'karma',
-        value: 75n,
-        owner: new Uint8Array(32),
-        guard: 'owner_signature',
-      } as KarmaBox,
-      {
-        boxType: 'post_lock',
-        value: 25n,
-        originalValue: 25n,
-        owner: new Uint8Array(32),
-        targetPostId: '',
-        guard: 'block_apply',
+        boxType: 'post_lock', value: 25n, originalValue: 25n,
+        owner: new Uint8Array(32), guard: 'block_apply',
       } as AnyBox,
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
+    post,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('validate-dont-trust', () => {
-  // -----------------------------------------------------------------------
-  // Parent hash recomputation
-  // -----------------------------------------------------------------------
-
-  it('accepts a post whose parent hash matches stored bytes', () => {
+  it('accepts a post whose parent exists', () => {
     const store = makeStore();
+    const parentId = 'a1'.repeat(32);
+    store.posts.add(parentId);
 
-    // Create a real parent post, encode it as CBOR, compute its canonical ID
-    const parentPost = makePost({ content: 'parent content' });
-    const parentRaw = encodePost(parentPost);
-    const parentId = computePostId(parentPost);
-    store.posts.set(parentId, parentRaw);
-
-    const child = makePost({ parentRefs: [parentId] });
-    const tx = makeKarmaLockTx();
-
-    // Should succeed: decodePost(parentRaw) -> computePostId -> matches parentId
-    const result = createPost(mockDeps(store), child, tx);
+    const result = createPost(mockDeps(store), makePostTx(makePost({ parentRefs: [parentId] })));
     expect(result.status).toBe('pending');
   });
 
-  it('rejects a post whose parent hash does not match: tampered bytes', () => {
+  it('rejects a post referencing a parent the store does not hold', () => {
     const store = makeStore();
+    const nonexistent = 'a'.repeat(64);
 
-    // Create two different parent posts. Store post B's CBOR under post A's ID.
-    const postA = makePost({ content: 'original parent data' });
-    const postB = makePost({ content: 'tampered parent data' });
-    const idA = computePostId(postA);
-    const rawB = encodePost(postB);
-
-    // Store post B's CBOR bytes under post A's ID — tampered store
-    store.posts.set(idA, rawB);
-
-    const child = makePost({ parentRefs: [idA] });
-    const tx = makeKarmaLockTx();
-
-    // Should reject: decodePost(rawB) -> computePostId(postB) != idA
-    expect(() => createPost(mockDeps(store), child, tx)).toThrow(PostValidationError);
-    expect(() => createPost(mockDeps(store), child, tx)).toThrow('parent hash mismatch');
+    const tx = makePostTx(makePost({ parentRefs: [nonexistent] }));
+    expect(() => createPost(mockDeps(store), tx)).toThrow(PostServiceError);
+    expect(() => createPost(mockDeps(store), tx)).toThrow('Parent post not found');
   });
 
-  it('rejects a post referencing a nonexistent parent (raw bytes unavailable)', () => {
-    const store = makeStore();
-    const nonexistentId = 'a'.repeat(64);
-
-    const child = makePost({ parentRefs: [nonexistentId] });
-    const tx = makeKarmaLockTx();
-
-    expect(() => createPost(mockDeps(store), child, tx)).toThrow(PostValidationError);
-    expect(() => createPost(mockDeps(store), child, tx)).toThrow(
-      'raw bytes unavailable',
-    );
+  it('⛔ a parent ref cannot be checked by recomputing the parent id', () => {
+    // The rule, asserted rather than described. A stored parent's bytes produce
+    // no id — there is no `(Post) => PostId` — so the store's recorded id is the
+    // only statement of the binding, and existence is what remains checkable.
+    const parent = makeStoredParent('b2'.repeat(32));
+    // The id is CARRIED, not derived: `StoredPost.id` is the store's statement.
+    expect(parent.id).toBe('b2'.repeat(32));
+    // And nothing in the payload determines it — two stored posts with identical
+    // payloads can legitimately hold different ids.
+    const twin: StoredPost = { ...parent, id: 'c3'.repeat(32) };
+    expect(twin.content).toBe(parent.content);
+    expect(twin.id).not.toBe(parent.id);
   });
 
-  // -----------------------------------------------------------------------
-  // Content hash (post ID) is server-authoritative
-  // -----------------------------------------------------------------------
-
-  it('computes post ID server-authoritatively (client ID is ignored)', () => {
+  it('computes the post id server-authoritatively — a client id has nowhere to go', () => {
+    // Non-spoofable by CONSTRUCTION rather than by a check: the request carries a
+    // transaction, the id is derived from it, and a client-supplied `postId` on
+    // the payload is not a field the derivation reads.
     const store = makeStore();
+    const tx = makePostTx();
+    const withClaim = {
+      ...tx,
+      post: { ...tx.post!, postId: 'ff'.repeat(32), id: 'ee'.repeat(32) },
+    } as unknown as UtxoTransaction;
 
-    // Create a post — the client does NOT provide postId
-    const post = makePost({ parentRefs: [] });
-    const tx = makeKarmaLockTx();
+    const honest = createPost(mockDeps(store), tx);
+    const claimed = createPost(mockDeps(makeStore()), withClaim);
 
-    const result = createPost(mockDeps(store), post, tx);
-
-    // postId is a 64-char hex string (32 bytes)
-    expect(typeof result.postId).toBe('string');
-    expect(result.postId.length).toBe(64);
-
-    // Verify it's valid hex
-    expect(/^[0-9a-f]{64}$/.test(result.postId)).toBe(true);
+    expect(claimed.postId).toBe(honest.postId);
+    expect(claimed.postId).not.toBe('ff'.repeat(32));
+    expect(claimed.postId).toBe(computePostId(computeTxId(tx), 0));
   });
 
-  it('produces different post IDs for different content', () => {
-    const store = makeStore();
-    const tx = makeKarmaLockTx();
-
-    const post1 = makePost({ content: 'hello world' });
-    const post2 = makePost({ content: 'different content' });
-
-    const result1 = createPost(mockDeps(store), post1, tx);
-    const result2 = createPost(mockDeps(store), post2, tx);
-
-    expect(result1.postId).not.toBe(result2.postId);
+  it('produces different post ids for different content', () => {
+    // Through the transaction: distinct payloads give distinct `TxId`s because
+    // `postFieldBytes` is inside that preimage.
+    const a = createPost(mockDeps(makeStore()), makePostTx(makePost({ content: 'first' })));
+    const b = createPost(mockDeps(makeStore()), makePostTx(makePost({ content: 'second' })));
+    expect(a.postId).not.toBe(b.postId);
   });
 
-  // NOTE: The Post type does not carry a client-set `id` field, so there is
-  // no self-reported content hash to reject on mismatch. The post ID is
-  // ALWAYS computed server-authoritatively via computePostId(). The following
-  // test verifies that the server-derived ID is fully determined by post
-  // content — there is no client-controlled ID to spoof.
-
-  it('server-derived postId is deterministic and non-spoofable (no client id field)', () => {
-    const store = makeStore();
-    const tx = makeKarmaLockTx();
-
-    // Create identical posts — they must produce the same postId.
-    // We only vary the fields that affect computePostId (content, parentRefs,
-    // timestamp, powNonce, protocolVersion). Author/challenge/signature are
-    // fixed to match the mock deps defaults so the karma-ownership check passes.
-    const base = {
-      content: 'identical content',
-      parentRefs: [] as string[],
-      timestamp: 1700000000000,
-      powNonce: 42,
-      protocolVersion: PROTOCOL_VERSION,
-    };
-
-    const postA = makePost(base);
-    const postB = makePost(base);
-
-    const resultA = createPost(mockDeps(store), postA, tx);
-    const resultB = createPost(mockDeps(store), postB, tx);
-
-    // Same deterministic fields → same postId. The server computes it; the
-    // client cannot inject a different value.
-    expect(resultA.postId).toBe(resultB.postId);
-
-    // Changing ANY field (even powNonce) produces a different postId.
-    const postC = makePost({ ...base, powNonce: 43 });
-    const resultC = createPost(mockDeps(store), postC, tx);
-    expect(resultC.postId).not.toBe(resultA.postId);
+  it('produces different post ids for IDENTICAL content on different inputs', () => {
+    // The half content-derivation could not give: the same payload twice is two
+    // posts, because the author must spend a different karma box each time.
+    const post = makePost({ content: 'the same words twice' });
+    const a = createPost(mockDeps(makeStore()), makePostTx(post, BOX_1));
+    const b = createPost(mockDeps(makeStore()), makePostTx(post, BOX_2));
+    expect(a.postId).not.toBe(b.postId);
   });
 
-  // -----------------------------------------------------------------------
-  // Edge cases
-  // -----------------------------------------------------------------------
-
-  it('accepts a post with no parent refs (root post)', () => {
-    const store = makeStore();
-    const post = makePost({ parentRefs: [] });
-    const tx = makeKarmaLockTx();
-
-    const result = createPost(mockDeps(store), post, tx);
-    expect(result.status).toBe('pending');
-    expect(Object.keys(result.subBlock).sort()).toEqual(
-      ['post', 'producerId', 'protocolVersion', 'subBlockId'],
-    );
-  });
-
-  it('accepts a post with multiple valid parent refs', () => {
-    const store = makeStore();
-
-    // Create two real parent posts
-    const parent1 = makePost({ content: 'parent 1' });
-    const parent2 = makePost({ content: 'parent 2' });
-    const raw1 = encodePost(parent1);
-    const raw2 = encodePost(parent2);
-    const id1 = computePostId(parent1);
-    const id2 = computePostId(parent2);
-
-    store.posts.set(id1, raw1);
-    store.posts.set(id2, raw2);
-
-    const child = makePost({ parentRefs: [id1, id2] });
-    const tx = makeKarmaLockTx();
-
-    const result = createPost(mockDeps(store), child, tx);
+  it('accepts a root post with no parent refs', () => {
+    const result = createPost(mockDeps(makeStore()), makePostTx(makePost({ parentRefs: [] })));
     expect(result.status).toBe('pending');
   });
 });

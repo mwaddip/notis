@@ -1,5 +1,4 @@
-import { decodeSubBlock } from '@dagsocial/types';
-import type { SubBlock, BlockHeader, OrderingBlock } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import type { Libp2p } from 'libp2p';
 import type { Stream } from '@libp2p/interface';
 import type { NetConfig } from './types.js';
@@ -15,63 +14,6 @@ import { decodeFrame } from './frame.js';
 import { MAX_STREAM_BYTES } from './msg-guards.js';
 
 export const SYNC_PROTOCOL = '/dagsocial/sync/1';
-
-// ---------------------------------------------------------------------------
-// Sub-block requests (legacy text-based protocol — kept for backward compat)
-// ---------------------------------------------------------------------------
-
-/**
- * Request a specific sub-block from a peer via a direct stream.
- *
- * Protocol:
- *   Request:  subBlockId as hex string (64 chars)
- *   Response: CBOR-encoded SubBlock, or single byte 0x00 (not found)
- *
- * Throws on timeout, not-found, or decode failure.
- */
-export async function requestSubBlock(
-  libp2p: Libp2p,
-  subBlockId: string,
-  peerId: string,
-  config: NetConfig,
-): Promise<SubBlock> {
-  const peer = libp2p.getPeers().find((p) => p.toString() === peerId);
-  if (!peer) {
-    throw new Error(`Peer ${peerId} not connected`);
-  }
-
-  let stream: Stream | undefined;
-  try {
-    stream = await libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
-      signal: AbortSignal.timeout(config.syncRequestTimeoutMs),
-    });
-
-    // Send request
-    const encoder = new TextEncoder();
-    await stream.sink([encoder.encode(subBlockId)]);
-
-    // Read response
-    const response = await readStreamBounded(stream.source);
-    if (response === null) {
-      throw new Error(`Sub-block response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
-    }
-
-    if (response.length === 0) {
-      throw new Error('Empty response from peer');
-    }
-
-    // Check for not-found marker
-    if (response.length === 1 && response[0] === 0x00) {
-      throw new Error(`Sub-block ${subBlockId} not found on peer ${peerId}`);
-    }
-
-    return decodeSubBlock(response);
-  } finally {
-    if (stream) {
-      await stream.close();
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Fork resolution's two chain queries — GetHeaders (14) and GetBlocks (16)

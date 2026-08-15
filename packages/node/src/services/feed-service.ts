@@ -1,4 +1,3 @@
-import { computePostId } from '@dagsocial/types';
 import type { Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost } from '../store/posts.js';
 
@@ -39,11 +38,8 @@ export interface PostJson {
   content: string;
   author: string;
   parentRefs: string[];
-  challenge: string;
-  powNonce: number;
   protocolVersion: number;
   timestamp: number;
-  signature: string;
   status: PostStatus;
   likeCount: number;
   likers: string[];
@@ -95,17 +91,13 @@ export function postToJson(
   likeCount: number,
   likers: string[],
 ): PostJson {
-  const postId = computePostId(post);
   return {
-    id: postId,
+    id: post.id,
     content: post.content,
     author: Buffer.from(post.author).toString('hex'),
     parentRefs: post.parentRefs,
-    challenge: Buffer.from(post.challenge).toString('hex'),
-    powNonce: post.powNonce,
     protocolVersion: post.protocolVersion,
     timestamp: post.timestamp,
-    signature: Buffer.from(post.signature).toString('hex'),
     status: post.status,
     likeCount,
     likers,
@@ -180,7 +172,7 @@ export class FeedService {
     const offset = opts.offset ?? 0;
     const posts = this.deps.queryPosts({ author: opts.author, limit, offset });
     return posts.map((post) => {
-      const postId = computePostId(post);
+      const postId = post.id;
       const likeCount = this.deps.getLikeRecordCount(postId);
       const likers = this.deps.getLikersForPost(postId);
       return postToJson(post, likeCount, likers);
@@ -209,7 +201,7 @@ export class FeedService {
     // Ancestors: walk up the parent chain (genesis → immediate parent)
     const ancestorPosts = this.deps.getAncestors(id);
     const ancestors = ancestorPosts.map((p) => {
-      const pid = computePostId(p);
+      const pid = p.id;
       const c = this.deps.getLikeRecordCount(pid);
       const l = this.deps.getLikersForPost(pid);
       return postToJson(p, c, l);
@@ -218,7 +210,7 @@ export class FeedService {
     // Descendants: full reply subtree below the target
     const descendantPosts = this.deps.getSubtree(id);
     const descendants = descendantPosts.map((p) => {
-      const pid = computePostId(p);
+      const pid = p.id;
       const c = this.deps.getLikeRecordCount(pid);
       const l = this.deps.getLikersForPost(pid);
       return postToJson(p, c, l);

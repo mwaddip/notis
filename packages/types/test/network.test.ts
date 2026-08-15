@@ -19,7 +19,6 @@ const PROFILE_FIELDS = [
   'networkType',
   'magic',
   'orderingBlockPowTargetBits',
-  'postPowTargetBits',
   'karmaDecayIntervalBlocks',
   'karmaStaleThresholdBlocks',
   'vouchCooldownBlocks',
@@ -123,7 +122,6 @@ describe('NETWORK_PROFILES', () => {
     const devnet = NETWORK_PROFILES.devnet;
     expect(devnet.karmaDecayIntervalBlocks).toBe(3);
     expect(devnet.karmaStaleThresholdBlocks).toBe(500);
-    expect(devnet.postPowTargetBits).toBe(4);
   });
 
   // Devnet's seed sits below mainnet's and above 2180. The floor is what makes a

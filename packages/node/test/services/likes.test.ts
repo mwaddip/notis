@@ -29,9 +29,7 @@ import {
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
-  hasPendingLike,
-  insertMempoolSubBlock,
-} from '../../src/store/index.js';
+  hasPendingLike, insertUtxoTx } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
@@ -39,8 +37,7 @@ import {
   rawPublicKey,
   seedProvenance,
   signTransaction,
-  type Stored,
-} from '../helpers.js';
+  type Stored, fixturePostId, fillerTx } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,14 +68,11 @@ function createTestPost(authorId: Uint8Array): string {
     content: 'Test post',
     author: authorId,
     parentRefs: [],
-    challenge: new Uint8Array(32).fill(0xcc),
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: Date.now(),
-    signature: new Uint8Array(64),
   };
-  const postId = computePostId(post);
-  insertPost(post, encodePost(post));
+  const postId = fixturePostId(post);
+  insertPost(fixturePostId(post), post, encodePost(post));
   return postId;
 }
 
@@ -289,7 +283,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     const postId = createTestPost(likerId);
 
     // Bury the pending like behind 1000 unrelated entries.
-    for (let i = 0; i < 1000; i++) insertMempoolSubBlock(`filler_${i}`, 900);
+    for (let i = 0; i < 1000; i++) insertUtxoTx(fillerTx(`filler_${i}`), 900);
     castLike(deps, buildBurnLikeTx(karma, postId), 5);
 
     const karma2 = createKarmaBox(likerPubKey, 50n, 2);

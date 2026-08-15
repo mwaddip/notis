@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Libp2p } from 'libp2p';
 import { SYNC_PROTOCOL, requestBlocks, requestHeaders } from '../src/sync.js';
 import { encodeFrame } from '../src/frame.js';
-import { encodePosts } from '../src/sync-codec.js';
+import { encodePeers } from '../src/sync-codec.js';
 import { MSG_BLOCKS, MSG_HEADERS } from '../src/types.js';
 import type { NetConfig } from '../src/types.js';
 
@@ -12,7 +12,6 @@ const PEER = 'peer-under-test';
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC,
-    postPowTargetBits: 20,
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,
@@ -80,11 +79,13 @@ describe('sync protocol', () => {
 // visible in a test that sends the wrong code.
 // ---------------------------------------------------------------------------
 
-describe('chain queries reject where requestPosts returns empty', () => {
+describe('chain queries reject a frame bearing another code', () => {
   it('throws on a response bearing another code', async () => {
-    // A `Posts` frame is the sharpest case: it is a legitimate message on this
-    // very stream, so nothing but the code check separates it from an answer.
-    const wrongCode = () => makeDialStub(encodePosts(MAGIC, { entries: [] })).libp2p;
+    // A `Peers` frame is the sharpest case available: it is a legitimate message
+    // on this very stream, so nothing but the code check separates it from an
+    // answer. (It replaced a `Posts` frame, which no longer exists — the
+    // posts-fetch message pair is deleted and codes 10/11 are reserved.)
+    const wrongCode = () => makeDialStub(encodePeers(MAGIC, { peers: [] })).libp2p;
 
     await expect(requestHeaders(wrongCode(), 3, 2, PEER, makeConfig()))
       .rejects.toThrow(/bears code/);

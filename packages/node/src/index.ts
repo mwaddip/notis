@@ -12,10 +12,8 @@ import {
   emitShutdownSignalReceived,
   emitServerShuttingDown,
 } from './journal.js';
-import { NetNode, type PostsEntry } from '@dagsocial/net';
+import { NetNode } from '@dagsocial/net';
 import * as validation from '@dagsocial/validation';
-import { verifyPostForRelay, type VerifierDeps } from './services/verifier.js';
-import { sweepPlaceholders, hasPlaceholders } from './services/content-sweep.js';
 import { validateTx } from './services/utxo-engine.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
@@ -34,14 +32,13 @@ import {
   insertPost,
   getBox,
   getCurrentHeight,
-  insertMempoolSubBlock,
   insertUtxoTx,
   MempoolFullError,
   PendingSpendConflictError,
   getOrderingBlock,
   peerStorage,
 } from './store/index.js';
-import { encodePost, MEMPOOL_EXPIRY_BLOCKS, subBlockFromPost, verifyPostId } from '@dagsocial/types';
+import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 
 const config = loadConfig();
@@ -110,12 +107,9 @@ if (isFaucetNetwork(config.networkType)) {
 // internal fallbacks silently govern instead.
 const net = new NetNode(
   {
-    // The profile's wire magic and post-PoW difficulty. Both are required in
-    // NetConfig — net has no fallback of its own (NET_INTERFACE → "Magic
-    // Bytes"); net checks inbound gossip PoW against the same profile
-    // difficulty the verifier enforces.
+    // The profile's wire magic. Required in NetConfig — net has no fallback of
+    // its own (NET_INTERFACE → "Magic Bytes").
     magic: config.profile.magic,
-    postPowTargetBits: config.postPowTargetBits,
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
@@ -132,47 +126,16 @@ const net = new NetNode(
 );
 setNet(net);
 
-// Shared deps for verifier and content sweep
-const deps = {
-  getActiveChallenge: () => null as { challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array } | null,
-  getKarmaBoxes,
-  getPost,
-};
-
 // DagService — owns canonical branch population and DAG reorg logic
 const dagService = new DagService();
 setDagServiceForMiner(dagService);
 
 // 3. Register Stage 2 handlers
-
-net.onSubBlock((sb) => {
-  const result = verifyPostForRelay(deps, sb.post, 0);
-  if (!result.valid) {
-    console.warn(`Relayed sub-block rejected: ${result.error}`);
-    return;
-  }
-  // Verify post ID matches claimed subBlockId (defense-in-depth)
-  if (!verifyPostId(sb.post, sb.subBlockId)) {
-    console.warn(`Relayed sub-block rejected: post ID mismatch for ${sb.subBlockId}`);
-    return;
-  }
-  insertPost(sb.post, encodePost(sb.post));
-  const currentHeight = getCurrentHeight();
-  try {
-    insertMempoolSubBlock(sb.subBlockId, currentHeight + MEMPOOL_EXPIRY_BLOCKS);
-  } catch (err) {
-    if (err instanceof MempoolFullError) {
-      console.warn(`Relayed sub-block dropped, mempool full: ${sb.subBlockId}`);
-      return;
-    }
-    throw err;
-  }
-  // Re-broadcast to other peers (gap 5)
-  net.broadcastSubBlock(sb).catch((err: Error) => {
-    console.warn(`Failed to relay sub-block ${sb.subBlockId}: ${err.message}`);
-  });
-  console.log(`Relayed sub-block queued in mempool: ${sb.subBlockId}`);
-});
+//
+// Reserved, never to be reused: the sub-block relay handler. A post arrives as a
+// transaction and is admitted by the transaction relay path below — one handler
+// where there were two, and the post's karma lock is verified statefully instead
+// of a PoW being re-checked.
 
 /**
  * The ordering-block boundary.
@@ -253,7 +216,7 @@ net.onTx((tx) => {
   }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   try {
-    insertUtxoTx(tx, null, expiresAtHeight);
+    insertUtxoTx(tx, expiresAtHeight);
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
@@ -322,72 +285,12 @@ enterDiscovery(config.bootstrapPeers.length);
 // polls would leave the node believing it had never met anybody.
 net.onPeerActive((_peerId: string) => notePeerMet());
 
-// Register storage-backed sync handler (replaces the null placeholder
-// registered during NetNode.start())
-net.setSyncHandler((subBlockId: string) => {
-  const post = getPost(subBlockId);
-  if (!post || !('content' in post) || !post.content) return null;
-  return subBlockFromPost(post, subBlockId);
-});
-
-// Register posts handler for GetPosts requests — skip missing and placeholder posts.
-// Validate IDs are 64-char hex before querying (reject malformed).
-net.setPostsHandler((postIds: string[]) => {
-  const HEX64 = /^[0-9a-f]{64}$/;
-  const entries: PostsEntry[] = [];
-  for (const postId of postIds) {
-    if (!HEX64.test(postId)) continue;
-    const post = getPost(postId);
-    if (!post || !('content' in post) || !post.content) continue;
-    entries.push({ postId, post });
-  }
-  return entries;
-});
-
-function runContentSweep(net: NetNode, deps: VerifierDeps): void {
-  if (hasPlaceholders()) {
-    console.log('[content-sweep] Sweeping placeholders...');
-    sweepPlaceholders(net, deps).then((result) => {
-      if (result.success) {
-        console.log('[content-sweep] All placeholders resolved.');
-      } else {
-        console.warn(
-          `[content-sweep] Sweep incomplete: ${result.remaining} placeholders remain after retries.`,
-        );
-      }
-    }).catch((err: Error) => {
-      console.error(`[content-sweep] Sweep failed: ${err.message}`);
-    });
-  }
-}
-
-// Register content sweep on sync completion
-net.onSyncComplete(() => runContentSweep(net, deps));
-
-// Re-run content sweep when a new peer becomes active
-net.onPeerActive((_peerId: string) => runContentSweep(net, deps));
-
-// Sweep on startup if placeholders already exist
-runContentSweep(net, deps);
-
-// Periodic sweep to catch placeholders that were created after sync
-// completed (race between sync finishing and handler registration).
-const SWEEP_INTERVAL_MS = 30_000;
-setInterval(() => {
-  if (hasPlaceholders()) {
-    runContentSweep(net, deps);
-  }
-}, SWEEP_INTERVAL_MS);
-
-// Re-run content sweep when a new peer becomes active and we have pending placeholders
-net.onPeerActive((_peerId: string) => {
-  if (hasPlaceholders()) {
-    console.log('[content-sweep] New peer active, retrying placeholder sweep...');
-    sweepPlaceholders(net, deps).catch((err: Error) => {
-      console.error(`[content-sweep] Sweep failed: ${err.message}`);
-    });
-  }
-});
+// Reserved, never to be reused: `setSyncHandler` and `setPostsHandler`. Both
+// served a post by id to a peer that held a `SubBlockEntry` but no content. A
+// block now carries its posts inside `utxoTxs`, so a node holding the block holds
+// the content — there is no placeholder state, nothing for a content sweep to
+// resolve, and no id-to-post fetch whose answer a receiver could verify (a post's
+// id is not a function of the post).
 
 // 5. Start block creator (miner only) and HTTP server
 if (config.nodeRole === 'miner') {

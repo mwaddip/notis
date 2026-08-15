@@ -37,7 +37,6 @@ function makeOrderingBlock(
       protocolVersion: 1,
       height: 1,
       prevBlockHash: '00'.repeat(32),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: uid('validator-1'),
@@ -45,13 +44,10 @@ function makeOrderingBlock(
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
     },
-    subBlockTree: {
-      subBlockEntries: [],
-      pruneEntries: [],
-    },
     utxoTxTree: {
       utxoTxIds: ['1a'.repeat(32)],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64).fill(0xab),
@@ -93,7 +89,6 @@ describe('ordering store', () => {
         protocolVersion: 1,
         height: 1,
         prevBlockHash: 'aa'.repeat(32),
-        subBlockRoot: 'bb'.repeat(32),
         utxoTxRoot: 'cc'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: uid('validator-alice'),
@@ -103,13 +98,10 @@ describe('ordering store', () => {
         powTargetBits: 256 * 14,
         createdAt: 1234567890,
       },
-      subBlockTree: {
-        subBlockEntries: [],
-        pruneEntries: [],
-      },
       utxoTxTree: {
         utxoTxIds: ['2b'.repeat(32)],
         utxoTxs: [],
+        pruneEntries: [],
         coinbaseOutputs: [
           {
             owner: uid('coinbase-recipient'),
@@ -130,8 +122,8 @@ describe('ordering store', () => {
     expect(h.height).toBe(1);
     expect(h.protocolVersion).toBe(1);
     expect(h.prevBlockHash).toBe('aa'.repeat(32));
-    expect(h.subBlockRoot).toBe('bb'.repeat(32));
     expect(h.utxoTxRoot).toBe('cc'.repeat(32));
+    expect(h.stateRoot).toBe('00'.repeat(33));
     expect(h.validatorId).toEqual(uid('validator-alice'));
     expect(h.powNonce).toBe(42);
     expect(h.powTargetBits).toBe(256 * 14);
@@ -141,19 +133,17 @@ describe('ordering store', () => {
       new Uint8Array(64).fill(0xcd),
     );
 
-    // subBlockTree
+    // utxoTxTree
     //
-    // `SubBlockTree` has exactly two fields — `subBlockEntries` and
-    // `pruneEntries` (TYPES_INTERFACE → Ordering block) — and both are
-    // asserted, so this covers the whole struct rather than a sample of it.
+    // `UtxoTxTree` has exactly four fields (TYPES_INTERFACE → Layout —
+    // UtxoTxTree) and all four are asserted, so this covers the whole struct
+    // rather than a sample of it.
     //
     // Asserting a name the struct does not declare is the trap here: it reads
     // as coverage while pinning the storage codec's tolerance for an unknown
     // key, which is a property of cbor-x and not of the protocol.
-    expect(result!.subBlockTree.subBlockEntries).toEqual([]);
-    expect(result!.subBlockTree.pruneEntries).toEqual([]);
-
-    // utxoTxTree
+    expect(result!.utxoTxTree.utxoTxs).toEqual([]);
+    expect(result!.utxoTxTree.pruneEntries).toEqual([]);
     //
     // ⚠ `CoinbaseOutput.value` is a **bigint**, and both the fixture at the top
     // of this test and the assertion below must spell it `100n`. A round-trip

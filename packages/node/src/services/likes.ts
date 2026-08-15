@@ -88,7 +88,7 @@ export function castLike(
 
   // ---- 5. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, null, expiresAtHeight);
+  insertUtxoTx(tx, expiresAtHeight);
 
   // ---- 6. Return pending result ----
   return {

@@ -8,30 +8,8 @@ import {
   writeVlqU64OrThrow,
 } from './codec.js';
 import type { UserId } from './identity.js';
-import type { Post, PostId } from './post.js';
 import type { TxId } from './utxo.js';
 import type { PruneEntry } from './stump.js';
-
-// ---------------------------------------------------------------------------
-// Sub-block (user-produced)
-// ---------------------------------------------------------------------------
-
-export interface SubBlock {
-  subBlockId: PostId;         // = post.postId (the post IS the sub-block)
-  post: Post;                 // The post (with PoW = sub-block proof)
-  producerId: UserId;         // = post.author
-  protocolVersion: number;
-}
-
-/** Construct a SubBlock from a Post, deriving producerId and protocolVersion. */
-export function subBlockFromPost(post: Post, subBlockId: string): SubBlock {
-  return {
-    subBlockId,
-    post,
-    producerId: post.author,
-    protocolVersion: post.protocolVersion,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Coinbase output (block reward)
@@ -109,12 +87,19 @@ export function coinbaseOutputBytes(o: CoinbaseOutput): Uint8Array {
 // Block header — what gets hashed for block ID and PoW
 // ---------------------------------------------------------------------------
 
+/**
+ * ⛔ **Nine positional fields, and dropping a field RENUMBERS every one after
+ * it** (TYPES_INTERFACE → Layout — Block). There are no keys on the wire, so a
+ * reader that skips a field but keeps the old offsets decodes `stateRoot` out of
+ * `utxoTxRoot`'s bytes and every later field one slot late — a silently wrong
+ * `blockHash`, not a decode error. This declaration, the contract's table and
+ * `serialization.ts`'s `HEADER` codec move together or not at all.
+ */
 export interface BlockHeader {
   protocolVersion: number;
   height: number;
   prevBlockHash: string;        // hex(32) — hash of previous header
-  subBlockRoot: string;         // hex(32) — Merkle root over DAG content
-  utxoTxRoot: string;           // hex(32) — Merkle root over UTXO content
+  utxoTxRoot: string;           // hex(32) — Merkle root over the block body
   stateRoot: string;            // hex(33) — AVL+ digest (zeroed for MVP)
   validatorId: UserId;
   powNonce: number;
@@ -130,83 +115,24 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
 // ---------------------------------------------------------------------------
 
 /**
- * Committed topology + authorship for one confirmed sub-block.
+ * **The block's one committed body** (TYPES_INTERFACE → OrderingBlock). Posts
+ * are transactions, so they ride `utxoTxIds` with everything else and there is no
+ * second tree; `pruneEntries` live here because `utxoTxRoot` commits them.
  *
- * `author` is consensus-carried (audit H-3): it rides in the block, committed
- * under `subBlockRoot`, so every node — including one that synced from ordering
- * blocks alone and never saw the post content — records an identical author per
- * post. It is a `postId`-preimage field, so any node holding the content can
- * verify the claim; nodes holding the post at apply time MUST reject a block
- * whose entry contradicts it (see NODE_INTERFACE.md, apply-time authorization).
- * This is what makes prune authorship checkable without DAG content.
+ * ⛔ **Leaf order is NORMATIVE and it is this struct's field order** —
+ * `utxoTxIds`, then `pruneEntries`, then `coinbaseOutputs`. `computeUtxoTxRoot`
+ * builds its leaves in exactly that sequence; reordering is a consensus change
+ * with no compiler signal.
+ *
+ * What keeps the three kinds apart inside one root is the `leafHash` domain tag —
+ * `'utxotx'`, `'prune'`, `'coinbase'`, each NUL-terminated and therefore
+ * prefix-free — not their position. The retired `'subblock'` domain is reachable
+ * from no leaf here and stays reserved.
  */
-export interface SubBlockEntry {
-  postId: string;        // hex-encoded 32-byte post ID
-  parentRefs: string[];  // hex-encoded parent post IDs (0–MAX_PARENT_REFS entries)
-  author: string;        // hex-encoded 32-byte author public key of the post
-}
-
-/**
- * One entry's positional bytes — `b32(postId)` ‖ `arr(parentRefs, b32)` ‖
- * `b32(author)`, all three hex.
- *
- * **These bytes are the `'subblock'` Merkle leaf preimage and the entry's wire
- * encoding, and they are the same bytes** (TYPES_INTERFACE → Layout — Merkle
- * leaf preimages). `SubBlockTree`'s element writer delegates here rather than
- * restating the layout, for the same reason `writePruneEntry` delegates to
- * `serializePruneEntry`: an entry's wire form and its committed
- * form must be one statement, because two statements of one layout drift with no
- * compiler signal and a consistent transposition round-trips perfectly — no
- * round-trip test can see it.
- *
- * ⚠ **The `leafHash('subblock', …)` domain tag stays outside.** This returns the
- * entry bytes alone; the caller supplies the tag. That is what makes the wire
- * form and the preimage byte-identical rather than merely parallel.
- *
- * ⚠ **`author` is hex here and `validatorId` is bytes in the header**, and both
- * are "a 32-byte Ed25519 public key" carried as `b32`. The in-memory spelling is
- * what decides the writer, not what the field means: `SubBlockEntry.author` is
- * declared `string` above and `verifyOrderingBlockStructure` checks it with
- * `isHex32`.
- *
- * Every row throws, and every row is pinned by `verifyOrderingBlockStructure`,
- * including `parentRefs.length <= MAX_PARENT_REFS`.
- */
-export function subBlockEntryBytes(e: SubBlockEntry): Uint8Array {
-  const w = new ByteWriter();
-  writeHexNOrThrow(w, e.postId, 32);
-  writeArr(w, e.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
-  writeHexNOrThrow(w, e.author, 32);
-  return w.toBytes();
-}
-
-/**
- * **Two arrays, and `subBlockRefs` is not one of them** (TYPES_INTERFACE →
- * Layout — Block).
- *
- * `computeSubBlockRoot` builds its leaves from `subBlockEntries` and
- * `pruneEntries` alone, so a `subBlockRefs` field here would be uncommitted:
- * refs naming entirely different post ids would ride an unchanged
- * `subBlockRoot` and an unchanged `blockHash`, and still reach a mempool
- * **eviction** (`removeSubBlockEntries`) and, through the journal's
- * `confirmedSubBlockIds`, a mempool **injection** on reorg.
- *
- * The asymmetry is what makes that reachable rather than merely untidy: apply
- * confirms from `subBlockEntries`, which is committed, so an uncommitted
- * parallel list on the rollback side lets the two disagree.
- *
- * It is also exactly `subBlockEntries.map(e => e.postId)` for any honest block,
- * so consumers derive it — `subBlockIdsOf` in node — and the two JSON routes
- * emit the field, leaving the HTTP response shape unchanged.
- */
-export interface SubBlockTree {
-  subBlockEntries: SubBlockEntry[]; // topology committed in the block
-  pruneEntries: PruneEntry[];       // prune entries committed in this block
-}
-
 export interface UtxoTxTree {
-  utxoTxIds: TxId[];            // UTXO transactions
+  utxoTxIds: TxId[];            // UTXO transactions — posts and likes included
   utxoTxs: Uint8Array[];        // CBOR-encoded UtxoTransactions (aligned with utxoTxIds)
+  pruneEntries: PruneEntry[];   // prune entries committed in this block
   coinbaseOutputs: CoinbaseOutput[];
 }
 
@@ -216,7 +142,6 @@ export interface UtxoTxTree {
 
 export interface OrderingBlock {
   header: BlockHeader;
-  subBlockTree: SubBlockTree;
   utxoTxTree: UtxoTxTree;
   validatorSignature: Uint8Array;  // 64 bytes — Ed25519 over header hash
 }

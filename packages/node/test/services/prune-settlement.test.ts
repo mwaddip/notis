@@ -16,8 +16,7 @@ import {
   makePruneEntry,
   makeTestIdentity,
   seedProvenance,
-  type Stored,
-} from '../helpers.js';
+  type Stored, seedPostTx } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers (module-level DB state requires reset + fresh import)
@@ -50,7 +49,7 @@ async function importTopology() {
 async function importUtxo() {
   const mod = await import('../../src/store/utxo.js');
   return mod as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => unknown;
     getPostLockBox: (targetPostId: string) => PostLockBox | null;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
@@ -131,20 +130,32 @@ function makeUserId(label: string): Uint8Array {
  * silently and the fixture pinned nothing about the u64 wire domain. The
  * positional writer has no `number` branch, which is what surfaced it.
  */
+/**
+ * A seeded post lock, plus the target the store must index it under.
+ *
+ * ⛔ **The box carries no `targetPostId`** — a post's id comes from the
+ * transaction that creates the lock, so the field would have to be known before
+ * the `TxId` that produces it (TYPES_INTERFACE → PostLockBox). A fixture seeds
+ * the box with SYNTHETIC provenance, so it is in the same position as a
+ * `postlock-remainder` lock: derivation route 1 (`computePostId(box.txId, 0)`)
+ * would produce an id from a transaction that never created this post. The
+ * target is therefore passed to `insertBox` — route 2 — and this helper returns
+ * both halves so no caller can forget.
+ */
 function makePostLockBox(
   value: bigint,
   owner: Uint8Array,
   targetPostId: string,
   seed: number,
-): Stored<PostLockBox> {
-  return seedProvenance<PostLockBox>({
+): { box: Stored<PostLockBox>; targetPostId: string } {
+  const box = seedProvenance<PostLockBox>({
     boxType: 'post_lock' as const,
     value,
     originalValue: value,
     owner,
-    targetPostId,
     guard: 'block_apply' as const,
   }, seed);
+  return { box, targetPostId };
 }
 
 function makeKarmaBox(
@@ -326,7 +337,7 @@ describe('settlePruneUtxo', () => {
     // returns; plus pre-existing karma the refund mint will merge in (seeded
     // outside the journal, like any pre-block state)
     const lockBox = makePostLockBox(100n, replier, replyPostId, 1);
-    utxo.insertBox(lockBox);
+    utxo.insertBox(lockBox.box, lockBox.targetPostId);
     const oldKarma = makeKarmaBox(40n, replier, 1);
     utxo.insertBox(oldKarma);
 
@@ -335,7 +346,7 @@ describe('settlePruneUtxo', () => {
     );
 
     // PostLockBox consumed
-    expect(removedIds(journal)).toContain(lockBox.id);
+    expect(removedIds(journal)).toContain(lockBox.box.id);
 
     // The pre-existing karma box the mint merged in is journaled too — the
     // merge-consume the old hand-maintained journal lost (value-loss on reorg)
@@ -343,7 +354,7 @@ describe('settlePruneUtxo', () => {
 
     // PostLockBox marked spent in DB
     const db = getDb();
-    expect(boxIsSpent(db, lockBox.id!)).toBe(true);
+    expect(boxIsSpent(db, lockBox.box.id!)).toBe(true);
 
     // Merged karma refund box created with old + refund value, its bytes in
     // the journal payload
@@ -373,8 +384,8 @@ describe('settlePruneUtxo', () => {
 
     // Insert a PostLockBox and spend it beforehand
     const lockBox = makePostLockBox(50n, replier, rootPostId, 1);
-    utxo.insertBox(lockBox);
-    utxo.consumeBox(lockBox.id!, 5); // Already spent at block 5
+    utxo.insertBox(lockBox.box, lockBox.targetPostId);
+    utxo.consumeBox(lockBox.box.id!, 5); // Already spent at block 5
 
     const journal = await journaled(10, () =>
       settlePruneUtxo(rootPostId, makeUserId('pruner2'), [rootPostId], 10),
@@ -401,16 +412,16 @@ describe('settlePruneUtxo', () => {
     // pruner's — aggregation is what is under test, not the burn rule.
     const lb1 = makePostLockBox(100n, authorId, postId1, 1);
     const lb2 = makePostLockBox(50n, authorId, postId2, 1);
-    utxo.insertBox(lb1);
-    utxo.insertBox(lb2);
+    utxo.insertBox(lb1.box, lb1.targetPostId);
+    utxo.insertBox(lb2.box, lb2.targetPostId);
 
     const journal = await journaled(10, () =>
       settlePruneUtxo(postId1, pruner, [postId1, postId2], 10),
     );
 
     // Both lock boxes consumed
-    expect(removedIds(journal)).toContain(lb1.id);
-    expect(removedIds(journal)).toContain(lb2.id);
+    expect(removedIds(journal)).toContain(lb1.box.id);
+    expect(removedIds(journal)).toContain(lb2.box.id);
 
     // One refund box for the author, values aggregated: 100 + 50 = 150
     expect(insertedIds(journal).length).toBe(1);
@@ -444,14 +455,14 @@ describe('settlePruneUtxo', () => {
     const authorId = makeUserId('author4');
 
     const lockBox = makePostLockBox(0n, authorId, rootPostId, 1);
-    utxo.insertBox(lockBox);
+    utxo.insertBox(lockBox.box, lockBox.targetPostId);
 
     const journal = await journaled(10, () =>
       settlePruneUtxo(rootPostId, makeUserId('pruner5'), [rootPostId], 10),
     );
 
-    // Zero-value box is skipped (lockBox.value > 0 check)
-    expect(removedIds(journal)).not.toContain(lockBox.id);
+    // Zero-value box is skipped (lockBox.box.value > 0 check)
+    expect(removedIds(journal)).not.toContain(lockBox.box.id);
     expect(journal.mutations.length).toBe(0);
   });
 
@@ -469,7 +480,7 @@ describe('settlePruneUtxo', () => {
     const pruner = makeUserId('self-pruner');
 
     const lockBox = makePostLockBox(100n, pruner, rootPostId, 1);
-    utxo.insertBox(lockBox);
+    utxo.insertBox(lockBox.box, lockBox.targetPostId);
     // Pre-existing karma: a mint would merge-consume this box and replace it.
     // Untouched, it proves no mint ran rather than merely that none was visible.
     const oldKarma = makeKarmaBox(40n, pruner, 1);
@@ -480,9 +491,9 @@ describe('settlePruneUtxo', () => {
     );
 
     // The lock is gone — consumed, journalled, and spent in the table.
-    expect(removedIds(journal)).toContain(lockBox.id);
+    expect(removedIds(journal)).toContain(lockBox.box.id);
     const db = getDb();
-    expect(boxIsSpent(db, lockBox.id!)).toBe(true);
+    expect(boxIsSpent(db, lockBox.box.id!)).toBe(true);
 
     // Nothing was created, and the standing karma box was never merged.
     expect(insertedIds(journal)).toEqual([]);
@@ -505,8 +516,8 @@ describe('settlePruneUtxo', () => {
 
     const ownLock = makePostLockBox(100n, pruner, rootId, 1);
     const otherLock = makePostLockBox(50n, replier, replyId, 1);
-    utxo.insertBox(ownLock);
-    utxo.insertBox(otherLock);
+    utxo.insertBox(ownLock.box, ownLock.targetPostId);
+    utxo.insertBox(otherLock.box, otherLock.targetPostId);
 
     const journal = await journaled(10, () =>
       settlePruneUtxo(rootId, pruner, [rootId, replyId], 10),
@@ -514,11 +525,11 @@ describe('settlePruneUtxo', () => {
 
     // Both locks are consumed — the burn and the return differ only in the mint.
     expect(removedIds(journal)).toEqual(
-      expect.arrayContaining([ownLock.id, otherLock.id]),
+      expect.arrayContaining([ownLock.box.id, otherLock.box.id]),
     );
     const db = getDb();
-    expect(boxIsSpent(db, ownLock.id!)).toBe(true);
-    expect(boxIsSpent(db, otherLock.id!)).toBe(true);
+    expect(boxIsSpent(db, ownLock.box.id!)).toBe(true);
+    expect(boxIsSpent(db, otherLock.box.id!)).toBe(true);
 
     // Exactly one karma box exists, holding the reply author's 50 and owned by
     // them. The pruner's 100 left supply.
@@ -544,19 +555,19 @@ describe('settlePruneUtxo', () => {
 
     const rootLock = makePostLockBox(70n, pruner, rootId, 1);
     const replyLock = makePostLockBox(30n, pruner, ownReplyId, 1);
-    utxo.insertBox(rootLock);
-    utxo.insertBox(replyLock);
+    utxo.insertBox(rootLock.box, rootLock.targetPostId);
+    utxo.insertBox(replyLock.box, replyLock.targetPostId);
 
     const journal = await journaled(10, () =>
       settlePruneUtxo(rootId, pruner, [rootId, ownReplyId], 10),
     );
 
     expect(removedIds(journal)).toEqual(
-      expect.arrayContaining([rootLock.id, replyLock.id]),
+      expect.arrayContaining([rootLock.box.id, replyLock.box.id]),
     );
     const db = getDb();
-    expect(boxIsSpent(db, rootLock.id!)).toBe(true);
-    expect(boxIsSpent(db, replyLock.id!)).toBe(true);
+    expect(boxIsSpent(db, rootLock.box.id!)).toBe(true);
+    expect(boxIsSpent(db, replyLock.box.id!)).toBe(true);
     expect(insertedIds(journal)).toEqual([]);
     expect(karmaRows(db)).toEqual([]);
   });
@@ -678,8 +689,10 @@ describe('settlePruneUtxo — refund provenance', () => {
     const prunerB = makeUserId('pruner-of-subtree-B');
     const authorId = makeUserId('author-in-both-subtrees');
 
-    utxo.insertBox(makePostLockBox(100n, authorId, rootA, 1));
-    utxo.insertBox(makePostLockBox(50n, authorId, rootB, 1));
+    const lockA = makePostLockBox(100n, authorId, rootA, 1);
+    const lockB = makePostLockBox(50n, authorId, rootB, 1);
+    utxo.insertBox(lockA.box, lockA.targetPostId);
+    utxo.insertBox(lockB.box, lockB.targetPostId);
 
     // One journal, one height, two entries — exactly the loop in block-apply.
     const journal = await journaled(10, () => {
@@ -719,7 +732,8 @@ describe('settlePruneUtxo — refund provenance', () => {
     const authorId = makeUserId('author-liked');
     const likerId = makeUserId('liker-liked');
 
-    utxo.insertBox(makePostLockBox(100n, authorId, root, 1));
+    const lock = makePostLockBox(100n, authorId, root, 1);
+    utxo.insertBox(lock.box, lock.targetPostId);
     likes.insertLikeRecord(root, likerId, 3);
 
     await journaled(10, () => settlePruneUtxo(root, pruner, [root], 10));
@@ -772,8 +786,8 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     // 3. Seed UTXO: PostLockBox for each post
     const lb1 = makePostLockBox(50n, authorId, rootId, 1);
     const lb2 = makePostLockBox(50n, replier, replyId, 1);
-    utxo.insertBox(lb1);
-    utxo.insertBox(lb2);
+    utxo.insertBox(lb1.box, lb1.targetPostId);
+    utxo.insertBox(lb2.box, lb2.targetPostId);
 
     // 4. Apply settlement, pruned by the root's author
     const journal = await journaled(10, () =>
@@ -781,8 +795,8 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     );
 
     // 5. Verify PostLockBoxes consumed
-    expect(removedIds(journal)).toContain(lb1.id);
-    expect(removedIds(journal)).toContain(lb2.id);
+    expect(removedIds(journal)).toContain(lb1.box.id);
+    expect(removedIds(journal)).toContain(lb2.box.id);
 
     // 6. Verify karma: the reply author gets their 50 back, the pruning author
     //    gets nothing — their own 50 burned with the consume
@@ -808,8 +822,8 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     ).toBeUndefined();
 
     // 7. Verify all original boxes are marked spent
-    expect(boxIsSpent(db, lb1.id!)).toBe(true);
-    expect(boxIsSpent(db, lb2.id!)).toBe(true);
+    expect(boxIsSpent(db, lb1.box.id!)).toBe(true);
+    expect(boxIsSpent(db, lb2.box.id!)).toBe(true);
 
     // 8. Verify getPostLockBox returns null (box now spent)
     expect(utxo.getPostLockBox(rootId)).toBeNull();
@@ -867,27 +881,28 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const rootId = 'a1'.repeat(32);
-    const replyId = 'b2'.repeat(32);
+    const root = await seedPostTx(author, 'prune root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'prune reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
 
     const blockApply = await importBlockApply();
 
-    // Height 1 confirms root + reply as consensus entries. No post content is
-    // ever inserted — confirmation creates placeholders, which is all a
-    // content-less node holds.
+    // ⛔ Height 1 carries both post TRANSACTIONS. There is no content-less
+    // variant of this any more: a block carries its posts, so a node applying it
+    // holds the content and `block_topology` is derived from `tx.post` rather
+    // than recorded from a claim.
     const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId: rootId, parentRefs: [], author: hex(author.userId) },
-        { postId: replyId, parentRefs: [rootId], author: hex(author.userId) },
-      ],
+      utxoTxs: [root.tx, reply.tx],
     });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
-    // Placeholder, not content — the content-less premise, pinned.
+    // The content arrived with the block that confirmed it — the transaction
+    // carries the payload, so applying it stores the post.
     const posts = await importPostsStore();
     const beforePrune = posts.getPost(rootId);
     expect(beforePrune).not.toBeNull();
-    expect((beforePrune as Post).content).toBe('');
+    expect((beforePrune as Post).content).toBe('prune root');
 
     // Height 2 settles the prune.
     const pruneBlock = await makeApplicableBlock({
@@ -928,14 +943,11 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const rootId = 'c3'.repeat(32);
+    const root = await seedPostTx(author, 'lone prune root');
+    const rootId = root.postId;
 
     const blockApply = await importBlockApply();
-    const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId: rootId, parentRefs: [], author: hex(author.userId) },
-      ],
-    });
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx] });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
     const pruneBlock = await makeApplicableBlock({
@@ -991,20 +1003,17 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
     const author = makeTestIdentity();
     const likerA = makeTestIdentity();
     const likerB = makeTestIdentity();
-    const rootId = 'd4'.repeat(32);
-    const replyId = 'e5'.repeat(32);
+    const root = await seedPostTx(author, 'reorg prune root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'reorg prune reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
 
     const blockApply = await importBlockApply();
     const likes = await importLikes();
     const forkResolution = await importForkResolution();
 
-    // Height 1 confirms root + reply as consensus entries.
-    const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId: rootId, parentRefs: [], author: hex(author.userId) },
-        { postId: replyId, parentRefs: [rootId], author: hex(author.userId) },
-      ],
-    });
+    // Height 1 carries both post transactions.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx, reply.tx] });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
     // Like-records applied by earlier blocks — seeded via the store with no

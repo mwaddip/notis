@@ -32,11 +32,13 @@ import type {
   AnyBoxCandidate,
   KarmaBox,
   CreditBox,
+  Post,
   UtxoTransaction,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 import {
   fixtureProvenance,
+  makePost,
   seedProvenance,
   type Stored,
 } from '../helpers.js';
@@ -102,7 +104,6 @@ function honestCandidate(
         value: 10n,
         originalValue: 10n,
         owner,
-        targetPostId: 'a'.repeat(64),
         guard: 'block_apply',
       };
     case 'vouch':
@@ -190,7 +191,7 @@ describe('checkOutputShape (direct)', () => {
       credit: 'owner',
       invite: 'inviteePublicKey',
       bond: 'inviteePublicKey',
-      post_lock: 'targetPostId',
+      post_lock: 'originalValue',
       vouch: 'targetId',
     };
     for (const t of BOX_TYPES) {
@@ -209,7 +210,7 @@ describe('checkOutputShape (direct)', () => {
   });
 
   it('rejects a required key present with value undefined', () => {
-    const r = shapeOf([{ ...honestCandidate('post_lock', owner), targetPostId: undefined }]);
+    const r = shapeOf([{ ...honestCandidate('post_lock', owner), originalValue: undefined }]);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/present with value undefined/);
   });
@@ -315,12 +316,17 @@ describe('validateTx output shape (integration)', () => {
     return box;
   }
 
-  function signedTx(inputs: string[], outputs: unknown[]): UtxoTransaction {
+  // `post` rides here rather than at the call sites because a `PostLockBox`
+  // output without it fails the engine's post biconditional (NODE_INTERFACE →
+  // Post transactions) — a second deviation in any fixture whose subject is the
+  // output schema.
+  function signedTx(inputs: string[], outputs: unknown[], post?: Post): UtxoTransaction {
     const tx: UtxoTransaction = {
       inputs,
       outputs: outputs as UtxoTransaction['outputs'],
       signatures: {},
       protocolVersion: 1,
+      ...(post ? { post } : {}),
     };
     const hash = Buffer.from(computeTxId(tx), 'hex');
     tx.signatures[Buffer.from(ownerPubKey).toString('hex')] = new Uint8Array(
@@ -394,12 +400,15 @@ describe('validateTx output shape (integration)', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
     };
     const r = validateTx(
       deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lock]),
+      signedTx(
+        [karma.id!],
+        [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
+        makePost(ownerPubKey, 'honest lock payload'),
+      ),
       10,
     );
     expect(r.valid, r.error).toBe(true);
@@ -485,7 +494,6 @@ describe('validateTx output shape (integration)', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'owner_signature',
     };
     const r = validateTx(
@@ -560,7 +568,6 @@ describe('validateTx output shape (integration)', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
       note: 'x',
     };
@@ -573,26 +580,29 @@ describe('validateTx output shape (integration)', () => {
     expect(r.error).toMatch(/unexpected key 'note'/);
   });
 
-  it('rejects a missing required key through validateTx (post_lock without targetPostId)', () => {
+  it('rejects a missing required key through validateTx (post_lock without originalValue)', () => {
     const karma = seedKarma(100n);
     const lock: Record<string, unknown> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      targetPostId: 'a'.repeat(64),
       guard: 'block_apply',
     };
-    const tx = signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lock]);
-    // The key is removed AFTER signing: `targetPostId` is `b32` in the box-id
-    // preimage, so a box without it has no encoding and `signedTx` would die at
-    // `computeTxId` before `checkOutputShape` — the gate under test — ever ran.
-    // `checkOutputShape` is `validateTx` step 4 and signatures are read at step
-    // 6, so the rejection asserted below still happens first.
-    delete lock['targetPostId'];
+    const tx = signedTx(
+      [karma.id!],
+      [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
+      makePost(ownerPubKey, 'lock payload'),
+    );
+    // The key is removed AFTER signing: `originalValue` is `vlqU64` in the
+    // box-id preimage, so a box without it has no encoding and `signedTx` would
+    // die at `computeTxId` before `checkOutputShape` — the gate under test —
+    // ever ran. `checkOutputShape` is `validateTx` step 4 and signatures are
+    // read at step 6, so the rejection asserted below still happens first.
+    delete lock['originalValue'];
     const r = validateTx(deps, tx, 10);
     expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/missing required key 'targetPostId'/);
+    expect(r.error).toMatch(/missing required key 'originalValue'/);
   });
 
   it('rejects an optional key present with undefined through validateTx (CBOR can encode it, the store cannot round-trip it)', () => {

@@ -1,6 +1,8 @@
 import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeTxId,
+  computePostId,
+  postFieldBytes,
   computeBoxId,
   canonicalBoxBytes,
   encodeTx,
@@ -10,6 +12,8 @@ import {
   hexToBuf,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
+  POST_LOCK_THREAD_COST,
+  POST_LOCK_REPLY_COST,
   EMPTY_STATE_ROOT,
   INVITE_BOND_KARMA,
 } from '@dagsocial/types';
@@ -27,7 +31,6 @@ import type {
   KarmaBox,
   BlockHeader,
   OrderingBlock,
-  SubBlockEntry,
   PruneEntry,
 } from '@dagsocial/types';
 
@@ -97,12 +100,140 @@ export function makePost(authorId: Uint8Array, content = 'test post'): Post {
     content,
     author: authorId,
     parentRefs: [],
-    challenge: new Uint8Array(32),
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: Date.now(),
-    signature: new Uint8Array(64),
   };
+}
+
+/**
+ * A post, the signed transaction that creates it, the id that transaction gives
+ * it, and the karma box it spends — the only way to name a post now.
+ *
+ * ⛔ **A post id cannot be derived from a post.** `computePostId(txId, index)`
+ * takes no `Post` (TYPES_INTERFACE → Hashing functions), so a fixture that wants
+ * an id has to build the creating transaction first. That inversion is the whole
+ * of option (C), and a helper that hid it would let a test assert an id the
+ * production path could never produce.
+ *
+ * ⚠ **`karmaBox` is returned, not seeded, and any caller whose block carries the
+ * transaction has to insert it.** Apply defers a transaction whose inputs are
+ * absent and REJECTS the block when they never arrive — the block commits to the
+ * tx in `utxoTxIds`, so a body that cannot apply it is a body its own `stateRoot`
+ * cannot reflect. An unseeded input therefore fails loudly at
+ * `applyOrderingBlock`, never quietly at the assertions downstream. The box is
+ * deterministic in the author and the content, so seeding it twice for one
+ * fixture is a `UNIQUE(tx_id, output_index)` failure rather than a silent second
+ * box.
+ *
+ * The transaction satisfies the engine's post biconditional
+ * (`utxo-engine.checkTransitions`): one karma input, one karma change output and
+ * one `PostLockBox` at the cost for this post's shape — `POST_LOCK_REPLY_COST`
+ * when it carries parent refs, `POST_LOCK_THREAD_COST` when it does not — owned
+ * by the author, who owns the karma being spent.
+ */
+export function makePostTx(
+  author: TestIdentity,
+  content = 'test post',
+  overrides: Partial<Post> = {},
+): { post: Post; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox } {
+  const post: Post = { ...makePost(author.userId, content), ...overrides };
+  const lock =
+    post.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
+  // One karma above the lock, so the change output is non-zero and the
+  // conservation check is a real subtraction rather than an identity.
+  const karmaBox = makeKarmaBox(lock + 1n, author.userId, 0, fixtureNonce(content));
+  const tx: UtxoTransaction = {
+    inputs: [karmaBox.id!],
+    outputs: [
+      { boxType: 'karma', value: 1n, owner: author.userId, guard: 'owner_signature' } as never,
+      {
+        boxType: 'post_lock',
+        value: lock,
+        originalValue: lock,
+        owner: author.userId,
+        guard: 'block_apply',
+      } as never,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+    post,
+  };
+  signTransaction(tx, author.privateKey, toHex(author.userId));
+  const txId = computeTxId(tx);
+  return { post, tx, postId: computePostId(txId, 0), karmaBox };
+}
+
+/**
+ * `makePostTx` with its karma input already in the store — what a test wants
+ * whenever a block or the pool is going to carry the transaction.
+ *
+ * The store module is reached by DYNAMIC import, which is what makes this safe
+ * under `vi.resetModules()`: a static import here would bind one module instance
+ * for the whole file while each test's own `importUtxo()` gets a fresh one, and
+ * the two would hold different `db` handles. Every store-touching helper in this
+ * file imports the same way, for the same reason.
+ */
+export async function seedPostTx(
+  author: TestIdentity,
+  content = 'test post',
+  overrides: Partial<Post> = {},
+): Promise<{ post: Post; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox }> {
+  const made = makePostTx(author, content, overrides);
+  const { insertBox } = await import('../src/store/utxo.js');
+  insertBox(made.karmaBox);
+  return made;
+}
+
+/**
+ * A per-content nonce for the karma box a post fixture spends. Two posts by one
+ * author in one test seed two boxes, and identical boxes derive one fixture txId
+ * — `UNIQUE(tx_id, output_index)`. Deterministic, so a fixture built twice keeps
+ * its ids.
+ */
+function fixtureNonce(content: string): number {
+  return createHash('blake2b512').update(content).digest().readUInt32BE(0);
+}
+
+/**
+ * A distinct, well-formed transaction per label — a pool occupant for a test
+ * whose subject is the mempool's bookkeeping rather than the transaction.
+ *
+ * Each names its own input box, because `insertUtxoTx` refuses a second pending
+ * spend of the same box: two fillers sharing an input would make a
+ * capacity or FIFO test measure the conflict rule instead.
+ */
+export function fillerTx(label: string): UtxoTransaction {
+  const id = createHash('blake2b512')
+    .update(new TextEncoder().encode('dagsocial/test-filler/1'))
+    .update(new TextEncoder().encode(label))
+    .digest().subarray(0, 32).toString('hex');
+  return { inputs: [id], outputs: [], signatures: {}, protocolVersion: PROTOCOL_VERSION };
+}
+
+/**
+ * The id a post fixture gets from its creating transaction.
+ *
+ * ⛔ **A post id is not a function of a post** — `computePostId(txId, index)`
+ * takes no `Post` (TYPES_INTERFACE → Hashing functions). A fixture that seeds a
+ * post directly into the store has no creating transaction, so this manufactures
+ * the stand-in, exactly as `fixtureProvenance` below does for a seeded box.
+ *
+ * Deterministic on the post's own bytes, so a fixture built twice gets the same
+ * id and golden values stay stable across runs and file orderings.
+ *
+ * ⚠ **This is a FIXTURE helper and its name says so.** It runs the real
+ * `computePostId` over a synthetic `TxId`, so it is structurally what production
+ * does — but a test asserting a *production* id must build the real transaction
+ * (`makePostTx`), not call this.
+ */
+export function fixturePostId(post: Post): string {
+  const synthetic = createHash('blake2b512')
+    .update(new TextEncoder().encode('dagsocial/test-fixture-post-tx/1'))
+    .update(postFieldBytes(post))
+    .digest()
+    .subarray(0, 32)
+    .toString('hex');
+  return computePostId(synthetic, 0);
 }
 
 /**
@@ -330,6 +461,18 @@ export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
 }
 
 /**
+ * The `PostLockBox` a `makePostTx` transaction creates, with its stored id —
+ * output 1, where `changeBoxOf` takes output 0.
+ *
+ * Same routing through `materializeOutput`, for the same reason: prune
+ * settlement finds this box by the id apply gave it, so a fixture that derived
+ * the id another way would assert against its own arithmetic.
+ */
+export function lockBoxOf(tx: UtxoTransaction): AnyBox {
+  return materializeOutput(tx.outputs[1]!, computeTxId(tx), 1);
+}
+
+/**
  * A complete `Config` for a test that has to hand one to production code.
  *
  * Derived from the loaded singleton rather than written out as a literal, so it
@@ -541,8 +684,6 @@ export async function makeApplicableBlock(
     signWith?: KeyObject;
     /** Height to build at; anything above 1 chain-links to the stored block below. */
     height?: number;
-    /** Sub-block entries this block confirms (topology + authorship). */
-    subBlockEntries?: SubBlockEntry[];
     /** Prune entries this block settles. */
     pruneEntries?: PruneEntry[];
     /** Mine to this identity (coinbase owner + validatorId) instead of a fresh
@@ -561,7 +702,7 @@ export async function makeApplicableBlock(
     coinbaseSplit?: Array<{ owner: Uint8Array; value: bigint; isTreasury: boolean }>;
   } = {},
 ): Promise<OrderingBlock> {
-  const { computeSubBlockRoot, computeUtxoTxRoot, computeBlockReward } = await import(
+  const { computeUtxoTxRoot, computeBlockReward } = await import(
     '../src/services/block-creator.js'
   );
   const { expectedTarget } = await import('../src/services/difficulty.js');
@@ -582,16 +723,12 @@ export async function makeApplicableBlock(
     prevBlockHash = prevHash;
   }
   const miner = opts.miner ?? makeTestIdentity();
-  const subBlockEntries = opts.subBlockEntries ?? [];
-  const subBlockTree = {
-    subBlockEntries,
-    pruneEntries: opts.pruneEntries ?? [],
-  };
   const lockedUntilBlock = opts.lockedUntilBlock ?? height + config.creditMinerRewardDelay;
   const embeddedTxs = opts.utxoTxs ?? [];
   const utxoTxTree = {
     utxoTxIds: embeddedTxs.map((tx) => computeTxId(tx)),
     utxoTxs: embeddedTxs.map((tx) => encodeTx(tx)),
+    pruneEntries: opts.pruneEntries ?? [],
     coinbaseOutputs: (
       opts.coinbaseSplit ?? [
         { owner: miner.userId, value: computeBlockReward(height), isTreasury: false },
@@ -603,7 +740,6 @@ export async function makeApplicableBlock(
     protocolVersion: PROTOCOL_VERSION,
     height,
     prevBlockHash,
-    subBlockRoot: computeSubBlockRoot(subBlockTree),
     utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: miner.userId,
@@ -614,7 +750,6 @@ export async function makeApplicableBlock(
 
   const block = {
     header,
-    subBlockTree,
     utxoTxTree,
     validatorSignature: new Uint8Array(64),
   } as unknown as OrderingBlock;

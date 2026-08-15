@@ -1,4 +1,4 @@
-import { uid } from '../helpers.js';
+import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
@@ -33,7 +33,7 @@ async function importStumpsFresh() {
 async function importTypesPosts() {
   const mod = await import('@dagsocial/types');
   return mod as {
-    computePostId: (post: Post) => string;
+    computePostId: (txId: string, index: number) => string;
     PROTOCOL_VERSION: number;
   };
 }
@@ -51,11 +51,8 @@ function makePost(overrides: Partial<Post> = {}): Post {
     content: 'Hello, world!',
     author: uid('alice123'),
     parentRefs: [],
-    challenge: bytes(32),
-    powNonce: 42,
     protocolVersion: 1,
     timestamp: 1700000000000,
-    signature: bytes(64),
     ...overrides,
   };
 }
@@ -96,15 +93,14 @@ describe('posts store', () => {
     const post = makePost({
       content: 'round-trip test',
       parentRefs: [],
-      powNonce: 12345,
       timestamp: 1700000000001,
     });
     const rawCbor = new Uint8Array([10, 20, 30]);
 
-    insertPost(post, rawCbor);
+    insertPost(fixturePostId(post), post, rawCbor);
 
     const { computePostId } = await importTypesPosts();
-    const id = computePostId(post);
+    const id = fixturePostId(post);
 
     const result = getPost(id);
     expect(result).not.toBeNull();
@@ -114,11 +110,16 @@ describe('posts store', () => {
     expect(retrieved.content).toBe('round-trip test');
     expect(retrieved.author).toEqual(uid('alice123'));
     expect(retrieved.parentRefs).toEqual([]);
-    expect(retrieved.challenge).toEqual(post.challenge);
-    expect(retrieved.powNonce).toBe(12345);
     expect(retrieved.protocolVersion).toBe(1);
     expect(retrieved.timestamp).toBe(1700000000001);
-    expect(retrieved.signature).toEqual(post.signature);
+    // `Post` has exactly five fields (TYPES_INTERFACE → Layout — Post), all
+    // five asserted above; the store adds `id` and `status`, which are row
+    // columns and not part of the post. Asserting the whole key set is what
+    // makes this a round-trip rather than a sample: a field that stopped
+    // surviving CBOR would otherwise pass unnoticed.
+    expect(Object.keys(retrieved).sort()).toEqual(
+      ['author', 'content', 'id', 'parentRefs', 'protocolVersion', 'status', 'timestamp'],
+    );
   });
 
   // 2. getPost returns null for unknown id
@@ -143,9 +144,9 @@ describe('posts store', () => {
 
     const post = makePost({ content: 'will be pruned' });
     const rawCbor = bytes(16);
-    insertPost(post, rawCbor);
+    insertPost(fixturePostId(post), post, rawCbor);
 
-    const postId = computePostId(post);
+    const postId = fixturePostId(post);
 
     // Verify it's a Post first
     expect(getPost(postId)).not.toBeNull();
@@ -184,8 +185,8 @@ describe('posts store', () => {
     const alicePost = makePost({ author: uid('alice'), content: 'alice post', timestamp: 100 });
     const bobPost = makePost({ author: uid('bob'), content: 'bob post', timestamp: 200 });
 
-    insertPost(alicePost, bytes(8));
-    insertPost(bobPost, bytes(8));
+    insertPost(fixturePostId(alicePost), alicePost, bytes(8));
+    insertPost(fixturePostId(bobPost), bobPost, bytes(8));
 
     const aliceResults = queryPosts({ author: uid('alice') });
     expect(aliceResults).toHaveLength(1);
@@ -212,7 +213,7 @@ describe('posts store', () => {
         content: `post-${i}`,
         timestamp: 1000 + i,
       });
-      insertPost(post, bytes(8));
+      insertPost(fixturePostId(post), post, bytes(8));
     }
 
     // Default limit=50, offset=0 — should return all 5
@@ -247,12 +248,12 @@ describe('posts store', () => {
     initDb(':memory:');
 
     const post = makePost({ content: 'doomed', timestamp: 100 });
-    insertPost(post, bytes(8));
+    insertPost(fixturePostId(post), post, bytes(8));
 
     // Before pruning, query returns the post
     expect(queryPosts({})).toHaveLength(1);
 
-    const postId = computePostId(post);
+    const postId = fixturePostId(post);
     const stump = makeStump({ rootPostHash: postId });
     pruneSubtree(postId);
     insertStump(stump);
@@ -269,9 +270,9 @@ describe('posts store', () => {
 
     initDb(':memory:');
 
-    insertPost(makePost({ content: 'oldest', timestamp: 100 }), bytes(8));
-    insertPost(makePost({ content: 'middle', timestamp: 200 }), bytes(8));
-    insertPost(makePost({ content: 'newest', timestamp: 300 }), bytes(8));
+    insertPost(fixturePostId(makePost({ content: 'oldest', timestamp: 100 })), makePost({ content: 'oldest', timestamp: 100 }), bytes(8));
+    insertPost(fixturePostId(makePost({ content: 'middle', timestamp: 200 })), makePost({ content: 'middle', timestamp: 200 }), bytes(8));
+    insertPost(fixturePostId(makePost({ content: 'newest', timestamp: 300 })), makePost({ content: 'newest', timestamp: 300 }), bytes(8));
 
     const pending = getPendingPosts(10);
     expect(pending).toHaveLength(3);
@@ -289,8 +290,8 @@ describe('posts store', () => {
     initDb(':memory:');
 
     const post = makePost({ content: 'confirm me' });
-    insertPost(post, bytes(8));
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(8));
+    const postId = fixturePostId(post);
 
     // Still pending before confirm
     expect(getPendingPosts(10)).toHaveLength(1);
@@ -325,8 +326,8 @@ describe('posts store', () => {
     // pinning live behaviour. One ref could not catch a truncation or a reorder.
     const refs3 = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
     const post = makePost({ parentRefs: refs3 });
-    insertPost(post, bytes(8));
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(8));
+    const postId = fixturePostId(post);
 
     const refs = getParentRefs(postId);
     expect(refs).toEqual(refs3);
@@ -342,23 +343,23 @@ describe('posts store', () => {
 
     // Root post
     const root = makePost({ content: 'root', parentRefs: [] });
-    insertPost(root, bytes(8));
-    const rootId = computePostId(root);
+    insertPost(fixturePostId(root), root, bytes(8));
+    const rootId = fixturePostId(root);
 
     // Child of root
     const child = makePost({
       content: 'child',
       parentRefs: [rootId],
     });
-    insertPost(child, bytes(8));
-    const childId = computePostId(child);
+    insertPost(fixturePostId(child), child, bytes(8));
+    const childId = fixturePostId(child);
 
     // Grandchild of root (child of child)
     const grandchild = makePost({
       content: 'grandchild',
       parentRefs: [childId],
     });
-    insertPost(grandchild, bytes(8));
+    insertPost(fixturePostId(grandchild), grandchild, bytes(8));
 
     const subtree = getSubtree(rootId);
     expect(subtree).toHaveLength(2);
@@ -377,8 +378,8 @@ describe('posts store', () => {
     initDb(':memory:');
 
     const post = makePost({ content: 'prune me' });
-    insertPost(post, bytes(8));
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(8));
+    const postId = fixturePostId(post);
 
     const stump = makeStump({
       rootPostHash: postId,
@@ -414,16 +415,16 @@ describe('posts store', () => {
 
     // Build chain: root -> child -> grandchild
     const root = makePost({ content: 'root', parentRefs: [] });
-    insertPost(root, bytes(8));
-    const rootId = computePostId(root);
+    insertPost(fixturePostId(root), root, bytes(8));
+    const rootId = fixturePostId(root);
 
     const child = makePost({ content: 'child', parentRefs: [rootId] });
-    insertPost(child, bytes(8));
-    const childId = computePostId(child);
+    insertPost(fixturePostId(child), child, bytes(8));
+    const childId = fixturePostId(child);
 
     const grandchild = makePost({ content: 'grandchild', parentRefs: [childId] });
-    insertPost(grandchild, bytes(8));
-    const grandchildId = computePostId(grandchild);
+    insertPost(fixturePostId(grandchild), grandchild, bytes(8));
+    const grandchildId = fixturePostId(grandchild);
 
     const stump = makeStump({
       rootPostHash: rootId,
@@ -459,8 +460,8 @@ describe('posts store', () => {
     initDb(':memory:');
 
     const post = makePost({ content: 'stump-direct' });
-    insertPost(post, bytes(8));
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(8));
+    const postId = fixturePostId(post);
 
     const stump = makeStump({
       rootPostHash: postId,
@@ -499,7 +500,7 @@ describe('posts store', () => {
     initDb(':memory:');
 
     for (let i = 0; i < 5; i++) {
-      insertPost(makePost({ content: `pending-${i}`, timestamp: 100 + i }), bytes(8));
+      insertPost(fixturePostId(makePost({ content: `pending-${i}`, timestamp: 100 + i })), makePost({ content: `pending-${i}`, timestamp: 100 + i }), bytes(8));
     }
 
     const limited = getPendingPosts(3);
@@ -510,52 +511,16 @@ describe('posts store', () => {
     expect(limited[2]!.content).toBe('pending-2');
   });
 
-  // 15. insertPost upgrades an existing placeholder with real content
-  it('insertPost upgrades an existing placeholder with real content', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, insertPostPlaceholder } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
+  // ⛔ Reserved, never to be reused: the placeholder-upgrade case. A post and
+  // the block that confirms it arrive together — the post is the payload of a
+  // transaction the block embeds (NODE_INTERFACE → Post transactions) — so
+  // there is no window in which a confirmed id has no content, and
+  // `insertPostPlaceholder` is gone rather than unused.
 
-    initDb(':memory:');
-
-    // Build the post first so we can compute its real postId
-    const post: Post = {
-      content: 'real content',
-      author: new Uint8Array(32).fill(1),
-      parentRefs: ['bb'.repeat(32)],
-      challenge: new Uint8Array(32).fill(2),
-      powNonce: 42,
-      protocolVersion: 1,
-      timestamp: 1700000000000,
-      signature: new Uint8Array(64).fill(3),
-    };
-    const postId = computePostId(post);
-
-    // Create a placeholder (simulating block-apply before gossip arrives)
-    insertPostPlaceholder(postId, ['bb'.repeat(32)]);
-
-    // Verify placeholder exists with empty content
-    const placeholder = getDb()
-      .prepare('SELECT content, author FROM dag_posts WHERE id = ?')
-      .get(postId) as any;
-    expect(placeholder.content).toBe('');
-
-    // Now insert real content via insertPost (simulating gossip arrival)
-    insertPost(post, new Uint8Array([1, 2, 3]));
-
-    // Verify content was upgraded
-    const upgraded = getDb()
-      .prepare('SELECT content, author, pow_nonce FROM dag_posts WHERE id = ?')
-      .get(postId) as any;
-    expect(upgraded.content).toBe('real content');
-    expect(upgraded.pow_nonce).toBe(42);
-  });
-
-  // 16. insertPost still works for a new post (no placeholder)
-  it('insertPost still works for a new post (no placeholder)', async () => {
+  // 16. insertPost stores under the id it is given
+  it('insertPost stores under the id it is given', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
 
@@ -563,15 +528,16 @@ describe('posts store', () => {
       content: 'fresh post',
       author: new Uint8Array(32).fill(9),
       parentRefs: [],
-      challenge: new Uint8Array(32).fill(8),
-      powNonce: 7,
       protocolVersion: 1,
       timestamp: 1700000000000,
-      signature: new Uint8Array(64).fill(6),
     };
-    insertPost(post, new Uint8Array([4, 5, 6]));
+    // ⛔ The id is a PARAMETER, not something the store derives. A post id comes
+    // from the creating transaction's provenance (TYPES_INTERFACE → Hashing
+    // functions), which the store never sees, so `insertPost` takes the id its
+    // caller derived.
+    const postId = fixturePostId(post);
+    insertPost(postId, post, new Uint8Array([4, 5, 6]));
 
-    const postId = computePostId(post);
     const row = getDb()
       .prepare('SELECT content FROM dag_posts WHERE id = ?')
       .get(postId) as any;

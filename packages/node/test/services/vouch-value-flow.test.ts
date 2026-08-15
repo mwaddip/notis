@@ -54,8 +54,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -84,7 +82,7 @@ async function importBlockCreator() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
   };
@@ -92,11 +90,7 @@ async function importUtxo() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (
-      tx: UtxoTransaction,
-      batchId: string | null,
-      expiresAtHeight: number,
-    ) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
   };
 }
 
@@ -183,7 +177,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     utxo.insertBox(zeroVouch);
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
 
-    mempool.insertUtxoTx(makeUnvouchTx(zeroVouch.id!, voucher), null, 100000);
+    mempool.insertUtxoTx(makeUnvouchTx(zeroVouch.id!, voucher), 100000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -251,7 +245,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(castTx, staker.privateKey, hex(staker.userId));
-    mempool.insertUtxoTx(castTx, null, 100000);
+    mempool.insertUtxoTx(castTx, 100000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);

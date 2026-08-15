@@ -94,9 +94,7 @@ A pure-additive DAG can't model deletion or mutable account state. A pure UTXO
 system can't model threaded conversation or author-sovereign content spaces.
 The hybrid preserves the strengths of both.
 
-### Block architecture: sub-blocks + ordering blocks
-
-See `SUBBLOCK_INTERFACE.md` for the full sub-block contract.
+### Block architecture: ordering blocks
 
 Inspired by Ergo's subblock model (EIP-15):
 
@@ -486,10 +484,13 @@ transition arms that dereference those fields, which is what closed the totality
 gap the same marker used to book as a queued follow-up.
 
 One correction that phase produced is worth keeping, because it was a
-type-versus-domain error of the kind this section is about:
-`post_lock.targetPostId` needed a `hex32` type added in the wire-format bundle,
-having been admitted as any `string` while `canonicalBoxBytes` wrote it with a
-throwing fixed-width writer.
+type-versus-domain error of the kind this section is about: a `hex32` field
+admitted as any `string` while a fixed-width writer throws on it.
+
+⚠ **The instance this named — `post_lock.targetPostId` — is gone**, deleted when
+post ids became provenance-derived. The error class is not: `post.parentRefs`
+reaches `writeHexNOrThrow` by the identical route and carries the same
+obligation.
 
 > ✅ **RESOLVED — the inbound obligation is now structural. Verified 2026-08-11.** This read
 > `AHEAD OF CODE` until Phase 9; the positional bundle
@@ -1689,13 +1690,15 @@ forever. A node rejects objects with an unsupported protocol version.
 - **Prover restored on rejection.** A rejected block leaves the AVL prover at
   its pre-block digest regardless of which stage rejected it.
 
-### Sub-blocks and ordering
+### Blocks and ordering
 
-See `SUBBLOCK_INTERFACE.md` for the full contract.
-
-- Sub-blocks are user-produced; ordering blocks are validator-produced
-- Sub-blocks carry exactly one post and nothing else
-- Ordering blocks anchor sub-blocks via Merkle digest
+- **There are no sub-blocks.** A post is a transaction, so it rides `utxoTxIds`
+  with every other transaction and the block commits one body, not two.
+  `SUBBLOCK_INTERFACE.md` is **deleted** — it described a structure that no
+  longer exists, and the rules that survived it are in `TYPES_INTERFACE` →
+  UtxoTransaction / OrderingBlock and `NODE_INTERFACE` → Post transactions.
+- Ordering blocks are validator-produced; consensus is **single-phase PoW**,
+  which is what it always effectively was
 - Like dedup is structural: the `(liker, post)` like-record exists or it does not
 - Like accrual and settlement happen every block — there is no epoch (P2-D)
 

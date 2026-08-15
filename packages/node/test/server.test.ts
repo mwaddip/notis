@@ -21,8 +21,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     networkType: 'testnet',
     profile: profileFor('testnet'),
     nodeRole: 'server',
-    postPowTargetBits: 20,
-    challengeWindowBlocks: 10,
     maxSubBlocksPerBlock: 1000,
     orderingBlockPowTargetBits: 3072,
     creditTreasuryPct: 10,

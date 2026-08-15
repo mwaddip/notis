@@ -5,8 +5,7 @@ import {
   seedProvenance,
   signTransaction,
   solveHeaderPow,
-  uid,
-} from '../helpers.js';
+  uid, fixturePostId, makePostTx, seedPostTx, fillerTx } from '../helpers.js';
 import {
   describe,
   it,
@@ -24,8 +23,7 @@ import {
   computeBoxId,
   computePostId,
   PROTOCOL_VERSION,
-  LIKE_KARMA_COST,
-} from '@dagsocial/types';
+  LIKE_KARMA_COST, computeTxId } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
   Post,
@@ -33,7 +31,6 @@ import type {
   OrderingBlock,
   Stump,
   UtxoTransaction,
-  SubBlockEntry,
 } from '@dagsocial/types';
 import type { StoredPost } from '../../src/store/posts.js';
 import type Database from 'better-sqlite3';
@@ -52,8 +49,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   // Mining
   orderingBlockPowTargetBits: 3072,
@@ -81,7 +76,7 @@ type BlockCreatorModule = {
   createOrderingBlock: () => OrderingBlock | null;
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
-  computeSubBlockRoot: (tree: OrderingBlock['subBlockTree']) => string;
+  computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
 };
 
 async function importDb(): Promise<DbModule> {
@@ -96,7 +91,7 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
 
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
+    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
     confirmPost: (postId: string, blockHeight: number) => void;
     getPost: (id: string) => StoredPost | Stump | null;
   };
@@ -105,22 +100,11 @@ async function importPosts() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertSubBlock: (
-      postId: string,
-      expiresAtHeight: number,
-      batchId?: string | null,
-    ) => number;
-    insertUtxoTx: (
-      tx: UtxoTransaction,
-      batchId: string | null,
-      expiresAtHeight: number,
-    ) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      subblockId: string | null;
       utxoTxCbor: Uint8Array | null;
-      batchId: string | null;
       expiresAtHeight: number;
       createdAt: string;
     }>;
@@ -131,7 +115,7 @@ async function importMempoolFresh() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
   };
@@ -190,11 +174,8 @@ function makePost(authorId: Uint8Array, content = 'test post'): Post {
     content,
     author: authorId,
     parentRefs: [],
-    challenge: new Uint8Array(32),
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: Date.now(),
-    signature: new Uint8Array(64),
   };
 }
 
@@ -279,7 +260,7 @@ describe('block-creator', () => {
     // At genesis (height 0→1), this produces a block with coinbase outputs.
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
-    expect(block!.subBlockTree.subBlockEntries).toEqual([]);
+    expect(block!.utxoTxTree.utxoTxIds).toEqual([]);
     expect(block!.utxoTxTree.coinbaseOutputs.length).toBeGreaterThan(0);
   });
 
@@ -294,18 +275,13 @@ describe('block-creator', () => {
     // Set up identity
     const author = makeTestIdentity();
 
-    // Create and insert post
-    const post = makePost(author.userId, 'hello world');
-    const postId = computePostId(post);
-    const { encodePost } = await import('@dagsocial/types');
-    const rawCbor = encodePost(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'hello world');
 
-    const posts = await importPosts();
-    posts.insertPost(post, rawCbor);
-
-    // Insert postId into mempool (ID-based, not CBOR-based)
+    // The transaction IS the post's carrier: the pool holds one entry and the
+    // block that takes it carries the payload (NODE_INTERFACE → Post
+    // transactions).
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     // Start block creator and create block
     const bc = await importBlockCreator();
@@ -314,47 +290,44 @@ describe('block-creator', () => {
     const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
-    expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
-
-    // Verify subBlockEntries in the block
-    expect(block!.subBlockTree.subBlockEntries).toBeDefined();
-    // The entries-versus-refs length assertion stood here and went with the
-    // field (Phase 3b). It would now compare `subBlockEntries` against itself.
-    expect(block!.subBlockTree.subBlockEntries).toHaveLength(1);
-    for (const entry of block!.subBlockTree.subBlockEntries) {
-      expect(entry.postId).toBe(postId);
-      expect(entry.parentRefs).toEqual(post.parentRefs);
-      // Filled from the resolved post, never from a client claim (audit H-3).
-      expect(entry.author).toBe(Buffer.from(post.author).toString('hex'));
-    }
+    // ⛔ ONE committed list. The post rides `utxoTxIds` with everything else,
+    // and its payload — parents and author included — is inside the transaction
+    // body rather than in a parallel claim the producer wrote (audit H-3).
+    const { postsOf } = await import('../../src/services/block-posts.js');
+    const carried = postsOf(block!);
+    expect(carried).toHaveLength(1);
+    expect(carried[0]!.postId).toBe(postId);
+    expect(carried[0]!.post.parentRefs).toEqual(post.parentRefs);
+    expect(Buffer.from(carried[0]!.post.author).toString('hex'))
+      .toBe(Buffer.from(post.author).toString('hex'));
   });
 
   // -----------------------------------------------------------------------
   // 3. Block includes sub-block refs
   // -----------------------------------------------------------------------
 
-  it('block includes sub-block refs', async () => {
+  it('block carries the post transactions it created posts from', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'post one');
-    const postId = computePostId(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'post one');
     const { encodePost } = await import('@dagsocial/types');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
     const block = await mineNextBlock(bc);
     expect(block).not.toBeNull();
-    expect(block!.subBlockTree.subBlockEntries.map((e) => e.postId)).toEqual([postId]);
+    const { postsOf } = await import('../../src/services/block-posts.js');
+    expect(postsOf(block!).map((p) => p.postId)).toEqual([postId]);
     expect(block!.header.validatorId).toBeTruthy();
     expect(block!.validatorSignature.length).toBe(64);
     const h = blockHash(block!.header);
@@ -372,15 +345,14 @@ describe('block-creator', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'confirm me');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'confirm me');
     const { encodePost } = await import('@dagsocial/types');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -410,15 +382,14 @@ describe('block-creator', () => {
     const bc = await importBlockCreator();
 
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'template shape');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'template shape');
     const { encodePost } = await import('@dagsocial/types');
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(postId, 1000);
+    posts.insertPost(postId, post, encodePost(post));
+    mempool.insertUtxoTx(postTx, 1000);
 
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    mempool.insertUtxoTx(makeLikeTx(author, karmaBox, postId), null, 1000);
+    mempool.insertUtxoTx(makeLikeTx(author, karmaBox, postId), 1000);
 
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
@@ -428,7 +399,7 @@ describe('block-creator', () => {
     // Exact-set, so a stray key sneaking back in — or a new one added
     // untested — fails here (block body CBOR is consensus-visible bytes).
     expect(Object.keys(block!.utxoTxTree).sort()).toEqual(
-      ['coinbaseOutputs', 'utxoTxIds', 'utxoTxs'],
+      ['coinbaseOutputs', 'pruneEntries', 'utxoTxIds', 'utxoTxs'],
     );
   });
 
@@ -457,7 +428,7 @@ describe('block-creator', () => {
       const stored = ordering.getOrderingBlock(height);
       expect(stored).not.toBeNull();
       expect(Object.keys(stored!.utxoTxTree).sort()).toEqual(
-        ['coinbaseOutputs', 'utxoTxIds', 'utxoTxs'],
+        ['coinbaseOutputs', 'pruneEntries', 'utxoTxIds', 'utxoTxs'],
       );
     }
   });
@@ -474,13 +445,12 @@ describe('block-creator', () => {
 
     const { encodePost } = await import('@dagsocial/types');
 
-    const post = makePost(author.userId, 'height test');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'height test');
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -493,10 +463,9 @@ describe('block-creator', () => {
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Second block
-    const post2 = makePost(author.userId, 'height test 2');
-    const postId2 = computePostId(post2);
-    posts.insertPost(post2, encodePost(post2));
-    mempool.insertSubBlock(postId2, 1000);
+    const { post: post2, tx: post2Tx, postId: postId2 } = await seedPostTx(author, 'height test 2');
+    posts.insertPost(postId2, post2, encodePost(post2));
+    mempool.insertUtxoTx(post2Tx, 1000);
 
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(2);
@@ -518,13 +487,12 @@ describe('block-creator', () => {
     const author = makeTestIdentity();
 
     // Create and insert a post
-    const post = makePost(author.userId, 'utxoTxIds test');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'utxoTxIds test');
     const { encodePost, computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     // Insert sub-block ID into mempool
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     // Set up: standalone UTXO transaction in mempool
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
@@ -534,7 +502,7 @@ describe('block-creator', () => {
     // placeholder has no encoding. What the test needs is "not this post", and a
     // well-formed id that differs says that just as well.
     const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
-    mempool.insertUtxoTx(likeTx, null, 1000);
+    mempool.insertUtxoTx(likeTx, 1000);
 
     // The subject is the body the creator assembles, so the template is what
     // this reads. The like names a post no block confirms, which apply rejects
@@ -582,21 +550,15 @@ describe('block-creator', () => {
     // Set up identity
     const author = makeTestIdentity();
 
-    // Create and insert a post
-    const post = makePost(author.userId, 'batch UTXO test');
-    const postId = computePostId(post);
-    const { encodePost, computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(post, encodePost(post));
+    const { tx: postTx, postId } = await seedPostTx(author, 'batch UTXO test');
+    const { computeTxId } = await import('@dagsocial/types');
+    mempool.insertUtxoTx(postTx, 1000);
 
-    // Insert sub-block ID with batch_id "batch1"
-    mempool.insertSubBlock(postId, 1000, 'batch1');
-
-    // Create a UTXO transaction with batch_id "batch1"
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
     // Well-formed and deliberately unrelated — see the note above.
     const likeTx = makeLikeTx(author, karmaBox, 'ee'.repeat(32));
-    mempool.insertUtxoTx(likeTx, 'batch1', 1000);
+    mempool.insertUtxoTx(likeTx, 1000);
 
     // Assembly again, so again the template: the like names a post no block
     // confirms and apply rejects the body it rides in.
@@ -607,8 +569,9 @@ describe('block-creator', () => {
     expect(template).not.toBeNull();
     // The batch-linked UTXO tx ID should be in utxoTxIds
     expect(template!.utxoTxTree.utxoTxIds).toContain(computeTxId(likeTx));
-    // The sub-block should be referenced
-    expect(template!.subBlockTree.subBlockEntries.map((e) => e.postId)).toContain(postId);
+    // …and the post rides the same list.
+    const { postsOf } = await import('../../src/services/block-posts.js');
+    expect(postsOf(template!).map((p) => p.postId)).toContain(postId);
     // Both entries leave the pool at finalize.
     const nonce = solveHeaderPow(template!.header);
     expect(bc.submitMinedBlock(nonce, template!.header.height)).not.toBeNull();
@@ -617,27 +580,33 @@ describe('block-creator', () => {
   });
 
   // -----------------------------------------------------------------------
-  // H-3: the sub-block Merkle leaf commits to the entry's author
+  // H-3: the committed root binds the post's author, through its transaction
   // -----------------------------------------------------------------------
 
-  it('computeSubBlockRoot commits to the entry author', async () => {
-    const { computeSubBlockRoot } = await importBlockCreator();
+  it('computeUtxoTxRoot commits to the post author, via the transaction id', async () => {
+    // ⛔ The successor to the `computeSubBlockRoot` author test, and the binding
+    // is now TWO steps rather than one — which is why it is stronger. The root
+    // commits `utxoTxIds`; a `TxId` covers `postFieldBytes`, which contains the
+    // author. So flipping the author moves the transaction id and therefore the
+    // root, and a producer cannot rewrite authorship after mining without
+    // producing a different block entirely.
+    const { computeUtxoTxRoot } = await importBlockCreator();
+    const author = makeTestIdentity();
+    const other = makeTestIdentity();
 
-    const postId = 'aa'.repeat(32);
-    const entry: SubBlockEntry = {
-      postId,
-      parentRefs: ['bb'.repeat(32)],
-      author: 'cc'.repeat(32),
-    };
-    const tree = { subBlockEntries: [entry], pruneEntries: [] };
-    // Author flipped, nothing else — if the root moved, the block is bound to
-    // the authorship claim and a producer cannot rewrite it after mining.
-    const flipped = {
-      ...tree,
-      subBlockEntries: [{ ...entry, author: 'dd'.repeat(32) }],
-    };
+    // `makePostTx`, not `seedPostTx`: this measures the root over transaction
+    // ids and opens no database.
+    const a = makePostTx(author, 'same words');
+    const b = makePostTx(other, 'same words');
+    expect(a.tx.post!.content).toBe(b.tx.post!.content);   // only the author differs
 
-    expect(computeSubBlockRoot(flipped)).not.toBe(computeSubBlockRoot(tree));
+    const treeOf = (txId: string) => ({
+      utxoTxIds: [txId], utxoTxs: [new Uint8Array(1)],
+      pruneEntries: [], coinbaseOutputs: [],
+    });
+    expect(computeTxId(a.tx)).not.toBe(computeTxId(b.tx));
+    expect(computeUtxoTxRoot(treeOf(computeTxId(a.tx))))
+      .not.toBe(computeUtxoTxRoot(treeOf(computeTxId(b.tx))));
   });
 
   // -----------------------------------------------------------------------

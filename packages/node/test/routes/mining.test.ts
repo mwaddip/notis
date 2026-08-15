@@ -27,21 +27,20 @@ function makeTemplate(): OrderingBlock {
       protocolVersion: 1,
       height: 7,
       prevBlockHash: '11'.repeat(32),
-      subBlockRoot: '22'.repeat(32),
       utxoTxRoot: '33'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32).fill(0x44),
-      powNonce: 0,
       // The template's difficulty is what `scripts/miner.mjs` expands, so it is
       // stated in the header denomination — 1/256 of a bit, VALIDATION_INTERFACE
       // → orderingPowTarget.
+      powNonce: 0,
       powTargetBits: 256 * 12,
       createdAt: 1_700_000_000_000,
     },
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [
         {
           owner: new Uint8Array(32).fill(0x55),
@@ -209,24 +208,20 @@ describe('mining routes — template subBlockRefs', () => {
     const committedId = 'aa'.repeat(32);
     const poisonId = 'bb'.repeat(32);
 
-    // ⚠ **There is no poison half to build.** A template carries one list —
-    // `subBlockEntries`, which `subBlockRoot` covers — so there is no second
-    // list that could disagree with it; the unrepresentability is pinned
-    // structurally in `@dagsocial/types`. What this file owns is the
-    // miner-facing JSON shape: an external miner reads `subBlockRefs`, and must
-    // get the ids the template committed to.
+    // ⚠ **There is no poison half to build.** A template carries ONE committed
+    // body, and the post ids the miner reads are derived from its post-bearing
+    // transactions rather than stored beside them — so there is no second list
+    // that could disagree. What this file owns is the miner-facing JSON shape.
     const tpl = makeTemplate();
-    tpl.subBlockTree.subBlockEntries = [
-      { postId: committedId, parentRefs: [], author: 'cc'.repeat(32) },
-    ];
 
     const res = await request(makeApp(makeDeps({ getCurrentTemplate: () => tpl })))
       .get('/template')
       .set('Authorization', `Bearer ${SECRET}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.subBlockRefs).toEqual([committedId]);
-    expect(res.body.subBlockRefs).not.toContain(poisonId);
+    expect(res.body.postIds).toEqual([]);
+    expect(res.body.subBlockRefs).toBeUndefined();
+    expect(res.body.subBlockEntries).toBeUndefined();
   });
 });
 

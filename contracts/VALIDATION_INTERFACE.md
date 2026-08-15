@@ -47,10 +47,19 @@ the schedule without touching the admission rule — difficulty-retarget spec, U
 is unchanged by that retarget and is shared by both expansions; `orderingPowTarget` below is the
 half that moved.
 
-> ⚠ **AHEAD OF CODE.** Once `orderingPowTarget` lands, **this function serves post PoW alone** — fixed
-> difficulty, never retargeted (user, 2026-08-12) — and keeps whole bits over `[0, 256]`. Ordering-block
-> headers stop using it. The two are not interchangeable and share a type: passing a 1/256-bit value
-> here is refused only because it exceeds 256.
+> ⚠ **AHEAD OF CODE, and its premise INVERTED when post PoW was removed.** This read *"once
+> `orderingPowTarget` lands, this function serves post PoW alone"*. There is no post PoW, so
+> **`powTarget` today serves ordering-block PoW and nothing else** — the opposite consumer from
+> the one this marker anticipated.
+>
+> ⛔ **The consequence belongs to the scaled-pow-target unit and changes its scope.** Once
+> `orderingPowTarget` lands, ordering headers stop calling `powTarget`, and it has **no consumer
+> left at all** — it becomes dead rather than narrowed, and should be deleted rather than kept
+> for a caller that no longer exists. **`meetsPowTarget` survives**: it is the comparator both
+> expansions share, and `orderingPowTarget` needs it.
+>
+> The two expansions remain non-interchangeable and share a type; passing a 1/256-bit value to
+> `powTarget` is refused only because it exceeds 256.
 
 **Solvers hoist the expansion.** `powTarget` depends only on `targetBits`, so a solver derives it once
 per template and calls `meetsPowTarget` per nonce. Deriving it inside the loop allocates once per hash.
@@ -259,7 +268,24 @@ than 256 target bits is arithmetically shiftable — `1n << 257n` is an ordinary
 shifts without consulting this domain counts `2^257` from a single header and outweighs any honest
 chain. Refusing out of domain is the bound; there is no separate range check to keep in step with it.
 
-### verifyPoW
+### ~~verifyPoW~~ — DELETED (posts as transactions)
+
+**There is no post PoW.** A post is a transaction, admitted by a **stateful** check —
+the author holds the karma and really locks it — which is strictly stronger than
+proving someone burned a millisecond. `verifyPoW`, `postPowPreimage` and
+`powNonceBytes` go together; the names stay reserved.
+
+⚠ **`isU64Safe(nonce)` retires with it, and its argument does not generalise.** The
+guard existed because `vlqU` is total by sentinel, so every out-of-domain nonce shared
+one hash. **No surviving consensus field has that shape** — `timestamp` and
+`protocolVersion` are still `vlqU` and still total, but neither is a search variable an
+attacker varies to hit a target. **Confirm that before deleting the guard**; it is the
+one place the totality argument could still bite.
+
+`verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
+always was. **Consensus becomes honestly single-phase.**
+
+The specification below is retained until the code catches up.
 
 ```
 verifyPoW(input: Uint8Array, nonce: number, targetBits: number): boolean
@@ -380,19 +406,18 @@ returned `string` and performed **no input check at all**, handing `header` stra
 
 ## Signature Verification
 
-### verifyPostSignature
+### ~~verifyPostSignature~~ — DELETED (posts as transactions)
 
-```
-verifyPostSignature(post: Post, publicKey: Uint8Array): boolean
-```
+**A post carries no signature of its own.** It is created by a transaction signed
+over that transaction's `TxId`, and the signing key is the author — so a post's
+authorship is verified by the transaction's signature check and nothing else.
+`signingHash` retires with this function, and **no path may reintroduce a
+post-level signature**: two signatures over one object is two places for them to
+disagree.
 
-Wraps the 32 raw Ed25519 public key bytes in an SPKI DER envelope
-(`302a300506032b6570032100` prefix), creates a `KeyObject` via
-`crypto.createPublicKey`, and calls `crypto.verify(null, signingHash(post),
-keyObj, signature)`. Returns `true` iff the signature is valid.
-
-The caller is responsible for looking up the author's public key — this
-function receives it as a parameter and performs no I/O.
+The SPKI-envelope mechanics survive in the transaction signature path unchanged —
+32 raw bytes wrapped with the `302a300506032b6570032100` prefix, a `KeyObject` via
+`crypto.createPublicKey`, then `crypto.verify(null, …)`.
 
 ### verifyValidatorSignature
 
@@ -607,7 +632,20 @@ rejection, and Phase 1e's teeth demonstration asserts exact labels.
 
 Total on adversarial input, like every function here.
 
-### verifySubBlockStructure
+### ~~verifySubBlockStructure~~ — DELETED (posts as transactions)
+
+**There is no sub-block to structurally verify.** A post's structural checks —
+`verifyPostFieldDomains` and the content limits — move to the post-bearing
+transaction's validation, where `verifyTxStructure` already runs. The three domain
+pins this function carried (`subBlockId` hex-32, `protocolVersion` `isU64Safe`,
+`producerId` 32 bytes) describe fields that cease to exist: a transaction has a
+`TxId`, its own `protocolVersion`, and a signer rather than a producer.
+
+⚠ **`verifyPostFieldDomains` survives and is still needed** — the post payload is
+still attacker-supplied bytes reaching an encoder, and the no-panic contract
+(M-5/M-6) is unchanged. Only its caller moves.
+
+The specification below is retained until the code catches up.
 
 ```
 verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?: string }
@@ -769,6 +807,11 @@ package imports every constant it enforces. **This package defines no protocol
 constant of its own**, and a bound with no subject here would be the first.
 
 ### verifyOrderingBlockStructure
+
+> **The block has one body.** Every clause naming `subBlockRoot`, `subBlockTree`,
+> `subBlockRefs` or `subBlockEntries` goes; `pruneEntries` are checked where they now
+> live, inside `UtxoTxTree`. ⛔ **The header is nine positional fields, not ten** — see
+> `TYPES_INTERFACE` → Layout — Block, and note that every position after 3 shifts down.
 
 ```
 verifyOrderingBlockStructure(block: OrderingBlock): { valid: boolean; error?: string }

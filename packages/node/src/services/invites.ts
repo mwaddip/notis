@@ -103,7 +103,7 @@ export function createInvite(
   // invite has no deadline and stays claimable until the inviter cancels
   // (NODE_INTERFACE → Invites).
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, null, expiresAtHeight);
+  insertUtxoTx(tx, expiresAtHeight);
 
   // ---- 7. Return result ----
   //
@@ -187,7 +187,7 @@ export function claimInvite(
 
   // ---- 4. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, null, expiresAtHeight);
+  insertUtxoTx(tx, expiresAtHeight);
 
   // ---- 5. Return result ----
   // txId first, then provenance — see createInvite.
@@ -259,7 +259,7 @@ export function cancelInvite(
 
   // ---- 4. Insert into mempool ----
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, null, expiresAtHeight);
+  insertUtxoTx(tx, expiresAtHeight);
 
   // ---- 5. Return result ----
   const txId = computeTxId(tx);

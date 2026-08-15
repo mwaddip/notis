@@ -126,7 +126,6 @@ function preimagePost(content: string, author: Uint8Array, parents: string[], ch
   return {
     content, author, parentRefs: parents, challenge: chal,
     powNonce: 0, protocolVersion: PROTOCOL_VERSION, timestamp: ts,
-    signature: new Uint8Array(64),
   };
 }
 
@@ -352,7 +351,6 @@ describe('E2E Pipeline', () => {
 
     const postR = await api('POST', `${A1}/posts`, {
       content: 'e2e-delete-test', author: pubHex, parentRefs: [],
-      challenge: chal.challenge, protocolVersion: PROTOCOL_VERSION,
       timestamp: ts, powNonce: nonce, signature: sig,
       karmaLockTx: txToApi(lockTx),
     }) as { status: string; postId: string };

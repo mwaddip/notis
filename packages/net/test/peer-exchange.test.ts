@@ -1,13 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { encode } from 'cbor-x';
 import {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
@@ -33,7 +30,6 @@ import type { NetConfig, PeerRecord, PeersMsg } from '../src/types.js';
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC_TESTNET,
-    postPowTargetBits: 8,
     bootstrapPeers: [],
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     maxPeers: 8,
@@ -234,13 +230,10 @@ describe('intakePeersBody', () => {
 
 describe('peerDbCap default (contract: soft cap 1000)', () => {
   const validators = {
-    verifyPoW,
     verifyOrderingBlockPoW,
-    verifyPostSignature,
     verifyProtocolVersion,
     verifyContentLimits,
     verifyParentRefsCount,
-    verifySubBlockStructure,
     verifyTxStructure,
     verifyOrderingBlockStructure,
   };

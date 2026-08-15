@@ -1,10 +1,5 @@
 export { initDb, getDb, closeDb } from './db.js';
 export {
-  createChallenge,
-  getActiveChallenge,
-  consumeChallenge,
-} from './challenges.js';
-export {
   insertPost,
   getPost,
   getPostRaw,
@@ -16,7 +11,6 @@ export {
   getAncestors,
   getSubtree,
   pruneSubtree,
-  insertPostPlaceholder,
 } from './posts.js';
 export type { PostStatus, StoredPost } from './posts.js';
 
@@ -83,13 +77,11 @@ export {
 } from './topology.js';
 
 export {
-  insertSubBlock as insertMempoolSubBlock,
   insertUtxoTx,
   insertMempoolPrune,
   getPendingEntries,
   purgeExpired,
   removeEntry,
-  removeSubBlockEntries,
   drainMempoolPrunes,
   removeMempoolPrunes,
   hasPendingLike,

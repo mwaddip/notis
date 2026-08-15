@@ -6,11 +6,13 @@ import {
   INVITE_BOND_KARMA,
   INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
+  POST_LOCK_THREAD_COST,
+  POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, InviteBox, VouchBox } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, InviteBox, VouchBox, PostLockBox, Post } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash `checkGuards`
@@ -19,7 +21,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, Invit
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
-import { ed25519PublicKeyToKeyObject } from '@dagsocial/validation';
+import { ed25519PublicKeyToKeyObject, verifyPostFieldDomains } from '@dagsocial/validation';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
@@ -138,6 +140,7 @@ function checkTransitions(
   outputs: AnyBoxCandidate[],
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
+  post: Post | undefined,
 ): { valid: boolean; error?: string } {
   // A like transaction (`likeTarget` present) has exactly one legal shape — the
   // liker's karma boxes in, one karma box out (the arm in the karma case below).
@@ -263,6 +266,42 @@ function checkTransitions(
             error: `Invalid post-lock transition: exactly 1 karma + 1 post_lock output expected`,
           };
         }
+        // ⛔ **The post biconditional** (NODE_INTERFACE → Post transactions), in
+        // the shape the like carve already set: `post` present ⟺ exactly one
+        // PostLockBox whose value is the cost for that post's shape. Both
+        // directions are checked, because only the pair makes it a
+        // biconditional — a lock with no payload is a lock nothing will ever
+        // unlock, and a payload with no lock is a post that cost nothing.
+        if (post === undefined) {
+          return {
+            valid: false,
+            error: 'A post_lock output requires the transaction to carry its post payload',
+          };
+        }
+        const expectedLock =
+          post.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
+        const lockValue = (postLockOutputs[0] as PostLockBox).value;
+        if (lockValue !== expectedLock) {
+          return {
+            valid: false,
+            error: `Post lock must be exactly ${expectedLock} karma, got ${lockValue}`,
+          };
+        }
+        // The author is the owner of the karma being spent — asserted here
+        // because the payload is otherwise opaque to the engine, and authorship
+        // is what prune and the feed key on.
+        if (!Buffer.from(post.author).equals(Buffer.from(inputKarma.owner))) {
+          return {
+            valid: false,
+            error: 'Post author must own the karma the transaction spends',
+          };
+        }
+      } else if (post !== undefined) {
+        // The biconditional's other direction: a payload with no lock.
+        return {
+          valid: false,
+          error: 'A post payload requires exactly one post_lock output',
+        };
       } else if (vouchOutputs.length > 0) {
         // karma → karma + vouch
         if (vouchOutputs.length !== 1 || inviteOutputs.length > 0 ||
@@ -666,6 +705,7 @@ const ENVELOPE_ALLOWED: ReadonlySet<string> = new Set<string>([
   ...ENVELOPE_REQUIRED,
   'preimages',
   'likeTarget',
+  'post',
 ]);
 
 /**
@@ -898,6 +938,28 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
     }
   }
 
+  // ---- 9. post: absent, or a payload inside the encodable domain ----
+  //
+  // ⛔ **This clause is what keeps `computeTxId` from throwing on a post-bearing
+  // transaction.** `txIdBytes` writes the payload through `postFieldBytes`,
+  // which encodes `author` and every `parentRefs` entry fixed-width — writers
+  // with no unreachable sentinel, so they THROW outside their domain
+  // (TYPES_INTERFACE → Totality). `checkGuards` hashes on its first line, so an
+  // attacker-supplied payload reaches those writers before any transition arm
+  // runs. Same obligation as `likeTarget` above, one field deeper.
+  //
+  // `verifyPostFieldDomains` is the single statement of that domain, shared with
+  // the gossip gate and the verifier — a narrower re-check written here would be
+  // a second spelling of one rule, which is the fork surface this engine rejects
+  // everywhere else. Whether the payload is *permitted* (the post biconditional,
+  // author owns the karma) is the transition arms' business, not the envelope's.
+  if (Object.hasOwn(tx, 'post')) {
+    const domains = verifyPostFieldDomains(tx.post as Post);
+    if (!domains.valid) {
+      return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
+    }
+  }
+
   return { valid: true };
 }
 
@@ -980,9 +1042,11 @@ const OUTPUT_SHAPE: Record<
       value: 'u64',
       originalValue: 'u64',
       owner: 'bytes32',
-      // NOT `'string'`: `canonicalBoxBytes` writes this with a throwing
-      // fixed-width writer, so a free string reaches `computeTxId` and panics.
-      targetPostId: 'hex32',
+      // Reserved, never to be reused: `targetPostId`. A lock carries no such
+      // field — a post's id comes from the transaction that creates the lock, so
+      // the field would have to be known before the `TxId` that produces it
+      // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
+      // held by the store.
       guard: null,
     }),
     vouch: shape({
@@ -1433,6 +1497,7 @@ export function validateTx(
     tx.outputs,
     deps,
     tx.likeTarget,
+    tx.post,
   );
   if (!transitionCheck.valid) return transitionCheck;
 

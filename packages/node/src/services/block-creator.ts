@@ -15,7 +15,6 @@ import {
   leafHash,
   buildMerkleRoot,
   serializePruneEntry,
-  subBlockEntryBytes,
   coinbaseOutputBytes,
   hexToBuf,
 } from '@dagsocial/types';
@@ -26,7 +25,6 @@ import {
 import type {
   OrderingBlock,
   BlockHeader,
-  SubBlockTree,
   UtxoTxTree,
   CoinbaseOutput,
   Post,
@@ -62,8 +60,8 @@ import {
 // Merkle root computation
 //
 // Every leaf preimage is the committed struct's own wire bytes, supplied by
-// `@dagsocial/types` — `subBlockEntryBytes`, `serializePruneEntry`,
-// `coinbaseOutputBytes`, and a bare 32-byte id for `utxotx`. Node states no
+// `@dagsocial/types` — `serializePruneEntry`, `coinbaseOutputBytes`, and a bare
+// 32-byte id for `utxotx`. Node states no
 // layout of its own here (TYPES_INTERFACE → "Merkle leaf preimages are the
 // struct's own wire bytes"): a second statement of a layout in a second package
 // drifts with no compiler signal, and a consistent transposition round-trips
@@ -72,24 +70,26 @@ import {
 // and its committed form byte-identical rather than merely parallel.
 // ---------------------------------------------------------------------------
 
-export function computeSubBlockRoot(tree: SubBlockTree): string {
-  const leaves = [
-    ...tree.subBlockEntries.map((entry) =>
-      // `author` is part of the leaf preimage (audit H-3) — the block commits to
-      // who authored each confirmed post, so prune authorship is checkable on a
-      // node that never received the content. Field order is normative and it
-      // lives in `subBlockEntryBytes`, not here.
-      leafHash('subblock', subBlockEntryBytes(entry))),
-    ...tree.pruneEntries.map((entry) =>
-      leafHash('prune', Buffer.from(serializePruneEntry(entry)))),
-  ];
-  return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
-}
-
+/**
+ * The block's one committed root.
+ *
+ * ⛔ **Leaf ORDER is normative and it is `UtxoTxTree`'s field order** — every
+ * transaction, then every prune entry, then every coinbase output
+ * (TYPES_INTERFACE → OrderingBlock). Reordering is a consensus change with no
+ * compiler signal.
+ *
+ * What keeps the three kinds apart inside one root is the `leafHash` domain tag,
+ * not their position: `'utxotx'`, `'prune'` and `'coinbase'` are distinct and
+ * NUL-terminated, so they are prefix-free and a prune leaf cannot be reread as a
+ * transaction leaf. The retired `'subblock'` domain is reachable from no leaf
+ * here and stays reserved.
+ */
 export function computeUtxoTxRoot(tree: UtxoTxTree): string {
   const leaves: Uint8Array[] = [
     ...tree.utxoTxIds.map((id) =>
       leafHash('utxotx', hexToBuf(id))),
+    ...tree.pruneEntries.map((entry) =>
+      leafHash('prune', Buffer.from(serializePruneEntry(entry)))),
     ...tree.coinbaseOutputs.map((o) =>
       leafHash('coinbase', coinbaseOutputBytes(o))),
   ];
@@ -226,7 +226,6 @@ export function submitMinedBlock(powNonce: number, submittedHeight: number): str
 
   const block: OrderingBlock = {
     header,
-    subBlockTree: tpl.subBlockTree,
     utxoTxTree: tpl.utxoTxTree,
     validatorSignature: new Uint8Array(sig),
   };
@@ -270,49 +269,16 @@ export function createOrderingBlock(): OrderingBlock | null {
   // 2. Get pending entries from mempool
   const entries = getPendingEntries(config.maxSubBlocksPerBlock);
 
-  // 3. Separate sub-blocks and standalone UTXO transactions
-  const subBlockEntries = entries.filter((e) => e.entryType === 'subblock');
-  const standaloneUtxoTxs = entries.filter(
-    (e) => e.entryType === 'utxo_tx' && e.batchId === null,
+  // 3. One entry type carries user work: transactions. A post is one of them
+  //    (NODE_INTERFACE → Post transactions), so there is no second list to
+  //    resolve, no batch to regroup, and no entry whose content might not have
+  //    arrived — the payload is inside the transaction.
+  const utxoTxEntries = entries.filter(
+    (e) => e.entryType === 'utxo_tx' && e.utxoTxCbor !== null,
   );
 
-  // 4. Resolve sub-block metadata from dag_posts (mempool now stores postId, not CBOR)
-  const resolvedSubBlocks: Array<{ subBlockId: string; post: Post }> = [];
-  for (const entry of subBlockEntries) {
-    if (!entry.subblockId) continue;
-    const post = getPost(entry.subblockId);
-    if (!post || !('author' in post)) continue; // skip if content not yet arrived
-    resolvedSubBlocks.push({
-      subBlockId: entry.subblockId,
-      post,
-    });
-  }
-
-  // 5. Resolve batch entries — collect linked UTXO payloads per batch
-  const batchMap = new Map<string, PoolEntry[]>();
-  for (const e of entries) {
-    if (e.batchId) {
-      if (!batchMap.has(e.batchId)) batchMap.set(e.batchId, []);
-      batchMap.get(e.batchId)!.push(e);
-    }
-  }
-
-  // 7. Standalone UTXO entries → utxoTxIds
-  const utxoTxIds = standaloneUtxoTxs.map((e) => {
-    const tx = decodeTx(e.utxoTxCbor!);
-    return computeTxId(tx);
-  });
-
-  // 7b. Batch-linked UTXO entries → utxoTxIds
-  // These were grouped by batch_id in step 5 but never decoded/added to the block.
-  for (const [, batchEntries] of batchMap) {
-    for (const entry of batchEntries) {
-      if (entry.entryType === 'utxo_tx' && entry.utxoTxCbor) {
-        const tx = decodeTx(entry.utxoTxCbor);
-        utxoTxIds.push(computeTxId(tx));
-      }
-    }
-  }
+  // 4. Transactions → utxoTxIds, in mempool order.
+  const utxoTxIds = utxoTxEntries.map((e) => computeTxId(decodeTx(e.utxoTxCbor!)));
 
   // 11. Always produce a block — miners need coinbase rewards even when
   //     there is no user work.  The block will be empty but still carries
@@ -320,17 +286,8 @@ export function createOrderingBlock(): OrderingBlock | null {
 
   // 12. Track confirmed rowids for finalizeBlock cleanup
   confirmedRowids = new Set<number>();
-  for (const e of subBlockEntries) {
+  for (const e of utxoTxEntries) {
     confirmedRowids.add(e.rowid);
-  }
-  for (const e of standaloneUtxoTxs) {
-    confirmedRowids.add(e.rowid);
-  }
-  // Also track batch entries
-  for (const [, batchEntries] of batchMap) {
-    for (const e of batchEntries) {
-      confirmedRowids.add(e.rowid);
-    }
   }
 
   // 13. Compute coinbase
@@ -363,51 +320,24 @@ export function createOrderingBlock(): OrderingBlock | null {
     );
   }
 
-  // Build subBlockEntries for the block (committed in the Merkle tree).
-  // Both parentRefs and author are read off the resolved post — never off a
-  // client-supplied claim — so an honest producer's entries always match the
-  // content other nodes verify them against (audit H-3).
-  const subBlockEntriesForBlock = resolvedSubBlocks.map((sb) => ({
-    postId: sb.subBlockId,
-    parentRefs: (sb.post as Post).parentRefs ?? [],
-    author: Buffer.from((sb.post as Post).author).toString('hex'),
-  }));
-
-  // Collect UTXO tx CBOR for inline storage, matching the utxoTxIds order:
-  // 1. standalone entries, 2. batch-linked entries
-  const utxoTxCbors: Uint8Array[] = [];
-
-  // Standalone UTXO txs
-  for (const entry of standaloneUtxoTxs) {
-    utxoTxCbors.push(entry.utxoTxCbor!);
-  }
-
-  // Batch-linked UTXO entries
-  for (const [, batchEntries] of batchMap) {
-    for (const entry of batchEntries) {
-      if (entry.entryType === 'utxo_tx' && entry.utxoTxCbor) {
-        utxoTxCbors.push(entry.utxoTxCbor);
-      }
-    }
-  }
+  // Transaction bodies, in the same order as `utxoTxIds` — the alignment
+  // `verifyOrderingBlockStructure` checks and the reason a syncing node holds the
+  // whole post rather than a claim about it (audit H-3).
+  const utxoTxCbors: Uint8Array[] = utxoTxEntries.map((e) => e.utxoTxCbor!);
 
   // Drain queued prune entries for block inclusion
   const MAX_PRUNES_PER_BLOCK = 32;
   const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
 
-  // 17. Build the body trees
-  const subBlockTree: SubBlockTree = {
-    subBlockEntries: subBlockEntriesForBlock,
-    pruneEntries,
-  };
+  // 17. Build the one body tree
   const utxoTxTree: UtxoTxTree = {
     utxoTxIds,
     utxoTxs: utxoTxCbors,
+    pruneEntries,
     coinbaseOutputs,
   };
 
-  // 18. Compute Merkle roots
-  const subBlockRoot = computeSubBlockRoot(subBlockTree);
+  // 18. Compute the Merkle root
   const utxoTxRoot = computeUtxoTxRoot(utxoTxTree);
 
   // 19. Build header template (powNonce=0). `stateRoot` is a placeholder here
@@ -417,7 +347,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     protocolVersion: PROTOCOL_VERSION,
     height: newHeight,
     prevBlockHash,
-    subBlockRoot,
     utxoTxRoot,
     stateRoot: EMPTY_STATE_ROOT,
     validatorId,
@@ -427,7 +356,6 @@ export function createOrderingBlock(): OrderingBlock | null {
   };
   const candidate: OrderingBlock = {
     header: headerTemplate,
-    subBlockTree,
     utxoTxTree,
     validatorSignature: new Uint8Array(64),
   };

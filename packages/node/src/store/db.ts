@@ -4,12 +4,8 @@ import { emitDbOpenStarted, emitDbOpenComplete } from '../journal.js';
 let db: Database.Database | null = null;
 
 const MIGRATIONS = [
-  // Challenges
-  `CREATE TABLE IF NOT EXISTS challenges (
-    user_id BLOB PRIMARY KEY,
-    challenge BLOB NOT NULL,
-    expires_at_block INTEGER NOT NULL
-  )`,
+  // Reserved, never to be reused: the `challenges` table. The PoW challenge
+  // handshake is gone with post PoW.
 
   // Posts DAG
   `CREATE TABLE IF NOT EXISTS dag_posts (
@@ -17,11 +13,8 @@ const MIGRATIONS = [
     content TEXT NOT NULL,
     author BLOB NOT NULL,             -- 32-byte Ed25519 public key
     parent_refs TEXT NOT NULL,       -- JSON array of PostId strings
-    challenge BLOB NOT NULL,
-    pow_nonce INTEGER NOT NULL,
     protocol_version INTEGER NOT NULL,
     timestamp INTEGER NOT NULL,
-    signature BLOB NOT NULL,
     raw_cbor BLOB NOT NULL,          -- Canonical CBOR bytes
     status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'confirmed' | 'pruned'
     block_height INTEGER             -- NULL until confirmed
@@ -33,14 +26,13 @@ const MIGRATIONS = [
     PRIMARY KEY (post_id, parent_id)
   )`,
 
-  // Stumps
+  // Stumps — the columns `Stump` declares and no others. A stump's subtree
+  // Merkle root, its prune signature and its karma deltas live in the
+  // `PruneEntry` the block carries, never in the row the settlement writes.
   `CREATE TABLE IF NOT EXISTS dag_stumps (
     id TEXT PRIMARY KEY,
     root_post_hash TEXT NOT NULL,
-    subtree_merkle_root BLOB NOT NULL,
     author_id BLOB NOT NULL,          -- 32-byte Ed25519 public key
-    prune_signature BLOB NOT NULL,
-    karma_deltas TEXT NOT NULL,      -- JSON array of KarmaDelta
     reply_count INTEGER NOT NULL,
     upvote_count INTEGER NOT NULL,
     trigger TEXT NOT NULL,
@@ -130,20 +122,23 @@ const MIGRATIONS = [
     PRIMARY KEY (target_post_id, liker_id)
   )`,
 
-  // Mempool (unified sub-block + UTXO transaction pool). Sub-blocks are held by
-  // id, not CBOR. A database predating a schema change is the operator's to
-  // wipe: the node neither versions its store nor refuses to start against an
-  // old one (NODE_INTERFACE → No store schema version, and none is owed).
+  // Mempool (UTXO transaction pool). A database predating a schema change is the
+  // operator's to wipe: the node neither versions its store nor refuses to start
+  // against an old one (NODE_INTERFACE → No store schema version, and none is
+  // owed).
+  //
+  // Reserved, never to be reused: `subblock_id`, `batch_id`, and the entry type
+  // `'subblock'`. A post is a transaction, so the post/lock pair `batch_id`
+  // existed to regroup is a single object.
   //
   // The like_/invite_/vouch_ columns are gate metadata (audit M-8): populated by
   // insertUtxoTx from the tx outputs so the correctness gates are plain SQL over
   // every row, not a decode-scan of the first 1000.
   `CREATE TABLE IF NOT EXISTS mempool (
     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_type TEXT NOT NULL CHECK(entry_type IN ('subblock', 'utxo_tx')),
-    subblock_id TEXT,
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
     utxo_tx_cbor BLOB,
-    batch_id TEXT,
+    prune_entry_cbor BLOB,
     expires_at_height INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT,
@@ -162,7 +157,6 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS ordering_blocks (
     height INTEGER PRIMARY KEY,
     header_cbor BLOB NOT NULL,
-    subblock_tree_cbor BLOB NOT NULL,
     utxotx_tree_cbor BLOB NOT NULL,
     validator_signature BLOB NOT NULL,  -- 64 bytes
     created_at INTEGER NOT NULL
@@ -225,32 +219,12 @@ const MIGRATIONS = [
   )`,
 ];
 
-function migrateMempoolForStumps(database: Database.Database): void {
-  // Check if migration already applied, or if verifiablePrune migration has superseded this
-  const cols = database.prepare("PRAGMA table_info('mempool')").all() as Array<{ name: string }>;
-  if (cols.some(c => c.name === 'stump_id' || c.name === 'prune_entry_cbor')) return;
-
-  database.exec(`
-    ALTER TABLE mempool RENAME TO mempool_old;
-
-    CREATE TABLE mempool (
-      rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-      entry_type TEXT NOT NULL CHECK(entry_type IN ('subblock', 'utxo_tx', 'stump')),
-      subblock_id TEXT,
-      utxo_tx_cbor BLOB,
-      stump_id TEXT,
-      batch_id TEXT,
-      expires_at_height INTEGER NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    INSERT INTO mempool (rowid, entry_type, subblock_id, utxo_tx_cbor, batch_id, expires_at_height, created_at)
-    SELECT rowid, entry_type, subblock_id, utxo_tx_cbor, batch_id, expires_at_height, created_at
-    FROM mempool_old;
-
-    DROP TABLE mempool_old;
-  `);
-}
+// Reserved, never to be reused: `migrateMempoolForStumps`. It reshaped a mempool
+// that still had a `subblock` entry type, and this change removes both that type
+// and the `batch_id` column it carried forward — so the schema it produced is one
+// no current code can read. Every stored block is unreadable across this change
+// anyway (the header lost a field and every position after 3 shifted down), which
+// is what makes a wipe the operator's only path rather than one option.
 
 function migrateAvlTree(database: Database.Database): void {
   const tables = database
@@ -304,11 +278,9 @@ function migrateVerifiablePrune(database: Database.Database): void {
     DROP TABLE IF EXISTS mempool;
     CREATE TABLE mempool (
       rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-      entry_type TEXT NOT NULL CHECK(entry_type IN ('subblock', 'utxo_tx', 'prune')),
-      subblock_id TEXT,
+      entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
       utxo_tx_cbor BLOB,
       prune_entry_cbor BLOB,
-      batch_id TEXT,
       expires_at_height INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       like_target TEXT,
@@ -414,8 +386,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(invite_inviter) WHERE invite_inviter IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_vouch
       ON mempool(vouch_voucher) WHERE vouch_voucher IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_mempool_subblock_id
-      ON mempool(subblock_id) WHERE subblock_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_expires
+      ON mempool(expires_at_height);
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_inputs
       ON mempool(tx_inputs) WHERE tx_inputs IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_output_ids
@@ -437,7 +409,6 @@ export function initDb(path: string): void {
   for (const sql of MIGRATIONS) {
     db.exec(sql);
   }
-  migrateMempoolForStumps(db);
   migrateAvlTree(db);
   migrateBlockTopology(db);
   migrateVerifiablePrune(db);

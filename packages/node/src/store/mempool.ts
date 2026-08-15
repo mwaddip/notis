@@ -47,13 +47,18 @@ export class PendingSpendConflictError extends ClientError {
   }
 }
 
+/**
+ * ⛔ **Two entry types, and `batchId` is gone with the pair it regrouped**
+ * (MEMPOOL_INTERFACE → PoolEntry). A post and its karma lock were two objects
+ * that had to be evicted and re-injected together, which is what `batchId`
+ * expressed; a post is now the payload of the lock transaction, so there is one
+ * object and nothing to group.
+ */
 export interface PoolEntry {
   rowid: number;
-  entryType: 'subblock' | 'utxo_tx' | 'prune';
-  subblockId: string | null;
+  entryType: 'utxo_tx' | 'prune';
   utxoTxCbor: Uint8Array | null;
   pruneEntryCbor: Uint8Array | null;
-  batchId: string | null;
   expiresAtHeight: number;
   createdAt: string;
 }
@@ -61,10 +66,8 @@ export interface PoolEntry {
 interface MempoolRow {
   rowid: number;
   entry_type: string;
-  subblock_id: string | null;
   utxo_tx_cbor: Buffer | null;
   prune_entry_cbor: Buffer | null;
-  batch_id: string | null;
   expires_at_height: number;
   created_at: string;
 }
@@ -72,11 +75,9 @@ interface MempoolRow {
 function rowToEntry(row: MempoolRow): PoolEntry {
   return {
     rowid: row.rowid,
-    entryType: row.entry_type as 'subblock' | 'utxo_tx' | 'prune',
-    subblockId: row.subblock_id,
+    entryType: row.entry_type as 'utxo_tx' | 'prune',
     utxoTxCbor: row.utxo_tx_cbor ? new Uint8Array(row.utxo_tx_cbor) : null,
     pruneEntryCbor: row.prune_entry_cbor ? new Uint8Array(row.prune_entry_cbor) : null,
-    batchId: row.batch_id,
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
   };
@@ -139,19 +140,8 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
   return meta;
 }
 
-export function insertSubBlock(
-  postId: string,
-  expiresAtHeight: number,
-  batchId: string | null = null,
-): number {
-  const db = getDb();
-  assertCapacity(db);
-  const result = db.prepare(
-    `INSERT INTO mempool (entry_type, subblock_id, batch_id, expires_at_height)
-     VALUES ('subblock', ?, ?, ?)`,
-  ).run(postId, batchId, expiresAtHeight);
-  return Number(result.lastInsertRowid);
-}
+// Reserved, never to be reused: `insertSubBlock` and `removeSubBlockEntries`. A
+// post enters the pool as the transaction that creates it.
 
 /**
  * The ids of the boxes this transaction would create.
@@ -169,7 +159,6 @@ function outputBoxIds(tx: UtxoTransaction): string[] {
 
 export function insertUtxoTx(
   tx: UtxoTransaction,
-  batchId: string | null,
   expiresAtHeight: number,
 ): number {
   const db = getDb();
@@ -182,13 +171,12 @@ export function insertUtxoTx(
   const cbor = encodeTx(tx);
   const meta = gateMetadata(tx);
   const result = db.prepare(
-    `INSERT INTO mempool (entry_type, utxo_tx_cbor, batch_id, expires_at_height,
+    `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
                           tx_inputs, tx_output_ids)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(cbor),
-    batchId,
     expiresAtHeight,
     meta.likeTarget,
     meta.likeLiker,
@@ -377,34 +365,10 @@ export function resolvePendingTip(box: AnyBox): AnyBox | null {
   }
 }
 
-/**
- * Delete confirmed sub-block entries by postId — a keyed DELETE, never a
- * bounded fetch-and-find loop, which would stop removing entries past its cap
- * (bookkeeping only — no consensus behaviour change). Chunked because a single
- * block may carry up to `maxSubBlocksPerBlock` refs, above SQLite's bound
- * parameter limit.
- */
-export function removeSubBlockEntries(postIds: string[]): number {
-  if (postIds.length === 0) return 0;
-  const db = getDb();
-  const CHUNK = 500;
-  let removed = 0;
-  for (let i = 0; i < postIds.length; i += CHUNK) {
-    const chunk = postIds.slice(i, i + CHUNK);
-    const result = db.prepare(
-      `DELETE FROM mempool
-       WHERE entry_type = 'subblock'
-         AND subblock_id IN (${chunk.map(() => '?').join(',')})`,
-    ).run(...chunk);
-    removed += result.changes;
-  }
-  return removed;
-}
-
 export function getPendingEntries(limit: number): PoolEntry[] {
   const db = getDb();
   const rows = db.prepare(
-    `SELECT rowid, entry_type, subblock_id, utxo_tx_cbor, prune_entry_cbor, batch_id,
+    `SELECT rowid, entry_type, utxo_tx_cbor, prune_entry_cbor,
             expires_at_height, created_at
      FROM mempool
      ORDER BY rowid ASC

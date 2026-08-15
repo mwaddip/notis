@@ -1,4 +1,4 @@
-import type { SubBlock, OrderingBlock, UtxoTransaction, Post, BlockHeader } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Message codes
@@ -9,12 +9,15 @@ export const MSG_SYNC_INFO = 2;
 export const MSG_INV = 3;
 export const MSG_MODIFIER_REQUEST = 4;
 export const MSG_MODIFIER_RESPONSE = 5;
-export const MSG_GET_SUB_BLOCK = 6;
-export const MSG_SUB_BLOCK_RESPONSE = 7;
+// Reserved, never to be reused: codes 6 and 7, `MSG_GET_SUB_BLOCK` and
+// `MSG_SUB_BLOCK_RESPONSE`. A message code is on the wire, so reuse would make
+// two protocols share a byte.
 export const MSG_GET_PEERS = 8;
 export const MSG_PEERS = 9;
-export const MSG_GET_POSTS = 10;
-export const MSG_POSTS = 11;
+// Reserved, never to be reused: codes 10 and 11, `MSG_GET_POSTS` /
+// `MSG_POSTS`. Fetching a bare post by id has no verifiable answer — a post's id
+// is not a function of the post — and a block now carries its posts inline, so
+// there is nothing to fetch separately.
 // Codes 12–13 are retired — reserved, never reuse (NET_INTERFACE → Message
 // Codes). The next new message type starts at 14.
 export const MSG_GET_HEADERS = 14;
@@ -136,7 +139,6 @@ export interface NetConfig {
   // these values, it never resolves them — no NetworkProfile import, no env
   // read, no default (NET_INTERFACE §Consensus parameters net enforces).
   magic: number;
-  postPowTargetBits: number;
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
@@ -153,14 +155,15 @@ export interface NetConfig {
 // NetValidators — passed at construction, provided by @dagsocial/validation
 // ---------------------------------------------------------------------------
 
+// Reserved, never to be reused: `verifyPoW`, `verifyPostSignature`,
+// `verifySubBlockStructure`. The relay gate for a post is now membership in the
+// karma set (`KarmaMembers` in gossip.ts) plus `verifyTxStructure`, which pins
+// the post payload's field domains.
 export interface NetValidators {
-  verifyPoW: (input: Uint8Array, nonce: number, targetBits: number) => boolean;
   verifyOrderingBlockPoW: (header: BlockHeader) => boolean;
-  verifyPostSignature: (post: Post, publicKey: Uint8Array) => boolean;
   verifyProtocolVersion: (version: number) => boolean;
   verifyContentLimits: (content: string) => { valid: boolean; error?: string };
   verifyParentRefsCount: (refs: string[]) => { valid: boolean; error?: string };
-  verifySubBlockStructure: (sb: SubBlock) => { valid: boolean; error?: string };
   verifyTxStructure: (tx: UtxoTransaction) => { valid: boolean; error?: string };
   verifyOrderingBlockStructure: (block: OrderingBlock) => { valid: boolean; error?: string };
 }
@@ -198,18 +201,7 @@ export interface PeersMsg {
 // GetPosts / Posts message types
 // ---------------------------------------------------------------------------
 
-export interface GetPostsMsg {
-  postIds: string[];
-}
-
-export interface PostsEntry {
-  postId: string;
-  post: Post;
-}
-
-export interface PostsMsg {
-  entries: PostsEntry[];
-}
+// Reserved, never to be reused: `GetPostsMsg`, `PostsEntry`, `PostsMsg`.
 
 // ---------------------------------------------------------------------------
 // GetHeaders / GetBlocks request types

@@ -47,8 +47,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -91,7 +89,7 @@ async function importAvl() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => { id?: string } | null;
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };

@@ -1,32 +1,23 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { createPrivateKey, sign } from 'crypto';
 import {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
 import {
   generateKeyPair,
-  computePostId,
-  postPowPreimage,
-  signingHash,
-  subBlockFromPost,
-  encodeSubBlock,
-  decodeSubBlock,
+  encodeTx,
   ReaderError,
   encodeOrderingBlock,
   decodeOrderingBlock,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
-  POST_POW_TARGET_BITS,
 } from '@dagsocial/types';
-import type { Post, SubBlock, OrderingBlock, BlockHeader } from '@dagsocial/types';
+import type { Post, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import { subscribeTopics, TOPICS } from '../src/gossip.js';
 import type { Libp2pGossip } from '../src/gossip.js';
@@ -41,13 +32,10 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 // the real @dagsocial/validation functions and a real PeerManager.
 
 const validators: NetValidators = {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 };
@@ -55,7 +43,6 @@ const validators: NetValidators = {
 function makeConfig(): NetConfig {
   return {
     magic: 0x54444147,
-    postPowTargetBits: POST_POW_TARGET_BITS,
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,
@@ -71,7 +58,7 @@ type CapturedValidator = (
   msg: { data: Uint8Array },
 ) => TopicValidatorResult;
 
-function makeHarness(postPowTargetBits: number = POST_POW_TARGET_BITS) {
+function makeHarness(karmaMembers: Set<string> = new Set()) {
   const topicValidators = new Map<string, CapturedValidator>();
   const stub = {
     services: {
@@ -85,13 +72,12 @@ function makeHarness(postPowTargetBits: number = POST_POW_TARGET_BITS) {
 
   const peerMgr = new PeerManager(makeConfig());
   subscribeTopics(stub, validators, peerMgr, {
-    onSubBlock: () => {},
     onOrderingBlock: () => {},
     onTx: () => {},
-  }, postPowTargetBits);
+  }, karmaMembers);
 
   const penaltySpy = vi.spyOn(peerMgr, 'recordPenalty');
-  return { topicValidators, peerMgr, penaltySpy };
+  return { topicValidators, peerMgr, penaltySpy, karmaMembers };
 }
 
 let peerSeq = 0;
@@ -110,7 +96,6 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     protocolVersion: 1,
     height: 7,
     prevBlockHash: '11'.repeat(32),
-    subBlockRoot: '22'.repeat(32),
     utxoTxRoot: '33'.repeat(32),
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(9),
@@ -122,8 +107,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
   function makeBlock(header: BlockHeader): OrderingBlock {
     return {
       header,
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       // 64-byte dummy — Stage 1 does not verify the validator signature.
       validatorSignature: new Uint8Array(64),
     };
@@ -250,228 +234,173 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sub-block topic validator — Stage 1 (structure, limits, PoW, signature)
+// Transaction topic validator — the post relay gate (membership, not PoW)
+//
+// ⛔ **The gate that replaces post PoW, and it is the easiest thing in this unit
+// to test vacuously.** A set that is always empty rejects everything and a set
+// that is always full accepts everything, and a fixture that only ever exercises
+// one side passes either way. All four cells are asserted below — known author
+// admitted, unknown author dropped, an author ADDED at runtime then admitted, an
+// author REMOVED then dropped — because the add/remove pair is the only thing
+// that proves the gate reads the live set rather than a constant, and the only
+// thing that proves `NetNode`'s mutators are connected to the path that drops.
 // ---------------------------------------------------------------------------
 
-describe('sub-block topic validator (Stage 1)', () => {
+describe('tx topic validator — the post membership gate', () => {
   let keyPair: ReturnType<typeof generateKeyPair>;
-  let validPost: Post;
-  let validSubBlock: SubBlock;
-  let failingPostNonce = -1;
+  let authorHex: string;
+  let postTx: UtxoTransaction;
+  let plainTx: UtxoTransaction;
+
+  const basePost = (author: Uint8Array, over: Partial<Post> = {}): Post => ({
+    content: 'gossip relay-gate fixture',
+    author,
+    parentRefs: [],
+    protocolVersion: 1,
+    timestamp: 1_722_470_400_000,
+    ...over,
+  });
+
+  const txWith = (post?: Post): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs: [{ boxType: 'karma', value: 10n, owner: new Uint8Array(32).fill(1) } as never],
+    signatures: {},
+    protocolVersion: 1,
+    ...(post ? { post } : {}),
+  });
 
   beforeAll(() => {
     keyPair = generateKeyPair();
-    const basePost: Post = {
-      content: 'gossip stage-1 fixture',
-      author: keyPair.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32).fill(7),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: 1_722_470_400_000,
-      signature: new Uint8Array(64),
-    };
+    authorHex = Buffer.from(keyPair.publicKey).toString('hex');
+    postTx = txWith(basePost(keyPair.publicKey));
+    plainTx = txWith();
+  });
 
-    // Mine the real 20-bit post PoW (~1M tries expected; the preimage
-    // excludes powNonce and signature, so mining and signing commute).
-    const powInput = postPowPreimage(basePost);
-    let nonce = -1;
-    for (let n = 0; n < 100_000_000; n++) {
-      const ok = verifyPoW(powInput, n, POST_POW_TARGET_BITS);
-      if (ok && nonce < 0) { nonce = n; break; }
-      if (!ok && failingPostNonce < 0) failingPostNonce = n;
-    }
-    if (nonce < 0) throw new Error('post PoW search exhausted');
-
-    validPost = { ...basePost, powNonce: nonce };
-    validPost.signature = new Uint8Array(
-      sign(null, signingHash(validPost), createPrivateKey({
-        key: Buffer.from(keyPair.secretKey), format: 'der', type: 'pkcs8',
-      })),
-    );
-    validSubBlock = subBlockFromPost(validPost, computePostId(validPost));
-  }, 120_000);
-
-  function validateSubBlock(sb: SubBlock) {
-    const { topicValidators, peerMgr, penaltySpy } = makeHarness();
-    const validate = topicValidators.get(TOPICS.subblock)!;
+  const validateTx = (tx: UtxoTransaction, members: Set<string>) => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(members);
+    const validate = topicValidators.get(TOPICS.tx)!;
     const peer = newPeer(peerMgr);
-    const result = validate(peer, { data: encodeSubBlock(sb) });
+    const result = validate(peer, { data: encodeTx(tx) });
     return { result, peer, peerMgr, penaltySpy };
-  }
+  };
 
-  it('accepts a mined, signed sub-block with zero penalties (control anchor)', () => {
-    const { result, peer, peerMgr, penaltySpy } = validateSubBlock(validSubBlock);
+  // --- cell 1: a known author is admitted -----------------------------------
+
+  it('accepts a post from an author IN the karma set, with zero penalties', () => {
+    const { result, peer, peerMgr, penaltySpy } = validateTx(postTx, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Accept);
     expect(penaltySpy).not.toHaveBeenCalled();
     expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
   });
 
-  it('rejects the same sub-block with a corrupted signature (pre-fix code Accepted this)', () => {
-    // Non-vacuity: the signature is the only thing here that can reject this
-    // message. The PoW preimage excludes it, so every other check in
-    // `runStage1SubBlock` passes on these exact bytes — drop
-    // `verifyPostSignature` and the message is Accepted and forwarded. The
-    // single-field-delta control that Accepts is the real-signature case above.
-    // This is the signature check NET_INTERFACE → Stage 1 requires.
-    const badSig = new Uint8Array(validPost.signature);
-    badSig[0] = badSig[0]! ^ 0xff;
-    const sb: SubBlock = {
-      ...validSubBlock,
-      post: { ...validPost, signature: badSig },
-    };
+  // --- cell 2: an unknown author is dropped ---------------------------------
 
-    const { result, peer, penaltySpy } = validateSubBlock(sb);
-
-    expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledTimes(1);
-    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, 'Signature invalid');
-  });
-
-  it('rejects a wrong post PoW nonce before the signature check runs', () => {
-    // Self-check the nonce genuinely fails, then confirm the reason is the
-    // PoW gate — the anti-spam check stays in front of the ~50µs signature.
-    expect(verifyPoW(postPowPreimage(validPost), failingPostNonce, POST_POW_TARGET_BITS)).toBe(false);
-    const sb: SubBlock = {
-      ...validSubBlock,
-      post: { ...validPost, powNonce: failingPostNonce },
-    };
-
-    const { result, peer, penaltySpy } = validateSubBlock(sb);
-
-    expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, 'Proof of Work invalid');
-  });
-
-  // Regression coverage from the pre-rewrite suite, now driven through the
-  // real registered validator instead of an inline copy. Each delta trips a
-  // check that runs before PoW, so the unmined variants stay cheap; the
-  // asserted reason string pins the rejection to the intended check.
-
-  it('rejects empty content', () => {
-    const sb: SubBlock = { ...validSubBlock, post: { ...validPost, content: '' } };
-    const { result, peer, penaltySpy } = validateSubBlock(sb);
-    expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, 'Content is empty');
-  });
-
-  it('rejects content exceeding 300 bytes', () => {
-    const sb: SubBlock = { ...validSubBlock, post: { ...validPost, content: 'x'.repeat(301) } };
-    const { result, penaltySpy } = validateSubBlock(sb);
-    expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects too many parent refs', () => {
-    const refs = Array.from({ length: 9 }, () => 'ab'.repeat(32));
-    const sb: SubBlock = { ...validSubBlock, post: { ...validPost, parentRefs: refs } };
-    const { result, penaltySpy } = validateSubBlock(sb);
-    expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects unsupported protocol version', () => {
-    const sb: SubBlock = { ...validSubBlock, post: { ...validPost, protocolVersion: 999 } };
-    const { result, peer, penaltySpy } = validateSubBlock(sb);
+  it('rejects the SAME post when its author is not in the set', () => {
+    // Byte-identical message, one difference: set membership. So the verdict
+    // cannot be coming from anything about the transaction itself.
+    const { result, peer, penaltySpy } = validateTx(postTx, new Set());
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'Unsupported protocol version',
+      'misbehavior', peer.id, 100, 'post author holds no karma',
     );
   });
 
-  it('a sub-block with a missing post cannot reach the validator at all', () => {
-    // There is no such message to send. `encodeSubBlock` writes the post's
-    // fields inline, so a sub-block without one has no encoding, and no byte
-    // string decodes to one either — a decoder reading the post's fields runs
-    // off the end of the buffer. A post-less sub-block is unrepresentable on
-    // the wire, which is the property a positional format exists to produce.
-    //
-    // Both halves are pinned, because "unrepresentable" is a claim about the
-    // encoder *and* the decoder, and the structure gate still covers the paths
-    // that do not cross a codec.
-    const { post: _post, ...rest } = validSubBlock;
-    expect(() => encodeSubBlock(rest as SubBlock)).toThrow();
-
-    const truncated = encodeSubBlock(validSubBlock).subarray(0, 40);
-    expect(() => decodeSubBlock(truncated)).toThrow(ReaderError);
-
-    // The structure gate keeps its verdict for callers that hold a struct
-    // rather than bytes. Gossip does not reach it for this input, but it is
-    // still the rule, and deleting a check needs the same care as adding one.
-    expect(verifySubBlockStructure(rest as SubBlock))
-      .toEqual({ valid: false, error: 'Sub-block missing post' });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Sub-block topic validator — per-network post difficulty (the A6 twin)
-// ---------------------------------------------------------------------------
-
-describe('sub-block topic validator (per-network post difficulty)', () => {
-  const DEVNET_TARGET_BITS = 8;
-
-  let devnetSubBlock: SubBlock;
-
-  beforeAll(() => {
-    const kp = generateKeyPair();
-    const basePost: Post = {
-      content: 'devnet-difficulty fixture',
-      author: kp.publicKey,
-      parentRefs: [],
-      challenge: new Uint8Array(32).fill(3),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: 1_722_470_400_000,
-      signature: new Uint8Array(64),
-    };
-
-    // Find a nonce that meets the devnet target but provably NOT the mainnet
-    // POST_POW_TARGET_BITS — the fixture a devnet user actually mines (~256
-    // tries at 8 bits; skipping the rare nonce that also clears the mainnet
-    // target keeps the fixture's property explicit, not probabilistic).
-    const powInput = postPowPreimage(basePost);
-    let nonce = -1;
-    for (let n = 0; n < 10_000_000; n++) {
-      if (verifyPoW(powInput, n, DEVNET_TARGET_BITS) && !verifyPoW(powInput, n, POST_POW_TARGET_BITS)) {
-        nonce = n;
-        break;
-      }
-    }
-    if (nonce < 0) throw new Error('devnet PoW search exhausted');
-
-    const post: Post = { ...basePost, powNonce: nonce };
-    post.signature = new Uint8Array(
-      sign(null, signingHash(post), createPrivateKey({
-        key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8',
-      })),
-    );
-    devnetSubBlock = subBlockFromPost(post, computePostId(post));
-  });
-
-  it('accepts a post mined at the configured non-mainnet target (devnet relays its own posts)', () => {
-    // Pre-fix, runStage1SubBlock verified against the imported
-    // POST_POW_TARGET_BITS, so a devnet relay rejected every post its own
-    // network mined. The fixture meets 8 bits and provably not the mainnet
-    // target — this Accept holds only if the gate reads the configured value.
-    const { topicValidators, peerMgr, penaltySpy } = makeHarness(DEVNET_TARGET_BITS);
-    const validate = topicValidators.get(TOPICS.subblock)!;
-    const peer = newPeer(peerMgr);
-
-    const result = validate(peer, { data: encodeSubBlock(devnetSubBlock) });
-
-    expect(result).toBe(TopicValidatorResult.Accept);
-    expect(penaltySpy).not.toHaveBeenCalled();
-  });
-
-  it('rejects the same post at the mainnet target (difficulty still gates relay)', () => {
-    const { topicValidators, peerMgr, penaltySpy } = makeHarness(POST_POW_TARGET_BITS);
-    const validate = topicValidators.get(TOPICS.subblock)!;
-    const peer = newPeer(peerMgr);
-
-    const result = validate(peer, { data: encodeSubBlock(devnetSubBlock) });
-
+  it('rejects a post whose author is in the set under a DIFFERENT spelling', () => {
+    // Uppercase hex names the same 32 bytes but is not the same string, and the
+    // set is keyed on the lowercase `toString('hex')` output every producer
+    // writes. A gate that lowercased its input would silently widen membership.
+    const { result } = validateTx(postTx, new Set([authorHex.toUpperCase()]));
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, 'Proof of Work invalid');
+  });
+
+  // --- cell 3 and 4: the set is LIVE, not captured ---------------------------
+
+  it('admits an author ADDED after the validator was registered', () => {
+    // ⛔ The mutation case. `subscribeTopics` closes over the set object, so a
+    // gate that copied it — or that was wired to a constant — would keep
+    // rejecting here. This is what proves `addKarmaMember` reaches the drop path.
+    const members = new Set<string>();
+    const { topicValidators, peerMgr } = makeHarness(members);
+    const validate = topicValidators.get(TOPICS.tx)!;
+
+    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+      .toBe(TopicValidatorResult.Reject);
+
+    members.add(authorHex);   // what NetNode.addKarmaMember does
+
+    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+      .toBe(TopicValidatorResult.Accept);
+  });
+
+  it('drops an author REMOVED after the validator was registered', () => {
+    // The other direction — an identity whose karma fell to zero. Together with
+    // the case above this pins the gate to the live set in both directions,
+    // which neither cell can do alone.
+    const members = new Set<string>([authorHex]);
+    const { topicValidators, peerMgr } = makeHarness(members);
+    const validate = topicValidators.get(TOPICS.tx)!;
+
+    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+      .toBe(TopicValidatorResult.Accept);
+
+    members.delete(authorHex);   // what NetNode.removeKarmaMember does
+
+    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+      .toBe(TopicValidatorResult.Reject);
+  });
+
+  // --- the biconditional's other half ---------------------------------------
+
+  it('a transaction with NO post is not gated by membership at all', () => {
+    // Both sides asserted against the same empty set: the post is rejected, the
+    // plain transaction is not. A gate that ran on every transaction would stop
+    // every like, invite and vouch from a member with no karma box — which is a
+    // different rule from the one being implemented.
+    const empty = new Set<string>();
+    expect(validateTx(postTx, empty).result).toBe(TopicValidatorResult.Reject);
+    expect(validateTx(plainTx, empty).result).toBe(TopicValidatorResult.Accept);
+  });
+
+  // --- structure still gates, ahead of membership ---------------------------
+
+  it('rejects an over-long post before consulting the set', () => {
+    // `verifyTxStructure` runs first, so a member's malformed post is still
+    // dropped — the membership check is an addition to the structural gate, not
+    // a replacement for it. The set holds the author, so only structure can be
+    // the cause.
+    const tx = txWith(basePost(keyPair.publicKey, { content: 'x'.repeat(301) }));
+    const { result, peer, penaltySpy } = validateTx(tx, new Set([authorHex]));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, expect.stringContaining('Content'),
+    );
+  });
+
+  it('rejects a post with a malformed author before hex-encoding it', () => {
+    // A 31-byte author would be `Buffer.from(...).toString('hex')`-able but is
+    // out of domain, and `verifyTxStructure` refuses it first — which is what
+    // keeps the gate from inventing a set key for a post that has no valid one.
+    const tx = txWith(basePost(new Uint8Array(31).fill(4)));
+    const { result } = validateTx(tx, new Set([authorHex]));
+    expect(result).toBe(TopicValidatorResult.Reject);
+  });
+
+  it('rejects an unsupported protocol version', () => {
+    const tx = { ...txWith(basePost(keyPair.publicKey)), protocolVersion: 99 };
+    const { result, peer, penaltySpy } = validateTx(tx, new Set([authorHex]));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, 'unsupported protocol version',
+    );
+  });
+
+  it('there is no sub-block topic to subscribe to', () => {
+    // The deletion, asserted rather than assumed: a producer still publishing on
+    // the retired topic reaches no validator here, and the topic string stays
+    // reserved (gossip.ts).
+    const { topicValidators } = makeHarness(new Set([authorHex]));
+    expect([...topicValidators.keys()].sort()).toEqual([TOPICS.orderingBlock, TOPICS.tx].sort());
+    expect(topicValidators.has('/dagsocial/subblock/1')).toBe(false);
   });
 });
 
@@ -497,7 +426,6 @@ type GossipListener = (evt: {
 const RELAY_PEER = 'peer-that-relayed-it';
 
 function makeDispatchHarness(handlers: {
-  onSubBlock?: (sb: SubBlock) => void;
   onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
   onTx?: (tx: unknown) => void;
 } = {}) {
@@ -520,11 +448,10 @@ function makeDispatchHarness(handlers: {
     validators,
     peerMgr,
     {
-      onSubBlock: handlers.onSubBlock ?? (() => {}),
       onOrderingBlock: handlers.onOrderingBlock ?? (() => {}),
       onTx: handlers.onTx ?? (() => {}),
     },
-    POST_POW_TARGET_BITS,
+    new Set<string>(),
   );
 
   // `from` is left undefined so the Active-peer filter is skipped — this suite
@@ -553,7 +480,6 @@ describe('gossip dispatch listener', () => {
     protocolVersion: 1,
     height: 3,
     prevBlockHash: '44'.repeat(32),
-    subBlockRoot: '55'.repeat(32),
     utxoTxRoot: '66'.repeat(32),
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: new Uint8Array(32).fill(1),
@@ -563,8 +489,7 @@ describe('gossip dispatch listener', () => {
   };
   const dispatchBlock: OrderingBlock = {
     header: dispatchHeader,
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+    utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
     validatorSignature: new Uint8Array(64),
   };
 

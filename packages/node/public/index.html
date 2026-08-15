@@ -626,23 +626,30 @@ function enum8Tag(table, value) {
  * postFieldBytes — the canonical, injective encoding shared by the signing
  * hash, the PoW preimage, and the post id:
  *
- *   lpUtf8(content) ‖ b32(author) ‖ arr(parentRefs, b32) ‖ b32(challenge)
+ *   lpUtf8(content) ‖ b32(author) ‖ arr(parentRefs, b32)
  *     ‖ vlqU(protocolVersion) ‖ vlqU(timestamp)
  *
  * Field order IS the specification — reordering it is a consensus change with
  * no signal, so the calls below are laid out to be read line-by-line against
- * that table. Excludes powNonce (the author signs before mining) and signature.
+ * that table.
+ *
+ * ⛔ **These bytes are the post's payload inside its creating transaction** —
+ * `txIdBytes` writes them as its `post` field, so they enter that transaction's
+ * `TxId`. They are NOT the post id: a post's id comes from the transaction
+ * (`computePostId(txId, index)`).
  *
  * **Injective** — TYPES_INTERFACE → Canonical field encoding. Every variable
  * field carries its own length or count, so no two distinct posts concatenate
  * to the same bytes; a parent ref crosses as the 32 raw bytes it names.
  */
-function postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
+function postFieldBytes(content, authorBytes, parentRefs, protocolVersion, timestamp) {
   return concatUint8Arrays([
     lpUtf8(content),
-    b32Bytes(authorBytes, 32),
+    // `b32Either`, because the page's identity carries `author` as hex text
+    // while a decoded post carries bytes. Both produce the same 32 bytes, which
+    // is what keeps the two entry points on one encoding rather than two.
+    b32Either(authorBytes, 32),
     arr(parentRefs, (ref) => b32Hex(ref, 32)),
-    b32Bytes(challengeBytes, 32),
     vlqU(protocolVersion),
     vlqU(timestamp),
   ]);
@@ -733,10 +740,12 @@ function boxTypeFields(box) {
         b32Either(box.inviteePublicKey, 32),
       ]);
     case 'post_lock':
+      // No `targetPostId`: a post's id comes from the transaction that creates
+      // this lock, so the field would have to be known before the `TxId` that
+      // produces it — unbuildable (TYPES_INTERFACE → PostLockBox).
       return concatUint8Arrays([
         vlqU64(box.originalValue),
         b32Either(box.owner, 32),
-        b32Hex(box.targetPostId, 32),
       ]);
     case 'vouch':
       return concatUint8Arrays([
@@ -768,6 +777,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *   | 3 | preimages       | opt(arr(sorted, b32(boxId) ‖ lp(preimage)))  |
  *   | 4 | protocolVersion | vlqU                                         |
  *   | 5 | likeTarget      | opt(b32)                                     |
+ *   | 6 | post            | opt(postFieldBytes)                          |
  *
  * Three properties this layout secures, each of which a bare concatenation
  * would not (TYPES_INTERFACE → Layout — UtxoTransaction):
@@ -777,10 +787,11 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *    concatenate to identical bytes.
  *  - `protocolVersion` is `vlqU`. Unprefixed decimal text would run into the
  *    field beside it.
- *  - `likeTarget` presence is `opt()`'s 0/1 tag, which needs no in-band marker
- *    and preserves the `!== undefined` distinction. An empty-string target is
- *    out of the `b32` domain, so it has no encoding at all rather than a
- *    distinct one.
+ *  - `likeTarget` and `post` presence is `opt()`'s 0/1 tag, which needs no
+ *    in-band marker and preserves the `!== undefined` distinction. An
+ *    empty-string target is out of the `b32` domain, so it has no encoding at
+ *    all rather than a distinct one. ⛔ `post` needs no length prefix inside its
+ *    `opt`: `postFieldBytes` is self-delimiting and it is last.
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  */
@@ -798,84 +809,31 @@ function computeTxId(tx) {
     })),
     vlqU(tx.protocolVersion),
     opt(tx.likeTarget, (target) => b32Hex(target, 32)),
+    // ⛔ The post payload, and this is what makes the post id derivable: a
+    // transaction carrying a distinct post has a distinct id, and
+    // `computePostId(txId, index)` inherits that uniqueness.
+    opt(tx.post, (post) => postFieldBytes(
+      post.content,
+      typeof post.author === 'string' ? hex2buf(post.author) : post.author,
+      post.parentRefs,
+      post.protocolVersion,
+      post.timestamp,
+    )),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
 }
 
 // ===========================================================================
-// PoW
+// Reserved, never to be reused: powTarget, meetsPowTarget, buildPowInput,
+// powNonceTail, postPowHash, solvePoW, buildSignHashInput, signPost.
+//
+// ⛔ There is no post PoW and no post signature. A post is the payload of the
+// transaction that locks its karma, and that transaction is signed over its
+// `TxId` by the author (NODE_INTERFACE → Post transactions) — so `signTxId`
+// below is the only signing this page does, and the relay gate is membership
+// rather than burned milliseconds.
 // ===========================================================================
-
-/**
- * The PoW admission rule, mirrored from `@dagsocial/validation` —
- * VALIDATION_INTERFACE.md → powTarget / meetsPowTarget. This page is served
- * statically with no bundler, so it cannot import the pair; `ui-crypto-mirror.test.ts`
- * extracts both declarations by name and holds them to validation's.
- *
- * `powTarget` expands a bit count into the inclusive 32-byte maximum acceptable
- * digest and returns null outside [0, 256]; `meetsPowTarget` answers hash <= target,
- * both big-endian.
- */
-function powTarget(targetBits) {
-  if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
-  const target = new Uint8Array(32).fill(0xff);
-  const wholeBytes = targetBits >> 3;
-  for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
-  const remainderBits = targetBits & 7;
-  if (remainderBits !== 0) target[wholeBytes] = 0xff >> remainderBits;
-  return target;
-}
-
-function meetsPowTarget(hash, target) {
-  for (let i = 0; i < target.length; i++) {
-    const h = hash[i];
-    const c = target[i];
-    if (h === undefined || c === undefined) return false;
-    if (h < c) return true;
-    if (h > c) return false;
-  }
-  return true;
-}
-
-/** PoW preimage = postFieldBytes; the nonce tail is appended by postPowHash. */
-function buildPowInput(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
-  return postFieldBytes(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp);
-}
-
-/**
- * The post-PoW nonce tail. TYPES_INTERFACE → Layout — Post names powNonceBytes
- * in @dagsocial/types as its only writer and forbids anything else from
- * constructing it; this is that writer's mirror, and the sole tail writer on
- * this side.
- */
-function powNonceTail(nonce) {
-  return vlqU(nonce);
-}
-
-/** blake2b512(powInput ‖ powNonceTail(nonce))[0..32] — the digest verifyPoW decides on. */
-function postPowHash(powInput, nonce) {
-  return blake2b(concatUint8Arrays([powInput, powNonceTail(nonce)]), null, 64).slice(0, 32);
-}
-
-function solvePoW(powInput, targetBits, onProgress) {
-  // Hoisted: the target depends only on targetBits, so deriving it per nonce
-  // would allocate once per hash. The server issues targetBits with the
-  // challenge, so a value no digest can satisfy is reachable here.
-  const target = powTarget(targetBits);
-  if (target === null) throw new Error('solvePoW: unsatisfiable targetBits ' + targetBits);
-  let nonce = 0;
-  const start = performance.now();
-  while (true) {
-    if (meetsPowTarget(postPowHash(powInput, nonce), target)) return nonce;
-
-    nonce++;
-    if (nonce % 200000 === 0) {
-      const elapsed = ((performance.now() - start) / 1000).toFixed(1);
-      if (onProgress) onProgress(`${(nonce / 1e6).toFixed(1)}M hashes (${elapsed}s)...`);
-    }
-  }
-}
 
 // ===========================================================================
 // Signing — txId-based (Ed25519 over computeTxId)
@@ -887,18 +845,6 @@ async function signTxId(tx) {
   const txIdBytes = hex2buf(txId);
   const sig = await crypto.subtle.sign('Ed25519', privKey, txIdBytes);
   return { txId, signature: buf2hex(new Uint8Array(sig)) };
-}
-
-/** The post signing preimage: the same bytes PoW hashes, excluding powNonce. */
-function buildSignHashInput(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
-  return buildPowInput(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp);
-}
-
-async function signPost(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp) {
-  const input = buildSignHashInput(content, authorBytes, parentRefs, challengeBytes, protocolVersion, timestamp);
-  const hash = blake2b(input, null, 64).slice(0, 32);
-  const sig = await crypto.subtle.sign('Ed25519', privKey, hash);
-  return buf2hex(new Uint8Array(sig));
 }
 
 // ===========================================================================
@@ -1052,7 +998,7 @@ async function fetchInviteState() {
 // ===========================================================================
 
 /** Build the karma-lock tx for post creation. Uses all boxes needed to cover lockAmount. */
-function buildKarmaLockTx(karmaBox, lockAmount, targetPostId, pubKeyHex) {
+function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
   const selected = selectBoxes(karmaBox.boxes, lockAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const newKarmaValue = selectedTotal - lockAmount;
@@ -1069,7 +1015,6 @@ function buildKarmaLockTx(karmaBox, lockAmount, targetPostId, pubKeyHex) {
     value: lockAmount,
     originalValue: lockAmount,
     owner: pubKeyHex,
-    targetPostId,
     guard: 'block_apply',
   };
 
@@ -1078,6 +1023,11 @@ function buildKarmaLockTx(karmaBox, lockAmount, targetPostId, pubKeyHex) {
     outputs: [karmaOutput, postLockOutput],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
+    // ⛔ The post rides INSIDE the transaction. `postFieldBytes` is in the
+    // `computeTxId` preimage, so the signature covers the post — a relay cannot
+    // rewrite it any more than it can re-point a like — and the id the page
+    // predicts below is derived from that same transaction.
+    post,
   };
 }
 
@@ -1390,17 +1340,38 @@ function computeCandidateBoxId(candidate, txId, index) {
 // ===========================================================================
 
 /**
- * postId = blake2b512(POST_ID_DOMAIN ‖ postFieldBytes ‖ vlqU(powNonce))[0..32]
+ * `u32BE(n)` — 4 bytes big-endian, TOTAL by sentinel.
  *
- * Domain-tagged, so the id is never equal to the PoW hash over the same post.
+ * Mirrors `u32BE` in `@dagsocial/types`. A value outside the encodable domain
+ * writes the all-ones sentinel rather than throwing, so a malformed index can
+ * never turn id derivation into a page exception — the same M-5 no-panic rule
+ * the numeric writers above follow. A mirror that threw would diverge.
  */
-function computePostId(post) {
-  const cBytes = typeof post.challenge === 'string' ? hex2buf(post.challenge) : post.challenge;
-  const aBytes = typeof post.author === 'string' ? hex2buf(post.author) : post.author;
+const U32_SENTINEL = 0xffffffff;
+function u32BE(n) {
+  const encodable = typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n < U32_SENTINEL;
+  const v = encodable ? n : U32_SENTINEL;
+  return new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff]);
+}
+
+/**
+ * postId = blake2b512(POST_ID_DOMAIN ‖ utf8(txId) ‖ u32BE(index))[0..32]
+ *
+ * ⛔ **Provenance-derived, and neither argument is a post.** The creating
+ * transaction spends the author's karma box, so `(txId, index)` names a post
+ * uniquely by construction (TYPES_INTERFACE → Hashing functions). The page must
+ * therefore build the transaction BEFORE it can name the post — the ordering
+ * inverts, and optimistic display still works because `computeTxId` is local.
+ *
+ * ⚠ `utf8(txId)`, not decoded bytes, and `u32BE` for the index — both are
+ * about totality: this runs on ids the page did not produce, and a hex decode
+ * throws on a malformed one.
+ */
+function computePostId(txId, index) {
   const combined = concatUint8Arrays([
     POST_ID_DOMAIN,
-    postFieldBytes(post.content, aBytes, post.parentRefs, cBytes, post.protocolVersion, post.timestamp),
-    powNonceTail(post.powNonce),
+    encoder.encode(txId),
+    u32BE(index),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
@@ -1601,29 +1572,11 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       return;
     }
 
-    // 2. Request challenge
-    setStatus('requesting challenge...', 'busy');
-    const chalRes = await fetch(API + '/challenge', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId }),
-    });
-    if (!chalRes.ok) {
-      const err = await chalRes.json();
-      setStatus(err.error || 'challenge failed', 'error');
-      return;
-    }
-    const { challenge: challengeHex, targetBits } = await chalRes.json();
-    const challengeBytes = hex2buf(challengeHex);
-
-    // 3. Build powInput and solve PoW
-    setStatus(`solving PoW (${targetBits} bits)...`, 'busy');
+    // 2. Validate parent refs before anything hashes them
     const parentRefs = document.getElementById('parents').value
       .split(',').map(s => s.trim()).filter(Boolean);
-    // Both refusals come before the PoW, because an over-wide or malformed
-    // parent ref would otherwise be mined and signed before the node bounced
-    // it, and the spent PoW is not recoverable. The domain check is not
-    // belt-and-braces: `b32Hex` has no encoding for a ref that is not 64
-    // lowercase hex, so the alternative is an exception out of `buildPowInput`.
+    // `b32Hex` has no encoding for a ref that is not 64 lowercase hex, so the
+    // alternative to refusing here is an exception out of `computeTxId`.
     if (parentRefs.length > MAX_PARENT_REFS) {
       setStatus(`at most ${MAX_PARENT_REFS} parent ref (got ${parentRefs.length})`, 'error');
       return;
@@ -1632,61 +1585,41 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       setStatus('each parent ref must be 64 lowercase hex characters', 'error');
       return;
     }
-    const timestamp = Date.now();
-    const powInput = buildPowInput(content, pubKeyRaw, parentRefs, challengeBytes, PROTOCOL_VERSION, timestamp);
 
-    const powNonce = solvePoW(powInput, targetBits, (msg) => {
-      setStatus(msg, 'busy');
-    });
-
-    // 4. Sign the post
-    setStatus('signing post...', 'busy');
-    const signature = await signPost(content, pubKeyRaw, parentRefs, challengeBytes, PROTOCOL_VERSION, timestamp);
-
-    // 5. Determine lock amount
+    // 3. Determine lock amount
     const lockAmount = parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
     if (karmaBox.total < lockAmount) {
       setStatus(`Insufficient karma: need ${lockAmount}, have ${karmaBox.total}`, 'error');
       return;
     }
 
-    // 6. Build post (for postId computation)
+    // 4. Build the post payload — no challenge, no nonce, no signature of its own
     const post = {
       content,
       author: userId,
       parentRefs,
-      challenge: challengeHex,
-      powNonce,
       protocolVersion: PROTOCOL_VERSION,
-      timestamp,
-      signature,
+      timestamp: Date.now(),
     };
-    const postId = computePostId(post);
 
-    // 7. Build and sign karma-lock tx
-    setStatus('building karma-lock tx...', 'busy');
+    // 5. Build and sign ONE transaction carrying that payload
+    setStatus('building post transaction...', 'busy');
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const karmaLockTx = buildKarmaLockTx(karmaBox, lockAmount, postId, pubKeyHex);
-    const clientTxId = computeTxId(karmaLockTx);
-    console.log('[client] txId:', clientTxId);
-    const { signature: txSig } = await signTxId(karmaLockTx);
-    karmaLockTx.signatures[pubKeyHex] = txSig;
+    const tx = buildPostTx(karmaBox, lockAmount, post, pubKeyHex);
+    const { txId, signature: txSig } = await signTxId(tx);
+    tx.signatures[pubKeyHex] = txSig;
 
-    // 8. Submit post + karma-lock tx
+    // 6. ⛔ Name the post from the transaction — the ordering that option (C)
+    //    inverts. Optimistic display still works because `computeTxId` is local;
+    //    what changed is that the transaction must exist first.
+    const postId = computePostId(txId, 0);
+    console.log('[client] txId:', txId, 'postId:', postId);
+
+    // 7. Submit the one transaction
     setStatus('posting...', 'busy');
     const postRes = await fetch(API + '/posts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content,
-        author: userId,
-        parentRefs,
-        challenge: challengeHex,
-        powNonce,
-        protocolVersion: PROTOCOL_VERSION,
-        timestamp,
-        signature,
-        karmaLockTx,
-      }, jsonBigint),
+      body: JSON.stringify({ tx }, jsonBigint),
     });
     if (!postRes.ok) {
       const err = await postRes.json();
@@ -1696,7 +1629,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     const posted = await postRes.json();
     // The lock is pending now, so a like on the next click must spend this
     // transaction's change rather than the box it just consumed.
-    recordPendingKarmaChange(karmaLockTx);
+    recordPendingKarmaChange(tx);
     setStatus('posted! ' + posted.postId.slice(0, 12) + '...', 'ok');
     document.getElementById('content').value = '';
     document.getElementById('parents').value = '';

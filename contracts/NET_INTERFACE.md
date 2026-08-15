@@ -199,8 +199,10 @@ chain data.
 
 ## Gossip Topics
 
-Sub-block structure, lifecycle, and propagation semantics are defined in
-`SUBBLOCK_INTERFACE.md`.
+**There is no sub-block topic.** A post is a transaction and propagates as one.
+The relay-path gate is a cached **membership** check — *does this author hold
+karma at all* — replacing post PoW; see `NODE_INTERFACE` → Post transactions for
+the rule and the measurement behind it.
 
 | Topic | Payload | Priority | Description |
 |-------|---------|----------|-------------|

@@ -36,7 +36,6 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       // straight through `createOrderingBlock` into the store, bypassing the
       // apply gate that checks the header domain. The only signal is the route
       // answering `hash: null` for a header it cannot encode.
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: uid('validator-1'),
@@ -44,13 +43,10 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
     },
-    subBlockTree: {
-      subBlockEntries: [],
-      pruneEntries: [],
-    },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
@@ -162,21 +158,15 @@ describe('blocks routes', () => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
     initDb(TEST_DB);
 
-    // ⚠ **There is no poison half to build.** `subBlockRefs` is not a stored
-    // field: the route derives it from `subBlockEntries`, so a block has
-    // nowhere to hold a second opinion about its own sub-block ids. That the
-    // field is unrepresentable rather than merely unwritten is pinned in
-    // `@dagsocial/types` (`serialization.test.ts`); what this file owns is the
-    // half below — the route's JSON shape, and that its contents come from the
-    // committed list.
+    // ⚠ **There is no poison half to build.** `postIds` is not a stored field:
+    // the route derives it from the block's post-bearing transactions, so a
+    // block has nowhere to hold a second opinion about which posts it created.
+    // What this file owns is the route's JSON shape, and that its contents come
+    // from the committed transaction list.
     //
     // Carried by the height-1 block rather than a second one on purpose — a
     // block at height 2 would move the tip `/blocks/current` asserts on.
-    const block = makeBlock(1, 'a'.repeat(64));
-    block.subBlockTree.subBlockEntries = [
-      { postId: COMMITTED_ID, parentRefs: [], author: 'cc'.repeat(32) },
-    ];
-    createOrderingBlock(block);
+    createOrderingBlock(makeBlock(1, 'a'.repeat(64)));
   });
 
   afterAll(() => {
@@ -194,21 +184,22 @@ describe('blocks routes', () => {
     expect(body.validatorSignature).toBeDefined();
   });
 
-  it('GET /blocks/:height serves subBlockRefs derived from the committed entries', async () => {
+  it('GET /blocks/:height serves postIds derived from the committed transactions', async () => {
     const res = await request('/blocks/1');
     expect(res.status).toBe(200);
-    const tree = (res.data as Record<string, unknown>).subBlockTree as Record<
+    const tree = (res.data as Record<string, unknown>).utxoTxTree as Record<
       string,
       unknown
     >;
 
-    // The response carries the ids the block committed to, under the field name
-    // clients already read — the HTTP shape does not move when the wire field
-    // is deleted, which is what makes 3a's derivation and 3b's deletion
-    // invisible to the demo UI, a light client and any indexer.
-    expect(tree.subBlockRefs).toEqual([COMMITTED_ID]);
-    expect(tree.subBlockRefs).not.toContain(POISON_ID);
-    expect(tree.subBlockEntries).toHaveLength(1);
+    // ⛔ Derived, never stored. A block that creates no posts reports an empty
+    // list rather than a missing field, and there is no second opinion it could
+    // hold — the ids come from `postsOf`, which reads the committed
+    // transactions and derives each id from the transaction that carries it.
+    expect(tree.postIds).toEqual([]);
+    expect(Array.isArray(tree.utxoTxIds)).toBe(true);
+    // The retired body section is not served under any name.
+    expect((res.data as Record<string, unknown>).subBlockTree).toBeUndefined();
   });
 
   it('GET /blocks/:height with invalid height returns 400', async () => {

@@ -50,7 +50,6 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
 
 const testConfig: NetConfig = {
   magic: 0x54444147,
-  postPowTargetBits: 8,
   bootstrapPeers: [],
   listenAddrs: '',
   maxPeers: 10,
@@ -93,7 +92,6 @@ function makeMachine(opts: { advanceOnAppend?: boolean } = {}): {
       },
     }),
     (peerId, data) => sent.push({ peerId, data }),
-    async () => [],
     (peerId, reason) => violations.push({ peerId, reason }),
   );
   return { machine, sent, appended, violations };

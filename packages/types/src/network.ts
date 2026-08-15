@@ -15,7 +15,6 @@
 
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,
-  POST_POW_TARGET_BITS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_STALE_THRESHOLD_BLOCKS,
   VOUCH_COOLDOWN_BLOCKS,
@@ -34,9 +33,9 @@ export interface NetworkProfile {
   readonly networkType: NetworkType;
   readonly magic: number;              // wire frame magic — one per network
 
-  // Difficulty
+  // Difficulty — ordering-block PoW only; consensus is single-phase.
+  // `postPowTargetBits` is reserved, never to be reused (constants.ts).
   readonly orderingBlockPowTargetBits: number;
-  readonly postPowTargetBits: number;
 
   // Block-denominated durations
   readonly karmaDecayIntervalBlocks: number;
@@ -119,7 +118,6 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   magic: MAGIC_MAINNET,
 
   orderingBlockPowTargetBits: ORDERING_BLOCK_POW_TARGET_BITS,
-  postPowTargetBits: POST_POW_TARGET_BITS,
 
   karmaDecayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
   karmaStaleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
@@ -172,9 +170,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
 // ones the parked e2e harness ran on (packages/node/test/harness/node-manager.ts).
-// postPowTargetBits is the value that harness wanted but could not override without
-// desynchronising the challenge endpoint from the verifier — the exact defect the profile
-// removes. The remaining durations are compressed roughly two orders of magnitude,
+// The remaining durations are compressed roughly two orders of magnitude,
 // preserving mainnet's orderings (bootstrap < stale threshold < probation,
 // epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
 // that is not timescale; see orderingBlockPowTargetBits below.
@@ -200,7 +196,6 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // 3072 a solve is ~4K hashes. Devnet's block cadence comes from throttling a miner's
   // hashrate, never from this number. TYPES_INTERFACE → Ordering block PoW.
   orderingBlockPowTargetBits: 3072,
-  postPowTargetBits: 4, // (harness intent — see above)
 
   karmaDecayIntervalBlocks: 3, // (harness)
   karmaStaleThresholdBlocks: 500, // (harness)

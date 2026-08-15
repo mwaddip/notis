@@ -20,43 +20,6 @@ export interface PostsDeps extends PostServiceDeps, FeedServiceDeps {}
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Convert hex strings in request body to binary for the Post type.
- * `author`, `challenge`, and `signature` are binary (hex on wire).
- */
-function hexToPost(body: Record<string, unknown>): Post {
-  const authorHex = body.author as string;
-  const challengeHex = body.challenge as string;
-  const signatureHex = body.signature as string;
-
-  let author: Uint8Array;
-  let challenge: Uint8Array;
-  let signature: Uint8Array;
-
-  try {
-    author = new Uint8Array(Buffer.from(authorHex, 'hex'));
-    challenge = new Uint8Array(Buffer.from(challengeHex, 'hex'));
-    signature = new Uint8Array(Buffer.from(signatureHex, 'hex'));
-  } catch {
-    throw new ClientError('Invalid hex encoding in author, challenge, or signature');
-  }
-
-  if (author.length !== 32) {
-    throw new ClientError('author must be 32 bytes (64 hex chars) — Ed25519 public key');
-  }
-
-  return {
-    content: body.content as string,
-    author,
-    parentRefs: (body.parentRefs ?? []) as string[],
-    challenge,
-    powNonce: body.powNonce as number,
-    protocolVersion: body.protocolVersion as number,
-    timestamp: body.timestamp as number,
-    signature,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -65,14 +28,31 @@ export function createRouter(deps: PostsDeps): Router {
   const router = Router();
   const feedService = new FeedService(deps);
 
-  // POST /posts — submit a new post
+  // POST /posts — submit a post transaction
+  //
+  // ⛔ **One transaction, one body field.** The post rides inside `tx.post`
+  // (NODE_INTERFACE → Post transactions); there is no separate post object and no
+  // `karmaLockTx` beside it, because they were always one intent and splitting
+  // them is what the mempool `batchId` existed to paper over.
   router.post('/', (req, res) => {
     // ---- 1. Validate input shape ----
-    let post: Post;
+    const rawTx = (req.body as { tx?: Record<string, unknown> }).tx;
+    if (!rawTx) {
+      res.status(400).json({ error: 400, reason: 'tx required' });
+      return;
+    }
+
+    let tx;
     try {
-      post = hexToPost(req.body as Record<string, unknown>);
+      tx = jsonToTx(rawTx);
     } catch (err) {
-      respondError(res, err, 'POST /posts (body decode)');
+      respondError(res, err, 'POST /posts (tx decode)');
+      return;
+    }
+
+    const post = tx.post;
+    if (!post) {
+      res.status(400).json({ error: 400, reason: 'tx.post required' });
       return;
     }
 
@@ -89,33 +69,15 @@ export function createRouter(deps: PostsDeps): Router {
       return;
     }
 
-    // Parse karmaLockTx from body
-    const rawKarmaLockTx = (req.body as { karmaLockTx?: Record<string, unknown> }).karmaLockTx;
-    if (!rawKarmaLockTx) {
-      res.status(400).json({ error: 400, reason: 'karmaLockTx required' });
-      return;
-    }
-
-    let karmaLockTx;
-    try {
-      karmaLockTx = jsonToTx(rawKarmaLockTx);
-    } catch (err) {
-      respondError(res, err, 'POST /posts (karmaLockTx decode)');
-      return;
-    }
-
     // ---- 2. Delegate to service ----
     try {
-      const result = createPost(deps, post, karmaLockTx);
+      const result = createPost(deps, tx);
 
       // ---- 3. Broadcast (fire-and-forget) ----
       const net = getNet();
       if (net) {
-        net.broadcastSubBlock(result.subBlock).catch((err: Error) => {
-          console.warn(`Failed to broadcast sub-block: ${err.message}`);
-        });
-        net.broadcastTx(result.karmaLockTx).catch((err: Error) => {
-          console.warn(`Failed to broadcast karma-lock tx: ${err.message}`);
+        net.broadcastTx(result.tx).catch((err: Error) => {
+          console.warn(`Failed to broadcast post transaction: ${err.message}`);
         });
       }
 

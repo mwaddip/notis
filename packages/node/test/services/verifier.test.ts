@@ -7,16 +7,12 @@ import {
   type KeyObject,
 } from 'crypto';
 import {
-  signingHash,
-  postPowPreimage,
   PROTOCOL_VERSION,
   MAX_CONTENT_BYTES,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
 } from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
-import { verifyPoW } from '../../src/services/pow.js';
-import { config } from '../../src/config.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
 
@@ -24,25 +20,12 @@ import type { VerifierDeps } from '../../src/services/verifier.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Brute-force a valid PoW nonce for the given input and target bits. Returns
- * the first nonce >= startNonce the verifier accepts — the acceptance rule is
- * `verifyPoW`'s, never a second copy of it here.
- */
-function solvePoW(input: Uint8Array, targetBits: number, startNonce = 0): number {
-  for (let nonce = startNonce; nonce < 100_000_000; nonce++) {
-    if (verifyPoW(input, nonce, targetBits)) return nonce;
-  }
-  throw new Error('Failed to solve PoW within iteration limit');
-}
-
-/**
- * Build the powInput buffer exactly as the verifier does — both now read the
- * one canonical encoder in @dagsocial/types (audit M-1).
- */
-function buildPowInput(post: Post): Buffer {
-  return Buffer.from(postPowPreimage(post));
-}
+// ⛔ **There is no PoW to solve and no post signature to build.** `verifyPost`
+// checks the post PAYLOAD — field domains, content, parent existence, karma —
+// and nothing else: a post is authenticated by the transaction that creates it,
+// which is signed over its `TxId` by the author (NODE_INTERFACE → Post
+// transactions). Reintroducing either here would be testing a rule the code no
+// longer has.
 
 // ---------------------------------------------------------------------------
 // Mock store helpers
@@ -50,9 +33,8 @@ function buildPowInput(post: Post): Buffer {
 
 interface MockStore {
   // Byte-keyed, because the store they stand in for compares BLOBs by
-  // value. `karmaBoxes` below already hex-keys; these two did not.
+  // value. `karmaBoxes` below already hex-keys; this one did not.
   identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
-  challenges: ByteKeyedMap<{ challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
   karmaBoxes: Map<string, { value: bigint }[]>; // keyed by hex(owner publicKey), now an array
   // Typed as what the dep must return, not `unknown`. Nothing is ever put
   // in it — `getPost` returns null throughout these suites — but a mock
@@ -63,7 +45,6 @@ interface MockStore {
 
 function createMockDeps(store: MockStore): VerifierDeps {
   return {
-    getActiveChallenge: (userId: Uint8Array) => store.challenges.get(userId) ?? null,
     getKarmaBoxes: (owner: Uint8Array) => {
       const hex = Buffer.from(owner).toString('hex');
       return store.karmaBoxes.get(hex) ?? [];
@@ -76,47 +57,37 @@ function createMockDeps(store: MockStore): VerifierDeps {
 // Tests
 // ---------------------------------------------------------------------------
 
+// Reserved, never to be reused: the challenge, PoW and post-signature cases.
+// `verifyPost` checks the post PAYLOAD only. The rules those tests covered are
+// either gone (there is no challenge and no post PoW) or moved to the
+// transaction path — the post's authorship is the transaction's signature, which
+// `validateTx` checks, and the engine's post biconditional is what enforces the
+// karma lock.
 describe('verifyPost', () => {
   // Shared test fixtures
   let pubKeyRaw: Uint8Array;
   let privKey: KeyObject;
   let userId: Uint8Array;
-  let challengeBytes: Uint8Array;
 
   // Build a fresh mock store for each test
   function makeStore(): MockStore {
     return {
       identities: new ByteKeyedMap(),
-      challenges: new ByteKeyedMap(),
       karmaBoxes: new Map(),
       posts: new Map(),
     };
   }
 
-  /**
-   * Create a fully valid Post object (unsigned) with the given overrides.
-   * The caller is responsible for signing and setting powNonce.
-   */
+  /** A fully valid post payload with the given overrides. */
   function makePost(overrides: Partial<Post> = {}): Post {
     return {
       content: 'hello world',
       author: userId,
       parentRefs: [],
-      challenge: challengeBytes,
-      powNonce: 0,
       protocolVersion: PROTOCOL_VERSION,
       timestamp: 1700000000000,
-      signature: new Uint8Array(64),
       ...overrides,
     };
-  }
-
-  /**
-   * Sign a post with the test private key and set its signature.
-   */
-  function signPost(post: Post): Post {
-    const sig = cryptoSign(null, signingHash(post), privKey);
-    return { ...post, signature: new Uint8Array(sig) };
   }
 
   // Generate a real Ed25519 keypair once for all tests
@@ -127,9 +98,6 @@ describe('verifyPost', () => {
     // Keep KeyObject — crypto.sign needs it for Ed25519
     privKey = privateKey;
     userId = pubKeyRaw;
-    challengeBytes = new Uint8Array(
-      createHash('blake2b512').update('test-challenge').digest().subarray(0, 32),
-    );
   }
 
   // -----------------------------------------------------------------------
@@ -147,26 +115,13 @@ describe('verifyPost', () => {
         publicKey: pubKeyRaw,
         createdAt: Date.now(),
       });
-      store.challenges.set(userId, {
-        userId,
-        challenge: challengeBytes,
-        expiresAtBlock: 100,
-      });
       store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
         { value: POST_LOCK_THREAD_COST },
       ]);
-
-      // Build post and solve PoW
-      let post = makePost();
-      const powInput = buildPowInput(post);
-      const nonce = solvePoW(powInput, 20);
-      post = { ...post, powNonce: nonce };
-
-      // Sign
-      post = signPost(post);
+    const post = makePost();
 
       const deps = createMockDeps(store);
-      const result = verifyPost(deps, post, 50);
+      const result = verifyPost(deps, post);
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
     },
@@ -179,7 +134,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     const post = makePost({ content: '' });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 50);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Content is empty');
   });
@@ -191,7 +146,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     const post = makePost({ content: 'x'.repeat(MAX_CONTENT_BYTES + 1) });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 50);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Content exceeds max length');
   });
@@ -211,7 +166,7 @@ describe('verifyPost', () => {
       ),
     });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 50);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Too many parent refs');
   });
@@ -223,131 +178,10 @@ describe('verifyPost', () => {
     const store = makeStore();
     const post = makePost({ protocolVersion: 99 });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 50);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Unsupported protocol version');
   });
-
-  // -----------------------------------------------------------------------
-  // 6. No active challenge
-  // -----------------------------------------------------------------------
-  it('rejects missing challenge', () => {
-    const store = makeStore();
-    // No challenge inserted
-    const post = makePost({ content: 'test' }); // 4 bytes, passes content check
-    const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 50);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('No active challenge');
-  });
-
-  // -----------------------------------------------------------------------
-  // 7. Challenge mismatch
-  // -----------------------------------------------------------------------
-  it('rejects challenge mismatch', () => {
-    const store = makeStore();
-    store.challenges.set(userId, {
-      userId,
-      challenge: new Uint8Array(32), // all zeros — not what the post carries
-      expiresAtBlock: 100,
-    });
-    const post = makePost({ content: 'test' });
-    const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 50);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('Challenge mismatch');
-  });
-
-  // -----------------------------------------------------------------------
-  // 8. Expired challenge
-  // -----------------------------------------------------------------------
-  it('rejects expired challenge', () => {
-    const store = makeStore();
-    store.challenges.set(userId, {
-      userId,
-      challenge: challengeBytes,
-      expiresAtBlock: 10,
-    });
-    const post = makePost({ content: 'test' });
-    const deps = createMockDeps(store);
-    // currentBlockHeight (20) > expiresAtBlock (10)
-    const result = verifyPost(deps, post, 20);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('Challenge expired');
-  });
-
-  // -----------------------------------------------------------------------
-  // 9. Invalid PoW
-  // -----------------------------------------------------------------------
-  it('rejects invalid PoW', () => {
-    const store = makeStore();
-    store.challenges.set(userId, {
-      userId,
-      challenge: challengeBytes,
-      expiresAtBlock: 100,
-    });
-    const deps = createMockDeps(store);
-
-    // The nonce has to be invalid at the target the verifier reads —
-    // `config.postPowTargetBits`, off the profile — and on a low-difficulty
-    // profile an arbitrary nonce is a coin flip rather than a certainty. Take
-    // the first one that fails instead of assuming one does; the fixture also
-    // carries an unsigned placeholder signature, so this pins that PoW is
-    // answered before the signature and not merely that something rejected.
-    const powInput = buildPowInput(makePost({ content: 'test', powNonce: 0 }));
-    let badNonce = 0;
-    while (verifyPoW(powInput, badNonce, config.postPowTargetBits)) badNonce++;
-    const post = makePost({ content: 'test', powNonce: badNonce });
-
-    const result = verifyPost(deps, post, 50);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('Proof of Work invalid');
-  });
-
-  // -----------------------------------------------------------------------
-  // 10. Invalid signature (tampered content)
-  // -----------------------------------------------------------------------
-  it(
-    'rejects invalid signature',
-    { timeout: 60_000 },
-    () => {
-      const store = makeStore();
-
-      store.identities.set(userId, {
-        userId,
-        publicKey: pubKeyRaw,
-        createdAt: Date.now(),
-      });
-      store.challenges.set(userId, {
-        userId,
-        challenge: challengeBytes,
-        expiresAtBlock: 100,
-      });
-      store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-        { value: POST_LOCK_THREAD_COST },
-      ]);
-
-      // Build a valid post, solve PoW, and sign the original content
-      let post = makePost({ content: 'original content' });
-      let powInput = buildPowInput(post);
-      const goodNonce = solvePoW(powInput, 20);
-      post = { ...post, powNonce: goodNonce };
-      post = signPost(post);
-
-      // Tamper with content after signing — signature no longer matches.
-      // Re-solve PoW for the tampered content so PoW check passes and we reach
-      // the signature verification step.
-      const tamperedPost = { ...post, content: 'tampered content' };
-      powInput = buildPowInput(tamperedPost);
-      const tamperedNonce = solvePoW(powInput, 20);
-      const finalTampered = { ...tamperedPost, powNonce: tamperedNonce };
-
-      const deps = createMockDeps(store);
-      const result = verifyPost(deps, finalTampered, 50);
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe('Signature invalid');
-    },
-  );
 
   // -----------------------------------------------------------------------
   // 11. Missing parent ref
@@ -362,11 +196,6 @@ describe('verifyPost', () => {
         userId,
         publicKey: pubKeyRaw,
         createdAt: Date.now(),
-      });
-      store.challenges.set(userId, {
-        userId,
-        challenge: challengeBytes,
-        expiresAtBlock: 100,
       });
       store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
         { value: POST_LOCK_THREAD_COST },
@@ -384,13 +213,9 @@ describe('verifyPost', () => {
       // producer could emit one.
       const ABSENT_PARENT = 'de'.repeat(32);
       let post = makePost({ parentRefs: [ABSENT_PARENT] });
-      const powInput = buildPowInput(post);
-      const nonce = solvePoW(powInput, 20);
-      post = { ...post, powNonce: nonce };
-      post = signPost(post);
 
       const deps = createMockDeps(store);
-      const result = verifyPost(deps, post, 50);
+      const result = verifyPost(deps, post);
       expect(result.valid).toBe(false);
       expect(result.error).toBe(`Parent post not found: ${ABSENT_PARENT}`);
     },
@@ -410,22 +235,12 @@ describe('verifyPost', () => {
         publicKey: pubKeyRaw,
         createdAt: Date.now(),
       });
-      store.challenges.set(userId, {
-        userId,
-        challenge: challengeBytes,
-        expiresAtBlock: 100,
-      });
       // Karma box value = 0, below POST_LOCK_THREAD_COST (5)
       store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [{ value: 0n }]);
-
-      let post = makePost();
-      const powInput = buildPowInput(post);
-      const nonce = solvePoW(powInput, 20);
-      post = { ...post, powNonce: nonce };
-      post = signPost(post);
+    const post = makePost();
 
       const deps = createMockDeps(store);
-      const result = verifyPost(deps, post, 50);
+      const result = verifyPost(deps, post);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Insufficient karma');
     },
@@ -445,24 +260,15 @@ describe('verifyPost', () => {
         publicKey: pubKeyRaw,
         createdAt: Date.now(),
       });
-      store.challenges.set(userId, {
-        userId,
-        challenge: challengeBytes,
-        expiresAtBlock: 100,
-      });
       store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
         { value: POST_LOCK_THREAD_COST },
       ]);
 
       // Explicitly empty parentRefs
-      let post = makePost({ parentRefs: [] });
-      const powInput = buildPowInput(post);
-      const nonce = solvePoW(powInput, 20);
-      post = { ...post, powNonce: nonce };
-      post = signPost(post);
+    const post = makePost({ parentRefs: [] });
 
       const deps = createMockDeps(store);
-      const result = verifyPost(deps, post, 50);
+      const result = verifyPost(deps, post);
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
     },
@@ -474,19 +280,14 @@ describe('verifyPost', () => {
   it('accepts post when karma is split across multiple boxes', { timeout: 60_000 }, () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
-    store.challenges.set(userId, { userId, challenge: challengeBytes, expiresAtBlock: 100 });
     // Two karma boxes: 3 + 2 = 5, enough for thread post
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
       { value: 3n },
       { value: 2n },
     ]);
     const deps = createMockDeps(store);
-    let post = makePost();
-    const powInput = buildPowInput(post);
-    const nonce = solvePoW(powInput, 20);
-    post = { ...post, powNonce: nonce };
-    post = signPost(post);
-    const result = verifyPost(deps, post, 50);
+    const post = makePost();
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(true);
   });
 
@@ -496,19 +297,14 @@ describe('verifyPost', () => {
   it('rejects post when combined karma across boxes is insufficient', { timeout: 60_000 }, () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
-    store.challenges.set(userId, { userId, challenge: challengeBytes, expiresAtBlock: 100 });
     // Two boxes with 2 + 2 = 4, but thread post costs 5
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
       { value: 2n },
       { value: 2n },
     ]);
     const deps = createMockDeps(store);
-    let post = makePost();
-    const powInput = buildPowInput(post);
-    const nonce = solvePoW(powInput, 20);
-    post = { ...post, powNonce: nonce };
-    post = signPost(post);
-    const result = verifyPost(deps, post, 50);
+    const post = makePost();
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Insufficient karma');
   });

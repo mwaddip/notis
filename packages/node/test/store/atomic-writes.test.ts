@@ -1,4 +1,4 @@
-import { uid } from '../helpers.js';
+import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
@@ -24,7 +24,7 @@ async function importDbFresh() {
 async function importPostsFresh() {
   const mod = await import('../../src/store/posts.js');
   return mod as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
+    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
     getPost: (id: string) => Post | Stump | null;
     confirmPost: (postId: string, blockHeight: number) => void;
     getParentRefs: (postId: string) => string[];
@@ -42,7 +42,7 @@ async function importStumpsFresh() {
 async function importTypesPosts() {
   const mod = await import('@dagsocial/types');
   return mod as {
-    computePostId: (post: Post) => string;
+    computePostId: (txId: string, index: number) => string;
     PROTOCOL_VERSION: number;
   };
 }
@@ -52,11 +52,8 @@ function makePost(overrides: Partial<Post> = {}): Post {
     content: 'atomic test post',
     author: uid('tester'),
     parentRefs: [],
-    challenge: bytes(32),
-    powNonce: 99,
     protocolVersion: 1,
     timestamp: 1700000000000,
-    signature: bytes(64),
     ...overrides,
   };
 }
@@ -107,9 +104,9 @@ describe('atomic writes', () => {
     });
     const rawCbor = new Uint8Array([1, 2, 3]);
 
-    insertPost(post, rawCbor);
+    insertPost(fixturePostId(post), post, rawCbor);
 
-    const postId = computePostId(post);
+    const postId = fixturePostId(post);
 
     // Both the post row and its parent refs must exist
     const db = getDb();
@@ -131,7 +128,7 @@ describe('atomic writes', () => {
     const db = getDb();
 
     const post = makePost({ content: 'should-not-exist' });
-    const postId = computePostId(post);
+    const postId = fixturePostId(post);
 
     // Simulate what a buggy multi-statement insert would look like without
     // a transaction wrapper: manually BEGIN then force a throw within the
@@ -140,19 +137,16 @@ describe('atomic writes', () => {
     try {
       db.prepare(
         `INSERT INTO dag_posts
-           (id, content, author, parent_refs, challenge, pow_nonce,
-            protocol_version, timestamp, signature, raw_cbor, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+           (id, content, author, parent_refs,
+            protocol_version, timestamp, raw_cbor, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
       ).run(
         postId,
         post.content,
         Buffer.from(post.author),
         JSON.stringify(post.parentRefs),
-        Buffer.from(post.challenge),
-        post.powNonce,
         post.protocolVersion,
         post.timestamp,
-        Buffer.from(post.signature),
         Buffer.from(new Uint8Array([9])),
       );
 
@@ -184,25 +178,22 @@ describe('atomic writes', () => {
     const db = getDb();
 
     const post = makePost({ content: 'tx-rollback-test' });
-    const postId = computePostId(post);
+    const postId = fixturePostId(post);
 
     expect(() => {
       db.transaction(() => {
         db.prepare(
           `INSERT INTO dag_posts
-             (id, content, author, parent_refs, challenge, pow_nonce,
-              protocol_version, timestamp, signature, raw_cbor, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+             (id, content, author, parent_refs,
+              protocol_version, timestamp, raw_cbor, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
         ).run(
           postId,
           post.content,
           Buffer.from(post.author),
           JSON.stringify(post.parentRefs),
-          Buffer.from(post.challenge),
-          post.powNonce,
           post.protocolVersion,
           post.timestamp,
-          Buffer.from(post.signature),
           Buffer.from(new Uint8Array([1])),
         );
 
@@ -239,8 +230,8 @@ describe('atomic writes', () => {
     // Insert a root post
     const post = makePost({ content: 'root for pruning', parentRefs: [] });
     const rawCbor = new Uint8Array([5, 6, 7]);
-    insertPost(post, rawCbor);
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, rawCbor);
+    const postId = fixturePostId(post);
 
     // Verify it starts as pending
     const before = db.prepare(
@@ -281,8 +272,8 @@ describe('atomic writes', () => {
 
     const post = makePost({ content: 'should stay pending', parentRefs: [] });
     const rawCbor = new Uint8Array([8, 9]);
-    insertPost(post, rawCbor);
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, rawCbor);
+    const postId = fixturePostId(post);
 
     // Simulate a partial prune: mark the post pruned but throw before
     // inserting the stump, then roll back.
@@ -321,8 +312,8 @@ describe('atomic writes', () => {
 
     const post = makePost({ content: 'confirm me' });
     const rawCbor = new Uint8Array([1]);
-    insertPost(post, rawCbor);
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, rawCbor);
+    const postId = fixturePostId(post);
 
     confirmPost(postId, 42);
 
@@ -344,8 +335,8 @@ describe('atomic writes', () => {
 
     const post = makePost({ content: 'unconfirm me' });
     const rawCbor = new Uint8Array([2]);
-    insertPost(post, rawCbor);
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, rawCbor);
+    const postId = fixturePostId(post);
 
     confirmPost(postId, 7);
     // Need to import unconfirmPost dynamically since it's not in importPostsFresh

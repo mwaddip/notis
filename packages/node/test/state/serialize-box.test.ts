@@ -155,7 +155,6 @@ describe('serializeBox', () => {
       owner: new Uint8Array(32).fill(0x44),
       // `b32` in the id preimage, so `'post-2'` has no encoding — the id this
       // fixture derives from itself could not be computed.
-      targetPostId: '77'.repeat(32),
       guard: 'block_apply' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
@@ -311,15 +310,14 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('post_lock — value then originalValue, and they must differ', () => {
     const box: PostLockBox = {
       boxType: 'post_lock', value: 5n, originalValue: 9n,
-      owner: new Uint8Array(32).fill(0x44), targetPostId: '77'.repeat(32),
+      owner: new Uint8Array(32).fill(0x44),
       guard: 'block_apply', txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
       '05' +            // enum8(post_lock) = 5
       '05' +            // vlqU64(value = 5)        ← shared prefix, written first
       '09' +            // vlqU64(originalValue = 9) ← per-type tail starts here
-      '44'.repeat(32) + // b32(owner)
-      '77'.repeat(32) + // b32(targetPostId)  ← differs from owner on purpose
+      '44'.repeat(32) + // b32(owner)  ← differs from owner on purpose
       PROV,
     );
   });
@@ -379,7 +377,7 @@ describe('boxId is a total function of the AVL value', () => {
     })],
     ['post_lock', seedProvenance<PostLockBox>({
       boxType: 'post_lock', value: 5n, originalValue: 9n,
-      owner: new Uint8Array(32).fill(0x44), targetPostId: '77'.repeat(32),
+      owner: new Uint8Array(32).fill(0x44),
       guard: 'block_apply',
     })],
     ['vouch', seedProvenance<VouchBox>({

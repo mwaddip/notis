@@ -36,8 +36,7 @@ import {
   makeTestIdentity,
   mineNextBlock,
   signHeader,
-  solveHeaderPow,
-} from '../helpers.js';
+  solveHeaderPow, fixturePostId, seedPostTx, fillerTx } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -52,8 +51,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -105,7 +102,7 @@ async function importBlockCreatorRoots() {
 
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
+    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
     confirmPost: (postId: string, blockHeight: number) => void;
     getPost: (id: string) => StoredPost | Stump | null;
   };
@@ -114,22 +111,11 @@ async function importPosts() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertSubBlock: (
-      postId: string,
-      expiresAtHeight: number,
-      batchId?: string | null,
-    ) => number;
-    insertUtxoTx: (
-      tx: UtxoTransaction,
-      batchId: string | null,
-      expiresAtHeight: number,
-    ) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      subblockId: string | null;
       utxoTxCbor: Uint8Array | null;
-      batchId: string | null;
       expiresAtHeight: number;
       createdAt: string;
     }>;
@@ -139,7 +125,7 @@ async function importMempoolFresh() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getBox: (boxId: string) => unknown;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
@@ -215,7 +201,6 @@ describe('cumulativeWork', () => {
       protocolVersion: PROTOCOL_VERSION,
       height: 1,
       prevBlockHash: '00'.repeat(32),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
@@ -227,6 +212,7 @@ describe('cumulativeWork', () => {
       ...h1,
       height: 2,
       prevBlockHash: 'ff'.repeat(32),
+      powNonce: 0,
       powTargetBits: 256 * 10,
     };
     expect(cumulativeWork([h1, h2])).toBe(2n * (1n << 10n));
@@ -237,7 +223,6 @@ describe('cumulativeWork', () => {
       protocolVersion: PROTOCOL_VERSION,
       height: 1,
       prevBlockHash: '00'.repeat(32),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
@@ -249,6 +234,7 @@ describe('cumulativeWork', () => {
       ...h1,
       height: 2,
       prevBlockHash: 'ff'.repeat(32),
+      powNonce: 0,
       powTargetBits: 256 * 6, // 2^6 = 2 * 2^5
     };
     // Work(h1) = 2^5 = 32, Work(h2) = 2^6 = 64
@@ -261,12 +247,10 @@ describe('cumulativeWork', () => {
     const chainA = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        subBlockRoot: '00'.repeat(32), utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000,
       },
       {
         protocolVersion: PROTOCOL_VERSION, height: 2, prevBlockHash: 'ff'.repeat(32),
-        subBlockRoot: '00'.repeat(32), utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000,
       },
     ] as BlockHeader[];
@@ -275,7 +259,6 @@ describe('cumulativeWork', () => {
     const chainB = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        subBlockRoot: '00'.repeat(32), utxoTxRoot: '00'.repeat(32), stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000,
       },
     ] as BlockHeader[];
@@ -304,14 +287,13 @@ describe('extendsOurTip', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'genesis');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'genesis');
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -319,10 +301,9 @@ describe('extendsOurTip', () => {
     expect(block1).not.toBeNull();
 
     // Create a second block that chains from block 1
-    const post2 = makePost(author.userId, 'block 2');
-    const postId2 = computePostId(post2);
-    posts.insertPost(post2, encodePost(post2));
-    mempool.insertSubBlock(postId2, 1000);
+    const { post: post2, tx: post2Tx, postId: postId2 } = await seedPostTx(author, 'block 2');
+    posts.insertPost(postId2, post2, encodePost(post2));
+    mempool.insertUtxoTx(post2Tx, 1000);
 
     const block2 = await mineNextBlock(bc);
     expect(block2).not.toBeNull();
@@ -354,14 +335,13 @@ describe('extendsOurTip', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'genesis');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'genesis');
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -374,7 +354,6 @@ describe('extendsOurTip', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 2,
         prevBlockHash: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
@@ -382,8 +361,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
 
@@ -400,7 +378,6 @@ describe('extendsOurTip', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 1,
         prevBlockHash: '00'.repeat(32),
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
@@ -408,8 +385,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
 
@@ -445,10 +421,9 @@ describe('findForkPoint', () => {
 
     // Build chain: block 1, block 2, block 3
     for (let i = 0; i < 3; i++) {
-      const post = makePost(author.userId, `block ${i + 1}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `block ${i + 1}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -464,11 +439,11 @@ describe('findForkPoint', () => {
       protocolVersion: PROTOCOL_VERSION,
       height: 3,
       prevBlockHash: blockHash(block2!.header)!, // chains from our block 2
-      subBlockRoot: 'ff'.repeat(32), // different content
-      utxoTxRoot: 'ff'.repeat(32),
+      utxoTxRoot: 'ff'.repeat(32), // different content
+
       stateRoot: 'ff'.repeat(33),
       validatorId: new Uint8Array(32),
-      powNonce: 999,
+      powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
     };
@@ -508,10 +483,9 @@ describe('findForkPoint', () => {
     bc.startBlockCreator(testConfig);
 
     // Build chain: block 1 only
-    const post = makePost(author.userId, 'genesis');
-    const postId = computePostId(post);
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(postId, 1000);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'genesis');
+    posts.insertPost(postId, post, encodePost(post));
+    mempool.insertUtxoTx(postTx, 1000);
     await mineNextBlock(bc);
 
     const ordering = await importOrdering();
@@ -524,7 +498,6 @@ describe('findForkPoint', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 5,
         prevBlockHash: 'ab'.repeat(32),
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
@@ -557,10 +530,9 @@ describe('findForkPoint', () => {
     const chainLength = MAX_REORG_DEPTH + 5;
 
     for (let i = 0; i < chainLength; i++) {
-      const post = makePost(author.userId, `deep ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `deep ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -578,7 +550,6 @@ describe('findForkPoint', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: chainLength - MAX_REORG_DEPTH - 1 + 3,
         prevBlockHash: blockHash(deepBlock!.header)!,
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
@@ -622,7 +593,6 @@ describe('findForkPoint', () => {
       protocolVersion: PROTOCOL_VERSION,
       height,
       prevBlockHash: 'cd'.repeat(32),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
@@ -632,10 +602,9 @@ describe('findForkPoint', () => {
     });
 
     for (let i = 0; i < MAX_REORG_DEPTH; i++) {
-      const post = makePost(author.userId, `bound ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `bound ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -646,10 +615,9 @@ describe('findForkPoint', () => {
 
     // One block further, the walk is truncated by the depth bound before it
     // reaches the bottom, and the answer goes back to "no common ancestor".
-    const post = makePost(author.userId, 'one past the bound');
-    const postId = computePostId(post);
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(postId, 1000);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'one past the bound');
+    posts.insertPost(postId, post, encodePost(post));
+    mempool.insertUtxoTx(postTx, 1000);
     await mineNextBlock(bc);
 
     const pastBound = ordering.getOrderingBlock(MAX_REORG_DEPTH + 1);
@@ -677,10 +645,9 @@ describe('findForkPoint', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     for (let i = 0; i < 2; i++) {
-      const post = makePost(author.userId, `poison control ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `poison control ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -691,7 +658,6 @@ describe('findForkPoint', () => {
       protocolVersion: PROTOCOL_VERSION,
       height: 2,
       prevBlockHash: 'ef'.repeat(32),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId: new Uint8Array(32),
@@ -738,10 +704,9 @@ describe('findForkPoint', () => {
     bc.startBlockCreator(testConfig);
 
     for (let i = 0; i < 3; i++) {
-      const post = makePost(author.userId, `batch block ${i + 1}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `batch block ${i + 1}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -759,11 +724,10 @@ describe('findForkPoint', () => {
       protocolVersion: PROTOCOL_VERSION,
       height: 3,
       prevBlockHash: blockHash(block2!.header)!,
-      subBlockRoot: 'ff'.repeat(32),
       utxoTxRoot: 'ff'.repeat(32),
       stateRoot: 'ff'.repeat(33),
       validatorId: new Uint8Array(32),
-      powNonce: 999,
+      powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
     };
@@ -847,7 +811,6 @@ describe('a stored header that cannot be hashed', () => {
         protocolVersion: PROTOCOL_VERSION,
         height,
         prevBlockHash: '00'.repeat(32),
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
@@ -855,8 +818,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     });
 
@@ -961,16 +923,14 @@ describe('a stored header that cannot be hashed', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 1,
         prevBlockHash: 'ff'.repeat(32),
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: 'a0'.repeat(32),
         stateRoot: 'ff'.repeat(33),
         validatorId: new Uint8Array(32).fill(0xff),
-        powNonce: Number.MAX_SAFE_INTEGER,
+        powNonce: 0,
         powTargetBits: 65536,
         createdAt: Number.MAX_SAFE_INTEGER,
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
     ordering.createOrderingBlock(extremes);
@@ -1065,7 +1025,6 @@ describe('a stored header that cannot be hashed', () => {
         protocolVersion: PROTOCOL_VERSION,
         height,
         prevBlockHash: '00'.repeat(32),
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: '00'.repeat(33),
         validatorId: new Uint8Array(32),
@@ -1073,8 +1032,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     });
     for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h));
@@ -1249,14 +1207,13 @@ describe('revertBlock', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'unconfirm me');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'unconfirm me');
     const { encodePost } = await import('@dagsocial/types');
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -1297,13 +1254,12 @@ describe('revertBlock', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'utxo revert test');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'utxo revert test');
     const { encodePost } = await import('@dagsocial/types');
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     // Insert sub-block
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     // Insert a standalone UTXO tx. The like targets the post this block
     // confirms — N2b rejects likes on unconfirmed targets, and topology
@@ -1311,7 +1267,7 @@ describe('revertBlock', () => {
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
     const likeTx = makeLikeTx(author, karmaBox, postId);
-    mempool.insertUtxoTx(likeTx, null, 1000);
+    mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
@@ -1489,10 +1445,9 @@ describe('reorg', () => {
 
     // Build 3 blocks
     for (let i = 0; i < 3; i++) {
-      const post = makePost(author.userId, `reorg test ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `reorg test ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -1538,14 +1493,14 @@ describe('reorg', () => {
     const bc = await importBlockCreator();
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'reorg re-insert conflict');
-    const postId = computePostId(post);
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(postId, 1000);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'reorg re-insert conflict');
+    posts.insertPost(postId, post, encodePost(post));
+    mempool.insertUtxoTx(postTx, 1000);
 
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    mempool.insertUtxoTx(makeLikeTx(author, karmaBox, postId), null, 1000);
+    const likeTx = makeLikeTx(author, karmaBox, postId);
+    mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
@@ -1554,7 +1509,6 @@ describe('reorg', () => {
     // An entry admitted since, spending the box the block's tx spent.
     mempool.insertUtxoTx(
       { inputs: [karmaBox.id!], outputs: [], signatures: {}, protocolVersion: 1 } as never,
-      null,
       1000,
     );
 
@@ -1564,11 +1518,19 @@ describe('reorg', () => {
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(0);
 
-    // The incumbent kept its place; the reverted tx was not admitted beside it.
-    const spenders = mempool.getPendingEntries(100).filter((e: { entryType: string; utxoTxCbor: Uint8Array | null }) =>
-      e.entryType === 'utxo_tx' && e.utxoTxCbor !== null,
-    );
-    expect(spenders).toHaveLength(1);
+    // Identified by transaction id, because the block carried TWO transactions
+    // and only one of them conflicts: the post's re-insert is the control that
+    // makes the like's absence a drop rather than an empty re-insert path.
+    const { computeTxId, decodeTx } = await import('@dagsocial/types');
+    const pooled = mempool.getPendingEntries(100)
+      .filter((e: { entryType: string; utxoTxCbor: Uint8Array | null }) =>
+        e.entryType === 'utxo_tx' && e.utxoTxCbor !== null)
+      .map((e: { utxoTxCbor: Uint8Array | null }) => computeTxId(decodeTx(e.utxoTxCbor!)));
+    // The incumbent kept its place; the reverted like was not admitted beside it.
+    expect(pooled).not.toContain(computeTxId(likeTx));
+    // The post transaction spends a box nothing else claims, so it came back.
+    expect(pooled).toContain(computeTxId(postTx));
+    expect(pooled).toHaveLength(2);
   });
 
   it('reorg then rebuild: state matches new chain', async () => {
@@ -1585,10 +1547,9 @@ describe('reorg', () => {
 
     // Build 2 blocks
     for (let i = 0; i < 2; i++) {
-      const post = makePost(author.userId, `chain a ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `chain a ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -1632,10 +1593,9 @@ describe('reorg', () => {
 
     // Build 3 blocks
     for (let i = 0; i < 3; i++) {
-      const post = makePost(author.userId, `original ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `original ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -1701,10 +1661,9 @@ describe('reorg', () => {
       // Two blocks, one sub-block each. Each insert sits alone in the pool
       // (cap 1) and is consumed by its block, so building the chain is fine.
       for (let i = 0; i < 2; i++) {
-        const post = makePost(author.userId, `full pool ${i}`);
-        const postId = computePostId(post);
-        posts.insertPost(post, encodePost(post));
-        mempool.insertSubBlock(postId, 1000);
+        const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `full pool ${i}`);
+        posts.insertPost(postId, post, encodePost(post));
+        mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }
 
@@ -1713,7 +1672,7 @@ describe('reorg', () => {
       expect(mempool.getPendingEntries(100)).toHaveLength(0);
 
       // Fill the pool to its cap, so every re-insertion below is rejected.
-      mempool.insertSubBlock('occupier', 1000);
+      mempool.insertUtxoTx(fillerTx('occupier'), 1000);
       expect(mempool.getPendingEntries(100)).toHaveLength(1);
 
       const forkResolution = await importForkResolution();
@@ -1747,14 +1706,13 @@ describe('reorg', () => {
     bc.startBlockCreator(testConfig);
 
     for (let i = 0; i < 2; i++) {
-      const post = makePost(author.userId, `room in pool ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `room in pool ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
-    mempool.insertSubBlock('occupier', 1000);
+    mempool.insertUtxoTx(fillerTx('occupier'), 1000);
 
     const forkResolution = await importForkResolution();
     forkResolution.reorg(0, []);
@@ -1794,10 +1752,9 @@ describe('reorg', () => {
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     for (let i = 0; i < 3; i++) {
-      const post = makePost(author.userId, `to genesis ${i}`);
-      const postId = computePostId(post);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `to genesis ${i}`);
+      posts.insertPost(postId, post, encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -2281,11 +2238,11 @@ describe('reorg — a missing AVL version at the fork height', () => {
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
+    const utxo = await importUtxo();
     bc.startBlockCreator(testConfig);
     for (let i = 0; i < 3; i++) {
-      const post = makePost(author.userId, `pruned version ${i}`);
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(computePostId(post), 1000);
+      const { tx: postTx } = await seedPostTx(author, `pruned version ${i}`);
+      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 

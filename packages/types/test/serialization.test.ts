@@ -18,19 +18,14 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'crypto';
 import { ReaderError } from '@dagsocial/wire';
-import { subBlockFromPost } from '../src/block.js';
 import { CodecError } from '../src/codec.js';
 import {
   encodePost,
   decodePost,
   encodeStump,
   decodeStump,
-  encodeSubBlock,
-  decodeSubBlock,
   encodeHeader,
   decodeHeader,
-  encodeSubBlockTree,
-  decodeSubBlockTree,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
   encodeOrderingBlock,
@@ -38,12 +33,10 @@ import {
   encodeTx,
   decodeTx,
 } from '../src/serialization.js';
-import { postPowPreimage, powNonceBytes, type Post } from '../src/post.js';
+import { postFieldBytes, type Post } from '../src/post.js';
 import type { Stump } from '../src/stump.js';
 import type {
-  SubBlock,
   BlockHeader,
-  SubBlockTree,
   UtxoTxTree,
   OrderingBlock,
 } from '../src/block.js';
@@ -66,11 +59,8 @@ function makePost(): Post {
     // faithfully and let a wrong fixture pass unnoticed.
     parentRefs: ['1a'.repeat(32), '2b'.repeat(32)],
     author: userA,
-    challenge,
-    powNonce: 12345,
     protocolVersion: 2,
     timestamp: 1700000000000,
-    signature: sig64,
   };
 }
 
@@ -86,36 +76,17 @@ function makeStump(): Stump {
   };
 }
 
-function makeSubBlock(): SubBlock {
-  return {
-    subBlockId: 'b'.repeat(64),
-    post: makePost(),
-    producerId: userA,
-    protocolVersion: 2,
-  };
-}
-
 function makeBlockHeader(): BlockHeader {
   return {
     protocolVersion: 2,
     height: 1,
     prevBlockHash: '0'.repeat(64),
-    subBlockRoot: '0'.repeat(64),
     utxoTxRoot: '0'.repeat(64),
     stateRoot: '00'.repeat(33),
     validatorId: validatorKey,
     powNonce: 0,
     powTargetBits: 3072,
     createdAt: 1700000000000,
-  };
-}
-
-function makeSubBlockTree(): SubBlockTree {
-  return {
-    subBlockEntries: [
-      { postId: 'b'.repeat(64), parentRefs: [], author: 'c'.repeat(64) },
-    ],
-    pruneEntries: [],
   };
 }
 
@@ -130,6 +101,7 @@ function makeUtxoTxTree(): UtxoTxTree {
     // wrong thing. Node reads these back through `decodeTx`, which does
     // `Buffer.from`, so neither side cares.
     utxoTxs: [new Uint8Array(encodeTx(makeTx()))],
+    pruneEntries: [],
     coinbaseOutputs: [
       { owner: userB, value: 5_000_000_00000000n, lockedUntilBlock: 720, isTreasury: false },
       { owner: userA, value: 1n, lockedUntilBlock: 1, isTreasury: true },
@@ -140,7 +112,6 @@ function makeUtxoTxTree(): UtxoTxTree {
 function makeOrderingBlock(): OrderingBlock {
   return {
     header: makeBlockHeader(),
-    subBlockTree: makeSubBlockTree(),
     utxoTxTree: makeUtxoTxTree(),
     validatorSignature: sig64,
   };
@@ -199,24 +170,16 @@ describe('positional serialization', () => {
       expect(decodePost(encodePost(makePost()))).toEqual(makePost());
     });
 
-    it('SubBlock — the embedded post is read inline, with no length prefix', () => {
-      expect(decodeSubBlock(encodeSubBlock(makeSubBlock()))).toEqual(makeSubBlock());
-    });
-
     it('BlockHeader', () => {
       expect(decodeHeader(encodeHeader(makeBlockHeader()))).toEqual(makeBlockHeader());
     });
 
-    it('SubBlockTree', () => {
-      expect(decodeSubBlockTree(encodeSubBlockTree(makeSubBlockTree()))).toEqual(makeSubBlockTree());
-    });
-
-    it('SubBlockTree with prune entries — the Merkle-leaf preimage, verbatim', () => {
-      const tree: SubBlockTree = {
-        subBlockEntries: [
-          { postId: 'aa'.repeat(32), parentRefs: [], author: 'cc'.repeat(32) },
-          { postId: 'bb'.repeat(32), parentRefs: ['aa'.repeat(32)], author: 'dd'.repeat(32) },
-        ],
+    it('UtxoTxTree with prune entries — the Merkle-leaf preimage, verbatim', () => {
+      // ⛔ Prune entries moved INTO this tree — `utxoTxRoot` commits them now, and
+      // the `'prune'` leaf domain is what keeps them apart from the transaction
+      // and coinbase leaves under the same root.
+      const tree: UtxoTxTree = {
+        ...makeUtxoTxTree(),
         pruneEntries: [{
           rootPostHash: 'ee'.repeat(32),
           subtreePostIds: ['aa'.repeat(32), 'bb'.repeat(32)],
@@ -226,7 +189,7 @@ describe('positional serialization', () => {
           trigger: 'storage_prune',
         }],
       };
-      expect(decodeSubBlockTree(encodeSubBlockTree(tree))).toEqual(tree);
+      expect(decodeUtxoTxTree(encodeUtxoTxTree(tree))).toEqual(tree);
     });
 
     it('UtxoTxTree — including both coinbase arms', () => {
@@ -258,7 +221,7 @@ describe('positional serialization', () => {
     // at different writers, pinned as behaviour so a "corrected" writer fails
     // here rather than at a node.
 
-    it('header validatorId is b32 from BYTES while its three neighbours are b32 from HEX', () => {
+    it('header validatorId is b32 from BYTES while its two neighbours are b32 from HEX', () => {
       const h = makeBlockHeader();
       const bytes = encodeHeader(h);
       // 32 raw bytes of 0x33, not 64 characters of "33" — the hex writer would
@@ -266,17 +229,31 @@ describe('positional serialization', () => {
       expect(hex(bytes)).toContain('33'.repeat(32));
       expect(decodeHeader(bytes).validatorId).toBeInstanceOf(Uint8Array);
       expect(decodeHeader(bytes).validatorId).toHaveLength(32);
-      // ...and the three hex rows decode back to strings, not bytes.
+      // ...and the two hex rows decode back to strings, not bytes.
       expect(typeof decodeHeader(bytes).prevBlockHash).toBe('string');
       expect(decodeHeader(bytes).stateRoot).toHaveLength(66); // b33, not b32
     });
 
-    it('SubBlockEntry.author is HEX where the header validatorId is bytes', () => {
-      // Both are "a 32-byte Ed25519 public key" written `b32` in the contract.
-      // The in-memory spelling decides the writer, and they differ.
-      const tree = decodeSubBlockTree(encodeSubBlockTree(makeSubBlockTree()));
-      expect(typeof tree.subBlockEntries[0]!.author).toBe('string');
-      expect(tree.subBlockEntries[0]!.author).toHaveLength(64);
+    it('pruneEntry authorId is BYTES where the header validatorId is also bytes', () => {
+      // Both are "a 32-byte Ed25519 public key" written `b32` in the contract,
+      // and here both are `Uint8Array` — so the writer follows the schema type
+      // rather than the notation. The hex writer would throw on either.
+      const tree = makeUtxoTxTree();
+      const withPrune: UtxoTxTree = {
+        ...tree,
+        pruneEntries: [{
+          rootPostHash: 'ee'.repeat(32),
+          subtreePostIds: [],
+          subtreeMerkleRoot: new Uint8Array(32).fill(0x44),
+          authorId: userA,
+          authorSignature: sig64,
+          trigger: 'author',
+        }],
+      };
+      const back = decodeUtxoTxTree(encodeUtxoTxTree(withPrune));
+      expect(back.pruneEntries[0]!.authorId).toBeInstanceOf(Uint8Array);
+      // …while its sibling `rootPostHash` is hex, in the same struct.
+      expect(typeof back.pruneEntries[0]!.rootPostHash).toBe('string');
     });
 
     it('coinbase value is the THROWING bigint writer, not the total number one', () => {
@@ -310,35 +287,44 @@ describe('positional serialization', () => {
   });
 
   // -------------------------------------------------------------------------
-  // subBlockRefs is gone
+  // The block has ONE committed body
   // -------------------------------------------------------------------------
 
-  describe('subBlockRefs is deleted (spec §1.2, §4.1)', () => {
-    it('the tree encodes exactly two arrays, and neither is a ref list', () => {
-      // A one-entry tree with no prune entries: count(1) ‖ entry ‖ count(0).
-      // A third array would show up as an extra count byte, and the length
-      // arithmetic below is what makes "there is no room for it" a measurement
-      // rather than an inspection.
-      const bytes = encodeSubBlockTree(makeSubBlockTree());
-      const entry = 32 + 1 + 32;            // b32(postId) ‖ arr(0 refs) ‖ b32(author)
-      expect(bytes.length).toBe(1 + entry + 1);
-      expect(bytes[0]).toBe(1);             // one sub-block entry
-      expect(bytes[bytes.length - 1]).toBe(0); // zero prune entries
+  describe('one body, and the sub-block sections are unrepresentable', () => {
+    it('the tree encodes exactly four arrays, in field order', () => {
+      // An empty tree is four count bytes and nothing else. A fifth array — or a
+      // missing one — shows up as a length delta, which is what makes "the
+      // sections are these four, in this order" a measurement rather than an
+      // inspection. Field order is also the normative LEAF order for
+      // `utxoTxRoot` (TYPES_INTERFACE → OrderingBlock).
+      const empty: UtxoTxTree = {
+        utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [],
+      };
+      const bytes = encodeUtxoTxTree(empty);
+      expect(bytes.length).toBe(4);
+      expect([...bytes]).toEqual([0, 0, 0, 0]);
     });
 
-    it('a decoded tree has no subBlockRefs property at all', () => {
-      const decoded = decodeSubBlockTree(encodeSubBlockTree(makeSubBlockTree()));
-      expect(Object.keys(decoded)).toEqual(['subBlockEntries', 'pruneEntries']);
-      expect('subBlockRefs' in decoded).toBe(false);
+    it('a decoded tree carries the four sections and nothing else', () => {
+      const decoded = decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()));
+      expect(Object.keys(decoded))
+        .toEqual(['utxoTxIds', 'utxoTxs', 'pruneEntries', 'coinbaseOutputs']);
     });
 
-    it('the field is unrepresentable, not merely unwritten', () => {
-      // The projection step: an object carrying the old field encodes to the
-      // same bytes as one without it, so there is no byte string a peer could
-      // send that would put refs back into a decoded tree.
-      const withRefs = { ...makeSubBlockTree(), subBlockRefs: ['de'.repeat(32)] };
-      expect(hex(encodeSubBlockTree(withRefs as SubBlockTree)))
-        .toBe(hex(encodeSubBlockTree(makeSubBlockTree())));
+    it('a sub-block section is unrepresentable, not merely unwritten', () => {
+      // The projection step, on the retired fields: an object carrying either of
+      // them encodes to the same bytes as one without, so there is no byte
+      // string a peer could send that would put a second body back into a
+      // decoded block.
+      const withSub = {
+        ...makeOrderingBlock(),
+        subBlockTree: { subBlockEntries: [{ postId: 'de'.repeat(32) }], pruneEntries: [] },
+      };
+      expect(hex(encodeOrderingBlock(withSub as OrderingBlock)))
+        .toBe(hex(encodeOrderingBlock(makeOrderingBlock())));
+      const withRoot = { ...makeBlockHeader(), subBlockRoot: 'de'.repeat(32) };
+      expect(hex(encodeHeader(withRoot as BlockHeader)))
+        .toBe(hex(encodeHeader(makeBlockHeader())));
     });
   });
 
@@ -358,12 +344,18 @@ describe('positional serialization', () => {
     });
 
     it('body and entry-level junk likewise', () => {
-      const tree = makeSubBlockTree();
-      const junked: SubBlockTree = {
+      const tree = makeUtxoTxTree();
+      // Junk the FIRST output only — the array keeps its length, so a bytes
+      // difference can only come from the junk key and not from a dropped
+      // element.
+      const junked: UtxoTxTree = {
         ...tree,
-        subBlockEntries: [{ ...tree.subBlockEntries[0]!, evil: 1 } as never],
+        coinbaseOutputs: [
+          { ...tree.coinbaseOutputs[0]!, evil: 1 } as never,
+          tree.coinbaseOutputs[1]!,
+        ],
       };
-      expect(hex(encodeSubBlockTree(junked))).toBe(hex(encodeSubBlockTree(tree)));
+      expect(hex(encodeUtxoTxTree(junked))).toBe(hex(encodeUtxoTxTree(tree)));
     });
 
     it('two nodes cannot hold byte-different blobs for one block hash', () => {
@@ -384,16 +376,14 @@ describe('positional serialization', () => {
     it('step 2 — trailing bytes are a rejection, not slack', () => {
       for (const [label, bytes] of [
         ['header', encodeHeader(makeBlockHeader())],
-        ['subBlockTree', encodeSubBlockTree(makeSubBlockTree())],
         ['utxoTxTree', encodeUtxoTxTree(makeUtxoTxTree())],
         ['post', encodePost(makePost())],
-        ['subBlock', encodeSubBlock(makeSubBlock())],
         ['orderingBlock', encodeOrderingBlock(makeOrderingBlock())],
       ] as [string, Uint8Array][]) {
         const decoder = {
-          header: decodeHeader, subBlockTree: decodeSubBlockTree,
+          header: decodeHeader,
           utxoTxTree: decodeUtxoTxTree, post: decodePost,
-          subBlock: decodeSubBlock, orderingBlock: decodeOrderingBlock,
+          orderingBlock: decodeOrderingBlock,
         }[label]!;
         expect(failureOf(() => decoder(withTrailingByte(bytes))), label).toBe('trailing-bytes');
       }
@@ -423,8 +413,8 @@ describe('positional serialization', () => {
       // The pre-migration version of this asserted a bare `toThrow()`, which
       // passes for any reason at all — including a `TypeError` from reading a
       // property of `undefined`. The class is the assertion.
-      for (const decoder of [decodePost, decodeHeader, decodeSubBlock,
-                             decodeSubBlockTree, decodeUtxoTxTree, decodeOrderingBlock]) {
+      for (const decoder of [decodePost, decodeHeader,
+                             decodeUtxoTxTree, decodeOrderingBlock]) {
         expect(() => decoder(new Uint8Array([0xff, 0xfe, 0xfd]))).toThrow(ReaderError);
       }
     });
@@ -449,12 +439,12 @@ describe('positional serialization', () => {
       expect(bytes[0]).not.toBe(0);
     });
 
-    it('the four sections are header, subBlockTree, utxoTxTree, signature', () => {
+    it('the three sections are header, utxoTxTree, signature', () => {
+      // THREE, not four: a post is a transaction, so the block commits one body.
       const block = makeOrderingBlock();
       const bytes = encodeOrderingBlock(block);
       const sections = [
         encodeHeader(block.header),
-        encodeSubBlockTree(block.subBlockTree),
         encodeUtxoTxTree(block.utxoTxTree),
       ];
       let offset = 0;
@@ -530,38 +520,44 @@ describe('positional serialization', () => {
     const PRE_T2B_ID = '586ff286a6309e50e07f429cff6bccb026ccf3d6e1b67b7036e654c8c2a487cc';
     const CBOR_ID = '9a1155ead5ddfb05d495a34df1f4be31482e2df4f9094925ba135b4679e0d114';
     const POSITIONAL_ID = '60ccc4811541897d5bfca53ccf1155ebe198efb16ee635fc9f181432ec90ba32';
+    /** Posts as transactions: the sub-block wrapper is gone and the post shrank. */
+    const POST_TX_ID = '68214f55219433736fd09a81a981407fbc95701dfac9665e31b1a38abbbbf6a8';
 
     const PINNED_POST: Post = {
       content: 'T2b consensus pin: sub-block shape',
       author: new Uint8Array(32).fill(7),
       parentRefs: [],
-      challenge: new Uint8Array(32).fill(9),
-      powNonce: 424242,
       protocolVersion: 1,
       timestamp: 1754600000000,
-      signature: new Uint8Array(64).fill(3),
     };
 
-    it('SubBlock: cbor → positional, and the sidecar shape stays dead', () => {
-      const sb = subBlockFromPost(PINNED_POST, 'ab'.repeat(32));
-      expect(Object.keys(sb)).toEqual(['subBlockId', 'post', 'producerId', 'protocolVersion']);
-      const bytes = encodeSubBlock(sb);
+    it('Post: the sub-block wrapper is dead and the post itself is the pin', () => {
+      // ⛔ The sequence continues rather than restarting. Each adjacent pair is
+      // one recorded, intentional consensus break: cbor → positional →
+      // posts-as-transactions. `encodeSubBlock` is gone, so what this pins is the
+      // post encoding that used to ride inside it — three fields lighter, since
+      // `challenge`, `powNonce` and `signature` all died with post PoW.
+      const bytes = encodePost(PINNED_POST);
       // The key name cannot appear: there are no key names.
       expect(hex(bytes)).not.toContain(Buffer.from('likeBoxes', 'utf8').toString('hex'));
       expect(hex(bytes)).not.toContain(Buffer.from('subBlockId', 'utf8').toString('hex'));
       const id = hash(bytes);
       expect(id).not.toBe(PRE_T2B_ID);
       expect(id).not.toBe(CBOR_ID);
-      expect(id).toBe(POSITIONAL_ID);
+      expect(id).not.toBe(POSITIONAL_ID);
+      expect(id).toBe(POST_TX_ID);
     });
 
     it('BlockHeader: the blockHash preimage moved, and shrank', () => {
-      // 434 bytes of cbor-x — a `b9`-prefixed map header, ten key names, and
-      // every id as its 64-character hex TEXT — against 172 positional:
-      // five VLQ integers (1+1+1+2+6) plus 32+32+32+33+32 raw bytes.
+      // ⛔ NINE fields, not ten — `subBlockRoot` is gone and every position after
+      // `prevBlockHash` shifted down by one. 140 positional bytes: five VLQ
+      // integers (1+1+1+2+6) plus 32+32+33+32 raw bytes, exactly 32 fewer than
+      // the ten-field form's 172. A reader that dropped the field but kept the
+      // old offsets would still be 140 bytes and would hash differently, which
+      // is why the hash is pinned beside the length rather than instead of it.
       const bytes = encodeHeader(makeBlockHeader());
-      expect(bytes.length).toBe(172);
-      expect(hash(bytes)).toBe('7334d5610810d80804fe316876cdb9e5968b80301c6709b6c686d6cfc5b944ad');
+      expect(bytes.length).toBe(140);
+      expect(hash(bytes)).toBe('63e9132c42173752a8449618d5371b6aafafdb7cc8e1df4e243814a9fc837a07');
       expect(hex(bytes)).not.toContain(Buffer.from('prevBlockHash', 'utf8').toString('hex'));
     });
 
@@ -574,33 +570,24 @@ describe('positional serialization', () => {
       // transaction moves this hash with no format change at all.
       //
       // Nothing committed follows it. `utxoTxRoot` is a Merkle root over
-      // `utxoTxIds` and `coinbaseOutputBytes` (node's `computeUtxoTxRoot`) and
-      // never reads `utxoTxs`; the id itself is `computeTxId`, positional and
-      // routed through `canonicalBoxBytes`. A move here is a consensus event
-      // only if the BlockHeader pin above moved too.
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('abbcaf3dbbf770baa5d40887fc123af4d3c6bb323aabba39f41d3a58224c7ac6');
+      // `utxoTxIds`, `serializePruneEntry` and `coinbaseOutputBytes` (node's
+      // `computeUtxoTxRoot`) and never reads `utxoTxs`; the id itself is
+      // `computeTxId`, positional and routed through `canonicalBoxBytes`. A move
+      // here is a consensus event only if the BlockHeader pin above moved too.
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('3e33a8d68ff4af334b3b143a70c71fddc296fbfbd9b4cef7e91788fd8fe21b2d');
     });
 
-    it('Post: the wire codec is the id preimage plus a two-field tail', () => {
-      // `encodePost` = `postFieldBytes` ‖ vlqU(powNonce) ‖ b64(signature), so
-      // the first bytes of the wire form ARE the preimage's. That relationship
-      // is the reason the post codec moved with this phase at all.
+    it('Post: the wire codec IS the payload preimage, with no tail at all', () => {
+      // ⛔ The two-field tail had exactly two members — `powNonce` and
+      // `signature` — and both died with post PoW. So `encodePost` and
+      // `postFieldBytes` are now the same bytes, and that is worth pinning
+      // rather than assuming: the wire form and the preimage being one encoding
+      // is what removes any chance of the two dialects drifting.
       const post = makePost();
       const wire = encodePost(post);
-      const preimage = postPowPreimage(post);
-      expect(hex(wire.subarray(0, preimage.length))).toBe(hex(preimage));
-      // ...and the tail is exactly the two excluded fields: vlqU(12345) is two
-      // bytes, the signature is 64.
-      expect(wire.length).toBe(preimage.length + 2 + 64);
-      // The nonce row is asserted against `powNonceBytes`, not only against its
-      // width. The codec writes that row itself rather than calling the export
-      // (serialization.ts, the `vlqU(powNonce)` line), so this is the only
-      // thing holding the wire form's nonce to the tail the id and the PoW hash
-      // append — and a width check alone cannot tell two same-width dialects
-      // apart.
-      const tail = powNonceBytes(post.powNonce);
-      expect(tail.length).toBe(2);
-      expect(hex(wire.subarray(preimage.length, preimage.length + 2))).toBe(hex(tail));
+      const preimage = postFieldBytes(post);
+      expect(hex(wire)).toBe(hex(preimage));
+      expect(wire.length).toBe(preimage.length);
     });
   });
 });

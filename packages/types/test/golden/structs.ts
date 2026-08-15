@@ -4,7 +4,7 @@
  * These differ from `probe.ts` in one deliberate way, and it is the point of
  * the file: **the write half is the production function.** `probe` is a
  * synthetic struct whose two halves are both test-side, so it regression-tests
- * the harness; these encode through `postPowPreimage`, `canonicalBoxBytes` and
+ * the harness; these encode through `postFieldBytes`, `canonicalBoxBytes` and
  * `serializePruneEntry` themselves, so a vector is a pin on the shipped
  * encoder rather than on a lookalike.
  *
@@ -34,25 +34,19 @@ import {
   readVlqU,
   readVlqU64,
 } from '../../src/codec.js';
-import { postPowPreimage, powNonceBytes, type Post } from '../../src/post.js';
+import { postFieldBytes, type Post } from '../../src/post.js';
 import { serializePruneEntry, TRIGGER, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
 import {
   encodeHeader,
-  encodeSubBlockTree,
   encodeUtxoTxTree,
-  encodeSubBlock,
   encodeOrderingBlock,
 } from '../../src/serialization.js';
 import {
   coinbaseOutputBytes,
-  subBlockEntryBytes,
   type BlockHeader,
   type CoinbaseOutput,
   type OrderingBlock,
-  type SubBlock,
-  type SubBlockEntry,
-  type SubBlockTree,
   type UtxoTxTree,
 } from '../../src/block.js';
 import { hex, registerStruct, type ValueCodec } from './harness.js';
@@ -62,24 +56,15 @@ import { hex, registerStruct, type ValueCodec } from './harness.js';
 // ---------------------------------------------------------------------------
 
 /**
- * The six fields the post preimage encodes.
+ * The five fields the post preimage encodes — every field a `Post` has.
  *
- * `powNonce` and `signature` are deliberately absent: the miner varies the
- * first and the second is never in any preimage. Naming the subject `PostFields`
- * rather than `Post` keeps the corpus honest about what the bytes carry — a
- * vector cannot accidentally claim coverage of a field the encoder skips.
+ * `PostFields` is now exactly `Post`, and the alias is kept rather than collapsed
+ * because the corpus's subject is the **preimage**, not the struct: if a field is
+ * ever added to `Post` that the encoder skips, this is where that divergence has
+ * to be spelled out, and a vector silently claiming coverage of it is the failure
+ * the separate name exists to prevent.
  */
-export interface PostFields {
-  content: string;
-  author: Uint8Array;
-  parentRefs: string[];
-  challenge: Uint8Array;
-  protocolVersion: number;
-  timestamp: number;
-}
-
-/** Values for the two excluded fields. Neither reaches `postFieldBytes`. */
-const NOT_IN_PREIMAGE = { powNonce: 0, signature: new Uint8Array(64) };
+export type PostFields = Post;
 
 const postFieldsCodec: ValueCodec<PostFields> = {
   parse(json: unknown): PostFields {
@@ -88,15 +73,14 @@ const postFieldsCodec: ValueCodec<PostFields> = {
       content: j.content as string,
       author: hex(j.author as string),
       parentRefs: j.parentRefs as string[],
-      challenge: hex(j.challenge as string),
       protocolVersion: j.protocolVersion as number,
       timestamp: j.timestamp as number,
     };
   },
 
-  // Production writer. `postPowPreimage` IS `postFieldBytes`.
+  // Production writer.
   write(w: ByteWriter, p: PostFields): void {
-    w.writeBytes(postPowPreimage({ ...p, ...NOT_IN_PREIMAGE } as Post));
+    w.writeBytes(postFieldBytes(p));
   },
 
   // Independent reader — TYPES_INTERFACE → Layout — Post, in order.
@@ -105,64 +89,9 @@ const postFieldsCodec: ValueCodec<PostFields> = {
       content: readLpUtf8(r),
       author: readBytesN(r, 32),
       parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
-      challenge: readBytesN(r, 32),
       protocolVersion: readVlqU(r),
       timestamp: readVlqU(r),
     };
-  },
-};
-
-// ---------------------------------------------------------------------------
-// powNonceTail / powPreimage — the tail the id and the PoW hash both append
-// ---------------------------------------------------------------------------
-//
-// `powNonceBytes` is that tail's only writer (TYPES_INTERFACE → Hashing
-// functions), so it is the one preimage element a second package builds by
-// calling this package rather than by re-reading a layout table. These two
-// codecs are what a conformance implementation — or `@dagsocial/validation` —
-// checks itself against.
-//
-// The split is deliberate. `powNonceTail` pins the export alone, which is the
-// unit `verifyPoW` calls and the only place the encoding is stated; the tail is
-// one byte at the nonces a post is actually mined at, so inside a 132-byte
-// vector its whole width is invisible. `powPreimage` pins the concatenation —
-// the exact bytes the PoW hash covers, `computePostId` domain-tags and
-// `verifyPoW` hashes bare — so a vector also fixes where the boundary between
-// the two falls.
-
-/** `postFieldBytes` plus the nonce the miner varies. `signature` stays out. */
-export interface PowPreimage extends PostFields {
-  powNonce: number;
-}
-
-const powNonceTailCodec: ValueCodec<number> = {
-  parse: (json: unknown): number => json as number,
-
-  // Production writer — the export itself, not a lookalike.
-  write(w: ByteWriter, nonce: number): void {
-    w.writeBytes(powNonceBytes(nonce));
-  },
-
-  // Independent reader — TYPES_INTERFACE → Layout — Post, the `vlqU(powNonce)`
-  // row.
-  read: readVlqU,
-};
-
-const powPreimageCodec: ValueCodec<PowPreimage> = {
-  parse(json: unknown): PowPreimage {
-    const j = json as Record<string, unknown>;
-    return { ...postFieldsCodec.parse(j), powNonce: j.powNonce as number };
-  },
-
-  // Both production writers, composed in `computePostId`'s order — the field
-  // bytes, then the tail.
-  write(w: ByteWriter, p: PowPreimage): void {
-    postFieldsCodec.write(w, p);
-    w.writeBytes(powNonceBytes(p.powNonce));
-  },
-
-  read(r: ByteReader): PowPreimage {
-    return { ...postFieldsCodec.read(r), powNonce: readVlqU(r) };
   },
 };
 
@@ -188,7 +117,7 @@ export type BoxContent =
   | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
   /** The same trailing fields as `invite`; the tag is what separates the two. */
   | { boxType: 'bond'; value: bigint; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
-  | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array; targetPostId: string }
+  | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array }
   | { boxType: 'vouch'; value: bigint; voucherId: Uint8Array; targetId: Uint8Array };
 
 /** The tag table, restated from the contract so a renumber fails here too. */
@@ -243,7 +172,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           value,
           originalValue: BigInt(j.originalValue as string),
           owner: hex(j.owner as string),
-          targetPostId: j.targetPostId as string,
         };
       case 'vouch':
         return {
@@ -312,7 +240,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           value,
           originalValue: readVlqU64(r),
           owner: readBytesN(r, 32),
-          targetPostId: readHexN(r, 32),
         };
       case 'vouch':
         return { boxType, value, voucherId: readBytesN(r, 32), targetId: readBytesN(r, 32) };
@@ -371,10 +298,9 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
       protocolVersion: j.protocolVersion as number,
       height: j.height as number,
       prevBlockHash: j.prevBlockHash as string,
-      subBlockRoot: j.subBlockRoot as string,
       utxoTxRoot: j.utxoTxRoot as string,
       stateRoot: j.stateRoot as string,
-      // Bytes, where its three `b32` table-neighbours are hex. The JSON spells
+      // Bytes, where its two `b32` table-neighbours are hex. The JSON spells
       // it as hex like everything else; the in-memory type is what differs.
       validatorId: hex(j.validatorId as string),
       powNonce: j.powNonce as number,
@@ -390,7 +316,6 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
       protocolVersion: readVlqU(r),
       height: readVlqU(r),
       prevBlockHash: readHexN(r, 32),
-      subBlockRoot: readHexN(r, 32),
       utxoTxRoot: readHexN(r, 32),
       stateRoot: readHexN(r, 33),   // b33 — the AVL+ digest carries a height byte
       validatorId: readBytesN(r, 32),
@@ -401,15 +326,7 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
   },
 };
 
-/** Independent readers for the three nested structs, from the layout lines. */
-function readEntry(r: ByteReader): SubBlockEntry {
-  return {
-    postId: readHexN(r, 32),
-    parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
-    author: readHexN(r, 32),   // hex, unlike the header's validatorId
-  };
-}
-
+/** Independent readers for the nested structs, from the layout lines. */
 function readPrune(r: ByteReader): PruneEntry {
   return {
     rootPostHash: readHexN(r, 32),
@@ -427,14 +344,6 @@ function readCoinbase(r: ByteReader): CoinbaseOutput {
     value: readVlqU64(r),        // bigint — the throwing writer's row
     lockedUntilBlock: readVlqU(r),
     isTreasury: readBool(r),     // strict 0/1; 0xff has no decoding
-  };
-}
-
-function parseEntry(j: Record<string, unknown>): SubBlockEntry {
-  return {
-    postId: j.postId as string,
-    parentRefs: j.parentRefs as string[],
-    author: j.author as string,
   };
 }
 
@@ -459,29 +368,22 @@ function parseCoinbase(j: Record<string, unknown>): CoinbaseOutput {
 }
 
 // ---------------------------------------------------------------------------
-// The two element preimages — TYPES_INTERFACE → Layout — Merkle leaf preimages
+// The element preimage — TYPES_INTERFACE → Layout — Merkle leaf preimages
 // ---------------------------------------------------------------------------
 //
-// `subBlockEntryBytes` and `coinbaseOutputBytes` are the block's other two
-// Merkle leaf preimages: `leafHash('subblock', …)` under `subBlockRoot` and
-// `leafHash('coinbase', …)` under `utxoTxRoot`, exactly as `serializePruneEntry`
-// is the `'prune'` one. They earn their own vectors rather than riding inside
-// `subBlockTree` / `utxoTxTree` because node hashes them directly, so they need
-// the same cross-implementation anchor every other preimage here has — a
-// conformance reader must be able to check one leaf without building a tree
-// around it.
+// `coinbaseOutputBytes` is a Merkle leaf preimage — `leafHash('coinbase', …)`
+// under `utxoTxRoot`, exactly as `serializePruneEntry` is the `'prune'` one, and
+// both now sit under that same root. It earns its own vector rather than riding
+// only inside `utxoTxTree` because node hashes it directly, so it needs the same
+// cross-implementation anchor every other preimage here has — a conformance
+// reader must be able to check one leaf without building a tree around it.
 //
-// The readers and parsers are the tree codecs' own (`readEntry` / `readCoinbase`,
-// written independently from the layout table), which is what makes
-// a moved element byte fail here **and** in the enclosing tree vector.
-
-const subBlockEntryCodec: ValueCodec<SubBlockEntry> = {
-  parse: (json: unknown): SubBlockEntry => parseEntry(json as Record<string, unknown>),
-  write(w: ByteWriter, e: SubBlockEntry): void {
-    w.writeBytes(subBlockEntryBytes(e));
-  },
-  read: readEntry,
-};
+// Reserved, never to be reused: the `subBlockEntry` vector name and the
+// `'subblock'` leaf domain.
+//
+// The reader and parser are the tree codec's own (`readCoinbase`, written
+// independently from the layout table), which is what makes a moved element byte
+// fail here **and** in the enclosing tree vector.
 
 const coinbaseOutputCodec: ValueCodec<CoinbaseOutput> = {
   parse: (json: unknown): CoinbaseOutput => parseCoinbase(json as Record<string, unknown>),
@@ -491,33 +393,13 @@ const coinbaseOutputCodec: ValueCodec<CoinbaseOutput> = {
   read: readCoinbase,
 };
 
-const subBlockTreeCodec: ValueCodec<SubBlockTree> = {
-  parse(json: unknown): SubBlockTree {
-    const j = json as Record<string, unknown>;
-    return {
-      // No `subBlockRefs`: the vector file has no way to spell it, which is the
-      // deletion stated in the conformance suite rather than only in the type.
-      subBlockEntries: (j.subBlockEntries as Record<string, unknown>[]).map(parseEntry),
-      pruneEntries: (j.pruneEntries as Record<string, unknown>[]).map(parsePrune),
-    };
-  },
-  write(w: ByteWriter, t: SubBlockTree): void {
-    w.writeBytes(encodeSubBlockTree(t));
-  },
-  read(r: ByteReader): SubBlockTree {
-    return {
-      subBlockEntries: readArr(r, readEntry),
-      pruneEntries: readArr(r, readPrune),
-    };
-  },
-};
-
 const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   parse(json: unknown): UtxoTxTree {
     const j = json as Record<string, unknown>;
     return {
       utxoTxIds: j.utxoTxIds as string[],
       utxoTxs: (j.utxoTxs as string[]).map(hex),
+      pruneEntries: (j.pruneEntries as Record<string, unknown>[]).map(parsePrune),
       coinbaseOutputs: (j.coinbaseOutputs as Record<string, unknown>[]).map(parseCoinbase),
     };
   },
@@ -528,69 +410,21 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
     return {
       utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
       utxoTxs: readArr(r, readLp),   // opaque: transactions are length-prefixed bytes
+      pruneEntries: readArr(r, readPrune),
       coinbaseOutputs: readArr(r, readCoinbase),
     };
   },
 };
 
-/** The post as `encodePost` writes it: the six preimage fields, then two more. */
-function readWirePost(r: ByteReader): Post {
-  return {
-    content: readLpUtf8(r),
-    author: readBytesN(r, 32),
-    parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
-    challenge: readBytesN(r, 32),
-    protocolVersion: readVlqU(r),
-    timestamp: readVlqU(r),
-    powNonce: readVlqU(r),
-    signature: readBytesN(r, 64),
-  };
-}
-
-function parseWirePost(j: Record<string, unknown>): Post {
-  return {
-    content: j.content as string,
-    author: hex(j.author as string),
-    parentRefs: j.parentRefs as string[],
-    challenge: hex(j.challenge as string),
-    protocolVersion: j.protocolVersion as number,
-    timestamp: j.timestamp as number,
-    powNonce: j.powNonce as number,
-    signature: hex(j.signature as string),
-  };
-}
-
-const subBlockCodec: ValueCodec<SubBlock> = {
-  parse(json: unknown): SubBlock {
-    const j = json as Record<string, unknown>;
-    return {
-      subBlockId: j.subBlockId as string,
-      post: parseWirePost(j.post as Record<string, unknown>),
-      producerId: hex(j.producerId as string),   // bytes; subBlockId is hex
-      protocolVersion: j.protocolVersion as number,
-    };
-  },
-  write(w: ByteWriter, sb: SubBlock): void {
-    w.writeBytes(encodeSubBlock(sb));
-  },
-  read(r: ByteReader): SubBlock {
-    // `postBytes` is read inline — no length prefix, because every post field
-    // is fixed-width, length-prefixed or a VLQ, so the post is self-delimiting.
-    return {
-      subBlockId: readHexN(r, 32),
-      post: readWirePost(r),
-      producerId: readBytesN(r, 32),
-      protocolVersion: readVlqU(r),
-    };
-  },
-};
+// Reserved, never to be reused: the `subBlock` vector name. `encodePost` is now
+// exactly `postFieldBytes`, so the `postFields` vectors pin the wire post too —
+// there is no second post encoding to fix.
 
 const orderingBlockCodec: ValueCodec<OrderingBlock> = {
   parse(json: unknown): OrderingBlock {
     const j = json as Record<string, unknown>;
     return {
       header: blockHeaderCodec.parse(j.header),
-      subBlockTree: subBlockTreeCodec.parse(j.subBlockTree),
       utxoTxTree: utxoTxTreeCodec.parse(j.utxoTxTree),
       validatorSignature: hex(j.validatorSignature as string),
     };
@@ -612,7 +446,6 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
     };
     return {
       header: section((rr) => blockHeaderCodec.read(rr)),
-      subBlockTree: section((rr) => subBlockTreeCodec.read(rr)),
       utxoTxTree: section((rr) => utxoTxTreeCodec.read(rr)),
       validatorSignature: readBytesN(r, 64),
     };
@@ -620,14 +453,9 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
 };
 
 registerStruct('postFields', postFieldsCodec);
-registerStruct('powNonceTail', powNonceTailCodec);
-registerStruct('powPreimage', powPreimageCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);
-registerStruct('subBlockEntry', subBlockEntryCodec);
 registerStruct('coinbaseOutput', coinbaseOutputCodec);
-registerStruct('subBlockTree', subBlockTreeCodec);
 registerStruct('utxoTxTree', utxoTxTreeCodec);
-registerStruct('subBlock', subBlockCodec);
 registerStruct('orderingBlock', orderingBlockCodec);

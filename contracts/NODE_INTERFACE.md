@@ -103,7 +103,7 @@ are hex-encoded.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/challenge` | `{ userId: hex }` | `{ challenge: hex(32), targetBits, expiresAtBlock }` | 400 if userId invalid |
+| ~~`POST`~~ | ~~`/challenge`~~ | **DELETED** — the PoW handshake goes with post PoW. The `challenges` table and `challengeWindowBlocks` go with it. Route path reserved | | |
 
 Challenge is upserted — requesting a new challenge replaces any existing one
 (no 409 blocking). Challenge expires at `currentBlock + CHALLENGE_WINDOW_BLOCKS`.
@@ -157,8 +157,9 @@ boundary instead of in a response body.
 
 **Post submission flow (mempool-based):**
 
-Sub-block assembly, lifecycle, and ordering block integration are defined in
-`SUBBLOCK_INTERFACE.md`.
+> **A post is submitted as one transaction** carrying the post payload and locking
+> the author's karma. There is no `batchId`, no challenge, and no PoW — see
+> "Post transactions" below.
 
 1. Decode hex fields (`author`, `challenge`, `signature`) to binary; parse `karmaLockTx`
 2. Validate field presence, content length (1–300 bytes)
@@ -748,8 +749,10 @@ schema for its `boxType`**:
     (credit, when present). `-0` is called out because it is JSON- and
     CBOR-reachable and breaks byte round-trips: cbor-x encodes it as a float
     where the store's JSON round-trip returns integer `0`.
-  - `string`: `targetPostId` (post_lock). Type only — format/length pins
-    (hex-64 ids, byte caps) are a recorded rider, not this pin.
+  - `string`: no box field carries one. `targetPostId` was the only entry and it
+    is deleted with the field (TYPES_INTERFACE → PostLockBox) — the circularity,
+    not a domain fix. Kept as a row because the *kind* is still part of the
+    schema vocabulary.
   - `boolean`: `decayBurn` (karma, when present).
 - **Unknown `boxType` is a reject — and the schema lookup is an own-property
   lookup** (`Object.hasOwn` or equivalent), never a bare index into the
@@ -1042,7 +1045,7 @@ node's* mempool entry and are NOT listed here.
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
 | KarmaBox | KarmaBox | **Like** (P2-D): `likeTarget` present ⟺ deficit exactly `LIKE_KARMA_COST` — the only legal deficit in any user tx. Exactly one karma output, same owner as all inputs; target must be a live post; `(liker, target)` not yet recorded |
-| KarmaBox | KarmaBox + PostLockBox | Same owner, value conserved |
+| KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author |
 
 ⚠ **"Same owner" binds the inputs to each other, not only the outputs to
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
@@ -1070,6 +1073,28 @@ There is **no other legal bond or invite shape**. In particular:
   whose surplus is not exactly `INVITE_KARMA_AMOUNT` is invalid. The
   biconditional is stated on the conservation gate, in the shape the like
   carve already set.
+
+### Post transactions (unit 2)
+
+- **A post is a transaction, and that is the whole of its admission.** It locks
+  the author's karma and conserves value; there is no separate post signature,
+  no PoW and no challenge. The author is the transaction's signer.
+- ⛔ **The relay gate is a cached MEMBERSHIP check, not a balance read.** `net`
+  drops a post from an author who holds no karma **at all**, consulting an
+  in-memory set rather than the store. The set moves only when an identity first
+  receives karma and when it falls to zero — it is not a decay or settlement
+  concern, so it is not on any hot path.
+
+  **Measured 2026-08-15:** Ed25519 verify **73.2 µs**, one `blake2b512`
+  **2.08 µs**, `Set.has()` **0.023 µs**. The relay path goes 75.3 → 73.8 µs,
+  **2 % cheaper** than with PoW, because the signature outweighs the PoW check
+  35×. **The cost objection to replacing PoW is answered by measurement.**
+  ⚠ Single core, no batching; the *ordering* of those costs is the durable
+  result, and the binding constraint on a real node is signature verification —
+  above ≈50 Mbit/s CPU binds before bandwidth does.
+- **Stateful admission is strictly stronger than PoW was.** PoW proved someone
+  burned a millisecond; a post transaction proves its author holds the karma and
+  really locked it. That is why the two removals are one unit and not two.
 
 ### Bond transition rules
 
@@ -2644,8 +2669,8 @@ for `post_lock`:**
 
 | Source | Order after `serializeBox` strips `id`/`boxType` |
 |--------|--------------------------------------------------|
-| `block-creator.ts` remainder box | `value, originalValue, createdAtBlock, owner, targetPostId, guard` |
-| `rowToBox` / demo UI | `value, createdAtBlock, originalValue, owner, targetPostId, guard` |
+| `block-creator.ts` remainder box | `value, originalValue, createdAtBlock, owner, guard` |
+| `rowToBox` / demo UI | `value, createdAtBlock, originalValue, owner, guard` |
 
 Measured: identical length, different bytes (`…6d6f726967696e616c56616c7565…` vs
 `…6e637265617465644174426c6f636b…`). Two consequences:
@@ -3419,8 +3444,14 @@ lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and
 any JS value. A narrower check written for this call site would be a second spelling of one schema,
 which is the fork surface this contract rejects everywhere else. **The obligation is the whole
 schema, not the `bigint` alone**: the spec names the `value` field because that is where it was
-found, and `post_lock.targetPostId` (a `hex32` written by `writeHexNOrThrow`) reaches a throwing
-writer by the identical route.
+found, and any `hex32` field written by `writeHexNOrThrow` reaches a throwing writer by the
+identical route.
+
+⚠ **The example this paragraph used to give — `post_lock.targetPostId` — no longer exists.** The
+field was deleted when post ids became provenance-derived, because a lock naming an id derived
+from its own creating transaction is unbuildable (→ `TYPES_INTERFACE` → PostLockBox). **The
+obligation is unchanged and is not weakened by losing its illustration**; `post.parentRefs`
+reaches the same writer by the same route and is the live instance.
 
 **Apply funnel: validation and mutation phases.** `applyBlockBody` is split so
 the state transition can be run without the header being final — that is what
