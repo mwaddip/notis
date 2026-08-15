@@ -1042,7 +1042,7 @@ node's* mempool entry and are NOT listed here.
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
 | KarmaBox | KarmaBox | **Like** (P2-D): `likeTarget` present ⟺ deficit exactly `LIKE_KARMA_COST` — the only legal deficit in any user tx. Exactly one karma output, same owner as all inputs; target must be a live post; `(liker, target)` not yet recorded |
-| KarmaBox | KarmaBox + PostLockBox | Same owner, value conserved |
+| KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author |
 
 ⚠ **"Same owner" binds the inputs to each other, not only the outputs to
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
@@ -1070,6 +1070,30 @@ There is **no other legal bond or invite shape**. In particular:
   whose surplus is not exactly `INVITE_KARMA_AMOUNT` is invalid. The
   biconditional is stated on the conservation gate, in the shape the like
   carve already set.
+
+### Post transactions (unit 2)
+
+> ⚠ **AHEAD OF CODE.** Posts ride a separate `subBlockTree` and are gated by PoW.
+
+- **A post is a transaction, and that is the whole of its admission.** It locks
+  the author's karma and conserves value; there is no separate post signature,
+  no PoW and no challenge. The author is the transaction's signer.
+- ⛔ **The relay gate is a cached MEMBERSHIP check, not a balance read.** `net`
+  drops a post from an author who holds no karma **at all**, consulting an
+  in-memory set rather than the store. The set moves only when an identity first
+  receives karma and when it falls to zero — it is not a decay or settlement
+  concern, so it is not on any hot path.
+
+  **Measured 2026-08-15:** Ed25519 verify **73.2 µs**, one `blake2b512`
+  **2.08 µs**, `Set.has()` **0.023 µs**. The relay path goes 75.3 → 73.8 µs,
+  **2 % cheaper** than with PoW, because the signature outweighs the PoW check
+  35×. **The cost objection to replacing PoW is answered by measurement.**
+  ⚠ Single core, no batching; the *ordering* of those costs is the durable
+  result, and the binding constraint on a real node is signature verification —
+  above ≈50 Mbit/s CPU binds before bandwidth does.
+- **Stateful admission is strictly stronger than PoW was.** PoW proved someone
+  burned a millisecond; a post transaction proves its author holds the karma and
+  really locked it. That is why the two removals are one unit and not two.
 
 ### Bond transition rules
 

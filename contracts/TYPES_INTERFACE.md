@@ -37,26 +37,49 @@ key IS the identity.
 
 ### Post
 
+> ⚠ **AHEAD OF CODE.** The tree still has `challenge`, `powNonce`, `signature`,
+> `signingHash`, `postPowPreimage` and `powNonceBytes`.
+
 ```
 Post {
   content: string              // 1–MAX_CONTENT_BYTES UTF-8
   author: UserId               // 32-byte Ed25519 public key (Uint8Array)
   parentRefs: PostId[]         // 0–MAX_PARENT_REFS
-  challenge: Uint8Array(32)    // Random nonce from node (anti-precomputation)
-  powNonce: number             // PoW solution against challenge
   protocolVersion: number      // 1
   timestamp: number            // Unix ms
-  signature: Uint8Array(64)    // Ed25519 over signingHash(post)
 }
 
-PostId = blake2b512(POST_ID_DOMAIN || postFieldBytes(post) || vlqU(powNonce))
+PostId = blake2b512(POST_ID_DOMAIN || utf8(txId) || u32BE(index))
          .subarray(0, 32).toString('hex')
-         // postFieldBytes is the canonical positional encoding —
-         // normative layout in Serialization → "Layout — Post"
 ```
 
 `PostId` is a hex string. `author` is binary (Uint8Array) — hex on the HTTP
 wire, raw bytes in CBOR.
+
+⛔ **A post's identity is PROVENANCE-DERIVED, exactly as a box's is.** A post is
+created by a transaction (→ "Post transactions" below), and no two posts can share
+one — the creating transaction spends the author's karma box, so its inputs differ.
+`(txId, index)` therefore names a post uniquely **by construction**, and the post's
+own fields do not enter its id at all.
+
+**This replaces a content-derived id whose uniqueness rested on PoW.** The old
+preimage ended `‖ b32(challenge) ‖ vlqU(powNonce)`, and those two fields — a
+node-issued random challenge and the miner's search variable — were the only
+things making two otherwise-identical posts distinct. Both die with post PoW, and
+deriving from provenance is what replaces them rather than inventing a new random
+field. **It is the same move Spec G made for boxes**, for the same reason and with
+the same consequence: an author cannot grind their own id, because they do not
+choose their inputs' ids.
+
+⚠ **`signature` is gone from the struct, and the post is still authenticated.**
+The creating transaction is signed over its `TxId`, and the signing key is the
+author — so a post's authorship is the transaction's authorship. `signingHash`
+retires with it; **there is no separate post signature to verify**, and no path
+should reintroduce one.
+
+⚠ **The demo UI must build the transaction before it can name the post.** It
+already computes `TxId` locally, so optimistic display still works — but the
+ordering inverts, and `public/index.html`'s mirror has to change with it.
 
 ### Canonical field encoding (M-1 — injective, protocol-breaking)
 
@@ -67,32 +90,29 @@ properties that layout must have and does not restate it. `POST_ID_DOMAIN` is
 `postFieldBytes` is **injective**: every variable-length field is length-prefixed and the
 ref array carries an explicit count, so no two distinct posts share a `postFieldBytes`.
 Numeric fields are encoded, never stringified — an undelimited `String(n)` concatenation
-collides, since `(powNonce=5, timestamp=23)` and `(52, 3)` both yield `…"5""23"…`. That is
+collides, since `(a=5, b=23)` and `(52, 3)` both yield `…"5""23"…`. That is
 the defect M-1 closed, and injectivity is the property every later dialect change has had to
 preserve.
 
-`powNonce` is **not** in `postFieldBytes` — the author signs before mining, and PoW appends
-the nonce itself. It enters the PoW hash and the id as a trailing `vlqU`, written by
-`powNonceBytes` in `@dagsocial/types` and reproduced by the demo-UI mirror. **Nothing else
-may construct that tail**; a second local copy is what let the PoW hash and the id disagree
-across packages (Phase 8).
+⛔ **Injectivity is still required, and it no longer carries post identity.** These bytes are
+the post's payload inside its creating transaction, so they enter that transaction's `TxId`
+— which is where two distinct posts are kept apart. **Do not weaken the encoding on the
+grounds that the id no longer reads it**: a non-injective payload would collide two
+transactions, which is strictly worse.
 
 The numeric writers are **total**: a field outside the encodable domain (non-negative safe
-integers ≤ 2⁵³−1) encodes to a sentinel rather than throwing. This keeps `signingHash`
+integers ≤ 2⁵³−1) encodes to a sentinel rather than throwing. This keeps the encoder
 panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-5/M-6). A
 mirror implementation must reproduce this, not reintroduce a throw.
 
-> ⚠ **Totality is not a domain check, and a caller in another package depends on the
-> difference.** Under `vlqU` every out-of-domain nonce takes `VLQ_SENTINEL`, so `NaN`, `-1`,
-> `1.5` and `2⁶⁰` share one tail — and therefore one `postId` and one PoW hash. What keeps
-> that harmless is `verifyPoW`'s `isU64Safe(nonce)` guard, upstream, in
-> `@dagsocial/validation`. It is **not** redundant with the writer's totality and must not be
-> removed as such. See `VALIDATION_INTERFACE.md → verifyPoW`.
+⚠ **The `isU64Safe(nonce)` guard in `verifyPoW` retires with post PoW**, and the totality
+argument it supported goes with it. **No surviving field takes an out-of-domain sentinel that
+consensus then reads** — check that before deleting the guard, because the sentinel behaviour
+of `vlqU` is unchanged for `timestamp` and `protocolVersion`.
 
-`computePostId` prefixes `POST_ID_DOMAIN` so the id is a distinct, full-entropy hash — not
-equal to the PoW hash `blake2b512(postFieldBytes ‖ vlqU(powNonce))`, which shares the same
-tail. `signingHash` carries no tag (it stays `blake2b512(postFieldBytes)`, the exact bytes
-PoW is solved over).
+`computePostId` prefixes `POST_ID_DOMAIN` so a post id can never collide with a box id or a
+tx id derived from the same provenance — the domain tag is the whole of that separation, and
+it is the same discipline `computeBoxId` and `computeMintTxId` already follow.
 
 **This encoding is protocol-breaking and unversioned.** It changes every post
 hash and must be byte-identical in `@dagsocial/types` **and** the demo-UI JS
@@ -118,16 +138,31 @@ UsernameClaim = Post with content { type: "username_claim", claim: "@alice" }
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `postPowPreimage(post)` | `(Post) => Uint8Array` | `postFieldBytes(post)` — the canonical length-prefixed encoding (see above). What PoW is solved over and what `signingHash` hashes. Excludes `powNonce` and `signature`. |
-| `signingHash(post)` | `(Post) => Buffer(32)` | `blake2b512(postFieldBytes(post)).subarray(0,32)` — what the author signs. Excludes `powNonce` and `signature`. |
-| `powNonceBytes(powNonce)` | `(number) => Uint8Array` | `vlqU(powNonce)` — the tail the PoW hash and the id both append. **The only writer of that tail**; `@dagsocial/validation`'s `verifyPoW` calls it rather than encoding the nonce itself. Total by sentinel, so an out-of-domain nonce collides rather than throwing — see the warning above. |
-| `computePostId(post)` | `(Post) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| postFieldBytes(post) \|\| powNonceBytes(powNonce)).subarray(0,32).toString('hex')` — includes PoW nonce; domain-tagged so it ≠ the PoW hash |
+> ⚠ **AHEAD OF CODE.** The tree exports `postPowPreimage`, `signingHash` and
+> `powNonceBytes`, and derives `computePostId` from the post's own fields.
+
+| Export | Signature | Description |
+|--------|-----------|-------------|
+| `postFieldBytes(post)` | `(Post) => Uint8Array` | The canonical length-prefixed encoding (see above). The post's **payload inside its creating transaction**, so it enters that transaction's `TxId`. |
+| `computePostId(txId, index)` | `(TxId, number) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| utf8(txId) \|\| u32BE(index)).subarray(0,32).toString('hex')` — **provenance-derived**, taking no `Post` at all |
 | `getPostDiscriminator(content)` | `(string) => string \| null` | Parse JSON content and extract `type` field, or null |
 | `buildProfileContent(type, extra)` | `(string, Record?) => string` | Build JSON content string with type discriminator |
 
-`powNonce` is intentionally excluded from `signingHash` — the author signs
-before finding the PoW nonce. It is included in `computePostId` to ensure
-uniqueness. `signature` is excluded from both.
+⛔ **`computePostId` takes two arguments and neither is a `Post`.** That is the point, and it
+is the shape `computeBoxId` already has: *"Any need for a second argument means the box is
+missing provenance"* applies in reverse here — a post **has** provenance, so its identity
+needs nothing from its content. A signature of `(Post) => PostId` is what the old
+content-derived id required, and reintroducing it would reintroduce the uniqueness problem
+PoW was carrying.
+
+**Deleted:** `postPowPreimage`, `signingHash`, `powNonceBytes`, `verifyPostId`. The first
+three exist only for post PoW; `verifyPostId(post, expectedId)` cannot exist at all once the
+id is not a function of the post. **Names stay reserved.**
+
+⚠ **`utf8(txId)`, not decoded bytes.** `TxId` is typed as a hex string, and this contract's
+standing rule (→ Pinned byte forms) is that a hex-typed value enters a preimage as the UTF-8
+bytes of its hex text. `computeMintTxId` and the `postlock-*` mint subjects already do this;
+a decoded-bytes variant here would be a silent third dialect.
 
 ### Merkle primitives (`merkle.ts`)
 
@@ -585,12 +620,37 @@ UtxoTransaction {
   preimages?: Record<string, Uint8Array>   // boxId → hash preimage — encoded and hashed, read by nothing
   protocolVersion: number                  // 1
   likeTarget?: PostId                      // Present ⟺ this tx is a like (P2-D) — see below
+  post?: Post                              // Present ⟺ this tx creates a post — see below
 }
 
 TxId = blake2b512( TX_ID_DOMAIN ‖ inputs ‖ canonicalCbor(outputs, in order)
                    ‖ preimages (sorted by boxId) ‖ protocolVersion
-                   ‖ ("like:" ‖ likeTarget, iff present) )[0:32]
+                   ‖ ("like:" ‖ likeTarget, iff present)
+                   ‖ ("post:" ‖ postFieldBytes(post), iff present) )[0:32]
 ```
+
+> ⚠ **AHEAD OF CODE.** The tree has no `post` field; posts ride a separate
+> `subBlockTree`.
+
+**`post`** carries the post's payload inside the transaction that creates it, on
+the same pattern `likeTarget` set: an optional field whose presence is
+biconditional with a rule. Its preimage contribution is the ASCII marker `post:`
+followed by `postFieldBytes(post)`, appended **only when present**, after
+`likeTarget`'s contribution. **The two markers are mutually exclusive in
+practice** — a transaction is a like or a post, never both — but the encoding does
+not rely on that: each is independently delimited, so the tail stays unambiguous
+however the fields combine.
+
+⛔ **This is what makes the post id derivable.** `postFieldBytes` is inside the
+`TxId` preimage, so a transaction carrying a distinct post has a distinct id, and
+`computePostId(txId, index)` inherits that uniqueness. **The `index` is the post's
+position among the transaction's post-bearing outputs**; today exactly one post
+rides one transaction, so it is `0` — the parameter exists so that stays a stated
+rule rather than an assumption baked into a call site.
+
+The consensus rule — `post` present ⟺ the transaction locks
+`POST_LOCK_{THREAD,REPLY}_COST` into a `PostLockBox` and conserves value — lives
+in `NODE_INTERFACE.md`, as the like biconditional does.
 
 **`likeTarget`** names the liked post from inside the signed bytes — a relay cannot
 re-point a like. Its preimage contribution is the ASCII marker `like:` followed by the
@@ -695,8 +755,7 @@ BlockHeader {
   protocolVersion: number        // 1
   height: number                 // Monotonically increasing, starting from 1
   prevBlockHash: string          // hex(32) — hash of the previous block's header
-  subBlockRoot: string           // hex(32) — Merkle root over the sub-block tree (DAG content)
-  utxoTxRoot: string             // hex(32) — Merkle root over the UTXO tx tree
+  utxoTxRoot: string             // hex(32) — Merkle root over the block body (txs + prune entries)
   stateRoot: string              // hex(33) — AVL+ digest (EMPTY_STATE_ROOT until enabled)
   validatorId: UserId            // Block producer's 32-byte public key
   powNonce: number               // PoW solution
@@ -772,32 +831,47 @@ signature. There is no flat `hash` field (the hash is derived on demand via
 `blockHash(header)`), and `height` / `powNonce` / `validatorId` / `prevBlockHash` live
 on `header`, not on the block.
 
+> ⚠ **AHEAD OF CODE.** The tree still has `subBlockTree`, `SubBlockEntry` and a
+> `subBlockRoot` in the header.
+
 ```
 OrderingBlock {
   header: BlockHeader
-  subBlockTree: SubBlockTree
   utxoTxTree: UtxoTxTree
   validatorSignature: Uint8Array(64)  // raw Ed25519 over blockHash(header)
 }
 
-SubBlockTree {
-  subBlockRefs: PostId[]            // ⚠ DELETED BY PHASE 3 — see Layout — Block
-  subBlockEntries: SubBlockEntry[]  // committed topology, aligned 1:1 with subBlockRefs
-  pruneEntries: PruneEntry[]        // prune entries committed in this block
-}
-
-SubBlockEntry {
-  postId: string        // hex(32) post ID
-  parentRefs: string[]  // hex(32) parent post IDs (0–MAX_PARENT_REFS)
-  author: string        // hex(32) author public key of the post (consensus-carried, audit H-3)
-}
-
 UtxoTxTree {
-  utxoTxIds: TxId[]                  // UTXO transaction IDs (likes included — P2-D)
+  utxoTxIds: TxId[]                  // UTXO transaction IDs (likes and POSTS included)
   utxoTxs: Uint8Array[]              // CBOR-encoded UtxoTransactions, aligned with utxoTxIds
+  pruneEntries: PruneEntry[]         // prune entries committed in this block
   coinbaseOutputs: CoinbaseOutput[]  // block reward distribution
 }
 ```
+
+⛔ **One committed list, not two.** A post is a transaction, so it rides `utxoTxIds`
+alongside likes and every other transaction, and `subBlockTree` has nothing left to
+carry. `pruneEntries` moves here rather than keeping a section of its own —
+`utxoTxRoot` commits both, and the leaf domains (`leafHash`'s first argument) are what
+keep a prune leaf from colliding with a transaction leaf.
+
+**`SubBlockEntry` is deleted, and its H-3 property survives strictly stronger.** That
+struct existed to carry `{postId, parentRefs, author}` in the block so a node syncing
+from ordering blocks alone — never seeing content — could still record an identical
+author per post, which is what makes prune authorship checkable without DAG content.
+A post transaction carries the **whole post** in `utxoTxs` plus the author's signature
+over the `TxId`, so such a node now holds more than the claim: it holds the thing the
+claim was about, and can verify it rather than trust it.
+
+⚠ **That guarantee rests on `utxoTxs` reaching every node that previously relied on
+`subBlockRoot`.** `utxoTxIds` alone is not enough — the ids do not contain the post.
+**Any sync path that delivers ids without bodies regresses H-3**, and this is the one
+thing to verify before the sub-block structures are deleted.
+
+**Reserved, never to be reused:** the struct names `SubBlockTree` and `SubBlockEntry`,
+the header field name `subBlockRoot`, the body field `subBlockRefs`, and the Merkle leaf
+domain `'subblock'` — a leaf domain is inside a consensus preimage, so reuse would make
+two different trees share a byte string.
 
 `likeBoxIds` and `epochTallyResults` were deleted by P2-D: likes ride `utxoTxIds` like
 every other transaction, and per-block settlement is **derived state** computed identically
@@ -805,14 +879,13 @@ by every node at apply — nothing to carry in the block. (The `EpochTally` stru
 `epoch` Merkle leaf and `canonicalEpochTallyJson` died with it; audit C-6's
 key-order-divergence problem is closed by not existing.)
 
-`SubBlockEntry.author` is the consensus-carried authorship claim for the confirmed
-post: it is committed under `subBlockRoot`, so every node — including one that
-synced from ordering blocks alone and never saw the post content — records an
-identical author per post. `author` is a `postId`-preimage field, so any node
-holding the content can verify the claim by recomputing the id; nodes holding
-the post at apply time MUST reject a block whose entry contradicts it (see
-`NODE_INTERFACE.md`, apply-time authorization). This is what makes prune
-authorship (audit H-3) checkable deterministically without DAG content.
+**Authorship is the transaction's signer**, and every node holding the block body holds
+it. A post transaction is signed over its `TxId` by the author's key, so the
+`signatures` map names the author directly — there is no separate authorship claim to
+contradict, and therefore no apply-time reconciliation between a claim and the content.
+This is what makes prune authorship (audit H-3) checkable deterministically, and it
+replaces a rule that required nodes holding the post to reject a block whose entry
+disagreed with it.
 
 ### Coinbase output
 
@@ -1246,16 +1319,21 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 | 1 | `protocolVersion` | `vlqU` — **first, so it is readable before any version dispatch** |
 | 2 | `height` | `vlqU` |
 | 3 | `prevBlockHash` | `b32` |
-| 4 | `subBlockRoot` | `b32` |
-| 5 | `utxoTxRoot` | `b32` |
-| 6 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
-| 7 | `validatorId` | `b32` |
-| 8 | `powNonce` | `vlqU` |
-| 9 | `powTargetBits` | `vlqU` |
-| 10 | `createdAt` | `vlqU` |
+| 4 | `utxoTxRoot` | `b32` |
+| 5 | `stateRoot` | **`b33`** — the AVL+ digest is 33 bytes, not 32 |
+| 6 | `validatorId` | `b32` |
+| 7 | `powNonce` | `vlqU` |
+| 8 | `powTargetBits` | `vlqU` |
+| 9 | `createdAt` | `vlqU` |
 
-**Ten fields, and the count is now the same ten in both places** — this table and the BlockHeader
-definition above. The pair previously said "eleven" and meant two different elevens; see below.
+> ⚠ **AHEAD OF CODE.** The tree writes ten fields with `subBlockRoot` at 4.
+
+⛔ **Nine fields, and every position after 3 SHIFTS DOWN BY ONE.** This is a positional
+layout with no keys, so dropping `subBlockRoot` is not a deletion in place — it renumbers
+`utxoTxRoot` through `createdAt`. A reader that skips the field but keeps the old offsets
+decodes `stateRoot` out of `utxoTxRoot`'s bytes and every later field one slot late, which
+is a silent wrong `blockHash` rather than a decode error. **The count and the numbering
+must move together in this table, in the BlockHeader definition above, and in the codec.**
 
 **⚠ This table was wrong in both directions, and the second correction was itself reversed.** Read
 all three notes together — the method lesson in the middle one is the durable part and it survives
