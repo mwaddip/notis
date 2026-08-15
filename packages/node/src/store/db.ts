@@ -407,6 +407,32 @@ function migrateDropValidationCounters(database: Database.Database): void {
  * against a full pool where this measures 7.5 ms (2026-08-15). See
  * MEMPOOL_INTERFACE → "Confirmed-entry cleanup is bounded by the pool, not by a
  * literal".
+ *
+ * `idx_mempool_fee_rate` is an **expression** index over the same division the
+ * eviction query orders by, and it is the second one with a measured cost. Once
+ * the credit class is full every arriving credit transaction compares itself
+ * against the cheapest resident, so that query runs per insert on exactly the
+ * path a flood takes. Measured 2026-08-15 at `maxMempoolEntries = 10,000` —
+ * 10,000 rows, 5,000 of them credit:
+ *
+ * | query | no index | this index |
+ * |---|---|---|
+ * | cheapest credit resident (per insert at capacity) | 0.636 ms | **0.001 ms** |
+ * | credit-class count (per insert) | 0.302 ms | 0.070 ms |
+ * | the fill's ordering pass (per block) | 2.84 ms | 3.17 ms |
+ *
+ * ⚠ **It makes the ordering pass slightly worse, and that is the right trade.**
+ * A full-class sort reads every row, so a non-covering index traversal loses to
+ * a plain scan and an in-memory sort; the loss is 0.33 ms once per block
+ * against 0.635 ms saved on every arriving transaction. The trade turns
+ * positive at one credit insert per block and is overwhelming under the flood
+ * the index exists for.
+ *
+ * ⛔ **The karma-class count is served by no index here and is not meant to
+ * be.** A partial index on `tx_fee IS NOT NULL` cannot answer `IS NULL`, and
+ * that count measures 0.300 ms with or without any of these — the same as the
+ * `COUNT(*)` it replaced, so the two-class capacity gate costs the pool
+ * nothing it was not already paying.
  */
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
@@ -424,6 +450,8 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(tx_output_ids) WHERE tx_output_ids IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_id
       ON mempool(tx_id) WHERE tx_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_fee_rate
+      ON mempool(CAST(tx_fee AS REAL) / tx_bytes) WHERE tx_fee IS NOT NULL;
   `);
 }
 

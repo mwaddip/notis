@@ -708,6 +708,13 @@ function* iterateKarmaFifo(): Generator<PoolEntry> {
  * The same `REAL` division as the eviction query, safe for the same reason and
  * unsafe to copy for the same one: this is a node's own assembly preference and
  * no validator recomputes it.
+ *
+ * ⚠ **The id list is safe to hold across the body fetches, and that is not a
+ * TOCTOU gap.** The only consumer is the block creator's fill, which is
+ * synchronous and writes nothing to the pool while it runs — `purgeExpired`
+ * has already finished and `finalizeBlock` has not begun. Neither a
+ * transaction nor a defensive re-check is needed; the missing-row skip below
+ * exists so the loop is total, not because a row is expected to vanish.
  */
 function* iterateCreditByRate(): Generator<PoolEntry> {
   const db = getDb();
