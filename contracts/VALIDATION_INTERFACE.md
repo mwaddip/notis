@@ -261,8 +261,6 @@ chain. Refusing out of domain is the bound; there is no separate range check to 
 
 ### ~~verifyPoW~~ — DELETED (posts as transactions)
 
-> ⚠ **AHEAD OF CODE.** The function and its two call sites are still in the tree.
-
 **There is no post PoW.** A post is a transaction, admitted by a **stateful** check —
 the author holds the karma and really locks it — which is strictly stronger than
 proving someone burned a millisecond. `verifyPoW`, `postPowPreimage` and
@@ -400,8 +398,6 @@ returned `string` and performed **no input check at all**, handing `header` stra
 ## Signature Verification
 
 ### ~~verifyPostSignature~~ — DELETED (posts as transactions)
-
-> ⚠ **AHEAD OF CODE.** The function and `Post.signature` are still in the tree.
 
 **A post carries no signature of its own.** It is created by a transaction signed
 over that transaction's `TxId`, and the signing key is the author — so a post's
@@ -629,8 +625,6 @@ Total on adversarial input, like every function here.
 
 ### ~~verifySubBlockStructure~~ — DELETED (posts as transactions)
 
-> ⚠ **AHEAD OF CODE.** The function and the `SubBlock` type are still in the tree.
-
 **There is no sub-block to structurally verify.** A post's structural checks —
 `verifyPostFieldDomains` and the content limits — move to the post-bearing
 transaction's validation, where `verifyTxStructure` already runs. The three domain
@@ -805,8 +799,6 @@ constant of its own**, and a bound with no subject here would be the first.
 
 ### verifyOrderingBlockStructure
 
-> ⚠ **AHEAD OF CODE.** The tree checks a `subBlockRoot` and a `subBlockTree`.
->
 > **The block has one body.** Every clause naming `subBlockRoot`, `subBlockTree`,
 > `subBlockRefs` or `subBlockEntries` goes; `pruneEntries` are checked where they now
 > live, inside `UtxoTxTree`. ⛔ **The header is nine positional fields, not ten** — see

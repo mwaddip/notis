@@ -4,85 +4,34 @@ import {
   MAX_PARENT_REFS,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
-  computePostId,
-  decodePost,
-  postPowPreimage,
 } from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
 import {
-  verifyPoW,
-  verifyPostSignature,
   verifyContentCharacters,
   verifyPostFieldDomains,
 } from '@dagsocial/validation';
-// The post PoW target comes from the shared config singleton — the same field
-// the challenge endpoint advertises — so the node cannot claim one difficulty
-// and enforce another (audit A6). Same pattern as difficulty.ts. Deliberately
-// not a parameter: an override argument would be the environment read the
-// network profile removed, reached by another door.
-import { config } from '../config.js';
-
-// ---------------------------------------------------------------------------
-// Parent hash verification
-// ---------------------------------------------------------------------------
-
-/**
- * Verify that a parentRef matches the hash of the parent post's raw CBOR bytes.
- * This is the "validate, don't trust" check — we independently recompute the
- * hash rather than trusting the lookup key.
- *
- * If `getPostRaw` is not available (e.g., in unit tests that don't provide
- * raw bytes), the check falls back to existence-only validation.
- */
-function verifyParentHash(
-  deps: VerifierDeps,
-  parentId: string,
-): { valid: boolean; error?: string } {
-  const parentRaw = deps.getPostRaw?.(parentId);
-  if (!parentRaw) {
-    // getPostRaw not available — fall back to existence check (already
-    // verified by the caller). This is a soft-path for tests.
-    return { valid: true };
-  }
-  // Round-trip through decode -> computePostId (CBOR hash != field hash)
-  const parentPost = decodePost(parentRaw);
-  const recomputedId = computePostId(parentPost);
-  if (recomputedId !== parentId) {
-    return {
-      valid: false,
-      error: `Parent hash mismatch: claimed ${parentId}, computed ${recomputedId}`,
-    };
-  }
-  return { valid: true };
-}
 
 // ---------------------------------------------------------------------------
 // Shared types
 // ---------------------------------------------------------------------------
 
-export interface ChallengeRecord {
-  challenge: Uint8Array;
-  expiresAtBlock: number;
-  userId: Uint8Array;
-}
+// Reserved, never to be reused: `ChallengeRecord`. The PoW challenge handshake is
+// gone with post PoW.
 
 // ---------------------------------------------------------------------------
 // Dependency interface
 // ---------------------------------------------------------------------------
 
 export interface VerifierDeps {
-  getActiveChallenge: (userId: Uint8Array) => ChallengeRecord | null;
   getKarmaBoxes: (owner: Uint8Array) => { value: bigint; id?: string }[];
   /**
    * The store's real signature. Both arms are meaningful here rather than
    * incidental: a parent ref may name a live post OR a stump, and both are
-   * valid parents (NODE_INTERFACE → Posts). The two call sites below use it
-   * as an existence check, so the union needs no narrowing — but an `unknown`
-   * here would hide that the stump case is deliberate.
+   * valid parents (NODE_INTERFACE → Posts). The call site below uses it as an
+   * existence check, so the union needs no narrowing — but an `unknown` here
+   * would hide that the stump case is deliberate.
    */
   getPost: (id: string) => Post | Stump | null;
-  /** Raw CBOR bytes for a post, used for independent hash recomputation. */
-  getPostRaw?: (id: string) => Uint8Array | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,24 +48,35 @@ export interface VerificationResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Verify a post against protocol rules.
+ * Verify a post payload against protocol rules.
  *
- * Checks are performed in fail-fast order.  The caller supplies store functions
+ * ⛔ **There is no signature check and no PoW check here, and adding either back
+ * is a defect.** A post is the payload of the transaction that creates it
+ * (NODE_INTERFACE → Post transactions): that transaction is signed over its
+ * `TxId`, the signing key is the author, and the payload is inside the `TxId`
+ * preimage — so authorship is settled by the transaction signature check and a
+ * second signature over the same object would be two places for one fact to
+ * disagree. Admission is the **stateful** karma lock, which is strictly stronger
+ * than proving someone burned a millisecond.
+ *
+ * ⚠ **A parent ref's id CANNOT be recomputed from the parent post**, and the
+ * check that used to do so is gone rather than relaxed. A post id is
+ * provenance-derived — `computePostId(txId, index)` takes no `Post` — so the
+ * store's recorded id, written when the creating transaction applied, is the only
+ * statement of it. Existence is what remains checkable here.
+ *
+ * Checks are performed in fail-fast order. The caller supplies store functions
  * via `deps` so the verifier can be tested without a real database.
  */
 export function verifyPost(
   deps: VerifierDeps,
   post: Post,
-  currentBlockHeight: number,
 ): VerificationResult {
-  // 0. Field domains — the precondition, not a courtesy of the caller. Under
-  //    the positional wire format `author`, `challenge` and every `parentRefs`
-  //    entry are fixed-width, and a fixed-width writer has no unreachable
-  //    sentinel, so it throws (TYPES_INTERFACE → Totality). Step 5 below builds
-  //    a preimage from this post, so the domain has to be established before
-  //    then — and it belongs here rather than at the callers, because a check
-  //    the caller must remember to invoke is the shape that produced this whole
-  //    defect class.
+  // 0. Field domains — the precondition, not a courtesy of the caller. Under the
+  //    positional wire format `author` and every `parentRefs` entry are
+  //    fixed-width, and a fixed-width writer has no unreachable sentinel, so it
+  //    throws (TYPES_INTERFACE → Totality). The payload reaches `computeTxId`
+  //    through `postFieldBytes`, so the domain has to be established before then.
   const domains = verifyPostFieldDomains(post);
   if (!domains.valid) return domains;
 
@@ -143,36 +103,13 @@ export function verifyPost(
     return { valid: false, error: 'Unsupported protocol version' };
   }
 
-  // 4. Challenge: must exist, not expire, and match byte-for-byte.
-  const challenge = deps.getActiveChallenge(post.author);
-  if (!challenge) {
-    return { valid: false, error: 'No active challenge' };
-  }
-  if (challenge.expiresAtBlock < currentBlockHeight) {
-    return { valid: false, error: 'Challenge expired' };
-  }
-  if (
-    challenge.challenge.length !== post.challenge.length ||
-    !Buffer.from(challenge.challenge).equals(Buffer.from(post.challenge))
-  ) {
-    return { valid: false, error: 'Challenge mismatch' };
-  }
-
-  // 5. Proof of Work. The preimage comes from @dagsocial/types — the single
-  //    canonical encoder (audit M-1). Rebuilding it here would be a third copy
-  //    that silently drifts from the miner's.
-  const powInput = postPowPreimage(post);
-  if (!verifyPoW(powInput, post.powNonce, config.postPowTargetBits)) {
-    return { valid: false, error: 'Proof of Work invalid' };
-  }
-
-  // 6. Signature — post.author IS the 32-byte Ed25519 public key
-  if (!verifyPostSignature(post, post.author)) {
-    return { valid: false, error: 'Signature invalid' };
-  }
-
-  // 7. Karma: author must have sufficient karma across all boxes.
-  // Look up by public key (post.author).
+  // 4. Karma: author must have sufficient karma across all boxes.
+  //
+  //    ⚠ This is an early, friendlier rejection and NOT the enforcement point.
+  //    The lock is enforced structurally by the UTXO engine's post biconditional
+  //    — `post` present ⟺ exactly one PostLockBox of the right cost, value
+  //    conserved — which is what a block re-validates. A sufficiency check here
+  //    that disagreed with the engine would reject nothing the engine accepts.
   const karmaBoxes = deps.getKarmaBoxes(post.author);
   if (karmaBoxes.length === 0) {
     return { valid: false, error: 'No karma box found' };
@@ -187,94 +124,17 @@ export function verifyPost(
     };
   }
 
-  // 8. Parent refs: every referenced post must exist AND hash must match.
+  // 5. Parent refs: every referenced post must exist.
   for (const parentId of post.parentRefs) {
     if (!deps.getPost(parentId)) {
       return { valid: false, error: `Parent post not found: ${parentId}` };
     }
-    const hashCheck = verifyParentHash(deps, parentId);
-    if (!hashCheck.valid) return hashCheck;
   }
 
   return { valid: true };
 }
 
-// ---------------------------------------------------------------------------
-// verifyPostForRelay
-// ---------------------------------------------------------------------------
-
-/**
- * Verify a relayed post (received via gossip). Same as verifyPost but skips
- * the challenge check — the challenge was local to the origin node.
- *
- * Stage 2 validation: runs after Stage 1 (stateless checks in net package)
- * has already passed. Adds stateful checks: parent refs exist, karma
- * sufficient.
- */
-export function verifyPostForRelay(
-  deps: VerifierDeps,
-  post: Post,
-  currentBlockHeight: number,
-): VerificationResult {
-  // 0. Field domains — see verifyPost above. Sharper here than there: step 4 is
-  //    skipped by design, so on the `content-sweep` caller nothing upstream has
-  //    pinned any of the three fields, and step 5 still builds a preimage.
-  const domains = verifyPostFieldDomains(post);
-  if (!domains.valid) return domains;
-
-  // 1. Content: already checked by Stage 1, but re-verify
-  const contentBytes = Buffer.byteLength(post.content, 'utf8');
-  if (contentBytes === 0) {
-    return { valid: false, error: 'Content is empty' };
-  }
-  if (contentBytes > MAX_CONTENT_BYTES) {
-    return { valid: false, error: 'Content exceeds max length' };
-  }
-
-  // 1b. Character restrictions: no control, zero-width, or bidi chars.
-  const charCheck = verifyContentCharacters(post.content);
-  if (!charCheck.valid) return charCheck;
-
-  // 2. Parent refs count
-  if (post.parentRefs.length > MAX_PARENT_REFS) {
-    return { valid: false, error: `Too many parent refs (max ${MAX_PARENT_REFS})` };
-  }
-
-  // 3. Protocol version
-  if (post.protocolVersion !== PROTOCOL_VERSION) {
-    return { valid: false, error: 'Unsupported protocol version' };
-  }
-
-  // 4. Challenge is NOT checked — challenge was node-local to origin
-
-  // 5. PoW: re-verify (stateless, cheap). Canonical preimage from
-  //    @dagsocial/types — see verifyPost above.
-  const powInput = postPowPreimage(post);
-  if (!verifyPoW(powInput, post.powNonce, config.postPowTargetBits)) {
-    return { valid: false, error: 'Proof of Work invalid' };
-  }
-
-  // 6. Signature — post.author IS the 32-byte Ed25519 public key.
-  // No identity lookup needed; the key proves the identity.
-  if (!verifyPostSignature(post, post.author)) {
-    return { valid: false, error: 'Signature invalid' };
-  }
-
-  // 7. Karma is NOT checked on relay.  The block producer (miner) already
-  //    verified economic rules before creating the sub-block.  A relaying
-  //    node caches the data and trusts the ordering block to confirm or
-  //    reject it.  Cryptographic checks (signature, PoW) are sufficient
-  //    for relay acceptance.
-
-  // 8. Parent refs: must exist AND hash must match.
-  for (const parentId of post.parentRefs) {
-    if (!deps.getPost(parentId)) {
-      return { valid: false, error: `Parent post not found: ${parentId}` };
-    }
-    const hashCheck = verifyParentHash(deps, parentId);
-    if (!hashCheck.valid) return hashCheck;
-  }
-
-  return { valid: true };
-}
-
+// Reserved, never to be reused: `verifyPostForRelay`. It was Stage 2 for a post
+// gossiped as a sub-block, and its distinguishing feature — skipping the
+// node-local challenge — describes a handshake that no longer exists. A post now
+// arrives as a transaction and is validated by the transaction path.

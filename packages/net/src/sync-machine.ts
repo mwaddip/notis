@@ -173,7 +173,6 @@ export class SyncMachine {
     private config: NetConfig,
     private store: SyncStore,
     private sendToPeer: (peerId: string, data: Uint8Array) => void,
-    private requestSubBlocks: (peerId: string, ids: string[]) => Promise<unknown[]>,
     private onProtocolViolation: (peerId: string, reason: string) => void = () => {},
   ) {
     this.magic = config.magic;

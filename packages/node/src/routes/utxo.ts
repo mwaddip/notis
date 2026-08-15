@@ -271,7 +271,7 @@ export function createRouter(deps: UtxoDeps): Router {
 
         // Insert into mempool and record the grant
         const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-        insertUtxoTx(tx, null, expiresAtHeight);
+        insertUtxoTx(tx, expiresAtHeight);
         recordFaucetGrant(toBytes, 'credit', txId, currentHeight);
 
         outcome = { ok: true, txId, tx };

@@ -28,7 +28,6 @@ import type {
   BlockHeader,
   OrderingBlock,
   Stump,
-  SubBlockEntry,
   PruneEntry,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -55,8 +54,7 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  solveHeaderPow,
-} from '../helpers.js';
+  solveHeaderPow, fixturePostId, seedPostTx, fillerTx } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -71,8 +69,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -112,7 +108,7 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
 
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
+    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
     confirmPost: (postId: string, blockHeight: number) => void;
     getPost: (id: string) => StoredPost | Stump | null;
   };
@@ -121,22 +117,11 @@ async function importPosts() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertSubBlock: (
-      postId: string,
-      expiresAtHeight: number,
-      batchId?: string | null,
-    ) => number;
-    insertUtxoTx: (
-      tx: UtxoTransaction,
-      batchId: string | null,
-      expiresAtHeight: number,
-    ) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      subblockId: string | null;
       utxoTxCbor: Uint8Array | null;
-      batchId: string | null;
       expiresAtHeight: number;
       createdAt: string;
     }>;
@@ -146,7 +131,7 @@ async function importMempoolFresh() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getCreditBoxes: (owner: Uint8Array) => AnyBox[];
     getBox: (boxId: string) => unknown;
@@ -267,15 +252,14 @@ describe('block-apply journal recording', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'journal test post');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'journal test post');
     const { encodePost } = await import('@dagsocial/types');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const mempool = await importMempoolFresh();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -306,13 +290,12 @@ describe('block-apply journal recording', () => {
 
     const author = makeTestIdentity();
 
-    const post = makePost(author.userId, 'utxo journal test');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'utxo journal test');
     const { encodePost, computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     // Insert sub-block ID
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     // Insert a standalone UTXO transaction in mempool. The like targets the
     // post this same block confirms — N2b's apply rules reject a like on an
@@ -322,7 +305,7 @@ describe('block-apply journal recording', () => {
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
     const likeTx = makeLikeTx(author, karmaBox, postId);
-    mempool.insertUtxoTx(likeTx, null, 1000);
+    mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
@@ -344,8 +327,14 @@ describe('block-apply journal recording', () => {
     expect(saved!.appliedUtxoTxs.length).toBeGreaterThan(0);
 
     // The applied-tx record carries what mempool re-insertion needs: the id
-    // and the CBOR, which round-trips to the same transaction
-    const applied = saved!.appliedUtxoTxs[0]!;
+    // and the CBOR, which round-trips to the same transaction. Two transactions
+    // rode this block — the post's and the like's, in that order, because the
+    // like cannot apply before the block confirms its target.
+    expect(saved!.appliedUtxoTxs.map((t) => t.txId)).toEqual([
+      computeTxId(postTx),
+      computeTxId(likeTx),
+    ]);
+    const applied = saved!.appliedUtxoTxs[1]!;
     expect(applied.txId).toBe(computeTxId(likeTx));
     expect(applied.txCbor).toBeInstanceOf(Uint8Array);
     expect(computeTxId(decodeTx(applied.txCbor))).toBe(applied.txId);
@@ -377,7 +366,6 @@ describe('block-apply journal recording', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 1,
         prevBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
-        subBlockRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
@@ -385,11 +373,10 @@ describe('block-apply journal recording', () => {
         powTargetBits: expectedTarget(1),
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
-        coinbaseOutputs: [],
+        pruneEntries: [], coinbaseOutputs: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -425,7 +412,6 @@ describe('block-apply journal recording', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 99, // Genesis must have height 1
         prevBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
-        subBlockRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
@@ -438,11 +424,10 @@ describe('block-apply journal recording', () => {
         powTargetBits: expectedTarget(99),
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
-        coinbaseOutputs: [],
+        pruneEntries: [], coinbaseOutputs: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -474,7 +459,6 @@ describe('block-apply journal recording', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 1,
         prevBlockHash: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-        subBlockRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
@@ -483,11 +467,10 @@ describe('block-apply journal recording', () => {
         powTargetBits: expectedTarget(1),
         createdAt: Date.now(),
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
-        coinbaseOutputs: [],
+        pruneEntries: [], coinbaseOutputs: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -519,18 +502,15 @@ describe('block-apply journal recording', () => {
     // and the Merkle roots are computed rather than zeroed. With a header that
     // failed PoW it was a coin flip whether PoW or the Merkle root did the
     // rejecting, and the coinbase check went untested.
-    const { computeSubBlockRoot, computeUtxoTxRoot } = await import(
+    const { computeUtxoTxRoot } = await import(
       '../../src/services/block-creator.js'
     );
     const { expectedTarget } = await import('../../src/services/difficulty.js');
-    const subBlockTree = {
-      subBlockEntries: [],
-      pruneEntries: [],
-    };
     const miner = makeTestIdentity();
     const utxoTxTree = {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [
         // The scheduled maturity lock, so the value is the only thing wrong:
         // a non-numeric `lockedUntilBlock` is now a structure rejection, which
@@ -547,7 +527,6 @@ describe('block-apply journal recording', () => {
       protocolVersion: PROTOCOL_VERSION,
       height: 1,
       prevBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
-      subBlockRoot: computeSubBlockRoot(subBlockTree),
       utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
       // EMPTY_STATE_ROOT, not a hand-written literal: `stateRoot` is hex(33) =
       // 66 characters (VALIDATION_INTERFACE → `verifyHeaderFieldDomains`), so a
@@ -564,7 +543,6 @@ describe('block-apply journal recording', () => {
     header.powNonce = solveHeaderPow(header);
     const block = {
       header,
-      subBlockTree,
       utxoTxTree,
       // Signed: the coinbase check sits behind the validator-signature gate, so
       // an unsigned block would reject at the gate and test nothing here.
@@ -794,7 +772,7 @@ describe('block-apply embedded tx re-validation', () => {
     // missing signature long before them.
     const forged = makeLikeTx(victim, victimBox, ZERO_HASH);
     forged.signatures = {};
-    mempool.insertUtxoTx(forged, null, 1000);
+    mempool.insertUtxoTx(forged, 1000);
 
     await mineBlockOverMempool();
 
@@ -842,7 +820,6 @@ describe('block-apply embedded tx re-validation', () => {
           owner: attacker.userId,
           // `b32` in the box-id preimage — `'target_post'` has no encoding, and
           // the tx has to be *hashable* for the value check to be what rejects it.
-          targetPostId: '7a'.repeat(32),
           guard: 'block_apply',
         } as PostLockBox,
       ],
@@ -854,7 +831,7 @@ describe('block-apply embedded tx re-validation', () => {
       attacker.privateKey,
       Buffer.from(attacker.userId).toString('hex'),
     );
-    mempool.insertUtxoTx(inflating, null, 1000);
+    mempool.insertUtxoTx(inflating, 1000);
 
     await mineBlockOverMempool();
 
@@ -890,19 +867,17 @@ describe('block-apply embedded tx re-validation', () => {
     // N2b: likes need confirmed live targets — real posts, confirmed by this
     // same block (topology at §8b precedes the tx loop at §11).
     const author = makeTestIdentity();
-    const postA = makePost(author.userId, 'valid-txs target a');
-    const postB = makePost(author.userId, 'valid-txs target b');
-    const postAId = computePostId(postA);
-    const postBId = computePostId(postB);
-    posts.insertPost(postA, encodePost(postA));
-    posts.insertPost(postB, encodePost(postB));
-    mempool.insertSubBlock(postAId, 1000);
-    mempool.insertSubBlock(postBId, 1000);
+    const { post: postA, tx: postATx, postId: postAId } = await seedPostTx(author, 'valid-txs target a');
+    const { post: postB, tx: postBTx, postId: postBId } = await seedPostTx(author, 'valid-txs target b');
+    posts.insertPost(postAId, postA, encodePost(postA));
+    posts.insertPost(postBId, postB, encodePost(postB));
+    mempool.insertUtxoTx(postATx, 1000);
+    mempool.insertUtxoTx(postBTx, 1000);
 
     const aliceTx = makeLikeTx(alice, aliceBox, postAId);
     const bobTx = makeLikeTx(bob, bobBox, postBId);
-    mempool.insertUtxoTx(aliceTx, null, 1000);
-    mempool.insertUtxoTx(bobTx, null, 1000);
+    mempool.insertUtxoTx(aliceTx, 1000);
+    mempool.insertUtxoTx(bobTx, 1000);
 
     await mineBlockOverMempool();
 
@@ -910,7 +885,12 @@ describe('block-apply embedded tx re-validation', () => {
     const saved = journal.getBlockJournal(1);
     expect(saved).not.toBeNull();
     expect(saved!.appliedUtxoTxs.map((t) => t.txId).sort()).toEqual(
-      [computeTxId(aliceTx), computeTxId(bobTx)].sort(),
+      [
+        computeTxId(postATx),
+        computeTxId(postBTx),
+        computeTxId(aliceTx),
+        computeTxId(bobTx),
+      ].sort(),
     );
 
     // Inputs consumed, change boxes live at the conserved values.
@@ -940,14 +920,12 @@ describe('block-apply embedded tx re-validation', () => {
     // N2b: likes need confirmed live targets — two real posts, confirmed by
     // the same block that carries the chained likes.
     const author = makeTestIdentity();
-    const postA = makePost(author.userId, 'defer-retry target a');
-    const postB = makePost(author.userId, 'defer-retry target b');
-    const postAId = computePostId(postA);
-    const postBId = computePostId(postB);
-    posts.insertPost(postA, encodePost(postA));
-    posts.insertPost(postB, encodePost(postB));
-    mempool.insertSubBlock(postAId, 1000);
-    mempool.insertSubBlock(postBId, 1000);
+    const { post: postA, tx: postATx, postId: postAId } = await seedPostTx(author, 'defer-retry target a');
+    const { post: postB, tx: postBTx, postId: postBId } = await seedPostTx(author, 'defer-retry target b');
+    posts.insertPost(postAId, postA, encodePost(postA));
+    posts.insertPost(postBId, postB, encodePost(postB));
+    mempool.insertUtxoTx(postATx, 1000);
+    mempool.insertUtxoTx(postBTx, 1000);
 
     const txA = makeLikeTx(liker, startBox, postAId);
     const txB = makeLikeTx(liker, changeBoxOf(txA), postBId);
@@ -955,17 +933,28 @@ describe('block-apply embedded tx re-validation', () => {
     // B goes in first, so the block lists it first and its input does not
     // exist on the first pass — the "inputs not present yet" case, which must
     // still defer and retry rather than take the block down.
-    mempool.insertUtxoTx(txB, null, 1000);
-    mempool.insertUtxoTx(txA, null, 1000);
+    mempool.insertUtxoTx(txB, 1000);
+    mempool.insertUtxoTx(txA, 1000);
 
     const block = await mineBlockOverMempool();
-    expect(block!.utxoTxTree.utxoTxIds[0]).toBe(computeTxId(txB));
+    // Block order is pool order: the two post transactions, then txB ahead of
+    // the txA it depends on — the inversion the multi-pass loop has to survive.
+    expect(block!.utxoTxTree.utxoTxIds).toEqual([
+      computeTxId(postATx),
+      computeTxId(postBTx),
+      computeTxId(txB),
+      computeTxId(txA),
+    ]);
 
     const journal = await importJournalStore();
     const saved = journal.getBlockJournal(1);
     expect(saved).not.toBeNull();
-    // Applied in dependency order, not block order.
+    // Applied in dependency order, not block order: the two post transactions
+    // and txA go on the first pass, txB on the second — where block order put
+    // txB ahead of txA.
     expect(saved!.appliedUtxoTxs.map((t) => t.txId)).toEqual([
+      computeTxId(postATx),
+      computeTxId(postBTx),
       computeTxId(txA),
       computeTxId(txB),
     ]);
@@ -1155,7 +1144,7 @@ describe('block-apply embedded tx re-validation', () => {
     utxo.insertBox(splitA);
     utxo.insertBox(splitB);
 
-    mempool.insertUtxoTx(makeVouchCastTx(splitA, voucher, target.userId), null, 1000);
+    mempool.insertUtxoTx(makeVouchCastTx(splitA, voucher, target.userId), 1000);
     const block = await mineBlockOverMempool();
     expect(block).not.toBeNull();
 
@@ -1190,7 +1179,7 @@ describe('block-apply embedded tx re-validation', () => {
     const whole = makeKarmaBox(12n, voucher.userId, 0);
     utxo.insertBox(whole);
 
-    mempool.insertUtxoTx(makeVouchCastTx(whole, voucher, target.userId), null, 1000);
+    mempool.insertUtxoTx(makeVouchCastTx(whole, voucher, target.userId), 1000);
     const block = await mineBlockOverMempool();
     expect(block).not.toBeNull();
 
@@ -1691,19 +1680,17 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
 
     const author = makeTestIdentity();
     const attacker = makeTestIdentity();
-    const post = makePost(author.userId, 'victim post');
-    const postId = computePostId(post);
-
-    const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    // ⛔ The block must CARRY the post transaction, not a claim about the post.
+    // `block_topology`'s author comes from `tx.post.author` now, so a fixture
+    // that seeded the post and asserted an id would be testing its own
+    // arithmetic — the binding under attack here is the one apply derives.
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'victim post');
 
     const blockApply = await importBlockApply();
 
     // Height 1 confirms the post — that is what records its author in
     // block_topology, and it is the only place the author is recorded.
-    const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [{ postId, parentRefs: [], author: hex(author.userId) }],
-    });
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
     // Height 2 is the attack: the prune is signed, correctly, by a key that has
@@ -1724,6 +1711,7 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const journal = await importJournalStore();
     expect(journal.getBlockJournal(2)).toBeNull();
 
+    const posts = await importPosts();
     const stored = posts.getPost(postId);
     expect(stored).not.toBeNull();
     expect((stored as Post).content).toBe('victim post');
@@ -1739,15 +1727,14 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'victim post');
-    const postId = computePostId(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'victim post');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const blockApply = await importBlockApply();
     const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [{ postId, parentRefs: [], author: hex(author.userId) }],
+      utxoTxs: [postTx],
     });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
@@ -1776,11 +1763,10 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     // it, so block_topology has no author for it and it is not prunable. Held
     // locally and unconfirmed is exactly the state a gossip-only post is in.
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'unconfirmed post');
-    const postId = computePostId(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'unconfirmed post');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const { getTopologyAuthor } = (await import('../../src/store/topology.js')) as {
       getTopologyAuthor: (postId: string) => string | null;
@@ -1803,17 +1789,16 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'confirmed post');
-    const postId = computePostId(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'confirmed post');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const blockApply = await importBlockApply();
     expect(
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({
-          subBlockEntries: [{ postId, parentRefs: [], author: hex(author.userId) }],
+          utxoTxs: [postTx],
         }),
       ),
     ).toBe(true);
@@ -1849,138 +1834,28 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
 
     const author = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA] };
-    const postId = computePostId(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'child post', { parentRefs: [parentA] },
+    );
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const blockApply = await importBlockApply();
-    const block = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId, parentRefs: [parentA], author: hex(author.userId) },
-      ],
-    });
+    const block = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
 
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(1);
   });
 
-  it('rejects a block whose entry claims an author the local post contradicts', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    // Identical to the control above except for `author` — the producer claims
-    // authorship of someone else's post, which is what would make the prune
-    // binding above authorize them.
-    const author = makeTestIdentity();
-    const attacker = makeTestIdentity();
-    const parentA = 'a1'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA] };
-    const postId = computePostId(post);
-
-    const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
-
-    const blockApply = await importBlockApply();
-    const block = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId, parentRefs: [parentA], author: hex(attacker.userId) },
-      ],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(0);
-
-    const { getTopologyAuthor } = (await import('../../src/store/topology.js')) as {
-      getTopologyAuthor: (postId: string) => string | null;
-    };
-    expect(getTopologyAuthor(postId)).toBeNull();
-  });
-
-  it('rejects a block whose entry grafts the post under a different parent', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    // Identical to the control except for `parentRefs`: the producer reparents
-    // a victim's post under a root they authored, so the victim's post falls
-    // inside the subtree their own prune signature covers.
-    const author = makeTestIdentity();
-    const parentA = 'a1'.repeat(32);
-    const attackerRoot = 'cc'.repeat(32);
-    const post = { ...makePost(author.userId), parentRefs: [parentA] };
-    const postId = computePostId(post);
-
-    const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
-
-    const blockApply = await importBlockApply();
-    const block = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId, parentRefs: [attackerRoot], author: hex(author.userId) },
-      ],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(0);
-  });
-
-  // ⚠ **DELETED: "rejects a block whose entry reorders the post parentRefs".**
+  // ⛔ Reserved, never to be reused: the unseen-post placeholder case.
   //
-  // It built `[parentA, parentB]` on the post and `[parentB, parentA]` on the
-  // entry and asserted rejection. Under `MAX_PARENT_REFS = 1` you cannot reorder
-  // a one-element array, so the only way to keep the fixture compiling was to
-  // keep it two wide — and then the block is rejected for its COUNT, by the
-  // structure gate, before the comparison it was written for ever runs. It would
-  // have gone on passing with the property deleted. That is worse than failing,
-  // and it is why this is a deletion rather than a re-fixture.
-  //
-  // **What is no longer covered, stated plainly:** the H-3 comparison against
-  // `realParents` is sequence-wise —
-  // `entry.parentRefs.every((ref, j) => ref === realParents[j])` — and at width
-  // 1 sequence-wise and set-wise are indistinguishable. So nothing now
-  // distinguishes the current implementation from a set comparison; if
-  // `MAX_PARENT_REFS` ever widens, this test has to come back with it.
-  //
-  // What survives: the grafting case above still proves the comparison reads
-  // the *values* (entry names a different parent → rejected), and the
-  // author-contradiction case still proves it reads the author. Only ordering
-  // went unconstructible.
-
-  // -----------------------------------------------------------------------
-  // Placeholder path — a node without the content still records the author
-  // -----------------------------------------------------------------------
-
-  it('confirms an unseen post as a placeholder and records the entry author', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    // The fresh-sync case: no content for this postId anywhere locally, so
-    // there is nothing to verify the entry against and the claim is recorded
-    // as given. block_topology carries the author; dag_posts does not.
-    const claimed = makeTestIdentity();
-    const postId = 'ab'.repeat(32);
-
-    const blockApply = await importBlockApply();
-    const block = await makeApplicableBlock({
-      subBlockEntries: [{ postId, parentRefs: [], author: hex(claimed.userId) }],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(true);
-
-    const { getTopologyAuthor } = (await import('../../src/store/topology.js')) as {
-      getTopologyAuthor: (postId: string) => string | null;
-    };
-    expect(getTopologyAuthor(postId)).toBe(hex(claimed.userId));
-
-    const posts = await importPosts();
-    const placeholder = posts.getPost(postId) as Post;
-    expect(placeholder).not.toBeNull();
-    expect(placeholder.content).toBe('');
-    expect(hex(placeholder.author)).toBe('00'.repeat(32));
-  });
+  // It covered a node that confirmed a post it had no content for — the state
+  // a `SubBlockEntry` created by carrying topology without content. **That
+  // state is unreachable**: a block carries its posts inside `utxoTxs`, so a
+  // node applying a block always has the content, `insertPostPlaceholder` has
+  // no producer, and `block_topology` is derived from `tx.post` rather than
+  // recorded from a claim it cannot check.
 });
 
 // ---------------------------------------------------------------------------
@@ -2021,16 +1896,13 @@ describe('block-apply funnel totality', () => {
    */
   async function confirmedPost(): Promise<{ postId: string; author: TestIdentity }> {
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'victim post');
-    const postId = computePostId(post);
+    const { post, tx: postTx, postId } = await seedPostTx(author, 'victim post');
 
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     const blockApply = await importBlockApply();
-    const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [{ postId, parentRefs: [], author: hex(author.userId) }],
-    });
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
     return { postId, author };
   }
@@ -2060,7 +1932,7 @@ describe('block-apply funnel totality', () => {
       height: 2,
       pruneEntries: [makePruneEntry(postId, [postId], author)],
     });
-    block.subBlockTree.pruneEntries[0] = killEntry;
+    block.utxoTxTree.pruneEntries[0] = killEntry;
     return { block, killEntry };
   }
 
@@ -2112,8 +1984,8 @@ describe('block-apply funnel totality', () => {
     // …and the reason the ordering matters, stated rather than assumed. Without
     // this line the pin above is vacuous: it would also hold if the Merkle
     // computation were still total.
-    const { computeSubBlockRoot } = await import('../../src/services/block-creator.js');
-    expect(() => computeSubBlockRoot(block.subBlockTree)).toThrow();
+    const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
+    expect(() => computeUtxoTxRoot(block.utxoTxTree)).toThrow();
 
     // Rolled back whole: the chain does not move and no journal is written.
     const ordering = await importOrdering();
@@ -2191,7 +2063,7 @@ describe('block-apply funnel totality', () => {
     // codec change must not be what keeps this honest). So the rest of the test
     // runs against the struct directly, which is what it was really asserting.
     const decoded = killBlock;
-    expect(typeof decoded.subBlockTree.pruneEntries[0]!.subtreeMerkleRoot).toBe('number');
+    expect(typeof decoded.utxoTxTree.pruneEntries[0]!.subtreeMerkleRoot).toBe('number');
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});

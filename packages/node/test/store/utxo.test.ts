@@ -38,7 +38,7 @@ async function importUtxoFresh() {
     getInviteFor: (inviteePublicKey: Uint8Array) => InviteBox | null;
     getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
     getBondBoxes: (inviterId: Uint8Array) => BondBox[];
-    insertBox: (box: AnyBox) => void;
+    insertBox: (box: AnyBox, postLockTarget?: string) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
   };
 }
@@ -196,7 +196,6 @@ describe('utxo store', () => {
     // read back.
     const relic = {
       boxType: 'like', value: 2n, likerId: uid('liker123'),
-      targetPostId: 'post456', guard: 'epoch_tally',
       txId: 'aa'.repeat(32), index: 0, id: 'bb'.repeat(32),
     };
     expect(() => insertBox(relic as never)).toThrow(/Unknown box type/);

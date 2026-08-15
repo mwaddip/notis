@@ -56,8 +56,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -89,18 +87,14 @@ async function importBlockCreator() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (
-      tx: UtxoTransaction,
-      batchId: string | null,
-      expiresAtHeight: number,
-    ) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ rowid: number }>;
   };
 }
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
@@ -216,7 +210,7 @@ async function seedStaleVouchCast() {
   const deps = await storeBackedDeps();
   expect(validateTx(deps, cast, 1).valid).toBe(true);
 
-  mempool.insertUtxoTx(cast, null, 1000);
+  mempool.insertUtxoTx(cast, 1000);
 
   // The voucher's other box is consumed AFTER the cast pooled, dropping the
   // summed balance below the minimum. The cast's own input stays live.
@@ -390,7 +384,6 @@ describe('block creator vs a body its own mutation phase rejects', () => {
         protocolVersion: PROTOCOL_VERSION,
         height: 1,
         prevBlockHash: '00'.repeat(32),
-        subBlockRoot: '00'.repeat(32),
         utxoTxRoot: '00'.repeat(32),
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: new Uint8Array(32),
@@ -398,10 +391,9 @@ describe('block creator vs a body its own mutation phase rejects', () => {
         powTargetBits: 256 * 12,
         createdAt: 0,
       },
-      subBlockTree: { subBlockEntries: [], pruneEntries: [] },
       // One declared id, no body beside it — the misalignment structure would
       // have caught on every other path into the mutation phase.
-      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
       validatorSignature: new Uint8Array(64),
     };
 

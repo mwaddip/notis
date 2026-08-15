@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
 import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from './constants.js';
 import {
+  u32BE,
   type StructCodec,
   decodeStruct,
   encodeStruct,
@@ -23,7 +24,7 @@ import {
   writeVlqU64OrThrow,
 } from './codec.js';
 import type { UserId } from './identity.js';
-import type { PostId } from './post.js';
+import { postFieldBytes, type Post, type PostId } from './post.js';
 
 // ---------------------------------------------------------------------------
 // Box identity
@@ -103,7 +104,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | invite        | b32(inviterId) ‖ b32(inviteePublicKey)                     |
  *   | genesis_proof | lp(payload)                                               |
  *   | bond          | b32(inviterId) ‖ b32(inviteePublicKey)                     |
- *   | post_lock     | vlqU64(originalValue) ‖ b32(owner) ‖ b32(targetPostId)     |
+ *   | post_lock     | vlqU64(originalValue) ‖ b32(owner)                         |
  *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
  *
  * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
@@ -194,7 +195,6 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'post_lock':
       writeVlqU64OrThrow(w, box.originalValue);
       writeBytesNOrThrow(w, box.owner, 32);
-      writeHexNOrThrow(w, box.targetPostId, 32);
       return;
     case 'vouch':
       writeBytesNOrThrow(w, box.voucherId, 32);
@@ -300,7 +300,6 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         value,
         originalValue: readVlqU64(r),
         owner: readBytesN(r, 32),
-        targetPostId: readHexN(r, 32),
       };
     case 'vouch':
       return {
@@ -312,39 +311,10 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
   }
 }
 
-/**
- * Write `n` as 4 bytes big-endian.
- *
- * Deliberately *total*: a value outside the encodable domain writes the
- * all-ones sentinel rather than throwing, so a malformed value can never turn
- * id derivation into a panic on untrusted input (audit M-5). The encodable
- * domain excludes the sentinel itself, so a well-formed value never collides
- * with a malformed one.
- *
- * ⚠ **Nothing in THIS package hashes a `u32BE`.** `computeCandidateBoxId`'s
- * `index` and `computeMintTxId`'s `height` are both `vlqU`. It survives for one
- * reason only:
- *
- * **Two mint `subject` encodings are `u32BE`, and subjects are the caller's.**
- * `coinbase` and `genesis` encode a `u32BE` selector
- * (`node/src/mint-provenance.ts`), `computeMintTxId` takes those bytes
- * opaquely, and `NODE_INTERFACE.md`'s reason/subject table is what mandates the
- * form. Exporting one implementation is the only way to stop node reimplementing
- * it and drifting — a silent divergence would move mint txIds, and through them
- * every box id, with nothing to catch it.
- *
- * So this is a **caller-side helper, not part of any preimage this package
- * writes**, and the mint subject encodings are the one place a fixed-width
- * big-endian integer reaches an id. Unifying them is `NODE_INTERFACE`'s call,
- * not this file's.
- */
-const U32_SENTINEL = 0xffffffff;
-
-export function u32BE(n: number): Uint8Array {
-  const encodable = typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n < U32_SENTINEL;
-  const v = encodable ? n : U32_SENTINEL;
-  return new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff]);
-}
+// `u32BE` lives in `codec.ts` with the other field writers and is re-exported
+// here, where its callers are. It moved so `post.ts` can reach it without a
+// value import of this module, which `postFieldBytes` already makes a cycle.
+export { u32BE } from './codec.js';
 
 /**
  * A box **with its provenance** — TYPES_INTERFACE → Layout — Boxes:
@@ -787,12 +757,32 @@ export interface BondBox extends BoxBase {
 
 // --- Post Lock ---
 
+/**
+ * ⛔ **There is no `targetPostId`, and the reason is CIRCULARITY — not tidiness.**
+ *
+ * A post's id comes from the transaction that creates it,
+ * `computePostId(txId, index)`. The lock is an **output of that same
+ * transaction**, and `canonicalBoxBytes` is inside the `TxId` preimage — so a
+ * `targetPostId` field would have to be known before the `TxId` that produces
+ * it. **The transaction would be unbuildable.** This is the same circularity
+ * that makes `outputs` carry *candidates*: a transaction cannot name its own
+ * outputs' ids, so ids are derived once `TxId` is known.
+ *
+ * It would also be a second copy of committed state. The lock's target is
+ * recomputable — `computePostId(box.txId, 0)` for the lock a post transaction
+ * creates — so carrying it adds a field that can disagree with the thing it
+ * describes and buys nothing.
+ *
+ * ⚠ **Do not re-add it.** It looks obviously useful and it is unbuildable. Node
+ * keeps the lock→post mapping as **derived state**, written at apply by every
+ * node identically (NODE_INTERFACE → Post-lock vesting), which is the same shape
+ * P2-D used for like settlement.
+ */
 export interface PostLockBox extends BoxBase {
   boxType: 'post_lock';
   value: bigint;              // Current locked karma (vests per block as likes accumulate)
   originalValue: bigint;      // Initial lock amount (POST_LOCK_THREAD_COST or POST_LOCK_REPLY_COST)
   owner: Uint8Array;          // 32 raw bytes — post author's Ed25519 public key
-  targetPostId: PostId;       // The post this lock secures
   guard: 'block_apply';       // Only consumable by block application
 }
 
@@ -892,6 +882,24 @@ export interface UtxoTransaction {
    * transaction — is consensus validation and lives in node's UTXO engine.
    */
   likeTarget?: PostId;
+  /**
+   * Present ⟺ this transaction creates a post (NODE_INTERFACE → Post
+   * transactions), carrying the post's payload inside the transaction that locks
+   * its karma. Same pattern `likeTarget` set: an optional field whose presence is
+   * biconditional with a rule.
+   *
+   * ⛔ **This is what makes the post id derivable.** `postFieldBytes(post)` sits
+   * inside the `computeTxId` preimage, so a transaction carrying a distinct post
+   * has a distinct id and `computePostId(txId, index)` inherits that uniqueness.
+   * It also puts the payload under the author's signature, so a relay cannot
+   * rewrite the post any more than it can re-point a like.
+   *
+   * This package defines only the field and its encoding; the biconditional —
+   * present ⟺ the tx locks `POST_LOCK_{THREAD,REPLY}_COST` into a `PostLockBox`
+   * and conserves value — is consensus validation and lives in node's UTXO
+   * engine.
+   */
+  post?: Post;
 }
 
 /**
@@ -903,6 +911,7 @@ export interface UtxoTransaction {
  *   | 3 | preimages       | opt(arr(sorted, b32(boxId) ‖ lp(preimage)))  |
  *   | 4 | protocolVersion | vlqU                                         |
  *   | 5 | likeTarget      | opt(b32)                                     |
+ *   | 6 | post            | opt(postFieldBytes)                          |
  *
  * **Every field is counted, tagged or length-prefixed, and each one is
  * load-bearing for injectivity:**
@@ -915,9 +924,20 @@ export interface UtxoTransaction {
  * - `likeTarget` presence is `opt()`'s 0/1 tag, which needs no in-band marker
  *   that a neighbouring field could forge, and preserves the `!== undefined`
  *   distinction — an empty-string target hashes differently from absence.
+ * - `post` takes the same `opt()` tag, for the same reason, and needs no length
+ *   prefix inside it: `postFieldBytes` is self-delimiting (every field is
+ *   fixed-width, length-prefixed or a VLQ) and it is last, so nothing follows it
+ *   to be ambiguous against. Its own injectivity is `postFieldBytes`'
+ *   (`post.ts`), which is why that property is required there even though the
+ *   post id no longer reads those bytes.
  * - `preimages` is sorted by key, per the normative map sort. Keys are
  *   lowercase hex, so sorting the strings and sorting the decoded bytes give
  *   the same order.
+ *
+ * ⚠ **`likeTarget` and `post` are mutually exclusive in practice** — a
+ * transaction is a like or a post, never both — but the encoding does not rest on
+ * it: each carries its own presence tag, so the tail stays unambiguous however
+ * the fields combine.
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  */
@@ -935,6 +955,7 @@ function txIdBytes(tx: UtxoTransaction): Uint8Array {
   });
   writeVlqU(w, tx.protocolVersion);
   writeOpt(w, tx.likeTarget, (ww, target) => writeHexNOrThrow(ww, target, 32));
+  writeOpt(w, tx.post, (ww, post) => ww.writeBytes(postFieldBytes(post)));
   return w.toBytes();
 }
 

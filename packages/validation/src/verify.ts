@@ -6,9 +6,8 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
-import { signingHash, powNonceBytes } from '@dagsocial/types';
 import { encodeHeader } from '@dagsocial/types';
-import type { Post, SubBlock, BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import type { Post, BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
@@ -78,10 +77,16 @@ function isBytes(v: unknown): v is Uint8Array {
 }
 
 /**
- * Guard for every value that reaches `BigInt(...)` + `writeBigUInt64LE`, for
- * bit-count arguments (audit M-6), and for the post PoW nonce — whose `vlqU`
- * writer cannot throw but takes every out-of-domain value to one sentinel tail
- * (VALIDATION_INTERFACE → verifyPoW).
+ * Guard for every value that reaches `BigInt(...)` + `writeBigUInt64LE`, and for
+ * bit-count arguments (audit M-6).
+ *
+ * ⛔ **`HEADER_DOMAIN`'s `powNonce` row is the load-bearing one, and it is a
+ * search variable an attacker varies against a target.** Its header writer is
+ * `vlqU`, total by sentinel, so without this guard every out-of-domain nonce
+ * would share one encoding — the shape that makes a totality argument bite. What
+ * closes it is this pin plus `verifyOrderingBlockPoW` hashing the nonce as a
+ * fixed 8-byte LE, which has no sentinel at all; `computePowHash` runs the whole
+ * header domain first, so the two cannot be reached out of order.
  *
  * `Number.isSafeInteger`, not a loose `typeof === 'number'` — the loose check
  * admits `NaN`, `Infinity`, and floats, each of which throws in `BigInt()`, and
@@ -157,8 +162,13 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
 const U64_BOUND = 1n << 64n;
 
 /**
- * The domain of every field `postFieldBytes` encodes — the precondition of
- * `signingHash`, `postPowPreimage` and `computePostId` in `@dagsocial/types`.
+ * The domain of every field `postFieldBytes` encodes.
+ *
+ * ⛔ **Its caller moved and its precondition got WIDER.** A post is the payload of
+ * the transaction that creates it, so `postFieldBytes` is now inside the
+ * `computeTxId` preimage — this guard is what keeps a throwing writer unreachable
+ * on the path that derives a *transaction* id, not just a post id. It runs on the
+ * post-bearing transaction, where `verifyTxStructure` already runs.
  *
  * **Type checks** (audit M-5/M-6): a malformed post must not throw inside
  * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
@@ -173,8 +183,8 @@ const U64_BOUND = 1n << 64n;
  * encoding. Rejecting them here keeps that sentinel path out of reach for
  * anything that passes this guard.
  *
- * **Width checks** (TYPES_INTERFACE → Layout — Post): `author` and `challenge`
- * are `b32` and `parentRefs` is `arr(refs, b32)`. A fixed-width writer has no
+ * **Width checks** (TYPES_INTERFACE → Layout — Post): `author` is `b32` and
+ * `parentRefs` is `arr(refs, b32)`. A fixed-width writer has no
  * unreachable sentinel — its wire domain *is* its encodable domain — so padding
  * or truncating a 31-byte `author` would map it onto a well-formed post's
  * encoding, a consensus-level collision strictly worse than the panic it
@@ -183,10 +193,9 @@ const U64_BOUND = 1n << 64n;
  * that writer is reached, keeping the throw unreachable rather than latent.
  *
  * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
- * 31-byte one cannot verify a signature), `challenge` is `randomBytes(32)` from
- * the issuing node, every `parentRef` is a `computePostId` output, a timestamp
- * is a non-negative safe integer, and `protocolVersion` must equal
- * `PROTOCOL_VERSION` to pass Stage 1 at all.
+ * 31-byte one cannot verify a signature), every `parentRef` is a `computePostId`
+ * output, a timestamp is a non-negative safe integer, and `protocolVersion` must
+ * equal `PROTOCOL_VERSION` to pass Stage 1 at all.
  */
 export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: string } {
   if (!isObject(post)) return { valid: false, error: 'Post is not an object' };
@@ -203,9 +212,6 @@ export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: st
     if (typeof ref !== 'string' || !POST_ID_HEX.test(ref)) {
       return { valid: false, error: 'Post parentRef must be 64 lowercase hex characters' };
     }
-  }
-  if (!isBytes(post.challenge) || post.challenge.length !== 32) {
-    return { valid: false, error: 'Post challenge must be exactly 32 bytes' };
   }
   if (!isU64Safe(post.protocolVersion)) {
     return { valid: false, error: 'Post protocolVersion must be a non-negative safe integer' };
@@ -246,7 +252,6 @@ type HeaderField =
   | 'protocolVersion'
   | 'height'
   | 'prevBlockHash'
-  | 'subBlockRoot'
   | 'utxoTxRoot'
   | 'stateRoot'
   | 'validatorId'
@@ -267,7 +272,6 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   { field: 'height', ok: isU64Safe, error: 'Block header height must be a non-negative safe integer' },
   // b32 — 32 bytes carried as hex in memory
   { field: 'prevBlockHash', ok: isHex32, error: 'Block header prevBlockHash must be 64 lowercase hex characters' },
-  { field: 'subBlockRoot', ok: isHex32, error: 'Block header subBlockRoot must be 64 lowercase hex characters' },
   { field: 'utxoTxRoot', ok: isHex32, error: 'Block header utxoTxRoot must be 64 lowercase hex characters' },
   // b33 — the AVL+ digest carries a height byte, so 66 characters, not 64
   { field: 'stateRoot', ok: isHex33, error: 'Block header stateRoot must be 66 lowercase hex characters' },
@@ -473,54 +477,6 @@ export function cumulativeWork(headers: BlockHeader[]): bigint {
 }
 
 // ---------------------------------------------------------------------------
-// verifyPoW
-// ---------------------------------------------------------------------------
-
-/**
- * Post PoW: `blake2b512(input ‖ powNonceBytes(nonce))[0..32]` meets the target
- * `targetBits` expands to.
- *
- * The tail is `@dagsocial/types`' to write — TYPES_INTERFACE → Serialization →
- * "Layout — Post" is the layout, and `powNonceBytes` its only writer, so this
- * predicate and `computePostId` cannot state it differently.
- *
- * `isU64Safe(nonce)` is **not** redundant with that writer, which is total by
- * sentinel: it is what stops every out-of-domain nonce sharing one tail and so
- * one verdict (VALIDATION_INTERFACE → verifyPoW).
- *
- * The ordering-block nonce is `encodeLE64` and has its own predicate below —
- * two encodings, each specified, sharing no code.
- */
-export function verifyPoW(input: Uint8Array, nonce: number, targetBits: number): boolean {
-  if (!isBytes(input)) return false;
-  if (!isU64Safe(nonce)) return false;
-  if (!isU64Safe(targetBits)) return false;
-  const target = powTarget(targetBits);
-  if (target === null) return false;
-  const buf = Buffer.concat([Buffer.from(input), Buffer.from(powNonceBytes(nonce))]);
-  const hash = createHash('blake2b512').update(buf).digest().subarray(0, 32);
-  return meetsPowTarget(hash, target);
-}
-
-// ---------------------------------------------------------------------------
-// verifyPostSignature
-// ---------------------------------------------------------------------------
-
-export function verifyPostSignature(post: Post, publicKey: Uint8Array): boolean {
-  // `createPublicKey` throws ("Failed to read asymmetric key") unless the SPKI
-  // envelope carries exactly 32 raw bytes.
-  if (!isBytes(publicKey) || publicKey.length !== 32) return false;
-  if (!isSignablePost(post)) return false;
-  // A wrong-*length* signature is left to `crypto.verify`, which rejects it
-  // cleanly; only a non-byte-view throws.
-  if (!isBytes(post.signature)) return false;
-  const pubDer = wrapSpki(publicKey);
-  const pubKeyObj = createPublicKey({ key: pubDer, format: 'der', type: 'spki' });
-  const sigBuf = Buffer.from(post.signature);
-  return cryptoVerify(null, signingHash(post), pubKeyObj, sigBuf);
-}
-
-// ---------------------------------------------------------------------------
 // verifyValidatorSignature
 // ---------------------------------------------------------------------------
 
@@ -538,7 +494,7 @@ export function verifyPostSignature(post: Post, publicKey: Uint8Array): boolean 
  */
 export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Array): boolean {
   // A non-byte signature throws in `Buffer.from`; a wrong-*length* signature is
-  // left to `crypto.verify`, which rejects it cleanly (as in verifyPostSignature).
+  // left to `crypto.verify`, which rejects it cleanly.
   if (!isBytes(signature)) return false;
   // `blockHash` establishes the header domain itself, so a malformed
   // header yields `null` rather than throwing inside `encodeHeader`. Its
@@ -615,43 +571,6 @@ export function verifyParentRefsCount(refs: string[]): { valid: boolean; error?:
 }
 
 // ---------------------------------------------------------------------------
-// verifySubBlockStructure
-// ---------------------------------------------------------------------------
-
-export function verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?: string } {
-  if (!isObject(sb)) return { valid: false, error: 'Sub-block is not an object' };
-  if (!sb.post) return { valid: false, error: 'Sub-block missing post' };
-  // The struct's own three fields, each pinned to the domain of the writer it
-  // feeds in the `SUB_BLOCK` codec. `b32` from hex and `b32` from bytes are
-  // fixed-width and throw outside their domain; `vlqU` is total by sentinel and
-  // collides instead. Both need the domain established upstream of the encoder
-  // (TYPES_INTERFACE → Totality).
-  if (!isHex32(sb.subBlockId)) {
-    return { valid: false, error: 'Sub-block subBlockId must be 64 lowercase hex characters' };
-  }
-  if (!isU64Safe(sb.protocolVersion)) {
-    return { valid: false, error: 'Sub-block protocolVersion must be a non-negative safe integer' };
-  }
-  // Type before width: `producerId` is `UserId` bytes, not the hex its
-  // table-neighbour `subBlockId` carries, so a 32-character string is not 32
-  // bytes and `writeBytesNOrThrow` refuses it.
-  if (!isBytesOfLength(sb.producerId, 32)) {
-    return { valid: false, error: 'Sub-block producerId must be exactly 32 bytes' };
-  }
-  // The post's field domains, checked here because this is the Stage-1 gate the
-  // relay path runs *before* it builds a PoW preimage from that post: `net`'s
-  // `runStage1SubBlock` calls this function and only then `postPowPreimage`.
-  // Under fixed-width writers a post outside the domain has no encoding and the
-  // writer throws — inside a topic validator whose catch arm bans the
-  // *forwarding* peer for a message it merely relayed.
-  // Rejecting it as invalid content is both the correct verdict and the correct
-  // penalty class.
-  const postDomains = verifyPostFieldDomains(sb.post);
-  if (!postDomains.valid) return postDomains;
-  return { valid: true };
-}
-
-// ---------------------------------------------------------------------------
 // verifyTxStructure
 // ---------------------------------------------------------------------------
 
@@ -688,6 +607,31 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   if (typeof tx.protocolVersion !== 'number') {
     return { valid: false, error: 'Transaction missing protocolVersion' };
   }
+  // ⛔ The post payload's domain, checked HERE because this is the structural
+  // gate that runs before anything takes the transaction's id, and
+  // `postFieldBytes` sits inside the `computeTxId` preimage. `author` and every
+  // `parentRef` feed fixed-width throwing writers, so without this pin a
+  // malformed post reaching `computeTxId` is a panic rather than a verdict — the
+  // no-panic contract (M-5/M-6), inherited by the transaction path.
+  //
+  // The *consensus* half of the biconditional — `post` present ⟺ the tx locks
+  // POST_LOCK_{THREAD,REPLY}_COST into a PostLockBox and conserves value — is
+  // stateful and belongs to node's UTXO engine, as the like carve does.
+  //
+  // ⚠ `verifyPostFieldDomains` runs FIRST and the order is load-bearing: it is
+  // the only one of the four that starts with `isObject`, so a `post` of `null`
+  // reaches a property read in any other order. After it returns valid, `content`
+  // is a string and `parentRefs` an array by construction.
+  if (tx.post !== undefined) {
+    const domains = verifyPostFieldDomains(tx.post);
+    if (!domains.valid) return domains;
+    const refs = verifyParentRefsCount(tx.post.parentRefs);
+    if (!refs.valid) return refs;
+    const limits = verifyContentLimits(tx.post.content);
+    if (!limits.valid) return limits;
+    const chars = verifyContentCharacters(tx.post.content);
+    if (!chars.valid) return chars;
+  }
   return { valid: true };
 }
 
@@ -703,7 +647,6 @@ const BLOCK_HEADER_FIELD_ERROR: Record<HeaderField, string> = {
   protocolVersion: 'Ordering block header missing protocolVersion',
   height: 'Ordering block invalid height',
   prevBlockHash: 'Ordering block header missing or invalid prevBlockHash',
-  subBlockRoot: 'Ordering block header missing subBlockRoot',
   utxoTxRoot: 'Ordering block header missing utxoTxRoot',
   stateRoot: 'Ordering block header missing or invalid stateRoot',
   validatorId: 'Ordering block header missing or invalid validatorId',
@@ -726,69 +669,17 @@ export function verifyOrderingBlockStructure(
   if (headerFailure) {
     return { valid: false, error: BLOCK_HEADER_FIELD_ERROR[headerFailure.field] };
   }
-  // `subBlockEntries`' presence check. There is no companion `subBlockRefs`
-  // check because the struct carries no such field: the committed topology is
-  // `subBlockEntries` and `pruneEntries` alone (TYPES_INTERFACE → Layout —
-  // Block). The `?.` is load-bearing — it makes a block with no `subBlockTree`
-  // at all a stated rejection here rather than a TypeError in the loop below.
-  // The message follows `pruneEntries`' below rather than inventing a phrasing.
-  if (!Array.isArray(block.subBlockTree?.subBlockEntries)) {
-    return { valid: false, error: 'Ordering block missing subBlockTree.subBlockEntries' };
-  }
-  // Validate each entry. All three fields are `b32` at the codec boundary —
-  // hex `string` in memory, raw bytes on the wire — so their domain is the hex
-  // alphabet, not a character count. A 64-character *non-hex* value has no
-  // encoding under a fixed-width writer and no sentinel to fall back on, so the
-  // writer throws (TYPES_INTERFACE → Totality).
-  //
-  // The count check is not the whole rule here, and the reachable path runs
-  // through the store rather than the preimage: `block-apply`'s entry loop takes
-  // `subBlockId = entry.postId` and calls `insertPostPlaceholder(subBlockId,
-  // entry.parentRefs)` for any confirmed sub-block whose content has not
-  // arrived. `insertPost` deliberately does not overwrite `parent_refs` when the
-  // real post lands later — its placeholder-upgrade branch says so — so the
-  // block's claim is what `rowToPost` → `computePostId` reads at feed-service
-  // and stump-engine, forever. Pinning here is what keeps that column inside
-  // the encodable domain.
-  for (const entry of block.subBlockTree.subBlockEntries) {
-    if (!isObject(entry)) {
-      return { valid: false, error: 'Ordering block subBlockEntry is not an object' };
-    }
-    if (!isHex32(entry.postId)) {
-      return { valid: false, error: 'Ordering block subBlockEntry has invalid postId' };
-    }
-    // `MAX_PARENT_REFS`, not a literal. Every enforcement site imports the
-    // constant — node's `verifyPost` and `verifyPostForRelay`, and
-    // `verifyParentRefsCount` above. A literal here would pin this path — the
-    // one that feeds `insertPostPlaceholder` — to whatever the constant read
-    // when it was written, while the post path tracked the constant itself.
-    if (!Array.isArray(entry.parentRefs) || entry.parentRefs.length > MAX_PARENT_REFS) {
-      return { valid: false, error: 'Ordering block subBlockEntry has invalid parentRefs' };
-    }
-    for (const ref of entry.parentRefs) {
-      if (!isHex32(ref)) {
-        return {
-          valid: false,
-          error: 'Ordering block subBlockEntry parentRef must be 64 lowercase hex characters',
-        };
-      }
-    }
-    // Structure only: `author` is checked for shape here, not truth. Binding it
-    // to the real post and to prune authorization is stateful (audit H-3) and
-    // lives in @dagsocial/node.
-    if (!isHex32(entry.author)) {
-      return { valid: false, error: 'Ordering block subBlockEntry has invalid author' };
-    }
-  }
   // Prune entries. Every byte field is checked with `isBytes`, not a `.length`
   // read: a CBOR payload puts any type in any field, and a 32-char string or a
   // `{length: 32}` object satisfies a length check while throwing in the
   // `Buffer.from` / `createHash().update()` these fields reach at block apply.
   // Type is the only property that makes those calls safe.
-  if (!Array.isArray(block.subBlockTree.pruneEntries)) {
-    return { valid: false, error: 'Ordering block missing subBlockTree.pruneEntries' };
+  // The `?.` is load-bearing — it makes a block with no `utxoTxTree` at all a
+  // stated rejection here rather than a TypeError in the loop below.
+  if (!Array.isArray(block.utxoTxTree?.pruneEntries)) {
+    return { valid: false, error: 'Ordering block missing utxoTxTree.pruneEntries' };
   }
-  for (const entry of block.subBlockTree.pruneEntries) {
+  for (const entry of block.utxoTxTree.pruneEntries) {
     if (!isObject(entry)) {
       return { valid: false, error: 'Ordering block pruneEntry is not an object' };
     }

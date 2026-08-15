@@ -4,15 +4,13 @@ import {
   seedProvenance,
   signTransaction,
   txToJson,
-  uid,
-} from '../helpers.js';
+  uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { createHash, generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, getPostRaw, queryPosts, getAncestors, getSubtree } from '../../src/store/posts.js';
-import { consumeChallenge, getActiveChallenge } from '../../src/store/challenges.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -24,7 +22,7 @@ import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/ide
 import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
-import { insertSubBlock as insertMempoolSubBlock, insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
+import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import {
@@ -63,13 +61,11 @@ async function request(
     const db = getDb();
     const deps = {
       insertPost,
-      consumeChallenge,
       getPost,
       getPostRaw,
       queryPosts,
       encodePost,
       verifyPost: overrides?.verifyPost ?? verifyPost,
-      getActiveChallenge,
       getKarmaBoxes,
       getKarmaBox,
       getLikeRecordCount,
@@ -77,7 +73,6 @@ async function request(
       getAncestors,
       getSubtree,
       getCurrentHeight,
-      insertMempoolSubBlock,
       insertUtxoTx,
       validateTx: (tx: UtxoTransaction, height: number) => {
         return validateTx(
@@ -173,34 +168,35 @@ describe('posts routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('POST /posts with invalid hex returns 400', async () => {
+  it('POST /posts with an invalid hex author returns 400', async () => {
     const res = await request('/', 'POST', {
-      content: 'test',
-      author: 'not-hex!!@@',
-      parentRefs: [],
-      challenge: 'not-hex!!@@',
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: Date.now(),
-      signature: 'ff'.repeat(64),
+      tx: {
+        inputs: ['11'.repeat(32)],
+        outputs: [],
+        signatures: {},
+        protocolVersion: 1,
+        post: {
+          content: 'test',
+          author: 'not-hex!!@@',
+          parentRefs: [],
+          protocolVersion: 1,
+          timestamp: Date.now(),
+        },
+      },
     });
     expect(res.status).toBe(400);
   });
 
-  it('POST /posts with no challenge returns 400', async () => {
-    // Create identity but no challenge
-    const kp = generateKeyPair();
-    const userId = kp.publicKey;
-
+  it('POST /posts with a transaction carrying no post returns 400', async () => {
+    // The biconditional's request-shape half: a bare transaction is not a post
+    // submission, and the route says so rather than inventing an empty payload.
     const res = await request('/', 'POST', {
-      content: 'test',
-      author: userId,
-      parentRefs: [],
-      challenge: 'aa'.repeat(32),
-      powNonce: 0,
-      protocolVersion: 1,
-      timestamp: Date.now(),
-      signature: 'bb'.repeat(64),
+      tx: {
+        inputs: ['11'.repeat(32)],
+        outputs: [],
+        signatures: {},
+        protocolVersion: 1,
+      },
     });
     expect(res.status).toBe(400);
   });
@@ -233,8 +229,6 @@ describe('posts routes', () => {
 
     // Setup: challenge
     const challengeBytes = new Uint8Array(Buffer.from('cc'.repeat(32), 'hex'));
-    const { createChallenge } = await import('../../src/store/challenges.js');
-    createChallenge(userId, challengeBytes, 9999);
 
     const timestamp = Date.now();
 
@@ -247,81 +241,59 @@ describe('posts routes', () => {
     }, 1);
     const newKarmaId = newKarma.id;
 
-    // The lock names the post it locks, computed here from the very fields
-    // posted below. Nothing downstream fills a blank in: `targetPostId` is
-    // `b32`, so an empty string has no encoding at all and a lock naming *no
-    // post* cannot be built. A client genuinely can compute this — the post id
-    // is a function of fields it already holds, which is the whole reason the
-    // lock can be submitted in the same batch as the post.
-    const targetPostId = computePostId({
-      content: 'hello mempool',
-      author: userId,
-      parentRefs: [],
-      challenge: challengeBytes,
-      powNonce: 42,
-      protocolVersion: PROTOCOL_VERSION,
-      timestamp,
-      signature: new Uint8Array(64),
-    });
-
+    // ⛔ The lock names NO post. `targetPostId` is gone from `PostLockBox`
+    // because a post's id comes from the transaction that creates the lock — the
+    // field would have to be known before the `TxId` that produces it
+    // (TYPES_INTERFACE → PostLockBox). The lock's target is the post riding the
+    // same transaction, and the store indexes it at apply.
     const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: userId,
-      targetPostId,
       guard: 'block_apply',
     };
 
-    const challengeHex = Buffer.from(challengeBytes).toString('hex');
-
-    const karmaLockTx: UtxoTransaction = {
-      inputs: [karmaBoxId],
-      outputs: [
-        newKarma,
-        postLockBox,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(karmaLockTx, privKeyObj, userIdHex);
-    const karmaLockTxJson = txToJson(karmaLockTx);
-
-    // Mock verifyPost to return valid
-    const mockVerify = () => ({ valid: true as const });
-
-    const res = await request('/', 'POST', {
+    const post = {
       content: 'hello mempool',
       author: userIdHex,
-      parentRefs: [],
-      challenge: challengeHex,
-      powNonce: 42,
+      parentRefs: [] as string[],
       protocolVersion: PROTOCOL_VERSION,
       timestamp,
-      signature: 'dd'.repeat(64),
-      karmaLockTx: karmaLockTxJson,
-    }, { verifyPost: mockVerify as typeof verifyPost });
+    };
+
+    const postTx: UtxoTransaction = {
+      inputs: [karmaBoxId],
+      outputs: [newKarma, postLockBox],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: { ...post, author: userId },
+    };
+    signTransaction(postTx, privKeyObj, userIdHex);
+    const txJson = { ...txToJson(postTx), post };
+
+    const mockVerify = () => ({ valid: true as const });
+
+    const res = await request('/', 'POST', { tx: txJson },
+      { verifyPost: mockVerify as typeof verifyPost });
 
     expect(res.status).toBe(200);
 
     const body = res.data as Record<string, unknown>;
     expect(body).toHaveProperty('postId');
     expect(body.status).toBe('pending');
-    expect(body).toHaveProperty('expiresAtHeight');
     expect(typeof body.expiresAtHeight).toBe('number');
 
-    // Verify mempool has both entries with matching batchId
+    // ⛔ ONE mempool entry, not two. The `batchId` that regrouped a post and its
+    // lock is gone with the pair — asserting the COUNT is what catches a
+    // reintroduced second insert.
     const entries = getPendingEntries(100);
-    const subBlockEntry = entries.find((e) => e.entryType === 'subblock');
-    const utxoEntry = entries.find((e) => e.entryType === 'utxo_tx');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.entryType).toBe('utxo_tx');
+    expect(entries[0]!.expiresAtHeight).toBe(body.expiresAtHeight);
 
-    expect(subBlockEntry).toBeDefined();
-    expect(utxoEntry).toBeDefined();
-    expect(subBlockEntry!.batchId).toBe(body.postId);
-    expect(utxoEntry!.batchId).toBe(body.postId);
-    expect(subBlockEntry!.batchId).toBe(utxoEntry!.batchId);
-    expect(subBlockEntry!.expiresAtHeight).toBe(body.expiresAtHeight);
-    expect(utxoEntry!.expiresAtHeight).toBe(body.expiresAtHeight);
+    // …and the id the route reports is the one the transaction gives it.
+    expect(body.postId).toBe(computePostId(body.txId as string, 0));
   });
 
   // -----------------------------------------------------------------------
@@ -369,15 +341,12 @@ describe('posts routes', () => {
         content: 'doomed root',
         author: stumpAuthor,
         parentRefs: [] as string[],
-        challenge: new Uint8Array(32).fill(3),
-        powNonce: 0,
         protocolVersion: PROTOCOL_VERSION,
         timestamp: 1_700_000_000_000,
-        signature: new Uint8Array(64).fill(4),
       };
       const { computePostId } = await import('@dagsocial/types');
-      prunedRootId = computePostId(root);
-      insertPost(root, encodePost(root));
+      prunedRootId = fixturePostId(root);
+      insertPost(fixturePostId(root), root, encodePost(root));
       insertStump({ rootPostHash: prunedRootId, authorId: stumpAuthor, ...stumpScalars });
       pruneSubtree(prunedRootId);
     });

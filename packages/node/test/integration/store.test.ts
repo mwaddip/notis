@@ -1,4 +1,4 @@
-import { uid } from '../helpers.js';
+import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
@@ -28,11 +28,8 @@ function makePost(overrides: Partial<Post> = {}): Post {
     content: 'integration test post',
     author: uid('author-integration'),
     parentRefs: [],
-    challenge: bytes(32),
-    powNonce: 42,
     protocolVersion: 1,
     timestamp: Date.now(),
-    signature: bytes(64),
     ...overrides,
   };
 }
@@ -63,8 +60,8 @@ describe('posts store (integration)', () => {
 
   it('inserts and retrieves a post via getPost', () => {
     const post = makePost({ content: 'integration round-trip' });
-    insertPost(post, bytes(16));
-    const id = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(16));
+    const id = fixturePostId(post);
     const retrieved = getPost(id);
     expect(retrieved).not.toBeNull();
     const p = retrieved as Post;
@@ -76,8 +73,8 @@ describe('posts store (integration)', () => {
   it('queryPosts returns live posts ordered newest first', () => {
     const post1 = makePost({ content: 'older', timestamp: 1000 });
     const post2 = makePost({ content: 'newer', timestamp: 2000 });
-    insertPost(post1, bytes(8));
-    insertPost(post2, bytes(8));
+    insertPost(fixturePostId(post1), post1, bytes(8));
+    insertPost(fixturePostId(post2), post2, bytes(8));
 
     const results = queryPosts({});
     const contents = results.map((p) => p.content);
@@ -91,8 +88,8 @@ describe('posts store (integration)', () => {
     const alice = uid('alice-int-' + suffix);
     const bob = uid('bob-int-' + suffix);
 
-    insertPost(makePost({ author: alice, content: 'alice post' }), bytes(8));
-    insertPost(makePost({ author: bob, content: 'bob post' }), bytes(8));
+    insertPost(fixturePostId(makePost({ author: alice, content: 'alice post' })), makePost({ author: alice, content: 'alice post' }), bytes(8));
+    insertPost(fixturePostId(makePost({ author: bob, content: 'bob post' })), makePost({ author: bob, content: 'bob post' }), bytes(8));
 
     const aliceResults = queryPosts({ author: alice });
     expect(aliceResults.every((p) => Buffer.from(p.author).equals(Buffer.from(alice)))).toBe(true);
@@ -103,12 +100,12 @@ describe('posts store (integration)', () => {
 
   it('post lifecycle: pending -> confirm -> not in pending', () => {
     const post = makePost({ content: 'lifecycle-' + Date.now() });
-    insertPost(post, bytes(8));
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(8));
+    const postId = fixturePostId(post);
 
     // Should be pending
     const pending = getPendingPosts(100);
-    const pendingIds = pending.map((p) => computePostId(p));
+    const pendingIds = pending.map((p) => fixturePostId(p));
     expect(pendingIds).toContain(postId);
 
     // Confirm
@@ -116,7 +113,7 @@ describe('posts store (integration)', () => {
 
     // No longer pending
     const afterConfirm = getPendingPosts(100);
-    const afterIds = afterConfirm.map((p) => computePostId(p));
+    const afterIds = afterConfirm.map((p) => fixturePostId(p));
     expect(afterIds).not.toContain(postId);
   });
 
@@ -128,8 +125,8 @@ describe('posts store (integration)', () => {
     const refs = ['a1'.repeat(24) + suffix, 'b2'.repeat(24) + suffix];
 
     const post = makePost({ parentRefs: refs });
-    insertPost(post, bytes(8));
-    const postId = computePostId(post);
+    insertPost(fixturePostId(post), post, bytes(8));
+    const postId = fixturePostId(post);
 
     expect(getParentRefs(postId)).toEqual(refs);
   });
@@ -137,17 +134,17 @@ describe('posts store (integration)', () => {
   it('getSubtree returns all descendants across levels', () => {
     // Root
     const root = makePost({ content: 'tree-root', parentRefs: [] });
-    insertPost(root, bytes(8));
-    const rootId = computePostId(root);
+    insertPost(fixturePostId(root), root, bytes(8));
+    const rootId = fixturePostId(root);
 
     // Child
     const child = makePost({ content: 'tree-child', parentRefs: [rootId] });
-    insertPost(child, bytes(8));
-    const childId = computePostId(child);
+    insertPost(fixturePostId(child), child, bytes(8));
+    const childId = fixturePostId(child);
 
     // Grandchild
     const grandchild = makePost({ content: 'tree-grandchild', parentRefs: [childId] });
-    insertPost(grandchild, bytes(8));
+    insertPost(fixturePostId(grandchild), grandchild, bytes(8));
 
     const subtree = getSubtree(rootId);
     const contents = subtree.map((p) => p.content).sort();
@@ -156,11 +153,11 @@ describe('posts store (integration)', () => {
 
   it('pruneSubtree marks posts as pruned and inserts stump', () => {
     const root = makePost({ content: 'prune-root', parentRefs: [] });
-    insertPost(root, bytes(8));
-    const rootId = computePostId(root);
+    insertPost(fixturePostId(root), root, bytes(8));
+    const rootId = fixturePostId(root);
 
     const child = makePost({ content: 'prune-child', parentRefs: [rootId] });
-    insertPost(child, bytes(8));
+    insertPost(fixturePostId(child), child, bytes(8));
 
     const stump = makeStump(rootId, {
       replyCount: 1,

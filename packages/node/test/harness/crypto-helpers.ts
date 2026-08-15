@@ -2,13 +2,10 @@
 import { createHash, sign as cryptoSign, type KeyObject } from 'node:crypto';
 import {
   computeTxId,
-  postPowPreimage,
-  signingHash,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
 } from '@dagsocial/types';
 import type { Post, UtxoTransaction } from '@dagsocial/types';
-import { verifyPoW } from '../../src/services/pow.js';
 
 export const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 export const unhex = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'hex'));
@@ -30,44 +27,14 @@ function preimagePost(
     content,
     author,
     parentRefs: parents,
-    challenge: chal,
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: ts,
-    signature: new Uint8Array(64),
   };
 }
 
-/**
- * PoW preimage — delegates to @dagsocial/types rather than rebuilding the
- * canonical encoding (TYPES_INTERFACE → Canonical field encoding). A local copy
- * here would let the harness mine against bytes the node does not verify.
- */
-export function powInput(
-  content: string, author: Uint8Array, parents: string[],
-  chal: Uint8Array, ts: number,
-): Uint8Array {
-  return postPowPreimage(preimagePost(content, author, parents, chal, ts));
-}
-
-/**
- * Mines through the node's own predicate rather than re-deriving the PoW rule —
- * same discipline as `powInput` above, applied to the nonce tail it appends.
- */
-export function solve(pi: Uint8Array, target: number): number {
-  for (let n = 0; n < 100_000_000; n++) {
-    if (verifyPoW(pi, n, target)) return n;
-  }
-  throw new Error('PoW timeout');
-}
-
-export function signPost(
-  content: string, author: Uint8Array, parents: string[],
-  chal: Uint8Array, ts: number, userKey: KeyObject,
-): string {
-  const h = signingHash(preimagePost(content, author, parents, chal, ts));
-  return hex(new Uint8Array(cryptoSign(null, h, userKey)));
-}
+// Reserved, never to be reused: `powInput`, `solve`, `signPost`. There is no
+// post PoW and no post signature — a post is the payload of the transaction that
+// locks its karma, and `signTx` below is the only signing the harness does.
 
 export function signTx(tx: UtxoTransaction, userKey: KeyObject, pubHex: string): void {
   const txId = computeTxId(tx);
@@ -110,10 +77,15 @@ export function txToApi(tx: UtxoTransaction): Record<string, unknown> {
  * value and the node rejects it. Karma is only burned by block-application
  * paths (decay, bond burn), never inside a user tx.
  */
+/**
+ * The post transaction: karma in, karma change + `PostLockBox` out, and the post
+ * payload riding inside. The lock names no post — a post's id comes from this
+ * very transaction (TYPES_INTERFACE → PostLockBox).
+ */
 export function postLockTx(
   boxes: { boxId: string; value: string }[],
   lockAmount: bigint,
-  targetPostId: string,
+  post: Post,
   author: Uint8Array,
 ): UtxoTransaction {
   // API box values arrive as decimal strings (bigint on the wire).
@@ -127,7 +99,7 @@ export function postLockTx(
       },
       {
         boxType: 'post_lock', value: lockAmount, originalValue: lockAmount,
-        owner: author, targetPostId, guard: 'block_apply',
+        owner: author, guard: 'block_apply',
       },
     ],
     signatures: {},

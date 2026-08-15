@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { computePowHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
-import { subBlockIdsOf } from '../services/sub-block-ids.js';
+import { postIdsOf } from '../services/block-posts.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -131,18 +131,16 @@ export function createRouter(deps: MiningDeps): Router {
         protocolVersion: tpl.header.protocolVersion,
         height: tpl.header.height,
         prevBlockHash: tpl.header.prevBlockHash,
-        subBlockRoot: tpl.header.subBlockRoot,
         utxoTxRoot: tpl.header.utxoTxRoot,
         stateRoot: tpl.header.stateRoot,
         validatorId: Buffer.from(tpl.header.validatorId).toString('hex'),
         powTargetBits: tpl.header.powTargetBits,
         createdAt: tpl.header.createdAt,
       },
-      // Response shape unchanged; the value now comes from the committed
-      // entries rather than the uncommitted field the template carries.
-      subBlockRefs: subBlockIdsOf(tpl.subBlockTree),
-      subBlockEntries: tpl.subBlockTree.subBlockEntries,
-      pruneEntries: tpl.subBlockTree.pruneEntries,
+      // The ids of the posts this template creates, derived from its
+      // post-bearing transactions.
+      postIds: postIdsOf(tpl),
+      pruneEntries: tpl.utxoTxTree.pruneEntries,
       utxoTxIds: tpl.utxoTxTree.utxoTxIds,
       coinbaseOutputs: tpl.utxoTxTree.coinbaseOutputs.map((o) => ({
         owner: Buffer.from(o.owner).toString('hex'),

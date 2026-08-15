@@ -1,21 +1,15 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   generateKeyPair,
-  computePostId,
-  postPowPreimage,
-  signingHash,
   PROTOCOL_VERSION,
   CREDIT_MINER_REWARD_DELAY,
 } from '@dagsocial/types';
-import type { Post, SubBlock, OrderingBlock, BlockHeader } from '@dagsocial/types';
+import type { Post, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
 import {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
@@ -30,7 +24,6 @@ function makeConfig(bootstrapPeers: string[] = []): NetConfig {
     // and what must not).
     magic: 0x54444147,
     // Matches the 20-bit target the fixtures below are mined at.
-    postPowTargetBits: 20,
     bootstrapPeers,
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,
@@ -42,36 +35,16 @@ function makeConfig(bootstrapPeers: string[] = []): NetConfig {
 }
 
 const validators: NetValidators = {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 };
 
 // Generous timeout — libp2p needs time for peer discovery and connection negotiation
 const TIMEOUT = 25000;
-
-/**
- * Brute-force a PoW nonce with the predicate the relay gate itself calls —
- * `verifyPoW`, from `runStage1SubBlock`. 20 bits target (~1M iterations worst
- * case, typically a few hundred ms in Node.js).
- *
- * The nonce tail's encoding belongs to `@dagsocial/types` and is pinned there
- * by golden vectors; a harness that re-derives a consensus rule is a second
- * implementation of it. Same pattern as this suite's Stage-1 fixtures in
- * `gossip.test.ts`.
- */
-function solvePoW(input: Uint8Array, targetBits: number): number {
-  for (let nonce = 0; nonce < 100_000_000; nonce++) {
-    if (verifyPoW(input, nonce, targetBits)) return nonce;
-  }
-  throw new Error('PoW solution not found within nonce limit');
-}
 
 // Block fixtures for the headers exchange. Copies of `sync-store.test.ts`'s
 // file-local pair: the headers path needs whole blocks, and a shared fixture
@@ -81,7 +54,6 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     protocolVersion: PROTOCOL_VERSION,
     height: 1,
     prevBlockHash: '00'.repeat(32),
-    subBlockRoot: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
@@ -95,10 +67,10 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeBlock(header: BlockHeader): OrderingBlock {
   return {
     header,
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [
         {
           value: 100n,
@@ -166,54 +138,37 @@ describe('Two-node integration', () => {
     await new Promise((r) => setTimeout(r, 3000));
 
     // Register handler on B
-    let receivedSubBlock: SubBlock | null = null;
-    nodeB.onSubBlock((sb) => {
-      receivedSubBlock = sb;
+    let receivedTx: UtxoTransaction | null = null;
+    nodeB.onTx((tx) => {
+      receivedTx = tx;
     });
 
-    // Create a valid sub-block and broadcast from A
+    // A post is a transaction, so it propagates on the tx topic. B's relay gate
+    // is membership, so B must know the author holds karma — mined PoW is gone.
     const kp = generateKeyPair();
-    const postBase: Omit<Post, 'powNonce'> = {
+    const post: Post = {
       content: 'hello from integration test',
       author: kp.publicKey,
       parentRefs: [],
-      challenge: new Uint8Array(32),
       protocolVersion: 1,
       timestamp: Date.now(),
-      signature: new Uint8Array(64),
     };
-    // Compute valid PoW nonce (20-bit target, Stage 1 validates it).
-    // The preimage comes from @dagsocial/types — gossip's Stage-1 check calls
-    // postPowPreimage(post), so mining against a local copy of the encoding
-    // silently stops matching the moment the encoding moves (audit M-1).
-    // powNonce is excluded from the preimage, so the placeholder is irrelevant.
-    const powInput = postPowPreimage({ ...postBase, powNonce: 0 });
-    const nonce = solvePoW(powInput, 20);
-    const post: Post = { ...postBase, powNonce: nonce };
-    // Stage 1 now verifies the post signature before relay (NET_INTERFACE
-    // Stage-1 de-drift) — an unsigned fixture dies at B's topic validator.
-    // signingHash excludes powNonce and signature, so signing after mining
-    // is sound.
-    post.signature = new Uint8Array(
-      sign(null, signingHash(post), createPrivateKey({
-        key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8',
-      })),
-    );
-    const sb: SubBlock = {
-      subBlockId: computePostId(post),
-      post,
-      producerId: post.author,
+    const tx: UtxoTransaction = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, owner: kp.publicKey } as never],
+      signatures: {},
       protocolVersion: 1,
+      post,
     };
+    nodeB.addKarmaMember(Buffer.from(kp.publicKey).toString('hex'));
 
-    await nodeA.broadcastSubBlock(sb);
+    await nodeA.broadcastTx(tx);
 
     // Wait for gossip propagation
     await new Promise((r) => setTimeout(r, 4000));
 
-    expect(receivedSubBlock).not.toBeNull();
-    expect(receivedSubBlock!.subBlockId).toBe(sb.subBlockId);
-    expect(receivedSubBlock!.post.content).toBe('hello from integration test');
+    expect(receivedTx).not.toBeNull();
+    expect(receivedTx!.post!.content).toBe('hello from integration test');
   }, TIMEOUT);
 
   it('ordering block propagates from A to B', async () => {
@@ -238,7 +193,6 @@ describe('Two-node integration', () => {
       protocolVersion: 1,
       height: 1,
       prevBlockHash: '00'.repeat(32),
-      subBlockRoot: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       validatorId,
@@ -253,14 +207,10 @@ describe('Two-node integration', () => {
     expect(blockNonce).toBeGreaterThanOrEqual(0);
     const block: OrderingBlock = {
       header: { ...headerBase, powNonce: blockNonce },
-      subBlockTree: {
-        subBlockEntries: [],
-        pruneEntries: [],
-      },
       utxoTxTree: {
         utxoTxIds: [],
         utxoTxs: [],
-        coinbaseOutputs: [],
+        pruneEntries: [], coinbaseOutputs: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -283,39 +233,35 @@ describe('Two-node integration', () => {
     await new Promise((r) => setTimeout(r, 3000));
 
     let received = false;
-    nodeB.onSubBlock(() => {
+    nodeB.onTx(() => {
       received = true;
     });
 
-    // Broadcast an invalid sub-block (empty content — fails ContentLimits).
-    // This fixture passes the structure gate and dies at ContentLimits, so the
-    // rejection fires for its intended reason.
+    // Broadcast an invalid post transaction (empty content — fails
+    // ContentLimits). The fixture passes the structure gate's earlier clauses
+    // and dies at content, so the rejection fires for its intended reason.
     //
-    // ⚠ **Every field except `content` carries its real shape, and that is
-    // load-bearing.** Placeholder ids like `subBlockId: 'bad'` or
-    // `author: 'user1'` have no encoding under fixed-width writers, so
-    // `broadcastSubBlock` would throw inside the *test* before anything is
-    // published — leaving it asserting that nothing arrived because nothing was
-    // ever sent. Empty content is kept as the only defect precisely because
-    // encoding is not validation: it still crosses the wire and is still
-    // rejected at Stage 1, which is what the test is for.
-    const invalidSb = {
-      subBlockId: 'ba'.repeat(32),
+    // ⚠ **The author IS admitted to B's karma set, and that is load-bearing.**
+    // Without it this test would pass because membership dropped the message,
+    // not because content did — the vacuous version of itself.
+    const author = new Uint8Array(32).fill(0xa1);
+    nodeB.addKarmaMember(Buffer.from(author).toString('hex'));
+
+    const invalidTx = {
+      inputs: ['ba'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, owner: author }],
+      signatures: {},
+      protocolVersion: 1,
       post: {
         content: '',
-        author: new Uint8Array(32).fill(0xa1),
+        author,
         parentRefs: [],
-        challenge: new Uint8Array(32).fill(0xa2),
-        powNonce: 0,
         protocolVersion: 1,
         timestamp: 1_722_470_400_000,
-        signature: new Uint8Array(64),
       },
-      producerId: new Uint8Array(32).fill(0xa1),
-      protocolVersion: 1,
-    } as unknown as SubBlock;
+    } as unknown as UtxoTransaction;
 
-    await nodeA.broadcastSubBlock(invalidSb);
+    await nodeA.broadcastTx(invalidTx);
     await new Promise((r) => setTimeout(r, 4000));
 
     expect(received).toBe(false);

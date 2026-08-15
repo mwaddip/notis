@@ -5,7 +5,7 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { computePostId, encodePost, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { makePost, makeTestConfig, makeTestIdentity, mineNextBlock } from '../helpers.js';
+import { makePost, makeTestConfig, makeTestIdentity, mineNextBlock, fixturePostId, seedPostTx } from '../helpers.js';
 
 /**
  * Genesis is **state, not a block**, and this suite pins the half of that claim
@@ -294,9 +294,10 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
 
-    const post = makePost(author.userId, 'past genesis');
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(computePostId(post), 1000);
+    // A block with a post in it — the tx carries the post, so the block that
+    // mines it is what stores and confirms it.
+    const { tx: postTx } = await seedPostTx(author, 'past genesis');
+    mempool.insertUtxoTx(postTx, 1000);
     expect(await mineNextBlock(bc)).not.toBeNull();
 
     // Erase the flag, which leaves exactly the store an upgrade produces: the
@@ -357,9 +358,8 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
       const author = makeTestIdentity();
       const posts = await import('../../src/store/posts.js');
       const mempool = await import('../../src/store/mempool.js');
-      const post = makePost(author.userId, 'past genesis');
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(computePostId(post), 1000);
+      const { tx: postTx } = await seedPostTx(author, 'past genesis');
+      mempool.insertUtxoTx(postTx, 1000);
       expect(await mineNextBlock(bc)).not.toBeNull();
 
       const keypair = s.system.getSystemKeypair()!;
@@ -511,9 +511,8 @@ describe('assertGenesisRoot', () => {
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
     try {
-      const post = makePost(author.userId, 'past genesis');
-      posts.insertPost(post, encodePost(post));
-      mempool.insertSubBlock(computePostId(post), 1000);
+      const { tx: postTx } = await seedPostTx(author, 'past genesis');
+      mempool.insertUtxoTx(postTx, 1000);
       expect(await mineNextBlock(bc)).not.toBeNull();
 
       expect(rootOf(s)).not.toBe(genesisRoot);

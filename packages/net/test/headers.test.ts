@@ -11,13 +11,10 @@ import {
 } from '@dagsocial/types';
 import {
   blockHash,
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
@@ -97,7 +94,6 @@ function makeMockHeader(
     protocolVersion: PROTOCOL_VERSION,
     height,
     prevBlockHash,
-    subBlockRoot: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
@@ -113,10 +109,10 @@ function makeMockOrderingBlock(
 ): OrderingBlock {
   return {
     header: makeMockHeader(height, prevBlockHash),
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [
         // The coinbase is inert payload for this suite — every assertion is
         // about heights, hashes and counts, and the block hash covers the
@@ -638,8 +634,7 @@ describe('serve: GetBlocks', () => {
     const returned = blocks![0]!;
     expect(returned.header.height).toBe(1);
     expect(returned.header.protocolVersion).toBe(PROTOCOL_VERSION);
-    expect(returned.subBlockTree.subBlockEntries).toEqual([]);
-    expect(returned.subBlockTree.pruneEntries).toEqual([]);
+    expect(returned.utxoTxTree.pruneEntries).toEqual([]);
     expect(returned.utxoTxTree.coinbaseOutputs.length).toBe(1);
     expect(returned.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
     expect(returned.validatorSignature).toBeInstanceOf(Uint8Array);
@@ -718,7 +713,6 @@ describe('chain query round-trip', () => {
 
 const registrationConfig: NetConfig = {
   magic: MAGIC,
-  postPowTargetBits: 20,
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
   maxPeers: 10,
@@ -729,13 +723,10 @@ const registrationConfig: NetConfig = {
 };
 
 const registrationValidators: NetValidators = {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 };

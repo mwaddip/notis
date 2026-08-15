@@ -9,13 +9,10 @@ import {
 } from '@dagsocial/types';
 import {
   blockHash,
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
@@ -46,7 +43,6 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     protocolVersion: PROTOCOL_VERSION,
     height: 1,
     prevBlockHash: '00'.repeat(32),
-    subBlockRoot: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
@@ -60,10 +56,10 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeBlock(header: BlockHeader): OrderingBlock {
   return {
     header,
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [
         {
           value: 100n,
@@ -78,13 +74,10 @@ function makeBlock(header: BlockHeader): OrderingBlock {
 }
 
 const validators: NetValidators = {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 };
@@ -334,7 +327,6 @@ describe('LazySyncStore.cumulativeWork', () => {
 
 const config: NetConfig = {
   magic: 0x54444147,
-  postPowTargetBits: 20,
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
   maxPeers: 10,

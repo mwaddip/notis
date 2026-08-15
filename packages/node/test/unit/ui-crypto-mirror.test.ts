@@ -1,3 +1,4 @@
+import { fixturePostId } from '../helpers.js';
 /**
  * TS ↔ JS mirror: the demo UI must encode posts, boxes and transactions
  * byte-identically to `@dagsocial/types` — TYPES_INTERFACE → Canonical field
@@ -30,11 +31,10 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
-  computePostId, signingHash, postPowPreimage, computeBoxId, computeTxId,
-  computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS, powNonceBytes,
-  PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE,
+  computePostId, postFieldBytes, computeBoxId, computeTxId,
+  computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS,
+  PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE, u32BE,
 } from '@dagsocial/types';
-import { verifyPoW } from '../../src/services/pow.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
@@ -51,8 +51,6 @@ const INDEX_HTML = fileURLToPath(new URL('../../public/index.html', import.meta.
 
 const GOLDEN_AUTHOR = new Uint8Array(32);
 for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
-const GOLDEN_CHALLENGE = new Uint8Array(32);
-for (let i = 0; i < 32; i++) GOLDEN_CHALLENGE[i] = 0x20 + i;
 
 /** A well-formed `b32` parent ref: 64 lowercase hex characters. */
 const GOLDEN_REF = '11'.repeat(32);
@@ -61,17 +59,22 @@ const GOLDEN_POST: Post = {
   content: 'dagsocial golden vector ✓',
   author: GOLDEN_AUTHOR,
   parentRefs: [GOLDEN_REF],
-  challenge: GOLDEN_CHALLENGE,
-  powNonce: 4294967296,     // 2^32 — five VLQ bytes, so the wide path is covered
   protocolVersion: 1,
   timestamp: 1767225600000, // > 2^32 — six VLQ bytes
-  signature: new Uint8Array(64).fill(0xcd),
 };
 
-const GOLDEN_SIGNING_HASH =
-  '3143d7a351cf2bb4cdbca49ba7aa994ce2e4fd1638a9322058d03fe87debc6b0';
-const GOLDEN_POST_ID =
-  'fefac701207339ba5953fdfe98ed6212f7ead3025dc6e718878dc465ca06e8b0';
+/** The txId a post id is derived from. Any 64-hex value; this one is distinctive. */
+const GOLDEN_POST_TX_ID = '7f'.repeat(32);
+
+/**
+ * The same payload as the page builds it: `author` is the identity's HEX, not
+ * bytes. Both forms encode to the same 32 bytes (`b32Either`), and this is the
+ * one that survives the page's own `JSON.stringify` → `jsonToTx` round trip.
+ */
+const GOLDEN_POST_HEX_AUTHOR = {
+  ...GOLDEN_POST,
+  author: Buffer.from(GOLDEN_AUTHOR).toString('hex'),
+} as unknown as Post;
 
 // ---------------------------------------------------------------------------
 // Golden box vectors — must stay identical to packages/types/test/utxo.test.ts
@@ -100,11 +103,11 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
+  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
 const GOLDEN_CREDIT_BOX_ID =
-  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
+  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
 const GOLDEN_UTXO_TX_ID =
-  '1377c556cc3dd835e4a51c9f0186afa749cf0904a415bcea2c08a7f6fcc4c893';
+  '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -144,13 +147,13 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
+  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
+  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  '43bd05c2fe285b1dc96359c27735ebfded27681136f6f91cc2d9d30822fe14f1';
+  '4bddba401e9efed7ee9e846bcc662a621f6a0528b8a4d79de12d888ccf805817';
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '368406eeb2cd989ed05a763707b6b6132ffaaa738f890f8ed4cb4bb2dc29b89e';
+  '69e4e8f0d241b3db914458db37187dc4c4a377c8fbd6bd867b6678a4a8c54bcb';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -197,7 +200,7 @@ const GOLDEN_BOND_BOX: BondBox = {
 
 const GOLDEN_POST_LOCK_BOX: PostLockBox = {
   boxType: 'post_lock', value: 8n,
-  originalValue: 10n, owner: GOLDEN_AUTHOR, targetPostId: GOLDEN_POST_ID,
+  originalValue: 10n, owner: GOLDEN_AUTHOR,
   guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 2,
 };
@@ -266,12 +269,11 @@ const BYTE_PRIMITIVES = [
   'boolByte', 'enum8Tag', 'b32Bytes', 'b32Hex', 'b32Either',
 ] as const;
 
-/** The rest of what the mirror evaluates: helpers, the id preimages, the PoW pair. */
+/** The rest of what the mirror evaluates: helpers and the id preimages. */
 const MIRRORED_OTHER = [
   'buf2hex', 'hex2buf', 'concatUint8Arrays',
   'isEncodableVlqU', 'isEncodableVlqS',
-  'postFieldBytes', 'buildPowInput',
-  'powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget',
+  'postFieldBytes', 'u32BE',
   'computePostId', 'canonicalBoxBytes', 'boxTypeFields',
   'computeBoxId', 'computeCandidateBoxId', 'computeTxId',
   'jsonBigint',
@@ -287,7 +289,7 @@ const MIRRORED_OTHER = [
  */
 const MIRRORED_BUILDERS = [
   'selectBoxes', 'buildVouchTx', 'buildUnvouchTx',
-  'buildKarmaLockTx', 'buildLikeTx', 'predictOutputBoxId',
+  'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
   'recordPendingKarmaChange', 'applyPendingKarmaChange',
 ] as const;
 
@@ -297,7 +299,7 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 
 /** Consts the mirror lifts. A top-level one may itself construct bytes. */
 const MIRRORED_CONSTS = [
-  'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'BOX_TYPE_TAGS',
+  'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
   'pendingKarmaChange',
@@ -305,13 +307,12 @@ const MIRRORED_CONSTS = [
 
 /** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
 const RETURNED = [
-  'postFieldBytes', 'buildPowInput', 'computePostId',
-  'powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget',
+  'postFieldBytes', 'computePostId', 'u32BE',
   'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'boolByte', 'enum8Tag',
   'b32Bytes', 'b32Hex',
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
   'jsonBigint', 'buildVouchTx', 'buildUnvouchTx',
-  'buildKarmaLockTx', 'buildLikeTx', 'predictOutputBoxId',
+  'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
   'recordPendingKarmaChange', 'applyPendingKarmaChange', 'pendingKarmaChange',
   'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
 ] as const;
@@ -321,15 +322,11 @@ interface KarmaView { total: bigint; boxes: Array<{ boxId: string; value: bigint
 
 interface UiCrypto {
   postFieldBytes: (
-    content: string, author: Uint8Array, parentRefs: string[],
-    challenge: Uint8Array, protocolVersion: number, timestamp: number,
+    content: string, author: Uint8Array | string, parentRefs: string[],
+    protocolVersion: number, timestamp: number,
   ) => Uint8Array;
-  buildPowInput: UiCrypto['postFieldBytes'];
-  computePostId: (post: Record<string, unknown>) => string;
-  powNonceTail: (nonce: number) => Uint8Array;
-  postPowHash: (powInput: Uint8Array, nonce: number) => Uint8Array;
-  powTarget: (targetBits: number) => Uint8Array | null;
-  meetsPowTarget: (hash: Uint8Array, target: Uint8Array) => boolean;
+  computePostId: (txId: string, index: number) => string;
+  u32BE: (n: number) => Uint8Array;
   vlqU: (n: number) => Uint8Array;
   vlqS: (n: number) => Uint8Array;
   vlqU64: (v: bigint) => Uint8Array;
@@ -354,10 +351,10 @@ interface UiCrypto {
     pubKeyHex: string,
   ) => Record<string, unknown>;
   buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
-  buildKarmaLockTx: (
+  buildPostTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     lockAmount: bigint,
-    targetPostId: string,
+    post: Post,
     pubKeyHex: string,
   ) => UtxoTransaction;
   buildLikeTx: (
@@ -397,13 +394,11 @@ function loadUiCrypto(): UiCrypto {
 
 const ui = loadUiCrypto();
 
-/** What the UI's signPost() hashes: blake2b(buildSignHashInput(...)).slice(0,32). */
-function uiSigningHash(post: Post): string {
-  const input = ui.buildPowInput(
-    post.content, post.author, post.parentRefs,
-    post.challenge, post.protocolVersion, post.timestamp,
+/** The UI's payload encoder, called the way the page calls it. */
+function uiPayload(post: Post): Uint8Array {
+  return ui.postFieldBytes(
+    post.content, post.author, post.parentRefs, post.protocolVersion, post.timestamp,
   );
-  return Buffer.from(blake2bShim(input, null, 64).slice(0, 32)).toString('hex');
 }
 
 const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
@@ -411,38 +406,35 @@ const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 // ---------------------------------------------------------------------------
 
 describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
-  it('the UI reproduces the frozen golden signingHash', () => {
-    expect(uiSigningHash(GOLDEN_POST)).toBe(GOLDEN_SIGNING_HASH);
+  it('the UI payload encoder is byte-identical to postFieldBytes', () => {
+    expect(hexOf(uiPayload(GOLDEN_POST))).toBe(hexOf(postFieldBytes(GOLDEN_POST)));
   });
 
-  it('the UI reproduces the frozen golden postId', () => {
-    expect(ui.computePostId(GOLDEN_POST as unknown as Record<string, unknown>))
-      .toBe(GOLDEN_POST_ID);
+  it('the UI derives a post id from (txId, index) exactly as types does', () => {
+    // ⛔ Both sides take the TRANSACTION, not the post. A mirror that still took
+    // a post would be reproducing an id the node can no longer produce.
+    expect(ui.computePostId(GOLDEN_POST_TX_ID, 0)).toBe(computePostId(GOLDEN_POST_TX_ID, 0));
+    expect(ui.computePostId(GOLDEN_POST_TX_ID, 1)).toBe(computePostId(GOLDEN_POST_TX_ID, 1));
+    expect(ui.computePostId(GOLDEN_POST_TX_ID, 0))
+      .not.toBe(ui.computePostId(GOLDEN_POST_TX_ID, 1));
   });
 
-  it('types reproduces the same frozen golden vector', () => {
-    // Pins both live implementations to the constants, not just to each other.
-    expect(signingHash(GOLDEN_POST).toString('hex')).toBe(GOLDEN_SIGNING_HASH);
-    expect(computePostId(GOLDEN_POST)).toBe(GOLDEN_POST_ID);
+  it('the UI derives a malformed index to the sentinel id rather than throwing', () => {
+    // The M-5 totality split, mirrored: `u32BE` sentinels on both sides, so a
+    // page handed a bad index shows a wrong id rather than breaking.
+    for (const bad of [NaN, -1, 1.5, 2 ** 40]) {
+      expect(ui.computePostId(GOLDEN_POST_TX_ID, bad))
+        .toBe(computePostId(GOLDEN_POST_TX_ID, bad));
+    }
   });
 
-  it('the UI PoW preimage is byte-identical to postPowPreimage', () => {
-    const uiBytes = ui.buildPowInput(
-      GOLDEN_POST.content, GOLDEN_POST.author, GOLDEN_POST.parentRefs,
-      GOLDEN_POST.challenge, GOLDEN_POST.protocolVersion, GOLDEN_POST.timestamp,
+  it('the UI accepts a hex-string author identically', () => {
+    // The posting flow passes the identity's hex straight through.
+    const asHex = ui.postFieldBytes(
+      GOLDEN_POST.content, Buffer.from(GOLDEN_POST.author).toString('hex'),
+      GOLDEN_POST.parentRefs, GOLDEN_POST.protocolVersion, GOLDEN_POST.timestamp,
     );
-    expect(hexOf(uiBytes)).toBe(hexOf(postPowPreimage(GOLDEN_POST)));
-  });
-
-  it('the UI accepts a hex-string author and challenge identically', () => {
-    // The posting flow passes hex strings straight from the API response.
-    const hexPost = {
-      ...GOLDEN_POST,
-      author: Buffer.from(GOLDEN_POST.author).toString('hex'),
-      challenge: Buffer.from(GOLDEN_POST.challenge).toString('hex'),
-    };
-    expect(ui.computePostId(hexPost as unknown as Record<string, unknown>))
-      .toBe(GOLDEN_POST_ID);
+    expect(hexOf(asHex)).toBe(hexOf(postFieldBytes(GOLDEN_POST)));
   });
 
   it('both implementations agree across a spread of posts', () => {
@@ -453,8 +445,8 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
       { ...GOLDEN_POST, content: 'a', parentRefs: [] },
       { ...GOLDEN_POST, content: '', parentRefs: [] },
       { ...GOLDEN_POST, content: '🙂 multi-byte ✓ ünïcode', parentRefs: ['ab'.repeat(32)] },
-      { ...GOLDEN_POST, powNonce: 0, timestamp: 0 },
-      { ...GOLDEN_POST, powNonce: Number.MAX_SAFE_INTEGER, timestamp: Number.MAX_SAFE_INTEGER },
+      { ...GOLDEN_POST, protocolVersion: 0, timestamp: 0 },
+      { ...GOLDEN_POST, protocolVersion: 52, timestamp: Number.MAX_SAFE_INTEGER },
       // At the cap. The encoder itself has no opinion on the count — the cap is
       // validation's — so this pins the count prefix, not the rule.
       {
@@ -463,8 +455,7 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
       },
     ];
     for (const v of variants) {
-      expect(ui.computePostId(v as unknown as Record<string, unknown>)).toBe(computePostId(v));
-      expect(uiSigningHash(v)).toBe(signingHash(v).toString('hex'));
+      expect(hexOf(uiPayload(v))).toBe(hexOf(postFieldBytes(v)));
     }
   });
 
@@ -480,22 +471,21 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     const MIXED_CASE_REF = 'ab'.repeat(32).toUpperCase();
     for (const bad of ['', 'ab', 'abcd', 'z'.repeat(64), MIXED_CASE_REF]) {
       const post = { ...GOLDEN_POST, parentRefs: [bad] };
-      expect(() => computePostId(post), `types accepted ${bad}`).toThrow();
-      expect(
-        () => ui.computePostId(post as unknown as Record<string, unknown>),
-        `ui accepted ${bad}`,
-      ).toThrow();
+      expect(() => postFieldBytes(post), `types accepted ${bad}`).toThrow();
+      expect(() => uiPayload(post), `ui accepted ${bad}`).toThrow();
     }
   });
 
   it('the M-1 collision pair is distinct in the UI too', () => {
-    const a = { ...GOLDEN_POST, powNonce: 5, timestamp: 23 };
-    const b = { ...GOLDEN_POST, powNonce: 52, timestamp: 3 };
-    const idA = ui.computePostId(a as unknown as Record<string, unknown>);
-    const idB = ui.computePostId(b as unknown as Record<string, unknown>);
-    expect(idA).not.toBe(idB);
-    expect(idA).toBe(computePostId(a));
-    expect(idB).toBe(computePostId(b));
+    // The pair moved from (powNonce, timestamp) to (protocolVersion, timestamp)
+    // — the field died, the collision shape did not. Compared as PAYLOAD bytes,
+    // because that is where injectivity now matters: these bytes go inside the
+    // `TxId`, so a collision here collides two transactions.
+    const a = { ...GOLDEN_POST, protocolVersion: 5, timestamp: 23 };
+    const b = { ...GOLDEN_POST, protocolVersion: 52, timestamp: 3 };
+    expect(hexOf(uiPayload(a))).not.toBe(hexOf(uiPayload(b)));
+    expect(hexOf(uiPayload(a))).toBe(hexOf(postFieldBytes(a)));
+    expect(hexOf(uiPayload(b))).toBe(hexOf(postFieldBytes(b)));
   });
 
   it('the UI positional writers match the frozen byte forms', () => {
@@ -866,7 +856,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
 
     for (const tx of [
       ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex),
-      ui.buildKarmaLockTx(karmaBox, 5n, targetPostId, pubKeyHex),
+      ui.buildPostTx(karmaBox, 5n, GOLDEN_POST_HEX_AUTHOR, pubKeyHex),
     ]) {
       const asTx = tx as unknown as Record<string, unknown>;
       const txId = computeTxId(jsonToTx(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))));
@@ -891,8 +881,8 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const pubKeyHex = '02'.repeat(32);
     const confirmed = { boxId: 'a1'.repeat(32), value: 100n };
 
-    const lock = ui.buildKarmaLockTx(
-      { total: 100n, boxes: [{ ...confirmed }] }, 5n, '11'.repeat(32), pubKeyHex,
+    const lock = ui.buildPostTx(
+      { total: 100n, boxes: [{ ...confirmed }] }, 5n, GOLDEN_POST_HEX_AUTHOR, pubKeyHex,
     );
     ui.recordPendingKarmaChange(lock as unknown as Record<string, unknown>);
 
@@ -1050,11 +1040,11 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    '67f0a61ddcda29f83200fbc241f90631498c3635a1fc7f6d903f686d29ee7ed7';
+    '8532737906b87b98c27d43a1c441c757abbaf50da441439360d741d397163e60';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,
-    likeTarget: GOLDEN_POST_ID,
+    likeTarget: GOLDEN_POST_TX_ID,
   };
 
   it('the UI reproduces the frozen likeTarget-bearing txId', () => {
@@ -1089,82 +1079,38 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The post-PoW nonce tail, and the predicate the UI decides with it
+// The post-id index writer
+//
+// Reserved, never to be reused: the post-PoW nonce tail and the PoW predicate
+// suites (`powNonceTail`, `postPowHash`, `powTarget`, `meetsPowTarget`). There
+// is no post PoW. What the id derivation needs from the page instead is `u32BE`,
+// and it is total on both sides for the same M-5 reason the nonce tail was.
 // ---------------------------------------------------------------------------
 
-describe('demo UI ↔ @dagsocial/types post-PoW nonce tail', () => {
-  // TYPES_INTERFACE → Serialization → "Layout — Post" makes `powNonceBytes` the
-  // tail's only writer, so the UI's copy is a mirror and not a second dialect.
-  // These are the values `packages/types/test/golden/post.json` freezes for it —
-  // including the out-of-domain sentinel, because the tail is total on both sides
-  // and four out-of-domain nonces sharing one tail is a property, not an accident.
-  const FROZEN_NONCES = [0, 127, 128, 1000000, Number.MAX_SAFE_INTEGER, -1];
+describe('demo UI ↔ @dagsocial/types u32BE', () => {
+  // Including the out-of-domain sentinel, because the writer is total on both
+  // sides and several out-of-domain indices sharing one encoding is a property,
+  // not an accident.
+  const FROZEN = [0, 1, 127, 128, 65535, 65536, 0xfffffffe, -1, 1.5, NaN, 2 ** 40];
 
-  it.each(FROZEN_NONCES)('powNonceTail(%d) is byte-identical to powNonceBytes', (n) => {
-    expect(hexOf(ui.powNonceTail(n))).toBe(hexOf(powNonceBytes(n)));
+  it.each(FROZEN)('u32BE(%p) is byte-identical to the types writer', (n) => {
+    expect(hexOf(ui.u32BE(n))).toBe(hexOf(u32BE(n)));
   });
 
-  it('computePostId reaches the same tail writer, not a second copy of it', () => {
-    // The id's nonce row must move with `powNonceTail`. Two UI call sites read
-    // the same writer, so neither can drift from the other or from validation.
-    const tail = ui.powNonceTail(GOLDEN_POST.powNonce);
-    expect(hexOf(tail)).toBe(hexOf(powNonceBytes(GOLDEN_POST.powNonce)));
-    expect(ui.computePostId(GOLDEN_POST as unknown as Record<string, unknown>))
-      .toBe(computePostId(GOLDEN_POST));
-  });
-});
-
-describe('demo UI PoW predicate ↔ @dagsocial/validation verifyPoW', () => {
-  const INPUTS = {
-    'three-bytes': new Uint8Array([0x01, 0x02, 0x03]),
-    'empty': new Uint8Array([]),
-    '32-zero-bytes': new Uint8Array(32),
-  } satisfies Record<string, Uint8Array>;
-
-  // Every row carries the zero-bit count its digest actually opens with, so
-  // `targetBits` is CHOSEN, never searched. A test that mines a nonce through the
-  // predicate it is testing cannot fail — it asks the predicate for an input the
-  // predicate accepts.
-  //
-  // The hash column is regenerated rather than hand-derived: the LAYOUT is pinned
-  // upstream by types' golden vectors, written from the layout table. What these rows
-  // pin is that two independent implementations of the same predicate agree —
-  // `validation/src/verify.ts` and the demo UI compute the same concat, the same
-  // blake2b512, the same [0..32] and the same leading-zero test, sharing no code.
-  const ROWS = [
-    { input: 'three-bytes', nonce: 0, zeroBits: 0, hash: 'ca8a13775dfec26a67ac1f7f19a2f01417bf74ea9d32c5a0c97ba6e672b397a1' },
-    { input: 'three-bytes', nonce: 1, zeroBits: 2, hash: '2b64d5317f8a756bdf36152e0cf8d11bf3d64d0f0757acddbda7b91637255119' },
-    { input: 'three-bytes', nonce: 127, zeroBits: 2, hash: '365c35d560d5098d733cd8616880664fd220bdffa5181d3f1e0f235c2c7bb245' },
-    { input: 'three-bytes', nonce: 128, zeroBits: 0, hash: '8aa077826cc617670c94e07ea476567f5dbd3b4837ff3f04442a877e081b54a3' },
-    { input: 'three-bytes', nonce: 1000000, zeroBits: 5, hash: '0431e9d873053b76056b851cc66b4cfddbf0d19fd4db8c149dec44aeffa44a06' },
-    { input: 'three-bytes', nonce: 212554, zeroBits: 17, hash: '00004189c1bb78326f134603e69f033328f154395b18881789bd8f970f268b9c' },
-    { input: 'empty', nonce: 0, zeroBits: 2, hash: '2fa3f686df876995167e7c2e5d74c4c7b6e48f8068fe0e44208344d480f7904c' },
-    { input: 'empty', nonce: 1000000, zeroBits: 1, hash: '4612328d490fb0ca9ab63e82fb3400f7bca2da13928cddd5913e0b9c9d65ae93' },
-    { input: '32-zero-bytes', nonce: 0, zeroBits: 0, hash: 'e5950b21be53a5b576e5f131289b05ebb19bd8fdb20eb7168466b26651d62fa8' },
-    { input: '32-zero-bytes', nonce: 1000000, zeroBits: 5, hash: '06e52d645229208556c3d379c1a00e40b54c8126338d360c0d6d1db61d5b8738' },
-  ] as const;
-
-  it.each(ROWS)('$input @ nonce $nonce: the UI digest is verifyPoW\'s', (row) => {
-    const input = INPUTS[row.input];
-    const hash = ui.postPowHash(input, row.nonce);
-    expect(hexOf(hash)).toBe(row.hash);
-    // `zeroBits` is the exact count, so the digest meets that target and no
-    // tighter one — which pins the count without the predicate returning one.
-    expect(ui.meetsPowTarget(hash, ui.powTarget(row.zeroBits)!)).toBe(true);
-    expect(ui.meetsPowTarget(hash, ui.powTarget(row.zeroBits + 1)!)).toBe(false);
+  it('computePostId reaches that writer, not a second copy of it', () => {
+    // The id's index row must move with `u32BE`. Both sides read their own
+    // writer, so neither can drift from the other.
+    expect(hexOf(ui.u32BE(0))).toBe(hexOf(u32BE(0)));
+    expect(ui.computePostId(GOLDEN_POST_TX_ID, 0))
+      .toBe(computePostId(GOLDEN_POST_TX_ID, 0));
   });
 
-  it.each(ROWS)('$input @ nonce $nonce: both predicates hold at $zeroBits and fail one bit tighter', (row) => {
-    const input = INPUTS[row.input];
-    const uiHolds = (bits: number): boolean =>
-      ui.meetsPowTarget(ui.postPowHash(input, row.nonce), ui.powTarget(bits)!);
-
-    // A `bits` that holds and a `bits` that fails FOR THE SAME NONCE, so neither a
-    // constant-true nor a constant-false predicate survives either side.
-    expect(uiHolds(row.zeroBits)).toBe(true);
-    expect(verifyPoW(input, row.nonce, row.zeroBits)).toBe(true);
-    expect(uiHolds(row.zeroBits + 1)).toBe(false);
-    expect(verifyPoW(input, row.nonce, row.zeroBits + 1)).toBe(false);
+  it('the id is total on a malformed txId on both sides', () => {
+    // `utf8(txId)` rather than a hex decode, so a light client deriving from
+    // attacker-supplied fields gets a wrong id rather than an exception.
+    for (const bad of ['', 'zz', 'AB'.repeat(32)]) {
+      expect(ui.computePostId(bad, 0)).toBe(computePostId(bad, 0));
+    }
   });
 });
 
@@ -1201,8 +1147,6 @@ const AUDIT_VOCABULARY: readonly string[] = [
  * second column of coverage.
  */
 const AUDIT_ALLOW: Record<string, string> = {
-  signPost:
-    'its PREIMAGE is mirrored (buildSignHashInput -> buildPowInput); its digest line is NOT — uiSigningHash re-implements blake2b(input, null, 64).slice(0, 32) test-side rather than evaluating signPost, so changing this call to slice(0, 16) would fail nothing. An unpinned two-line copy, carried deliberately.',
   attachFeedHandlers:
     'hashes a server-issued challenge before Ed25519 signing — it takes no layout decision',
   'createInviteBtn#click':
@@ -1421,7 +1365,8 @@ describe('demo UI byte-construction completeness audit', () => {
     // Named on purpose. It is the site this audit exists to cover, so exempting it
     // would have been the audit's first act — the extraction is what keeps the
     // allow-list honest rather than self-serving.
-    expect(Object.keys(AUDIT_ALLOW)).not.toContain('solvePoW');
+    // `solvePoW` is gone with post PoW, so it can construct nothing.
+    expect(MIRRORED_FUNCTIONS).not.toContain('solvePoW');
     expect(findings.filter((f) => f.scope === 'solvePoW')).toEqual([]);
   });
 
@@ -1432,14 +1377,17 @@ describe('demo UI byte-construction completeness audit', () => {
     }
   });
 
-  it('the mirror still names the tail writer, the hash and the predicate', () => {
-    for (const name of ['powNonceTail', 'postPowHash', 'powTarget', 'meetsPowTarget']) {
+  it('the mirror still names the payload encoder and the index writer', () => {
+    // ⛔ The successors to the PoW tail/hash/predicate row. These four names are
+    // what the post path now depends on, and a mirror that stopped extracting
+    // one of them would silently stop comparing it.
+    for (const name of ['postFieldBytes', 'computePostId', 'u32BE', 'buildPostTx']) {
       expect(MIRRORED_FUNCTIONS).toContain(name);
       expect(RETURNED as readonly string[]).toContain(name);
     }
-    expect(typeof ui.powNonceTail).toBe('function');
-    expect(typeof ui.postPowHash).toBe('function');
-    expect(typeof ui.powTarget).toBe('function');
-    expect(typeof ui.meetsPowTarget).toBe('function');
+    expect(typeof ui.postFieldBytes).toBe('function');
+    expect(typeof ui.computePostId).toBe('function');
+    expect(typeof ui.u32BE).toBe('function');
+    expect(typeof ui.buildPostTx).toBe('function');
   });
 });

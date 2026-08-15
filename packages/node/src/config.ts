@@ -1,5 +1,4 @@
 import {
-  CHALLENGE_WINDOW_BLOCKS,
   CREDIT_TREASURY_PCT,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
@@ -30,8 +29,9 @@ export interface Config {
   nodeRole: 'server' | 'miner';
   /** Base path where the demo UI is served (e.g., "/testnet/" or "/"). */
   publicUrl: string;
-  postPowTargetBits: number;
-  challengeWindowBlocks: number;
+  // Reserved, never to be reused: `postPowTargetBits`, `challengeWindowBlocks`.
+  // Post PoW and its challenge handshake are gone; consensus PoW is the ordering
+  // block's alone.
   maxSubBlocksPerBlock: number;
   /** Hard mempool bound — inserts are rejected at the cap, never evicted (audit M-8). */
   maxMempoolEntries: number;
@@ -79,14 +79,6 @@ export function loadConfig(): Readonly<Config> {
     profile,
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
     publicUrl: process.env['PUBLIC_URL'] ?? '/',
-    // The challenge endpoint advertises this and the verifier enforces it — both
-    // read this one field, so a node cannot claim a difficulty it does not
-    // check (audit A6).
-    postPowTargetBits: profile.postPowTargetBits,
-    challengeWindowBlocks: parseInt(
-      process.env['CHALLENGE_WINDOW_BLOCKS'] ?? String(CHALLENGE_WINDOW_BLOCKS),
-      10,
-    ),
     maxSubBlocksPerBlock: parseInt(
       process.env['MAX_SUB_BLOCKS_PER_BLOCK'] ?? '1000',
       10,

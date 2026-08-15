@@ -5,7 +5,6 @@ import {
   encodeInv, decodeInv,
   encodeModifierRequest, decodeModifierRequest,
   encodeModifierResponse, decodeModifierResponse,
-  decodeGetPosts, decodePosts,
 } from '@dagsocial/net';
 import { MAGIC_TESTNET, decodeFrame, MAX_ADVERTISED_HEIGHT } from '@dagsocial/net';
 import { MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE } from '@dagsocial/net';
@@ -79,8 +78,6 @@ describe('sync codec decode boundary', () => {
     decodeInv,
     decodeModifierRequest,
     decodeModifierResponse,
-    decodeGetPosts,
-    decodePosts,
   };
 
   for (const [name, decodeFn] of Object.entries(decoders)) {
@@ -193,41 +190,11 @@ describe('sync codec decode boundary', () => {
     });
   });
 
-  describe('GetPosts', () => {
-    it('rejects a body missing its id list', () => {
-      expect(decodeGetPosts(body({ ids: ['a'] }))).toBeNull();
-    });
-
-    it('rejects a non-string id', () => {
-      expect(decodeGetPosts(body({ postIds: [1] }))).toBeNull();
-    });
-
-    it('accepts a well-formed request', () => {
-      expect(decodeGetPosts(body({ postIds: ['a', 'b'] }))).toEqual({ postIds: ['a', 'b'] });
-    });
-  });
-
-  describe('Posts responses', () => {
-    it('rejects an entry whose envelope is not walkable', () => {
-      expect(decodePosts(body({ entries: ['nope'] }))).toBeNull();
-      expect(decodePosts(body({ entries: [{ postId: 'a', post: 'not-a-map' }] }))).toBeNull();
-    });
-
-    // Acceptance pin, two-sided: the Posts envelope carries no likeBoxes field,
-    // so this exact entry — without one — must decode. A decoder that still
-    // required the field returns null here.
-    it('accepts a well-formed envelope without likeBoxes (P2-D pin)', () => {
-      const posts = { entries: [{ postId: 'a', post: { content: 'hi' } }] };
-      expect(decodePosts(body(posts))).toEqual(posts);
-    });
-
-    // The stated wire-compat posture (no shim): unknown keys are ignored, so an
-    // entry carrying a retired field still decodes — and the field does not
-    // leak inward, because the rebuilt entry carries no likeBoxes key.
-    it("ignores a stale peer's likeBoxes field", () => {
-      const stale = { entries: [{ postId: 'a', post: { content: 'hi' }, likeBoxes: [] }] };
-      expect(decodePosts(body(stale))).toEqual({ entries: [{ postId: 'a', post: { content: 'hi' } }] });
-    });
-  });
+  // Reserved, never to be reused: the `GetPosts` / `Posts` codec suites. A
+  // bare-post-by-id fetch has no verifiable answer once post ids are
+  // provenance-derived — the receiver cannot bind the bytes it gets back to the
+  // id it asked for — so the message pair is deleted and codes 10/11 are
+  // reserved. Anything that returns a post must return the transaction that
+  // created it, which is a different message.
 
 });

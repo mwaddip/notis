@@ -168,7 +168,7 @@ export function faucetGrant(
 
     // ---- 6. Insert into mempool and record the grant ----
     const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
-    insertUtxoTx(tx, null, expiresAtHeight);
+    insertUtxoTx(tx, expiresAtHeight);
     recordFaucetGrant(userIdBytes, 'karma', txId, currentHeight);
 
     granted = {

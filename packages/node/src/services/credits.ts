@@ -123,7 +123,7 @@ export function sendCredits(
   }
 
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
-  insertUtxoTx(tx, null, expiresAtHeight);
+  insertUtxoTx(tx, expiresAtHeight);
 
   return {
     status: 'pending',

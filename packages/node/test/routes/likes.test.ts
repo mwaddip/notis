@@ -3,8 +3,7 @@ import {
   rawPublicKey,
   seedProvenance,
   signTransaction,
-  txToJson,
-} from '../helpers.js';
+  txToJson, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -159,14 +158,11 @@ describe('likes routes', () => {
       content: 'test post for likes',
       author: authorId,
       parentRefs: [],
-      challenge: new Uint8Array(32),
-      powNonce: 0,
       protocolVersion: PROTOCOL_VERSION,
       timestamp: Date.now(),
-      signature: new Uint8Array(64),
     };
-    postId = computePostId(post);
-    insertPost(post, new Uint8Array(16));
+    postId = fixturePostId(post);
+    insertPost(fixturePostId(post), post, new Uint8Array(16));
 
     // Create a liker with sufficient karma
     likerKp = generateKeyPair();

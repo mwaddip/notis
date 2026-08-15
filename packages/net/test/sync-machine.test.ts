@@ -38,7 +38,6 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
 
 const testConfig: NetConfig = {
   magic: 0x54444147,
-  postPowTargetBits: 8,
   bootstrapPeers: [],
   listenAddrs: '',
   maxPeers: 10,
@@ -59,14 +58,12 @@ interface SentMessage {
 function makeMachine(overrides?: {
   store?: Partial<SyncStore>;
   sendToPeer?: (peerId: string, data: Uint8Array) => void;
-  requestSubBlocks?: (peerId: string, ids: string[]) => Promise<unknown[]>;
 }): { machine: SyncMachine; sent: SentMessage[] } {
   const sent: SentMessage[] = [];
   const machine = new SyncMachine(
     testConfig,
     stubStore(overrides?.store),
     overrides?.sendToPeer ?? ((peerId, data) => sent.push({ peerId, data })),
-    overrides?.requestSubBlocks ?? (async () => []),
   );
   return { machine, sent };
 }
@@ -803,8 +800,7 @@ describe('SyncMachine', () => {
         testConfig,
         stubStore({ chainHeight: () => 0 }),
         (peerId, data) => sent.push({ peerId, data }),
-        async () => [],
-      );
+          );
 
       machine.onPeerActive('peer1', 100);
       machine.flush();
@@ -880,8 +876,7 @@ describe('SyncMachine', () => {
         testConfig,
         stubStore(store),
         (peerId, data) => sent.push({ peerId, data }),
-        async () => [],
-        (peerId, reason) => violations.push({ peerId, reason }),
+            (peerId, reason) => violations.push({ peerId, reason }),
       );
       return { machine, sent, violations };
     }
@@ -1108,8 +1103,7 @@ describe('SyncMachine', () => {
         testConfig,
         stubStore(store),
         (peerId, data) => sent.push({ peerId, data }),
-        async () => [],
-        (peerId, reason) => violations.push({ peerId, reason }),
+            (peerId, reason) => violations.push({ peerId, reason }),
       );
       return { machine, sent, violations };
     }

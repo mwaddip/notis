@@ -1,3 +1,4 @@
+import { fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   generateKeyPairSync,
@@ -48,20 +49,17 @@ function makePost(
     content,
     author,
     parentRefs,
-    challenge: new Uint8Array(32).fill(0xaa),
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: Date.now(),
-    signature: new Uint8Array(64),
     ...overrides,
   };
 }
 
 /** Insert a post and return its computed ID. */
 function insertTestPost(post: Post): string {
-  const postId = computePostId(post);
+  const postId = fixturePostId(post);
   const rawCbor = encodePost(post);
-  insertPost(post, rawCbor);
+  insertPost(fixturePostId(post), post, rawCbor);
   return postId;
 }
 

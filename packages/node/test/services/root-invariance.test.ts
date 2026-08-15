@@ -1,9 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
-import type { SubBlockTree, UtxoTxTree, CoinbaseOutput, SubBlockEntry } from '@dagsocial/types';
+import type { UtxoTxTree, CoinbaseOutput } from '@dagsocial/types';
 import { buildMerkleRoot, leafHash, hexToBuf } from '@dagsocial/types';
 import {
-  computeSubBlockRoot,
   computeUtxoTxRoot,
 } from '../../src/services/block-creator.js';
 
@@ -62,9 +61,6 @@ function vector(name: string): GoldenVector {
 }
 
 /** The vector's JSON `value` as a `SubBlockEntry` — all three fields are hex. */
-function asSubBlockEntry(v: GoldenVector): SubBlockEntry {
-  return v.value as SubBlockEntry;
-}
 
 /**
  * The vector's JSON `value` as a `CoinbaseOutput`, using the same two
@@ -106,13 +102,9 @@ const rootOfLeaves = (...preimages: [string, string][]): string =>
 // ---------------------------------------------------------------------------
 
 describe('leaf preimages are types\' frozen wire bytes', () => {
-  for (const name of ['subBlockEntry/typical', 'subBlockEntry/thread-root']) {
-    it(`'subblock' leaf over ${name} matches the golden bytes`, () => {
-      const v = vector(name);
-      const tree: SubBlockTree = { subBlockEntries: [asSubBlockEntry(v)], pruneEntries: [] };
-      expect(computeSubBlockRoot(tree)).toBe(rootOfLeaves(['subblock', v.bytes]));
-    });
-  }
+  // Reserved, never to be reused: the `'subblock'` leaf cases and the vectors
+  // they read. That domain has no leaf in the combined tree — a post rides
+  // `utxoTxIds`, whose leaf is a bare 32-byte id.
 
   for (const name of ['coinbaseOutput/miner', 'coinbaseOutput/treasury']) {
     it(`'coinbase' leaf over ${name} matches the golden bytes`, () => {
@@ -120,6 +112,7 @@ describe('leaf preimages are types\' frozen wire bytes', () => {
       const tree: UtxoTxTree = {
         utxoTxIds: [],
         utxoTxs: [],
+        pruneEntries: [],
         coinbaseOutputs: [asCoinbaseOutput(v)],
       };
       expect(computeUtxoTxRoot(tree)).toBe(rootOfLeaves(['coinbase', v.bytes]));
@@ -135,7 +128,6 @@ describe('leaf preimages are types\' frozen wire bytes', () => {
 // the movement pin at the bottom compares like with like. What moves is the two
 // preimages, written out here by hand from the layout table:
 //
-//   SubBlockEntry  = b32(postId) ‖ arr(parentRefs, b32) ‖ b32(author)
 //   CoinbaseOutput = b32(owner) ‖ vlqU64(value) ‖ vlqU(lockedUntilBlock) ‖ u8(isTreasury)
 //
 // `arr` is a vlqU count followed by the elements; vlqU/vlqU64 are base-128
@@ -147,6 +139,7 @@ const FIXED_OWNER = new Uint8Array(32).fill(7);
 const utxoFixture: UtxoTxTree = {
   utxoTxIds: ['ab'.repeat(32), 'cd'.repeat(32)],
   utxoTxs: [], // carried bytes are not part of the root
+  pruneEntries: [],
   coinbaseOutputs: [
     {
       owner: FIXED_OWNER,
@@ -157,49 +150,29 @@ const utxoFixture: UtxoTxTree = {
   ],
 };
 
-const subBlockFixture: SubBlockTree = {
-  subBlockEntries: [
-    {
-      postId: 'aa'.repeat(32),
-      parentRefs: ['bb'.repeat(32)],
-      author: 'cc'.repeat(32),
-    },
-  ],
-  pruneEntries: [],
-};
-
-/**
- * `b32('aa'×32)` ‖ `arr` count 1 = `01` ‖ `b32('bb'×32)` ‖ `b32('cc'×32)`.
- * Same shape as the frozen `subBlockEntry/typical`, which carries the same `01`
- * over a single ref row — `MAX_PARENT_REFS` is 1, so one ref is the typical
- * case and `subBlockEntry/thread-root` is the empty `00` one.
- */
-const SUBBLOCK_LEAF_PREIMAGE = `${'aa'.repeat(32)}01${'bb'.repeat(32)}${'cc'.repeat(32)}`;
-
 /**
  * `b32(0x07×32)` ‖ `vlqU64(42)` = `2a` ‖ `vlqU(721)` = `d105`
  * (721 = 5·128 + 81; 81|0x80 = 0xd1, then 0x05) ‖ `u8(false)` = `00`.
  */
 const COINBASE_LEAF_PREIMAGE = `${'07'.repeat(32)}2ad10500`;
 
+/**
+ * ⛔ **UNCHANGED across this unit, and that is the finding.** `pruneEntries`
+ * moved INTO `UtxoTxTree` between `utxoTxs` and `coinbaseOutputs`, but an empty
+ * prune list contributes no leaves — so a block that prunes nothing has exactly
+ * the root it had before. The tree gained a section; the root gained nothing.
+ *
+ * A block that DOES carry prune entries has a different root than it would have
+ * had under `subBlockRoot`, because they are now under this one.
+ */
 const PINNED_UTXO_TX_ROOT =
   '0459a94fbdd9ff7e5ae64ee45c3a1831305221466d4c1cb140f9109482040840';
-const PINNED_SUB_BLOCK_ROOT =
-  '805e696be152fbcc9dd2f886307ad8d1348189bae6b0f523eb2c14e8fa62b13c';
 
-/** Both roots as this file pinned them before Phase 4b, for the movement pin. */
+/** The root as this file pinned it before Phase 4b, for the movement pin. */
 const PRE_4B_UTXO_TX_ROOT =
   '8ecb0e6de230bb762f65c5029572533fe55327fbf499038f9b5c98860cdce520';
-const PRE_4B_SUB_BLOCK_ROOT =
-  '49d3958c701a62cb6eb42293ae9852b4d21a578e92f4738bbf8dafd13d5cfe3c';
 
-describe('Phase 4b Merkle leaf preimages', () => {
-  it('subBlockRoot is the hand-derived positional preimage, hashed', () => {
-    expect(computeSubBlockRoot(subBlockFixture)).toBe(
-      rootOfLeaves(['subblock', SUBBLOCK_LEAF_PREIMAGE]),
-    );
-  });
-
+describe('Merkle leaf preimages', () => {
   it('utxoTxRoot leaves are two bare ids and the hand-derived coinbase preimage', () => {
     expect(computeUtxoTxRoot(utxoFixture)).toBe(
       rootOfLeaves(
@@ -210,10 +183,6 @@ describe('Phase 4b Merkle leaf preimages', () => {
     );
   });
 
-  it('subBlockRoot matches its pin', () => {
-    expect(computeSubBlockRoot(subBlockFixture)).toBe(PINNED_SUB_BLOCK_ROOT);
-  });
-
   it('utxoTxRoot matches its pin', () => {
     expect(computeUtxoTxRoot(utxoFixture)).toBe(PINNED_UTXO_TX_ROOT);
   });
@@ -221,8 +190,7 @@ describe('Phase 4b Merkle leaf preimages', () => {
   // Two-sided movement pin: the roots moved, and here is exactly what
   // they moved from. Every committed byte moves in this bundle, so the fresh
   // chain + wiped AVL store the standing deploy gate already mandates covers it.
-  it('both roots moved off the JSON preimages', () => {
-    expect(computeSubBlockRoot(subBlockFixture)).not.toBe(PRE_4B_SUB_BLOCK_ROOT);
+  it('the root moved off the JSON preimages', () => {
     expect(computeUtxoTxRoot(utxoFixture)).not.toBe(PRE_4B_UTXO_TX_ROOT);
   });
 });

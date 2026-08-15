@@ -1,12 +1,7 @@
-import { ByteKeyedMap, uid } from '../helpers.js';
+import { ByteKeyedMap } from '../helpers.js';
 import { describe, it, expect } from 'vitest';
-import {
-  generateKeyPairSync,
-  createHash,
-  sign as cryptoSign,
-  type KeyObject,
-} from 'crypto';
-import { signingHash, PROTOCOL_VERSION } from '@dagsocial/types';
+import { generateKeyPairSync } from 'crypto';
+import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
@@ -21,7 +16,6 @@ interface MockStore {
   // lookup with an equal-but-distinct array misses. `karmaBoxes` reaches the
   // same property by hex-keying.
   identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
-  challenges: ByteKeyedMap<{ challenge: Uint8Array; expiresAtBlock: number; userId: Uint8Array }>;
   karmaBoxes: Map<string, { value: bigint }[]>;
   // Typed as what the dep must return, not `unknown`. Nothing is ever put
   // in it — `getPost` returns null throughout these suites — but a mock
@@ -32,7 +26,6 @@ interface MockStore {
 
 function createMockDeps(store: MockStore): VerifierDeps {
   return {
-    getActiveChallenge: (userId: Uint8Array) => store.challenges.get(userId) ?? null,
     getKarmaBoxes: (owner: Uint8Array) => {
       const hex = Buffer.from(owner).toString('hex');
       return store.karmaBoxes.get(hex) ?? [];
@@ -44,33 +37,22 @@ function createMockDeps(store: MockStore): VerifierDeps {
 function makeStore(): MockStore {
   return {
     identities: new ByteKeyedMap(),
-    challenges: new ByteKeyedMap(),
     karmaBoxes: new Map(),
     posts: new Map(),
   };
 }
 
-function signPost(post: Post, privKey: Buffer | KeyObject): Post {
-  const sig = cryptoSign(null, signingHash(post), privKey);
-  return { ...post, signature: new Uint8Array(sig) };
-}
-
 describe('verifier', () => {
   let userId: Uint8Array;
-  let pubKeyRaw: Uint8Array;
-  let privKey: KeyObject;
-  let challengeBytes: Uint8Array;
 
-  // Generate a real Ed25519 keypair
+  // A real Ed25519 public key, because `author` is a 32-byte fixed-width field
+  // and `verifyPostFieldDomains` runs first (VALIDATION_INTERFACE →
+  // verifyPostFieldDomains). The private half is not generated: nothing here
+  // signs anything.
   {
-    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const { publicKey } = generateKeyPairSync('ed25519');
     const pubDer = publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
-    pubKeyRaw = new Uint8Array(pubDer.slice(pubDer.length - 32));
-    privKey = privateKey;
-    userId = pubKeyRaw;
-    challengeBytes = new Uint8Array(
-      createHash('blake2b512').update('unit-test-challenge').digest().subarray(0, 32),
-    );
+    userId = new Uint8Array(pubDer.slice(pubDer.length - 32));
   }
 
   function makePost(overrides: Partial<Post> = {}): Post {
@@ -78,11 +60,8 @@ describe('verifier', () => {
       content: 'hello',
       author: userId,
       parentRefs: [],
-      challenge: challengeBytes,
-      powNonce: 0,
       protocolVersion: PROTOCOL_VERSION,
       timestamp: 1700000000000,
-      signature: new Uint8Array(64),
       ...overrides,
     };
   }
@@ -91,7 +70,7 @@ describe('verifier', () => {
     const store = makeStore();
     const post = makePost({ protocolVersion: 99 });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 0);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Unsupported protocol version');
   });
@@ -101,7 +80,7 @@ describe('verifier', () => {
     const longContent = 'x'.repeat(301);
     const post = makePost({ content: longContent });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 0);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Content exceeds max length');
   });
@@ -110,37 +89,51 @@ describe('verifier', () => {
     const store = makeStore();
     const post = makePost({ content: '' });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post, 0);
+    const result = verifyPost(deps, post);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Content is empty');
   });
 
-  it('rejects post with invalid signature', () => {
+  it('accepts a payload carrying no signature and no proof of work', () => {
+    // ⛔ The POSITIVE half of the removal. Every other case here rejects, so a
+    // reintroduced signature or PoW gate would leave them all green — this is
+    // the one that fails if one comes back, and it asserts `valid` rather than
+    // an absent error string so a new gate cannot pass it by rejecting for a
+    // reason no case names.
     const store = makeStore();
-    store.identities.set(userId, {
-      userId,
-      publicKey: pubKeyRaw,
-      createdAt: Date.now(),
-    });
-    store.challenges.set(userId, {
-      userId,
-      challenge: challengeBytes,
-      expiresAtBlock: 100,
-    });
-    store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [{ value: 1n }]);
+    store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
+    const post = makePost();
+    expect(Object.keys(post).sort()).toEqual(
+      ['author', 'content', 'parentRefs', 'protocolVersion', 'timestamp'],
+    );
 
-    let post = makePost({ powNonce: 1 });
-    // Sign correctly, then zero the signature — crypto.verify will fail on
-    // an all-zeros 64-byte array against the real public key.
-    post = signPost(post, privKey);
-    const badPost = { ...post, signature: new Uint8Array(64) };
-
-    // powNonce=1 almost certainly fails PoW at targetBits=20, so the first
-    // failure will be "Proof of Work invalid". Both failure modes (PoW and
-    // signature) produce the correct `valid: false` with a descriptive error.
-    const deps = createMockDeps(store);
-    const result = verifyPost(deps, badPost, 50);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBeDefined();
+    const result = verifyPost(createMockDeps(store), post);
+    expect(result).toEqual({ valid: true });
   });
+
+  it('rejects a parent ref no stored post answers to', () => {
+    // The check that replaced parent-hash recomputation: a post id is
+    // provenance-derived, so the store's record is the only statement of it and
+    // existence is what stays checkable (NODE_INTERFACE → Post transactions).
+    const store = makeStore();
+    store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
+    const missing = 'ab'.repeat(32);
+    const result = verifyPost(createMockDeps(store), makePost({ parentRefs: [missing] }));
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe(`Parent post not found: ${missing}`);
+  });
+
+  it('rejects an author holding no karma', () => {
+    // The early, friendlier half of the lock. The enforcement point is the
+    // engine's post biconditional, which a block re-validates — this rejects
+    // before a doomed transaction is ever built.
+    const result = verifyPost(createMockDeps(makeStore()), makePost());
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('No karma box found');
+  });
+
+  // Reserved, never to be reused: the post-signature case. A post carries no
+  // signature of its own — the creating transaction is signed over its TxId and
+  // the signer is the author, so authorship is checked by the transaction path
+  // (`validateTx`) and by the engine's author-owns-the-spent-karma rule.
 });

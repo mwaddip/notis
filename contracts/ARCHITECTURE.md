@@ -96,9 +96,6 @@ The hybrid preserves the strengths of both.
 
 ### Block architecture: ordering blocks
 
-> ⚠ **AHEAD OF CODE.** The tree still has sub-blocks; the paragraphs below
-> describe the model they came from.
-
 Inspired by Ergo's subblock model (EIP-15):
 
 | Block type | Producer | PoW difficulty | Purpose | Interval |
@@ -1691,8 +1688,6 @@ forever. A node rejects objects with an unsupported protocol version.
   its pre-block digest regardless of which stage rejected it.
 
 ### Blocks and ordering
-
-> ⚠ **AHEAD OF CODE.** The tree still produces sub-blocks and mines post PoW.
 
 - **There are no sub-blocks.** A post is a transaction, so it rides `utxoTxIds`
   with every other transaction and the block commits one body, not two.

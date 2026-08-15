@@ -12,8 +12,7 @@ import {
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  signTransaction,
-} from '../helpers.js';
+  signTransaction, fixturePostId, seedPostTx } from '../helpers.js';
 import {
   describe,
   it,
@@ -60,8 +59,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -124,8 +121,7 @@ async function importFeedReadPath() {
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertUtxoTx: (tx: UtxoTransaction, batchId: string | null, expiresAtHeight: number) => number;
-    insertSubBlock: (postId: string, expiresAtHeight: number, batchId?: string | null) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
@@ -187,11 +183,8 @@ function makePost(authorId: Uint8Array, content = 'test post'): Post {
     content,
     author: authorId,
     parentRefs: [],
-    challenge: new Uint8Array(32),
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: Date.now(),
-    signature: new Uint8Array(64),
   };
 }
 
@@ -214,7 +207,7 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
 
 interface EngineDeps {
   getBox: (id: string) => AnyBox | null;
-  insertBox: (box: AnyBox) => void;
+  insertBox: (box: AnyBox, postLockTarget?: string) => void;
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   getKarmaValue: (owner: Uint8Array) => bigint;
@@ -294,17 +287,16 @@ describe('full-pipeline', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
 
-    const post = makePost(author.userId, 'full-pipeline like test');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'full-pipeline like test');
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     // ---- Step 0: Confirm the target first. A like on an unconfirmed post is
     // invalid at apply, so the canonical flow likes an already-confirmed post;
     // the confirm-and-like-in-one-block shape is test 2 below. Block 1 carries
     // the sub-block alone.
     const mempool = await importMempool();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     expect(await mineNextBlock(bc)).not.toBeNull();
@@ -388,14 +380,13 @@ describe('full-pipeline', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
 
-    const post = makePost(author.userId, 'multi-op test');
-    const postId = computePostId(post);
+    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'multi-op test');
     const posts = await importPosts();
-    posts.insertPost(post, encodePost(post));
+    posts.insertPost(postId, post, encodePost(post));
 
     // Insert sub-block into mempool
     const mempool = await importMempool();
-    mempool.insertSubBlock(postId, 1000);
+    mempool.insertUtxoTx(postTx, 1000);
 
     // Cast like via service — the burn shape
     const changeVal = karmaBox.value - LIKE_KARMA_COST;

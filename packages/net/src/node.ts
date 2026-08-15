@@ -8,21 +8,20 @@ import { gossipsub } from '@chainsafe/libp2p-gossipsub';
 import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
-import type { SubBlock, OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
 import { PROTOCOL_VERSION, decodeOrderingBlock } from '@dagsocial/types';
 import { blockHash, blockWork } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
 import type {
-  NetConfig, NetValidators, Peer, PeerEntryMsg, PostsMsg, PostsEntry,
+  NetConfig, NetValidators, Peer, PeerEntryMsg,
   GetHeadersMsg, GetBlocksMsg,
 } from './types.js';
 import { PeerState, PenaltyKind } from './types.js';
 import type { Libp2pGossip, GossipHandlers } from './gossip.js';
 import { PeerManager } from './peer-mgr.js';
-import { subscribeTopics, broadcastSubBlock, broadcastOrderingBlock, broadcastTx } from './gossip.js';
+import { subscribeTopics, broadcastOrderingBlock, broadcastTx } from './gossip.js';
 import {
   SYNC_PROTOCOL,
-  requestSubBlock,
   requestHeaders,
   requestBlocks,
 } from './sync.js';
@@ -31,16 +30,12 @@ import {
   decodeGetPeers,
   encodePeers,
   decodePeers,
-  encodeGetPosts,
-  decodeGetPosts,
-  encodePosts,
-  decodePosts,
   decodeGetHeaders,
   decodeGetBlocks,
   encodeBlocks,
   encodeHeaders,
 } from './sync-codec.js';
-import { encodeServableOrderingBlock, encodeServableSubBlock } from './serve-encode.js';
+import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
 import { MAX_CHAIN_RESPONSE_ITEMS, MAX_STREAM_BYTES } from './msg-guards.js';
@@ -57,17 +52,12 @@ import {
 } from './handshake.js';
 import type { HandshakeResult } from './handshake.js';
 import {
-  MSG_GET_SUB_BLOCK,
-  MSG_SUB_BLOCK_RESPONSE,
   MSG_GET_PEERS,
   MSG_PEERS,
-  MSG_GET_POSTS,
-  MSG_POSTS,
   MSG_GET_HEADERS,
   MSG_GET_BLOCKS,
 } from './types.js';
 
-type SubBlockCallback = (sb: SubBlock) => void;
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 type TxCallback = (tx: UtxoTransaction) => void;
 
@@ -147,7 +137,6 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
  */
 export class LazySyncStore implements SyncStore {
   private _getOrderingBlock: ((height: number) => unknown | null) | null = null;
-  private _getSubBlock: ((id: string) => unknown | null) | null = null;
   private _blocksHandler: ((block: OrderingBlock) => void) | null = null;
 
   /** Validators reach this class for one reason: `serializeOrderingBlock` serves a stored row. */
@@ -155,10 +144,6 @@ export class LazySyncStore implements SyncStore {
 
   setOrderingBlockFn(fn: (height: number) => unknown | null): void {
     this._getOrderingBlock = fn;
-  }
-
-  setSubBlockFn(fn: (id: string) => unknown | null): void {
-    this._getSubBlock = fn;
   }
 
   setBlocksHandler(fn: (block: OrderingBlock) => void): void {
@@ -206,10 +191,6 @@ export class LazySyncStore implements SyncStore {
       }
     }
     return null;
-  }
-
-  getSubBlock(id: string): unknown | null {
-    return this._getSubBlock?.(id) ?? null;
   }
 
   chainHeight(): number {
@@ -537,7 +518,12 @@ export class NetNode {
   private peerMgr: PeerManager;
   private config: NetConfig;
   private validators: NetValidators;
-  private subBlockHandlers: SubBlockCallback[] = [];
+  /**
+   * The relay-path membership set — see `KarmaMembers` in gossip.ts. Owned here
+   * so the topic validator reads one object rather than calling across the
+   * package seam per message; node moves it on the two events that change it.
+   */
+  private karmaMembers = new Set<string>();
   private orderingBlockHandlers: OrderingBlockCallback[] = [];
   private txHandlers: TxCallback[] = [];
   private started = false;
@@ -559,7 +545,6 @@ export class NetNode {
    * arrives without one is answered with zero bytes.
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
-  private postsHandler: ((postIds: string[]) => PostsEntry[]) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
   private peerActiveHandlers: Array<(peerId: string) => void> = [];
   private pendingBootstrapDials: Set<string> = new Set();
@@ -634,7 +619,6 @@ export class NetNode {
       this.config,
       this.syncStore,
       (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
-      async (peerId: string, ids: string[]) => this.requestSubBlocksFn(peerId, ids),
       (peerId: string, reason: string) => {
         this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
       },
@@ -715,7 +699,6 @@ export class NetNode {
 
     // Subscribe to gossip topics
     const handlers: GossipHandlers = {
-      onSubBlock: (sb) => { for (const cb of this.subBlockHandlers) cb(sb); },
       onOrderingBlock: (block, fromPeerId) => {
         for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
       },
@@ -727,7 +710,7 @@ export class NetNode {
       this.validators,
       this.peerMgr,
       handlers,
-      this.config.postPowTargetBits,
+      this.karmaMembers,
     );
 
     // Log listen addresses
@@ -1067,29 +1050,12 @@ export class NetNode {
           code = framed.code;
           body = framed.body;
         } catch {
-          // Legacy text protocol: subBlockId as hex
-          const request = new TextDecoder().decode(data);
-          const subBlock = this.syncStore.getSubBlock(request);
-          const payload = subBlock
-            ? encodeServableSubBlock(subBlock, this.validators, request)
-            : null;
-          // A row we hold but cannot encode is answered like a row we do not
-          // hold: the peer goes and asks someone else, and it is not at fault
-          // either way (NET_INTERFACE → Penalty Attribution).
-          await stream.sink([payload ?? new Uint8Array([0x00])]);
-          return;
-        }
-
-        // Handle framed sub-block requests (MSG_GET_SUB_BLOCK)
-        if (code === MSG_GET_SUB_BLOCK) {
-          const id = new TextDecoder().decode(body);
-          const subBlock = this.syncStore.getSubBlock(id);
-          const payload = subBlock
-            ? encodeServableSubBlock(subBlock, this.validators, id)
-            : null;
-          await stream.sink([
-            encodeFrame(magic, MSG_SUB_BLOCK_RESPONSE, payload ?? new Uint8Array([0x00])),
-          ]);
+          // An undecodable request on this protocol. The legacy text framing this
+          // arm used to carry was a sub-block id and has no successor: a post is
+          // a transaction, so it is served as part of a block body. Answering
+          // zero bytes is the arm's "I cannot answer" signal (NET_INTERFACE →
+          // Pull Requests) and attributes nothing to the peer.
+          await stream.sink([new Uint8Array(0)]);
           return;
         }
 
@@ -1110,48 +1076,6 @@ export class NetNode {
             magic,
           });
           if (response) await stream.sink([response]);
-          return;
-        }
-
-        // Handle post requests (MSG_GET_POSTS)
-        //
-        // ⚠ **Every path answers, including the three that decline** — the rule
-        // the chain-query arms below state in full (NET_INTERFACE → Sync Handler
-        // Registration). On a shared stream an unanswered request is not a
-        // refusal the caller can read: it is a caller blocked until its own
-        // timeout expires. `requestPosts` reads zero bytes as `{ entries: [] }`,
-        // which is what all three of these mean.
-        if (code === MSG_GET_POSTS) {
-          if (!this.postsHandler) {
-            await replyEmpty();
-            return;
-          }
-          const request = decodeGetPosts(body);
-          if (!request) {
-            console.warn(`[net] malformed GetPosts from ${peerId}, dropping`);
-            this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, 'malformed GetPosts');
-            await replyEmpty();
-            return;
-          }
-          if (request.postIds.length > 100) {
-            console.warn(`[net] GetPosts request with ${request.postIds.length} IDs exceeds limit, dropping`);
-            await replyEmpty();
-            return;
-          }
-          // The app-layer callback gets its own span. It is node's code, not
-          // ours and not the peer's, so a throw here is neither a wire fault
-          // nor a reason to penalise the sender. Folding it into the outer
-          // catch would make it indistinguishable from a broken stream.
-          let entries;
-          try {
-            entries = this.postsHandler(request.postIds);
-          } catch (err) {
-            console.error(`[net] posts handler threw for ${peerId}: ${String(err)}`);
-            await replyEmpty();
-            return;
-          }
-          const response = encodePosts(this.config.magic, { entries });
-          await stream.sink([response]);
           return;
         }
 
@@ -1325,20 +1249,6 @@ export class NetNode {
     });
   }
 
-  private async requestSubBlocksFn(peerId: string, ids: string[]): Promise<unknown[]> {
-    const results: unknown[] = [];
-    for (const id of ids) {
-      try {
-        if (!this.libp2p) break;
-        const sb = await requestSubBlock(this.libp2p, id, peerId, this.config);
-        results.push(sb);
-      } catch {
-        // skip failed requests
-      }
-    }
-    return results;
-  }
-
   // -----------------------------------------------------------------------
   // Identity + peers
   // -----------------------------------------------------------------------
@@ -1363,11 +1273,6 @@ export class NetNode {
   // Outbound broadcast
   // -----------------------------------------------------------------------
 
-  async broadcastSubBlock(sb: SubBlock): Promise<void> {
-    if (!this.libp2p) return;
-    await broadcastSubBlock(asGossip(this.libp2p), sb);
-  }
-
   async broadcastOrderingBlock(block: OrderingBlock): Promise<void> {
     if (!this.libp2p) return;
     await broadcastOrderingBlock(asGossip(this.libp2p), block);
@@ -1381,10 +1286,6 @@ export class NetNode {
   // -----------------------------------------------------------------------
   // Inbound handlers
   // -----------------------------------------------------------------------
-
-  onSubBlock(cb: SubBlockCallback): void {
-    this.subBlockHandlers.push(cb);
-  }
 
   onOrderingBlock(cb: OrderingBlockCallback): void {
     this.orderingBlockHandlers.push(cb);
@@ -1414,11 +1315,6 @@ export class NetNode {
   // Sync — outbound requests
   // -----------------------------------------------------------------------
 
-  async requestSubBlock(id: string, peerId: string): Promise<SubBlock> {
-    if (!this.libp2p) throw new Error('NetNode not started');
-    return requestSubBlock(this.libp2p, id, peerId, this.config);
-  }
-
   async requestHeaders(startHeight: number, maxCount: number, peerId: string): Promise<BlockHeader[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
     return requestHeaders(this.libp2p, startHeight, maxCount, peerId, this.config);
@@ -1427,52 +1323,6 @@ export class NetNode {
   async requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]> {
     if (!this.libp2p) throw new Error('NetNode not started');
     return requestBlocks(this.libp2p, startHeight, endHeight, peerId, this.config);
-  }
-
-  /**
-   * Request full post data (post body + like boxes) from a specific peer.
-   * Opens a sync-protocol stream, sends a GetPosts message, and reads the
-   * Posts response. Returns an empty entries array on any error.
-   */
-  async requestPosts(peerId: string, postIds: string[]): Promise<PostsMsg> {
-    if (!this.libp2p) return { entries: [] };
-    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
-    if (!peer) {
-      console.warn(`[net] requestPosts: peer ${peerId} not found`);
-      return { entries: [] };
-    }
-    const magic = this.config.magic;
-    const clamped = postIds.slice(0, 100);
-    const request = encodeGetPosts(magic, { postIds: clamped });
-    let stream: import('@libp2p/interface').Stream | undefined;
-    try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL);
-      await stream.sink([request]);
-      const data = await readStreamBounded(stream.source);
-      if (data === null) {
-        console.warn(`[net] requestPosts: response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
-        return { entries: [] };
-      }
-      if (data.length === 0) {
-        return { entries: [] };
-      }
-      const frame = decodeFrame(magic, data);
-      if (frame.code !== MSG_POSTS) {
-        console.warn(`[net] requestPosts: unexpected response code ${frame.code}`);
-        return { entries: [] };
-      }
-      const response = decodePosts(frame.body);
-      if (!response) {
-        console.warn(`[net] requestPosts: malformed Posts response from ${peerId}`);
-        return { entries: [] };
-      }
-      return response;
-    } catch (err) {
-      console.warn(`[net] requestPosts failed for peer ${peerId}: ${String(err)}`);
-      return { entries: [] };
-    } finally {
-      if (stream) await stream.close().catch(() => {});
-    }
   }
 
   /**
@@ -1529,20 +1379,28 @@ export class NetNode {
   // -----------------------------------------------------------------------
 
   /**
-   * Register a storage-backed sync handler. Must be called after start() by the
-   * node layer, which owns storage. Wires into the sync machine's store adapter.
+   * Replace the relay-path karma membership set — see `KarmaMembers` in
+   * gossip.ts. Node owns the membership; net only reads it.
+   *
+   * The set is mutated in place rather than reassigned, because the topic
+   * validator closed over this object at `subscribeTopics` time. Reassigning the
+   * field would leave that closure reading a set that never changes again — a
+   * gate that silently stops tracking, which is the failure mode this method's
+   * shape exists to prevent.
    */
-  setSyncHandler(handler: (id: string) => SubBlock | null): void {
-    this.syncStore.setSubBlockFn((id) => handler(id));
+  setKarmaMembers(members: Iterable<string>): void {
+    this.karmaMembers.clear();
+    for (const m of members) this.karmaMembers.add(m);
   }
 
-  /**
-   * Register a handler that serves post data to peers who request it via
-   * MSG_GET_POSTS. The handler receives an array of post IDs and must return
-   * the corresponding PostsEntry records (post + like boxes).
-   */
-  setPostsHandler(handler: (postIds: string[]) => PostsEntry[]): void {
-    this.postsHandler = handler;
+  /** Admit an identity to the relay gate — it first received karma. */
+  addKarmaMember(authorHex: string): void {
+    this.karmaMembers.add(authorHex);
+  }
+
+  /** Drop an identity from the relay gate — its karma balance reached zero. */
+  removeKarmaMember(authorHex: string): void {
+    this.karmaMembers.delete(authorHex);
   }
 
   /**

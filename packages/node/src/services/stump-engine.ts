@@ -1,5 +1,4 @@
 import {
-  computePostId,
   leafHash,
   buildMerkleRoot,
   hexToBuf,
@@ -78,7 +77,7 @@ export function executePrune(intent: PruneIntent): PruneEntry {
   const descendants = getSubtree(intent.rootPostHash);
   const expectedIds = new Set([
     intent.rootPostHash,
-    ...descendants.map(p => computePostId(p)),
+    ...descendants.map(p => p.id),
   ]);
   const actualIds = new Set(intent.subtreePostIds);
   if (expectedIds.size !== actualIds.size ||

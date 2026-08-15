@@ -10,7 +10,7 @@ import {
   POST_LOCK_REPLY_COST,
 } from '@dagsocial/types';
 import {
-  hex, unhex, blake32, powInput, solve, signPost,
+  hex, unhex, blake32,
   signTx, txToApi, postLockTx, likeTx,
 } from './crypto-helpers.js';
 
@@ -153,19 +153,18 @@ export class ApiClient {
     author: IdentityKey,
     parentRefs: string[] = [],
   ): Promise<PostResponse> {
-    // 1. Request challenge
-    const chal = await this.requestChallenge(author.publicKeyHex);
-    const chalBytes = unhex(chal.challenge);
     const ts = Date.now();
 
-    // 2. PoW
-    const pi = powInput(content, author.publicKey, parentRefs, chalBytes, ts);
-    const nonce = solve(pi, chal.targetBits);
+    // ⛔ No challenge, no PoW, no post signature. One transaction carries the
+    // payload and is signed over its own `TxId`; the post's id follows from it.
+    const post = {
+      content,
+      author: author.publicKey,
+      parentRefs,
+      protocolVersion: PROTOCOL_VERSION,
+      timestamp: ts,
+    };
 
-    // 3. Sign post
-    const sig = signPost(content, author.publicKey, parentRefs, chalBytes, ts, author.keyObject);
-
-    // 4. Build karma lock tx
     const lockAmount = parentRefs.length > 0 ? POST_LOCK_REPLY_COST : POST_LOCK_THREAD_COST;
     const k = await this.getKarma(author.publicKeyHex);
     // Filter to only spendable karma boxes — post_lock boxes have
@@ -174,33 +173,15 @@ export class ApiClient {
     if (spendableBoxes.length === 0) {
       throw new Error(`No spendable karma boxes for ${author.publicKeyHex.slice(0, 12)}...`);
     }
-    const lockTx = postLockTx(spendableBoxes, lockAmount, 'pre-compute', author.publicKey);
-    // Pre-compute post ID so lockTx can reference it
-    const preId = computePostId({
-      content,
-      author: author.publicKey,
-      parentRefs,
-      challenge: chalBytes,
-      protocolVersion: PROTOCOL_VERSION,
-      timestamp: ts,
-      powNonce: nonce,
-      signature: unhex(sig),
-    } as any);
-    // Rebuild with correct targetPostId
-    const finalLockTx = postLockTx(spendableBoxes, lockAmount, preId, author.publicKey);
-    signTx(finalLockTx, author.keyObject, author.publicKeyHex);
+    // ⛔ ONE build, not two. The old flow built the lock twice — once with a
+    // placeholder target, then again with the pre-computed post id — because the
+    // lock had to name the post. It names nothing now, so there is nothing to
+    // pre-compute and nothing to rebuild.
+    const tx = postLockTx(spendableBoxes, lockAmount, post, author.publicKey);
+    signTx(tx, author.keyObject, author.publicKeyHex);
 
-    // 5. Submit
     return this.post<PostResponse>('/posts', {
-      content,
-      author: author.publicKeyHex,
-      parentRefs,
-      challenge: chal.challenge,
-      protocolVersion: PROTOCOL_VERSION,
-      timestamp: ts,
-      powNonce: nonce,
-      signature: sig,
-      karmaLockTx: txToApi(finalLockTx),
+      tx: { ...txToApi(tx), post: { ...post, author: author.publicKeyHex } },
     });
   }
 
@@ -250,7 +231,6 @@ export class ApiClient {
       authorId: author.publicKeyHex,
       subtreeMerkleRoot: merkleRootHex,
       subtreePostIds: sortedIds,
-      signature: sig,
       trigger: 'author',
     });
   }

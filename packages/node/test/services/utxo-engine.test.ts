@@ -1,4 +1,5 @@
 import {
+  makePost,
   seedAsOneTx,
   seedProvenance,
   type Stored,
@@ -26,6 +27,7 @@ import type {
   KarmaBox,
   InviteBox,
   BondBox,
+  Post,
   PostLockBox,
   VouchBox,
   AnyBoxCandidate,
@@ -183,6 +185,7 @@ describe('validateAndApplyTx', () => {
     pubKey: Uint8Array,
     protocolVersion = 1,
     likeTarget?: string,
+    post?: Post,
   ): UtxoTransaction {
     const hexKey = Buffer.from(pubKey).toString('hex');
     const tx: UtxoTransaction = {
@@ -191,6 +194,7 @@ describe('validateAndApplyTx', () => {
       signatures: {},
       protocolVersion,
       ...(likeTarget !== undefined ? { likeTarget } : {}),
+      ...(post !== undefined ? { post } : {}),
     };
     const hash = computeTxHash(tx);
     tx.signatures[hexKey] = signHash(hash, privKey);
@@ -875,15 +879,20 @@ describe('validateAndApplyTx', () => {
         value: POST_LOCK_THREAD_COST,
         originalValue: POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
-        targetPostId: 'ab'.repeat(32),
         guard: 'block_apply',
       };
 
+      // The lock's payload: `post` present ⟺ exactly one `PostLockBox` at the
+      // cost for that post's shape, and the author owns the karma being spent
+      // (NODE_INTERFACE → Post transactions).
       const tx = buildSignedTx(
         [karma.id!],
         [newKarma, postLock],
         ownerPrivKey,
         ownerPubKey,
+        1,
+        undefined,
+        makePost(ownerPubKey, 'conserving lock payload'),
       );
       const result = validateAndApplyTx(deps, tx, 10);
 
@@ -1349,7 +1358,6 @@ describe('validateAndApplyTx', () => {
         value: 5n,
         originalValue: 5n,
         owner: ownerPubKey,
-        targetPostId: TARGET,
         guard: 'block_apply',
       } as PostLockBox;
       const tx = buildSignedTx(
@@ -1374,7 +1382,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'like',
         value: 2n,
         likerId: ownerUserId,
-        targetPostId: TARGET,
         guard: 'epoch_tally',
       } as never;
       const tx = buildSignedTx(
@@ -1393,7 +1400,6 @@ describe('validateAndApplyTx', () => {
         value: POST_LOCK_THREAD_COST,
         originalValue: POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
-        targetPostId: TARGET,
         guard: 'block_apply',
       };
       const seededPostLock = seedProvenance<PostLockBox>(postLock, 1);

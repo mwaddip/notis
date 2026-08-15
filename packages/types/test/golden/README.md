@@ -19,29 +19,38 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `primitives.json` | One group per row of the Primitives table, at its boundaries |
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
-| `post.json` | `postFieldBytes` — the post id and PoW preimage — plus `powNonceBytes` and the two composed |
+| `post.json` | `postFieldBytes` — the post payload inside its creating transaction's `TxId` preimage |
 | `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type, both states of `bond.inviteePublicKey`, and both states of `genesis_proof.payload` |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage |
-| `block.json` | The six block structs and the ordering-block framing, plus the two element preimages |
+| `block.json` | The block header, the one body tree and the ordering-block framing, plus the coinbase leaf preimage |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |
 | `probe.ts` | The probe struct — a synthetic struct with a field of every kind |
 | `structs.ts` | The id-preimage codecs, the block codecs, the element codecs |
 
-`block.json` covers `blockHeader`, `subBlockTree` (with and without prune
-entries), `utxoTxTree` (with and without transactions and coinbase outputs),
-`subBlock` and `orderingBlock` — each at a typical value and at its smallest
-legal one, because the all-zeros case is where a transposition of two
+`block.json` covers `blockHeader`, `utxoTxTree` (with and without transactions
+and coinbase outputs) and `orderingBlock` — each at a typical value and at its
+smallest legal one, because the all-zeros case is where a transposition of two
 same-width fields becomes invisible.
 
-It also covers `subBlockEntry` and `coinbaseOutput` **on their own**, not only
-inside the trees that embed them. Those two are the block's other Merkle leaf
-preimages — `leafHash('subblock', …)` under `subBlockRoot` and
-`leafHash('coinbase', …)` under `utxoTxRoot`, as `prune.json` already is for
-`leafHash('prune', …)` — so node hashes them directly and a conformance
+⛔ **The header is NINE fields.** `subBlockRoot` is gone and every position after
+`prevBlockHash` shifted down by one, which is a renumbering rather than a
+deletion in place — a reader keeping the old offsets produces a silently wrong
+`blockHash`, not a decode error. The `blockHeader` vectors are what catch that.
+
+It also covers `coinbaseOutput` **on its own**, not only inside the tree that
+embeds it. It is a Merkle leaf preimage — `leafHash('coinbase', …)` under
+`utxoTxRoot`, as `prune.json` already is for `leafHash('prune', …)`, and both now
+sit under that same root — so node hashes it directly and a conformance
 implementation must be able to check one leaf without building a tree around it.
 The domain tag is **not** in the vector bytes; it is the caller's, which is what
 makes the leaf preimage and the wire encoding the same bytes rather than merely
 parallel ones.
+
+**Reserved, never to be reused:** the vector names `subBlockEntry`,
+`subBlockTree`, `subBlock`, `powNonceTail` and `powPreimage`, and the leaf domain
+`'subblock'`. A post is a transaction, so there is no sub-block to encode and no
+PoW nonce to append; `encodePost` is now exactly `postFieldBytes`, so the
+`postFields` vectors pin the wire post too.
 
 ### Two kinds of struct codec, and the difference is the point
 

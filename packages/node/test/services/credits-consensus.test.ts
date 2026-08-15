@@ -38,8 +38,7 @@ import {
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  type Stored,
-} from '../helpers.js';
+  type Stored, fixturePostId, seedPostTx } from '../helpers.js';
 
 // Same shape as block-apply.test.ts — small epoch, internal miner. Every field
 // below is kept verbatim; `makeTestConfig` only fills the thirteen `Config`
@@ -49,8 +48,6 @@ const testConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -236,9 +233,8 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
 
     // Mine: one sub-block to satisfy the block minimum, then create the block.
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'settlement fixture');
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(computePostId(post), 1000);
+    const { tx: postTx } = await seedPostTx(author, 'settlement fixture');
+    mempool.insertUtxoTx(postTx, 1000);
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
     bc.stopBlockCreator();
@@ -336,9 +332,8 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const preBlockDigest = digestHex(handle);
 
     const author = makeTestIdentity();
-    const post = makePost(author.userId, 'convergence fixture');
-    posts.insertPost(post, encodePost(post));
-    mempool.insertSubBlock(computePostId(post), 1000);
+    const { tx: postTx } = await seedPostTx(author, 'convergence fixture');
+    mempool.insertUtxoTx(postTx, 1000);
     bc.startBlockCreator(testConfig);
     const block3 = await mineNextBlock(bc);
     bc.stopBlockCreator();

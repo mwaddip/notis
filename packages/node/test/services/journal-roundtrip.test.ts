@@ -11,6 +11,7 @@ import {
   computePostId,
   computeTxId,
   encodePost,
+  POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
@@ -27,11 +28,15 @@ import type { StoredPost } from '../../src/store/posts.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
+  changeBoxOf,
+  fixturePostId,
   fixtureProvenance,
   hex,
+  lockBoxOf,
   makeApplicableBlock,
   makeKarmaBox,
   makePost,
+  seedPostTx,
   makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
@@ -74,8 +79,6 @@ const plainConfig = makeTestConfig({
   dbPath: ':memory:',
   networkType: 'testnet' as const,
   nodeRole: 'miner' as const,
-  postPowTargetBits: 20,
-  challengeWindowBlocks: 10,
   maxSubBlocksPerBlock: 1000,
   orderingBlockPowTargetBits: 3072,
   creditTreasuryPct: 10,
@@ -132,26 +135,21 @@ async function importAvl() {
 
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
-    insertPost: (post: Post, rawCbor: Uint8Array) => void;
+    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
     getPost: (id: string) => StoredPost | Stump | null;
   };
 }
 
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
-    insertSubBlock: (postId: string, expiresAtHeight: number) => number;
-    insertUtxoTx: (
-      tx: UtxoTransaction,
-      batchId: string | null,
-      expiresAtHeight: number,
-    ) => number;
+    insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ entryType: string }>;
   };
 }
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => { id?: string; value: bigint } | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
@@ -421,7 +419,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     signTransaction(tx, sender.privateKey, hex(sender.userId));
 
     const mempool = await importMempool();
-    mempool.insertUtxoTx(tx, null, 1000);
+    mempool.insertUtxoTx(tx, 1000);
 
     const classBlock = await mineNextBlock(bc); // height 2 carries the tx
     expect(classBlock).not.toBeNull();
@@ -458,53 +456,37 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       hasLikeRecord: (targetPostId: string, likerId: Uint8Array) => boolean;
     };
 
-    const post = makePost(author.userId, 'prune round-trip victim');
-    const postId = computePostId(post);
-    posts.insertPost(post, encodePost(post));
-    const reply: Post = {
-      ...makePost(replier.userId, 'somebody else in the same thread'),
-      parentRefs: [postId],
-    };
-    const replyId = computePostId(reply);
-    posts.insertPost(reply, encodePost(reply));
-
-    // Everything the UTXO leg touches, seeded before bootstrap: each user's
-    // karma and each post's lock box. Only the replier's karma is a merge
-    // target — the author's lock mints nothing to merge into.
-    const authorKarma = makeKarmaBox(20n, author.userId, 0);
-    utxo.insertBox(authorKarma);
-    const replierKarma = makeKarmaBox(5n, replier.userId, 0);
-    utxo.insertBox(replierKarma);
-    const lockBox = seedProvenance<PostLockBox>({
-      boxType: 'post_lock',
-      value: 30n,
-      originalValue: 30n,
-      owner: author.userId,
-      targetPostId: postId,
-      guard: 'block_apply',
-    }, 1);
-    utxo.insertBox(lockBox);
-    const replyLockBox = seedProvenance<PostLockBox>({
-      boxType: 'post_lock',
-      value: 40n,
-      originalValue: 40n,
-      owner: replier.userId,
-      targetPostId: replyId,
-      guard: 'block_apply',
-    }, 2);
-    utxo.insertBox(replyLockBox);
+    // ⛔ The lock boxes are MINTED by the post transactions, not seeded. A post
+    // and its lock are one transaction (NODE_INTERFACE → Post transactions), so
+    // a fixture that seeded a `PostLockBox` beside a separately-inserted post
+    // would settle a pairing the chain never made.
+    const { tx: postTx, postId } = await seedPostTx(author, 'prune round-trip victim');
+    const { tx: replyTx, postId: replyId } = await seedPostTx(
+      replier, 'somebody else in the same thread', { parentRefs: [postId] },
+    );
 
     const handle = await activateProver();
     const blockApply = await importBlockApply();
 
-    // Block 1 confirms both posts — prune authorization reads block_topology.
-    const confirmBlock = await makeApplicableBlock({
-      subBlockEntries: [
-        { postId, parentRefs: [], author: hex(author.userId) },
-        { postId: replyId, parentRefs: [postId], author: hex(replier.userId) },
-      ],
-    });
+    // Block 1 carries both post transactions — that is what stores the posts,
+    // records `block_topology` (which prune authorization reads) and mints the
+    // two locks. Only the replier's karma is a merge target: the pruning
+    // author's own lock burns and mints nothing to merge into.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx, replyTx] });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+    // Attribution: the block APPLIED both transactions rather than deferring and
+    // skipping them, which is the shape that leaves every assertion below
+    // measuring an empty chain.
+    expect(posts.getPost(postId)).not.toBeNull();
+    expect(posts.getPost(replyId)).not.toBeNull();
+    const lockBox = lockBoxOf(postTx);
+    const replyLockBox = lockBoxOf(replyTx);
+    expect(utxo.getBox(lockBox.id!)).not.toBeNull();
+    expect(utxo.getBox(replyLockBox.id!)).not.toBeNull();
+    // The change boxes the two post transactions left behind — 1 karma each,
+    // and the replier's is the merge target the refund lands in.
+    const authorChange = changeBoxOf(postTx);
+    const replierChange = changeBoxOf(replyTx);
     // A like applied at block 1 — seeded with no journal open, so the
     // seeding records nothing. Part of the pre-state the revert must restore.
     likes.insertLikeRecord(postId, liker.userId, 1);
@@ -516,16 +498,16 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // Settled: both locks consumed. The replier's pre-existing karma is
-    // merge-consumed into a 5 + 40 refund; the pruning author's 30 burned with
-    // its consume, leaving their standing 20 untouched. The liker got nothing
-    // (the burn is unrecoverable); the like-record died with the post.
+    // Settled: both locks consumed. The replier's change box is merge-consumed
+    // into a 1 + POST_LOCK_REPLY_COST refund; the pruning author's lock burned
+    // with its consume, leaving their 1 karma of change untouched. The liker got
+    // nothing (the burn is unrecoverable); the like-record died with the post.
     expect(utxo.getBox(lockBox.id!)).toBeNull();
     expect(utxo.getBox(replyLockBox.id!)).toBeNull();
-    expect(utxo.getBox(replierKarma.id!)).toBeNull();
-    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(45n);
-    expect(utxo.getBox(authorKarma.id!)).not.toBeNull();
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(20n);
+    expect(utxo.getBox(replierChange.id!)).toBeNull();
+    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(1n + POST_LOCK_REPLY_COST);
+    expect(utxo.getBox(authorChange.id!)).not.toBeNull();
+    expect(utxo.getKarmaBox(author.userId)!.value).toBe(1n);
     expect(utxo.getKarmaBox(liker.userId)).toBeNull();
     expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
     // Every consumption and the record deletion are in the journal the revert
@@ -538,7 +520,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       saved.mutations
         .filter((m) => m.kind === 'box' && m.op === 'remove')
         .map((m) => (m as { boxId: string }).boxId),
-    ).toEqual(expect.arrayContaining([lockBox.id, replyLockBox.id, replierKarma.id]));
+    ).toEqual(expect.arrayContaining([lockBox.id, replyLockBox.id, replierChange.id]));
     expect(saved.likeRecordDeletions).toEqual([
       { targetPostId: postId, likerId: liker.userId, appliedAtBlock: 1 },
     ]);
@@ -546,8 +528,8 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     await assertRoundTrip(db, handle, pre, classBlock);
 
     // The re-applied block leaves the same settled state again.
-    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(45n);
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(20n);
+    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(1n + POST_LOCK_REPLY_COST);
+    expect(utxo.getKarmaBox(author.userId)!.value).toBe(1n);
     expect(utxo.getBox(lockBox.id!)).toBeNull();
     expect(utxo.getBox(replyLockBox.id!)).toBeNull();
     expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);

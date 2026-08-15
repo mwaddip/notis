@@ -18,7 +18,6 @@ import {
   deleteLikeRecord,
   restoreLikeRecord,
   insertUtxoTx,
-  insertMempoolSubBlock,
   insertMempoolPrune,
   removeMempoolPrunes,
   rollbackBlockTopology,
@@ -222,7 +221,7 @@ export function revertBlock(height: number): PruneEntry[] {
 
   // Collect prune entries before the block is deleted
   const block = getOrderingBlock(height);
-  const pruneEntries: PruneEntry[] = block?.subBlockTree.pruneEntries ?? [];
+  const pruneEntries: PruneEntry[] = block?.utxoTxTree.pruneEntries ?? [];
 
   // 1. Replay the primitive mutation log in reverse: box/insert → deleteBox,
   // box/remove → unconsumeBox, record → restore `replaced` or delete. This
@@ -406,18 +405,21 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
     avlHandle.prover.rollback(version);
   }
 
-  // Phase 2: re-insert reverted txs and sub-blocks to mempool
+  // Phase 2: re-insert reverted txs to mempool.
+  //
+  // ⛔ **A post rides its own transaction, so re-inserting the transactions
+  // re-inserts the posts.** The separate sub-block injection this loop used to do
+  // is gone with the mempool's second entry type — and with it the injection
+  // primitive that a list of ids the block never committed made reachable.
+  // `journal.confirmedSubBlockIds` survives for the *un-confirm* half of the
+  // rollback; it is not a mempool key.
   const newTipHeight = forkHeight + newBlocks.length;
   const mempoolExpiry = newTipHeight + MEMPOOL_EXPIRY_BLOCKS;
   for (const journal of revertedJournals) {
     // Re-insert UTXO txs
     for (const txRecord of journal.appliedUtxoTxs) {
       const tx = decodeTx(txRecord.txCbor);
-      reinsert(() => insertUtxoTx(tx, null, mempoolExpiry), `tx ${txRecord.txId}`);
-    }
-    // Re-insert sub-blocks by ID (content is in dag_posts)
-    for (const subBlockId of journal.confirmedSubBlockIds) {
-      reinsert(() => insertMempoolSubBlock(subBlockId, mempoolExpiry), `sub-block ${subBlockId}`);
+      reinsert(() => insertUtxoTx(tx, mempoolExpiry), `tx ${txRecord.txId}`);
     }
   }
 

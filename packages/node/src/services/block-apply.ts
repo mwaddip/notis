@@ -30,12 +30,11 @@ import type { DecayDeps } from './decay.js';
 import { config } from '../config.js';
 import {
   computeBlockReward,
-  computeSubBlockRoot,
   computeUtxoTxRoot,
   clearTemplate,
   rebuildTemplate,
 } from './block-creator.js';
-import { subBlockIdsOf } from './sub-block-ids.js';
+import { postsOf, postIdsOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
 import {
@@ -52,18 +51,17 @@ import {
   getKarmaValue,
   getPost,
   insertStump,
-  insertPostPlaceholder,
   insertBox,
   getBox,
   consumeBox,
   confirmPost,
+  insertPost,
   pruneSubtree,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
   getPendingEntries,
   removeEntry,
-  removeSubBlockEntries,
   insertBlockTopology,
   getSubtreeTopology,
   getTopologyAuthor,
@@ -92,6 +90,7 @@ import type { RecordPut } from '../state/avl-prover.js';
 import {
   encodeTx,
   decodeTx,
+  encodePost,
   MAX_REORG_DEPTH,
   PROTOCOL_VERSION,
   INVITE_BOND_VEST_PER_LIKES,
@@ -398,14 +397,10 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     return false;
   }
 
-  // 4. Merkle root verification
-  const computedSubRoot = computeSubBlockRoot(block.subBlockTree);
+  // 4. Merkle root verification — one root over one body (transactions, prune
+  //    entries, coinbase outputs), each kept apart by its `leafHash` domain.
+
   const computedUtxoRoot = computeUtxoTxRoot(block.utxoTxTree);
-  if (computedSubRoot !== block.header.subBlockRoot) {
-    console.warn(`Rejected block height=${block.header.height}: subBlockRoot mismatch`);
-    abortBlockJournal();
-    return false;
-  }
   if (computedUtxoRoot !== block.header.utxoTxRoot) {
     console.warn(`Rejected block height=${block.header.height}: utxoTxRoot mismatch`);
     abortBlockJournal();
@@ -505,7 +500,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // back a valid block, and inventing a placeholder would print a hash that is
   // not one. If the impossible happens the line says `hash=null`, which is true.
   const appliedHash = validation.blockHash(block.header);
-  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.subBlockTree.subBlockEntries.length} sub-blocks)`);
+  console.log(`Applied ordering block height=${block.header.height} hash=${appliedHash} (${block.utxoTxTree.utxoTxIds.length} txs)`);
   return true;
 }
 
@@ -710,14 +705,12 @@ function applyMutationPhase(
   height: number,
   dagService?: DagService,
 ): boolean {
-  // Every id the block commits to, independent of per-post confirm outcomes —
-  // same semantics as the confirm loop in §7, which tolerates per-post
-  // failures. Derived from `subBlockEntries` because the journal is the
-  // *inverse* of that loop: rollback un-confirms exactly what apply confirmed,
-  // and the confirm loop iterates entries. Keying the inverse on the
-  // uncommitted `subBlockRefs` made the two disagree for any block that lied
-  // (`subBlockIdsOf`).
-  recordConfirmedSubBlocks(subBlockIdsOf(block.subBlockTree));
+  // Every post id the block commits to, independent of per-post confirm
+  // outcomes — same semantics as the confirm loop in §7, which tolerates
+  // per-post failures. Both read `postsOf`, so rollback un-confirms exactly what
+  // apply confirmed.
+  const blockPosts = postsOf(block);
+  recordConfirmedSubBlocks(postIdsOf(block));
 
   // 7. Apply coinbase — mint credits for each output. The store choke point
   // journals both the pre-existing boxes the mint merges in and the new box.
@@ -732,79 +725,53 @@ function applyMutationPhase(
     mintCredits(out.owner, out.value, height, coinbaseContext(i), out.lockedUntilBlock);
   }
 
-  // 7. Confirm sub-blocks — create placeholders if post doesn't exist
+  // 7. Store and confirm the posts this block creates.
   //
-  // Entry-vs-post verification (H-3): `author` and `parentRefs` are both
-  // postId-preimage fields, so any node holding the content can check the
-  // block's claim against it. Nodes that do reject a lying entry, which keeps
-  // it out of the canonical chain for everyone; a node lacking the content
-  // accepts the entry as claimed and inherits the guarantee through PoW weight.
-  // Unchecked, a producer could graft a victim's post under their own root (via
-  // parentRefs) or claim its authorship outright — and then prune it "as author".
-  for (let i = 0; i < block.subBlockTree.subBlockEntries.length; i++) {
-    const entry = block.subBlockTree.subBlockEntries[i]!;
-    const subBlockId = entry.postId;
-
-    const localPost = getPost(subBlockId);
-    if (!localPost) {
-      // Content hasn't arrived — record the claim, verify it if it ever does.
-      insertPostPlaceholder(subBlockId, entry.parentRefs);
-    } else if ('content' in localPost && localPost.content !== '') {
-      // Real content (not a placeholder, not a stump) — the claim is checkable.
-      const realAuthor = Buffer.from(localPost.author).toString('hex');
-      if (entry.author !== realAuthor) {
-        console.warn(
-          `Rejected block height=${height}: subBlockEntry author ` +
-          `mismatch for ${subBlockId}`,
-        );
-        return false;
-      }
-      const realParents = localPost.parentRefs;
-      const parentsMatch =
-        Array.isArray(entry.parentRefs) &&
-        entry.parentRefs.length === realParents.length &&
-        entry.parentRefs.every((ref, j) => ref === realParents[j]);
-      if (!parentsMatch) {
-        console.warn(
-          `Rejected block height=${height}: subBlockEntry parentRefs ` +
-          `mismatch for ${subBlockId}`,
-        );
-        return false;
+  // ⛔ **There is no claim to verify here, and that is the point** (audit H-3).
+  // The block carries the post itself inside its creating transaction, so a node
+  // syncing from ordering blocks alone holds the content and the author's
+  // signature over the `TxId` — it verifies authorship rather than recording a
+  // `SubBlockEntry`'s assertion of it on trust. A producer cannot graft a
+  // victim's post under its own root or claim its authorship, because it cannot
+  // produce the victim's signature over a transaction spending the victim's
+  // karma.
+  //
+  // A post absent locally is simply inserted: the body is right here. There is no
+  // placeholder state and nothing for a content sweep to resolve.
+  for (const { postId, post } of blockPosts) {
+    if (!getPost(postId)) {
+      try {
+        insertPost(postId, post, encodePost(post));
+      } catch (err) {
+        console.warn(`Failed to store post ${postId}: ${String(err)}`);
       }
     }
-
     try {
-      confirmPost(subBlockId, height);
+      confirmPost(postId, height);
     } catch (err) {
-      console.warn(`Failed to confirm sub-block ${subBlockId}: ${String(err)}`);
+      console.warn(`Failed to confirm post ${postId}: ${String(err)}`);
     }
   }
-
-  // Still remove confirmed entries from local mempool (if we have them).
-  // One DELETE keyed by subblock_id, never a bounded fetch-and-find loop: a
-  // row cap silently stops removing entries past it (audit M-8, bookkeeping
-  // only — the stragglers linger until expiry, no consensus effect).
-  removeSubBlockEntries(subBlockIdsOf(block.subBlockTree));
 
   // 8. Compute DAG scores and evaluate canonical tip
   if (dagService) {
     let bestScore = 0;
     let bestId: string | null = null;
 
-    for (const entry of block.subBlockTree.subBlockEntries) {
+    for (const { postId, post } of blockPosts) {
       let maxParent = 0;
-      for (const pid of entry.parentRefs) {
+      for (const pid of post.parentRefs) {
         const ps = dagService.getScore(pid);
         if (ps !== null && ps > maxParent) {
           maxParent = ps;
         }
       }
       const score = maxParent + 1; // uniform weight: ownWork = 1
-      dagService.saveScore(entry.postId, score);
+      dagService.saveScore(postId, score);
 
       if (score > bestScore) {
         bestScore = score;
-        bestId = entry.postId;
+        bestId = postId;
       }
     }
 
@@ -820,11 +787,16 @@ function applyMutationPhase(
     }
   }
 
-  // 8b. Populate block_topology from this block's subBlockEntries
-  // Consensus data only (verified against local content above where we hold it)
-  // — this, not dag_posts.author, is the authority for prune authorization.
-  for (const entry of block.subBlockTree.subBlockEntries) {
-    insertBlockTopology(entry.postId, entry.parentRefs, entry.author, height);
+  // 8b. Populate block_topology from this block's post transactions.
+  // Consensus data only — this, not dag_posts.author, is the authority for prune
+  // authorization, and it is derivable by any node holding the block body.
+  for (const { postId, post } of blockPosts) {
+    insertBlockTopology(
+      postId,
+      post.parentRefs,
+      Buffer.from(post.author).toString('hex'),
+      height,
+    );
   }
 
   // 8c. Process prune entries from this block
@@ -837,7 +809,7 @@ function applyMutationPhase(
   //      to every owner but the pruning author, delete the subtree's
   //      like-records (journalled)
   //   6. Prune DAG content, insert simplified Stump for historical record
-  for (const entry of block.subBlockTree.pruneEntries) {
+  for (const entry of block.utxoTxTree.pruneEntries) {
     // 1. Authorship binding (H-3)
     //
     // The signature check below proves the entry was signed *by* authorId; it
@@ -950,7 +922,9 @@ function applyMutationPhase(
   //  - Inputs not present yet → defer and retry. A tx may consume a box
   //    created by an earlier tx in the same block, and block order does not
   //    have to be dependency order, so the loop makes repeated passes until it
-  //    stops making progress. Txs whose inputs never appear are skipped.
+  //    stops making progress. A tx whose inputs never arrive rejects the block:
+  //    the block commits to it in `utxoTxIds`, so a body that cannot apply it
+  //    is a body its own `stateRoot` cannot reflect.
   //
   //  - Inputs present but the tx is invalid → reject the whole block. Validator
   //    selection is permissionless PoW, so the producer is untrusted and
@@ -1368,13 +1342,15 @@ function applyMutationPhase(
         value: remaining,
         originalValue: lockBox.originalValue,
         owner: lockBox.owner,
-        targetPostId: postId,
         guard: 'block_apply',
         txId: mintTxIdFor(postlockRemainderContext(postId), height),
         index: MINT_OUTPUT_INDEX,
       };
       remainder.id = computeBoxId(remainder);
-      insertBox(remainder);
+      // ⛔ Derivation route 2 (`insertBox`): this box's provenance names the
+      // MINT, not the post, so the target must be passed. Deriving it from
+      // `remainder.txId` would produce an id computed from a synthetic mint.
+      insertBox(remainder, postId);
     }
   }
 

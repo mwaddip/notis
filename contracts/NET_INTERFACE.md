@@ -199,8 +199,6 @@ chain data.
 
 ## Gossip Topics
 
-> ⚠ **AHEAD OF CODE.** The tree gossips sub-blocks on their own topic.
-
 **There is no sub-block topic.** A post is a transaction and propagates as one.
 The relay-path gate is a cached **membership** check — *does this author hold
 karma at all* — replacing post PoW; see `NODE_INTERFACE` → Post transactions for

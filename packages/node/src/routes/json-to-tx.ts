@@ -1,5 +1,5 @@
 import { PROTOCOL_VERSION } from '@dagsocial/types';
-import type { AnyBox, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, Post, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
 /**
@@ -67,6 +67,13 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     throw new ClientError('likeTarget must be a string post id');
   }
 
+  // ---- post ----
+  // Same rule as `likeTarget`: carried through only when present, because it sits
+  // inside the signed bytes. `author` is the one binary field — hex on the wire,
+  // raw bytes in the preimage — and `verifyTxStructure` owns its 32-byte shape
+  // check, as `castLike` owns `likeTarget`'s.
+  const post = raw.post === undefined ? undefined : jsonToPost(raw.post);
+
   return {
     inputs: (raw.inputs ?? []) as string[],
     outputs,
@@ -80,6 +87,36 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     ...(Object.keys(preimages).length > 0 ? { preimages } : {}),
     protocolVersion,
     ...(likeTarget !== undefined ? { likeTarget } : {}),
+    ...(post !== undefined ? { post } : {}),
+  };
+}
+
+/**
+ * Convert the JSON post payload carried by a post transaction.
+ *
+ * ⚠ **No id is read and none may be.** A post's id comes from the transaction
+ * that creates it (`computePostId(txId, index)`), so a client-supplied id would
+ * be a claim with nothing behind it. The service derives it after the
+ * transaction validates.
+ */
+function jsonToPost(raw: unknown): Post {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ClientError('post must be an object');
+  }
+  const p = raw as Record<string, unknown>;
+  if (typeof p.author !== 'string') {
+    throw new ClientError('post author must be a hex string');
+  }
+  const author = hexToBytes(p.author);
+  if (author.length !== 32) {
+    throw new ClientError('post author must be 32 bytes (64 hex chars) — Ed25519 public key');
+  }
+  return {
+    content: p.content as string,
+    author,
+    parentRefs: (p.parentRefs ?? []) as string[],
+    protocolVersion: (p.protocolVersion as number) ?? PROTOCOL_VERSION,
+    timestamp: p.timestamp as number,
   };
 }
 

@@ -54,8 +54,12 @@ export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
 
 // PoW
-export const POST_POW_TARGET_BITS = 20; // → profile: postPowTargetBits
-export const CHALLENGE_WINDOW_BLOCKS = 10;
+//
+// Reserved, never to be reused: `POST_POW_TARGET_BITS`, the profile field
+// `postPowTargetBits`, and `CHALLENGE_WINDOW_BLOCKS`. Post PoW and its challenge
+// handshake are gone — a post is admitted by the stateful karma lock. Ordering
+// -block PoW is unaffected: it is the consensus PoW and always was, and
+// consensus is now honestly single-phase.
 
 // Karma decay (periodic burn model)
 export const KARMA_POSTING_MINIMUM = 1n;

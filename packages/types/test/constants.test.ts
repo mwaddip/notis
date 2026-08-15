@@ -13,7 +13,6 @@ import { describe, it, expect } from 'vitest';
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
-  POST_POW_TARGET_BITS,
   MAX_REORG_DEPTH,
   NETWORK_PROFILES,
 } from '../src/index.js';
@@ -29,10 +28,13 @@ describe('PoW difficulty constants', () => {
     expect(ORDERING_BLOCK_POW_TARGET_BITS / 256).toBe(23.375);
   });
 
-  // Post PoW is fixed difficulty and is never retargeted, so it is not scaled.
-  // VALIDATION_INTERFACE → powTarget / meetsPowTarget keeps its [0, 256] domain.
-  it('leaves post difficulty in whole bits', () => {
-    expect(POST_POW_TARGET_BITS).toBe(20);
+  // ⛔ There is exactly ONE PoW constant, and consensus is single-phase.
+  // `POST_POW_TARGET_BITS` is deleted with post PoW — a post is admitted by the
+  // stateful karma lock, not by a proof of burned milliseconds.
+  it('has no post-PoW difficulty', async () => {
+    const constants = await import('../src/constants.js') as Record<string, unknown>;
+    expect(constants.POST_POW_TARGET_BITS).toBeUndefined();
+    expect(constants.CHALLENGE_WINDOW_BLOCKS).toBeUndefined();
   });
 
   // NOT the x256 rescale of 4. VALIDATION_INTERFACE → blockWork / cumulativeWork:
@@ -64,7 +66,6 @@ describe('PoW difficulty constants', () => {
   // DEVNET_PROFILE is module-private; NETWORK_PROFILES is the exported handle.
   it('seeds devnet above the work-resolution floor', () => {
     expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetBits).toBeGreaterThan(2180);
-    expect(NETWORK_PROFILES.devnet.postPowTargetBits).toBe(4);
   });
 
   // TYPES_INTERFACE → Ordering block PoW: the constant is mainnet's and testnet's,

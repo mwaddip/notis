@@ -7,7 +7,6 @@ function header(powTargetBits: number): BlockHeader {
     protocolVersion: 1,
     height: 1,
     prevBlockHash: '00'.repeat(32),
-    subBlockRoot: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),

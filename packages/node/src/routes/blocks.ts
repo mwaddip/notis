@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { blockHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
-import { subBlockIdsOf } from '../services/sub-block-ids.js';
+import { postIdsOf } from '../services/block-posts.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -41,7 +41,6 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       protocolVersion: block.header.protocolVersion,
       height: block.header.height,
       prevBlockHash: block.header.prevBlockHash,
-      subBlockRoot: block.header.subBlockRoot,
       utxoTxRoot: block.header.utxoTxRoot,
       stateRoot: block.header.stateRoot,
       validatorId: Buffer.from(block.header.validatorId).toString('hex'),
@@ -49,15 +48,12 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       powTargetBits: block.header.powTargetBits,
       createdAt: block.header.createdAt,
     },
-    subBlockTree: {
-      // Response shape unchanged; the value now comes from the committed
-      // entries rather than the uncommitted field a block carried.
-      subBlockRefs: subBlockIdsOf(block.subBlockTree),
-      subBlockEntries: block.subBlockTree.subBlockEntries,
-      pruneEntries: block.subBlockTree.pruneEntries,
-    },
     utxoTxTree: {
       utxoTxIds: block.utxoTxTree.utxoTxIds,
+      // The ids of the posts this block creates, derived from its post-bearing
+      // transactions. There is no separate sub-block section to report.
+      postIds: postIdsOf(block),
+      pruneEntries: block.utxoTxTree.pruneEntries,
       // CBOR fields omitted from JSON — UTXO tx CBOR has no meaningful
       // textual representation.
       utxoTxs: [],

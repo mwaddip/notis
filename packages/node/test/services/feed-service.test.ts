@@ -1,3 +1,4 @@
+import { fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
 import { computePostId, encodePost, PROTOCOL_VERSION } from '@dagsocial/types';
@@ -55,18 +56,15 @@ function makePost(
     content,
     author,
     parentRefs,
-    challenge: new Uint8Array(32).fill(0xaa),
-    powNonce: 0,
     protocolVersion: PROTOCOL_VERSION,
     timestamp: Date.now(),
-    signature: new Uint8Array(64),
   };
 }
 
 /** Insert a post and return its computed ID. */
 function insertTestPost(post: Post): string {
-  const postId = computePostId(post);
-  insertPost(post, encodePost(post));
+  const postId = fixturePostId(post);
+  insertPost(fixturePostId(post), post, encodePost(post));
   return postId;
 }
 

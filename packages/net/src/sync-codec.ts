@@ -3,11 +3,11 @@ import { encodeFrame } from './frame.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from './sync-types.js';
 import {
   MSG_SYNC_INFO, MSG_INV, MSG_MODIFIER_REQUEST, MSG_MODIFIER_RESPONSE,
-  MSG_GET_PEERS, MSG_PEERS, MSG_GET_POSTS, MSG_POSTS,
+  MSG_GET_PEERS, MSG_PEERS,
   MSG_GET_HEADERS, MSG_HEADERS, MSG_GET_BLOCKS, MSG_BLOCKS,
 } from './types.js';
 import type {
-  GetPeersMsg, PeersMsg, PeerEntryMsg, GetPostsMsg, PostsMsg, PostsEntry,
+  GetPeersMsg, PeersMsg, PeerEntryMsg,
   GetHeadersMsg, GetBlocksMsg,
 } from './types.js';
 import {
@@ -24,7 +24,7 @@ import {
   writeLp,
   writeVlqU,
 } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock, Post, StructCodec } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, StructCodec } from '@dagsocial/types';
 import {
   isRecord,
   isBoundedInt,
@@ -192,43 +192,6 @@ export function decodePeers(body: Uint8Array): PeersMsg | null {
   }
 
   return { peers };
-}
-
-export function encodeGetPosts(magic: number, msg: GetPostsMsg): Uint8Array {
-  // GetPostsMsg is a simple object — CBOR handles it natively
-  return frameMessage(magic, MSG_GET_POSTS, msg);
-}
-
-export function decodeGetPosts(body: Uint8Array): GetPostsMsg | null {
-  const v = tryDecode(body);
-  if (!isRecord(v)) return null;
-  if (!isStringArray(v.postIds)) return null;
-  return { postIds: [...v.postIds] };
-}
-
-export function encodePosts(magic: number, msg: PostsMsg): Uint8Array {
-  return frameMessage(magic, MSG_POSTS, msg);
-}
-
-export function decodePosts(body: Uint8Array): PostsMsg | null {
-  const v = tryDecode(body);
-  if (!isRecord(v)) return null;
-  if (!Array.isArray(v.entries)) return null;
-
-  const entries: PostsEntry[] = [];
-  for (const e of v.entries) {
-    if (!isRecord(e) || typeof e.postId !== 'string') return null;
-    if (!isRecord(e.post)) return null;
-    // The Post interior is not inspected here — content validation is
-    // Stage 1's job (`@dagsocial/validation`). This boundary only guarantees
-    // the envelope can be walked without throwing.
-    entries.push({
-      postId: e.postId,
-      post: e.post as unknown as Post,
-    });
-  }
-
-  return { entries };
 }
 
 // ---------------------------------------------------------------------------

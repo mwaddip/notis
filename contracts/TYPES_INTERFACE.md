@@ -37,9 +37,6 @@ key IS the identity.
 
 ### Post
 
-> ⚠ **AHEAD OF CODE.** The tree still has `challenge`, `powNonce`, `signature`,
-> `signingHash`, `postPowPreimage` and `powNonceBytes`.
-
 ```
 Post {
   content: string              // 1–MAX_CONTENT_BYTES UTF-8
@@ -138,9 +135,6 @@ UsernameClaim = Post with content { type: "username_claim", claim: "@alice" }
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-> ⚠ **AHEAD OF CODE.** The tree exports `postPowPreimage`, `signingHash` and
-> `powNonceBytes`, and derives `computePostId` from the post's own fields.
-
 | Export | Signature | Description |
 |--------|-----------|-------------|
 | `postFieldBytes(post)` | `(Post) => Uint8Array` | The canonical length-prefixed encoding (see above). The post's **payload inside its creating transaction**, so it enters that transaction's `TxId`. |
@@ -160,9 +154,38 @@ three exist only for post PoW; `verifyPostId(post, expectedId)` cannot exist at 
 id is not a function of the post. **Names stay reserved.**
 
 ⚠ **`utf8(txId)`, not decoded bytes.** `TxId` is typed as a hex string, and this contract's
-standing rule (→ Pinned byte forms) is that a hex-typed value enters a preimage as the UTF-8
-bytes of its hex text. `computeMintTxId` and the `postlock-*` mint subjects already do this;
-a decoded-bytes variant here would be a silent third dialect.
+standing rule (→ Pinned byte forms) is that a **standalone derivation** takes it as the UTF-8
+bytes of its hex text — as the `postlock-*` and `prune-refund-author` mint subjects do. The
+decoded-bytes form belongs to the positional struct encoders, which establish their domain
+upstream; this function has no upstream and must stay total on an attacker-supplied `txId`.
+
+#### ⛔ What "verify a post" means now
+
+**A post id is not recomputable from the post, and the creating transaction is the only
+binding.** A node handed a bare `Post` and an id **cannot check that they belong together** —
+there is no function that takes the post and answers the id, and there must not be.
+
+**This is not a weakening; it is exactly the standing of a box.** A box id has needed
+provenance since Spec G, and nobody reads that as a box being less verifiable — the binding
+moved from the content to the transaction, where it is *stronger*, because the transaction is
+signed and its inputs cannot be reused. A post is now in that same position. What verifies a
+post is the transaction that created it: its `TxId` is checked byte-for-byte against
+`computeTxId`, the payload is inside that preimage, and the signer is the author.
+
+Three consequences, each of which reads as a loss only if this rule is not stated:
+
+- **`verifyPostId(post, expectedId)` cannot exist.** Not "was removed" — it has no possible
+  implementation.
+- **Parent refs are checked for EXISTENCE, not by hash recomputation.** A `verifyParentHash`
+  that decoded the parent and re-derived its id was checking a claim the parent's own bytes
+  can no longer make.
+- **A bare-post-by-id fetch has no verifiable answer**, which is why no such wire message
+  exists (`NET_INTERFACE` → Gossip Topics; codes 10/11 reserved). Anything that returns a
+  post must return the transaction that created it.
+
+**`StoredPost.id` is the store's statement of the binding.** It is written when the creating
+transaction applies and carried on every read; a reader takes it rather than deriving it,
+because deriving it is the thing that cannot be done.
 
 ### Merkle primitives (`merkle.ts`)
 
@@ -243,7 +266,7 @@ type AnyBoxCandidate = CandidateOf<KarmaBox> | CandidateOf<CreditBox> | …   //
 **`BoxCandidate` is the base, `CandidateOf<B>` is the per-type candidate.** An earlier draft of
 this block wrote `BoxCandidate` with a `…per-type fields` placeholder, which read as though one
 name covered both; it does not, and typing `UtxoTransaction.outputs` as the base would erase
-`owner`, `guard`, `targetPostId` and force a cast at every consumer. `Omit` is applied **per union
+`owner`, `guard`, `originalValue` and force a cast at every consumer. `Omit` is applied **per union
 member** — omitting from a union collapses it to the common keys. `UtxoTransaction.outputs` is
 `AnyBoxCandidate[]`.
 
@@ -296,13 +319,32 @@ reason/subject table in `NODE_INTERFACE.md`.
 Protocol-visible: a mirror implementation (demo UI, light client) that chooses differently
 computes different ids.
 
-- **`txId` enters a preimage as the UTF-8 bytes of its 64-character hex string**, not as the 32
-  decoded bytes. Consistent with how every other id already enters a preimage here
-  (`computeTxId` hashes input `BoxId`s as text, `postFieldBytes` encodes `parentRefs` as text);
-  keeps derivation **total** on untrusted input, since a hex decode throws on a malformed
-  `txId` and light clients derive ids from attacker-supplied fields; and is strictly more
-  injective, as decoding would collapse `AB…` and `ab…` onto one id. `reason` likewise enters
-  as ASCII.
+- **A hex-typed id has TWO encodings in this repo, and which one applies is decided by
+  whether it is a declared field in a positional layout.**
+
+  - **A `b32` field inside a positional layout enters as the 32 DECODED bytes.** `b32` is
+    written by `writeHexNOrThrow`, which decodes. This covers `computeTxId`'s `inputs`
+    (via `txIdBytes`), `postFieldBytes`' `parentRefs`, and `boxRecordBytes`' `txId`.
+  - **A free byte string concatenated into a hash enters as the UTF-8 bytes of its
+    64-character hex text.** This covers `computePostId`'s `txId` and the `postlock-unlock`,
+    `postlock-remainder` and `prune-refund-author` mint subjects. `reason` likewise enters
+    as ASCII.
+
+  ⛔ **The dividing line is a FIXED WIDTH, and that is why it is principled rather than
+  historical.** A positional reader finds every later field by offset, so a `b32` row must
+  be exactly 32 bytes — hex text would be 64 and break the layout's own arithmetic. A hash
+  preimage has no reader and therefore no width constraint, so the choice there is settled
+  by the two properties that are otherwise free: derivation stays **total** on untrusted
+  input, since a hex decode throws on a malformed id and light clients derive ids from
+  attacker-supplied fields; and it is strictly more **injective**, since decoding would
+  collapse `AB…` and `ab…` onto one id. Inside a layout those two are bought differently —
+  the domain is established upstream (→ Totality) and `b32` accepts lowercase only.
+
+  ⚠ **"Derivation" is not the discriminator, and reading it as one gets `computeTxId`
+  backwards.** `computeTxId` and `computeMintTxId` are both derivations that hash a
+  positional encoding; a mint `subject` is text only because it is *opaque `lp` bytes the
+  caller encodes*, not a typed field. State the form per preimage, and check which side of
+  the line it falls on rather than inferring from a neighbouring function's name.
 - **`u32BE` is total, never throwing.** Input outside `[0, 2³²−1)` writes the all-ones
   sentinel, following `post.ts`'s numeric-writer discipline for the M-5 no-panic contract. The
   encodable domain excludes the sentinel, so a well-formed index or height never collides with
@@ -514,10 +556,37 @@ PostLockBox extends BoxBase {
   value: bigint                // Current locked karma (decreases per block as likes accumulate)
   originalValue: bigint        // Initial lock amount (POST_LOCK_THREAD_COST or POST_LOCK_REPLY_COST)
   owner: Uint8Array            // 32 raw bytes — post author's Ed25519 public key
-  targetPostId: PostId         // The post this lock secures
   guard: "block_apply"         // Consumable only by block application (per-block vesting)
 }
 ```
+
+⛔ **There is no `targetPostId`, and the reason is CIRCULARITY.** A post's id comes
+from the transaction that creates it (`computePostId(txId, index)`). The lock is an
+**output of that same transaction**, and `canonicalBoxBytes` is inside the `TxId`
+preimage — so the field would have to be known before the `TxId` that produces it.
+**The transaction would be unbuildable.** This is the same circularity that makes
+`outputs` carry *candidates*: a transaction cannot name its own outputs' ids, so ids
+are derived once `TxId` is known.
+
+It would also be a **second copy of committed state**: a lock's target is recomputable
+from the transaction that created it, so carrying it adds a field that can disagree
+with the thing it describes and buys nothing.
+
+⚠ **Do not re-add it.** The field looks obviously useful and is unbuildable. Node holds
+the lock→post mapping as **derived state**, written at apply by every node identically
+— the shape P2-D already blesses ("derived state computed identically by every node at
+apply — nothing to carry in the block").
+
+⛔ **TWO derivation routes, and one does not cover the other.**
+
+| lock | provenance names | target derived from |
+|---|---|---|
+| the original lock | the **post's own transaction** | `computePostId(box.txId, 0)` |
+| a `postlock-remainder` lock | a **synthetic mint** (`computeMintTxId`) | the mint **subject**, which carries the post id |
+
+A remainder lock's provenance names the mint, **not** the post, so route 1 derives a
+wrong id from it. Node's `insertBox` states both routes adjacently and refuses a
+`post_lock` that supplies neither.
 
 Post lock karma vests **per block** (P2-D — there is no epoch): every
 `POST_LOCK_UNLOCK_PER_LIKES` (10) lifetime likes on the target post unlocks
@@ -623,23 +692,42 @@ UtxoTransaction {
   post?: Post                              // Present ⟺ this tx creates a post — see below
 }
 
-TxId = blake2b512( TX_ID_DOMAIN ‖ inputs ‖ canonicalCbor(outputs, in order)
-                   ‖ preimages (sorted by boxId) ‖ protocolVersion
-                   ‖ ("like:" ‖ likeTarget, iff present)
-                   ‖ ("post:" ‖ postFieldBytes(post), iff present) )[0:32]
+TxId = blake2b512( TX_ID_DOMAIN ‖ txIdBytes )[0:32]
+
+txIdBytes = arr(inputs, b32) ‖ arr(outputs, canonicalBoxBytes)
+            ‖ opt(arr(preimages sorted, b32(boxId) ‖ lp(preimage)))
+            ‖ vlqU(protocolVersion)
+            ‖ opt(likeTarget, b32)
+            ‖ opt(post, postFieldBytes)
 ```
 
-> ⚠ **AHEAD OF CODE.** The tree has no `post` field; posts ride a separate
-> `subBlockTree`.
+⚠ **Where this section and "Layout — UtxoTransaction" disagree, the LAYOUT TABLE
+is normative** — it always was, and this formula has been restated here to stop
+saying otherwise. Both optional fields carry `opt()`'s **0/1 presence tag**, not
+an in-band ASCII marker; the `like:` / `post:` marker scheme this section used to
+describe was never implemented for either field.
 
 **`post`** carries the post's payload inside the transaction that creates it, on
 the same pattern `likeTarget` set: an optional field whose presence is
-biconditional with a rule. Its preimage contribution is the ASCII marker `post:`
-followed by `postFieldBytes(post)`, appended **only when present**, after
-`likeTarget`'s contribution. **The two markers are mutually exclusive in
-practice** — a transaction is a like or a post, never both — but the encoding does
-not rely on that: each is independently delimited, so the tail stays unambiguous
-however the fields combine.
+biconditional with a rule. It takes `opt()`'s presence tag followed by
+`postFieldBytes(post)`, appended **only when present**, after `likeTarget`'s
+contribution. **The two are mutually exclusive in practice** — a transaction is a
+like or a post, never both — but the encoding does not rely on that: each carries
+its own tag, so the tail stays unambiguous however the fields combine.
+
+⛔ **A presence tag is unambiguous by construction; an in-band marker is
+unambiguous only by argument** — and the argument has to be remade every time a
+neighbouring field changes. That is why `opt()` is the form for every optional
+field in this layout, and why a marker scheme must not be reintroduced for one.
+
+⚠ **The tag costs ONE BYTE on EVERY transaction preimage, including transactions
+that carry no post — and that is the accepted price, not an oversight.** An
+in-band marker appends nothing when the field is absent; an `opt()` tag always
+appends its `0`. Adding `post` therefore moved **every** `TxId` in existence, and
+through them every box id derived from one, which is why the golden vectors
+churned far beyond the post path. **A marker was considered and rejected on the
+ambiguity argument above.** Do not read that churn as a defect and "optimise" the
+tag back into a marker.
 
 ⛔ **This is what makes the post id derivable.** `postFieldBytes` is inside the
 `TxId` preimage, so a transaction carrying a distinct post has a distinct id, and
@@ -653,10 +741,11 @@ The consensus rule — `post` present ⟺ the transaction locks
 in `NODE_INTERFACE.md`, as the like biconditional does.
 
 **`likeTarget`** names the liked post from inside the signed bytes — a relay cannot
-re-point a like. Its preimage contribution is the ASCII marker `like:` followed by the
-64-char hex, appended after `protocolVersion` **only when the field is present**; absence
-appends nothing. The marker makes absent/present unambiguous at the tail (a
-`protocolVersion` decimal string can never produce `like:`). This package defines only the
+re-point a like. Its preimage contribution is `opt()`'s presence tag followed by `b32` —
+the 32 **decoded** bytes, per Pinned byte forms — appended after `protocolVersion` **only
+when the field is present**; absence appends the tag alone. The tag also preserves the
+`!== undefined` distinction, so an empty-string target hashes differently from absence.
+This package defines only the
 field and its encoding; the **biconditional rule** — `likeTarget` present ⟺ the
 transaction burns exactly `LIKE_KARMA_COST`, the only legal karma deficit in any user
 transaction — is consensus validation and lives in `NODE_INTERFACE.md` (UTXO engine).
@@ -830,9 +919,6 @@ Validator-produced, and a **nested** structure — a header plus two body trees 
 signature. There is no flat `hash` field (the hash is derived on demand via
 `blockHash(header)`), and `height` / `powNonce` / `validatorId` / `prevBlockHash` live
 on `header`, not on the block.
-
-> ⚠ **AHEAD OF CODE.** The tree still has `subBlockTree`, `SubBlockEntry` and a
-> `subBlockRoot` in the header.
 
 ```
 OrderingBlock {
@@ -1223,7 +1309,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | `invite` | `b32(inviterId)` ‖ `b32(inviteePublicKey)` |
 | `genesis_proof` | `lp(payload)` |
 | `bond` | `b32(inviterId)` ‖ **`b32(inviteePublicKey)`** |
-| `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` ‖ `b32(targetPostId)` |
+| `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
 
 `genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
@@ -1270,9 +1356,9 @@ that box.
 
 ⚠ **A search for `bytes0or32` cannot find every instance of this defect**, and the
 reason generalises: that searches a **name**, where the property is *a throwing
-writer whose schema type does not pin its domain*. `post_lock.targetPostId` is a
-hex **string**, so it is not a byte-kind entry at all and no pass over that list
-can surface it — it is the `✗` row in the table above, still open.
+writer whose schema type does not pin its domain*. `post_lock.targetPostId` was a
+hex **string**, so it was not a byte-kind entry at all and no pass over that list
+could surface it — it was the `✗` row in the table below.
 
 **The correct search, and the one to reuse: cross-check every throwing writer in the layout against
 the schema type of the field it writes.** Run over the box arms 2026-08-09:
@@ -1281,17 +1367,15 @@ the schema type of the field it writes.** Run over the box arms 2026-08-09:
 |---|---|---|---|
 | `karma.owner`, `credit.owner`, `invite.inviterId`, `invite.inviteePublicKey`, `bond.inviterId`, `bond.inviteePublicKey`, `post_lock.owner`, `vouch.voucherId`, `vouch.targetId` | `writeBytesNOrThrow(…, 32)` | `bytes32` | ✓ |
 | `post_lock.originalValue` | `writeVlqU64OrThrow` | `u64` | ✓ |
-| **`post_lock.targetPostId`** | **`writeHexNOrThrow(…, 32)`** | **`'string'`** — `typeof v === 'string'`, no width, no alphabet | **✗** |
+**The `✗` row was `post_lock.targetPostId`, and it is closed by DELETION rather than by a
+domain pin.** The field is gone (→ PostLockBox): it was unbuildable under provenance-derived
+post ids, so the throwing writer it fed has no input left to be adversarial about. There is no
+throwing writer in the box arms whose schema type fails to pin its domain.
 
-`targetPostId` is therefore a second live throw of the same shape: `checkOutputShape` admits any
-string, nothing else constrains the field, and `computeTxId` runs after it — so `validateTx` throws
-on adversarial input where `cbor-x` encoded it faithfully. **The fix is in node's schema, not here:**
-the domain belongs upstream of the encoder (spec §2.5), so `OUTPUT_SHAPE` gains a `hex32` runtime
-type. A guard inside `canonicalBoxBytes` would be the band-aid.
-
-This also corrects the 2a report's §7.1, which concluded the user-transaction path was clean because
-`checkOutputShape` runs at step 4 before `computeTxId`. It does run first — it just does not pin this
-field.
+⚠ **Deletion is a legitimate close and a misleading one to leave unrecorded.** The method the
+row exists to teach — cross-check every throwing writer against the schema type of the field it
+writes — is unaffected, and is still the search to reuse. What changed is the instance, not the
+class: a future box field can reintroduce the shape, and the table above is how it gets found.
 
 **Phase 3 must run the table above against the block structs before pinning any width**, and must run
 it in that shape: writer versus schema type, field by field. Two rows in this contract were wrong,
@@ -1303,7 +1387,11 @@ and both were found by someone searching from a direction the previous searcher 
 
 `TX_ID_DOMAIN` ‖ `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖
 `opt(arr(preimages sorted, b32(boxId) ‖ lp(preimage)))` ‖ `vlqU(protocolVersion)` ‖
-`opt(likeTarget, b32)`
+`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)`
+
+`post` needs no length prefix inside its `opt`: `postFieldBytes` is self-delimiting (every
+field is fixed-width, length-prefixed or a VLQ) and it is last, so nothing follows it to be
+ambiguous against.
 
 Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
 `String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with
@@ -1325,8 +1413,6 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 | 7 | `powNonce` | `vlqU` |
 | 8 | `powTargetBits` | `vlqU` |
 | 9 | `createdAt` | `vlqU` |
-
-> ⚠ **AHEAD OF CODE.** The tree writes ten fields with `subBlockRoot` at 4.
 
 ⛔ **Nine fields, and every position after 3 SHIFTS DOWN BY ONE.** This is a positional
 layout with no keys, so dropping `subBlockRoot` is not a deletion in place — it renumbers

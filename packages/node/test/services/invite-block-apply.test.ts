@@ -38,8 +38,7 @@ import {
   mineNextBlock,
   seedAsOneTx,
   signTransaction,
-  type TestIdentity,
-} from '../helpers.js';
+  type TestIdentity, fixturePostId, fillerTx, seedPostTx } from '../helpers.js';
 
 /** Short enough that the deadline is reachable by mining a few real blocks. */
 const PROBATION = 3;
@@ -191,7 +190,7 @@ describe('the invite at block application', () => {
     const mempool = await importMempool();
     const records = await importRecords();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
+    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const block = await mineOne();
     expect(block).not.toBeNull();
     const height = block!.header.height;
@@ -220,7 +219,7 @@ describe('the invite at block application', () => {
     const records = await importRecords();
     const cooldowns = await import('../../src/store/vouch-cooldowns.js');
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
+    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     expect(await mineOne()).not.toBeNull();
 
     const secondInviter = makeTestIdentity();
@@ -272,7 +271,7 @@ describe('the invite at block application', () => {
 
     expect(utxo.getKarmaValue(inviter.userId)).toBe(0n);
 
-    mempool.insertUtxoTx(cancelTx(invite, inviter), null, 1000);
+    mempool.insertUtxoTx(cancelTx(invite, inviter), 1000);
     expect(await mineOne()).not.toBeNull();
 
     // Whole, not vested: a cancellation happens before any claim, so there is
@@ -306,7 +305,7 @@ describe('the invite at block application', () => {
     const mempool = await importMempool();
     const records = await importRecords();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
+    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const claimBlock = await mineOne();
     expect(claimBlock).not.toBeNull();
     const invitedAtBlock = claimBlock!.header.height;
@@ -439,16 +438,15 @@ describe('the invite at block application', () => {
     const postIds: string[] = [];
     for (let i = 0; i < count; i++) {
       const nonce = nonceBase + i;
-      const post = makePost(author.userId, `post ${nonce}`);
-      const postId = types.computePostId(post);
-      posts.insertPost(post, types.encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { post, tx: postTx, postId } = await seedPostTx(author, `post ${nonce}`);
+      posts.insertPost(postId, post, types.encodePost(post));
+      mempool.insertUtxoTx(postTx, 1000);
       postIds.push(postId);
 
       const liker = makeTestIdentity();
       const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
       utxo.insertBox(karma);
-      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), null, 1000);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), 1000);
     }
 
     expect(await mineOne()).not.toBeNull();
@@ -483,7 +481,7 @@ describe('the invite at block application', () => {
     const mempool = await importMempool();
     const records = await importRecords();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
+    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const invitedAtBlock = (await mineOne())!.header.height;
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
@@ -511,7 +509,7 @@ describe('the invite at block application', () => {
     const records = await importRecords();
     const db = await importDb();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), null, 1000);
+    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const invitedAtBlock = (await mineOne())!.header.height;
 
     const postIds = await earnLikes(invitee, INVITE_BOND_VEST_PER_LIKES, 100);
@@ -634,19 +632,21 @@ describe('the invite at block application — decay adjacency', () => {
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(claim, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
-    mempool.insertUtxoTx(claim, null, 1000);
+    mempool.insertUtxoTx(claim, 1000);
     const invitedAtBlock = (await mine()).header.height;
 
     // Five likes in one block → floor(5 / 5) = 1 karma vested at the deadline.
     for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
-      const post = makePost(invitee.userId, `decay post ${i}`);
-      const postId = types.computePostId(post);
-      posts.insertPost(post, types.encodePost(post));
-      mempool.insertSubBlock(postId, 1000);
+      const { tx: postTx, postId } = await seedPostTx(invitee, `decay post ${i}`);
+      // The post transaction itself, ahead of the like that targets it: a like
+      // is rejected unless `block_topology` already names its target, and that
+      // row is written when this transaction applies (NODE_INTERFACE → Post
+      // transactions). Both ride the same block, in this order.
+      mempool.insertUtxoTx(postTx, 1000);
       const liker = makeTestIdentity();
       const karma = makeKarmaBox(100n, liker.userId, 0, 900 + i);
       utxo.insertBox(karma);
-      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), null, 1000);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), 1000);
     }
     await mine();
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;

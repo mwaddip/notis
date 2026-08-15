@@ -627,3 +627,35 @@ export function firstDifference(a: Uint8Array, b: Uint8Array): number {
   }
   return a.length === b.length ? -1 : n;
 }
+
+/**
+ * Write `n` as 4 bytes big-endian.
+ *
+ * Deliberately *total*: a value outside the encodable domain writes the
+ * all-ones sentinel rather than throwing, so a malformed value can never turn
+ * id derivation into a panic on untrusted input (audit M-5). The encodable
+ * domain excludes the sentinel itself, so a well-formed value never collides
+ * with a malformed one.
+ *
+ * ⛔ **`computePostId` hashes one, and its totality is the reason.** A post id is
+ * derived from `(txId, index)` on the light-client path, from fields an attacker
+ * supplies — so a throwing writer there would turn id derivation into a panic,
+ * which is exactly what audit M-5 closed for the numeric fields.
+ * `computeCandidateBoxId`'s `index` and `computeMintTxId`'s `height` are `vlqU`
+ * instead; both forms are total, and which applies is stated per preimage.
+ *
+ * **Two mint `subject` encodings are also `u32BE`, and subjects are the
+ * caller's.** `coinbase` and `genesis` encode a `u32BE` selector
+ * (`node/src/mint-provenance.ts`), `computeMintTxId` takes those bytes
+ * opaquely, and `NODE_INTERFACE.md`'s reason/subject table is what mandates the
+ * form. One exported implementation is what stops node reimplementing it and
+ * drifting — a silent divergence would move mint txIds, and through them every
+ * box id, with nothing to catch it.
+ */
+const U32_SENTINEL = 0xffffffff;
+
+export function u32BE(n: number): Uint8Array {
+  const encodable = typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 && n < U32_SENTINEL;
+  const v = encodable ? n : U32_SENTINEL;
+  return new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff]);
+}

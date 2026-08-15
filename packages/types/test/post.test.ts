@@ -2,17 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'crypto';
 import {
   computePostId,
-  signingHash,
-  postPowPreimage,
+  postFieldBytes,
   getPostDiscriminator,
   buildProfileContent,
 } from '../src/post.js';
+import { computeTxId } from '../src/utxo.js';
+import type { UtxoTransaction } from '../src/utxo.js';
 import {
   PROTOCOL_VERSION,
   MAX_CONTENT_BYTES,
   MAX_PARENT_REFS,
-  POST_POW_TARGET_BITS,
-  CHALLENGE_WINDOW_BLOCKS,
   KARMA_POSTING_MINIMUM,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
@@ -38,76 +37,122 @@ import {
 } from '../src/constants.js';
 import type { Post } from '../src/post.js';
 
-const challenge = new Uint8Array(32).fill(0xab);
-const signature = new Uint8Array(64).fill(0xcd);
-
 const post: Post = {
   content: 'hello world',
   author: new Uint8Array(32).fill(0x11),
   parentRefs: [],
-  challenge,
-  powNonce: 42,
   protocolVersion: 2,
   timestamp: 1700000000000,
-  signature,
 };
 
-describe('post', () => {
+const TX_A = 'aa'.repeat(32);
+const TX_B = 'bb'.repeat(32);
+
+describe('post identity', () => {
   it('computePostId is deterministic', () => {
-    expect(computePostId(post)).toBe(computePostId(post));
+    expect(computePostId(TX_A, 0)).toBe(computePostId(TX_A, 0));
   });
 
-  it('computePostId changes with content', () => {
-    expect(computePostId(post))
-      .not.toBe(computePostId({ ...post, content: 'different' }));
+  it('⛔ takes no Post at all — the id is a function of the transaction only', () => {
+    // The whole of option (C). Two posts with byte-identical payloads get
+    // different ids iff their creating transactions differ, and identical ids
+    // iff the transaction is the same one — so the payload cannot influence it.
+    const other: Post = { ...post, content: 'completely different' };
+    expect(postFieldBytes(post)).not.toEqual(postFieldBytes(other));
+    // Same (txId, index) → same id, regardless of which post is "at" it.
+    expect(computePostId(TX_A, 0)).toBe(computePostId(TX_A, 0));
+    // Different transaction → different id.
+    expect(computePostId(TX_A, 0)).not.toBe(computePostId(TX_B, 0));
   });
 
-  it('signingHash excludes powNonce', () => {
-    const h1 = signingHash(post);
-    const h2 = signingHash({ ...post, powNonce: 99 });
-    expect(Buffer.compare(h1, h2)).toBe(0);
+  it('changes with index', () => {
+    // `index` is 0 for every post today (one post per transaction), but it is a
+    // real parameter and must be in the preimage — otherwise the rule "one post
+    // per transaction" would be load-bearing rather than stated.
+    expect(computePostId(TX_A, 0)).not.toBe(computePostId(TX_A, 1));
   });
 
-  it('signingHash changes with content', () => {
-    const h1 = signingHash(post);
-    const h2 = signingHash({ ...post, content: 'other' });
-    expect(Buffer.compare(h1, h2)).not.toBe(0);
-  });
-
-  it('signingHash changes with protocolVersion', () => {
-    const h1 = signingHash(post);
-    const h2 = signingHash({ ...post, protocolVersion: 3 });
-    expect(Buffer.compare(h1, h2)).not.toBe(0);
-  });
-
-  it('computePostId changes with powNonce (unlike signingHash)', () => {
-    const id1 = computePostId(post);
-    const id2 = computePostId({ ...post, powNonce: 43 });
-    expect(id1).not.toBe(id2);
-  });
-
-  it('computePostId returns a hex string', () => {
-    const id = computePostId(post);
+  it('returns a hex string', () => {
+    const id = computePostId(TX_A, 0);
     expect(typeof id).toBe('string');
     expect(id).toHaveLength(64); // 32 bytes = 64 hex chars
     expect(/^[0-9a-f]+$/.test(id)).toBe(true);
   });
 
-  it('signingHash returns 32 bytes', () => {
-    expect(signingHash(post)).toHaveLength(32);
+  it('takes txId as UTF-8 hex TEXT, not decoded bytes', () => {
+    // TYPES_INTERFACE → Pinned byte forms. A standalone derivation hashes the
+    // hex text; the decoded-bytes form belongs to the positional encoders. The
+    // two are distinguishable, so this is a real pin and not a restatement.
+    const indexBytes = Buffer.alloc(4);
+    const asText = createHash('blake2b512')
+      .update(new TextEncoder().encode('dagsocial/post-id/1'))
+      .update(new TextEncoder().encode(TX_A))
+      .update(indexBytes)
+      .digest().subarray(0, 32).toString('hex');
+    const asBytes = createHash('blake2b512')
+      .update(new TextEncoder().encode('dagsocial/post-id/1'))
+      .update(Buffer.from(TX_A, 'hex'))
+      .update(indexBytes)
+      .digest().subarray(0, 32).toString('hex');
+    expect(computePostId(TX_A, 0)).toBe(asText);
+    expect(computePostId(TX_A, 0)).not.toBe(asBytes);
   });
 
-  it('post with parentRefs hashes differently', () => {
-    // A ref is `b32` now, so it must be 64 lowercase hex characters to have an
+  it('is TOTAL on a malformed txId — a light client derives from untrusted fields', () => {
+    // The reason the text form is chosen. `Buffer.from(x, 'hex')` on a
+    // malformed id would throw or silently truncate; UTF-8 encoding cannot.
+    for (const bad of ['', 'zz', 'AB'.repeat(32), 'a'.repeat(63)]) {
+      expect(() => computePostId(bad, 0)).not.toThrow();
+    }
+    // …and `index` is total by sentinel, like every other numeric writer here.
+    for (const bad of [NaN, -1, 1.5, 2 ** 40]) {
+      expect(() => computePostId(TX_A, bad)).not.toThrow();
+    }
+  });
+
+  it('the payload reaches the id THROUGH the transaction — the chain, end to end', () => {
+    // ⛔ Assert the mechanism, not only the outcome. `postFieldBytes` is inside
+    // the `computeTxId` preimage, so a distinct payload gives a distinct txId,
+    // which gives a distinct post id. If `post` were ever dropped from
+    // `txIdBytes`, the two txIds would collide and this fails.
+    const base: UtxoTransaction = {
+      inputs: ['01'.repeat(32)],
+      outputs: [],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const txWithPost: UtxoTransaction = { ...base, post };
+    const txWithOther: UtxoTransaction = { ...base, post: { ...post, content: 'other' } };
+
+    expect(computeTxId(txWithPost)).not.toBe(computeTxId(txWithOther));
+    expect(computePostId(computeTxId(txWithPost), 0))
+      .not.toBe(computePostId(computeTxId(txWithOther), 0));
+
+    // Presence is distinguishable from absence — `opt()`'s tag.
+    expect(computeTxId(txWithPost)).not.toBe(computeTxId(base));
+  });
+
+  it('two byte-identical payloads in one block get DIFFERENT ids (spec §7)', () => {
+    // The property PoW used to buy with `challenge` + `powNonce`, now bought by
+    // construction: the same author posting the same content twice must spend
+    // different karma boxes, so the transactions differ in `inputs` alone.
+    const identical: Post = { ...post };
+    const tx1: UtxoTransaction = {
+      inputs: ['01'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, post: identical,
+    };
+    const tx2: UtxoTransaction = {
+      inputs: ['02'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, post: identical,
+    };
+    expect(postFieldBytes(tx1.post!)).toEqual(postFieldBytes(tx2.post!)); // payloads identical
+    expect(computePostId(computeTxId(tx1), 0))
+      .not.toBe(computePostId(computeTxId(tx2), 0));                      // ids are not
+  });
+
+  it('post with parentRefs encodes differently', () => {
+    // A ref is `b32`, so it must be 64 lowercase hex characters to have an
     // encoding at all — see the domain tests below.
     const withRefs = { ...post, parentRefs: ['a1'.repeat(32)] };
-    expect(computePostId(post)).not.toBe(computePostId(withRefs));
-  });
-
-  it('post with different challenge hashes differently', () => {
-    const otherChallenge = new Uint8Array(32).fill(0xff);
-    const other = { ...post, challenge: otherChallenge };
-    expect(computePostId(post)).not.toBe(computePostId(other));
+    expect(postFieldBytes(post)).not.toEqual(postFieldBytes(withRefs));
   });
 });
 
@@ -125,11 +170,24 @@ function legacyPostId(p: Post): string {
   h.update(p.content);
   h.update(p.author);
   for (const ref of p.parentRefs) h.update(ref);
-  h.update(p.challenge);
   h.update(String(p.protocolVersion));
-  h.update(String(p.powNonce));
   h.update(String(p.timestamp));
   return h.digest().subarray(0, 32).toString('hex');
+}
+
+/**
+ * The payload's encoding as a hex string — the subject of every test below.
+ *
+ * ⛔ **These assertions moved from the post ID to the PAYLOAD BYTES, and the
+ * property they test did not change.** Injectivity used to keep two posts'
+ * *ids* apart; it now keeps two *transactions* apart, because `postFieldBytes`
+ * sits inside the `computeTxId` preimage (TYPES_INTERFACE → Canonical field
+ * encoding). Weakening the encoding because the id no longer reads it would
+ * collide two transactions, which is strictly worse than colliding two ids —
+ * so these tests are more load-bearing than before, not less.
+ */
+function payload(p: Post): string {
+  return Buffer.from(postFieldBytes(p)).toString('hex');
 }
 
 /**
@@ -146,14 +204,12 @@ function legacyPostId(p: Post): string {
  * `arr(refs, b32)` (TYPES_INTERFACE → Layout — Post).
  *
  * Adjacent fields carry **distinct non-zero values** — `author` is `00..1f`,
- * `challenge` is `20..3f`, the ref is `11…`, `protocolVersion` is 1 and the
- * timestamp is wide — because an all-zeros vector cannot detect a field-order
- * swap, and field order *is* the specification here.
+ * the ref is `11…`, `protocolVersion` is 1 and the timestamp is wide — because
+ * an all-zeros vector cannot detect a field-order swap, and field order *is* the
+ * specification here.
  */
 const GOLDEN_AUTHOR = new Uint8Array(32);
 for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
-const GOLDEN_CHALLENGE = new Uint8Array(32);
-for (let i = 0; i < 32; i++) GOLDEN_CHALLENGE[i] = 0x20 + i;
 
 /** A well-formed `b32` parent ref: 64 lowercase hex characters. */
 const GOLDEN_REF = '11'.repeat(32);
@@ -162,21 +218,14 @@ const GOLDEN_POST: Post = {
   content: 'dagsocial golden vector ✓',
   author: GOLDEN_AUTHOR,
   parentRefs: [GOLDEN_REF],
-  challenge: GOLDEN_CHALLENGE,
-  powNonce: 4294967296,     // 2^32 — five VLQ bytes, so the wide path is covered
   protocolVersion: 1,
   timestamp: 1767225600000, // > 2^32 — six VLQ bytes
-  signature: new Uint8Array(64).fill(0xcd),
 };
 
-const GOLDEN_SIGNING_HASH =
-  '3143d7a351cf2bb4cdbca49ba7aa994ce2e4fd1638a9322058d03fe87debc6b0';
-const GOLDEN_POST_ID =
-  'fefac701207339ba5953fdfe98ed6212f7ead3025dc6e718878dc465ca06e8b0';
-
 /**
- * The exact preimage bytes, frozen. Stronger than the two hashes above: a hash
- * says "something moved", these say *which byte*.
+ * The exact preimage bytes, frozen — and the same bytes `test/golden/post.json`
+ * carries as `post/golden`. Stronger than a hash: a hash says "something moved",
+ * these say *which byte*.
  */
 const GOLDEN_PREIMAGE =
   '1b' +                                                     // vlqU(27) content length
@@ -184,24 +233,15 @@ const GOLDEN_PREIMAGE =
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 author
   '01' +                                                     // arr count = 1
   '1111111111111111111111111111111111111111111111111111111111111111' + // b32 ref, RAW
-  '202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f' + // b32 challenge
   '01' +                                                     // vlqU protocolVersion
   '80d0eab6b733';                                            // vlqU timestamp
 
 describe('canonical field encoding (M-1)', () => {
-  it('golden vector: signingHash is frozen', () => {
-    expect(signingHash(GOLDEN_POST).toString('hex')).toBe(GOLDEN_SIGNING_HASH);
-  });
-
-  it('golden vector: postId is frozen', () => {
-    expect(computePostId(GOLDEN_POST)).toBe(GOLDEN_POST_ID);
-  });
-
   it('golden vector: preimage is the exact positional layout', () => {
-    const pre = postPowPreimage(GOLDEN_POST);
+    const pre = postFieldBytes(GOLDEN_POST);
     expect(Buffer.from(pre).toString('hex')).toBe(GOLDEN_PREIMAGE);
-    //  1 + 27 content, 32 author, 1 + 32 refs, 32 challenge, 1 version, 6 ts
-    expect(pre.length).toBe(28 + 32 + 33 + 32 + 1 + 6);
+    //  1 + 27 content, 32 author, 1 + 32 refs, 1 version, 6 ts
+    expect(pre.length).toBe(28 + 32 + 33 + 1 + 6);
   });
 
   it('an id crosses the preimage as 32 RAW bytes, not as 64 hex characters', () => {
@@ -210,8 +250,8 @@ describe('canonical field encoding (M-1)', () => {
     // not the 68 that a length-prefixed hex text would (`u32LE(64) ‖
     // utf8(hex)`). Asserted as a length delta rather than against a constant so
     // it stays true if the fixture's other fields change.
-    const withRef = postPowPreimage(GOLDEN_POST);
-    const without = postPowPreimage({ ...GOLDEN_POST, parentRefs: [] });
+    const withRef = postFieldBytes(GOLDEN_POST);
+    const without = postFieldBytes({ ...GOLDEN_POST, parentRefs: [] });
     expect(withRef.length - without.length).toBe(32);
     // And the raw bytes really are in there — not their hex text.
     expect(Buffer.from(withRef).toString('hex')).toContain('11'.repeat(32));
@@ -226,9 +266,9 @@ describe('canonical field encoding (M-1)', () => {
     // array is counted (TYPES_INTERFACE → Canonical field encoding) — so this
     // assertion guards the property against a dialect change rather than
     // recording its arrival.
-    const a: Post = { ...GOLDEN_POST, powNonce: 5, timestamp: 23 };
-    const b: Post = { ...GOLDEN_POST, powNonce: 52, timestamp: 3 };
-    expect(computePostId(a)).not.toBe(computePostId(b));
+    const a: Post = { ...GOLDEN_POST, protocolVersion: 5, timestamp: 23 };
+    const b: Post = { ...GOLDEN_POST, protocolVersion: 52, timestamp: 3 };
+    expect(payload(a)).not.toBe(payload(b));
     // Vacuity check: this pair DOES collide under the undelimited
     // concatenation `legacyPostId` above models.
     expect(legacyPostId(a)).toBe(legacyPostId(b));
@@ -244,31 +284,31 @@ describe('canonical field encoding (M-1)', () => {
     // map a malformed ref onto a well-formed post's encoding.
     const split: Post = { ...GOLDEN_POST, parentRefs: ['ab', 'cd'] };
     const joined: Post = { ...GOLDEN_POST, parentRefs: ['abcd'] };
-    expect(() => computePostId(split)).toThrow(/64 lowercase hex chars/);
-    expect(() => computePostId(joined)).toThrow(/64 lowercase hex chars/);
+    expect(() => payload(split)).toThrow(/64 lowercase hex chars/);
+    expect(() => payload(joined)).toThrow(/64 lowercase hex chars/);
     // Vacuity check: the pair really did collide under the old concatenation,
     // which is what makes "unconstructible" an improvement and not a dodge.
     expect(legacyPostId(split)).toBe(legacyPostId(joined));
     // Uppercase hex is out of domain too: 'AB…' and 'ab…' decode to identical
     // bytes, so admitting both would make the boundary non-injective.
-    expect(() => computePostId({ ...GOLDEN_POST, parentRefs: ['AB'.repeat(32)] }))
+    expect(() => payload({ ...GOLDEN_POST, parentRefs: ['AB'.repeat(32)] }))
       .toThrow(/64 lowercase hex chars/);
   });
 
   it('the content/parentRefs boundary is unambiguous — the one leg still earned by a prefix', () => {
-    // Restates "the content/author boundary is unambiguous". `author`,
-    // `challenge` and every ref are fixed-width now, so their boundaries are
+    // Restates "the content/author boundary is unambiguous". `author` and every
+    // ref are fixed-width now, so their boundaries are
     // structural and nothing can test them. `content` is the sole remaining
     // variable-length field, so it is the only place where the M-1 argument is
     // still load-bearing: without its length prefix, moving a ref's text into
     // the content would produce the same byte stream.
     const a: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: [GOLDEN_REF] };
     const b: Post = { ...GOLDEN_POST, content: `ab${GOLDEN_REF}`, parentRefs: [] };
-    expect(computePostId(a)).not.toBe(computePostId(b));
+    expect(payload(a)).not.toBe(payload(b));
     // …and the count prefix seals the other direction: same content, ref
     // present versus absent.
     const c: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: [] };
-    expect(computePostId(a)).not.toBe(computePostId(c));
+    expect(payload(a)).not.toBe(payload(c));
   });
 
   it('an empty parentRef is unrepresentable, and absence is still distinguishable', () => {
@@ -278,52 +318,41 @@ describe('canonical field encoding (M-1)', () => {
     // ref has no encoding at all.
     const none: Post = { ...GOLDEN_POST, parentRefs: [] };
     const empty: Post = { ...GOLDEN_POST, parentRefs: [''] };
-    expect(() => computePostId(empty)).toThrow(/64 lowercase hex chars/);
+    expect(() => payload(empty)).toThrow(/64 lowercase hex chars/);
     // Vacuity check: both append nothing under the undelimited concatenation
     // `legacyPostId` models.
     expect(legacyPostId(none)).toBe(legacyPostId(empty));
     // The count prefix still does its job for the in-domain pair.
-    expect(computePostId(none)).not.toBe(computePostId({ ...GOLDEN_POST, parentRefs: [GOLDEN_REF] }));
+    expect(payload(none)).not.toBe(payload({ ...GOLDEN_POST, parentRefs: [GOLDEN_REF] }));
   });
 
-  it('the post id is domain-tagged — it is not the PoW hash', () => {
-    // The PoW hash appends `vlqU(powNonce)` to the same preimage and carries no
-    // domain tag; 2^32 encodes as five VLQ bytes.
-    const nonce = Buffer.from([0x80, 0x80, 0x80, 0x80, 0x10]);
-    const powHash = createHash('blake2b512')
-      .update(postPowPreimage(GOLDEN_POST))
-      .update(nonce)
-      .digest()
-      .subarray(0, 32)
-      .toString('hex');
-    expect(computePostId(GOLDEN_POST)).not.toBe(powHash);
-  });
-
-  it('postPowPreimage excludes powNonce, computePostId includes it', () => {
-    const other: Post = { ...GOLDEN_POST, powNonce: GOLDEN_POST.powNonce + 1 };
-    expect(Buffer.compare(
-      Buffer.from(postPowPreimage(GOLDEN_POST)),
-      Buffer.from(postPowPreimage(other)),
-    )).toBe(0);
-    expect(computePostId(GOLDEN_POST)).not.toBe(computePostId(other));
+  it('the post id is domain-tagged — it cannot collide with a box or tx id', () => {
+    // All three are derived from the same `(txId, index)` provenance, so the tag
+    // is the whole of the separation between them (TYPES_INTERFACE → Domain
+    // tags). Without it, a post id and a box id at the same outpoint would be
+    // the same 32 bytes in one keyspace.
+    const indexBytes = Buffer.alloc(4);
+    const untagged = createHash('blake2b512')
+      .update(new TextEncoder().encode(TX_A))
+      .update(indexBytes)
+      .digest().subarray(0, 32).toString('hex');
+    expect(computePostId(TX_A, 0)).not.toBe(untagged);
   });
 
   it('never throws on out-of-domain numerics (validation no-panic contract)', () => {
     // `@dagsocial/validation`'s isSignablePost admits any `typeof === 'number'`,
     // so these reach the encoder. BigInt/writeBigUInt64LE would throw here.
     for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, 2 ** 64, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(() => signingHash({ ...GOLDEN_POST, timestamp: bad })).not.toThrow();
-      expect(() => computePostId({ ...GOLDEN_POST, timestamp: bad })).not.toThrow();
-      expect(() => computePostId({ ...GOLDEN_POST, powNonce: bad })).not.toThrow();
-      expect(() => computePostId({ ...GOLDEN_POST, protocolVersion: bad })).not.toThrow();
+      expect(() => payload({ ...GOLDEN_POST, timestamp: bad })).not.toThrow();
+      expect(() => payload({ ...GOLDEN_POST, protocolVersion: bad })).not.toThrow();
     }
   });
 
   it('an out-of-domain numeric cannot impersonate a valid one', () => {
     // The all-ones sentinel is unreachable from a non-negative safe integer.
-    const valid = computePostId({ ...GOLDEN_POST, timestamp: 0 });
+    const valid = payload({ ...GOLDEN_POST, timestamp: 0 });
     for (const bad of [NaN, Infinity, -1, 1.5]) {
-      expect(computePostId({ ...GOLDEN_POST, timestamp: bad })).not.toBe(valid);
+      expect(payload({ ...GOLDEN_POST, timestamp: bad })).not.toBe(valid);
     }
   });
 });
@@ -375,11 +404,6 @@ describe('constants', () => {
     // signature from authorising the deletion of a reply that also hangs off
     // another author's thread.
     expect(MAX_PARENT_REFS).toBe(1);
-  });
-
-  it('PoW constants are defined', () => {
-    expect(POST_POW_TARGET_BITS).toBe(20);
-    expect(CHALLENGE_WINDOW_BLOCKS).toBe(10);
   });
 
   it('karma constants are defined', () => {

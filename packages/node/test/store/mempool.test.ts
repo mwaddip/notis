@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 
@@ -14,12 +15,10 @@ async function importDbFresh() {
 async function importMempoolFresh() {
   const mod = await import('../../src/store/mempool.js');
   return mod as {
-    insertSubBlock: (postId: string, expiresAtHeight: number, batchId?: string | null) => number;
-    insertUtxoTx: (tx: any, batchId: string | null, expiresAtHeight: number) => number;
+    insertUtxoTx: (tx: any, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => any[];
     purgeExpired: (currentHeight: number) => number;
     removeEntry: (rowid: number) => void;
-    removeSubBlockEntries: (postIds: string[]) => number;
     hasPendingLike: (targetPostId: string, likerId: string) => boolean;
     countPendingInvites: (inviterId: string) => number;
     hasPendingVouch: (voucherId: string) => boolean;
@@ -154,6 +153,16 @@ function pruneEntry(rootPostHash: string) {
   } as any;
 }
 
+/**
+ * A distinct transaction per label — the mempool's entry-count and FIFO tests
+ * need N distinct entries, and `insertUtxoTx` rejects a duplicate pending spend,
+ * so each fixture must name its own input box.
+ */
+function txWithInput(label: string): unknown {
+  const id = createHash('blake2b512').update(label).digest().subarray(0, 32).toString('hex');
+  return { inputs: [id], outputs: [], signatures: {}, protocolVersion: 1 };
+}
+
 describe('mempool store', () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -166,21 +175,6 @@ describe('mempool store', () => {
     db.closeDb();
   });
 
-  it('inserts a subblock and retrieves it via getPendingEntries', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
-
-    const rowid = insertSubBlock('post_test1', 100); // expires at height 100
-    const entries = getPendingEntries(10);
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0].rowid).toBe(rowid);
-    expect(entries[0].entryType).toBe('subblock');
-    expect(entries[0].subblockId).toBe('post_test1');
-    expect(entries[0].utxoTxCbor).toBeNull();
-    expect(entries[0].batchId).toBeNull();
-    expect(entries[0].expiresAtHeight).toBe(100);
-  });
-
   it('inserts a UTXO transaction and retrieves it', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = {
@@ -190,7 +184,7 @@ describe('mempool store', () => {
       protocolVersion: 1,
     };
 
-    insertUtxoTx(tx as any, null, 200);
+    insertUtxoTx(tx as any, 200);
     const entries = getPendingEntries(10);
 
     expect(entries).toHaveLength(1);
@@ -199,39 +193,16 @@ describe('mempool store', () => {
     expect(entries[0].expiresAtHeight).toBe(200);
   });
 
-  it('inserts a subblock with batchId and retrieves it', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
-
-    insertSubBlock('sb_batch', 50, 'batch-abc');
-    const entries = getPendingEntries(10);
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0].batchId).toBe('batch-abc');
-    expect(entries[0].entryType).toBe('subblock');
-  });
-
-  it('inserts a UTXO tx with batchId and retrieves it', async () => {
-    const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
-    const tx = {
-      inputs: [BOX_2],
-      outputs: [],
-      signatures: {},
-      protocolVersion: 1,
-    };
-
-    insertUtxoTx(tx as any, 'batch-xyz', 75);
-    const entries = getPendingEntries(10);
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0].batchId).toBe('batch-xyz');
-    expect(entries[0].entryType).toBe('utxo_tx');
-  });
+  // ⛔ Reserved, never to be reused: the `batchId` case. A post and its karma
+  // lock were two objects that had to be evicted and re-injected together, which
+  // is what `batchId` grouped; a post is the payload of that one transaction now
+  // (MEMPOOL_INTERFACE → PoolEntry), so there is nothing left to group.
 
   it('getPendingEntries respects limit', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
+    const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
 
     for (let i = 0; i < 5; i++) {
-      insertSubBlock(`sb_${i}`, 100);
+      insertUtxoTx(txWithInput(`sb_${i}`) as any, 100);
     }
 
     const entries = getPendingEntries(3);
@@ -239,11 +210,11 @@ describe('mempool store', () => {
   });
 
   it('getPendingEntries returns entries in FIFO order by rowid', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
+    const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
 
-    insertSubBlock('first', 100);
-    insertSubBlock('second', 100);
-    insertSubBlock('third', 100);
+    insertUtxoTx(txWithInput('first') as any, 100);
+    insertUtxoTx(txWithInput('second') as any, 100);
+    insertUtxoTx(txWithInput('third') as any, 100);
 
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
@@ -253,40 +224,42 @@ describe('mempool store', () => {
   });
 
   it('purgeExpired removes entries with expires_at_height < currentHeight', async () => {
-    const { insertSubBlock, insertUtxoTx, getPendingEntries, purgeExpired } =
+    const { insertUtxoTx, insertMempoolPrune, getPendingEntries, purgeExpired } =
       await importMempoolFresh();
 
-    insertSubBlock('sb_expired', 10);
-    insertSubBlock('sb_valid', 50);
+    insertUtxoTx(txWithInput('expired') as any, 10);
+    insertMempoolPrune(pruneEntry(ROOT_1), 50);
     const tx = { inputs: [BOX_3], outputs: [], signatures: {}, protocolVersion: 1 };
-    insertUtxoTx(tx as any, null, 30);
+    insertUtxoTx(tx as any, 30);
 
     const removed = purgeExpired(25); // removes entries with expires_at_height < 25
-    expect(removed).toBe(1); // only sb_expired at 10; sb_valid at 50 and tx at 30 are kept
+    expect(removed).toBe(1); // only expired at 10; the prune at 50 and tx at 30 are kept
 
+    // Both surviving entry types, so the purge is shown to be keyed on the
+    // height and not on the kind of row.
     const entries = getPendingEntries(10);
-    expect(entries).toHaveLength(2); // sb_valid + tx
+    expect(entries).toHaveLength(2);
     const entryTypes = entries.map((e) => e.entryType);
-    expect(entryTypes).toContain('subblock');
+    expect(entryTypes).toContain('prune');
     expect(entryTypes).toContain('utxo_tx');
   });
 
   it('purgeExpired returns count of removed entries', async () => {
-    const { insertSubBlock, purgeExpired } = await importMempoolFresh();
+    const { insertUtxoTx, purgeExpired } = await importMempoolFresh();
 
-    insertSubBlock('a', 10);
-    insertSubBlock('b', 20);
-    insertSubBlock('c', 30);
+    insertUtxoTx(txWithInput('a') as any, 10);
+    insertUtxoTx(txWithInput('b') as any, 20);
+    insertUtxoTx(txWithInput('c') as any, 30);
 
     const removed = purgeExpired(25);
     expect(removed).toBe(2); // a (10) and b (20) — both < 25
   });
 
   it('removeEntry removes a specific row by rowid', async () => {
-    const { insertSubBlock, getPendingEntries, removeEntry } = await importMempoolFresh();
+    const { insertUtxoTx, getPendingEntries, removeEntry } = await importMempoolFresh();
 
-    const rowid1 = insertSubBlock('keep', 100);
-    const rowid2 = insertSubBlock('remove', 100);
+    const rowid1 = insertUtxoTx(txWithInput('keep') as any, 100);
+    const rowid2 = insertUtxoTx(txWithInput('remove') as any, 100);
 
     removeEntry(rowid2);
 
@@ -296,18 +269,21 @@ describe('mempool store', () => {
   });
 
   it('handles multiple entries of mixed types', async () => {
-    const { insertSubBlock, insertUtxoTx, getPendingEntries } = await importMempoolFresh();
+    const { insertUtxoTx, insertMempoolPrune, getPendingEntries } =
+      await importMempoolFresh();
     const tx = { inputs: [BOX_5], outputs: [], signatures: {}, protocolVersion: 1 };
 
-    insertSubBlock('sb1', 100);
-    insertUtxoTx(tx as any, null, 100);
-    insertSubBlock('sb2', 100);
+    insertMempoolPrune(pruneEntry(ROOT_1), 100);
+    insertUtxoTx(tx as any, 100);
+    insertMempoolPrune(pruneEntry(ROOT_2), 100);
 
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
 
+    // Insertion order, across both entry types — `getPendingEntries` is FIFO by
+    // rowid and does not group by kind.
     const types = entries.map((e) => e.entryType);
-    expect(types).toEqual(['subblock', 'utxo_tx', 'subblock']);
+    expect(types).toEqual(['prune', 'utxo_tx', 'prune']);
   });
 
   it('getPendingEntries returns empty array when mempool is empty', async () => {
@@ -317,53 +293,45 @@ describe('mempool store', () => {
   });
 
   it('getPendingEntries with limit 0 returns empty array', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
-    insertSubBlock('sb_limit0', 100);
+    const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
+    insertUtxoTx(txWithInput('sb_limit0') as any, 100);
     const entries = getPendingEntries(0);
     expect(entries).toEqual([]);
   });
 
   it('purgeExpired returns 0 when nothing to purge', async () => {
-    const { insertSubBlock, purgeExpired } = await importMempoolFresh();
-    insertSubBlock('sb_nopurge', 100);
+    const { insertUtxoTx, purgeExpired } = await importMempoolFresh();
+    insertUtxoTx(txWithInput('sb_nopurge') as any, 100);
     const removed = purgeExpired(50); // nothing < 50
     expect(removed).toBe(0);
   });
 
   it('removeEntry is a no-op for a non-existent rowid', async () => {
-    const { insertSubBlock, getPendingEntries, removeEntry } = await importMempoolFresh();
-    insertSubBlock('sb_remove_noop', 100);
+    const { insertUtxoTx, getPendingEntries, removeEntry } = await importMempoolFresh();
+    insertUtxoTx(txWithInput('sb_remove_noop') as any, 100);
     removeEntry(9999); // should not throw
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
   });
 
   it('createdAt is set on insert', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
-    insertSubBlock('sb_createdat', 100);
+    const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
+    insertUtxoTx(txWithInput('sb_createdat') as any, 100);
     const entries = getPendingEntries(10);
     expect(entries[0].createdAt).toBeTruthy();
     expect(typeof entries[0].createdAt).toBe('string');
   });
 
-  it('subblock entry has subblockId set and utxoTxCbor null', async () => {
-    const { insertSubBlock, getPendingEntries } = await importMempoolFresh();
-    insertSubBlock('post_abc123', 200);
-    const entries = getPendingEntries(10);
-    expect(entries).toHaveLength(1);
-    expect(entries[0].entryType).toBe('subblock');
-    expect(entries[0].subblockId).toBe('post_abc123');
-    expect(entries[0].utxoTxCbor).toBeNull();
-  });
-
-  it('utxo_tx entry has subblockId null and utxoTxCbor set', async () => {
+  it('utxo_tx entry has pruneEntryCbor null and utxoTxCbor set', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = { inputs: [BOX_99], outputs: [], signatures: {}, protocolVersion: 1 };
-    insertUtxoTx(tx as any, null, 300);
+    insertUtxoTx(tx as any, 300);
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
     expect(entries[0].entryType).toBe('utxo_tx');
-    expect(entries[0].subblockId).toBeNull();
+    // The payload columns are exclusive: a row carries the CBOR its entry type
+    // names and null in the other (MEMPOOL_INTERFACE → PoolEntry).
+    expect(entries[0].pruneEntryCbor).toBeNull();
     expect(entries[0].utxoTxCbor).toBeInstanceOf(Uint8Array);
   });
 
@@ -373,17 +341,20 @@ describe('mempool store', () => {
 
   describe('gate metadata and correctness gates', () => {
     it('hasPendingLike sees a like inserted past any bounded scan', async () => {
-      const { insertSubBlock, insertUtxoTx, hasPendingLike, getPendingEntries } =
+      const { insertUtxoTx, hasPendingLike, getPendingEntries } =
         await importMempoolFresh();
 
       // Bury the like behind the 1000-row bound the old decode-scan used.
-      for (let i = 0; i < 1000; i++) insertSubBlock(`filler_${i}`, 100);
-      insertUtxoTx(likeTx(TARGET, LIKER_A) as any, null, 100);
+      for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, 100);
+      const likeRowid = insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100);
 
       // Vacuity: the entry really is past the old scan's reach, so this test
-      // fails against the fetch-1000-and-decode implementation.
+      // fails against the fetch-1000-and-decode implementation. Keyed on the
+      // like's own rowid — every row in the pool is a `utxo_tx` now, so the
+      // entry type no longer separates the like from what buries it.
       const scanned = getPendingEntries(1000);
-      expect(scanned.some((e: any) => e.entryType === 'utxo_tx')).toBe(false);
+      expect(scanned).toHaveLength(1000);
+      expect(scanned.some((e: any) => e.rowid === likeRowid)).toBe(false);
 
       expect(hasPendingLike(TARGET, LIKER_A)).toBe(true);
       // Controls — a single-field delta in each direction.
@@ -392,13 +363,13 @@ describe('mempool store', () => {
     });
 
     it('countPendingInvites counts invites past any bounded scan', async () => {
-      const { insertSubBlock, insertUtxoTx, countPendingInvites } =
+      const { insertUtxoTx, countPendingInvites } =
         await importMempoolFresh();
 
-      for (let i = 0; i < 1000; i++) insertSubBlock(`filler_${i}`, 100);
-      insertUtxoTx(inviteTx(INVITER_A) as any, null, 100);
-      insertUtxoTx(inviteTx(INVITER_A) as any, null, 100);
-      insertUtxoTx(inviteTx(INVITER_B) as any, null, 100);
+      for (let i = 0; i < 1000; i++) insertUtxoTx(txWithInput(`filler_${i}`) as any, 100);
+      insertUtxoTx(inviteTx(INVITER_A) as any, 100);
+      insertUtxoTx(inviteTx(INVITER_A) as any, 100);
+      insertUtxoTx(inviteTx(INVITER_B) as any, 100);
 
       expect(countPendingInvites(INVITER_A)).toBe(2);
       expect(countPendingInvites(INVITER_B)).toBe(1);
@@ -408,7 +379,7 @@ describe('mempool store', () => {
     it('hasPendingVouch is keyed on the voucher alone', async () => {
       const { insertUtxoTx, hasPendingVouch } = await importMempoolFresh();
 
-      insertUtxoTx(vouchTx(VOUCHER_A, TARGET_ID) as any, null, 100);
+      insertUtxoTx(vouchTx(VOUCHER_A, TARGET_ID) as any, 100);
 
       expect(hasPendingVouch(VOUCHER_A)).toBe(true);
       expect(hasPendingVouch(VOUCHER_B)).toBe(false);
@@ -416,7 +387,7 @@ describe('mempool store', () => {
 
     it('leaves gate columns null for a tx with no gated outputs', async () => {
       const { insertUtxoTx, getDbRow } = await importMempoolWithRow();
-      insertUtxoTx({ inputs: [], outputs: [], signatures: {}, protocolVersion: 1 } as any, null, 100);
+      insertUtxoTx({ inputs: [], outputs: [], signatures: {}, protocolVersion: 1 } as any, 100);
       const row = getDbRow();
       expect(row.like_target).toBeNull();
       expect(row.like_liker).toBeNull();
@@ -426,7 +397,7 @@ describe('mempool store', () => {
 
     it('populates like_target/like_liker from the tx field and the signer (P2-D)', async () => {
       const { insertUtxoTx, getDbRow } = await importMempoolWithRow();
-      insertUtxoTx(likeTx(TARGET, LIKER_A) as any, null, 100);
+      insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100);
       const row = getDbRow();
       expect(row.like_target).toBe(TARGET);
       expect(row.like_liker).toBe(LIKER_A);
@@ -439,7 +410,7 @@ describe('mempool store', () => {
       const { insertUtxoTx, getDbRow, hasPendingLike } = await importMempoolWithRow();
       const tx = likeTx(TARGET, LIKER_A);
       (tx.signatures as Record<string, Uint8Array>)[LIKER_B] = new Uint8Array(64);
-      insertUtxoTx(tx as any, null, 100);
+      insertUtxoTx(tx as any, 100);
       const row = getDbRow();
       expect(row.like_target).toBe(TARGET);
       expect(row.like_liker).toBeNull();
@@ -453,11 +424,10 @@ describe('mempool store', () => {
         inputs: [],
         outputs: [{
           boxType: 'like', value: 2n, likerId: bytes(LIKER_A),
-          targetPostId: TARGET, guard: 'epoch_tally',
         }],
         signatures: {},
         protocolVersion: 1,
-      } as any, null, 100);
+      } as any, 100);
       const row = getDbRow();
       expect(row.like_target).toBeNull();
       expect(row.like_liker).toBeNull();
@@ -488,12 +458,12 @@ describe('mempool store', () => {
     it('refuses a second pending spend of the same box', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
 
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000)).toThrow(
         mem.PendingSpendConflictError,
       );
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000)).toThrow(
         /already spent by a pending/i,
       );
     });
@@ -501,20 +471,20 @@ describe('mempool store', () => {
     it('admits two transactions spending different boxes', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
 
-      expect(() => mem.insertUtxoTx(spendTx([BOX_B]) as any, null, 1000)).not.toThrow();
+      expect(() => mem.insertUtxoTx(spendTx([BOX_B]) as any, 1000)).not.toThrow();
       expect(mem.getPendingEntries(10)).toHaveLength(2);
     });
 
     it('refuses on any shared input, not only the first', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_B]) as any, null, 1000);
+      mem.insertUtxoTx(spendTx([BOX_B]) as any, 1000);
 
       // BOX_A is free; the conflict is on the second input, and the error names
       // the box that actually collided rather than the first one checked.
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A, BOX_B]) as any, null, 1000)).toThrow(
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A, BOX_B]) as any, 1000)).toThrow(
         new RegExp(BOX_B),
       );
     });
@@ -522,7 +492,7 @@ describe('mempool store', () => {
     it('hasPendingSpend names the conflicting box and is null when there is none', async () => {
       const mem = await importMempoolFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
 
       expect(mem.hasPendingSpend([BOX_A])).toBe(BOX_A);
       expect(mem.hasPendingSpend([BOX_B])).toBeNull();
@@ -536,20 +506,13 @@ describe('mempool store', () => {
       const mem = await importMempoolFresh();
       const { getDb } = await importDbFresh();
 
-      mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000);
+      mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000);
       getDb().prepare('UPDATE mempool SET tx_inputs = NULL').run();
 
       expect(mem.hasPendingSpend([BOX_A])).toBeNull();
-      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, null, 1000)).not.toThrow();
+      expect(() => mem.insertUtxoTx(spendTx([BOX_A]) as any, 1000)).not.toThrow();
     });
 
-    it('a sub-block entry carries no inputs and blocks nothing', async () => {
-      const mem = await importMempoolFresh();
-
-      mem.insertSubBlock('post_x', 1000);
-
-      expect(mem.hasPendingSpend([BOX_A])).toBeNull();
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -596,7 +559,7 @@ describe('mempool store', () => {
       const mem = await importMempoolFresh();
 
       const parent = chainTx([CONFIRMED], [karmaOut(95n), karmaOut(5n)]);
-      mem.insertUtxoTx(parent as never, null, 1000);
+      mem.insertUtxoTx(parent as never, 1000);
       const changeId = await predictedId(parent, 0);
 
       expect(mem.findPendingOutput(changeId)).not.toBeNull();
@@ -608,10 +571,10 @@ describe('mempool store', () => {
       const mem = await importMempoolFresh();
 
       const parent = chainTx([CONFIRMED], [karmaOut(95n)]);
-      mem.insertUtxoTx(parent as never, null, 1000);
+      mem.insertUtxoTx(parent as never, 1000);
       const changeId = await predictedId(parent, 0);
 
-      mem.insertUtxoTx(chainTx([changeId], [karmaOut(90n)]) as never, null, 1000);
+      mem.insertUtxoTx(chainTx([changeId], [karmaOut(90n)]) as never, 1000);
 
       // The row is still findable — subtracting the spend is the view's job,
       // not the index's.
@@ -637,7 +600,7 @@ describe('mempool store', () => {
 
       expect(mem.getBoxWithPending(confirmed.id)!.id).toBe(confirmed.id);
 
-      mem.insertUtxoTx(chainTx([confirmed.id], [karmaOut(99n)]) as never, null, 1000);
+      mem.insertUtxoTx(chainTx([confirmed.id], [karmaOut(99n)]) as never, 1000);
 
       expect(mem.getBoxWithPending(confirmed.id)).toBeNull();
     });
@@ -662,7 +625,7 @@ describe('mempool store', () => {
         index: 7,
       };
       const parent = chainTx([CONFIRMED], [forged]);
-      mem.insertUtxoTx(parent as never, null, 1000);
+      mem.insertUtxoTx(parent as never, 1000);
 
       expect(mem.findPendingOutput('ff'.repeat(32))).toBeNull();
       const realId = await predictedId(parent, 0);
@@ -751,45 +714,9 @@ describe('mempool store', () => {
     });
   });
 
-  describe('removeSubBlockEntries', () => {
-    it('removes confirmed sub-blocks past the first rows and spares the rest', async () => {
-      const { insertSubBlock, insertUtxoTx, removeSubBlockEntries, getPendingEntries } =
-        await importMempoolFresh();
-
-      for (let i = 0; i < 1000; i++) insertSubBlock(`filler_${i}`, 100);
-      insertSubBlock('confirmed_a', 100);
-      insertUtxoTx(likeTx(TARGET, LIKER_A) as any, null, 100);
-      insertSubBlock('confirmed_b', 100);
-      insertSubBlock('survivor', 100);
-
-      const removed = removeSubBlockEntries(['confirmed_a', 'confirmed_b']);
-      expect(removed).toBe(2);
-
-      const remaining = getPendingEntries(2000);
-      expect(remaining.some((e: any) => e.subblockId === 'confirmed_a')).toBe(false);
-      expect(remaining.some((e: any) => e.subblockId === 'confirmed_b')).toBe(false);
-      // Controls: unrelated entries survive.
-      expect(remaining.some((e: any) => e.subblockId === 'survivor')).toBe(true);
-      expect(remaining.filter((e: any) => e.entryType === 'utxo_tx')).toHaveLength(1);
-      expect(remaining).toHaveLength(1002);
-    });
-
-    it('returns 0 for an empty list and ignores unknown ids', async () => {
-      const { insertSubBlock, removeSubBlockEntries } = await importMempoolFresh();
-      insertSubBlock('kept', 100);
-      expect(removeSubBlockEntries([])).toBe(0);
-      expect(removeSubBlockEntries(['never_inserted'])).toBe(0);
-    });
-
-    it('deletes more ids than SQLite takes bound parameters for', async () => {
-      const { insertSubBlock, removeSubBlockEntries, getPendingEntries } =
-        await importMempoolFresh();
-      const ids = Array.from({ length: 1200 }, (_, i) => `bulk_${i}`);
-      for (const id of ids) insertSubBlock(id, 100);
-      expect(removeSubBlockEntries(ids)).toBe(1200);
-      expect(getPendingEntries(2000)).toHaveLength(0);
-    });
-  });
+  // ⛔ Reserved, never to be reused: the `removeSubBlockEntries` suite. There
+  // are no sub-block entries to evict — a post enters the pool as the
+  // transaction that creates it, and `finalizeBlock` clears those by rowid.
 
   // -------------------------------------------------------------------------
   // Size cap — reject, never evict
@@ -816,13 +743,13 @@ describe('mempool store', () => {
       const mem = await importCapped(3);
 
       // Control: inserts below the cap succeed.
-      expect(() => mem.insertSubBlock('sb_1', 100)).not.toThrow();
-      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, null, 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('sb_1') as any, 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100)).not.toThrow();
       expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_1), 100)).not.toThrow();
 
       // At the cap (3 entries), each insert path rejects.
-      expect(() => mem.insertSubBlock('sb_2', 100)).toThrow(mem.MempoolFullError);
-      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, null, 100)).toThrow(
+      expect(() => mem.insertUtxoTx(txWithInput('sb_2') as any, 100)).toThrow(mem.MempoolFullError);
+      expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, 100)).toThrow(
         mem.MempoolFullError,
       );
       expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_2), 100), ).toThrow(
@@ -835,12 +762,12 @@ describe('mempool store', () => {
 
     it('accepts again once entries expire — a full pool drains itself', async () => {
       const mem = await importCapped(2);
-      mem.insertSubBlock('sb_expiring', 10);
-      mem.insertSubBlock('sb_live', 900);
-      expect(() => mem.insertSubBlock('sb_blocked', 900)).toThrow(mem.MempoolFullError);
+      mem.insertUtxoTx(txWithInput('sb_expiring') as any, 10);
+      mem.insertUtxoTx(txWithInput('sb_live') as any, 900);
+      expect(() => mem.insertUtxoTx(txWithInput('sb_blocked') as any, 900)).toThrow(mem.MempoolFullError);
 
       mem.purgeExpired(50);
-      expect(() => mem.insertSubBlock('sb_after_purge', 900)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('sb_after_purge') as any, 900)).not.toThrow();
     });
 
     it('defaults to 10000 entries when MAX_MEMPOOL_ENTRIES is unset', async () => {

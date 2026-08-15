@@ -2,8 +2,6 @@ import { getDb } from './db.js';
 import {
   encodeHeader,
   decodeHeader,
-  encodeSubBlockTree,
-  decodeSubBlockTree,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '@dagsocial/types';
@@ -17,7 +15,6 @@ import { UnreadableStoredBlockError } from '../services/corrupt-state.js';
 interface OrderingBlockRow {
   height: number;
   header_cbor: Buffer;
-  subblock_tree_cbor: Buffer;
   utxotx_tree_cbor: Buffer;
   validator_signature: Buffer;
   created_at: number;
@@ -31,7 +28,7 @@ interface OrderingBlockRow {
  * The one frame that knows these bytes are ours.
  *
  * A decode failure here is never "bad input" — nothing a peer sends is stored
- * in these three columns, only this node's own re-encoding of a block that
+ * in these two columns, only this node's own re-encoding of a block that
  * already cleared the apply gate (the full argument, with the writer
  * enumeration and the rejected alternative, is on `UnreadableStoredBlockError`).
  * Downstream that fact is gone: `applyOrderingBlock`'s totality catch sees a
@@ -50,7 +47,6 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
   try {
     return {
       header: decodeHeader(new Uint8Array(row.header_cbor)),
-      subBlockTree: decodeSubBlockTree(new Uint8Array(row.subblock_tree_cbor)),
       utxoTxTree: decodeUtxoTxTree(new Uint8Array(row.utxotx_tree_cbor)),
       validatorSignature: new Uint8Array(row.validator_signature),
     };
@@ -76,7 +72,7 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
  * on it.** This is the table's only INSERT, and in `src` it has exactly one
  * caller: `block-apply.ts` imports it as `storeCreateOrderingBlock` and calls
  * it from `applyBlockBody`. What it stores is `encodeHeader` /
- * `encodeSubBlockTree` / `encodeUtxoTxTree` **of the decoded block** — this
+ * `encodeUtxoTxTree` **of the decoded block** — this
  * node's own re-encoding, never the bytes a peer sent. So no input a peer can
  * choose reaches a reader of this table, and a row that disagrees with our own
  * writer means local corruption or a bug in us.
@@ -106,13 +102,12 @@ export function createOrderingBlock(block: OrderingBlock): void {
 
   db.prepare(
     `INSERT INTO ordering_blocks
-       (height, header_cbor, subblock_tree_cbor, utxotx_tree_cbor,
+       (height, header_cbor, utxotx_tree_cbor,
         validator_signature, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?)`,
   ).run(
     block.header.height,
     Buffer.from(encodeHeader(block.header)),
-    Buffer.from(encodeSubBlockTree(block.subBlockTree)),
     Buffer.from(encodeUtxoTxTree(block.utxoTxTree)),
     Buffer.from(block.validatorSignature),
     block.header.createdAt,

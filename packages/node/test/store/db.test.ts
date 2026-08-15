@@ -14,9 +14,10 @@ async function importFresh() {
   };
 }
 
+// ⛔ Reserved, never to be reused: `challenges`. The PoW challenge handshake is
+// gone with post PoW, and the table with it.
 const EXPECTED_TABLES = [
   'canonical_branch',
-  'challenges',
   'dag_meta',
   'dag_posts',
   'dag_parent_refs',
@@ -111,13 +112,6 @@ describe('db lifecycle', () => {
     expect(sysNames).toContain('key');
     expect(sysNames).toContain('value');
 
-    // challenges
-    const challengeCols = db.pragma('table_info(challenges)') as Array<{ name: string }>;
-    const challengeNames = challengeCols.map((c) => c.name);
-    expect(challengeNames).toContain('user_id');
-    expect(challengeNames).toContain('challenge');
-    expect(challengeNames).toContain('expires_at_block');
-
     // dag_posts
     const dagPostsCols = db.pragma('table_info(dag_posts)') as Array<{ name: string }>;
     const dagPostsNames = dagPostsCols.map((c) => c.name);
@@ -133,7 +127,6 @@ describe('db lifecycle', () => {
     const orderNames = orderCols.map((c) => c.name);
     expect(orderNames).toContain('height');
     expect(orderNames).toContain('header_cbor');
-    expect(orderNames).toContain('subblock_tree_cbor');
     expect(orderNames).toContain('utxotx_tree_cbor');
     expect(orderNames).toContain('validator_signature');
     expect(orderNames).toContain('created_at');

@@ -4,23 +4,18 @@ import {
   CREDIT_MINER_REWARD_DELAY,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   decodeOrderingBlock,
-  decodeSubBlock,
   encodeOrderingBlock,
-  encodeSubBlock,
 } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock, Post, SubBlock } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
-import { encodeServableOrderingBlock, encodeServableSubBlock } from '../src/serve-encode.js';
+import { encodeServableOrderingBlock } from '../src/serve-encode.js';
 import { LazySyncStore } from '../src/node.js';
 import type { NetValidators } from '../src/types.js';
 
@@ -38,52 +33,28 @@ import type { NetValidators } from '../src/types.js';
 //   - **throwing** — `writeHexNOrThrow` / `writeBytesNOrThrow` on a field
 //     outside their fixed width;
 //   - **colliding** — `writeVlqU`, which is total by sentinel, so an
-//     out-of-domain value encodes *successfully* into bytes `decodeSubBlock`
+//     out-of-domain value encodes *successfully* into bytes `decodeOrderingBlock`
 //     then refuses. Nothing downstream of the encoder can see this one.
+//
+// Reserved, never to be reused: `encodeServableSubBlock` and its two suites. A
+// post is a transaction and is served inside the block body, so the ordering
+// block is the only servable object and the same two failure classes apply to it.
 // ---------------------------------------------------------------------------
 
 const validators: NetValidators = {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 };
-
-function makePost(overrides: Partial<Post> = {}): Post {
-  return {
-    content: 'a stored post',
-    author: new Uint8Array(32).fill(7),
-    parentRefs: [],
-    challenge: new Uint8Array(32),
-    protocolVersion: PROTOCOL_VERSION,
-    timestamp: 1_000_000,
-    powNonce: 42,
-    signature: new Uint8Array(64),
-    ...overrides,
-  };
-}
-
-function makeSubBlock(overrides: Partial<SubBlock> = {}): SubBlock {
-  return {
-    subBlockId: 'ab'.repeat(32),
-    post: makePost(),
-    producerId: new Uint8Array(32).fill(7),
-    protocolVersion: PROTOCOL_VERSION,
-    ...overrides,
-  };
-}
 
 function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
   return {
     protocolVersion: PROTOCOL_VERSION,
     height: 1,
     prevBlockHash: '00'.repeat(32),
-    subBlockRoot: '00'.repeat(32),
     utxoTxRoot: '00'.repeat(32),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
@@ -103,10 +74,10 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeOrderingBlock(header: BlockHeader = makeHeader()): OrderingBlock {
   return {
     header,
-    subBlockTree: { subBlockEntries: [], pruneEntries: [] },
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
+      pruneEntries: [],
       coinbaseOutputs: [
         {
           value: 100n,
@@ -136,103 +107,6 @@ function capturingErrors<T>(fn: () => T): { result: T; logged: string[] } {
 // ---------------------------------------------------------------------------
 // The guard fires — and fires for the right reason
 // ---------------------------------------------------------------------------
-
-describe('encodeServableSubBlock — out-of-domain rows', () => {
-  it('refuses a colliding `protocolVersion` that the encoder would accept', () => {
-    // The load-bearing case. `writeVlqU(-1)` does not throw: it emits a
-    // sentinel, and the bytes come back as a *successful* encode that our own
-    // reader then refuses. Only the structural verdict sees this.
-    const stored = makeSubBlock({ protocolVersion: -1 });
-
-    expect(() => encodeSubBlock(stored)).not.toThrow();
-    expect(() => decodeSubBlock(encodeSubBlock(stored))).toThrow();
-
-    const { result, logged } = capturingErrors(() =>
-      encodeServableSubBlock(stored, validators, stored.subBlockId),
-    );
-    expect(result).toBeNull();
-    expect(logged.join('\n')).toContain('protocolVersion');
-  });
-
-  it('refuses a non-hex `subBlockId` instead of throwing out of the encoder', () => {
-    const stored = makeSubBlock({ subBlockId: 'not hex' });
-
-    expect(() => encodeSubBlock(stored)).toThrow();
-
-    const { result, logged } = capturingErrors(() =>
-      encodeServableSubBlock(stored, validators, 'not hex'),
-    );
-    expect(result).toBeNull();
-    expect(logged.join('\n')).toContain('subBlockId');
-  });
-
-  it('refuses a `producerId` that is 32 characters rather than 32 bytes', () => {
-    const stored = makeSubBlock({ producerId: '0'.repeat(32) as unknown as Uint8Array });
-
-    const { result, logged } = capturingErrors(() =>
-      encodeServableSubBlock(stored, validators, stored.subBlockId),
-    );
-    expect(result).toBeNull();
-    expect(logged.join('\n')).toContain('producerId');
-  });
-
-  it('refuses an out-of-domain post field', () => {
-    const stored = makeSubBlock({ post: makePost({ timestamp: -1 }) });
-
-    const { result } = capturingErrors(() =>
-      encodeServableSubBlock(stored, validators, stored.subBlockId),
-    );
-    expect(result).toBeNull();
-  });
-
-  it('refuses a row that is not a sub-block at all, without throwing', () => {
-    for (const junk of [null, undefined, 42, 'a string', {}, { post: {} }]) {
-      const { result } = capturingErrors(() =>
-        encodeServableSubBlock(junk, validators, 'junk'),
-      );
-      expect(result).toBeNull();
-    }
-  });
-
-  it('refuses a bad `post.signature`, which the structural verdict does not reach', () => {
-    // ⚠ This is the residual gap, pinned so it is visible rather than assumed
-    // closed: `verifyPostFieldDomains` stops at `timestamp`, so `signature`
-    // passes the verdict and is caught only by the encode arm. The root fix is
-    // in `@dagsocial/validation` — until then, this asserts the serve path
-    // stays total, not that the check is complete.
-    const stored = makeSubBlock({ post: makePost({ signature: new Uint8Array(63) }) });
-
-    expect(verifySubBlockStructure(stored).valid).toBe(true);
-    expect(() => encodeSubBlock(stored)).toThrow();
-
-    const { result, logged } = capturingErrors(() =>
-      encodeServableSubBlock(stored, validators, stored.subBlockId),
-    );
-    expect(result).toBeNull();
-    expect(logged.join('\n')).toContain('encode failed');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// …and does not fire on an honest row (the "guard that never fires" inverse)
-// ---------------------------------------------------------------------------
-
-describe('encodeServableSubBlock — in-domain rows still serve', () => {
-  it('returns bytes that round-trip back to the same sub-block', () => {
-    const stored = makeSubBlock();
-    const { result, logged } = capturingErrors(() =>
-      encodeServableSubBlock(stored, validators, stored.subBlockId),
-    );
-
-    expect(result).not.toBeNull();
-    expect(logged).toEqual([]);
-
-    const back = decodeSubBlock(result!);
-    expect(back.subBlockId).toBe(stored.subBlockId);
-    expect(back.protocolVersion).toBe(PROTOCOL_VERSION);
-    expect(back.post.content).toBe('a stored post');
-  });
-});
 
 describe('encodeServableOrderingBlock', () => {
   it('returns bytes that round-trip back to the same block', () => {
@@ -297,7 +171,7 @@ describe('LazySyncStore.serializeOrderingBlock', () => {
   it('still serves the neighbouring good blocks — one bad row is not a dead batch', () => {
     const rows = new Map<number, unknown>([
       [1, makeOrderingBlock(makeHeader({ height: 1 }))],
-      [2, makeOrderingBlock(makeHeader({ height: 2, subBlockRoot: 'nope' }))],
+      [2, makeOrderingBlock(makeHeader({ height: 2, prevBlockHash: 'nope' }))],
       [3, makeOrderingBlock(makeHeader({ height: 3 }))],
     ]);
     const store = new LazySyncStore(validators);

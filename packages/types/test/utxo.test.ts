@@ -225,11 +225,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
+  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
 const GOLDEN_CREDIT_BOX_ID =
-  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
+  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
 const GOLDEN_TX_ID =
-  '1377c556cc3dd835e4a51c9f0186afa749cf0904a415bcea2c08a7f6fcc4c893';
+  '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -365,9 +365,9 @@ const ALL_MINT_REASONS: MintReason[] = [
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '9ce0a81f7f17d02d921a3f7891c3d13766b74315325287d3f15b535fe194a971';
+  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  '4715f81241dbef101d86328288a28cf8309dd44b40c66df0999f628453073db4';
+  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
 const GOLDEN_MINT_COINBASE_ID =
   'da905d0f72efd81bc5c1ed3074e28fae890d7d1140fcb7f17d155da4bc12ce18';
 const GOLDEN_MINT_DECAY_ID =
@@ -659,15 +659,14 @@ describe('genesis_proof', () => {
     // shares. `utxoTxTree.utxoTxs` is `arr(lp)` and goes through the same
     // primitive on the same positional reader, so it is what a bound placed in
     // the primitive would have caught along with this box — and it must not be.
-    const tree = { utxoTxIds: [], utxoTxs: [overBound], coinbaseOutputs: [] };
+    const tree = { utxoTxIds: [], utxoTxs: [overBound], pruneEntries: [], coinbaseOutputs: [] };
     expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
   });
 });
 
 /**
- * `u32BE` is a **caller-side subject encoder**, not part of any preimage this
- * package writes: `computeCandidateBoxId`'s `index` and `computeMintTxId`'s
- * `height` are both `vlqU`.
+ * `u32BE` is the mint `subject` encoder and `computePostId`'s index writer;
+ * `computeCandidateBoxId`'s `index` and `computeMintTxId`'s `height` are `vlqU`.
  *
  * It is exported because `NODE_INTERFACE.md`'s reason/subject table gives the
  * `coinbase` and `genesis` mints a `u32BE` selector as their `subject`, and
@@ -908,7 +907,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '1377c556cc3dd835e4a51c9f0186afa749cf0904a415bcea2c08a7f6fcc4c893' + // b32 txId
+      '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -973,7 +972,7 @@ describe('boxRecordFromBytes', () => {
     }],
     ['post_lock', {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
-      targetPostId: 'ab'.repeat(32), guard: 'block_apply',
+      guard: 'block_apply',
     }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
     ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
@@ -1247,6 +1246,7 @@ describe('transactions', () => {
       //
       //   TX_ID_DOMAIN ‖ arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
       //                ‖ opt(preimages) ‖ vlqU(protocolVersion) ‖ opt(likeTarget)
+      //                ‖ opt(post)
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));           // arr count
@@ -1256,6 +1256,7 @@ describe('transactions', () => {
       h.update(Buffer.from([0]));                                 // opt preimages: absent
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));         // vlqU(1)
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
+      h.update(Buffer.from([0]));                                 // opt post: absent
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(computeTxId(GOLDEN_TX));
     });
 
@@ -1501,6 +1502,7 @@ describe('transactions', () => {
       h.update(Buffer.from([tx.protocolVersion]));      // vlqU(1)
       h.update(Buffer.from([1]));                       // opt likeTarget: present
       h.update(Buffer.from(TARGET_A, 'hex'));           // b32 — raw, not hex text
+      h.update(Buffer.from([0]));                       // opt post: absent
       expect(computeTxId(tx)).toBe(h.digest().subarray(0, 32).toString('hex'));
     });
 
@@ -1660,7 +1662,7 @@ describe('the box-type tables', () => {
     },
     post_lock: {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
-      targetPostId: 'ab'.repeat(32), guard: 'block_apply',
+      guard: 'block_apply',
     },
     vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
   };

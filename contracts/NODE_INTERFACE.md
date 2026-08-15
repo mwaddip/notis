@@ -157,9 +157,6 @@ boundary instead of in a response body.
 
 **Post submission flow (mempool-based):**
 
-> ⚠ **AHEAD OF CODE.** The tree submits a post as a sub-block plus a separate
-> karma-lock transaction, joined by a mempool `batchId`.
->
 > **A post is submitted as one transaction** carrying the post payload and locking
 > the author's karma. There is no `batchId`, no challenge, and no PoW — see
 > "Post transactions" below.
@@ -752,8 +749,10 @@ schema for its `boxType`**:
     (credit, when present). `-0` is called out because it is JSON- and
     CBOR-reachable and breaks byte round-trips: cbor-x encodes it as a float
     where the store's JSON round-trip returns integer `0`.
-  - `string`: `targetPostId` (post_lock). Type only — format/length pins
-    (hex-64 ids, byte caps) are a recorded rider, not this pin.
+  - `string`: no box field carries one. `targetPostId` was the only entry and it
+    is deleted with the field (TYPES_INTERFACE → PostLockBox) — the circularity,
+    not a domain fix. Kept as a row because the *kind* is still part of the
+    schema vocabulary.
   - `boolean`: `decayBurn` (karma, when present).
 - **Unknown `boxType` is a reject — and the schema lookup is an own-property
   lookup** (`Object.hasOwn` or equivalent), never a bare index into the
@@ -1076,8 +1075,6 @@ There is **no other legal bond or invite shape**. In particular:
   carve already set.
 
 ### Post transactions (unit 2)
-
-> ⚠ **AHEAD OF CODE.** Posts ride a separate `subBlockTree` and are gated by PoW.
 
 - **A post is a transaction, and that is the whole of its admission.** It locks
   the author's karma and conserves value; there is no separate post signature,
@@ -2672,8 +2669,8 @@ for `post_lock`:**
 
 | Source | Order after `serializeBox` strips `id`/`boxType` |
 |--------|--------------------------------------------------|
-| `block-creator.ts` remainder box | `value, originalValue, createdAtBlock, owner, targetPostId, guard` |
-| `rowToBox` / demo UI | `value, createdAtBlock, originalValue, owner, targetPostId, guard` |
+| `block-creator.ts` remainder box | `value, originalValue, createdAtBlock, owner, guard` |
+| `rowToBox` / demo UI | `value, createdAtBlock, originalValue, owner, guard` |
 
 Measured: identical length, different bytes (`…6d6f726967696e616c56616c7565…` vs
 `…6e637265617465644174426c6f636b…`). Two consequences:

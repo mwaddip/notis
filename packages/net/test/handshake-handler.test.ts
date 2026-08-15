@@ -2,13 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
@@ -34,13 +31,10 @@ import type { PeerManager } from '../src/peer-mgr.js';
 const MAGIC = 0x54444147;
 
 const validators: NetValidators = {
-  verifyPoW,
   verifyOrderingBlockPoW,
-  verifyPostSignature,
   verifyProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
-  verifySubBlockStructure,
   verifyTxStructure,
   verifyOrderingBlockStructure,
 };
@@ -48,7 +42,6 @@ const validators: NetValidators = {
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC,
-    postPowTargetBits: 20,
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,

@@ -1,5 +1,4 @@
 import express from 'express';
-import { createRouter as challengeRoutes } from './routes/challenges.js';
 import { createRouter as postRoutes } from './routes/posts.js';
 import { createRouter as likeRoutes } from './routes/likes.js';
 import { createRouter as inviteRoutes } from './routes/invites.js';
@@ -11,7 +10,6 @@ import { createRouter as blockRoutes } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import * as store from './store/index.js';
 import { getSystemKeypair } from './store/system.js';
-import { generateChallenge } from './services/pow.js';
 import { verifyPost } from './services/verifier.js';
 import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services/block-creator.js';
 import { isPeerReady } from './services/peer-readiness.js';
@@ -201,18 +199,8 @@ export function createApp(config: Config): express.Express {
 
   // ---- Routes ----
 
-  // Challenges — /challenge
-  app.use(
-    '/challenge',
-    challengeRoutes({
-      generateChallenge,
-      createChallenge: store.createChallenge,
-      getActiveChallenge: store.getActiveChallenge,
-      getCurrentHeight: store.getCurrentHeight,
-      challengeWindowBlocks: config.challengeWindowBlocks,
-      postPowTargetBits: config.postPowTargetBits,
-    }),
-  );
+  // Reserved, never to be reused: the route path `/challenge`. The PoW handshake
+  // is gone with post PoW — a post is admitted by the stateful karma lock.
 
   // Posts — /posts
   app.use(
@@ -221,18 +209,14 @@ export function createApp(config: Config): express.Express {
       verifyPost,
       encodePost,
       insertPost: store.insertPost,
-      consumeChallenge: store.consumeChallenge,
       getPost: store.getPost,
-      getPostRaw: store.getPostRaw,
       queryPosts: store.queryPosts,
-      getActiveChallenge: store.getActiveChallenge,
       getKarmaBoxes: store.getKarmaBoxes,
       getCurrentHeight: store.getCurrentHeight,
       getLikeRecordCount: store.getLikeRecordCount,
       getLikersForPost: store.getLikersForPost,
       getAncestors: store.getAncestors,
       getSubtree: store.getSubtree,
-      insertMempoolSubBlock: store.insertMempoolSubBlock,
       insertUtxoTx: store.insertUtxoTx,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),

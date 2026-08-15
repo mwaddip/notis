@@ -45,7 +45,7 @@ async function importDb() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown) => void;
+    insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => AnyBox | null;
   };
 }
@@ -224,9 +224,10 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   it('an out-of-domain output field is a stated rejection, not the totality catch', async () => {
     // D6. `checkTxEnvelope` deliberately does not type output entries, so an
     // output field outside the encoder's domain reaches a THROWING writer
-    // inside `computeTxId` — `writeHexNOrThrow` for `post_lock.targetPostId`
-    // here. `checkOutputShape` between the two is what converts that throw into
-    // a refusal the node can name (NODE_INTERFACE → "The output domain check").
+    // inside `computeTxId` — `vlqU64` for `post_lock.originalValue` here, which
+    // refuses a non-bigint. `checkOutputShape` between the two is what converts
+    // that throw into a refusal the node can name (NODE_INTERFACE → "The output
+    // domain check").
     //
     // The poison rides in as spliced bytes for a structural reason, not for
     // convenience: a throwing writer means the transaction cannot be hashed, so
@@ -247,9 +248,8 @@ describe('block funnel — the embedded-tx proof obligation', () => {
       {
         boxType: 'post_lock',
         value: 100n,
-        originalValue: 100n,
+        originalValue: '100', // vlqU64 THROWS on a string
         owner: alice.userId,
-        targetPostId: 'not-64-lowercase-hex',
         guard: 'block_apply',
       },
     ] as unknown as UtxoTransaction['outputs'];
@@ -272,7 +272,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     expect(applied).toBe(false);
     expect(
       warnings.filter(
-        (w) => w.includes('has an out-of-domain output') && w.includes('targetPostId'),
+        (w) => w.includes('has an out-of-domain output') && w.includes('originalValue'),
       ),
       `output-domain rejection missing; got ${JSON.stringify(warnings)}`,
     ).toHaveLength(1);

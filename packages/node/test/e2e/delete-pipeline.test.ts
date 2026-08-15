@@ -119,7 +119,6 @@ function preimagePost(content: string, author: Uint8Array, parents: string[], ch
   return {
     content, author, parentRefs: parents, challenge: chal,
     powNonce: 0, protocolVersion: PROTOCOL_VERSION, timestamp: ts,
-    signature: new Uint8Array(64),
   };
 }
 

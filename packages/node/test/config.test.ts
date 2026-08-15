@@ -59,8 +59,6 @@ describe('config', () => {
 
       expect(cfg.port).toBe(3000);
       expect(cfg.dbPath).toBe('dagsocial.db');
-      expect(cfg.postPowTargetBits).toBe(20);
-      expect(cfg.challengeWindowBlocks).toBe(10);
       expect(cfg.maxSubBlocksPerBlock).toBe(1000);
       expect(cfg.maxMempoolEntries).toBe(10000);
       expect(cfg.networkType).toBe('testnet');
@@ -87,7 +85,6 @@ describe('config', () => {
 
       expect(cfg.port).toBe(8080);
       expect(cfg.dbPath).toBe('/tmp/test.db');
-      expect(cfg.challengeWindowBlocks).toBe(5);
       expect(cfg.maxSubBlocksPerBlock).toBe(500);
       expect(cfg.maxMempoolEntries).toBe(25);
       expect(cfg.networkType).toBe('mainnet');
@@ -205,7 +202,6 @@ describe('config', () => {
       // 3072 is below testnet's 5984 (TYPES_INTERFACE → Network profiles), so a
       // read sourced from the wrong profile fails here. It is in units of 1/256
       // of a bit; `postPowTargetBits` is not.
-      expect(cfg.postPowTargetBits).toBe(4);
       expect(cfg.orderingBlockPowTargetBits).toBe(3072);
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
       expect(cfg.karmaStaleThresholdBlocks).toBe(500);
@@ -299,8 +295,6 @@ describe('config', () => {
 
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
-
-      expect(cfg.postPowTargetBits).toBe(20);
       // 1/256-bit units, so 23.375 bits (VALIDATION_INTERFACE →
       // orderingPowTarget). `postPowTargetBits` above is whole bits.
       expect(cfg.orderingBlockPowTargetBits).toBe(5984);
