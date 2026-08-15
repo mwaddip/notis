@@ -280,6 +280,25 @@ failure so one bad message degrades that message only, never the loop.
 handling a request must not be `O(ids × chainHeight)` — an unbounded id list must not each
 trigger a full-chain scan.
 
+⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
+item count alone.** A count bounds an array's length and says nothing about its weight, and both
+`ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops
+before exceeding `MAX_SERVE_BODY_BYTES`, and always emits its first item so an oversized object moves
+rather than wedging sync.
+
+**Three limits stand in a fixed order, and the relation is the rule:**
+
+```
+MAX_BLOCK_BODY_BYTES (2,000,000)  <  MAX_SERVE_BODY_BYTES (4 MiB)  <  MAX_STREAM_BYTES (8 MiB)
+```
+
+The lowest is `@dagsocial/types`' consensus bound (`TYPES_INTERFACE` → Size caps); the upper two are
+this package's. A single legal block therefore always fits inside a response the requester will
+accept, and a multi-block response truncates instead of overflowing. ⚠ **Raising the block bound above
+this package's serve limit makes a block valid and unservable** — it propagates by gossip and no peer
+syncing from history can ever fetch it, which is a consensus-visible split produced entirely by two
+constants moving independently.
+
 Handshake specifics:
 - `protocolVersion` must be one this node supports
 - `chainHeight` (and `SyncInfo.tipHeight`) must be a non-negative integer `<=
@@ -922,6 +941,17 @@ the band-aid; the root cause was the second dialect, so the dialect is gone.
   > grounds left to it** — the 400-item cap and the per-item boundary check the length-prefixed
   > nesting allows. Kept because a reader hardening this path from the old text would defend against
   > a hazard that is gone and might weaken the bound that is not.
+- ⛔ **The `Blocks` serve arm is byte-bounded as well as count-bounded**, and the two bounds answer
+  different questions. `MAX_CHAIN_RESPONSE_ITEMS` bounds how many blocks we assemble; it says nothing
+  about their weight, and blocks are bounded individually by `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE`
+  → Size caps) at up to 2 MB each. 400 × 2 MB is far past the requester's `MAX_STREAM_BYTES`, so a
+  count-only bound produces a response no peer can read — a stall that appears exactly when blocks
+  are full and never before.
+
+  The rule is `handleModifierRequestMsg`'s, applied here: accumulate encoded bytes, stop before
+  exceeding `MAX_SERVE_BODY_BYTES`, and **always include the first block** so an oversized one moves
+  rather than wedging sync. A truncated response costs the requester one round trip — it re-asks for
+  what is still missing on the next `SyncInfo` round — and never costs it the chain.
 - **A response that does not decode THROWS; it must never resolve to `[]`.** `requestBlocks`' result
   goes straight to `reorg(forkHeight, newBlocks)`, which reverts above the fork point and applies what
   it is given — so an empty array *truncates our own chain* instead of failing to extend it.

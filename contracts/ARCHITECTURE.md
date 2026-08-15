@@ -1701,6 +1701,19 @@ forever. A node rejects objects with an unsupported protocol version.
   which is what it always effectively was
 - Like dedup is structural: the `(liker, post)` like-record exists or it does not
 - Like accrual and settlement happen every block — there is no epoch (P2-D)
+- **A block body is bounded in bytes, and a valid block is always servable.**
+  `MAX_BLOCK_BODY_BYTES` < `MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES`
+  (`TYPES_INTERFACE` → Size caps). The bound is checked in structure validation,
+  which is what runs **before relay**, so an oversized block is refused rather
+  than forwarded and then refused. ⚠ **The ordering is the invariant, not the
+  three numbers** — inverting any pair produces a block that consensus accepts
+  and no syncing peer can fetch.
+- **Weight is bounded in bytes, never in transactions**, and the two do not
+  coincide: a transaction's encoded size is a property of the codec, which
+  `TYPES_INTERFACE` → Layout — UtxoTransaction is already specified to change.
+  A byte bound survives that change as a capacity gain; a count bound would have
+  had to be re-derived, and the storage guarantee it was chosen for would move
+  with it.
 
 ### Network identity
 
@@ -1844,6 +1857,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > as the consumer-list one.
 
 ### Storage guarantees
+- **Chain growth is bounded by consensus, at ~1.05 TB/yr.** `MAX_BLOCK_BODY_BYTES`
+  of 2,000,000 across 525,960 blocks a year (60 s target) is the ceiling an
+  archival node plans against. ⚠ **It is a worst case, not a steady state**: it
+  assumes every block full and nothing pruned, while prunable content and stumps
+  mean a pruning node grows more slowly. It is not the figure a light client
+  stores.
 - **Single-transaction atomic writes** — every post insertion that touches
   multiple tables (posts, dag_edges, indexes, scores) MUST happen in a
   single SQLite transaction. No partial writes.

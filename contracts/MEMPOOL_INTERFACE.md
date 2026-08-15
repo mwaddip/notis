@@ -300,7 +300,7 @@ The block creator (`services/block-creator.ts`) is the sole consumer of
 pending entries:
 
 1. Calls `purgeExpired(currentHeight)` — drops stale entries
-2. Calls `getPendingEntries(maxSubBlocksPerBlock)` — fetches FIFO batch
+2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`
 3. Separates entries by `entryType`:
    - `subblock` entries → decoded, included as `subBlockRefs`
    - `utxo_tx` entries with `batch_id = null` → either attached to matching
@@ -312,6 +312,36 @@ pending entries:
 4. Tracks `confirmedRowids` (set of rowids included in the block)
 5. After block finalization: `removeEntry(rowid)` for each confirmed rowid,
    `removeMempoolPrunes(entryIds)` for confirmed prune entries
+
+### The fill budget is bytes; `getPendingEntries` is a count
+
+⛔ **`getPendingEntries(limit)` is a SQL `LIMIT` and does not express a byte budget.** The two do not
+correspond: 2 MB of body is roughly 2,030 max-size post transactions but roughly 4,283 likes, against
+a pool that holds up to `MAX_MEMPOOL_ENTRIES`. Step 2 must therefore page, or take a byte-aware
+query — **a large fixed count is not a substitute.** An under-fetch produces short blocks while every
+test still passes and every block still validates, which is the failure mode that reads as working
+software.
+
+The budget is spent in this order: `pruneEntries` and `coinbaseOutputs` first — both mandatory, and
+neither the miner's to trim — then transactions with what remains.
+
+### Confirmed-entry cleanup is bounded by the pool, not by a literal
+
+**Two paths clear a confirmed entry, and only one of them is complete.** A block this node produced is
+cleaned by rowid (`confirmedRowids`, step 5), which reaches every included entry wherever it sits. A
+block arriving **from a peer** is cleaned by block application scanning pending entries and matching
+recomputed `TxId`s — and that scan's bound is what decides whether the cleanup is total.
+
+⛔ **The scan bound must not be a literal.** Bounded below `MAX_MEMPOOL_ENTRIES`, a confirmed
+transaction sitting past it is never removed: it holds a slot, the creator later rebuilds it into a
+block, and apply rejects that block because the transaction can no longer be applied. The chain
+recovers — `finalizeBlock` evicts the row even on rejection — so the cost is one wasted block rather
+than a stall, and it is invisible until the pool is deeper than the bound.
+
+⚠ **A fill budget and a scan bound that happen to be equal are not the same rule**, and this is what
+made the defect unreachable rather than absent: while both were `1000`, no block could confirm an
+entry the scan could not see. A byte budget breaks that coincidence — it drains 2,030–4,283 rows —
+so the scan must be bounded by the pool's own capacity rather than by a number that used to match.
 
 ### ~~Like attachment during assembly~~ — DELETED (P2-D)
 
