@@ -453,7 +453,7 @@ BondBox extends BoxBase {
 
 **A `BondBox` is byte-identical from creation to the block that consumes it**, and
 the field list is what makes that true. `inviteOutputIndex` goes with the pairing
-it expressed: an address can be invited only once, so `inviteePublicKey` names the
+it expressed: a key is invited at most once, so `inviteePublicKey` names the
 paired invite by itself and no output index is needed. Both probation fields go
 too — the window runs from the **claim**, not the creation, and the claim height
 is already recorded as `IdentityRecord.invitedAtBlock` (`NODE_INTERFACE` →
@@ -462,9 +462,10 @@ Identity Records), so carrying it here would be a second copy of committed state
 **There is no `originalValue`,** and the contrast with `PostLockBox` below is the
 reason. A post lock vests per block, so its current and initial values differ and
 both have to be carried. A bond settles **once**, for
-`min(floor(inviteeLifetimeLikes / 5), value)` — a pure function of the invitee's
-lifetime like count, which makes a single evaluation arithmetically identical to
-accumulated instalments. No partial state exists to record.
+`min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES), value)`
+— a pure function of a monotonic counter, which makes a single evaluation
+arithmetically identical to accumulated instalments. No partial state exists to
+record.
 
 **Nothing spends a bond.** Creation, claim, cancellation and settlement all move
 it through block application, so the guard admits no user transaction at all —
@@ -1766,7 +1767,15 @@ export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;  // consensus
 export const INVITE_KARMA_AMOUNT = 25n;            // consensus — karma MINTED to the invitee
 export const INVITE_BOND_KARMA = 25n;              // consensus — bond locked by the inviter
 export const INVITE_PROBATION_BLOCKS = 43200;      // consensus — 30 days at 60s → profile: inviteProbationBlocks
+export const INVITE_BOND_VEST_PER_LIKES = 5;       // consensus — likes the invitee must receive per 1 karma vested
 ```
+
+⛔ **`INVITE_BOND_VEST_PER_LIKES` is not `LIKES_PER_KARMA_PAYOUT`, and the two must
+not be collapsed** because they are equal. They answer different questions —
+*how many likes vest one karma of an inviter's stake* versus *how many likes an
+author is paid for before one is burned* — and each can move without the other.
+A single constant serving both would make an economic change to one silently
+re-price the other.
 
 `MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **deleted. Names reserved**,
 on the same argument as the retired like constants: a deletion-proof grep only

@@ -934,11 +934,20 @@ Create:
 
 **Alice pays only the bond.** `G` does not exist yet: the invite is a right to
 mint it, and creation therefore conserves value like any other transaction.
-Bob's key must never have been invited before — an address may be invited
-**once, ever** — which is checked here so that a second inviter's bond is never
-locked against an invite that could not have been claimed. Being barred costs an
-uninvited party nothing: with no karma they have never posted, so the identity
-carries nothing and a new keypair costs a keygen.
+⛔ **Bob's key must not already be an account** — meaning it holds no identity
+record, which every karma receipt writes. Checked at creation, so a second
+inviter's bond is never locked against an invite that could not be claimed.
+
+The weaker test, *"has not been invited before"*, **prints karma**: an established
+account that had simply never been invited could be named, the claim would mint it
+`G` from nothing, and the bond would vest in full against likes that key had
+already earned — returning Alice's whole stake for the price of a
+probation-length lock. Record existence is the test that closes it, and it also
+means a legal invitee has never posted and never been liked, so the claim is
+always the record-*creating* event.
+
+Being barred costs an uninvited party nothing: with no karma they have never
+posted, so the identity carries nothing and a new keypair costs a keygen.
 
 ### Invite claim
 
@@ -973,22 +982,30 @@ open costs Alice her own capacity and no rule has to bound it.
 
 ### Bond outcomes
 
-The bond settles **once**, at `invitedAtBlock + INVITE_PROBATION_BLOCKS`, and
-reads one thing: how many likes Bob has received in his life.
+The bond settles **once**, at `IdentityRecord.invitedAtBlock +
+INVITE_PROBATION_BLOCKS`, and reads one thing:
+`IdentityRecord.lifetimeLikesReceived`.
 
 | Scenario | Bond karma | Significance |
 |----------|------------|--------------|
 | Alice cancels before Bob claims | Returned to Alice | No account was created |
-| Bob received ≥ 5·B likes by the deadline | Returned to Alice in full | Alice vouched for someone the network valued |
-| Bob received fewer | `floor(likes / 5)` returned, **the rest burned** | Alice's stake was partly forfeit |
+| Bob's counter reached `INVITE_BOND_VEST_PER_LIKES · B` | Returned to Alice in full | Alice vouched for someone the network valued |
+| Bob's counter is lower | `floor(counter / INVITE_BOND_VEST_PER_LIKES)` returned, **the rest burned** | Alice's stake was partly forfeit |
 | Bob never engaged | Burned entirely | Alice vouched for nobody |
 
-Vesting is `min(floor(inviteeLifetimeLikes / 5), B)` — one karma per five likes.
+**Which count settles the bond is the whole of the rule**, so the contract names
+the field rather than saying "likes received". It is the identity record's
+monotonic counter: incremented by per-block like settlement, **decremented by
+nothing, prune included**. A count derived from live posts instead would let a
+third party burn Alice's stake — Bob replies in Carol's thread, Carol prunes it,
+Alice forfeits — which *"you may destroy your own stake, never someone else's"*
+forbids.
+
 Nothing else is consulted: not Bob's balance, not whether he is still active, not
 when the likes arrived. **A single evaluation at the deadline is arithmetically
 identical to accruing instalments**, because the vested amount is a pure function
-of a lifetime count, which is why no per-block bond pass exists and a `BondBox` is
-byte-identical from creation to the block that consumes it.
+of a monotonic count, which is why no per-block bond pass exists and a `BondBox`
+is byte-identical from creation to the block that consumes it.
 
 Burned karma is permanently destroyed — not redistributed. Against the invite
 mint on the other side, a failed invite is a **net loss of karma to the network**
@@ -1595,7 +1612,8 @@ forever. A node rejects objects with an unsupported protocol version.
   no preimage and no bearer form
 - An invite can be cancelled by its inviter until it is claimed, and never expires
   otherwise
-- An address can be invited **once, ever**
+- An invite may only name a key that is **not already an account**, so a key is
+  invited at most once ever
 - Invite bonds vest against the invitee's lifetime likes and the unvested part is
   **burned** at the probation deadline
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
