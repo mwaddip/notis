@@ -50,6 +50,18 @@ export const MAX_PARENT_REFS = 1;
  */
 export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 
+// Size caps — consensus bounds on whole encoded structures. Distinct in kind
+// from the content limits above, which are format bounds a codec enforces on one
+// field; no codec consults these. TYPES_INTERFACE → Size caps carries the byte
+// denomination and why neither constant moves when the positional transaction
+// form lands.
+//
+// ⚠ AHEAD OF CODE — nothing enforces either bound yet. The contract assigns the
+// body check to `verifyOrderingBlockStructure` and the transaction check to
+// `verifyTxStructure`, both in `@dagsocial/validation`.
+export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTxTree
+export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction
+
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
 
