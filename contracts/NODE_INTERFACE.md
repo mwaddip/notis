@@ -369,7 +369,7 @@ against live content).
 |--------|------|----------|--------|
 | `GET` | `/karma/:userId` | `{ userId: hex, total, boxes: [{ boxId, value }] }` | — |
 | `GET` | `/credits/:userId` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }] }` | — |
-| `GET` | `/invites/:userId` | `{ pending: InviteBox[], bonds: BondBox[] }` | — |
+| `GET` | `/invites/:userId` | `{ open: InviteBox[], bonds: BondBox[] }` | — |
 
 Multi-box UTXO model — identities can hold multiple karma/credit boxes.
 `total` is the sum across all boxes. **`value` and `total` are decimal strings** in
@@ -546,11 +546,17 @@ endpoint semantics in `MINING_INTERFACE.md`.
 > `inviteProbationBlocks`. A plain `number`, not a decimal string: unlike `totalKarma` /
 > `totalCredits` it is not a `bigint` server-side.
 >
-> **Why a per-network value has to be served rather than known.** The demo UI builds bond commits,
-> and `utxo-engine` requires the probation window to equal `config.inviteProbationBlocks`
-> **exactly**. The UI hardcoded `1000`. That agreed with the node on every network only while the
-> node *also* read the constant — once the node started resolving the field from the network
-> profile, a devnet node wanted `10` and every devnet bond commit was rejected.
+> **Why a per-network value has to be served rather than known.** ⚠ **The instance below is
+> historical and its mechanism is gone** — there are no bond commits, and a bond carries no
+> probation window for a client to reproduce. It is kept because the RULE it illustrates is live
+> and the field is still served: the probation length now dates a bond's settlement through
+> `IdentityRecord.invitedAtBlock`, so a client that wants to *display* when a bond settles still
+> has to learn it from the node.
+>
+> The original instance: the UI built bond commits, `utxo-engine` required the window to equal
+> `config.inviteProbationBlocks` **exactly**, and the UI hardcoded `1000`. That agreed on every
+> network only while the node also read the constant — once the node resolved the field from the
+> network profile, a devnet node wanted `10` and every devnet bond commit was rejected.
 >
 > The general rule this instance is an example of: **a per-network consensus value the client must
 > reproduce is served by the node, never held as a client constant.** `/challenge` already does
