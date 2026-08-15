@@ -3444,8 +3444,14 @@ lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and
 any JS value. A narrower check written for this call site would be a second spelling of one schema,
 which is the fork surface this contract rejects everywhere else. **The obligation is the whole
 schema, not the `bigint` alone**: the spec names the `value` field because that is where it was
-found, and `post_lock.targetPostId` (a `hex32` written by `writeHexNOrThrow`) reaches a throwing
-writer by the identical route.
+found, and any `hex32` field written by `writeHexNOrThrow` reaches a throwing writer by the
+identical route.
+
+⚠ **The example this paragraph used to give — `post_lock.targetPostId` — no longer exists.** The
+field was deleted when post ids became provenance-derived, because a lock naming an id derived
+from its own creating transaction is unbuildable (→ `TYPES_INTERFACE` → PostLockBox). **The
+obligation is unchanged and is not weakened by losing its illustration**; `post.parentRefs`
+reaches the same writer by the same route and is the live instance.
 
 **Apply funnel: validation and mutation phases.** `applyBlockBody` is split so
 the state transition can be run without the header being final — that is what

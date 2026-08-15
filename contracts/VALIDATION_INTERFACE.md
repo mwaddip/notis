@@ -47,10 +47,19 @@ the schedule without touching the admission rule — difficulty-retarget spec, U
 is unchanged by that retarget and is shared by both expansions; `orderingPowTarget` below is the
 half that moved.
 
-> ⚠ **AHEAD OF CODE.** Once `orderingPowTarget` lands, **this function serves post PoW alone** — fixed
-> difficulty, never retargeted (user, 2026-08-12) — and keeps whole bits over `[0, 256]`. Ordering-block
-> headers stop using it. The two are not interchangeable and share a type: passing a 1/256-bit value
-> here is refused only because it exceeds 256.
+> ⚠ **AHEAD OF CODE, and its premise INVERTED when post PoW was removed.** This read *"once
+> `orderingPowTarget` lands, this function serves post PoW alone"*. There is no post PoW, so
+> **`powTarget` today serves ordering-block PoW and nothing else** — the opposite consumer from
+> the one this marker anticipated.
+>
+> ⛔ **The consequence belongs to the scaled-pow-target unit and changes its scope.** Once
+> `orderingPowTarget` lands, ordering headers stop calling `powTarget`, and it has **no consumer
+> left at all** — it becomes dead rather than narrowed, and should be deleted rather than kept
+> for a caller that no longer exists. **`meetsPowTarget` survives**: it is the comparator both
+> expansions share, and `orderingPowTarget` needs it.
+>
+> The two expansions remain non-interchangeable and share a type; passing a 1/256-bit value to
+> `powTarget` is refused only because it exceeds 256.
 
 **Solvers hoist the expansion.** `powTarget` depends only on `targetBits`, so a solver derives it once
 per template and calls `meetsPowTarget` per nonce. Deriving it inside the loop allocates once per hash.

@@ -484,10 +484,13 @@ transition arms that dereference those fields, which is what closed the totality
 gap the same marker used to book as a queued follow-up.
 
 One correction that phase produced is worth keeping, because it was a
-type-versus-domain error of the kind this section is about:
-`post_lock.targetPostId` needed a `hex32` type added in the wire-format bundle,
-having been admitted as any `string` while `canonicalBoxBytes` wrote it with a
-throwing fixed-width writer.
+type-versus-domain error of the kind this section is about: a `hex32` field
+admitted as any `string` while a fixed-width writer throws on it.
+
+⚠ **The instance this named — `post_lock.targetPostId` — is gone**, deleted when
+post ids became provenance-derived. The error class is not: `post.parentRefs`
+reaches `writeHexNOrThrow` by the identical route and carries the same
+obligation.
 
 > ✅ **RESOLVED — the inbound obligation is now structural. Verified 2026-08-11.** This read
 > `AHEAD OF CODE` until Phase 9; the positional bundle
