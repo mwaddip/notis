@@ -94,9 +94,10 @@ A pure-additive DAG can't model deletion or mutable account state. A pure UTXO
 system can't model threaded conversation or author-sovereign content spaces.
 The hybrid preserves the strengths of both.
 
-### Block architecture: sub-blocks + ordering blocks
+### Block architecture: ordering blocks
 
-See `SUBBLOCK_INTERFACE.md` for the full sub-block contract.
+> ⚠ **AHEAD OF CODE.** The tree still has sub-blocks; the paragraphs below
+> describe the model they came from.
 
 Inspired by Ergo's subblock model (EIP-15):
 
@@ -1689,13 +1690,17 @@ forever. A node rejects objects with an unsupported protocol version.
 - **Prover restored on rejection.** A rejected block leaves the AVL prover at
   its pre-block digest regardless of which stage rejected it.
 
-### Sub-blocks and ordering
+### Blocks and ordering
 
-See `SUBBLOCK_INTERFACE.md` for the full contract.
+> ⚠ **AHEAD OF CODE.** The tree still produces sub-blocks and mines post PoW.
 
-- Sub-blocks are user-produced; ordering blocks are validator-produced
-- Sub-blocks carry exactly one post and nothing else
-- Ordering blocks anchor sub-blocks via Merkle digest
+- **There are no sub-blocks.** A post is a transaction, so it rides `utxoTxIds`
+  with every other transaction and the block commits one body, not two.
+  `SUBBLOCK_INTERFACE.md` is **deleted** — it described a structure that no
+  longer exists, and the rules that survived it are in `TYPES_INTERFACE` →
+  UtxoTransaction / OrderingBlock and `NODE_INTERFACE` → Post transactions.
+- Ordering blocks are validator-produced; consensus is **single-phase PoW**,
+  which is what it always effectively was
 - Like dedup is structural: the `(liker, post)` like-record exists or it does not
 - Like accrual and settlement happen every block — there is no epoch (P2-D)
 

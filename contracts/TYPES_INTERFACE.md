@@ -1786,7 +1786,9 @@ and only the origination comparison fails.
 ### PoW
 
 ```typescript
-export const POST_POW_TARGET_BITS = 20;       // Difficulty (higher = harder)
+// POST_POW_TARGET_BITS is DELETED with post PoW; the name and the profile field
+// `postPowTargetBits` stay reserved. Ordering-block PoW is unaffected — it is the
+// consensus PoW and always was.
 export const CHALLENGE_WINDOW_BLOCKS = 10;     // Blocks before challenge expires
 ```
 

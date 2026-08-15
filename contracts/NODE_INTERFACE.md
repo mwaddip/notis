@@ -103,7 +103,7 @@ are hex-encoded.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/challenge` | `{ userId: hex }` | `{ challenge: hex(32), targetBits, expiresAtBlock }` | 400 if userId invalid |
+| ~~`POST`~~ | ~~`/challenge`~~ | **DELETED** — the PoW handshake goes with post PoW. The `challenges` table and `challengeWindowBlocks` go with it. Route path reserved | | |
 
 Challenge is upserted — requesting a new challenge replaces any existing one
 (no 409 blocking). Challenge expires at `currentBlock + CHALLENGE_WINDOW_BLOCKS`.
@@ -157,8 +157,12 @@ boundary instead of in a response body.
 
 **Post submission flow (mempool-based):**
 
-Sub-block assembly, lifecycle, and ordering block integration are defined in
-`SUBBLOCK_INTERFACE.md`.
+> ⚠ **AHEAD OF CODE.** The tree submits a post as a sub-block plus a separate
+> karma-lock transaction, joined by a mempool `batchId`.
+>
+> **A post is submitted as one transaction** carrying the post payload and locking
+> the author's karma. There is no `batchId`, no challenge, and no PoW — see
+> "Post transactions" below.
 
 1. Decode hex fields (`author`, `challenge`, `signature`) to binary; parse `karmaLockTx`
 2. Validate field presence, content length (1–300 bytes)

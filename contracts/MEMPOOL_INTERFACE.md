@@ -38,12 +38,15 @@ entries.
 ### PoolEntry (in-memory representation)
 
 ```typescript
-> ⚠ **This declaration is the correct one. Elsewhere in this file — and in
-> `SUBBLOCK_INTERFACE.md` — the mempool is described as storing sub-block CBOR. It does
-> not.** The column is `subblock_id TEXT` and always has been; sub-block content lives in
-> the DAG store. Where those descriptions conflict with this interface, **this wins.**
-> Note the same file states both versions in different sections, so quoting one section is
-> not sufficient evidence of the schema.
+> ⚠ **AHEAD OF CODE.** The tree still has a `subblock` entry type and a
+> `batch_id` column.
+>
+> **The mempool holds one entry type: transactions.** A post is a transaction, so
+> the post/lock pair that `batch_id` existed to regroup is a single object and the
+> column goes with it. Elsewhere in this file the mempool is described as storing
+> sub-block CBOR — it never did; the column was `subblock_id TEXT` and content
+> lived in the DAG store. **Where those descriptions conflict with this interface,
+> this wins.**
 
 interface PoolEntry {
   rowid: number;
