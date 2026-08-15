@@ -28,12 +28,25 @@ CREATE TABLE mempool (
     prune_entry_cbor  BLOB,            -- CBOR-encoded PruneEntry (null for non-prune)
     batch_id          TEXT,            -- Links sub-block + UTXO payloads from same operation
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
-    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    tx_id             TEXT             -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
 );
+
+CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
 ```
 
 No separate `id` column — the SQLite `rowid` is the canonical identifier for
 entries.
+
+**`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
+no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
+peer's block confirms it, and a scan that recomputes the id per candidate is the cost measured under
+*Confirmed-entry cleanup* below. The index is **partial** — non-`utxo_tx` rows carry `NULL` and are
+not indexed.
+
+⚠ **Rows written before the column existed carry `NULL` and no cleanup matches them.** They leave the
+pool by `purgeExpired` at their expiry height, which is the same path an unconfirmed entry always
+took.
 
 ### PoolEntry (in-memory representation)
 
@@ -101,7 +114,25 @@ insertUtxoTx(tx: UtxoTransaction, batchId: string | null, expiresAtHeight: numbe
 
 Encodes the UTXO transaction as CBOR and inserts a `utxo_tx` entry, populating
 the gate-metadata columns from the transaction's outputs (see above). Returns
-the SQLite `rowid`. Throws `MempoolFullError` at the size cap.
+the SQLite `rowid`. Throws `MempoolFullError` at the size cap, and
+**`TxTooLargeError` when the encoding exceeds `MAX_TX_BYTES`.**
+
+⛔ **The size bound lives here because this is the only door.** Every submission route reaches the
+pool through this function, and it already computes `encodeTx(tx)` — so one check covers them all
+and costs no extra encoding. A rule per route is a rule someone adds a route without.
+
+**It is node's own admission gate, not a restatement of validation's.**
+`@dagsocial/validation`'s `verifyTxStructure` carries the same bound but runs only on net's gossip
+path — **node calls it zero times** — so without this a transaction above `MAX_TX_BYTES` submitted to
+this node's HTTP API would be pooled, mined, and then refused by this node's *own*
+`verifyOrderingBlockStructure` at apply. A self-rejecting block, recovered at the cost of one block
+by `finalizeBlock`'s eviction.
+
+⚠ **Reorg re-insertion must not let this throw escape.** `fork-resolution` re-inserts reverted
+transactions inside the chain-switch SQLite transaction, where an escaping error rolls back the
+switch and strands the node on the lighter chain. `TxTooLargeError` is dropped and logged there, as
+`MempoolFullError` already is. A transaction that rode in a block cannot exceed the bound — validation
+refuses those — so the path should never trip it, and it is defended anyway.
 
 - `batchId` is null for standalone transactions (likes, invites, faucet).
   Set to a post ID for batch-linked transactions (karma-lock on post creation).
@@ -162,16 +193,41 @@ confirmed prune entry.
 ### getPendingEntries
 
 ```
-getPendingEntries(limit: number): PoolEntry[]
+getPendingEntries(limit: number, afterRowid?: number): PoolEntry[]
 ```
 
-Returns pending entries in FIFO order (`ORDER BY rowid ASC`), up to `limit`.
-All entries are returned — `subblock`, `utxo_tx`, and `prune` types. The caller
-(block creator) is responsible for decoding and organizing entries by type
-and batch.
+Returns pending entries in FIFO order (`ORDER BY rowid ASC`), up to `limit`,
+starting after `afterRowid` (default `0` — from the beginning). All entries are
+returned — `subblock`, `utxo_tx`, and `prune` types. The caller (block creator)
+is responsible for decoding and organizing entries by type and batch.
 
 Entries are NOT filtered by expiry here — the caller calls `purgeExpired`
 first before fetching.
+
+**`afterRowid` is a keyset cursor, not an offset**, so paging stays `O(page)` as the pool deepens
+rather than re-walking what it already returned.
+
+### iteratePendingEntries
+
+```
+iteratePendingEntries(): Generator<PoolEntry>
+```
+
+Pages through the whole pool in FIFO order via the `getPendingEntries` cursor, yielding one entry at
+a time. **This is what a byte budget requires**: a caller filling to a byte target cannot know in
+advance how many rows it needs, because entry sizes vary by more than 6× (a like against a max-size
+post transaction). A generator lets the creator stop the moment the budget is spent, without either
+over-fetching the pool or guessing a `LIMIT`.
+
+### removeUtxoTxEntry
+
+```
+removeUtxoTxEntry(txId: string): number
+```
+
+Deletes the `utxo_tx` entry whose `tx_id` matches, returning the rows deleted. **The indexed lookup
+that confirmed-entry cleanup runs** when a block arrives from a peer — see below for why a scan is
+not an option.
 
 ### purgeExpired
 
@@ -315,33 +371,63 @@ pending entries:
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
-⛔ **`getPendingEntries(limit)` is a SQL `LIMIT` and does not express a byte budget.** The two do not
-correspond: 2 MB of body is roughly 2,030 max-size post transactions but roughly 4,283 likes, against
-a pool that holds up to `MAX_MEMPOOL_ENTRIES`. Step 2 must therefore page, or take a byte-aware
-query — **a large fixed count is not a substitute.** An under-fetch produces short blocks while every
-test still passes and every block still validates, which is the failure mode that reads as working
-software.
+⛔ **A SQL `LIMIT` does not express a byte budget.** The two do not correspond: 2 MB of body is
+roughly 2,026 max-size post transactions but roughly 4,264 likes, against a pool that holds up to
+`MAX_MEMPOOL_ENTRIES`. The creator therefore pages with `iteratePendingEntries` and stops when the
+budget is spent — **a large fixed count is not a substitute.** An under-fetch produces short blocks
+while every test still passes and every block still validates, which is the failure mode that reads
+as working software.
+
+**The budget is not spent in SQL, and that is deliberate.** A query can weigh
+`length(utxo_tx_cbor)` and nothing else — not the 32-byte `utxoTxIds` entry, not the `lp` prefix, not
+the four array count prefixes, not the reserve. Budgeting there would need a padding constant, which
+is the arbitrary number moved one level down where no test can see it.
+
+**How the accumulator and the authoritative measure reconcile:**
+
+- Per-entry cost is **exact**: `utxoTxTreeByteLength` of a one-entry body minus an empty one, so the
+  framing arithmetic stays in the encoder's mirror and is never restated here.
+- The running total is blind to **one** thing: the two array count prefixes widen as the counts grow,
+  under-counting by `2 × (vlqU(k) − 1)` — **at most 6 bytes** across the whole body.
+- The creator then measures the assembled tree with `utxoTxTreeByteLength` and pops from the tail
+  while it exceeds the budget. Minimum entry cost is 34 bytes, so that loop runs **at most once**.
+
+⛔ **The sizer has the last word, so no body exceeds the budget.** An accumulator that is nearly right
+plus a final exact measurement is a different guarantee from an accumulator trusted outright.
 
 The budget is spent in this order: `pruneEntries` and `coinbaseOutputs` first — both mandatory, and
 neither the miner's to trim — then transactions with what remains.
 
-### Confirmed-entry cleanup is bounded by the pool, not by a literal
+### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 
-**Two paths clear a confirmed entry, and only one of them is complete.** A block this node produced is
-cleaned by rowid (`confirmedRowids`, step 5), which reaches every included entry wherever it sits. A
-block arriving **from a peer** is cleaned by block application scanning pending entries and matching
-recomputed `TxId`s — and that scan's bound is what decides whether the cleanup is total.
+**Two paths clear a confirmed entry.** A block this node produced is cleaned by rowid
+(`confirmedRowids`, step 5), which reaches every included entry wherever it sits. A block arriving
+**from a peer** is cleaned by `removeUtxoTxEntry(txId)` — an indexed delete on `tx_id`.
 
-⛔ **The scan bound must not be a literal.** Bounded below `MAX_MEMPOOL_ENTRIES`, a confirmed
-transaction sitting past it is never removed: it holds a slot, the creator later rebuilds it into a
-block, and apply rejects that block because the transaction can no longer be applied. The chain
-recovers — `finalizeBlock` evicts the row even on rejection — so the cost is one wasted block rather
-than a stall, and it is invisible until the pool is deeper than the bound.
+**The rule is that cleanup reaches every row**, whatever its depth. An entry left behind holds a
+slot, and the creator later rebuilds it into a block that apply refuses as inapplicable; the chain
+recovers, because `finalizeBlock` evicts the row even on rejection, so the cost is one wasted block
+rather than a stall — and it is invisible until the pool is deeper than whatever bound was missed.
 
-⚠ **A fill budget and a scan bound that happen to be equal are not the same rule**, and this is what
-made the defect unreachable rather than absent: while both were `1000`, no block could confirm an
-entry the scan could not see. A byte budget breaks that coincidence — it drains 2,030–4,283 rows —
-so the scan must be bounded by the pool's own capacity rather than by a number that used to match.
+⛔ **A scan cannot satisfy that rule at any bound, and the numbers are why.** Cleanup by scanning
+decodes candidate entries and recomputes a `TxId` per candidate, once per applied transaction, so it
+is `O(applied × scanned)` with a blake2b inside. Measured 2026-08-15 through the real store, pool of
+10,000 entries at 975 B each:
+
+| Mechanism | Per applied block |
+|---|---|
+| Scan bounded at 1,000, `K = 1000` applied | **6.4 s** |
+| Scan bounded at `MAX_MEMPOOL_ENTRIES`, `K = 2026` | **27.4 s** |
+| Indexed delete on `tx_id`, `K = 2026` | **7.5 ms** |
+
+27.4 s is a third of a 60 s block interval and a liveness failure during back-to-back sync — so
+raising a scan bound to cover the pool trades a completeness gap for a worse one. The index is the
+root cause fixed rather than the symptom bounded, and it is the same shape as the *Correctness gates*
+above, which are SQL over indexed metadata columns for exactly this reason.
+
+⚠ **A fill budget and a cleanup bound that happen to be equal are not the same rule.** While both
+were `1000`, no block could confirm an entry the cleanup could not see, which made the gap
+unreachable rather than absent. A byte budget drains 2,026–4,264 rows and breaks that coincidence.
 
 ### ~~Like attachment during assembly~~ — DELETED (P2-D)
 

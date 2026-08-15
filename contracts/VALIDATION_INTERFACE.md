@@ -850,8 +850,8 @@ has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char st
 `powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (2304), `coinbaseOutputs` is
 an array with each output having a 32-byte `owner`, a `bigint` `value` in
 `[0, 2⁶⁴)`, a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
-and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view.
-Last, the encoded body is at most `MAX_BLOCK_BODY_BYTES`.
+and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
+**of at most `MAX_TX_BYTES`**. Last, the encoded body is at most `MAX_BLOCK_BODY_BYTES`.
 
 > ⚠ **The `< 2⁶⁴` bound lives HERE, not in node — corrected 2026-08-10.** This
 > passage used to route it to node's apply-time `checkOutputValues` "matching the
@@ -879,6 +879,21 @@ be `Uint8Array`, not merely length-bearing — a CBOR payload can put any type
 in any field, and the consumers of these fields call `Buffer.from(...)` and
 `createHash().update(...)`, which throw on a number or object. Structure
 validation is the layer that guarantees they never see one.
+
+#### Each embedded transaction is bounded too
+
+`utxoTxs[i].length > MAX_TX_BYTES` rejects, checked in the same loop that types the elements.
+
+⛔ **Without it, `MAX_TX_BYTES` would not be a consensus bound at all.** `verifyTxStructure` carries
+the same limit but has exactly one production caller — net's gossip `tx` validator — and
+`@dagsocial/node` calls it zero times. So that check alone bounds transactions arriving by gossip and
+nothing arriving inside a block: a miner could mine a transaction no peer could have relayed, and
+every node would accept the block. A bound that binds users and not miners is an asymmetry with no
+purpose.
+
+**The measure here is the as-arrived byte length**, matching how the body bound weighs the same
+array, and deliberately unlike `verifyTxStructure`'s re-encoding. It needs no decode — the elements
+are already opaque bytes.
 
 #### The body size bound — `utxoTxTreeByteLength` ≤ `MAX_BLOCK_BODY_BYTES`
 
