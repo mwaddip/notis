@@ -36,7 +36,7 @@ export type PoolClass = 'credit' | 'karma';
  * bids zero, so there is nothing to order by and nothing that deserves to
  * displace anything. The credit class rejects only a transaction bidding at or
  * below its cheapest resident; a higher bid displaces that resident instead
- * (audit M-8, and the fee market that superseded its deferral).
+ * (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
  *
  * Routes map this to 503; the gossip relay and reorg re-insertion drop the
  * entry and log.
@@ -274,7 +274,7 @@ function cheapestCreditEntry(
  * pays more per byte — cross-multiplied, because THIS comparison decides
  * whether a transaction is dropped and the float above is only an ordering.
  *
- * Checked by every insert path — an unbounded pool was a disk-DoS lever
+ * Checked by every insert path — an unbounded pool is a disk-DoS lever
  * (audit M-8).
  */
 function assertCapacity(
@@ -719,9 +719,9 @@ function* iterateKarmaFifo(): Generator<PoolEntry> {
 function* iterateCreditByRate(): Generator<PoolEntry> {
   const db = getDb();
   // ⚠ **The unary `+` is load-bearing, not a typo.** It makes the ORDER BY term
-  // non-indexable, so `idx_mempool_fee_rate` is still used to confine the scan
-  // to credit rows but is no longer asked to satisfy the ordering — which it
-  // can only do by a random row lookup per entry. This pass reads the whole
+  // non-indexable, so `idx_mempool_fee_rate` confines the scan to credit rows
+  // without being asked to satisfy the ordering as well — which it can only do
+  // by a random row lookup per entry. This pass reads the whole
   // class, so an in-memory sort wins: 2.29 ms against 2.88 ms for the same
   // query without the `+`, and 2.65 ms with no index at all (2026-08-15, a
   // 10,000-row pool of which 5,000 are credit). Removing it costs half a

@@ -436,9 +436,9 @@ function migrateDropValidationCounters(database: Database.Database): void {
  *
  * ⛔ **Two indexes are deliberately absent.** The karma-class count is served by
  * none: a partial index on `tx_fee IS NOT NULL` cannot answer `IS NULL`, and
- * that count measures 0.300 ms with or without any shape — the same as the
- * `COUNT(*)` it replaced, so the two-class capacity gate costs the pool nothing
- * it was not already paying. An index on `tx_fee` alone would take the
+ * that count measures 0.300 ms with or without any shape — the cost of an
+ * unfiltered `COUNT(*)` over the same table, so bounding the pool per class is
+ * no dearer than bounding it whole. An index on `tx_fee` alone would take the
  * credit-class count from 0.070 ms to 0.032 ms; at 3.8% of a ~1 ms insert that
  * is below what earns a permanent schema object, and it is not a write-cost
  * argument — write cost was measured and is nil for both.

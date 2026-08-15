@@ -288,9 +288,9 @@ export function createOrderingBlock(): OrderingBlock | null {
   purgeExpired(currentHeight);
 
   // 2. The prune entries, which the drain reads off the pool alone. The
-  //    coinbase can no longer be built here: its value is the block's income
-  //    and its split is scaled by the actors the body carries, so it depends on
-  //    what the fill selects — which in turn depends on the budget the coinbase
+  //    coinbase cannot be built here: its value is the block's income and its
+  //    split is scaled by the actors the body carries, so it depends on what
+  //    the fill selects — which in turn depends on the budget the coinbase
   //    leaves. The budget is seeded with the largest encoding a coinbase could
   //    take, and the real one replaces it once the fill is done.
   const MAX_PRUNES_PER_BLOCK = 32;

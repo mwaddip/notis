@@ -673,8 +673,8 @@ describe('block-creator', () => {
       // income, so it cannot be built until the fill has chosen a body; the
       // fill runs against the largest encoding a coinbase could take and the
       // real one — smaller — replaces it afterwards. Measuring the finished
-      // body's coinbase here would model a creator that no longer exists and
-      // predict one transaction more than fits.
+      // body's coinbase here models a creator that reserves what it ends up
+      // carrying, and predicts one transaction more than fits.
       bc.startBlockCreator(testConfig);
       const full = bc.getCurrentTemplate();
       expect(full).not.toBeNull();

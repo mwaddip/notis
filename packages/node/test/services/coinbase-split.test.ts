@@ -139,6 +139,29 @@ describe('splitCoinbase', () => {
     }
   });
 
+  // ⚠ **AHEAD OF CODE, and reachable only by calling this function.** No block
+  // reaches income 0 while `computeBlockReward` floors at `CREDIT_TAIL_REWARD`
+  // — devnet's height 5,900 pays 2e8, not 0, and the first zero-reward height
+  // is 5,901 under the emission termination that has not landed. So the rule
+  // that no coinbase output may carry zero cannot be exercised through a block
+  // at income 0; what CAN be exercised is that the split leaves nothing to pay,
+  // which is what makes the empty output list the only legal encoding there.
+  it('leaves nothing for either slice at zero income', () => {
+    const s = splitCoinbase(0n, 0n, 0);
+    expect(s.treasury).toBe(0n);
+    expect(s.miner).toBe(0n);
+
+    // And at every actor count, so the bonus curve cannot conjure a slice from
+    // an empty pool — `0 × a / (a + K)` is 0, but the subtraction that derives
+    // `unearned` is where a stray base unit would appear if it appeared.
+    for (const actors of [0, 1, 5, 40, 1000]) {
+      const t = splitCoinbase(0n, 0n, actors);
+      expect(t.treasury + t.miner).toBe(0n);
+      expect(t.treasury).toBe(0n);
+      expect(t.miner).toBe(0n);
+    }
+  });
+
   it('gives the miner every remainder the divisions leave', () => {
     // Below 4 the bonus pool truncates to zero as well as the treasury base, so
     // every slice is empty and the whole income lands on the floor — the miner
