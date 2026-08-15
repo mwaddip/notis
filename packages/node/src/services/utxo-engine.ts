@@ -1196,7 +1196,7 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *
  * Karma and credits are minted or burned only in block-application paths (like
  * settlement, decay, coinbase, bond settlement), never inside a user
- * transaction, so no box type gets a blanket exemption. **Three stated
+ * transaction, so no box type gets a blanket exemption. **Four stated
  * exceptions and no others** (NODE_INTERFACE → `validateTx` step 5):
  *
  * - **The like burn** — `likeTarget` present ⟺ the transaction burns
@@ -1223,6 +1223,13 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *   root, is a known wart — modelling it as a maturing box is tracked
  *   separately. A cancelled invite is *also* a zero-output spend but needs no
  *   exemption: the box holds `0`, so it conserves arithmetically.
+ *
+ * - **The transaction fee** — a spend of `credit` boxes may leave a deficit of
+ *   any size, zero included, and the block claims it. Not a biconditional and
+ *   not an amount: any deficit is legal and no fee is required, because the
+ *   price of inclusion is relay policy and block assembly rather than validity.
+ *   A *surplus* on credit inputs is refused inside the same arm, which is what
+ *   keeps the invite claim the only mint.
  *
  * The BondBox has **no** exemption and needs none: a bond is destroyed by the
  * probation-deadline settlement, which is block application, and this gate
@@ -1278,6 +1285,32 @@ function checkValueConservation(
         error:
           `Claim non-conservation: a claim must mint exactly ${INVITE_KARMA_AMOUNT} ` +
           `karma (inputs=${totalInputValue}, outputs=${totalOutputValue})`,
+      };
+    }
+    return { valid: true };
+  }
+
+  // Fee carve. A transaction spending credit boxes may leave a deficit of any
+  // size, zero included; the block carrying it claims the difference in its
+  // coinbase (MINING_INTERFACE → Coinbase Application). A surplus stays
+  // invalid — a deficit is a fee, a surplus is a mint, and the invite claim
+  // above is the only mint a user transaction may perform.
+  //
+  // Keyed on the input ledger, which is a property of the transaction rather
+  // than of this check: `validateTx` step 3 pins every input to one boxType and
+  // the transition table admits only credit → credit. That is what makes the
+  // key disjoint from the two karma carves above, which additionally require
+  // all-karma inputs and `invite → karma` respectively.
+  //
+  // No amount is checked here. A zero-fee transaction is valid consensus; the
+  // price is each node's relay policy (MEMPOOL_INTERFACE → Fee floor).
+  if (inputType === 'credit') {
+    if (totalOutputValue > totalInputValue) {
+      return {
+        valid: false,
+        error:
+          `Credit non-conservation: outputs exceed inputs ` +
+          `(inputs=${totalInputValue}, outputs=${totalOutputValue})`,
       };
     }
     return { valid: true };
