@@ -78,6 +78,7 @@ type BlockCreatorModule = {
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
+  worstCaseCoinbaseOutputs: (height: number) => OrderingBlock['utxoTxTree']['coinbaseOutputs'];
 };
 
 async function importDb(): Promise<DbModule> {
@@ -666,22 +667,40 @@ describe('block-creator', () => {
       const POOL = 40;
       const rowids = await fillPool(POOL, 'budget');
 
-      // Pass one, at the production budget, to learn what this body costs. The
-      // reserve is the mandatory sections — prune entries and coinbase outputs
-      // — measured on the tree the creator actually built, not predicted here.
+      // Pass one, at the production budget, to learn what this body costs.
+      //
+      // ⚠ The reserve is measured against the **worst-case** coinbase, not the
+      // one the finished template carries. The coinbase's value is the block's
+      // income, so it cannot be built until the fill has chosen a body; the
+      // fill runs against the largest encoding a coinbase could take and the
+      // real one — smaller — replaces it afterwards. Measuring the finished
+      // body's coinbase here would model a creator that no longer exists and
+      // predict one transaction more than fits.
       bc.startBlockCreator(testConfig);
       const full = bc.getCurrentTemplate();
       expect(full).not.toBeNull();
       expect(full!.utxoTxTree.utxoTxIds).toHaveLength(POOL);
 
-      const reserved = utxoTxTreeByteLength({
+      // What the finished body carries, which is what `perTx` must be derived
+      // from — every term but the transactions is unchanged between the two.
+      const carried = utxoTxTreeByteLength({
         ...full!.utxoTxTree,
         utxoTxIds: [],
         utxoTxs: [],
       });
-      const perTx =
-        (utxoTxTreeByteLength(full!.utxoTxTree) - reserved) / POOL;
+      const perTx = (utxoTxTreeByteLength(full!.utxoTxTree) - carried) / POOL;
       expect(Number.isInteger(perTx)).toBe(true);
+
+      // What the FILL budgeted against, which is what decides how many fit.
+      const reserved = utxoTxTreeByteLength({
+        ...full!.utxoTxTree,
+        utxoTxIds: [],
+        utxoTxs: [],
+        coinbaseOutputs: bc.worstCaseCoinbaseOutputs(1),
+      });
+      // The seed really is larger than what the block ends up carrying — were
+      // it not, this test would pass while measuring the wrong reserve.
+      expect(reserved).toBeGreaterThan(carried);
 
       // Pass two, at a budget that binds mid-pool. Every count prefix in the
       // body is one byte wide below 128 entries, so the arithmetic is exact

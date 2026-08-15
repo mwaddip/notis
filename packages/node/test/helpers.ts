@@ -747,13 +747,14 @@ export async function makeApplicableBlock(
      *  suite's apply measures. Listed in the order given — dependency order
      *  is the apply loop's job. */
     utxoTxs?: UtxoTransaction[];
-    /** Split the coinbase across these owners instead of paying the miner
-     *  alone — the shape a node with `creditTreasuryPct > 0` produces. The
-     *  shares must sum to the scheduled emission or apply rejects the block. */
+    /** Replace the coinbase outright. The default is the one the block's own
+     *  body requires — `splitCoinbase` over the emission, the fees the embedded
+     *  transactions leave, and the actors they carry — so a test states this
+     *  only to deviate from it deliberately. */
     coinbaseSplit?: Array<{ owner: Uint8Array; value: bigint; isTreasury: boolean }>;
   } = {},
 ): Promise<OrderingBlock> {
-  const { computeUtxoTxRoot, computeBlockReward } = await import(
+  const { computeUtxoTxRoot, buildCoinbaseOutputs, predictIncome } = await import(
     '../src/services/block-creator.js'
   );
   const { expectedTarget } = await import('../src/services/difficulty.js');
@@ -776,15 +777,23 @@ export async function makeApplicableBlock(
   const miner = opts.miner ?? makeTestIdentity();
   const lockedUntilBlock = opts.lockedUntilBlock ?? height + config.creditMinerRewardDelay;
   const embeddedTxs = opts.utxoTxs ?? [];
+  const txCbors = embeddedTxs.map((tx) => encodeTx(tx));
+
+  // The coinbase this body requires, built the way the creator builds it — the
+  // helper's contract is a block that passes every apply check, and since the
+  // coinbase became the block's income that is a function of the body rather
+  // than of the height alone. A test that wants a wrong coinbase says so.
+  const { fees, actors } = predictIncome(txCbors, miner.userId);
   const utxoTxTree = {
     utxoTxIds: embeddedTxs.map((tx) => computeTxId(tx)),
-    utxoTxs: embeddedTxs.map((tx) => encodeTx(tx)),
+    utxoTxs: txCbors,
     pruneEntries: opts.pruneEntries ?? [],
-    coinbaseOutputs: (
-      opts.coinbaseSplit ?? [
-        { owner: miner.userId, value: computeBlockReward(height), isTreasury: false },
-      ]
-    ).map((share) => ({ ...share, lockedUntilBlock })),
+    coinbaseOutputs: opts.coinbaseSplit
+      ? opts.coinbaseSplit.map((share) => ({ ...share, lockedUntilBlock }))
+      : buildCoinbaseOutputs(height, fees, actors, miner.userId).map((out) => ({
+          ...out,
+          lockedUntilBlock,
+        })),
   };
 
   const header = {

@@ -573,9 +573,18 @@ describe('block-apply journal recording', () => {
   // -----------------------------------------------------------------------
 
   describe('the coinbase equals emission plus fees', () => {
-    /** The miner-only coinbase for a block whose transactions left `fees`. */
-    function incomeSplit(miner: TestIdentity, reward: bigint, fees: bigint) {
-      return [{ owner: miner.userId, value: reward + fees, isTreasury: false }];
+    /**
+     * The miner's slice of a block at height 1 carrying `fees` and `actors`.
+     *
+     * ⚠ **Not the income.** Devnet's profile has no `treasuryPubKey`, so the
+     * treasury's share and the forfeited bonus are never minted and the block's
+     * minted total is smaller than its income by exactly that much. The two
+     * coincide only on a keyed profile.
+     */
+    async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
+      return splitCoinbase(computeBlockReward(1), fees, actors).miner;
     }
 
     it('accepts a coinbase claiming the fees of the block it carries', async () => {
@@ -583,7 +592,6 @@ describe('block-apply journal recording', () => {
       db.initDb(':memory:');
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
@@ -592,15 +600,19 @@ describe('block-apply journal recording', () => {
       utxo.insertBox(boxA);
       utxo.insertBox(boxB);
 
-      const reward = computeBlockReward(1);
+      // No `coinbaseSplit`: the helper builds the coinbase this body requires,
+      // which is the thing under test.
       const block = await makeApplicableBlock({
         miner,
         utxoTxs: [makeCreditTx(sender, [boxA], 100n), makeCreditTx(sender, [boxB], 50n)],
-        coinbaseSplit: incomeSplit(miner, reward, 150n),
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(true);
-      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(reward + 150n);
+      const paid = utxo.getCreditBoxes(miner.userId)[0]!.value;
+      expect(paid).toBe(await minerSliceAt1(150n, 0));
+      // And the fees moved the number — otherwise this passes on a coinbase
+      // that ignored them entirely.
+      expect(paid).toBeGreaterThan(await minerSliceAt1(0n, 0));
     });
 
     it('rejects a coinbase claiming more than emission plus fees', async () => {
@@ -615,10 +627,13 @@ describe('block-apply journal recording', () => {
       const box = makeCreditBox(1000n, sender.userId, 0, 1);
       utxo.insertBox(box);
 
+      // One base unit above the slice this body earns.
       const block = await makeApplicableBlock({
         miner,
         utxoTxs: [makeCreditTx(sender, [box], 100n)],
-        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 101n),
+        coinbaseSplit: [
+          { owner: miner.userId, value: (await minerSliceAt1(100n, 0)) + 1n, isTreasury: false },
+        ],
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
@@ -637,12 +652,15 @@ describe('block-apply journal recording', () => {
       const box = makeCreditBox(1000n, sender.userId, 0, 1);
       utxo.insertBox(box);
 
-      // Under-claiming is a rejection, not a donation: otherwise one block has
-      // more than one valid encoding.
+      // The slice this body would earn if its transaction paid nothing —
+      // under-claiming is a rejection, not a donation, or one block has more
+      // than one valid encoding.
       const block = await makeApplicableBlock({
         miner,
         utxoTxs: [makeCreditTx(sender, [box], 100n)],
-        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 0n),
+        coinbaseSplit: [
+          { owner: miner.userId, value: await minerSliceAt1(0n, 0), isTreasury: false },
+        ],
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
@@ -675,14 +693,10 @@ describe('block-apply journal recording', () => {
       ) as CreditBox;
       const txB = makeCreditTx(sender, [aOutput], 50n);
 
-      const block = await makeApplicableBlock({
-        miner,
-        utxoTxs: [txA, txB],
-        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 150n),
-      });
+      const block = await makeApplicableBlock({ miner, utxoTxs: [txA, txB] });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(true);
-      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(computeBlockReward(1) + 150n);
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(await minerSliceAt1(150n, 0));
       // B's output survives, so the chain really applied rather than the block
       // passing on A alone.
       expect(utxo.getCreditBoxes(sender.userId)[0]!.value).toBe(850n);
@@ -722,16 +736,13 @@ describe('block-apply journal recording', () => {
       };
       signTransaction(unvouch, voucher.privateKey, hex(voucher.userId));
 
-      // The coinbase claims the emission and nothing else — the staked karma is
-      // escrowed, not a fee, and it is not on the credit ledger at all.
-      const block = await makeApplicableBlock({
-        miner,
-        utxoTxs: [unvouch],
-        coinbaseSplit: incomeSplit(miner, computeBlockReward(1), 0n),
-      });
+      // The staked karma is escrowed, not a fee, and it is not on the credit
+      // ledger at all — so the coinbase is exactly what a fee-free block earns.
+      // The voucher IS an actor, though, so the slice is the one-actor slice.
+      const block = await makeApplicableBlock({ miner, utxoTxs: [unvouch] });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(true);
-      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(computeBlockReward(1));
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(await minerSliceAt1(0n, 1));
     });
 
     // One block, one encoding. Without this, `[]` and `[{value: 0}]` are both
@@ -745,16 +756,135 @@ describe('block-apply journal recording', () => {
       const blockApply = await importBlockApply();
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
 
+      // The total is exactly right and no value is misrouted, so the zero-value
+      // clause is the only gate that can refuse this.
       const miner = makeTestIdentity();
       const block = await makeApplicableBlock({
         miner,
         coinbaseSplit: [
-          { owner: miner.userId, value: computeBlockReward(1), isTreasury: false },
-          { owner: makeTestIdentity().userId, value: 0n, isTreasury: true },
+          { owner: miner.userId, value: await minerSliceAt1(0n, 0), isTreasury: false },
+          { owner: makeTestIdentity().userId, value: 0n, isTreasury: false },
         ],
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    });
+
+    // The forfeit is the whole mechanism the inclusion bonus prices with, so a
+    // block that keeps it sums correctly against the income and gives up
+    // nothing. This is the case a total-only check cannot see.
+    it('rejects a coinbase that keeps the forfeited bonus', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+
+      const miner = makeTestIdentity();
+      const block = await makeApplicableBlock({
+        miner,
+        // The whole emission — what a producer who forfeits nothing pays
+        // themselves, and strictly more than the slice they earned.
+        coinbaseSplit: [
+          { owner: miner.userId, value: computeBlockReward(1), isTreasury: false },
+        ],
+      });
+
+      expect(computeBlockReward(1)).toBeGreaterThan(await minerSliceAt1(0n, 0));
+      expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    });
+
+    // ⚠ Devnet, testnet and mainnet all carry `treasuryPubKey: ''`, so the rest
+    // of this suite exercises the burn and never mints a treasury output at
+    // all. The keyed path is reachable only by mocking the profile:
+    // `treasuryPubKey` is profile data by design, and a config override would
+    // reach the creator without reaching the applier — the block would then be
+    // refused by the node that built it.
+    describe('on a profile that has a treasury key', () => {
+      const TREASURY_KEY = 'ab'.repeat(32);
+
+      function mockKeyedProfile(): void {
+        vi.doMock('@dagsocial/types', async (importOriginal) => {
+          const actual = await importOriginal<typeof import('@dagsocial/types')>();
+          return {
+            ...actual,
+            profileFor: (networkType: string) => ({
+              ...actual.profileFor(networkType as never),
+              treasuryPubKey: TREASURY_KEY,
+            }),
+          };
+        });
+      }
+
+      afterEach(() => {
+        vi.doUnmock('@dagsocial/types');
+        vi.resetModules();
+      });
+
+      it('mints the treasury its share, and pays the income out in full', async () => {
+        mockKeyedProfile();
+        const db = await importDb();
+        db.initDb(':memory:');
+        const utxo = await importUtxo();
+        const blockApply = await importBlockApply();
+        const { computeBlockReward } = await import('../../src/services/block-creator.js');
+        const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
+
+        const miner = makeTestIdentity();
+        const block = await makeApplicableBlock({ miner });
+        expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+        const split = splitCoinbase(computeBlockReward(1), 0n, 0);
+        const treasuryOwner = new Uint8Array(Buffer.from(TREASURY_KEY, 'hex'));
+        expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(split.miner);
+        expect(utxo.getCreditBoxes(treasuryOwner)[0]!.value).toBe(split.treasury);
+
+        // Keyed is the case where the minted total and the income coincide:
+        // nothing is burned, so the whole emission lands somewhere.
+        expect(split.miner + split.treasury).toBe(computeBlockReward(1));
+      });
+
+      it('refuses a treasury output paid to any key but the profile’s', async () => {
+        mockKeyedProfile();
+        const db = await importDb();
+        db.initDb(':memory:');
+        await importUtxo();
+        const blockApply = await importBlockApply();
+        const { computeBlockReward } = await import('../../src/services/block-creator.js');
+        const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
+
+        // Both amounts are exactly what the split requires — only the
+        // destination is wrong. Without the owner check this is how a producer
+        // recovers their own forfeit under the treasury's name.
+        const miner = makeTestIdentity();
+        const split = splitCoinbase(computeBlockReward(1), 0n, 0);
+        const block = await makeApplicableBlock({
+          miner,
+          coinbaseSplit: [
+            { owner: miner.userId, value: split.miner, isTreasury: false },
+            { owner: makeTestIdentity().userId, value: split.treasury, isTreasury: true },
+          ],
+        });
+
+        expect(blockApply.applyOrderingBlock(block)).toBe(false);
+
+        // Control, and it is what stops this passing for the wrong reason: on
+        // an UNKEYED profile the same block is refused too — for carrying a
+        // treasury output at all — so "rejected" alone would prove nothing
+        // about the owner. Swapping in the profile's own key applies it.
+        const keyed = await makeApplicableBlock({
+          miner,
+          coinbaseSplit: [
+            { owner: miner.userId, value: split.miner, isTreasury: false },
+            {
+              owner: new Uint8Array(Buffer.from(TREASURY_KEY, 'hex')),
+              value: split.treasury,
+              isTreasury: true,
+            },
+          ],
+        });
+        expect(blockApply.applyOrderingBlock(keyed)).toBe(true);
+      });
     });
   });
 
@@ -1426,26 +1556,32 @@ describe('block-apply mint provenance', () => {
     const { computeMintTxId } = await import('@dagsocial/types');
     const { coinbaseContext } = await import('../../src/mint-provenance.js');
 
-    // The shape any node with `creditTreasuryPct > 0` produces. Coinbase is N
-    // mint *events*, not one N-output transaction, so each output carries its
-    // own synthetic txId keyed on its index — and `UNIQUE(tx_id, output_index)`
-    // turns a shared txId into a rejected block rather than silent corruption.
+    // Coinbase is N mint *events*, not one N-output transaction, so each output
+    // carries its own synthetic txId keyed on its index — and
+    // `UNIQUE(tx_id, output_index)` turns a shared txId into a rejected block
+    // rather than silent corruption.
+    //
+    // Two outputs on the MINER's side, which is the multi-output shape devnet
+    // can reach: only the treasury side is pinned to an amount and an owner, so
+    // a producer may pay their own slice to more than one key. The pair here
+    // sums to that slice exactly.
+    const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
     const miner = makeTestIdentity();
-    const treasury = makeTestIdentity();
-    const reward = computeBlockReward(1);
-    const treasuryShare = reward / 10n;
+    const second = makeTestIdentity();
+    const slice = splitCoinbase(computeBlockReward(1), 0n, 0).miner;
+    const secondShare = slice / 10n;
 
     const block = await makeApplicableBlock({
       miner,
       coinbaseSplit: [
-        { owner: miner.userId, value: reward - treasuryShare, isTreasury: false },
-        { owner: treasury.userId, value: treasuryShare, isTreasury: true },
+        { owner: miner.userId, value: slice - secondShare, isTreasury: false },
+        { owner: second.userId, value: secondShare, isTreasury: false },
       ],
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
 
     const minerBox = utxo.getCreditBoxes(miner.userId)[0];
-    const treasuryBox = utxo.getCreditBoxes(treasury.userId)[0];
+    const treasuryBox = utxo.getCreditBoxes(second.userId)[0];
     expect(minerBox).toBeDefined();
     expect(treasuryBox).toBeDefined();
 
