@@ -724,7 +724,14 @@ spent away.
 | Half | Home | Keyed on | Why it can only go there |
 |---|---|---|---|
 | not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. A candidate's own `guard` field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
-| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a second unspendable type is covered without an edit. |
+| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a new type barred from inputs is covered without an edit **whichever guard it fixes**: `unspendable` and `block_apply` both reject unconditionally here. |
+
+⚠ **The three barred types do not reach that arm by the same route, and the difference is
+load-bearing for anyone adding a fourth.** `genesis_proof` is `unspendable`; `emission` and
+`treasury` are `block_apply`, the guard `BondBox` and `PostLockBox` already carry. So "barred from
+both positions" is a statement about the *outcome* for all three, and the input half is delivered by
+two different arms. A reader who takes the `unspendable` arm as the mechanism will conclude a
+`block_apply` type needs an edit that it does not.
 
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
