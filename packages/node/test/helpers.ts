@@ -803,6 +803,16 @@ export async function seedEmissionBox(): Promise<void> {
  * them, because a feed of only boxes produces a tree missing every record and a
  * different `stateRoot`.
  *
+ * ⛔ **A fixture that runs the real `seedGenesisState` CANNOT use this, and
+ * cannot hand-seed a box at all.** That seeder does this same ordering itself,
+ * and a hand-seeded box fits neither side of it: after it, the tree never
+ * receives the box; before it, the box joins the genesis feed — the seeder
+ * builds that feed from `getUnspentBoxes()` — and `assertGenesisRoot` refuses
+ * the pinned root *inside the seeding transaction*. Such a fixture mines
+ * **coinbase-only blocks** instead, which still move the state off genesis by
+ * releasing the emission box. Five suites are in that position; routing them
+ * through here rediscovers the genesis-root refusal the hard way.
+ *
  * Returns the handle so a caller can read the digest it starts from.
  */
 export async function activateProverOverStore(
