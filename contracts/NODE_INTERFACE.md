@@ -2644,6 +2644,19 @@ also identity records (see "Two entity kinds" below).
   journal-derived (P1) — so a mismatch means genuine state divergence, not a
   representation difference. A rejected block leaves the prover restored by
   the funnel's single rollback point
+- ⛔ **A box block application SPENDS must already be in the tree, and a violation is
+  SILENT.** Removing a key the tree never held is not an error anyone sees: `applyBlockMutations`
+  issues the `Remove` and **discards `performOneOperation`'s result**, so the digest simply
+  diverges with nothing raised. The genesis boxes get this right by construction —
+  `bootstrapAvlProver` runs over `getUnspentBoxes()` at height 0, before any block — but nothing
+  stated it until the `EmissionBox` made it reachable: seed that box after the prover bootstrap
+  and block 1 removes a key that was never inserted.
+
+  ⚠ **A single-node test cannot catch this class.** Producer and verifier are the same process,
+  so both compute the same wrong root and it matches. What exposes it is a fixture ordering, not
+  an assertion — three suites needed the seed moved ahead of `createAvlProver` /
+  `startBlockCreator`. **This is the concrete cost of the discarded `performOneOperation` result**
+  (`avl-prover.ts`), which is what turns a genuine state violation into silence.
 - **Journal-fed:** the per-block mutation set is derived from
   `BlockJournal.mutations` — intra-block insert+remove pairs for the same
   boxId net out; inserted box bytes come from the journal's `box` payload,
