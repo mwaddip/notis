@@ -77,9 +77,7 @@ describe('a refused AVL+ operation raises DivergedStateTreeError', () => {
     const { prover } = createAvlProver(db);
     const absent = 'ab'.repeat(32);
 
-    // The tree holds one box, and the block spends a different one. Under a
-    // discarded verdict this returned a digest over a tree that still held
-    // everything it started with.
+    // The tree holds one box, and the block spends a different one.
     applyBlockMutations(prover, 1, [], [makeKarmaBox('11'.repeat(32))]);
 
     let caught: unknown;
@@ -186,8 +184,8 @@ describe('a refused AVL+ operation raises DivergedStateTreeError', () => {
     const key = '7b'.repeat(32);
 
     // The counterpart to the two bootstrap cases: the same repetition that is a
-    // refusal on `Insert` is a legal overwrite here, which is why `:183`'s
-    // result carries no verdict to read.
+    // refusal on `Insert` is a legal overwrite here, which is why the record-put
+    // loop's result carries no verdict to read.
     applyBlockMutations(prover, 1, [], [], [{ key, record: REC }]);
     expect(() =>
       applyBlockMutations(prover, 2, [], [], [
