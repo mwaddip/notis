@@ -1485,11 +1485,21 @@ Three things about them that are decided, not open:
   byte-identical, so nothing about the encoding moved. Found by the executor adding tags 11
   and 12, which is the first time anything forced the list to be read against the union.
 
-  **This is the second instance of one defect in this unit** — the demo-UI mirror's
-  `ALL_BOX_TYPES` is the other. Both are hand-kept lists standing where a contract claims
-  mechanical coverage. When a contract says a property is pinned "over the whole" of
-  something, that sentence is a claim about a *type*, and it is worth checking that the test
-  is keyed on one.
+  ⛔ **THREE instances of one defect surfaced in a single unit, and the third had already
+  drifted before it began.** All three are lists of "every X" that nothing checks:
+
+  | Site | State when found |
+  |---|---|
+  | the mint-reason golden table (types) | tags 8, 9, 10 in a consensus preimage with no vector |
+  | `ui-crypto-mirror`'s `ALL_BOX_TYPES` | 6 of 8 box types mirrored; omitting one compiled and passed |
+  | `mint-provenance.test.ts`'s `allContexts` | **8 entries against an 11-member union**, and the test *named* "covers every `MintReason` exactly once" compared the hand-kept list against itself |
+
+  All three are now keyed on the type (`Record<…>` / `satisfies`), so an omission is a compile
+  error. **The general rule: a list of "every X" that is not derived from X's type is a manual
+  copy of a type definition, and it drifts silently — a test named for coverage is the most
+  dangerous form, because the name is what stops anyone checking.** When a contract says a
+  property is pinned "over the whole" of something, that sentence is a claim about a *type*;
+  verify the test is keyed on one.
 
 **`prune-refund-author` is NOT retired, and the reasoning that expected it to be
 was wrong in an instructive way.** Burning the pruner's own bond retires the

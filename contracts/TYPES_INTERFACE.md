@@ -621,10 +621,15 @@ GenesisProofBox extends BoxBase {
 }
 ```
 
-The third box seeded at cold start, beside system karma and faucet credits. Those two are
-byte-identical on every network, so **this box's `payload` is the whole of network identity at
-height 0** — it is what makes the three genesis state roots differ, and `NetworkProfile
-.genesisProofPayload` carries the per-network value as hex (§Network profiles).
+One of the boxes seeded at cold start, beside system karma, faucet credits and the emission box.
+`NetworkProfile.genesisProofPayload` carries its per-network value as hex (§Network profiles).
+
+⚠ **It is NO LONGER the whole of network identity at height 0, and this line said it was.** The
+karma and credit boxes are byte-identical across networks, so the payload used to be the only thing
+separating testnet's genesis root from devnet's. The `EmissionBox` is now a **second** per-network
+difference: its value is that profile's emission total, derived from `creditFixedRateBlocks` and
+`creditEpochBlocks`, and devnet's compressed schedule gives it a smaller one. Two networks now
+differ in two boxes, not one. Corrected 2026-08-16, when unit 4b made it false.
 
 `value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
 so the literal makes any other unrepresentable rather than merely invalid.
