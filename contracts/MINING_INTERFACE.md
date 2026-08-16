@@ -32,7 +32,7 @@ whatever the other income terms yield — fees, and storage rent when it arrives
 |-----------|-------|-------------|
 | `CREDIT_INITIAL_REWARD` | 100 | Credits per block in fixed-rate period |
 | `CREDIT_REWARD_REDUCTION` | 2 | Credits reduced per epoch |
-| `CREDIT_MINER_REWARD_DELAY` | 720 | Blocks before coinbase can be spent (~12h) |
+| `CREDIT_MINER_REWARD_DELAY` | 1440 | Blocks before coinbase can be spent (24h at 60s) |
 | `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
 | `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
 | `COINBASE_BACKER_PCT` | 35 | Backer pool. **AHEAD OF CODE** — nothing stakes, so it falls to the miner floor |

@@ -1940,7 +1940,7 @@ else:
 Emission terminates: block 7,401,600 is the last that pays, and the reward is 0 above it.
 The schedule and its totals are `MINING_INTERFACE → Emission Schedule`.
 
-Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
+Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (1440) blocks — 24h at 60s.
 The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices, and carries
 the **miner's slice alone**. The treasury's share and the unearned inclusion bonus accrue to
 the `TreasuryBox` — never redirected to the miner, who would otherwise recover their own
@@ -1968,7 +1968,7 @@ reads. Above the terminus no emission box exists and nothing is released.
 > **Enforcing it is not a one-line check**, and that is why it is recorded
 > rather than fixed. `mintCredits` consolidates *every* credit box an owner
 > holds into one carrying `max(all locks)`, so under enforcement a single
-> mined block would freeze the miner's whole balance for 720 blocks, and
+> mined block would freeze the miner's whole balance for 1440 blocks, and
 > mining again would extend it — an active miner could never spend. The rule
 > and the consolidation have to be designed together (a coinbase mint keeping
 > its own box is the obvious shape, and is how Bitcoin and Ergo do it), which

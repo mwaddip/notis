@@ -380,10 +380,17 @@ Classes are defined in `NODE_INTERFACE.md → Configuration`.
 > The values are in `types/`. Right line numbers, wrong package: the failure mode carried
 > register #25 describes, found here independently.
 >
-> The karma pair were the **only** constants on a 2-minute basis — `CREDIT_MINER_REWARD_DELAY`
-> and `MEMPOOL_EXPIRY_BLOCKS` (both `720` = ~12h), `CREDIT_EPOCH_BLOCKS` (`129_600` = ~90d)
-> and `CREDIT_FIXED_RATE_BLOCKS` ("at 60s blocks") all agree on 60s. So at the block time
-> the node runs, these two delivered **14 days and 12 hours instead of 28 and 24**.
+> The karma pair were the **only** constants on a 2-minute basis — `MEMPOOL_EXPIRY_BLOCKS`
+> (`720` = ~12h), `CREDIT_EPOCH_BLOCKS` (`129_600` = ~90d) and `CREDIT_FIXED_RATE_BLOCKS`
+> ("at 60s blocks") all agree on 60s. So at the block time the node runs, these two delivered
+> **14 days and 12 hours instead of 28 and 24**.
+>
+> ⛔ **That sweep checked each annotation against its own arithmetic, and nothing more.** A ✓
+> beside a constant means its comment and its value agree at 60 seconds; it is **not** evidence
+> that the duration was chosen. `CREDIT_MINER_REWARD_DELAY` was cited here as a second
+> `720`-for-12h control and passed on exactly that basis — its duration had never been decided,
+> and it is now **1440 for 24h** (TYPES_INTERFACE → Credit emission). **Do not read a passing
+> unit check as a settled value.**
 >
 > ⚠ **The 28-day figure is separately still open.** The economics design track wants a
 > short, days-scale grace window ("e.g. ~5, not 28"), so `40320` is a faithful translation
