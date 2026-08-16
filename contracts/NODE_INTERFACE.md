@@ -1473,8 +1473,23 @@ Three things about them that are decided, not open:
 - **Prefix-freeness still holds** across the post-P2-D set: `like-payout` is not a
   prefix of any live tag and none is a prefix of it (it also diverges from the *retired*
   `liker-refund` at the fifth byte, so even historical collisions are impossible).
-  Phase A test-pinned the property over the whole `MintReason` union, so it re-checks
-  automatically when the types phase edits the set.
+  The property is test-pinned over the whole `MintReason` union and re-checks automatically
+  when the set is edited.
+
+  ⚠ **Corrected 2026-08-16 — this claimed coverage the test did not have, and that claim is
+  why nobody looked.** The check ran over a **hand-written `MintReason[]`** that never tracked
+  the union, so `invite-claim`, `bond-settle` and `bond-return` — tags 8, 9 and 10 — sat in a
+  consensus preimage with **no frozen vector at all**. The list is now
+  `Readonly<Record<MintReason, string>>`, so a reason added without a vector is a compile
+  error, and the three missing vectors are pinned; all eight that already existed came out
+  byte-identical, so nothing about the encoding moved. Found by the executor adding tags 11
+  and 12, which is the first time anything forced the list to be read against the union.
+
+  **This is the second instance of one defect in this unit** — the demo-UI mirror's
+  `ALL_BOX_TYPES` is the other. Both are hand-kept lists standing where a contract claims
+  mechanical coverage. When a contract says a property is pinned "over the whole" of
+  something, that sentence is a claim about a *type*, and it is worth checking that the test
+  is keyed on one.
 
 **`prune-refund-author` is NOT retired, and the reasoning that expected it to be
 was wrong in an instructive way.** Burning the pruner's own bond retires the
