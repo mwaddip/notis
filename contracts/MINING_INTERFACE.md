@@ -317,14 +317,20 @@ validator key), stores it, broadcasts it, and applies coinbase mints.
 
 ## Coinbase Application
 
-The coinbase carries the block's **income**, not a fixed reward: `emission(height)`
-plus the deficits the block's credit transactions left unclaimed (ARCHITECTURE → UTXO
-conservation). Storage rent becomes a third term, and nothing in this rule is revisited
-when it arrives — that is the point of stating it income-shaped.
+The coinbase carries the block's **income**, not a fixed reward: `emission(height)` plus the
+value of the `FeeBox` outputs the block's transactions carry (TYPES_INTERFACE → FeeBox).
+Storage rent becomes a third term, and nothing in this rule is revisited when it arrives —
+that is the point of stating it income-shaped.
+
+⛔ **`fees` is a sum over boxes, and resolves no inputs.** Every fee in the block is written
+down in it, so the total is a property of the body's own bytes. **Block application consumes
+the fee boxes in the block that created them**; the pair nets out of the prover feed, so they
+never reach the AVL tree and `stateRoot` is unaffected (NODE_INTERFACE → the prover feed
+derivation).
 
 ### On block creation (miner):
 1. Fill the body **first** — the fees and the actor count are properties of what was included
-2. `income = computeBlockReward(height) + fees`
+2. `income = computeBlockReward(height) + fees`, `fees = Σ FeeBox.value` over the body
 3. Split per the slice table below. **Only the miner's slice becomes a `CoinbaseOutput`**; the
    treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
 4. Include `CoinbaseOutput[]` in block

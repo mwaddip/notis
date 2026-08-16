@@ -1654,11 +1654,12 @@ forever. A node rejects objects with an unsupported protocol version.
   above carries and for the same reason: this entry read *"exactly one stated exception"*
   while that list already held three. All other mints and burns happen only in
   block-application paths, never inside a user transaction.
-  > **The exceptions span both ledgers, and that is what keeps each shape exact.** The
-  > like burn and the invite-claim surplus move **karma**; a transaction fee is a
-  > **credit** deficit. A karma deficit is a like ⟺ `likeTarget`; a credit deficit is a
-  > fee. Were a fee ever charged on a karma-moving operation, the two would collide in a
-  > single check.
+  > **Every exception is on the karma ledger, and credits conserve strictly.** A fee is a
+  > `FeeBox` output the transaction names (TYPES_INTERFACE → FeeBox), so what the miner
+  > takes is inside the output sum rather than a gap between two sums. **There is exactly
+  > one deficit in the system** — the like burn — so `likeTarget` ⟺ a deficit stays exact
+  > with no ledger argument behind it: there is no second deficit for it to be confused
+  > with, and no shape a fee could take that would collide with it.
   > Conservation is **enforced** since P2-B (`checkValueConservation` per transaction,
   > full re-validation at apply; the unvouch and `sendCredits` violations closed in its
   > phases 2–3) — this entry's previous `⚠ UNENFORCED` marker had outlived its defect.

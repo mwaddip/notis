@@ -655,7 +655,7 @@ Full read-only validation. Performs all checks without modifying state:
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
 5. Value conservation: `sum(input values) == sum(output values)` for **every** box
-   type, with **four stated exceptions and no others**:
+   type, with **three stated exceptions and no others**:
    - the **like deficit** — `likeTarget` present ⟺ the sums differ by exactly
      `LIKE_KARMA_COST`, a burn;
    - the **invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
@@ -668,27 +668,23 @@ Full read-only validation. Performs all checks without modifying state:
      round-trip rather than a burn) or of an `InviteBox` (cancel — the box holds
      `0`, so this conserves arithmetically and is listed here only because the
      gate rejects zero-output shapes structurally);
-   - the **transaction fee** — a transaction whose inputs are `credit` boxes may
-     leave a deficit of any size, zero included. The block carrying it claims the
-     difference in its coinbase (MINING_INTERFACE → Coinbase Application). A
-     *surplus* on credit inputs stays invalid: a deficit is a fee, a surplus is a
-     mint, and the invite claim above is the only mint a user transaction may
-     perform.
-     > **The key is structural, not incidental.** Step 3 pins every input to one
-     > `boxType` and the transition table admits only `credit → credit`, so the
-     > ledger a transaction sits on is a property of the transaction. This
-     > exception therefore cannot collide with the two karma ones: the like arm
-     > additionally requires all-karma inputs, and the claim arm requires
-     > `invite → karma`.
-     > **No amount is checked here.** A zero-fee transaction is valid consensus —
-     > the price is each node's relay policy (MEMPOOL_INTERFACE → Fee floor), and
-     > what makes paying rational is the block creator's fill order, not this gate.
-     > **A whole-input deficit is expressible, and the encoding is worth knowing.**
-     > An output `value` is a **non-negative** `bigint` (step 4's schema, `u64`), so
-     > `credit(X) → credit(0)` pays the entire input as fee. What the transition
-     > rules refuse is the zero-**length** output list — a constraint on the output
-     > list's shape, not on the fee's size. **The two are independent, and reading
-     > the first as bounding the second is wrong.**
+   > ⛔ **All three exceptions move karma. A credit transaction conserves strictly**,
+   > and the fee is why that is possible: it is a `FeeBox` output the transaction
+   > names, so what the miner takes is inside the output sum rather than the gap
+   > between two sums (TYPES_INTERFACE → FeeBox). **There is no credit-ledger
+   > exception, and a credit-side deficit is invalid** — a transaction wanting to
+   > pay a fee carries a box for it.
+   >
+   > That is what keeps the like burn the only non-conserving *user* transaction on
+   > either ledger, so `likeTarget` ⟺ a deficit needs no ledger argument to stay
+   > exact: there is no second deficit anywhere for it to be confused with.
+   >
+   > **A whole-input fee is expressible, and the encoding is worth knowing.** An
+   > output `value` is a **non-negative** `bigint` (step 4's schema, `u64`), so
+   > `credit(X) → fee(X)` pays the entire input and conserves. What the transition
+   > rules refuse is the zero-**length** output list — a constraint on the output
+   > list's shape, not on the fee's size. **The two are independent, and reading the
+   > first as bounding the second is wrong.**
 
    There is **no BondBox exception, and none is needed**: a bond is destroyed by
    the probation-deadline settlement, which is block application, and this gate
@@ -767,11 +763,22 @@ schema for its `boxType`**:
   fields — `KarmaBox.decayBurn`, `CreditBox.lockedUntilBlock` — may be present
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
-- **`guard` equals the boxType's canonical guard.** `karma`/`credit`/`vouch` →
-  `owner_signature`, `invite` → `invite_dual`, `bond` → `block_apply`,
-  `post_lock` → `block_apply`, `genesis_proof` → `unspendable` —
-  the same constants `rowToBox` fabricates on read. One table, engine-owned;
-  `rowToBox` and the check must never disagree.
+- **`guard` equals the boxType's canonical guard**, and **`BOX_GUARDS`
+  (TYPES_INTERFACE → Layout — Boxes) is the authoritative mapping** — read it,
+  never restate it here. It is `as const satisfies` the box interfaces' own
+  `guard` literals, so a box type with no entry is a compile error, which no
+  prose list can be. `rowToBox` fabricates from the same table on read, and the
+  two must never disagree.
+  > ⚠ **Do not restate the mapping in this document.** A prose mirror of a
+  > compile-checked table earns nothing and decays on its own schedule — the one
+  > that stood here named six types and was missing `emission` and `treasury`,
+  > with no signal that it was short.
+  >
+  > **`fee` carries `block_apply` while being user-created**, which is the shape
+  > `bond` and `post_lock` already have: a user transaction creates the box, and
+  > only block application may consume it. The schema below has a row for every
+  > boxType a user transaction may emit — `fee` makes seven. `genesis_proof`,
+  > `emission` and `treasury` have none, because no transaction may create them.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
   - `bigint`, `0 ≤ v < 2⁶⁴`: `value` (every boxType) **and `originalValue`
@@ -1093,7 +1100,7 @@ own karma boxes stays legal; that is the legitimate multi-input case.
 | VouchBox | — (unvouch) | **Exactly one VouchBox input**, zero outputs, voucher-signed. The staked karma escrows to `vouch_cooldowns` and is re-minted to `voucherId` at maturity — a round trip, not a burn |
 | InviteBox | KarmaBox | Claim: **exactly one InviteBox input**, invitee-signed; one karma output, owner = `invite.inviteePublicKey`, value == `INVITE_KARMA_AMOUNT`. The input holds `0`, so the whole output is a **surplus** — the only karma surplus any transaction may carry |
 | InviteBox | — (cancel) | **Exactly one InviteBox input**, zero outputs, inviter-signed. The box holds `0`, so this conserves; the paired bond returns to the inviter through block application, not through this transaction |
-| CreditBox | CreditBox(+CreditBox) | Any owner, value conserved |
+| CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
 | PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
 | BondBox | KarmaBox / — | Block application only: settlement at the probation deadline, or return to the inviter when the paired invite is cancelled — **no user transaction can spend a `BondBox`** |
 
@@ -1110,6 +1117,12 @@ There is **no other legal bond or invite shape**. In particular:
   whose surplus is not exactly `INVITE_KARMA_AMOUNT` is invalid. The
   biconditional is stated on the conservation gate, in the shape the like
   carve already set.
+- **A FeeBox is reachable only from the credit row.** The karma rows admit
+  the karma family alone (`karma`, `invite`, `bond`, `post_lock`, `vouch`),
+  so a fee output on a karma-side transaction is refused by that allowlist
+  rather than by a rule naming `fee` — see "Karma transition rules". A karma
+  transaction holds no credits to pay with, so the shape has nothing to
+  express.
 
 ### Post transactions (unit 2)
 

@@ -250,7 +250,7 @@ Two shapes, not one:
 ```
 interface BoxCandidate {              // the shared BASE — no per-type fields
   boxType: "karma" | "credit" | "invite" | "genesis_proof" | "bond" | "post_lock" | "vouch"
-         | "emission" | "treasury"
+         | "emission" | "treasury" | "fee"
   value: bigint                // integer base units — uniform bigint (see "Value denomination")
 }
 
@@ -685,8 +685,8 @@ what remains to be emitted is a value an observer reads rather than a schedule t
 what `ARCHITECTURE` → UTXO conservation rests its bound on.
 
 **No owner, and therefore no per-type trailing fields.** The box names no spender because block
-application is the only one, and `block_apply` already says so. It is the first box type whose
-content encoding is the shared prefix alone (§Layout — Boxes).
+application is the only one, and `block_apply` already says so. Its content encoding is the shared
+prefix alone — one of three box types with an empty tail (§Layout — Boxes).
 
 ⛔ **A successor whose value would be `0` is not created.** The total equals the schedule's sum
 exactly, so the last emitting block consumes the box and leaves none; above the terminus no emission
@@ -722,6 +722,41 @@ spend gate. Held in one box with the emission remainder, that gate's ceiling wou
 `value − remainingEmission(height)` — which works, and makes the ceiling depend on a schedule sum
 staying consistent with `computeBlockReward` forever. Two boxes mean no rule lets a treasury spend
 reach unreleased emission, rather than a rule computing how much of one box it may reach.
+
+### FeeBox
+
+```
+FeeBox extends BoxBase {
+  boxType: "fee"
+  value: bigint                // Credits paid to the block's miner, in base units
+  guard: "block_apply"         // Consumable only by block application
+}
+```
+
+**What a credit transaction pays for its inclusion, named as an output so the transaction balances
+exactly.** A credit-side transaction carries zero or one; block application sums the block's fee
+boxes into the coinbase's income term and consumes them in the same block
+(`MINING_INTERFACE` → Coinbase Application).
+
+**No owner, and therefore no per-type trailing fields.** Block application is the only spender, and
+which key the fee reaches is already decided — the coinbase pays `split.miner`. A field naming the
+recipient would be a second statement of that, free for a producer to set and never read.
+
+⛔ **A zero-value fee box is not created: zero fee means no box.** Both encodings would express one
+economic fact with different `utxoTxRoot`, which is the rule §EmissionBox states for the zero-value
+successor and the coinbase states for its own outputs. **A transaction carrying no fee box is valid
+consensus** — no amount is checked anywhere, because the price of inclusion is relay policy and block
+assembly rather than validity (`MEMPOOL_INTERFACE` → Fee floor).
+
+**At most one per transaction**, for the same one-block-one-encoding reason: a second carries no
+information a producer could not put in the first.
+
+**A transaction whose only output is a fee box is legal.** It conserves, and it is a donation to the
+miner. Nothing in the design gives that shape a meaning worth forbidding.
+
+⚠ **`fee` is not a member of the karma family**, so a fee output on a karma-side transaction is
+rejected by the karma transition arm rather than by a rule of its own
+(`NODE_INTERFACE` → the karma transition rules).
 
 ### BoxGuard
 
@@ -1378,6 +1413,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 6 | `vouch` |
 | 7 | `emission` |
 | 8 | `treasury` |
+| 9 | `fee` |
 
 | Type | Trailing fields |
 |---|---|
@@ -1390,19 +1426,20 @@ from this table — a use that reads every cell as an instruction rather than as
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
 | `emission` | *(none)* |
 | `treasury` | *(none)* |
+| `fee` | *(none)* |
 
-⚠ **`emission` and `treasury` have an empty tail, and an empty cell in this table is a layout, not
-an omission.** Their content encoding is the shared prefix alone — `enum8(boxType)` ‖ `vlqU64(value)`
-— because neither names an owner. The `enum8` tag is the whole of what separates them from each
-other, exactly as it separates `invite` from `bond`, and their ids differ from one another and across
-heights through the provenance `computeBoxId` appends.
+⚠ **`emission`, `treasury` and `fee` have an empty tail, and an empty cell in this table is a layout,
+not an omission.** Their content encoding is the shared prefix alone — `enum8(boxType)` ‖
+`vlqU64(value)` — because none of them names an owner. The `enum8` tag is the whole of what separates
+them from each other, exactly as it separates `invite` from `bond`, and their ids differ from one
+another and across heights through the provenance `computeBoxId` appends.
 
 `genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
 decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder
 that does not own one. The length prefix is the whole of the field's injectivity — appended raw, an
 empty payload would be indistinguishable from the end of the box. It is the only arm whose entire
 tail is one field; at `enum8(3) ‖ vlqU64(0) ‖ u8(0)` it is three bytes, and the **smallest legal box
-of any type is `emission` or `treasury` at two** — the shared prefix with nothing after it.
+of any type is `emission`, `treasury` or `fee` at two** — the shared prefix with nothing after it.
 
 ⚠ **`genesis_proof.payload` carries the one per-type domain rule in this table**: the reader refuses
 a payload over `MAX_GENESIS_PROOF_PAYLOAD_BYTES` (§GenesisProofBox, §Content limits). It binds this
@@ -2048,18 +2085,23 @@ export const KARMA_DECAY_AMOUNT = 5n;                // consensus — karma burn
 export const KARMA_MINIMUM = 10n;                    // consensus — floor, decay never reduces below
 ```
 
-> ⚠ **The two `*_BLOCKS` values above are CORRECTED and the code still holds the old ones**
-> (`20160` / `720`). Decision 2026-08-06: **the target block time is 60 seconds**, so these
-> are recomputed from a 2-minute basis. Phase 2 changes `constants.ts`.
+> ⚠ **The two `*_BLOCKS` values above were CORRECTED on 2026-08-06 from a 2-minute basis.**
+> **The target block time is 60 seconds.**
 >
 > **This was a unit error, not a tuning question.** The constants were annotated "28 days"
 > and "24 hours" while the target block time is 60 seconds and every other time-derived
-> constant is 60s-based — `CREDIT_MINER_REWARD_DELAY` and `MEMPOOL_EXPIRY_BLOCKS` are both
-> `720` for "~12h" (720 minutes ✓), `CREDIT_EPOCH_BLOCKS` is `129_600` for "~90 days" ✓,
-> and `CREDIT_FIXED_RATE_BLOCKS` says "at 60s blocks" outright. **The karma pair were the
-> only constants on a 2-minute basis**, so at the block time the node actually runs they
-> delivered **14 days and 12 hours — half their stated durations.** Decay bit twice as fast
-> and twice as often as documented.
+> constant is 60s-based — `MEMPOOL_EXPIRY_BLOCKS` is `720` for "~12h" (720 minutes ✓),
+> `CREDIT_EPOCH_BLOCKS` is `129_600` for "~90 days" ✓, and `CREDIT_FIXED_RATE_BLOCKS` says
+> "at 60s blocks" outright. **The karma pair were the only constants on a 2-minute basis**,
+> so at the block time the node actually runs they delivered **14 days and 12 hours — half
+> their stated durations.** Decay bit twice as fast and twice as often as documented.
+>
+> ⛔ **What that sweep checked was each annotation against its own arithmetic, and nothing
+> more.** A ✓ beside a constant means its comment and its value agree at 60 seconds. It is
+> **not** evidence that the duration was chosen. `CREDIT_MINER_REWARD_DELAY` was cited here
+> as a `720`-for-12h control and passed on exactly that basis; its duration had never been
+> decided, and it is now **1440 for 24h** (§Credit emission). **Do not read a passing unit
+> check as a settled value.**
 >
 > ⚠ **Separately, 28 days is itself probably the wrong duration.** The economics design
 > track calls for a **short, days-scale window — "e.g. ~5, not 28"** — so this correction
@@ -2145,7 +2187,7 @@ export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;     // consensus — ~2 years
 export const CREDIT_INITIAL_REWARD = 100n * 10n ** 8n; // consensus — 100 credits/block, base units
 export const CREDIT_EPOCH_BLOCKS = 129_600;            // consensus — ~90 days, reduction interval
 export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // consensus — 2 credits reduced per epoch
-export const CREDIT_MINER_REWARD_DELAY = 720;          // consensus — blocks before coinbase spendable
+export const CREDIT_MINER_REWARD_DELAY = 1440;         // consensus — blocks before coinbase spendable (24h at 60s blocks)
 export const COINBASE_TREASURY_PCT = 5;      // consensus — per income TERM: of emission and of fees, never of rent
 export const COINBASE_MINER_FLOOR_PCT = 35;  // consensus — guaranteed, and takes every remainder
 export const COINBASE_BACKER_PCT = 35;       // consensus — AHEAD OF CODE, falls to the miner floor
