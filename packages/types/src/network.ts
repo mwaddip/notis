@@ -61,7 +61,7 @@ export interface NetworkProfile {
    *
    * Hex `string`, not `Uint8Array`, and the reason is immutability rather than
    * style: every profile is an `Object.freeze`d literal, and freezing a typed
-   * array does not prevent writes to its contents. `treasuryPubKey` and
+   * array does not prevent writes to its contents. `genesisStateRoot` and
    * `genesisCommitteeKeys` are hex for the same reason.
    */
   readonly genesisProofPayload: string;
@@ -89,7 +89,6 @@ export interface NetworkProfile {
    * anything here changing.
    */
   readonly genesisStateRoot: string;
-  readonly treasuryPubKey: string;
 }
 
 // The network magics live here, not in @dagsocial/wire: wire has zero runtime dependencies
@@ -109,8 +108,9 @@ export const KNOWN_FRAME_MAGICS: readonly number[] = Object.freeze([
 
 // ⚠ PROVISIONAL VALUES — every number below is a placeholder pending the constants-pinning
 // session (TYPES_INTERFACE §Network profiles: "Do not read any number in this contract as
-// decided"). Genesis committee keys and treasury keys are empty placeholders on all three
-// networks until real chains launch.
+// decided"). Genesis committee keys are empty placeholders on all three networks until real
+// chains launch. **No field names the treasury**: it is a `TreasuryBox` under `block_apply`
+// and no key can reach it (ARCHITECTURE → Treasury).
 
 // mainnet: today's constants (constants.ts is the single source while both surfaces exist).
 const MAINNET_PROFILE: NetworkProfile = Object.freeze({
@@ -137,16 +137,17 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // no-premine evidence later is a value change on a network that has not
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Over ONE leaf. Mainnet's genesis state is the proof box alone: the system
-  // karma and faucet credit boxes sit behind `isFaucetNetwork`, and a faucet on
-  // mainnet would be a defect rather than a shortfall. The other two networks
-  // seed four leaves — those two boxes, this one, and the system identity
-  // record — which is why this root's trailing height byte differs from theirs.
-  genesisStateRoot: 'df46d498fbf94b68dd05a57ddee4486a72211ffa5b1ca961272b2ef4f09b8c6c01',
-  treasuryPubKey: '',
+  // Over TWO leaves — the proof box and the emission box. The system karma and
+  // faucet credit boxes sit behind `isFaucetNetwork`, and a faucet on mainnet
+  // would be a defect rather than a shortfall; the emission box is outside that
+  // gate on purpose, because it is what every block's coinbase is released from
+  // (TYPES_INTERFACE → EmissionBox). The other two networks seed FIVE leaves —
+  // those two boxes, these two, and the system identity record — which is why
+  // this root's trailing height byte (`02`) differs from theirs (`03`).
+  genesisStateRoot: '93914ff4c85ec583169f5a81e21bb07c42a03bf9e2f27b23b09507d9d0ac938d02',
 } satisfies NetworkProfile);
 
-// testnet: identical to mainnet except network identity, genesis and treasury — deliberate
+// testnet: identical to mainnet except network identity and genesis — deliberate
 // (a testnet that differs from mainnet cannot catch a mainnet bug; the burden is on the
 // difference). The spread makes identity structural: a mainnet parameter change cannot
 // silently leave testnet behind.
@@ -164,8 +165,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: 'ec50b959ea5284dbf993f7c289a7c26c8b38979c0530fe0bf7c1f13dd428892b03',
-  treasuryPubKey: '',
+  genesisStateRoot: 'ddd15bd501ebc1a77644d2e925c7dbf2768168311ce9bd1712a1f61b81d5d1d103',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
@@ -221,10 +221,11 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
   // Testnet and devnet seed byte-identical karma and credit boxes — same system
-  // keypair, same values — so the proof box is the whole difference between
-  // these two roots.
-  genesisStateRoot: '0efe4301ae44bf9ed30b92ceab2db77bf0cd38d1a8d725f1972da18d2ab347a703',
-  treasuryPubKey: '',
+  // keypair, same values — so those two separate nothing. **Two things do:** the
+  // proof box's payload, and the emission box's value, which is derived from
+  // `creditFixedRateBlocks` and `creditEpochBlocks` and so is smaller here than
+  // on the two networks that share mainnet's schedule.
+  genesisStateRoot: '74a99448702a494afc572520ae6c6ef2596d9ab820e9f331d8ecde5823695b6f03',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

@@ -1347,7 +1347,7 @@ not be independently readable.
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `BOOTSTRAP_PERIOD_BLOCKS` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`GENESIS_CREDITS_PER_MEMBER` · `TREASURY_PUBKEY` · `genesisProofPayload` · `genesisStateRoot`
+`GENESIS_CREDITS_PER_MEMBER` · `genesisProofPayload` · `genesisStateRoot`
 
 The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
 other name in the list is either a `constants.ts` export or a retired environment variable, and these
@@ -1642,6 +1642,12 @@ forever. A node rejects objects with an unsupported protocol version.
   > (`MINING_INTERFACE → Emission Schedule`). Genesis credits sit on top of that and sinks
   > pull the other way, so the supply is bounded above by `genesis + 422,640,000` and is not
   > equal to it.
+  >
+  > **The bound is held as state, not only as a rule.** Genesis creates an `EmissionBox`
+  > holding the whole total, and every block releases from it rather than minting
+  > (TYPES_INTERFACE → EmissionBox). An observer reads how much may still be emitted
+  > instead of trusting that a schedule will be honoured — which is what makes the
+  > fair-launch claim checkable on day one rather than a promise about future code.
 - Every UTXO transaction conserves value, with a closed set of stated exceptions.
   **NODE_INTERFACE's `validateTx` step 5 is the authoritative enumeration** — derive from
   it, never maintain a parallel list here. This is the same rule the mint-reason table
@@ -1771,6 +1777,28 @@ forever. A node rejects objects with an unsupported protocol version.
   requires justifying why devnet may behave differently from mainnet in that respect.
 - **The wire magic is a function of the network profile**, not a per-call-site default. A
   node cannot frame for one network while validating for another.
+
+### Treasury
+
+A slice of every coinbase and of every fee accrues to the treasury, from genesis onward, and
+**never a slice of storage rent** — rent is the security tail, and it belongs to miners. The
+forfeited part of the inclusion bonus accrues there too, which is what makes the bonus a cost
+to a miner who excludes rather than a delay.
+
+**Unspendable by absent rule.** No protocol rule permits a treasury spend. This is not a
+withheld key: it is a `TreasuryBox` (TYPES_INTERFACE → TreasuryBox) whose guard admits only
+block application, and block application carries no path that releases from it. Inviolable by
+everyone, the project included, because there is nothing to hold.
+
+**A key would be a weaker claim, not a simpler one.** A box paid to a key nobody admits to
+holding is spendable the moment that assertion turns out to be wrong, and it cannot be checked
+from outside. It also pre-empts the intended governance: a future protocol version puts treasury
+spending to a karma vote, and a keyholder able to spend regardless would make that vote
+advisory.
+
+**Growth is intended.** Credits held there are out of circulation, so the treasury is mildly
+deflationary and grows without bound until a spend gate exists — the second term of the credit
+supply's upper bound, not an addition to it.
 
 ---
 

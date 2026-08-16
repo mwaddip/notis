@@ -32,8 +32,8 @@ import type { IdentityRecord } from '../store/identity-records.js';
 
 /**
  * The box types that hold karma: spendable in a `karma` box, escrowed in the
- * other four. `credit` is the other ledger and `genesis_proof` is unspendable
- * at 0 (NODE_INTERFACE → the `/status` row).
+ * other four. `credit`, `emission` and `treasury` are the other ledger and
+ * `genesis_proof` is unspendable at 0 (NODE_INTERFACE → the `/status` row).
  *
  * One statement, two readers. The karma transition arm below admits exactly
  * these as the outputs of a karma spend, and `/status` sums `totalKarma` over
@@ -966,17 +966,30 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
 /**
  * The box types a transaction may create.
  *
- * `genesis_proof` is excluded **in the type**, not by an omitted entry: the box
- * is written by genesis seeding alone, so a transaction may never create one.
- * This is the node-side twin of the rule `validation` enforces at the gossip
- * gate (`VALIDATION_INTERFACE` → "A transaction may not create a genesis_proof
- * box"); node owns the input half of the same rule, in `checkGuards`.
+ * Three are excluded **in the type**, not by an omitted entry. `genesis_proof`
+ * is written by genesis seeding alone; `emission` and `treasury` are created
+ * and spent by block application alone (NODE_INTERFACE → "Genesis proof boxes
+ * are never in a transaction": all three are barred from both transaction
+ * positions). This is the node-side twin of the rule `validation` enforces at
+ * the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not create a
+ * genesis_proof box"); node owns the input half of the same rule, in
+ * `checkGuards`.
+ *
+ * ⚠ **The input half is covered for the two new types by a DIFFERENT arm than
+ * for `genesis_proof`, and the difference is their guard.** `genesis_proof` is
+ * `unspendable`; `emission` and `treasury` are `block_apply`, which
+ * `checkGuards` already rejects unconditionally for `BondBox` and `PostLockBox`.
+ * So both halves hold, but the reasoning "a second unspendable type is covered
+ * without an edit" does not reach them — the `block_apply` arm does.
  *
  * Written as an `Exclude` so the exclusion is deliberate and a *new* box type
  * still fails to compile until it is given a shape — an omitted key would be
  * indistinguishable from a forgotten one.
  */
-type OutputBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
+type OutputBoxType = Exclude<
+  AnyBox['boxType'],
+  'genesis_proof' | 'emission' | 'treasury'
+>;
 
 /**
  * Closed key set and per-field runtime types per boxType, in candidate form —
@@ -1082,11 +1095,11 @@ const OUTPUT_SHAPE: Record<
  *   not a late throw downstream, and the table lookup is an OWN-PROPERTY
  *   lookup (`Object.hasOwn`): `boxType: 'constructor'` lands in this reject
  *   instead of retrieving `Object.prototype.constructor` and throwing;
- * - `genesis_proof` is a reject under its own name, ahead of that lookup. The
- *   `OutputBoxType` exclusion already makes it unrepresentable in the table, so
- *   the verdict would be the same either way — the named arm is what keeps the
- *   *diagnosis* true, since an assigned tag refused by protocol rule is not an
- *   unknown one.
+ * - `genesis_proof`, `emission` and `treasury` are rejects under their own
+ *   names, ahead of that lookup. The `OutputBoxType` exclusion already makes
+ *   all three unrepresentable in the table, so the verdict would be the same
+ *   either way — the named arm is what keeps the *diagnosis* true, since an
+ *   assigned tag refused by protocol rule is not an unknown one.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
  * they are structurally outside every committed byte (no layout declares them;
@@ -1112,11 +1125,15 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
     // (its boxType read is undefined), never a throw.
     const box = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
     const boxTypeValue = box.boxType;
-    if (boxTypeValue === 'genesis_proof') {
+    if (
+      boxTypeValue === 'genesis_proof' ||
+      boxTypeValue === 'emission' ||
+      boxTypeValue === 'treasury'
+    ) {
       return {
         valid: false,
         error:
-          `Invalid output shape at index ${i}: a genesis_proof box may not be a ` +
+          `Invalid output shape at index ${i}: a ${boxTypeValue} box may not be a ` +
           `transaction output`,
       };
     }
@@ -1351,8 +1368,13 @@ function checkGuards(
       }
 
       case 'block_apply': {
-        // `PostLockBox` and `BondBox` are consumable only by block application —
-        // no user transaction spends either.
+        // `PostLockBox`, `BondBox`, `EmissionBox` and `TreasuryBox` are
+        // consumable only by block application — no user transaction spends any
+        // of them. Unconditional, so it is also the INPUT half of "emission and
+        // treasury are barred from both transaction positions"
+        // (NODE_INTERFACE → "Genesis proof boxes are never in a transaction"),
+        // which the `unspendable` arm below does NOT reach: those two carry this
+        // guard, not that one.
         return {
           valid: false,
           error: `Box with ${box.guard} guard can only be consumed by block application`,

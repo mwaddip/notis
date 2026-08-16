@@ -81,6 +81,8 @@ export const BOX_TYPE_TAGS = Object.freeze({
   bond: 4,
   post_lock: 5,
   vouch: 6,
+  emission: 7,
+  treasury: 8,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -106,6 +108,13 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | bond          | b32(inviterId) ‖ b32(inviteePublicKey)                     |
  *   | post_lock     | vlqU64(originalValue) ‖ b32(owner)                         |
  *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
+ *   | emission      | (none)                                                    |
+ *   | treasury      | (none)                                                    |
+ *
+ * **`emission` and `treasury` stop after the prefix**, and an empty cell above
+ * is a layout rather than an omission (TYPES_INTERFACE → Layout — Boxes).
+ * Neither box names an owner, so there is no trailing field to write and the
+ * smallest legal box of any type is two bytes.
  *
  * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
  * Boxes). It is a pure function of `boxType` — one guard string per type, with
@@ -143,7 +152,10 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * Layout — Boxes). `enum8(boxType)` is field 1, so the tag is what makes the
  * encoding injective across the two; `value` happens to differ as well — an
  * invite is always `0` — but nothing may rely on that. It is the standing
- * `karma` and `credit` already have.
+ * `karma` and `credit` already have. **`emission` and `treasury` stand in the
+ * same relation with no fields at all**, so at equal `value` the tag is the
+ * whole of the difference and their ids part on the provenance `computeBoxId`
+ * appends.
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
@@ -199,6 +211,15 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'vouch':
       writeBytesNOrThrow(w, box.voucherId, 32);
       writeBytesNOrThrow(w, box.targetId, 32);
+      return;
+    case 'emission':
+    case 'treasury':
+      // The tail is empty by layout, not by oversight (TYPES_INTERFACE →
+      // Layout — Boxes). Neither box names an owner — block application is the
+      // only spender and `block_apply` already says so — so the content
+      // encoding is the shared prefix alone. Stated as its own arm rather than
+      // left to `default`, which is the unknown-tag sentinel below and would
+      // write these bytes for a reason that is not this one.
       return;
     default:
       // Unreachable from a valid box, and returning rather than throwing is
@@ -308,6 +329,14 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         voucherId: readBytesN(r, 32),
         targetId: readBytesN(r, 32),
       };
+    case 'emission':
+    case 'treasury':
+      // Nothing follows the prefix on either arm, so the box is complete at
+      // the point the tag and value have been read. `boxRecordFromBytes`'
+      // exhaustion check is what makes that a decoding rather than a silent
+      // stop: bytes past this point are `trailing-bytes`, not a tail this
+      // reader declined to walk.
+      return { boxType, value };
   }
 }
 
@@ -411,7 +440,9 @@ export type DecodedBoxCandidate =
   | Omit<CandidateOf<GenesisProofBox>, 'guard'>
   | Omit<CandidateOf<BondBox>, 'guard'>
   | Omit<CandidateOf<PostLockBox>, 'guard'>
-  | Omit<CandidateOf<VouchBox>, 'guard'>;
+  | Omit<CandidateOf<VouchBox>, 'guard'>
+  | Omit<CandidateOf<EmissionBox>, 'guard'>
+  | Omit<CandidateOf<TreasuryBox>, 'guard'>;
 
 /**
  * The box-record layout, written once and walked from both ends.
@@ -475,6 +506,14 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
  * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.
  *
+ * `emission-release` and `treasury-accrue` take an **empty** subject, and
+ * `lp(subject)` writes that as a zero length rather than as an absence. Exactly
+ * one emission successor and one treasury successor exist per height, so the
+ * height alone separates every instance within a reason and the tag byte
+ * separates the reasons — nothing is derived from a position in the block.
+ * Neither creates credits: both name a box that block application spends and
+ * recreates (NODE_INTERFACE → Reason and subject table).
+ *
  * **Retired reasons — reserved, never reuse:** `'author-reward'`,
  * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
  * prune settlement refunds no liker). None of them holds a number in
@@ -492,7 +531,9 @@ export type MintReason =
   | 'prune-refund-author'
   | 'invite-claim'
   | 'bond-settle'
-  | 'bond-return';
+  | 'bond-return'
+  | 'emission-release'
+  | 'treasury-accrue';
 
 /**
  * The `MintReason` tag table.
@@ -530,6 +571,8 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
   'invite-claim': 8,
   'bond-settle': 9,
   'bond-return': 10,
+  'emission-release': 11,
+  'treasury-accrue': 12,
 });
 
 /**
@@ -615,7 +658,8 @@ export interface BoxCandidate {
   // `'like'` is a retired box type — string reserved, never reuse. A new box
   // type wearing the name would make old-vs-new greps and historical debugging
   // ambiguous forever.
-  boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch';
+  boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
+    | 'emission' | 'treasury';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
@@ -796,11 +840,82 @@ export interface VouchBox extends BoxBase {
   guard: 'owner_signature';          // voucher controls spend
 }
 
+// --- Emission ---
+
+/**
+ * The whole of a network's credit emission, held as state — TYPES_INTERFACE →
+ * EmissionBox.
+ *
+ * Genesis creates one on every network holding that profile's entire emission
+ * total, and each block spends it to a successor holding `value −
+ * computeBlockReward(height)`. No other rule reduces it and none increases it,
+ * so what remains to be emitted is a value an observer reads rather than a
+ * schedule they trust.
+ *
+ * **No owner, and therefore no trailing fields.** The box names no spender
+ * because block application is the only one and `block_apply` already says so,
+ * so its content encoding is the shared prefix alone (see `canonicalBoxBytes`).
+ *
+ * ⛔ **A successor whose value would be `0` is not created.** The total equals
+ * the schedule's sum exactly, so the last emitting block consumes the box and
+ * leaves none; above the terminus no emission box exists and nothing is spent.
+ * Without it a zero-value box is removed and reinserted on every block forever.
+ *
+ * ⚠ **The genesis value is derived from the profile's schedule, never carried
+ * in the profile.** A hardcoded total that disagrees with `computeBlockReward`
+ * either starves the box before the terminus, making every block from that
+ * height unproducible, or strands a residue no rule can release. The
+ * derivation is node's (MINING_INTERFACE → Emission Schedule); this package
+ * declares only the type.
+ */
+export interface EmissionBox extends BoxBase {
+  boxType: 'emission';
+  value: bigint;              // Credits not yet released, in base units
+  guard: 'block_apply';       // Consumable only by block application
+}
+
+// --- Treasury ---
+
+/**
+ * Where the coinbase's treasury slice and the forfeited inclusion bonus land —
+ * TYPES_INTERFACE → TreasuryBox.
+ *
+ * Block application spends it to a successor holding `value + split.treasury`,
+ * and there is no rule that reduces it. ARCHITECTURE → Treasury requires the
+ * treasury be unspendable **by absent rule** rather than by a withheld key, and
+ * this is that rule's shape: no key exists, and block application carries no
+ * release path to write one out.
+ *
+ * Genesis creates none — it would hold `0`, which the emission box's rule
+ * refuses. The first block whose `split.treasury` is nonzero creates it.
+ *
+ * **Separate from the emission box, structurally.** A future protocol version
+ * gives the treasury a spend gate; held in one box with the emission remainder,
+ * that gate's ceiling would be the computable `value − remainingEmission(height)`
+ * — which works, and makes the ceiling depend on a schedule sum staying
+ * consistent with `computeBlockReward` forever. Two boxes mean no rule lets a
+ * treasury spend reach unreleased emission.
+ */
+export interface TreasuryBox extends BoxBase {
+  boxType: 'treasury';
+  value: bigint;              // Credits accrued, in base units
+  guard: 'block_apply';       // Consumable only by block application
+}
+
 // ---------------------------------------------------------------------------
 // Union type
 // ---------------------------------------------------------------------------
 
-export type AnyBox = KarmaBox | CreditBox | InviteBox | GenesisProofBox | BondBox | PostLockBox | VouchBox;
+export type AnyBox =
+  | KarmaBox
+  | CreditBox
+  | InviteBox
+  | GenesisProofBox
+  | BondBox
+  | PostLockBox
+  | VouchBox
+  | EmissionBox
+  | TreasuryBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
@@ -810,7 +925,9 @@ export type AnyBoxCandidate =
   | CandidateOf<GenesisProofBox>
   | CandidateOf<BondBox>
   | CandidateOf<PostLockBox>
-  | CandidateOf<VouchBox>;
+  | CandidateOf<VouchBox>
+  | CandidateOf<EmissionBox>
+  | CandidateOf<TreasuryBox>;
 
 // ---------------------------------------------------------------------------
 // Guard table
@@ -845,6 +962,8 @@ export const BOX_GUARDS = Object.freeze({
   bond: 'block_apply',
   post_lock: 'block_apply',
   vouch: 'owner_signature',
+  emission: 'block_apply',
+  treasury: 'block_apply',
 } as const satisfies { [T in AnyBox['boxType']]: Extract<AnyBox, { boxType: T }>['guard'] });
 
 // ---------------------------------------------------------------------------

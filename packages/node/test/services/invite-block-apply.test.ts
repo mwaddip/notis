@@ -37,6 +37,7 @@ import {
   makeTestIdentity,
   mineNextBlock,
   seedAsOneTx,
+  seedEmissionBox,
   signTransaction,
   type TestIdentity, fixturePostId, fillerTx, seedPostTx } from '../helpers.js';
 
@@ -116,6 +117,12 @@ describe('the invite at block application', () => {
     const utxo = await importUtxo();
     const avl = await importAvl();
     avl.createAvlProver();
+    // Before `startBlockCreator`, not merely before the mine. Its first
+    // `rebuildTemplate` speculates over a body this store cannot apply without
+    // an emission box, and a `body-rejected` speculation **evicts the included
+    // mempool entries** — so a seed that arrived later would leave the creator
+    // building correct, empty blocks over a pool it had already thrown away.
+    await seedEmissionBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
@@ -592,6 +599,8 @@ describe('the invite at block application — decay adjacency', () => {
     const bc = await import('../../src/services/block-creator.js');
     const types = await import('@dagsocial/types');
     (await import('../../src/state/avl-prover.js')).createAvlProver();
+    // Ahead of the first `startBlockCreator` below — see `seedEmissionBox`.
+    await seedEmissionBox();
 
     const cfg = makeTestConfig({
       dbPath: ':memory:',

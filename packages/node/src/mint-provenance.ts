@@ -30,6 +30,7 @@ export const MINT_OUTPUT_INDEX = 0;
 export const GENESIS_SYSTEM_KARMA = 0;
 export const GENESIS_FAUCET_CREDITS = 1;
 export const GENESIS_PROOF = 2;
+export const GENESIS_EMISSION = 3;
 
 const utf8 = new TextEncoder();
 
@@ -129,6 +130,38 @@ export function decayContext(owner: Uint8Array): MintContext {
  */
 export function genesisContext(which: number): MintContext {
   return { reason: 'genesis', subject: u32BE(which) };
+}
+
+// The two block-application box successors. Both take an **empty** subject,
+// which is the honest encoding when there is nothing to discriminate:
+// `computeMintTxId` writes `lp(subject)`, so an empty one is a zero length
+// rather than an absence, and stays self-delimiting.
+//
+// Exactly one emission successor and one treasury successor exist per height,
+// so the height alone separates every instance within a reason and the reason's
+// `enum8` tag separates the two from each other and from every other row. That
+// satisfies "Discriminants are semantic, never positional" outright rather than
+// by argument (NODE_INTERFACE → Reason and subject table).
+//
+// ⛔ **Neither creates credits.** Both name a box block application spends and
+// recreates — the emission box's successor holds what the schedule has not yet
+// released, the treasury's what has accrued. Needing a synthetic txId is what
+// any created box needs for an identity; it is not a claim that value was
+// minted, the same standing `vouch-settle` and `bond-return` have.
+//
+// ⚠ **Deriving either subject from a position in the block — the coinbase
+// output count, say — would be collision-free and forbidden.** It is exactly
+// the position-derived identity that section rules out, and being safe is what
+// would make it tempting.
+
+/** `emission-release` — no subject. The `EmissionBox` successor. */
+export function emissionSuccessorContext(): MintContext {
+  return { reason: 'emission-release', subject: new Uint8Array(0) };
+}
+
+/** `treasury-accrue` — no subject. The `TreasuryBox` successor. */
+export function treasurySuccessorContext(): MintContext {
+  return { reason: 'treasury-accrue', subject: new Uint8Array(0) };
 }
 
 /**

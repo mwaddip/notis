@@ -250,6 +250,7 @@ Two shapes, not one:
 ```
 interface BoxCandidate {              // the shared BASE — no per-type fields
   boxType: "karma" | "credit" | "invite" | "genesis_proof" | "bond" | "post_lock" | "vouch"
+         | "emission" | "treasury"
   value: bigint                // integer base units — uniform bigint (see "Value denomination")
 }
 
@@ -260,7 +261,7 @@ interface BoxBase extends BoxCandidate {
 }
 
 type CandidateOf<B extends BoxBase> = Omit<B, "id" | "txId" | "index">
-type AnyBoxCandidate = CandidateOf<KarmaBox> | CandidateOf<CreditBox> | …   // all seven
+type AnyBoxCandidate = CandidateOf<KarmaBox> | CandidateOf<CreditBox> | …   // all nine
 ```
 
 **`BoxCandidate` is the base, `CandidateOf<B>` is the per-type candidate.** An earlier draft of
@@ -299,20 +300,24 @@ decay, post-lock vesting, genesis) derive a **synthetic transaction id**, so the
 one derivation path:
 
 ```
-mintTxId = blake2b512( MINT_ID_DOMAIN ‖ u32BE(height) ‖ reason ‖ subject )[0:32]
+mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 ```
 
-`reason` is an ASCII tag from a closed set; `subject` is a canonical byte encoding defined per
-reason. The discriminant is **semantic, never positional** — deriving it from journal position
-would make identity order-dependent, the failure class M-12 closed for the AVL feed. Full
-reason/subject table in `NODE_INTERFACE.md`.
+`reason` is a tag from a closed set, written into the preimage as a single `enum8` byte; `subject`
+is a canonical byte encoding defined per reason. The discriminant is **semantic, never positional** —
+deriving it from journal position would make identity order-dependent, the failure class M-12 closed
+for the AVL feed. Full reason/subject table in `NODE_INTERFACE.md`.
 
 > **Injectivity is only half-guaranteed here, and the other half is `NODE_INTERFACE.md`'s.**
-> *Across* reasons it holds unconditionally, because no `MintReason` is a prefix of another
-> (verified and test-pinned). *Within* one reason it does **not** hold automatically: `subject`
-> carries no length prefix, so two different subjects could concatenate identically. Every
-> per-reason subject encoding MUST therefore be **fixed-length or self-delimiting**. This
-> package cannot enforce it — the caller owns the bytes.
+> *Across* reasons it holds unconditionally, because `enum8(reason)` is a single distinguishing
+> byte ahead of the subject. *Within* one reason, `lp(subject)` separates any two whole subjects —
+> what it cannot separate is the **parts** of a multi-part subject, which it wraps as one opaque
+> run. Every per-reason subject encoding MUST therefore be **fixed-length or self-delimiting** in
+> its parts. This package cannot enforce it — the caller owns the bytes.
+>
+> ⚠ **Corrected 2026-08-16.** This read *"`subject` carries no length prefix"* and justified
+> across-reason uniqueness by ASCII prefix-freeness. `computeMintTxId` writes
+> `vlqU(height) ‖ enum8(reason) ‖ lp(subject)`; neither premise held.
 
 #### Pinned byte forms
 
@@ -327,8 +332,8 @@ computes different ids.
     (via `txIdBytes`), `postFieldBytes`' `parentRefs`, and `boxRecordBytes`' `txId`.
   - **A free byte string concatenated into a hash enters as the UTF-8 bytes of its
     64-character hex text.** This covers `computePostId`'s `txId` and the `postlock-unlock`,
-    `postlock-remainder` and `prune-refund-author` mint subjects. `reason` likewise enters
-    as ASCII.
+    `postlock-remainder` and `prune-refund-author` mint subjects. **`reason` does NOT enter
+    this way** — it is an `enum8` tag byte, not ASCII text (corrected 2026-08-16).
 
   ⛔ **The dividing line is a FIXED WIDTH, and that is why it is principled rather than
   historical.** A positional reader finds every later field by offset, so a `b32` row must
@@ -616,10 +621,15 @@ GenesisProofBox extends BoxBase {
 }
 ```
 
-The third box seeded at cold start, beside system karma and faucet credits. Those two are
-byte-identical on every network, so **this box's `payload` is the whole of network identity at
-height 0** — it is what makes the three genesis state roots differ, and `NetworkProfile
-.genesisProofPayload` carries the per-network value as hex (§Network profiles).
+One of the boxes seeded at cold start, beside system karma, faucet credits and the emission box.
+`NetworkProfile.genesisProofPayload` carries its per-network value as hex (§Network profiles).
+
+⚠ **It is NO LONGER the whole of network identity at height 0, and this line said it was.** The
+karma and credit boxes are byte-identical across networks, so the payload used to be the only thing
+separating testnet's genesis root from devnet's. The `EmissionBox` is now a **second** per-network
+difference: its value is that profile's emission total, derived from `creditFixedRateBlocks` and
+`creditEpochBlocks`, and devnet's compressed schedule gives it a smaller one. Two networks now
+differ in two boxes, not one. Corrected 2026-08-16, when unit 4b made it false.
 
 `value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
 so the literal makes any other unrepresentable rather than merely invalid.
@@ -657,6 +667,61 @@ The rejection is a `ReaderError` with code `invalid-tag`. `ReaderErrorCode` is `
 and has no member for a domain refusal; `readLpUtf8` already uses `invalid-tag` for the same shape —
 a length-prefixed field whose *contents* are out of domain — and `CodecError` states the general
 argument for the choice.
+
+### EmissionBox
+
+```
+EmissionBox extends BoxBase {
+  boxType: "emission"
+  value: bigint                // Credits not yet released, in base units
+  guard: "block_apply"         // Consumable only by block application
+}
+```
+
+**The whole of a network's credit emission, held as state from height 0.** Genesis creates one on
+every network holding that profile's entire emission total; each block spends it to a successor
+holding `value − computeBlockReward(height)`. No other rule reduces it and none increases it, so
+what remains to be emitted is a value an observer reads rather than a schedule they trust — which is
+what `ARCHITECTURE` → UTXO conservation rests its bound on.
+
+**No owner, and therefore no per-type trailing fields.** The box names no spender because block
+application is the only one, and `block_apply` already says so. It is the first box type whose
+content encoding is the shared prefix alone (§Layout — Boxes).
+
+⛔ **A successor whose value would be `0` is not created.** The total equals the schedule's sum
+exactly, so the last emitting block consumes the box and leaves none; above the terminus no emission
+box exists and nothing is spent. This is the box form of the rule the coinbase already carries —
+one block, one encoding — and without it a zero-value box is removed and reinserted on every block
+forever.
+
+⚠ **The genesis value is derived from the profile's schedule, not written into the profile.** A
+hardcoded total that disagrees with `computeBlockReward` either starves the box before the terminus,
+making every block from that height unproducible, or strands a residue no rule can release.
+
+### TreasuryBox
+
+```
+TreasuryBox extends BoxBase {
+  boxType: "treasury"
+  value: bigint                // Credits accrued, in base units
+  guard: "block_apply"         // Consumable only by block application
+}
+```
+
+**Where the coinbase's treasury slice and the forfeited inclusion bonus land.** Block application
+spends it to a successor holding `value + split.treasury`; there is no rule that reduces it.
+`ARCHITECTURE` → Treasury requires the treasury be unspendable **by absent rule** rather than by a
+withheld key, and this is that rule's shape: no key exists, and block application carries no release
+path to write one out.
+
+Genesis creates none — it would hold `0`, which §EmissionBox's rule refuses. The first block whose
+`split.treasury` is nonzero creates it.
+
+**Separate from the emission box, structurally.** A future protocol version gives the treasury a
+spend gate. Held in one box with the emission remainder, that gate's ceiling would be the computable
+`value − remainingEmission(height)` — which works, and makes the ceiling depend on a schedule sum
+staying consistent with `computeBlockReward` forever. Two boxes mean no rule lets a treasury spend
+reach unreleased emission, rather than a rule computing how much of one box it may reach.
 
 ### BoxGuard
 
@@ -980,9 +1045,19 @@ CoinbaseOutput {
   owner: UserId              // 32-byte recipient public key
   value: bigint              // Credits minted (integer base units)
   lockedUntilBlock: number   // Height at which credits become spendable
-  isTreasury: boolean        // Treasury or miner output
+  isTreasury: boolean        // Always false — see below
 }
 ```
+
+**Every coinbase output is the miner's, so `isTreasury` is `false` on every output at every
+height.** The treasury's slice accrues to a `TreasuryBox` and is never a coinbase output. Node
+rejects a block carrying an output with `isTreasury: true` (MINING_INTERFACE → Coinbase
+Application).
+
+> **AHEAD OF CODE — the field is scheduled for deletion.** It carries no information once no
+> output can be the treasury's, and it survives only because removing it is a wire-format change
+> reaching `@dagsocial/validation` and `@dagsocial/net` as well as this package and node. Deleting
+> it is its own unit; **do not add a reader of it.**
 
 ### ~~Epoch tally~~ — DELETED (P2-D)
 
@@ -1254,7 +1329,7 @@ construction throw, not a type error.
 > consume) and omitted `boxType` (which it does).
 >
 > **`guard` is therefore dropped from the AVL value, and that is lossless** — it is a pure function
-> of `boxType` (C10), each of the seven box types declares exactly one literal, and a decoder
+> of `boxType` (C10), each of the nine box types declares exactly one literal, and a decoder
 > synthesises it from the discriminator. Verified field-by-field by the Phase 5 executor, 2026-08-10.
 
 > ⚠ **`boxRecordBytes` is paired with `boxRecordFromBytes(bytes) → { candidate, txId, index }`, and
@@ -1273,7 +1348,7 @@ construction throw, not a type error.
 >
 > `boxRecordFromBytes` carries the four-part boundary check like every other decoder. It does **not**
 > return `guard` — that is not in the bytes; `node` synthesises it. **The proof obligation is a
-> round-trip over all seven box types**, which is strictly stronger than a frozen vector: a frozen
+> round-trip over all nine box types**, which is strictly stronger than a frozen vector: a frozen
 > vector can pass while writer and reader disagree, a round-trip cannot.
 >
 > Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
@@ -1301,6 +1376,8 @@ from this table — a use that reads every cell as an instruction rather than as
 | 4 | `bond` |
 | 5 | `post_lock` |
 | 6 | `vouch` |
+| 7 | `emission` |
+| 8 | `treasury` |
 
 | Type | Trailing fields |
 |---|---|
@@ -1311,13 +1388,21 @@ from this table — a use that reads every cell as an instruction rather than as
 | `bond` | `b32(inviterId)` ‖ **`b32(inviteePublicKey)`** |
 | `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
+| `emission` | *(none)* |
+| `treasury` | *(none)* |
+
+⚠ **`emission` and `treasury` have an empty tail, and an empty cell in this table is a layout, not
+an omission.** Their content encoding is the shared prefix alone — `enum8(boxType)` ‖ `vlqU64(value)`
+— because neither names an owner. The `enum8` tag is the whole of what separates them from each
+other, exactly as it separates `invite` from `bond`, and their ids differ from one another and across
+heights through the provenance `computeBoxId` appends.
 
 `genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
 decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder
 that does not own one. The length prefix is the whole of the field's injectivity — appended raw, an
-empty payload would be indistinguishable from the end of the box. It is also the only arm whose entire
-tail is one field, so `enum8(3) ‖ vlqU64(0) ‖ u8(0)` is the smallest legal box of any type at three
-bytes.
+empty payload would be indistinguishable from the end of the box. It is the only arm whose entire
+tail is one field; at `enum8(3) ‖ vlqU64(0) ‖ u8(0)` it is three bytes, and the **smallest legal box
+of any type is `emission` or `treasury` at two** — the shared prefix with nothing after it.
 
 ⚠ **`genesis_proof.payload` carries the one per-type domain rule in this table**: the reader refuses
 a payload over `MAX_GENESIS_PROOF_PAYLOAD_BYTES` (§GenesisProofBox, §Content limits). It binds this
@@ -1325,10 +1410,11 @@ row and no other — a second implementation that took the bound from `lp` itsel
 `tx.preimages`, `utxoTxs` and the block's three sections, all of which use the same primitive
 unbounded. Every other refusal these rows make belongs to the primitive named in the cell.
 
-**`karma` and `credit` are the two arms with no variable-length field**, so
-`genesis_proof.payload` above is the only place inside a box where a length prefix can change
-width. Both arms are a fixed 32-byte owner and one option, and the `enum8` tag is the whole of
-what separates them at equal `value`.
+**`genesis_proof.payload` is the only place inside a box where a length prefix can change width** —
+every other field in the table is fixed-width or a `vlqU`/`vlqU64` whose width follows its value.
+`karma` and `credit` are the pair this matters most for: both are a fixed 32-byte owner and one
+option, and the `enum8` tag is the whole of what separates them at equal `value`. `emission` and
+`treasury` stand in the same relation to each other with no fields at all.
 
 ⚠ **The option tag is what keeps absence from being a value.** An absent `lockedUntilBlock`
 writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `vlqU` with `0`
@@ -1730,7 +1816,6 @@ export interface NetworkProfile {
   readonly genesisCreditsPerMember: bigint;
   readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
   readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
-  readonly treasuryPubKey: string;
 }
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>>;
@@ -1761,7 +1846,7 @@ break same-network peering; the damage is entirely cross-network.
 **`genesisProofPayload` is hex `string`, not `Uint8Array`, and the reason is immutability rather
 than style.** Every profile is an `Object.freeze`d literal, and freezing does not reach a typed
 array's contents — a profile holding one would be mutable in exactly the field that defines the
-network. `treasuryPubKey` and `genesisCommitteeKeys` are hex for the same reason, so this follows
+network. `genesisStateRoot` and `genesisCommitteeKeys` are hex for the same reason, so this follows
 the file rather than adding a convention.
 
 **What must hold is that the three payloads DIFFER; what is inside them need not be anything.**

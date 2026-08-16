@@ -65,7 +65,6 @@ export interface Config {
   // Mining
   miningSecret: string;          // bearer token for mining API, required non-empty on a miner
   orderingBlockPowTargetBits: number;
-  treasuryPubKey: string;  // hex-encoded 32-byte key, empty = no treasury
   /** Blocks before a coinbase output is spendable. Apply-time consensus check (MINING invariant 3). */
   creditMinerRewardDelay: number;
   // Emission schedule shape. `computeBlockReward` is a consensus function on
@@ -116,7 +115,6 @@ export function loadConfig(): Readonly<Config> {
     // Mining
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
-    treasuryPubKey: profile.treasuryPubKey,
     creditMinerRewardDelay: profile.creditMinerRewardDelay,
     creditFixedRateBlocks: profile.creditFixedRateBlocks,
     creditEpochBlocks: profile.creditEpochBlocks,
@@ -149,7 +147,6 @@ export function loadConfig(): Readonly<Config> {
   };
 
   assertMiningAuthConfigured(cfg);
-  assertTreasuryKeyEncodable(cfg);
   assertGenesisProofPayloadEncodable(cfg);
   assertOrderingTargetAboveFloor(cfg);
   assertProofHistoryCoversReorgDepth(cfg);
@@ -277,33 +274,9 @@ function assertOrderingTargetAboveFloor(cfg: Config): void {
 }
 
 /**
- * The treasury key's domain, established where it enters this node's config
- * surface rather than where it is encoded (TYPES_INTERFACE → "Totality": a
- * throwing writer's domain belongs upstream of the encoder).
- *
- * `buildCoinbaseOutputs` turns this string into a `CoinbaseOutput.owner`, whose
- * writer is `writeBytesNOrThrow(…, 32)` — and `Buffer.from(s, 'hex')` stops at
- * the first character pair outside the alphabet instead of failing, so a
- * character count says nothing about the byte count it produces: 64 non-hex
- * characters yield 0 bytes, `62 hex + 'zz'` yields 31. Both encode to a
- * coinbase leaf the writer refuses, inside the miner's own interval callback,
- * where nothing converts a throw into a rejection.
- */
-function assertTreasuryKeyEncodable(cfg: Config): void {
-  const key = cfg.treasuryPubKey;
-  if (key.length === 0) return;
-  if (!/^[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error(
-      `Invalid treasuryPubKey for network "${cfg.networkType}" — must be 64 ` +
-        'hex characters (32 bytes) or empty for no treasury',
-    );
-  }
-}
-
-/**
  * The genesis proof payload's domain, established where it enters this node's
- * config surface — the same job `assertTreasuryKeyEncodable` does one function
- * up, and for the sharper half of the same hazard.
+ * config surface rather than where it is encoded (TYPES_INTERFACE →
+ * "Totality": a throwing writer's domain belongs upstream of the encoder).
  *
  * `Buffer.from(s, 'hex')` stops at the first character pair outside the
  * alphabet instead of failing, and `writeLp` is total by sentinel rather than

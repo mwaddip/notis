@@ -27,7 +27,7 @@ import {
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -346,16 +346,42 @@ function u32BEMirror(n: number): Uint8Array {
   return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
 }
 
-const ALL_MINT_REASONS: MintReason[] = [
-  'coinbase',
-  'vouch-settle',
-  'like-payout',
-  'postlock-unlock',
-  'postlock-remainder',
-  'decay',
-  'genesis',
-  'prune-refund-author',
-];
+/**
+ * One frozen mint id per `MintReason`, at height 1 with subject `4x 0x5a` — the
+ * conformance artifact an independent implementation needs, and the only thing
+ * that catches a **renumber**. A renumber moves every mint txId carrying the tag
+ * and, through `computeCandidateBoxId`, every box id minted under it, while
+ * "every reason derives a distinct id" stays green: a permutation keeps them all
+ * distinct. Do not "fix" a failure here by editing a hash — the derivation is
+ * protocol-breaking and unversioned.
+ *
+ * `Readonly<Record<MintReason, string>>` is what makes the coverage structural: a
+ * member added to the union without a row here is a **compile error**, so no tag
+ * can ship unpinned. A list typed `MintReason[]` cannot carry that property —
+ * an array of the union is satisfied by any subset of it, so it tracks the set
+ * only by hand.
+ */
+const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
+  coinbase:               '32fe945568d48465eb9a2b74d506b0ec16395136fbb4357c8de21cef5a105c0a',
+  'vouch-settle':         '09a5a40e4424fd0f4897aff225d32500975941acb7ef4972bf30a71f2c6a62aa',
+  'like-payout':          '53a7f0ab4f60e54e0b7bbc694c0082e777c6e4ebf910db321dcfb4c1d222f59a',
+  'postlock-unlock':      '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f',
+  'postlock-remainder':   '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d',
+  decay:                  'a483b6263e7a5ed49246aca51adae2c12e0cd24958412657ced84f64dca0e77a',
+  genesis:                '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2',
+  'prune-refund-author':  'aa42ffca37cb6d20d30cc5afe2c691567fd31106a3a79a21e715cf616b863a32',
+  'invite-claim':         'f59f898a63637ffd1c7ebc705ca88321bfc9035f23caa047366d56d49b1e8173',
+  'bond-settle':          'b036b7e30827db46de4d98f80c982b978aa011e7a1a5a3f11389788e335eafde',
+  'bond-return':          '7b6ffca09e60c23b597e01b4e217846117744e64b444ca41523e05912f5705c1',
+  'emission-release':     '4cb4b95c47aa83dc1330235f096c09348ba7735ad7871eb18f21160ff2f5f0a1',
+  'treasury-accrue':      '83b6e7983c2c14be4bdc71da51278d43372a9123ef071a5cf06aefd80fedca65',
+};
+
+const MINT_GOLDEN_HEIGHT = 1;
+const MINT_GOLDEN_SUBJECT = new Uint8Array(4).fill(0x5a);
+
+/** Every member of the union, inherited from the goldens' exhaustiveness. */
+const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
 
 /**
  * Frozen golden vectors for the provenance derivation — the cross-implementation
@@ -580,7 +606,8 @@ describe('genesis_proof', () => {
     // `lp` and not raw bytes appended: without the count an empty payload is
     // indistinguishable from the end of the box, and a one-byte payload of
     // `00` would share its encoding with an empty one. Three bytes is the
-    // smallest legal box of any type.
+    // smallest box that carries a tail; `emission` and `treasury` reach two by
+    // carrying none.
     expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array(0))))).toBe('030000');
     expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('03000100');
   });
@@ -661,6 +688,148 @@ describe('genesis_proof', () => {
     // the primitive would have caught along with this box — and it must not be.
     const tree = { utxoTxIds: [], utxoTxs: [overBound], pruneEntries: [], coinbaseOutputs: [] };
     expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// emission and treasury — the two types whose encoding stops at the prefix
+// ---------------------------------------------------------------------------
+
+/**
+ * Tags 7 and 8, and **no trailing fields on either** (TYPES_INTERFACE → Layout
+ * — Boxes). Neither box names an owner — block application is the only spender
+ * and `block_apply` already says so — so the content encoding is the shared
+ * `enum8(boxType) ‖ vlqU64(value)` and nothing else.
+ *
+ * **The empty tail is the shape the rest of the corpus does not hold.** Every
+ * other arm writes at least one field, so a reader that assumed something
+ * follows the prefix would be correct on every one of them and wrong only here.
+ * The round-trips below are what makes "an empty tail is representable" a
+ * checked property rather than an argument from the encoder's shape.
+ *
+ * Hand-assembled from the layout table, not copied from the encoder's output —
+ * the file's idiom for a frozen byte string, and the only form that makes a
+ * vector an independent check rather than a screenshot.
+ *
+ *   07 | 64     — emission, value 100
+ *   08 | 64     — treasury, value 100
+ *   ^tag ^vlqU64(value)
+ */
+const EMISSION_CANDIDATE: CandidateOf<EmissionBox> = {
+  boxType: 'emission', value: 100n, guard: 'block_apply',
+};
+const TREASURY_CANDIDATE: CandidateOf<TreasuryBox> = {
+  boxType: 'treasury', value: 100n, guard: 'block_apply',
+};
+
+/** The tailed arms, at their own floor — one candidate per type that has a tail. */
+const TAILED_CANDIDATES: AnyBoxCandidate[] = [
+  { boxType: 'karma', value: 0n, owner, guard: 'owner_signature' },
+  { boxType: 'credit', value: 0n, owner, guard: 'owner_signature' },
+  { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'invite_dual' },
+  { boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(0), guard: 'unspendable' },
+  { boxType: 'bond', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'block_apply' },
+  { boxType: 'post_lock', value: 0n, originalValue: 0n, owner, guard: 'block_apply' },
+  { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+];
+
+describe('emission and treasury', () => {
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+  it('each encodes to its tag and value, and nothing else', () => {
+    expect(hexOf(canonicalBoxBytes(EMISSION_CANDIDATE))).toBe('0764');
+    expect(hexOf(canonicalBoxBytes(TREASURY_CANDIDATE))).toBe('0864');
+    expect(canonicalBoxBytes(EMISSION_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.emission);
+    expect(canonicalBoxBytes(TREASURY_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.treasury);
+  });
+
+  it('two bytes is the smallest legal box of any type', () => {
+    // The prefix with nothing after it. The nearest type is `genesis_proof` at
+    // `03 00 00`, three bytes, because its empty payload still spends a length
+    // prefix. Pinned so the claim in TYPES_INTERFACE → Layout — Boxes has a
+    // test under it.
+    const emptyEmission: CandidateOf<EmissionBox> = { ...EMISSION_CANDIDATE, value: 0n };
+    const emptyTreasury: CandidateOf<TreasuryBox> = { ...TREASURY_CANDIDATE, value: 0n };
+    const smallest = canonicalBoxBytes(emptyEmission);
+    expect(hexOf(smallest)).toBe('0700');
+    expect(smallest.length).toBe(2);
+    expect(canonicalBoxBytes(emptyTreasury).length).toBe(2);
+    // Nothing else reaches two. Every other arm carries a tail, so this is the
+    // floor for the whole format rather than for these two types.
+    for (const candidate of TAILED_CANDIDATES) {
+      expect(canonicalBoxBytes(candidate).length, candidate.boxType).toBeGreaterThan(2);
+    }
+  });
+
+  it('the tag alone separates them at equal value', () => {
+    // The `invite`/`bond` case with the trailing fields removed: same value,
+    // different type, and byte 0 is the whole of the difference. The ids part
+    // on the provenance `computeBoxId` appends, not on the content bytes.
+    const a = hexOf(canonicalBoxBytes(EMISSION_CANDIDATE));
+    const b = hexOf(canonicalBoxBytes(TREASURY_CANDIDATE));
+    expect(a.slice(2)).toBe(b.slice(2));
+    expect(a.slice(0, 2)).toBe('07');
+    expect(b.slice(0, 2)).toBe('08');
+    expect(computeCandidateBoxId(EMISSION_CANDIDATE, FIXTURE_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(TREASURY_CANDIDATE, FIXTURE_TX_ID, 0));
+  });
+
+  it('identical content bytes still get distinct ids, from provenance alone', () => {
+    // With no trailing fields, two boxes of one type at one value have exactly
+    // the same content bytes — there is no field left to differ in. Identity
+    // therefore rests entirely on the provenance `computeBoxId` appends, which
+    // is the case the empty tail makes reachable rather than hypothetical.
+    const ids = [0, 1, 2].map((index) =>
+      computeCandidateBoxId(EMISSION_CANDIDATE, FIXTURE_TX_ID, index),
+    );
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('round-trips through the box record, with guard absent from the bytes', () => {
+    for (const candidate of [EMISSION_CANDIDATE, TREASURY_CANDIDATE]) {
+      const record = boxRecordFromBytes(boxRecordBytes(candidate, FIXTURE_TX_ID, 0));
+      expect(record).toEqual({
+        candidate: { boxType: candidate.boxType, value: 100n },
+        txId: FIXTURE_TX_ID,
+        index: 0,
+      });
+    }
+  });
+
+  it('the record is the content bytes plus provenance, with no tail between', () => {
+    // The one place an empty tail could go wrong silently: `boxRecordBytes`
+    // concatenates the content half with `b32(txId) ‖ vlqU(index)`, so if the
+    // reader walked a phantom field the txId would decode from the wrong
+    // offset and still be 32 well-formed bytes.
+    const bytes = boxRecordBytes(EMISSION_CANDIDATE, FIXTURE_TX_ID, 0);
+    expect(hexOf(bytes)).toBe('0764' + FIXTURE_TX_ID + '00');
+    expect(bytes.length).toBe(2 + 32 + 1);
+  });
+
+  it('a transaction carrying one hashes it like any other output', () => {
+    // Neither type is a legal transaction output under node's shape rules, but
+    // `computeTxId` is a total function of the candidates it is handed and must
+    // not depend on that: an encoder that skipped an empty tail differently
+    // from the reader would move a txId rather than reject it.
+    const tx: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [EMISSION_CANDIDATE, TREASURY_CANDIDATE],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    expect(computeTxId(tx)).toHaveLength(64);
+    const swapped: UtxoTransaction = { ...tx, outputs: [TREASURY_CANDIDATE, EMISSION_CANDIDATE] };
+    expect(computeTxId(swapped)).not.toBe(computeTxId(tx));
+  });
+
+  it('value still throws outside the u64, like every other box type', () => {
+    // The empty tail removes fields, not the prefix's domain. `value` is
+    // `vlqU64` on every arm (TYPES_INTERFACE → Totality), so the exception is
+    // the same one and not a new class.
+    for (const value of [-1n, 2n ** 64n]) {
+      expect(() => canonicalBoxBytes({ ...EMISSION_CANDIDATE, value }), `${value}`).toThrow();
+      expect(() => canonicalBoxBytes({ ...TREASURY_CANDIDATE, value }), `${value}`).toThrow();
+    }
   });
 });
 
@@ -977,6 +1146,12 @@ describe('boxRecordFromBytes', () => {
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
     ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
     ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
+    // The empty-tail pair. A reader that assumed at least one field followed
+    // the shared prefix would fail here and nowhere else — every other row
+    // above walks a tail, so nothing in this list exercised a box that ends at
+    // the prefix until these two.
+    ['emission', EMISSION_CANDIDATE],
+    ['treasury', TREASURY_CANDIDATE],
   ];
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
@@ -1030,14 +1205,16 @@ describe('boxRecordFromBytes', () => {
 
     // 1 — the reserved sentinel tag and every unassigned boxType have no
     // decoding at all: the tag reader refuses them, so nothing after the tag is
-    // read. 7 is the first number `BOX_TYPE` does not assign.
+    // read. 9 is the first number `BOX_TYPE` does not assign.
     //
     // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
     // *assigned* tag swapped in here throws too — on the fields it then
     // misreads, as `trailing-bytes` — so a bare `toThrow` cannot tell "this tag
     // has no decoding" from "this tag decodes, into something else". That is
-    // the difference this loop exists to pin, and only the code shows it.
-    for (const tag of [0x07, 0xff]) {
+    // the difference this loop exists to pin, and only the code shows it, and
+    // it is what makes the number here load-bearing: a tag this test names is
+    // one the table must not claim.
+    for (const tag of [0x09, 0xff]) {
       const badTag = bytes.slice();
       badTag[0] = tag;
       let thrown: unknown;
@@ -1085,33 +1262,17 @@ describe('computeMintTxId', () => {
   });
 
   it('golden vector: the WHOLE reason tag table is frozen', () => {
-    // ⚠ Added because the mutation check caught a gap this phase created. The
-    // reason is an `enum8` tag now, and a RENUMBER moves every mint txId
-    // carrying the tag and, through computeCandidateBoxId, every box id minted
-    // under it. Two goldens (coinbase, decay) covered two of the eight tags,
-    // and "every reason derives a distinct mint id" is renumber-BLIND — a
-    // permutation keeps them all distinct. Swapping any two un-goldened tags
-    // was a silent consensus change.
+    // The reason is an `enum8` tag, so the thing to catch is a RENUMBER — and
+    // "every reason derives a distinct mint id" is renumber-BLIND, since a
+    // permutation keeps them all distinct. One frozen id per member is what
+    // makes swapping two tags fail instead of silently changing consensus.
     //
-    // One frozen id per member closes that, and it is the conformance artifact
-    // an independent implementation needs anyway. Height 1, subject 4x 0x5a.
-    const subject = new Uint8Array(4).fill(0x5a);
-    const FROZEN: ReadonlyArray<readonly [MintReason, string]> = [
-      ['coinbase',            '32fe945568d48465eb9a2b74d506b0ec16395136fbb4357c8de21cef5a105c0a'],
-      ['vouch-settle',        '09a5a40e4424fd0f4897aff225d32500975941acb7ef4972bf30a71f2c6a62aa'],
-      ['like-payout',         '53a7f0ab4f60e54e0b7bbc694c0082e777c6e4ebf910db321dcfb4c1d222f59a'],
-      ['postlock-unlock',     '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f'],
-      ['postlock-remainder',  '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d'],
-      ['decay',               'a483b6263e7a5ed49246aca51adae2c12e0cd24958412657ced84f64dca0e77a'],
-      ['genesis',             '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2'],
-      ['prune-refund-author', 'aa42ffca37cb6d20d30cc5afe2c691567fd31106a3a79a21e715cf616b863a32'],
-    ];
-    for (const [reason, id] of FROZEN) {
-      expect(computeMintTxId(1, reason, subject), reason).toBe(id);
+    // Coverage of the union is a compile-time property of the goldens' type,
+    // not an assertion here (→ `MINT_REASON_GOLDENS`).
+    for (const [reason, id] of Object.entries(MINT_REASON_GOLDENS)) {
+      expect(computeMintTxId(MINT_GOLDEN_HEIGHT, reason as MintReason, MINT_GOLDEN_SUBJECT), reason)
+        .toBe(id);
     }
-    // And the table covers the type exhaustively — a member added without a
-    // frozen vector fails here rather than shipping unpinned.
-    expect(FROZEN.map(([r]) => r).sort()).toEqual([...ALL_MINT_REASONS].sort());
   });
 
   it('cross-reason injectivity is STRUCTURAL now — the prefix-free rule is retired', () => {
@@ -1168,6 +1329,51 @@ describe('computeMintTxId', () => {
     // Still total on a non-byte-view subject: the length prefix takes the
     // sentinel rather than throwing.
     expect(() => computeMintTxId(1, 'decay', undefined as unknown as Uint8Array)).not.toThrow();
+  });
+
+  it('the two empty-subject reasons separate from each other and from an empty-subject peer', () => {
+    // `emission-release` and `treasury-accrue` carry no subject, so the tag byte
+    // is the whole separator between them at one height — including against a
+    // reason whose subject merely happens to be empty in this call.
+    const empty = new Uint8Array(0);
+    const ids = (['emission-release', 'treasury-accrue', 'coinbase'] as const)
+      .map((r) => computeMintTxId(70000, r, empty));
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('an empty-subject reason still separates heights', () => {
+    // The property the empty subject rests on. With nothing to discriminate
+    // inside a reason, the height is the only thing left, and exactly one
+    // emission successor and one treasury successor exist per height
+    // (NODE_INTERFACE → Reason and subject table).
+    const empty = new Uint8Array(0);
+    for (const reason of ['emission-release', 'treasury-accrue'] as const) {
+      const heights = [0, 1, 2, 70000];
+      const ids = heights.map((h) => computeMintTxId(h, reason, empty));
+      expect(new Set(ids).size, reason).toBe(heights.length);
+    }
+  });
+
+  it('an empty subject encodes as a zero LENGTH, not as an absence', () => {
+    // Recomputed from the layout rather than from the function under test:
+    // MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject). At height 1
+    // with an empty subject that is three bytes — 0x01, the tag, and a zero
+    // length — so the tag numbers are pinned here independently of the goldens.
+    const mirror = (tail: number[]) =>
+      createHash('blake2b512')
+        .update(Buffer.from(MINT_ID_DOMAIN))
+        .update(Buffer.from(tail))
+        .digest()
+        .subarray(0, 32)
+        .toString('hex');
+
+    const empty = new Uint8Array(0);
+    expect(computeMintTxId(1, 'emission-release', empty)).toBe(mirror([0x01, 0x0b, 0x00]));
+    expect(computeMintTxId(1, 'treasury-accrue', empty)).toBe(mirror([0x01, 0x0c, 0x00]));
+
+    // Drop the length byte and the id moves: present-and-empty is not absent,
+    // which is what keeps the subject self-delimiting at width zero.
+    expect(computeMintTxId(1, 'emission-release', empty)).not.toBe(mirror([0x01, 0x0b]));
   });
 
   it('does not throw on an unencodable height (M-5 no-panic)', () => {
@@ -1665,6 +1871,10 @@ describe('the box-type tables', () => {
       guard: 'block_apply',
     },
     vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+    // The two arms with no trailing fields at all — the row that makes this map
+    // exercise a box whose bytes stop after the shared prefix.
+    emission: { boxType: 'emission', value: 100n, guard: 'block_apply' },
+    treasury: { boxType: 'treasury', value: 100n, guard: 'block_apply' },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -1699,6 +1909,7 @@ describe('the box-type tables', () => {
   it('pins both tables', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
       karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
+      emission: 7, treasury: 8,
     });
     expect({ ...BOX_GUARDS }).toEqual({
       karma: 'owner_signature',
@@ -1708,10 +1919,12 @@ describe('the box-type tables', () => {
       bond: 'block_apply',
       post_lock: 'block_apply',
       vouch: 'owner_signature',
+      emission: 'block_apply',
+      treasury: 'block_apply',
     });
   });
 
-  // Total over the same seven types. A consumer synthesising `guard` from the
+  // Total over the same box types. A consumer synthesising `guard` from the
   // discriminator meets a table short of one type as an `undefined` guard at
   // runtime, not as a rejection.
   it('covers exactly the same box types', () => {

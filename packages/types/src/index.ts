@@ -121,6 +121,8 @@ export type {
   BondBox,
   PostLockBox,
   VouchBox,
+  EmissionBox,
+  TreasuryBox,
   AnyBox,
   UtxoTransaction,
   TxId,

@@ -52,8 +52,15 @@ computeBlockReward(height):
 ```
 
 **Emission total: 422,640,000 credits** — the fixed-rate period (`1,051,200 × 100`) plus
-the decay triangle (`129,600 × Σ(k=1..49)(100 − 2k)`). This is a ceiling on emission and
-nothing else.
+the decay triangle (`129,600 × Σ(k=1..49)(100 − 2k)`).
+
+**It is also a value in state.** Genesis creates an `EmissionBox` holding exactly this
+total, and each block spends it to a successor `computeBlockReward(height)` smaller
+(TYPES_INTERFACE → EmissionBox). The total is therefore both the schedule's sum and the
+box's genesis value, and the box **derives** it from the parameters above rather than
+carrying its own copy — a second copy that disagreed would starve the box before the
+terminus or strand a residue no rule releases. Every network derives its own from its own
+`creditFixedRateBlocks` and `creditEpochBlocks`.
 
 ⚠ **It is not the total supply**, which `ARCHITECTURE → UTXO conservation` defines as
 genesis credits plus ordering block rewards, less sinks. Emission bounds the second term
@@ -61,8 +68,8 @@ alone; genesis credits sit on top of it and sinks pull the other way.
 
 **Coinbase split:** see "Coinbase Application → The slices" below. It is taken over
 block **income**, not over the reward; the treasury's share is per income term; and
-the miner floor absorbs every remainder. On a profile with no `treasuryPubKey` the
-treasury share and the unearned bonus are **not minted**, never redirected to the miner.
+the miner floor absorbs every remainder. The treasury share and the unearned bonus accrue
+to the `TreasuryBox`, never to the miner and never to an output.
 
 ## Ordering Block (extended)
 
@@ -81,7 +88,7 @@ Additions to the existing `OrderingBlock` type:
 | `owner` | `Uint8Array` (32 bytes) | Recipient public key |
 | `value` | `number` | Credits minted |
 | `lockedUntilBlock` | `number` | Height at which credits become spendable |
-| `isTreasury` | `boolean` | Treasury or miner output |
+| `isTreasury` | `boolean` | **Always `false`** — no output is the treasury's. Scheduled for deletion; see TYPES_INTERFACE → Coinbase output |
 
 ### Block hash and PoW preimage (header model)
 
@@ -195,8 +202,7 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
   "pruneEntries": [...],
   "utxoTxIds": [],
   "coinbaseOutputs": [
-    { "owner": "hex(32)", "value": 90, "lockedUntilBlock": 843, "isTreasury": false },
-    { "owner": "hex(32)", "value": 10, "lockedUntilBlock": 843, "isTreasury": true }
+    { "owner": "hex(32)", "value": 90, "lockedUntilBlock": 843, "isTreasury": false }
   ],
   "powPreimage": "hex(32)"
 }
@@ -319,7 +325,8 @@ when it arrives — that is the point of stating it income-shaped.
 ### On block creation (miner):
 1. Fill the body **first** — the fees and the actor count are properties of what was included
 2. `income = computeBlockReward(height) + fees`
-3. Split into miner + treasury outputs per the slice table below
+3. Split per the slice table below. **Only the miner's slice becomes a `CoinbaseOutput`**; the
+   treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
 4. Include `CoinbaseOutput[]` in block
 5. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
 
@@ -348,24 +355,29 @@ rounding and storage rent's treasury exemption to miners, which is where rent be
 who recovered their own forfeit would face a delay rather than a cost, and the bonus
 would price nothing.
 
-**On a profile with no `treasuryPubKey`, both are simply not minted**, and income is
-reduced by exactly that amount. The forfeit becomes a burn instead of a lock; from the
-miner's side the incentive is identical, because they do not receive it either way.
+**Both accrue to the `TreasuryBox` on every network**, which is why no profile carries a
+treasury key and no coinbase output is flagged as the treasury's. ARCHITECTURE → Treasury
+requires unspendability **by absent rule** rather than by a withheld key; a box block
+application has no release path for is that rule, while a key nobody admits to holding is
+the shape it rejects. The forfeit is a lock rather than a burn, on every network equally.
 
-⚠ **This keys on the PROFILE, never on local config.** `treasuryPubKey` is profile
-data, so "this network has no treasury" is network-wide and every node computes the
-same coinbase; a config-sourced answer would let two nodes on one network disagree
-about a consensus value. All three profiles carry `''` today, so the burn is the live
-path and the keyed path is the one a test has to reach deliberately. **Mainnet pins a
-real key**; devnet and testnet burning is intended.
+⚠ **Emission and the treasury slice come from opposite directions.** The miner's slice is
+paid out of released emission plus recreated fees, so it is a `CoinbaseOutput`; the
+treasury's is never released at all, so it is a value the successor box carries. Both are
+derived from the same `splitCoinbase` result and neither is the producer's choice.
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify `sum(coinbaseOutputs.map(o => o.value))` equals the **minted total** the slice table yields for this height, fee sum and actor count. That is `emission + fees` on a keyed profile, and that **less the treasury share and the unearned bonus** on an unkeyed one, where neither is minted. ⚠ **Income and minted total are not the same number**, and only the keyed profile makes them coincide
-3. Verify the **split**, not only the total — a block paying the whole income to the miner sums correctly and forfeits nothing
+2. Verify `sum(coinbaseOutputs.map(o => o.value))` equals the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus, both of which go to the `TreasuryBox` rather than to any output
+3. Verify the two box transitions: the emission box's successor holds `value − emission(height)` and the treasury box's holds `value + treasury`, both **exactly**. This is where the split is enforced — a block paying the whole income to its miner sums correctly against nothing, and it is the successors that refuse it
 4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes
+4b. Verify no output carries `isTreasury === true`. Nothing is paid to the treasury through the coinbase, so the flag has one legal value and a block claiming otherwise is rejected rather than reinterpreted
 5. For each output, mint credits
 6. Coinbase outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — the UTXO engine enforces this during transaction validation
+
+**Neither transition rides in the block.** Both are derived from the body the way per-block
+like settlement is, so producer and verifier cannot disagree, and both are committed through
+`stateRoot` — an unbacked successor forks its author out at the next header.
 
 ## Config
 
@@ -379,24 +391,23 @@ Classes are defined in `NODE_INTERFACE.md → Configuration`. A `consensus` vari
 partition permanently.
 
 **The four `consensus` rows that were here are no longer configuration.** They and two
-further values this contract depends on resolve as follows — the first five are fields of
+further values this contract depends on resolve as follows — the first four are fields of
 the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 `NETWORK_TYPE`:
 
 | Value | Source | Per-network? | Purpose |
 |---|---|---|---|
 | `orderingBlockPowTargetBits` | profile | **yes** | Ordering block PoW difficulty |
-| `creditFixedRateBlocks` / `creditEpochBlocks` | profile | **yes** | Emission schedule shape |
+| `creditFixedRateBlocks` / `creditEpochBlocks` | profile | **yes** | Emission schedule shape, and the `EmissionBox`'s genesis value |
 | `creditMinerRewardDelay` | profile | **yes** | Blocks before a coinbase output is spendable |
-| `treasuryPubKey` | profile | **yes** | Treasury key — genesis data, differs per chain |
 | `CREDIT_INITIAL_REWARD` | constant | no | Credits per block in the fixed-rate period, base units of 10⁻⁸ |
 | `COINBASE_TREASURY_PCT` | constant | no | Percent of emission and of fees to treasury |
 | `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | constant | no | The rest of the coinbase split |
 
-> ✅ **RESOLVED — the bypass is closed. All five are profile-sourced. Verified 2026-08-11.**
+> ✅ **RESOLVED — the bypass is closed. All four are profile-sourced. Verified 2026-08-11.**
 > This read `PARTLY IMPLEMENTED` until Phase 9.
 >
-> `orderingBlockPowTargetBits` and `treasuryPubKey` were already profile-sourced. **The other
+> `orderingBlockPowTargetBits` was already profile-sourced. **The other
 > three now are too:** `node/src/config.ts` reads `creditFixedRateBlocks`, `creditEpochBlocks`
 > and `creditMinerRewardDelay` from the profile, `computeBlockReward` uses
 > `nodeConfig.creditFixedRateBlocks` / `nodeConfig.creditEpochBlocks` rather than the module
@@ -433,14 +444,14 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 
 ## Invariants
 
-1. Coinbase value per block matches the **minted total** exactly — stated once at
+1. Coinbase value per block matches the **miner's slice** exactly — stated once at
    "On block receipt" step 2, and not restated here, because this file has already
    carried two copies of this rule that disagreed. **No coinbase output carries
    `value === 0`** at any height
-2. The coinbase's split matches the slice table above — verified **per output**, not
-   only as a sum. On a profile with no treasury key, the treasury share and the
-   unearned bonus are not minted and income is reduced by exactly that amount —
-   the value is a function of the **profile**, never of local config
+2. The coinbase's split matches the slice table above. The **miner's** half is the
+   coinbase's sum; the **treasury's** half is enforced as the `TreasuryBox` successor's
+   value, and the emission box's successor pins what was released. A total-only check
+   on the coinbase alone would accept a block that forfeited nothing
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
    output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip

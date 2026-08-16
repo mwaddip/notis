@@ -724,7 +724,14 @@ spent away.
 | Half | Home | Keyed on | Why it can only go there |
 |---|---|---|---|
 | not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. A candidate's own `guard` field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
-| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a second unspendable type is covered without an edit. |
+| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a new type barred from inputs is covered without an edit **whichever guard it fixes**: `unspendable` and `block_apply` both reject unconditionally here. |
+
+⚠ **The three barred types do not reach that arm by the same route, and the difference is
+load-bearing for anyone adding a fourth.** `genesis_proof` is `unspendable`; `emission` and
+`treasury` are `block_apply`, the guard `BondBox` and `PostLockBox` already carry. So "barred from
+both positions" is a statement about the *outcome* for all three, and the input half is delivered by
+two different arms. A reader who takes the `unspendable` arm as the mechanism will conclude a
+`block_apply` type needs an edit that it does not.
 
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
@@ -734,9 +741,12 @@ ahead of the table lookup: the verdict would be identical either way, but an
 assigned tag refused by protocol rule is not an *unknown* one, and a test
 asserting rejection must be able to assert which rule rejected.
 
-`CANONICAL_GUARD` keeps all seven types even though the output schema carries
-six: its other obligation is agreement with `rowToBox`, and a genesis-seeded
-proof box is rebuilt from its row like any other.
+`CANONICAL_GUARD` keeps all nine types even though the output schema carries
+six: its other obligation is agreement with `rowToBox`, and the genesis-seeded
+proof and emission boxes are rebuilt from their rows like any other. The
+`emission` and `treasury` types join `genesis_proof` in being barred from both
+transaction positions — block application is their only producer and their only
+spender.
 
 ### Output shape — the closed per-boxType schema (guard-shape pin + field-type pin)
 
@@ -1337,9 +1347,14 @@ than by a user transaction — coinbase, karma mints, decay, epoch post-locks,
 genesis — have no transaction, so each mint *event* derives a synthetic one:
 
 ```
-mintTxId = blake2b512( MINT_ID_DOMAIN ‖ u32BE(height) ‖ reason ‖ subject )[0:32]
+mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 boxId    = blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes(candidate) ‖ utf8(mintTxId) ‖ u32BE(index) )[0:32]
 ```
+
+⚠ **Corrected 2026-08-16 — this line read `u32BE(height) ‖ reason ‖ subject` in all three fields.**
+`computeMintTxId` writes `writeVlqU`, an `enum8` tag byte and `writeLp`; `reason` has not been ASCII
+in the preimage since the tag table existed. Found while adding the two rows below, by reading the
+function beside the claim.
 
 Box derivation is then identical to the user-transaction path — one derivation,
 not two.
@@ -1347,13 +1362,26 @@ not two.
 ### The subject encoding rule
 
 > **Every per-reason `subject` encoding MUST be fixed-length or
-> self-delimiting.** `subject` carries no length prefix, so within a single
-> reason two different subjects could otherwise concatenate to identical bytes
-> and collide. *Across* reasons uniqueness holds unconditionally — no
-> `MintReason` is a prefix of another (verified and test-pinned in types) — but
-> that says nothing about within-reason collisions. `@dagsocial/types` cannot
-> enforce this: it takes `subject: Uint8Array` and the caller owns the bytes.
-> **This contract is the other half of that guarantee.**
+> self-delimiting** — and the reason is the subject's own INTERNAL structure, not
+> its boundary. `computeMintTxId` writes `lp(subject)`, so one whole subject can
+> never be confused with another; what `lp` cannot do is separate the **parts** of
+> a multi-part subject, which it wraps as one opaque run. `prune-refund-author` is
+> `utf8(hex) ‖ raw`, and were either part variable-width, two different
+> `(rootPostHash, owner)` pairs could concatenate to the same 96 bytes and collide
+> inside one reason. Fixed-width parts are what close that.
+>
+> *Across* reasons uniqueness holds unconditionally, because `enum8(reason)` is a
+> single distinguishing byte ahead of the subject. `@dagsocial/types` cannot
+> enforce the within-reason half: it takes `subject: Uint8Array` and the caller
+> owns the bytes. **This contract is the other half of that guarantee.**
+>
+> ⚠ **Corrected 2026-08-16.** This read *"`subject` carries no length prefix"* and
+> justified across-reason uniqueness by no `MintReason` being a prefix of another.
+> Both describe an earlier preimage: the subject is `lp`-wrapped and the reason is
+> an `enum8` byte, so ASCII prefix-freeness decides nothing about ids. **The rule
+> survives the correction; only its justification was wrong** — which is the more
+> dangerous half to leave standing, because a reader deriving a NEW subject
+> encoding from a false reason reaches a false conclusion about what is safe.
 
 Two byte-form rules, both inherited from `TYPES_INTERFACE.md` → Pinned byte
 forms, so a mirror implementation derives the same ids:
@@ -1372,7 +1400,9 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting → `mintKarma(post.author, toUnlock)` |
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
-| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof, `3` = emission | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` |
+| `emission-release` | — | *(empty)* | 0 | block application, the `EmissionBox` successor |
+| `treasury-accrue` | — | *(empty)* | 0 | block application, the `TreasuryBox` successor |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
 | `invite-claim` | `inviteePublicKey` | raw | 32 | invite claim → `mintKarma(invitee, INVITE_KARMA_AMOUNT)` |
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
@@ -1384,6 +1414,24 @@ same sense `vouch-settle` re-mints an escrow — a synthetic txId for a box that
 block application creates, not a new unit of karma. `ARCHITECTURE` → "Karma supply
 changes" names this table as authoritative, so the distinction has to be readable
 here rather than inferred.
+
+⛔ **`emission-release` and `treasury-accrue` create no credits.** Both name a box that block
+application spends and recreates: the emission box's successor holds what the schedule has not yet
+released, the treasury box's holds what has accrued. A synthetic txId is what any created box needs
+in order to have an identity, and needing one is not a claim that value was minted — the same
+standing `vouch-settle`, `bond-settle` and `bond-return` already have on the karma side.
+
+**Why `(height, reason, subject)` cannot repeat for the two empty subjects.** An empty subject is
+the honest encoding when there is nothing to discriminate, and it is self-delimiting because
+`computeMintTxId` writes `lp(subject)` — a zero length, not an absence. Exactly one emission
+successor and one treasury successor exist per height, so the height alone separates every instance
+within a reason, and `enum8(reason)` separates the two reasons from each other and from every other
+row. This satisfies the third requirement of "Discriminants are semantic, never positional" outright
+rather than by argument.
+
+⚠ **This is why the count is not `coinbaseOutputs.length`.** Deriving either subject from a position
+in the block would be exactly the position-derived identity that section forbids, and it would be
+collision-free — which is what makes it tempting and does not make it permitted.
 
 **Why `(height, reason, subject)` cannot repeat for these three.** All three take
 the invitee's public key as subject; an invite may not name an existing account
@@ -1425,8 +1473,33 @@ Three things about them that are decided, not open:
 - **Prefix-freeness still holds** across the post-P2-D set: `like-payout` is not a
   prefix of any live tag and none is a prefix of it (it also diverges from the *retired*
   `liker-refund` at the fifth byte, so even historical collisions are impossible).
-  Phase A test-pinned the property over the whole `MintReason` union, so it re-checks
-  automatically when the types phase edits the set.
+  The property is test-pinned over the whole `MintReason` union and re-checks automatically
+  when the set is edited.
+
+  ⚠ **Corrected 2026-08-16 — this claimed coverage the test did not have, and that claim is
+  why nobody looked.** The check ran over a **hand-written `MintReason[]`** that never tracked
+  the union, so `invite-claim`, `bond-settle` and `bond-return` — tags 8, 9 and 10 — sat in a
+  consensus preimage with **no frozen vector at all**. The list is now
+  `Readonly<Record<MintReason, string>>`, so a reason added without a vector is a compile
+  error, and the three missing vectors are pinned; all eight that already existed came out
+  byte-identical, so nothing about the encoding moved. Found by the executor adding tags 11
+  and 12, which is the first time anything forced the list to be read against the union.
+
+  ⛔ **THREE instances of one defect surfaced in a single unit, and the third had already
+  drifted before it began.** All three are lists of "every X" that nothing checks:
+
+  | Site | State when found |
+  |---|---|
+  | the mint-reason golden table (types) | tags 8, 9, 10 in a consensus preimage with no vector |
+  | `ui-crypto-mirror`'s `ALL_BOX_TYPES` | 6 of 8 box types mirrored; omitting one compiled and passed |
+  | `mint-provenance.test.ts`'s `allContexts` | **8 entries against an 11-member union**, and the test *named* "covers every `MintReason` exactly once" compared the hand-kept list against itself |
+
+  All three are now keyed on the type (`Record<…>` / `satisfies`), so an omission is a compile
+  error. **The general rule: a list of "every X" that is not derived from X's type is a manual
+  copy of a type definition, and it drifts silently — a test named for coverage is the most
+  dangerous form, because the name is what stops anyone checking.** When a contract says a
+  property is pinned "over the whole" of something, that sentence is a claim about a *type*;
+  verify the test is keyed on one.
 
 **`prune-refund-author` is NOT retired, and the reasoning that expected it to be
 was wrong in an instructive way.** Burning the pruner's own bond retires the
@@ -1448,14 +1521,18 @@ The liker leg is **already gone**: P2-D deleted `prune-refund-liker` with
 Retired names stay reserved.
 
 Every encoding above is **fixed-length**, so the rule holds by construction
-rather than by inspection.
+rather than by inspection. **The two empty subjects are fixed-length at zero**, which is not an
+exception to that: `computeMintTxId` writes `lp(subject)`, so an empty one encodes as a zero length
+and remains self-delimiting — an absent field and a present-but-empty one are the same bytes here
+only because there is no absent case.
 
 ⚠ **`genesis` deliberately does not use the ASCII tags `system-karma` /
 `faucet-credits`** that Spec G §3.2 sketched. Those are variable-length and
 neither self-delimiting nor fixed — they are merely *prefix-free*, which happens
 to be sufficient for this pair but is not a property the rule can check per
-encoding. A `u32BE` selector satisfies the rule outright. Adding a third genesis
-box then costs one integer, not a re-examination of prefix-freeness.
+encoding. A `u32BE` selector satisfies the rule outright. Adding a genesis box then costs one
+integer, not a re-examination of prefix-freeness — which is exactly what the emission box's
+selector `3` cost.
 
 `reason` is the discriminant that separates `like-payout` from `postlock-unlock` —
 both can mint to the same author at the same height; the reason alone already
@@ -1543,8 +1620,8 @@ them as CBOR *text* (`7840` + 64 ASCII) where the node writes a *byte string*
 (`5820` + 32 raw), giving a different box id. Latent only because the vouch flow
 POSTs to `/vouches` and never builds the box client-side.
 
-That gap survived because the mirror covered **karma and credit only** — five of
-seven box types were never encoded through both implementations and compared. So
+That gap survived because the mirror covered **karma and credit only** — the other
+box types were never encoded through both implementations and compared. So
 the enforceable rule is coverage, not documentation: with every box type in the
 mirror, a missing `binaryFields` entry fails mechanically instead of waiting for
 someone to notice the list is a manual copy of a type definition.
@@ -1709,8 +1786,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     the included mempool entries. Mining over a body the node itself will not
     apply wastes PoW on a block that cannot be accepted anywhere.
 13. Track confirmed mempool rowids for cleanup
-14. Build coinbase outputs (credit emission with Ergo-style decay,
-    treasury split if configured)
+14. Build coinbase outputs — the **miner's slice only**. The treasury's accrues to the
+    `TreasuryBox` and the released emission comes out of the `EmissionBox`; both
+    successors are derived here too, and neither rides in the block
 15. Adjust difficulty at epoch boundaries (credit epochs, not like epochs)
 15b. Compute `stateRoot` — the **post-block** digest (see "Post-block
     stateRoot" below). Never the creator's current (pre-block) digest.
@@ -1850,10 +1928,15 @@ Emission terminates: block 7,401,600 is the last that pays, and the reward is 0 
 The schedule and its totals are `MINING_INTERFACE → Emission Schedule`.
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (720) blocks.
-The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices. On a
-profile carrying no `treasuryPubKey`, the treasury's share and the unearned inclusion
-bonus are **not minted at all** — never redirected to the miner, who would otherwise
-recover their own forfeit.
+The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices, and carries
+the **miner's slice alone**. The treasury's share and the unearned inclusion bonus accrue to
+the `TreasuryBox` — never redirected to the miner, who would otherwise recover their own
+forfeit, and never a coinbase output on any network.
+
+**Emission is released from a box, not minted.** Genesis holds the whole schedule in an
+`EmissionBox` (TYPES_INTERFACE → EmissionBox) and each block spends it to a successor
+`computeBlockReward(height)` smaller, so what remains to be emitted is state an observer
+reads. Above the terminus no emission box exists and nothing is released.
 
 > ⚠ **VIOLATED — the lock has no spend-time enforcement, so it is decorative.**
 > Measured 2026-08-07, **re-verified 2026-08-11 by reading every `lockedUntilBlock` occurrence
@@ -2571,6 +2654,19 @@ also identity records (see "Two entity kinds" below).
   journal-derived (P1) — so a mismatch means genuine state divergence, not a
   representation difference. A rejected block leaves the prover restored by
   the funnel's single rollback point
+- ⛔ **A box block application SPENDS must already be in the tree, and a violation is
+  SILENT.** Removing a key the tree never held is not an error anyone sees: `applyBlockMutations`
+  issues the `Remove` and **discards `performOneOperation`'s result**, so the digest simply
+  diverges with nothing raised. The genesis boxes get this right by construction —
+  `bootstrapAvlProver` runs over `getUnspentBoxes()` at height 0, before any block — but nothing
+  stated it until the `EmissionBox` made it reachable: seed that box after the prover bootstrap
+  and block 1 removes a key that was never inserted.
+
+  ⚠ **A single-node test cannot catch this class.** Producer and verifier are the same process,
+  so both compute the same wrong root and it matches. What exposes it is a fixture ordering, not
+  an assertion — three suites needed the seed moved ahead of `createAvlProver` /
+  `startBlockCreator`. **This is the concrete cost of the discarded `performOneOperation` result**
+  (`avl-prover.ts`), which is what turns a genuine state violation into silence.
 - **Journal-fed:** the per-block mutation set is derived from
   `BlockJournal.mutations` — intra-block insert+remove pairs for the same
   boxId net out; inserted box bytes come from the journal's `box` payload,
@@ -2962,7 +3058,9 @@ read behind one.
 ### The genesis state root is checked fail-stop, once, where it is built
 
 `seedGenesisState` computes the height-0 AVL+ root over the boxes it seeded and compares it to
-the profile's `genesisStateRoot`. **A mismatch throws and the node does not start**
+the profile's `genesisStateRoot`. Its set is the proof box and the `EmissionBox` on every
+network, plus the system karma and faucet credit boxes on the faucet-bearing ones. **A mismatch
+throws and the node does not start**
 (`assertGenesisRoot`, exported so it is reachable without a boot). Refusal rather than a
 warning follows `loadConfig`'s below-floor ordering target: proceeding silently means running a
 chain that forks from every honest peer at height 1, discovered later and somewhere else.
@@ -3171,7 +3269,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `POST_POW_TARGET_BITS` | **profile** | Difficulty differs per network |
 | `KARMA_DECAY_INTERVAL_BLOCKS` | **profile** | Timescale differs per network |
 | `KARMA_STALE_THRESHOLD_BLOCKS` | **profile** | Timescale differs per network |
-| `TREASURY_PUBKEY` | **profile** | Genesis data — a different chain has a different treasury |
+| `TREASURY_PUBKEY` | **deleted outright** | The treasury is a box no key can spend, so there is no key to place anywhere |
 | `KARMA_DECAY_AMOUNT` | universal constant | Economics. Devnet decays *often*, not *harder* |
 | `KARMA_MINIMUM` | universal constant | Economics |
 | `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`, `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `INCLUSION_BONUS_K` | universal constant | Economics — the coinbase split |
@@ -3199,7 +3297,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`KARMA_MINIMUM`~~ | **removed** | ~~`10`~~ | → universal constant `KARMA_MINIMUM` (`@dagsocial/types`) |
 | ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`. Closed MINING invariants 4, 5 and 7 — `expectedTarget(height)` now sources the profile, and its unused `height` parameter is the seam a real retarget will need |
 | ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
-| ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | → profile field `treasuryPubKey` — genesis data, so a different chain has a different treasury |
+| ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
 | `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |
 | ~~`POST_POW_TARGET_BITS`~~ | **removed** | ~~`20`~~ | → profile field `postPowTargetBits`. The `advertised` class is retired with it: the challenge endpoint and the verifier now read the same field, so a node can no longer report a difficulty it does not enforce (A6) |

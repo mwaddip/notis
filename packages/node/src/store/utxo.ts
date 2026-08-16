@@ -17,6 +17,8 @@ import type {
   BondBox,
   PostLockBox,
   VouchBox,
+  EmissionBox,
+  TreasuryBox,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -263,6 +265,29 @@ function rowToBox(row: UtxoRow): AnyBox {
       };
     }
 
+    // The two block-application boxes read back from the shared columns alone —
+    // no owner, no extra_data (TYPES_INTERFACE → EmissionBox / TreasuryBox: "no
+    // owner, and therefore no per-type trailing fields"). `extra` is parsed
+    // above and deliberately unread here: an arm that touched it would be
+    // asserting a field the layout does not write.
+    case 'emission':
+      return {
+        id: row.id,
+        boxType: 'emission',
+        value: row.value,
+        guard: BOX_GUARDS.emission,
+        ...prov,
+      };
+
+    case 'treasury':
+      return {
+        id: row.id,
+        boxType: 'treasury',
+        value: row.value,
+        guard: BOX_GUARDS.treasury,
+        ...prov,
+      };
+
     default:
       throw new Error(`Unknown box_type: ${row.box_type}`);
   }
@@ -315,6 +340,58 @@ export function getGenesisProofBox(): GenesisProofBox | null {
     .safeIntegers()
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as GenesisProofBox) : null;
+}
+
+/**
+ * Return the unspent emission box, or null if this network has released its
+ * whole schedule (TYPES_INTERFACE → EmissionBox).
+ *
+ * **`null` is a reachable, ordinary answer here, unlike `getGenesisProofBox`'s.**
+ * Genesis seeds one on every network, and the last emitting block consumes it
+ * and creates no successor, so above the terminus there is nothing to find and
+ * nothing is released. A caller that treats `null` as a fault refuses every
+ * block past the terminus.
+ *
+ * `ORDER BY id` for the reason its sibling above carries: `LIMIT 1` alone names
+ * no row. Two unspent emission boxes are unreachable — `OUTPUT_SHAPE` excludes
+ * the type so no transaction mints one, and block application consumes the
+ * predecessor in the same block it writes the successor — but that is an
+ * argument about the rest of the tree, and the ordering costs nothing if it
+ * expires.
+ */
+export function getEmissionBox(): EmissionBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'emission' AND spent_at_block IS NULL
+       ORDER BY id
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get() as UtxoRow | undefined;
+  return row ? (rowToBox(row) as EmissionBox) : null;
+}
+
+/**
+ * Return the unspent treasury box, or null before the first block whose
+ * `split.treasury` is nonzero (TYPES_INTERFACE → TreasuryBox).
+ *
+ * **`null` here means "not yet", where the emission box's means "no longer".**
+ * Genesis creates none because it would hold `0`, and once created there is no
+ * rule that reduces it — so this answers `null` for a prefix of the chain and
+ * never again after.
+ */
+export function getTreasuryBox(): TreasuryBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'treasury' AND spent_at_block IS NULL
+       ORDER BY id
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get() as UtxoRow | undefined;
+  return row ? (rowToBox(row) as TreasuryBox) : null;
 }
 
 /**
@@ -754,6 +831,16 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
         voucherId: pubkeyToHex(v.voucherId),
         targetId: pubkeyToHex(v.targetId),
       } satisfies VouchExtra;
+      break;
+    }
+    // No `owner` and no per-type fields on either, so the columns the two
+    // share with every box carry the whole box — the same shape
+    // `genesis_proof` has, minus its payload. `extraData` stays `{}` rather
+    // than NULL so `rowToBox`'s `JSON.parse` sees the same empty object every
+    // other ownerless arm does.
+    case 'emission':
+    case 'treasury': {
+      extraData = {};
       break;
     }
     default:

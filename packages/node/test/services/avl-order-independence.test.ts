@@ -7,6 +7,7 @@ import {
   makeKarmaBox,
   makeTestConfig,
   mineNextBlock,
+  seedEmissionBox,
   uid,
 } from '../helpers.js';
 
@@ -50,7 +51,6 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   orderingBlockPowTargetBits: 3072,
-  treasuryPubKey: '',
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
@@ -145,6 +145,12 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
     const dbA = await importDb();
     dbA.initDb(':memory:');
     const utxoA = await importUtxo();
+    // ⚠ **Before `activateProver`, so the box is in the bootstrap feed.** Block
+    // 1 spends the emission box, and a remove against a key the tree never held
+    // is not a state transition either node can perform. Genesis puts it in the
+    // height-0 tree for exactly this reason; a seed after the bootstrap would
+    // leave it in SQL and outside the digest.
+    await seedEmissionBox();
     for (const kb of karmaBoxes) utxoA.insertBox(kb);
 
     const {
@@ -176,6 +182,11 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
     const dbB = await importDb();
     dbB.initDb(':memory:');
     const utxoB = await importUtxo();
+    // Same box, same id — `ensureEmissionBox` is a total function of the
+    // profile — which is what lets B apply A's blocks at all. Seeded before the
+    // reversed inserts on purpose: if its position in the feed mattered, the
+    // bootstrap-digest equality below would catch it.
+    await seedEmissionBox();
     for (const kb of [...karmaBoxes].reverse()) utxoB.insertBox(kb);
 
     const {

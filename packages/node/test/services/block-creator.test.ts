@@ -53,7 +53,6 @@ const testConfig = makeTestConfig({
   blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   // Mining
   orderingBlockPowTargetBits: 3072,
-  treasuryPubKey: '',
   // Net settings
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',

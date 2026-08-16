@@ -207,13 +207,21 @@ describe('seedGenesisState', () => {
     }
   });
 
-  it('mainnet seeds the proof box alone; the faucet networks seed three', async () => {
-    // Not a restatement of `isFaucetNetwork` — it pins that the proof box is
-    // OUTSIDE that gate. Inside it, mainnet would have no genesis state at all
-    // and no network identity at height 0.
-    expect((await underProfile('mainnet')).boxTypes).toEqual(['genesis_proof']);
-    expect((await underProfile('testnet')).boxTypes).toEqual(['credit', 'genesis_proof', 'karma']);
-    expect((await underProfile('devnet')).boxTypes).toEqual(['credit', 'genesis_proof', 'karma']);
+  it('mainnet seeds the proof and emission boxes; the faucet networks seed four', async () => {
+    // Not a restatement of `isFaucetNetwork` — it pins which boxes are OUTSIDE
+    // that gate. Inside it, mainnet would have no genesis state at all and no
+    // network identity at height 0; and the emission box being outside it is
+    // what lets mainnet pay a coinbase, since emission is released from that
+    // box rather than minted (TYPES_INTERFACE → EmissionBox).
+    //
+    // ⛔ **No `treasury` row on any network.** It would hold 0, and a
+    // zero-value successor is not created — the first block whose
+    // `split.treasury` is nonzero creates it.
+    expect((await underProfile('mainnet')).boxTypes).toEqual(['emission', 'genesis_proof']);
+    expect((await underProfile('testnet')).boxTypes)
+      .toEqual(['credit', 'emission', 'genesis_proof', 'karma']);
+    expect((await underProfile('devnet')).boxTypes)
+      .toEqual(['credit', 'emission', 'genesis_proof', 'karma']);
   });
 
   it('the three networks reach three distinct height-0 roots', async () => {
@@ -443,7 +451,8 @@ describe('seedGenesisState — a store that is not empty', () => {
       key: s.records.identityRecordKey(r.identityId),
       record: r.record,
     }));
-    expect(boxes.length).toBe(3);
+    // devnet (the pinned test profile): karma, credit, proof, emission.
+    expect(boxes.length).toBe(4);
     expect(records.length).toBe(1);
 
     const mirrorDb = new Database(':memory:');

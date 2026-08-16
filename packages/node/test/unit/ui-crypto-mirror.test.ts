@@ -41,6 +41,7 @@ import { extractDeclaration as extractDeclarationFrom } from './extract-declarat
 import type {
   CandidateOf,
   Post, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
+  EmissionBox, TreasuryBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
 
@@ -212,14 +213,51 @@ const GOLDEN_VOUCH_BOX: VouchBox = {
   txId: COVERAGE_TX_ID, index: 3,
 };
 
-const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> = [
-  { name: 'karma', box: GOLDEN_KARMA_BOX },
-  { name: 'credit', box: GOLDEN_CREDIT_BOX },
-  { name: 'invite', box: GOLDEN_INVITE_BOX },
-  { name: 'bond', box: GOLDEN_BOND_BOX },
-  { name: 'post_lock', box: GOLDEN_POST_LOCK_BOX },
-  { name: 'vouch', box: GOLDEN_VOUCH_BOX },
-];
+const GOLDEN_EMISSION_BOX: EmissionBox = {
+  boxType: 'emission', value: 4226400000000n,
+  guard: 'block_apply',
+  txId: COVERAGE_TX_ID, index: 4,
+};
+
+const GOLDEN_TREASURY_BOX: TreasuryBox = {
+  boxType: 'treasury', value: 77n,
+  guard: 'block_apply',
+  txId: COVERAGE_TX_ID, index: 5,
+};
+
+/**
+ * The box types the mirror covers, **keyed so coverage is a compile error.**
+ *
+ * ⛔ **`satisfies Record<MirroredBoxType, AnyBox>` is what makes the coverage
+ * structural: a box type added to the union without a fixture here is a compile
+ * error.** NODE_INTERFACE (→ the mirror's coverage rule) states the enforceable
+ * rule is coverage rather than documentation: *"with every box type in the
+ * mirror, a missing `binaryFields` entry fails mechanically instead of waiting
+ * for someone to notice the list is a manual copy of a type definition."* An
+ * array is that manual copy — an array of the union is satisfied by any subset
+ * of it, so it tracks the set only by hand. Same shape as `MINT_REASON_GOLDENS`
+ * in `@dagsocial/types`.
+ *
+ * `genesis_proof` is the one deliberate exclusion, in the type rather than by
+ * omission, and it is covered separately in the byte form only — `toUiForm`
+ * renders every `Uint8Array` as hex because that is how the UI's tx builders
+ * carry keys, and no builder carries a `payload`.
+ */
+type MirroredBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
+
+const BOX_TYPE_FIXTURES = {
+  karma: GOLDEN_KARMA_BOX,
+  credit: GOLDEN_CREDIT_BOX,
+  invite: GOLDEN_INVITE_BOX,
+  bond: GOLDEN_BOND_BOX,
+  post_lock: GOLDEN_POST_LOCK_BOX,
+  vouch: GOLDEN_VOUCH_BOX,
+  emission: GOLDEN_EMISSION_BOX,
+  treasury: GOLDEN_TREASURY_BOX,
+} satisfies Record<MirroredBoxType, AnyBox>;
+
+const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> =
+  Object.entries(BOX_TYPE_FIXTURES).map(([name, box]) => ({ name, box }));
 
 /**
  * The tx-builder form of a box: every `Uint8Array` field as a hex string, which
