@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'crypto';
 import { serializeBox, deserializeBox, deserializeBoxWithId } from '../../src/state/serialize-box.js';
 import { seedProvenance } from '../helpers.js';
-import { BOX_ID_DOMAIN, ReaderError, computeBoxId } from '@dagsocial/types';
+import { BOX_ID_DOMAIN, BOX_TYPE_TAGS, CodecError, ReaderError, computeBoxId } from '@dagsocial/types';
 import type { AnyBox, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
 
 /**
@@ -54,25 +54,27 @@ describe('serializeBox', () => {
   });
 
   it('an unassigned box tag has no decoding — the AVL value reader refuses it', () => {
-    // 9 is the first number `BOX_TYPE` does not assign (TYPES_INTERFACE →
-    // Layout — Boxes). Bytes carrying it must fail at the tag rather than parse
-    // as some other type, which is what makes the rejection a property of the
-    // tag table instead of a special case somebody has to remember.
+    // Bytes under a tag `BOX_TYPE_TAGS` does not assign must fail at the tag
+    // rather than parse as some other type, which is what makes the rejection a
+    // property of the tag table instead of a special case somebody has to
+    // remember.
     //
-    // ⛔ **The literal moves with `BOX_TYPE_TAGS`, and the next tag assignment
-    // has to move it.** Two bytes under an *assigned* tag are a complete box at
-    // value 0 — the format's floor — so they parse, and the throw lands further
-    // in, as a short read on `txId` (`truncated`). `packages/types` pins the
-    // same number in `utxo.test.ts` and in the golden corpus's reject vector,
-    // so all three move together.
+    // The tag is **derived** rather than written down, so it follows every
+    // future box type with no edit here. `packages/types` derives the same
+    // sentinel in `utxo.test.ts`; the golden corpus's reject vector names its
+    // number literally, and must — a corpus deriving its input from the code
+    // under test checks nothing.
     //
-    // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
-    // *assigned* tag put here throws too — on the fields it then misreads — so a
-    // bare `toThrow` cannot tell "this tag has no decoding" from "this tag
-    // decodes, into something else". `packages/types` pins the same property the
-    // same way, at `boxRecordFromBytes` and in the golden corpus; three sites
-    // agreeing on one property is the point.
-    const bytes = new Uint8Array([0x09, 0x00]); // unassigned tag + a value byte
+    // ⚠ **`not.toBeInstanceOf(CodecError)` is the assertion the code cannot
+    // make.** Two bytes under an *assigned* tag are a complete box at value 0 —
+    // the format's floor — so they parse and throw further in, and `CodecError`
+    // extends `ReaderError` carrying `code: 'invalid-tag'` whatever its
+    // `failure` is (`types/src/codec.ts:193`, the same code `enum8` gives an
+    // unknown tag). So the code alone cannot tell "this tag has no decoding"
+    // from "this tag decodes, into something else"; only the class separates
+    // them.
+    const FIRST_UNASSIGNED_BOX_TAG = Math.max(...Object.values(BOX_TYPE_TAGS)) + 1;
+    const bytes = new Uint8Array([FIRST_UNASSIGNED_BOX_TAG, 0x00]); // + a value byte
     let thrown: unknown;
     try {
       deserializeBox(bytes);
@@ -80,6 +82,7 @@ describe('serializeBox', () => {
       thrown = e;
     }
     expect(thrown).toBeInstanceOf(ReaderError);
+    expect(thrown).not.toBeInstanceOf(CodecError);
     expect((thrown as ReaderError).code).toBe('invalid-tag');
   });
 

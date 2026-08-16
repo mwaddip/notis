@@ -809,9 +809,9 @@ describe('block-creator', () => {
 
   describe('fill order', () => {
     /**
-     * A credit box in the store and a signed transfer spending it, leaving
-     * `fee` behind. `padding` widens the transaction without changing the fee,
-     * which is how a rate is told apart from a total.
+     * A credit box in the store and a transfer spending it, naming `fee` in a
+     * `FeeBox` output. `padding` widens the transaction without changing the
+     * fee, which is how a rate is told apart from a total.
      */
     async function seedCreditSpend(
       label: string,
@@ -832,10 +832,14 @@ describe('block-creator', () => {
 
       const out = value - fee;
       const share = out / BigInt(padding);
-      const outputs = Array.from({ length: padding }, (_, i) => ({
+      const outputs: unknown[] = Array.from({ length: padding }, (_, i) => ({
         ...candidate,
         value: i === 0 ? out - share * BigInt(padding - 1) : share,
       }));
+      // Zero fee means no box (NODE_INTERFACE → the credit transition row).
+      if (fee > 0n) {
+        outputs.push({ boxType: 'fee' as const, value: fee, guard: 'block_apply' as const });
+      }
       return {
         inputs: [box.id!],
         outputs,

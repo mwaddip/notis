@@ -400,8 +400,14 @@ export function createApp(config: Config): express.Express {
       // and the treasury holds what is out of circulation with no rule to
       // release it (ARCHITECTURE → Treasury), so counting either would report a
       // supply larger than anyone can hold. Keyed on `credit` by name rather
-      // than by excluding the two, so a later credit-bearing box type is a
+      // than by excluding them, so a later credit-bearing box type is a
       // deliberate addition here.
+      //
+      // ⛔ **`fee` is credit-bearing and is still not summed**, because the sum
+      // could only ever be zero: block application consumes a fee box in the
+      // block that created it (MINING_INTERFACE → Coinbase Application), so no
+      // fee box is unspent at any height a caller can observe. Its value
+      // reaches this total through the coinbase, as a `credit` box.
       getTotalCredits: () => {
         const row = db
           .prepare(

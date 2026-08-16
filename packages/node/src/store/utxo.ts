@@ -288,6 +288,18 @@ function rowToBox(row: UtxoRow): AnyBox {
         ...prov,
       };
 
+    // Created by a credit-side user transaction and consumed by the same
+    // block's application, so a fee box is only ever read back inside the block
+    // that made it (MINING_INTERFACE → Coinbase Application).
+    case 'fee':
+      return {
+        id: row.id,
+        boxType: 'fee',
+        value: row.value,
+        guard: BOX_GUARDS.fee,
+        ...prov,
+      };
+
     default:
       throw new Error(`Unknown box_type: ${row.box_type}`);
   }
@@ -833,13 +845,14 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
       } satisfies VouchExtra;
       break;
     }
-    // No `owner` and no per-type fields on either, so the columns the two
-    // share with every box carry the whole box — the same shape
+    // No `owner` and no per-type fields on any of the three, so the columns
+    // they share with every box carry the whole box — the same shape
     // `genesis_proof` has, minus its payload. `extraData` stays `{}` rather
     // than NULL so `rowToBox`'s `JSON.parse` sees the same empty object every
     // other ownerless arm does.
     case 'emission':
-    case 'treasury': {
+    case 'treasury':
+    case 'fee': {
       extraData = {};
       break;
     }

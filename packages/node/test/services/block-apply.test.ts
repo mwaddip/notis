@@ -45,6 +45,7 @@ import type { TestIdentity } from '../helpers.js';
 import {
   ZERO_HASH,
   changeBoxOf,
+  feeBoxOf,
   hex,
   makeApplicableBlock,
   makeCreditBox,
@@ -138,6 +139,7 @@ async function importUtxo() {
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getCreditBoxes: (owner: Uint8Array) => AnyBox[];
     getBox: (boxId: string) => unknown;
+    getUnspentBoxes: () => AnyBox[];
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
   };
 }

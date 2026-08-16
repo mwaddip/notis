@@ -25,7 +25,7 @@ import type { IdentityRecord } from '../store/identity-records.js';
  * stays open for future box kinds without ever colliding with an entity
  * discriminator.
  *
- * ⚠ **`enum8(boxType)` — `0` karma … `8` treasury — is the box numbering, and
+ * ⚠ **`enum8(boxType)` — `0` karma … `9` fee — is the box numbering, and
  * this package must never carry a second one.** Composing a local tag with the
  * record's own, `tag ‖ boxRecordBytes`, writes the box type twice in adjacent
  * bytes under two schemes nothing forces to agree, and they need not differ by

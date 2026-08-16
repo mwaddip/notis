@@ -380,29 +380,18 @@ function outputBoxIds(tx: UtxoTransaction, txId: string): string[] {
  * included — a zero-fee transfer is valid consensus and holds a credit slot
  * until a paying one displaces it (MEMPOOL_INTERFACE → Fee floor).
  *
- * ⛔ **The class is decided by `isCreditSideTx` alone, never by whether the fee
- * could be computed.** Inputs resolve against the confirmed set and pending
- * outputs — chaining onto one's own pending change is ordinary here — but an
- * input resolving to neither means only that this node cannot price the entry,
- * not that it changed ledgers. Such an entry bids `0`, which puts it first in
- * line to be evicted; folding it into the karma class instead would let an
- * unpriceable credit transaction occupy a slot that nothing is allowed to
- * reclaim.
+ * ⛔ **The bid is a property of the transaction's own bytes and resolves
+ * nothing** (MEMPOOL_INTERFACE → Fee floor). The fee is a `FeeBox` output the
+ * transaction names, so a node prices an entry exactly whether or not it has
+ * ever seen the inputs — the same standing the class already has, since
+ * `isCreditSideTx` decides that from the same bytes. **There is no unpriceable
+ * credit entry**, and the pool's two questions are one shape.
  */
 export function bidOf(tx: UtxoTransaction): bigint | null {
   if (!isCreditSideTx(tx)) return null;
-
-  let inputSum = 0n;
-  for (const boxId of tx.inputs ?? []) {
-    const box = getBox(boxId) ?? findPendingOutput(boxId);
-    if (!box) return 0n;
-    inputSum += box.value;
-  }
-  const outputSum = (tx.outputs ?? []).reduce((sum, out) => sum + out.value, 0n);
-  // `validateTx` admits no credit surplus, but admission is not the only caller
-  // — reorg re-insertion arrives here directly — so a surplus bids nothing
-  // rather than being stored as a negative the ordering would read as cheapest.
-  return outputSum > inputSum ? 0n : inputSum - outputSum;
+  return (tx.outputs ?? [])
+    .filter((out) => out.boxType === 'fee')
+    .reduce((sum, out) => sum + out.value, 0n);
 }
 
 export function insertUtxoTx(

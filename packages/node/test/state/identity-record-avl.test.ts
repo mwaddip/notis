@@ -14,6 +14,7 @@ import {
   applyBlockMutations,
   type RecordPut,
 } from '../../src/state/avl-prover.js';
+import { BOX_TYPE_TAGS } from '@dagsocial/types';
 import type { KarmaBox, AnyBox } from '@dagsocial/types';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
 import { fixtureProvenance } from '../helpers.js';
@@ -76,10 +77,11 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   });
 
   it('NO box type is shadowed by the record tag', () => {
-    // Every box type, not just karma: a record tag chosen inside the 0x00-0x08
-    // range would make one real box type decode as a record (deserializeAvlValue
-    // tests the record tag first) and make deserializeBox reject it outright.
-    // Asserting only the tag literal would leave that consequence untested.
+    // Every box type, not just karma: a record tag chosen inside the assigned
+    // range of `BOX_TYPE_TAGS` would make one real box type decode as a record
+    // (deserializeAvlValue tests the record tag first) and make deserializeBox
+    // reject it outright. Asserting only the tag literal would leave that
+    // consequence untested.
     const owner = new Uint8Array(randomBytes(32));
     // `withProvenance` mirrors `makeKarmaBox` above: a caller-chosen id (the AVL
     // key, controlled so the tag-collision assertions below are readable) plus
@@ -134,20 +136,20 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const bytes = serializeIdentityRecord(REC);
     const val = deserializeAvlValue(bytes);
     expect(val.kind).toBe('record');
-    // And the record's tag byte is not one any box can emit.
-    // Every assigned box tag, `karma: 0` … `treasury: 8`. ⛔ **The range is
-    // load-bearing and grows with `BOX_TYPE_TAGS`** — a set that understates it
-    // still passes, because 0x80 is in neither, so nothing here fails when a
-    // tag is added.
-    const boxTags = new Set([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+    // And the record's tag byte is not one any box can emit. ⛔ **The set is
+    // read from `BOX_TYPE_TAGS` rather than written down**: a hand-kept set
+    // that understates the range still passes, because 0x80 is in neither, so
+    // nothing here would fail when a tag is added.
+    const boxTags = new Set<number>(Object.values(BOX_TYPE_TAGS));
     expect(boxTags.has(bytes[0]!)).toBe(false);
   });
 
   it('the record tag is outside the box-type range, with the high bit set', () => {
     expect(IDENTITY_RECORD_TAG).toBe(0x80);
-    // "box" vs "not a box" is a single bit test, and 0x00-0x08 stays open.
+    // "box" vs "not a box" is a single bit test, and the whole assigned range
+    // below the high bit stays open to `BOX_TYPE_TAGS`.
     expect(IDENTITY_RECORD_TAG & 0x80).toBe(0x80);
-    expect(IDENTITY_RECORD_TAG).toBeGreaterThan(0x08);
+    expect(IDENTITY_RECORD_TAG).toBeGreaterThan(Math.max(...Object.values(BOX_TYPE_TAGS)));
     expect(serializeIdentityRecord(REC)[0]).toBe(IDENTITY_RECORD_TAG);
   });
 

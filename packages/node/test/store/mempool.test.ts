@@ -182,8 +182,14 @@ function creditTxWithInput(label: string): unknown {
 }
 
 /**
- * A credit entry that really bids: its input is a credit box seeded into the
- * UTXO store, so the pool resolves it and records `input − output` as the fee.
+ * A credit entry that really bids: it names `inputValue − outputValue` in a
+ * `FeeBox` output, which is the whole of what the pool reads.
+ *
+ * ⛔ **The seeded box is not what makes the bid readable.** `bidOf` resolves
+ * nothing (MEMPOOL_INTERFACE → Fee floor), so the fee is legible from the
+ * transaction's own bytes; the box is here because these fixtures are otherwise
+ * real transactions and the conflict gate reads their inputs.
+ *
  * `padding` widens the transaction, which is how a test separates a fee from a
  * fee RATE — the same fee over more bytes is a worse bid.
  */
@@ -204,12 +210,18 @@ function seededCreditTx(
   };
   const id = computeBoxId(box as never);
   const share = outputValue / BigInt(padding);
-  const outputs = Array.from({ length: padding }, (_, i) => ({
+  const outputs: unknown[] = Array.from({ length: padding }, (_, i) => ({
     boxType: 'credit' as const,
     value: i === 0 ? outputValue - share * BigInt(padding - 1) : share,
     owner: new Uint8Array(owner),
     guard: 'owner_signature' as const,
   }));
+  const fee = inputValue - outputValue;
+  // Zero fee means no box, so a zero-bidding entry carries none — which is
+  // exactly the shape the flood cases above rely on.
+  if (fee > 0n) {
+    outputs.push({ boxType: 'fee' as const, value: fee, guard: 'block_apply' as const });
+  }
   return {
     tx: { inputs: [id], outputs, signatures: {}, protocolVersion: 1 },
     box: { ...box, id },
