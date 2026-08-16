@@ -95,6 +95,19 @@ sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be 
    Not merged ahead of it — one PR shows the rule and its implementation together, so a reviewer can
    check they agree instead of taking it on trust. It also means the executor's tree already holds the
    contract they are building against.
+7. **After the merge, refresh `prompts/SESSION-HANDOFF.md` and `prompts/OUTSTANDING-WORK.md` in ONE
+   pass** (user, 2026-08-16). They are one operation: the handoff carries the summary and the
+   ordering, the inventory carries the measurement, the anchors and the blockers. **An inventory left
+   behind gives no sign of it** — its entries keep their verdicts and their anchors, so a stale item
+   reads exactly like a current one.
+   - **Every item in the handoff's NEXT list cites its `OUTSTANDING-WORK` section**, so the entry is
+     read *before* a job starts and updated *when it ends*.
+   - **Mark an incremental inventory pass as NOT a re-derivation**, and name which entries were
+     re-read. That file's header claims every item was re-derived against the tree; appending to that
+     claim without doing the work makes the whole file untrustworthy rather than just the new part.
+   - ⚠ **Re-read the claim, not just the line.** A pin that still resolves is not evidence the claim
+     it supported still holds — an anchor can keep reading correctly while the code path around it
+     moves and the conclusion goes false.
 
 ### Prompt boilerplate
 
