@@ -506,6 +506,14 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
  * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.
  *
+ * `emission-release` and `treasury-accrue` take an **empty** subject, and
+ * `lp(subject)` writes that as a zero length rather than as an absence. Exactly
+ * one emission successor and one treasury successor exist per height, so the
+ * height alone separates every instance within a reason and the tag byte
+ * separates the reasons — nothing is derived from a position in the block.
+ * Neither creates credits: both name a box that block application spends and
+ * recreates (NODE_INTERFACE → Reason and subject table).
+ *
  * **Retired reasons — reserved, never reuse:** `'author-reward'`,
  * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
  * prune settlement refunds no liker). None of them holds a number in
@@ -523,7 +531,9 @@ export type MintReason =
   | 'prune-refund-author'
   | 'invite-claim'
   | 'bond-settle'
-  | 'bond-return';
+  | 'bond-return'
+  | 'emission-release'
+  | 'treasury-accrue';
 
 /**
  * The `MintReason` tag table.
@@ -561,6 +571,8 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
   'invite-claim': 8,
   'bond-settle': 9,
   'bond-return': 10,
+  'emission-release': 11,
+  'treasury-accrue': 12,
 });
 
 /**

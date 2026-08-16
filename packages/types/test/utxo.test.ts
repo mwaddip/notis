@@ -346,16 +346,42 @@ function u32BEMirror(n: number): Uint8Array {
   return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
 }
 
-const ALL_MINT_REASONS: MintReason[] = [
-  'coinbase',
-  'vouch-settle',
-  'like-payout',
-  'postlock-unlock',
-  'postlock-remainder',
-  'decay',
-  'genesis',
-  'prune-refund-author',
-];
+/**
+ * One frozen mint id per `MintReason`, at height 1 with subject `4x 0x5a` — the
+ * conformance artifact an independent implementation needs, and the only thing
+ * that catches a **renumber**. A renumber moves every mint txId carrying the tag
+ * and, through `computeCandidateBoxId`, every box id minted under it, while
+ * "every reason derives a distinct id" stays green: a permutation keeps them all
+ * distinct. Do not "fix" a failure here by editing a hash — the derivation is
+ * protocol-breaking and unversioned.
+ *
+ * `Readonly<Record<MintReason, string>>` is what makes the coverage structural: a
+ * member added to the union without a row here is a **compile error**, so no tag
+ * can ship unpinned. A list typed `MintReason[]` cannot carry that property —
+ * an array of the union is satisfied by any subset of it, so it tracks the set
+ * only by hand.
+ */
+const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
+  coinbase:               '32fe945568d48465eb9a2b74d506b0ec16395136fbb4357c8de21cef5a105c0a',
+  'vouch-settle':         '09a5a40e4424fd0f4897aff225d32500975941acb7ef4972bf30a71f2c6a62aa',
+  'like-payout':          '53a7f0ab4f60e54e0b7bbc694c0082e777c6e4ebf910db321dcfb4c1d222f59a',
+  'postlock-unlock':      '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f',
+  'postlock-remainder':   '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d',
+  decay:                  'a483b6263e7a5ed49246aca51adae2c12e0cd24958412657ced84f64dca0e77a',
+  genesis:                '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2',
+  'prune-refund-author':  'aa42ffca37cb6d20d30cc5afe2c691567fd31106a3a79a21e715cf616b863a32',
+  'invite-claim':         'f59f898a63637ffd1c7ebc705ca88321bfc9035f23caa047366d56d49b1e8173',
+  'bond-settle':          'b036b7e30827db46de4d98f80c982b978aa011e7a1a5a3f11389788e335eafde',
+  'bond-return':          '7b6ffca09e60c23b597e01b4e217846117744e64b444ca41523e05912f5705c1',
+  'emission-release':     '4cb4b95c47aa83dc1330235f096c09348ba7735ad7871eb18f21160ff2f5f0a1',
+  'treasury-accrue':      '83b6e7983c2c14be4bdc71da51278d43372a9123ef071a5cf06aefd80fedca65',
+};
+
+const MINT_GOLDEN_HEIGHT = 1;
+const MINT_GOLDEN_SUBJECT = new Uint8Array(4).fill(0x5a);
+
+/** Every member of the union, inherited from the goldens' exhaustiveness. */
+const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
 
 /**
  * Frozen golden vectors for the provenance derivation — the cross-implementation
@@ -1236,33 +1262,17 @@ describe('computeMintTxId', () => {
   });
 
   it('golden vector: the WHOLE reason tag table is frozen', () => {
-    // ⚠ Added because the mutation check caught a gap this phase created. The
-    // reason is an `enum8` tag now, and a RENUMBER moves every mint txId
-    // carrying the tag and, through computeCandidateBoxId, every box id minted
-    // under it. Two goldens (coinbase, decay) covered two of the eight tags,
-    // and "every reason derives a distinct mint id" is renumber-BLIND — a
-    // permutation keeps them all distinct. Swapping any two un-goldened tags
-    // was a silent consensus change.
+    // The reason is an `enum8` tag, so the thing to catch is a RENUMBER — and
+    // "every reason derives a distinct mint id" is renumber-BLIND, since a
+    // permutation keeps them all distinct. One frozen id per member is what
+    // makes swapping two tags fail instead of silently changing consensus.
     //
-    // One frozen id per member closes that, and it is the conformance artifact
-    // an independent implementation needs anyway. Height 1, subject 4x 0x5a.
-    const subject = new Uint8Array(4).fill(0x5a);
-    const FROZEN: ReadonlyArray<readonly [MintReason, string]> = [
-      ['coinbase',            '32fe945568d48465eb9a2b74d506b0ec16395136fbb4357c8de21cef5a105c0a'],
-      ['vouch-settle',        '09a5a40e4424fd0f4897aff225d32500975941acb7ef4972bf30a71f2c6a62aa'],
-      ['like-payout',         '53a7f0ab4f60e54e0b7bbc694c0082e777c6e4ebf910db321dcfb4c1d222f59a'],
-      ['postlock-unlock',     '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f'],
-      ['postlock-remainder',  '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d'],
-      ['decay',               'a483b6263e7a5ed49246aca51adae2c12e0cd24958412657ced84f64dca0e77a'],
-      ['genesis',             '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2'],
-      ['prune-refund-author', 'aa42ffca37cb6d20d30cc5afe2c691567fd31106a3a79a21e715cf616b863a32'],
-    ];
-    for (const [reason, id] of FROZEN) {
-      expect(computeMintTxId(1, reason, subject), reason).toBe(id);
+    // Coverage of the union is a compile-time property of the goldens' type,
+    // not an assertion here (→ `MINT_REASON_GOLDENS`).
+    for (const [reason, id] of Object.entries(MINT_REASON_GOLDENS)) {
+      expect(computeMintTxId(MINT_GOLDEN_HEIGHT, reason as MintReason, MINT_GOLDEN_SUBJECT), reason)
+        .toBe(id);
     }
-    // And the table covers the type exhaustively — a member added without a
-    // frozen vector fails here rather than shipping unpinned.
-    expect(FROZEN.map(([r]) => r).sort()).toEqual([...ALL_MINT_REASONS].sort());
   });
 
   it('cross-reason injectivity is STRUCTURAL now — the prefix-free rule is retired', () => {
@@ -1319,6 +1329,51 @@ describe('computeMintTxId', () => {
     // Still total on a non-byte-view subject: the length prefix takes the
     // sentinel rather than throwing.
     expect(() => computeMintTxId(1, 'decay', undefined as unknown as Uint8Array)).not.toThrow();
+  });
+
+  it('the two empty-subject reasons separate from each other and from an empty-subject peer', () => {
+    // `emission-release` and `treasury-accrue` carry no subject, so the tag byte
+    // is the whole separator between them at one height — including against a
+    // reason whose subject merely happens to be empty in this call.
+    const empty = new Uint8Array(0);
+    const ids = (['emission-release', 'treasury-accrue', 'coinbase'] as const)
+      .map((r) => computeMintTxId(70000, r, empty));
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('an empty-subject reason still separates heights', () => {
+    // The property the empty subject rests on. With nothing to discriminate
+    // inside a reason, the height is the only thing left, and exactly one
+    // emission successor and one treasury successor exist per height
+    // (NODE_INTERFACE → Reason and subject table).
+    const empty = new Uint8Array(0);
+    for (const reason of ['emission-release', 'treasury-accrue'] as const) {
+      const heights = [0, 1, 2, 70000];
+      const ids = heights.map((h) => computeMintTxId(h, reason, empty));
+      expect(new Set(ids).size, reason).toBe(heights.length);
+    }
+  });
+
+  it('an empty subject encodes as a zero LENGTH, not as an absence', () => {
+    // Recomputed from the layout rather than from the function under test:
+    // MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject). At height 1
+    // with an empty subject that is three bytes — 0x01, the tag, and a zero
+    // length — so the tag numbers are pinned here independently of the goldens.
+    const mirror = (tail: number[]) =>
+      createHash('blake2b512')
+        .update(Buffer.from(MINT_ID_DOMAIN))
+        .update(Buffer.from(tail))
+        .digest()
+        .subarray(0, 32)
+        .toString('hex');
+
+    const empty = new Uint8Array(0);
+    expect(computeMintTxId(1, 'emission-release', empty)).toBe(mirror([0x01, 0x0b, 0x00]));
+    expect(computeMintTxId(1, 'treasury-accrue', empty)).toBe(mirror([0x01, 0x0c, 0x00]));
+
+    // Drop the length byte and the id moves: present-and-empty is not absent,
+    // which is what keeps the subject self-delimiting at width zero.
+    expect(computeMintTxId(1, 'emission-release', empty)).not.toBe(mirror([0x01, 0x0b]));
   });
 
   it('does not throw on an unencodable height (M-5 no-panic)', () => {
