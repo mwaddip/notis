@@ -120,12 +120,14 @@ export type BoxContent =
   | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array }
   | { boxType: 'vouch'; value: bigint; voucherId: Uint8Array; targetId: Uint8Array }
   /**
-   * No trailing fields on either — the content encoding is the shared prefix
-   * alone. Both members carry `boxType` and `value` and nothing else, which is
-   * what a reader assuming at least one field after the prefix gets wrong.
+   * No trailing fields on any of the three — the content encoding is the shared
+   * prefix alone. Each member carries `boxType` and `value` and nothing else,
+   * which is what a reader assuming at least one field after the prefix gets
+   * wrong.
    */
   | { boxType: 'emission'; value: bigint }
-  | { boxType: 'treasury'; value: bigint };
+  | { boxType: 'treasury'; value: bigint }
+  | { boxType: 'fee'; value: bigint };
 
 /** The tag table, restated from the contract so a renumber fails here too. */
 const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
@@ -138,6 +140,7 @@ const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
   6: 'vouch',
   7: 'emission',
   8: 'treasury',
+  9: 'fee',
 };
 
 const boxContentCodec: ValueCodec<BoxContent> = {
@@ -193,6 +196,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType: 'emission', value };
       case 'treasury':
         return { boxType: 'treasury', value };
+      case 'fee':
+        return { boxType: 'fee', value };
       default:
         throw new Error(`boxContent: unknown boxType ${String(j.boxType)}`);
     }
@@ -258,6 +263,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType, value, voucherId: readBytesN(r, 32), targetId: readBytesN(r, 32) };
       case 'emission':
       case 'treasury':
+      case 'fee':
         // The box is complete at the prefix. An independent reader is where a
         // phantom trailing field would show up as a decode failure rather than
         // as agreement between a writer and a reader that share the mistake.

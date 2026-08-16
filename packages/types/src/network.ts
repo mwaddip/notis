@@ -209,7 +209,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // writer passing `0` instead of the stored value compiles and silently moves a
   // probation deadline or forfeits a bond that had vested.
   inviteProbationBlocks: 540,
-  creditMinerRewardDelay: 10, // 720 ÷ 72 — small enough to spend, large enough to observe immaturity
+  creditMinerRewardDelay: 10, // small enough to spend, large enough to observe immaturity
   bootstrapPeriodBlocks: 100, // 10000 ÷ 100
 
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable

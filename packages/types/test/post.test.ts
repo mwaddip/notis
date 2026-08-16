@@ -433,7 +433,7 @@ describe('constants', () => {
     expect(CREDIT_FIXED_RATE_BLOCKS).toBe(1_051_200);
     expect(CREDIT_EPOCH_BLOCKS).toBe(129_600);
     expect(CREDIT_REWARD_REDUCTION).toBe(2n * 10n ** 8n);
-    expect(CREDIT_MINER_REWARD_DELAY).toBe(720);
+    expect(CREDIT_MINER_REWARD_DELAY).toBe(1440); // 24 hours at 60s blocks
     expect(COINBASE_TREASURY_PCT).toBe(5);
     expect(ORDERING_BLOCK_POW_TARGET_FLOOR).toBe(2304);
   });
