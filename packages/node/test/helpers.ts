@@ -21,6 +21,7 @@ import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
+import type { AvlProverHandle, RecordPut } from '../src/state/avl-prover.js';
 import type {
   UtxoTransaction,
   AnyBox,
@@ -779,6 +780,41 @@ export async function seedEmissionBox(): Promise<void> {
   const { ensureEmissionBox } = await import('../src/store/system.js');
   const { emissionTotal } = await import('../src/services/block-creator.js');
   ensureEmissionBox(emissionTotal(), 0);
+}
+
+/**
+ * Activate the singleton prover over everything the store already holds —
+ * **committed state first, tree second**, which is the order
+ * `seedGenesisState` itself runs in (`ensureEmissionBox`, then
+ * `bootstrapAvlProver`, one function).
+ *
+ * ⛔ **The ordering is the whole contract of this helper, and it is
+ * load-bearing** (NODE_INTERFACE → AVL+ State Root). A box that enters the store
+ * *after* the bootstrap is absent from the tree, so the first block that spends
+ * it asks the tree to remove a key it never held — a `DivergedStateTreeError`,
+ * and a node that stops. `makeApplicableBlock` seeds the emission box lazily on
+ * its first call, which is why the seed belongs here rather than in each suite:
+ * a fixture that mines a block and bootstraps by hand has no way to get this
+ * right by accident.
+ *
+ * ⚠ **It owns the ordering and nothing else.** Boxes a test wants in the tree
+ * must be inserted before it is called; anything a test wants *outside* the tree
+ * it inserts after, deliberately. Identity records are the caller's too — pass
+ * them, because a feed of only boxes produces a tree missing every record and a
+ * different `stateRoot`.
+ *
+ * Returns the handle so a caller can read the digest it starts from.
+ */
+export async function activateProverOverStore(
+  records: RecordPut[] = [],
+  height = 0,
+): Promise<AvlProverHandle> {
+  await seedEmissionBox();
+  const { createAvlProver, bootstrapAvlProver } = await import('../src/state/avl-prover.js');
+  const { getUnspentBoxes } = await import('../src/store/utxo.js');
+  const handle = createAvlProver();
+  bootstrapAvlProver(handle, getUnspentBoxes(), height, records);
+  return handle;
 }
 
 export async function makeApplicableBlock(

@@ -7,6 +7,7 @@ import {
   makeCreditBox,
   makeCreditTx,
   makeTestIdentity,
+  activateProverOverStore,
 } from '../helpers.js';
 
 /**
@@ -67,12 +68,13 @@ describe('the fee box never reaches the prover', () => {
         ...actual,
         applyBlockMutations: (
           prover: Parameters<typeof actual.applyBlockMutations>[0],
+          height: Parameters<typeof actual.applyBlockMutations>[1],
           consumed: string[],
           created: AnyBox[],
-          recordPuts: Parameters<typeof actual.applyBlockMutations>[3],
+          recordPuts: Parameters<typeof actual.applyBlockMutations>[4],
         ) => {
           feeds.push({ consumed: [...consumed], created: [...created] });
-          return actual.applyBlockMutations(prover, consumed, created, recordPuts);
+          return actual.applyBlockMutations(prover, height, consumed, created, recordPuts);
         },
       };
     });
@@ -86,9 +88,8 @@ describe('the fee box never reaches the prover', () => {
     const box = makeCreditBox(1000n, sender.userId, 0, 1);
     utxo.insertBox(box);
 
+    await activateProverOverStore();
     const avl = await import('../../src/state/avl-prover.js');
-    const handle = avl.createAvlProver();
-    avl.bootstrapAvlProver(handle, utxo.getUnspentBoxes(), 0, []);
     expect(avl.tryGetAvlProver()).not.toBeNull();
 
     const blockApply = (await import('../../src/services/block-apply.js')) as unknown as {

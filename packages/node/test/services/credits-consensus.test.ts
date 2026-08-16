@@ -39,7 +39,7 @@ import {
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  type Stored, fixturePostId, seedPostTx } from '../helpers.js';
+  type Stored, fixturePostId, seedPostTx, activateProverOverStore } from '../helpers.js';
 
 // Same shape as block-apply.test.ts — small epoch, internal miner. Every field
 // below is kept verbatim; `makeTestConfig` only fills the thirteen `Config`
@@ -302,9 +302,13 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const bob = makeTestIdentity();
     const seeded = seedCreditBox(utxo.insertBox, alicePub, 500n);
 
+    // Block 3 spends this post's karma box, so it has to be in the store before
+    // the tree is built from it — the transaction itself is pooled later.
+    const author = makeTestIdentity();
+    const { tx: postTx } = await seedPostTx(author, 'convergence fixture');
+
     // src/index.ts wiring: singleton prover bootstrapped from unspent boxes.
-    const handle = avl.createAvlProver();
-    avl.bootstrapAvlProver(handle, utxo.getUnspentBoxes(), 0, []);
+    const handle = await activateProverOverStore();
 
     // A block or two of honest history.
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
@@ -330,8 +334,6 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     // The live prover has not moved yet: pooling settles nothing.
     const preBlockDigest = digestHex(handle);
 
-    const author = makeTestIdentity();
-    const { tx: postTx } = await seedPostTx(author, 'convergence fixture');
     mempool.insertUtxoTx(postTx, 1000);
     bc.startBlockCreator(testConfig);
     const block3 = await mineNextBlock(bc);

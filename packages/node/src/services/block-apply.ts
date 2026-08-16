@@ -567,7 +567,9 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   const handle = tryGetAvlProver();
   if (handle) {
     const { consumed, created, recordPuts } = proverFeedFromJournal(journal);
-    const computedDigest = applyBlockMutations(handle.prover, consumed, created, recordPuts);
+    const computedDigest = applyBlockMutations(
+      handle.prover, block.header.height, consumed, created, recordPuts,
+    );
 
     // Verify against block header (gated). The prover is restored by the
     // funnel's single rollback point, not here.
@@ -747,7 +749,7 @@ export function computePostBlockStateRoot(
       // The digest rides out on the throw: nothing this run did may survive.
       throw new SpeculativeRollback(
         Buffer.from(
-          applyBlockMutations(handle.prover, consumed, created, recordPuts),
+          applyBlockMutations(handle.prover, height, consumed, created, recordPuts),
         ).toString('hex'),
       );
     })();

@@ -35,6 +35,7 @@ import {
   seedProvenance,
   signTransaction,
   type TestIdentity,
+  activateProverOverStore,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -149,14 +150,10 @@ function dumpState(db: Database.Database) {
 }
 
 async function activateProver() {
-  const avlMod = await importAvl();
-  const utxo = await importUtxo();
-  const handle = avlMod.createAvlProver();
-  const unspent = utxo.getUnspentBoxes();
-  if (unspent.length > 0) {
-    avlMod.bootstrapAvlProver(handle, unspent, 0, []);
-  }
-  expect(avlMod.tryGetAvlProver()).not.toBeNull();
+  // Ordering lives in the shared helper: committed state into the store, then
+  // the tree built from it (helpers.ts → `activateProverOverStore`).
+  const handle = await activateProverOverStore();
+  expect((await importAvl()).tryGetAvlProver()).not.toBeNull();
   return handle;
 }
 

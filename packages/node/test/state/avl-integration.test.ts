@@ -97,7 +97,7 @@ describe('AVL integration — full pipeline', () => {
       makeKarmaBox(nextId(), BigInt(100 + i), 1, i),
     );
     for (const b of created1) allBoxes.set(b.id, b);
-    const d1 = applyBlockMutations(handle.prover, [], created1);
+    const d1 = applyBlockMutations(handle.prover, 1, [], created1);
     checkpointProver(handle, 1);
 
     expect(d1).toBeInstanceOf(Uint8Array);
@@ -122,7 +122,7 @@ describe('AVL integration — full pipeline', () => {
     );
     for (const b of created2) allBoxes.set(b.id, b);
 
-    const d2 = applyBlockMutations(handle.prover, consumed2, created2);
+    const d2 = applyBlockMutations(handle.prover, 2, consumed2, created2);
     checkpointProver(handle, 2);
 
     expect(d2).toBeInstanceOf(Uint8Array);
@@ -159,7 +159,7 @@ describe('AVL integration — full pipeline', () => {
 
       for (const b of created) allBoxes.set(b.id, b);
 
-      applyBlockMutations(handle.prover, consumed, created);
+      applyBlockMutations(handle.prover, block, consumed, created);
       checkpointProver(handle, block);
 
       const digest = handle.prover.digest();
