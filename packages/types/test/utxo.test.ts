@@ -27,7 +27,7 @@ import {
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -580,7 +580,8 @@ describe('genesis_proof', () => {
     // `lp` and not raw bytes appended: without the count an empty payload is
     // indistinguishable from the end of the box, and a one-byte payload of
     // `00` would share its encoding with an empty one. Three bytes is the
-    // smallest legal box of any type.
+    // smallest box that carries a tail; `emission` and `treasury` reach two by
+    // carrying none.
     expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array(0))))).toBe('030000');
     expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('03000100');
   });
@@ -661,6 +662,148 @@ describe('genesis_proof', () => {
     // the primitive would have caught along with this box — and it must not be.
     const tree = { utxoTxIds: [], utxoTxs: [overBound], pruneEntries: [], coinbaseOutputs: [] };
     expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// emission and treasury — the two types whose encoding stops at the prefix
+// ---------------------------------------------------------------------------
+
+/**
+ * Tags 7 and 8, and **no trailing fields on either** (TYPES_INTERFACE → Layout
+ * — Boxes). Neither box names an owner — block application is the only spender
+ * and `block_apply` already says so — so the content encoding is the shared
+ * `enum8(boxType) ‖ vlqU64(value)` and nothing else.
+ *
+ * **The empty tail is the shape the rest of the corpus does not hold.** Every
+ * other arm writes at least one field, so a reader that assumed something
+ * follows the prefix would be correct on every one of them and wrong only here.
+ * The round-trips below are what makes "an empty tail is representable" a
+ * checked property rather than an argument from the encoder's shape.
+ *
+ * Hand-assembled from the layout table, not copied from the encoder's output —
+ * the file's idiom for a frozen byte string, and the only form that makes a
+ * vector an independent check rather than a screenshot.
+ *
+ *   07 | 64     — emission, value 100
+ *   08 | 64     — treasury, value 100
+ *   ^tag ^vlqU64(value)
+ */
+const EMISSION_CANDIDATE: CandidateOf<EmissionBox> = {
+  boxType: 'emission', value: 100n, guard: 'block_apply',
+};
+const TREASURY_CANDIDATE: CandidateOf<TreasuryBox> = {
+  boxType: 'treasury', value: 100n, guard: 'block_apply',
+};
+
+/** The tailed arms, at their own floor — one candidate per type that has a tail. */
+const TAILED_CANDIDATES: AnyBoxCandidate[] = [
+  { boxType: 'karma', value: 0n, owner, guard: 'owner_signature' },
+  { boxType: 'credit', value: 0n, owner, guard: 'owner_signature' },
+  { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'invite_dual' },
+  { boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(0), guard: 'unspendable' },
+  { boxType: 'bond', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'block_apply' },
+  { boxType: 'post_lock', value: 0n, originalValue: 0n, owner, guard: 'block_apply' },
+  { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+];
+
+describe('emission and treasury', () => {
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+  it('each encodes to its tag and value, and nothing else', () => {
+    expect(hexOf(canonicalBoxBytes(EMISSION_CANDIDATE))).toBe('0764');
+    expect(hexOf(canonicalBoxBytes(TREASURY_CANDIDATE))).toBe('0864');
+    expect(canonicalBoxBytes(EMISSION_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.emission);
+    expect(canonicalBoxBytes(TREASURY_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.treasury);
+  });
+
+  it('two bytes is the smallest legal box of any type', () => {
+    // The prefix with nothing after it. The nearest type is `genesis_proof` at
+    // `03 00 00`, three bytes, because its empty payload still spends a length
+    // prefix. Pinned so the claim in TYPES_INTERFACE → Layout — Boxes has a
+    // test under it.
+    const emptyEmission: CandidateOf<EmissionBox> = { ...EMISSION_CANDIDATE, value: 0n };
+    const emptyTreasury: CandidateOf<TreasuryBox> = { ...TREASURY_CANDIDATE, value: 0n };
+    const smallest = canonicalBoxBytes(emptyEmission);
+    expect(hexOf(smallest)).toBe('0700');
+    expect(smallest.length).toBe(2);
+    expect(canonicalBoxBytes(emptyTreasury).length).toBe(2);
+    // Nothing else reaches two. Every other arm carries a tail, so this is the
+    // floor for the whole format rather than for these two types.
+    for (const candidate of TAILED_CANDIDATES) {
+      expect(canonicalBoxBytes(candidate).length, candidate.boxType).toBeGreaterThan(2);
+    }
+  });
+
+  it('the tag alone separates them at equal value', () => {
+    // The `invite`/`bond` case with the trailing fields removed: same value,
+    // different type, and byte 0 is the whole of the difference. The ids part
+    // on the provenance `computeBoxId` appends, not on the content bytes.
+    const a = hexOf(canonicalBoxBytes(EMISSION_CANDIDATE));
+    const b = hexOf(canonicalBoxBytes(TREASURY_CANDIDATE));
+    expect(a.slice(2)).toBe(b.slice(2));
+    expect(a.slice(0, 2)).toBe('07');
+    expect(b.slice(0, 2)).toBe('08');
+    expect(computeCandidateBoxId(EMISSION_CANDIDATE, FIXTURE_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(TREASURY_CANDIDATE, FIXTURE_TX_ID, 0));
+  });
+
+  it('identical content bytes still get distinct ids, from provenance alone', () => {
+    // With no trailing fields, two boxes of one type at one value have exactly
+    // the same content bytes — there is no field left to differ in. Identity
+    // therefore rests entirely on the provenance `computeBoxId` appends, which
+    // is the case the empty tail makes reachable rather than hypothetical.
+    const ids = [0, 1, 2].map((index) =>
+      computeCandidateBoxId(EMISSION_CANDIDATE, FIXTURE_TX_ID, index),
+    );
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('round-trips through the box record, with guard absent from the bytes', () => {
+    for (const candidate of [EMISSION_CANDIDATE, TREASURY_CANDIDATE]) {
+      const record = boxRecordFromBytes(boxRecordBytes(candidate, FIXTURE_TX_ID, 0));
+      expect(record).toEqual({
+        candidate: { boxType: candidate.boxType, value: 100n },
+        txId: FIXTURE_TX_ID,
+        index: 0,
+      });
+    }
+  });
+
+  it('the record is the content bytes plus provenance, with no tail between', () => {
+    // The one place an empty tail could go wrong silently: `boxRecordBytes`
+    // concatenates the content half with `b32(txId) ‖ vlqU(index)`, so if the
+    // reader walked a phantom field the txId would decode from the wrong
+    // offset and still be 32 well-formed bytes.
+    const bytes = boxRecordBytes(EMISSION_CANDIDATE, FIXTURE_TX_ID, 0);
+    expect(hexOf(bytes)).toBe('0764' + FIXTURE_TX_ID + '00');
+    expect(bytes.length).toBe(2 + 32 + 1);
+  });
+
+  it('a transaction carrying one hashes it like any other output', () => {
+    // Neither type is a legal transaction output under node's shape rules, but
+    // `computeTxId` is a total function of the candidates it is handed and must
+    // not depend on that: an encoder that skipped an empty tail differently
+    // from the reader would move a txId rather than reject it.
+    const tx: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [EMISSION_CANDIDATE, TREASURY_CANDIDATE],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    expect(computeTxId(tx)).toHaveLength(64);
+    const swapped: UtxoTransaction = { ...tx, outputs: [TREASURY_CANDIDATE, EMISSION_CANDIDATE] };
+    expect(computeTxId(swapped)).not.toBe(computeTxId(tx));
+  });
+
+  it('value still throws outside the u64, like every other box type', () => {
+    // The empty tail removes fields, not the prefix's domain. `value` is
+    // `vlqU64` on every arm (TYPES_INTERFACE → Totality), so the exception is
+    // the same one and not a new class.
+    for (const value of [-1n, 2n ** 64n]) {
+      expect(() => canonicalBoxBytes({ ...EMISSION_CANDIDATE, value }), `${value}`).toThrow();
+      expect(() => canonicalBoxBytes({ ...TREASURY_CANDIDATE, value }), `${value}`).toThrow();
+    }
   });
 });
 
@@ -977,6 +1120,12 @@ describe('boxRecordFromBytes', () => {
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
     ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
     ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
+    // The empty-tail pair. A reader that assumed at least one field followed
+    // the shared prefix would fail here and nowhere else — every other row
+    // above walks a tail, so nothing in this list exercised a box that ends at
+    // the prefix until these two.
+    ['emission', EMISSION_CANDIDATE],
+    ['treasury', TREASURY_CANDIDATE],
   ];
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
@@ -1030,14 +1179,16 @@ describe('boxRecordFromBytes', () => {
 
     // 1 — the reserved sentinel tag and every unassigned boxType have no
     // decoding at all: the tag reader refuses them, so nothing after the tag is
-    // read. 7 is the first number `BOX_TYPE` does not assign.
+    // read. 9 is the first number `BOX_TYPE` does not assign.
     //
     // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
     // *assigned* tag swapped in here throws too — on the fields it then
     // misreads, as `trailing-bytes` — so a bare `toThrow` cannot tell "this tag
     // has no decoding" from "this tag decodes, into something else". That is
-    // the difference this loop exists to pin, and only the code shows it.
-    for (const tag of [0x07, 0xff]) {
+    // the difference this loop exists to pin, and only the code shows it, and
+    // it is what makes the number here load-bearing: a tag this test names is
+    // one the table must not claim.
+    for (const tag of [0x09, 0xff]) {
       const badTag = bytes.slice();
       badTag[0] = tag;
       let thrown: unknown;
@@ -1665,6 +1816,10 @@ describe('the box-type tables', () => {
       guard: 'block_apply',
     },
     vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+    // The two arms with no trailing fields at all — the row that makes this map
+    // exercise a box whose bytes stop after the shared prefix.
+    emission: { boxType: 'emission', value: 100n, guard: 'block_apply' },
+    treasury: { boxType: 'treasury', value: 100n, guard: 'block_apply' },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -1699,6 +1854,7 @@ describe('the box-type tables', () => {
   it('pins both tables', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
       karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
+      emission: 7, treasury: 8,
     });
     expect({ ...BOX_GUARDS }).toEqual({
       karma: 'owner_signature',
@@ -1708,10 +1864,12 @@ describe('the box-type tables', () => {
       bond: 'block_apply',
       post_lock: 'block_apply',
       vouch: 'owner_signature',
+      emission: 'block_apply',
+      treasury: 'block_apply',
     });
   });
 
-  // Total over the same seven types. A consumer synthesising `guard` from the
+  // Total over the same box types. A consumer synthesising `guard` from the
   // discriminator meets a table short of one type as an `undefined` guard at
   // runtime, not as a rejection.
   it('covers exactly the same box types', () => {

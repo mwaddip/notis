@@ -32,7 +32,6 @@ const PROFILE_FIELDS = [
   'genesisCreditsPerMember',
   'genesisProofPayload',
   'genesisStateRoot',
-  'treasuryPubKey',
 ].sort();
 
 function asciiOfMagic(magic: number): string {
@@ -82,6 +81,19 @@ describe('NETWORK_PROFILES', () => {
     }
   });
 
+  it('no field names the treasury, on any network', () => {
+    // ARCHITECTURE → Treasury: unspendable **by absent rule**, not by a withheld
+    // key. A profile field holding a treasury key would be the withheld-key
+    // shape that rule rejects — spendable by whoever holds it, and uncheckable
+    // from outside. The field-set assertion above would catch a reintroduction
+    // under the old name; this catches one under any name.
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      for (const field of Object.keys(profile)) {
+        expect(field.toLowerCase(), profile.networkType).not.toContain('treasury');
+      }
+    }
+  });
+
   it('table and profiles are frozen', () => {
     expect(Object.isFrozen(NETWORK_PROFILES)).toBe(true);
     for (const profile of Object.values(NETWORK_PROFILES)) {
@@ -97,7 +109,7 @@ describe('NETWORK_PROFILES', () => {
     expect(NETWORK_PROFILES.mainnet.karmaDecayIntervalBlocks).toBe(1440);
   });
 
-  it('testnet is identical to mainnet except identity, genesis and treasury', () => {
+  it('testnet is identical to mainnet except identity and genesis', () => {
     const identityOrGenesis = new Set([
       'networkType',
       'magic',
@@ -107,7 +119,6 @@ describe('NETWORK_PROFILES', () => {
       // the digest over a box set whose only per-network member is that
       // payload, so the two differ across networks together or not at all.
       'genesisStateRoot',
-      'treasuryPubKey',
     ]);
     const { mainnet, testnet } = NETWORK_PROFILES;
     for (const field of PROFILE_FIELDS) {

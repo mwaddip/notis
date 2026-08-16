@@ -61,7 +61,7 @@ export interface NetworkProfile {
    *
    * Hex `string`, not `Uint8Array`, and the reason is immutability rather than
    * style: every profile is an `Object.freeze`d literal, and freezing a typed
-   * array does not prevent writes to its contents. `treasuryPubKey` and
+   * array does not prevent writes to its contents. `genesisStateRoot` and
    * `genesisCommitteeKeys` are hex for the same reason.
    */
   readonly genesisProofPayload: string;
@@ -89,7 +89,6 @@ export interface NetworkProfile {
    * anything here changing.
    */
   readonly genesisStateRoot: string;
-  readonly treasuryPubKey: string;
 }
 
 // The network magics live here, not in @dagsocial/wire: wire has zero runtime dependencies
@@ -109,8 +108,9 @@ export const KNOWN_FRAME_MAGICS: readonly number[] = Object.freeze([
 
 // ⚠ PROVISIONAL VALUES — every number below is a placeholder pending the constants-pinning
 // session (TYPES_INTERFACE §Network profiles: "Do not read any number in this contract as
-// decided"). Genesis committee keys and treasury keys are empty placeholders on all three
-// networks until real chains launch.
+// decided"). Genesis committee keys are empty placeholders on all three networks until real
+// chains launch. **No field names the treasury**: it is a `TreasuryBox` under `block_apply`
+// and no key can reach it (ARCHITECTURE → Treasury).
 
 // mainnet: today's constants (constants.ts is the single source while both surfaces exist).
 const MAINNET_PROFILE: NetworkProfile = Object.freeze({
@@ -143,10 +143,9 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // seed four leaves — those two boxes, this one, and the system identity
   // record — which is why this root's trailing height byte differs from theirs.
   genesisStateRoot: 'df46d498fbf94b68dd05a57ddee4486a72211ffa5b1ca961272b2ef4f09b8c6c01',
-  treasuryPubKey: '',
 } satisfies NetworkProfile);
 
-// testnet: identical to mainnet except network identity, genesis and treasury — deliberate
+// testnet: identical to mainnet except network identity and genesis — deliberate
 // (a testnet that differs from mainnet cannot catch a mainnet bug; the burden is on the
 // difference). The spread makes identity structural: a mainnet parameter change cannot
 // silently leave testnet behind.
@@ -165,7 +164,6 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
   genesisStateRoot: 'ec50b959ea5284dbf993f7c289a7c26c8b38979c0530fe0bf7c1f13dd428892b03',
-  treasuryPubKey: '',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
@@ -224,7 +222,6 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // keypair, same values — so the proof box is the whole difference between
   // these two roots.
   genesisStateRoot: '0efe4301ae44bf9ed30b92ceab2db77bf0cd38d1a8d725f1972da18d2ab347a703',
-  treasuryPubKey: '',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

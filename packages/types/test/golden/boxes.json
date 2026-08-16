@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are seven separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for. The invite and bond vectors are a deliberate pair: their trailing fields are identical and the tag byte is the whole of what separates their leaves.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is. Two pairs are deliberate: invite and bond share identical trailing fields, and emission and treasury share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -91,7 +91,7 @@
         "payload": ""
       },
       "bytes": "030000",
-      "note": "Three bytes \u2014 the smallest legal box of any type, and the case that pins why the payload is length-prefixed. Appended raw, an empty payload would be indistinguishable from the end of the box, and a one-byte payload of 00 would encode as 030000 too. Here the trailing 00 is the count, and a one-byte payload of 00 is 03000100."
+      "note": "Three bytes \u2014 the smallest box that carries a tail, and the case that pins why the payload is length-prefixed. Appended raw, an empty payload would be indistinguishable from the end of the box, and a one-byte payload of 00 would encode as 030000 too. Here the trailing 00 is the count, and a one-byte payload of 00 is 03000100. box/emission-zero reaches two by carrying no tail at all."
     },
     {
       "name": "box/bond",
@@ -128,6 +128,36 @@
       },
       "bytes": "060111111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222",
       "note": "Value is always 1 karma on this type, so the vector's job is the two identity fields and the tag."
+    },
+    {
+      "name": "box/emission",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "emission",
+        "value": "42264000000000000"
+      },
+      "bytes": "078080a696a5dc894b",
+      "note": "The first box type whose whole encoding is the shared prefix - tag byte, value, and nothing after it. There is no owner because block application is the only spender and the block_apply guard already says so, and guard is absent from the consensus bytes on every type. The value is mainnet's entire emission total, 422,640,000 credits at 8 decimals, which is what genesis puts in the box; eight VLQ bytes carry it, so the whole box is nine. Read against box/treasury below: with no trailing fields at all, the tag byte is the whole of what separates the two types."
+    },
+    {
+      "name": "box/treasury",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "treasury",
+        "value": "42264000000000000"
+      },
+      "bytes": "088080a696a5dc894b",
+      "note": "Byte-for-byte box/emission under tag 08, deliberately at the same value: the pair is one empty layout with two tags, the same standing box/invite and box/bond have with two shared fields. Their ids part on the provenance computeBoxId appends, never on these bytes. A treasury box never actually holds the emission total - the value is chosen to make the collision case the vector, not to describe a reachable state."
+    },
+    {
+      "name": "box/emission-zero",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "emission",
+        "value": "0"
+      },
+      "bytes": "0700",
+      "note": "Two bytes - the smallest legal box of any type, and the floor for the whole format. Every other arm carries a tail: box/genesis-proof-empty-payload is three because its empty payload still spends a length prefix. The value is 0 for the byte width alone; block application creates no successor at zero, so this is a shape the encoder must handle and the ledger never holds."
     }
   ],
   "rejects": [
@@ -139,11 +169,11 @@
       "note": "A 513-byte payload, one past MAX_GENESIS_PROOF_PAYLOAD_BYTES. Every byte of it is present and the lp field is well formed, so nothing here is truncated and nothing re-encodes differently - the bound is the only rule that can refuse these bytes, and 8104 is the count that makes them 513 rather than 512. The bound is per-type and lives in the genesis_proof arm of the reader, never in readLp, which every lp field shares; box/genesis-proof-typical is the same layout inside the bound. An over-bound payload still ENCODES, exactly as an unknown boxType does - the writers are total and the refusal is one-way."
     },
     {
-      "name": "box/unassigned-tag-7",
+      "name": "box/unassigned-tag-9",
       "codec": "boxContent",
-      "bytes": "0701",
+      "bytes": "0901",
       "failure": "reader-fault",
-      "note": "7 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way."
+      "note": "9 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way. The number here is load-bearing: a tag this vector names is one the table must not claim, so assigning it is what moves this vector."
     },
     {
       "name": "box/unknown-tag-255",
