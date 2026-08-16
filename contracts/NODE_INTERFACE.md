@@ -887,10 +887,33 @@ tree collapse into clean rejections:
 > emit bytes our reader rejects: a bug in us, which is what fail-stop is for.
 >
 > **Two stores disagreeing: neither arm is reachable from peer input.** `DivergedStateTreeError`
-> examines nothing a peer sent — it fires when the AVL+ tree and `utxo_boxes` have drifted apart. A
-> duplicate box id dies on `utxo_boxes.id`'s primary key inside the applying transaction, before the
-> prover feed is built; a consumed id reaches that feed only through a journal entry written against
-> a row that existed. See AVL+ State Root → "the tree is asked".
+> examines nothing a peer sent — it fires when the AVL+ tree and `utxo_boxes` have drifted apart.
+> See AVL+ State Root → "the tree is asked".
+>
+> The **`Insert`** arm is enforced by the schema: a duplicate box id dies on `utxo_boxes.id`'s
+> primary key inside the applying transaction, before the prover feed is built from the journal.
+>
+> ⚠ **The `Remove` arm is CALLER-KEPT, not enforced, and that is the weaker half of this
+> argument.** `consumeBox` is the sole writer of a remove entry — `recordBoxRemove` has exactly one
+> caller — and its `UPDATE` guards on neither the row count nor `spent_at_block IS NULL`. Nothing in
+> the primitive requires that a journalled remove spent a live row. Its **eleven** call sites divide
+> **1 / 9 / 1**:
+>
+> - **the peer-facing tx loop**, where `validateTx` step 2 resolves every input through `getBox`'s
+>   `spent_at_block IS NULL` filter, in the same transaction immediately before `applyTx`;
+> - **nine block-application paths**, each reading a live-filtered set of its own;
+> - ⚠ **one that reads nothing** — the fee-box consume, which names ids from the block's own outputs
+>   and is safe only because `proverFeedFromJournal` cancels the insert+remove pair before it reaches
+>   the tree. ✅ **That guard is pinned rather than asserted**: `fee-box-prover-feed.test.ts` proves
+>   both halves were journalled *and* that neither reaches either feed, the speculative or the
+>   applied. Change the netting and it goes red.
+>
+> ⛔ **A second remove of one id would break peer-unreachability, and two separate mechanisms stop
+> it.** Within one transaction, `validateTx` step 1 rejects duplicate inputs. Across two, the apply
+> loop's liveness pre-check runs against state the loop is itself evolving, so the second transaction
+> defers forever and the block is rejected. **Nothing downstream would catch it** —
+> `proverFeedFromJournal` cancels insert-then-remove pairs but does not dedupe repeated removes, so
+> a second remove reaching the feed would reach the tree.
 >
 > ⚠ **The store is now a raising site, and that is the point.** An earlier draft of this section
 > implied the boundary lives only at apply's callers. **It cannot.** By the time a `ReaderError`
@@ -2691,10 +2714,24 @@ also identity records (see "Two entity kinds" below).
   rejecting would reject forever while staying up.
 
   ⚠ **A single-node ROOT COMPARISON cannot catch this class.** Producer and verifier are the same
-  process, so both compute the same wrong root and it matches. **Three suites' fixture orderings
-  are load-bearing for that reason** — the seed sits ahead of `createAvlProver` /
-  `startBlockCreator`, and no root comparison would catch it moving. **What is assertable is the
-  throw**; a test that seeds a divergence and compares digests passes for the wrong reason.
+  process, so both compute the same wrong root and it matches. **What is assertable is the throw**;
+  a test that seeds a divergence and compares digests passes for the wrong reason.
+
+  ⛔ **A FIXTURE'S SEED ORDERING IS LOAD-BEARING IN BOTH DIRECTIONS, and no count of suites states
+  it.** Committed state enters the store first and the tree is built from it second — the order
+  `seedGenesisState` runs in, and the one `test/helpers.ts`'s `activateProverOverStore` exists to
+  own. A box seeded
+  *behind* the bootstrap is absent from the tree, so the first block spending it is refused; a seed
+  already *ahead* of it must not be moved back. **The two mistakes are different populations of
+  suite and they overlap** — one file can hold both — which is why the rule names the ordering
+  rather than a number of files.
+
+  ⚠ **A fixture running the real `seedGenesisState` cannot use that helper and cannot hand-seed a
+  box at all.** The seeder does this same ordering itself, and a hand-seeded box fits neither side:
+  after it the tree never receives the box; before it the box joins the genesis feed, which is that
+  same `getUnspentBoxes()` read, and `assertGenesisRoot` refuses the pinned root inside the seeding
+  transaction. Such a fixture mines **coinbase-only** blocks, which still move state off genesis by
+  releasing the emission box.
 - **Journal-fed:** the per-block mutation set is derived from
   `BlockJournal.mutations` — intra-block insert+remove pairs for the same
   boxId net out; inserted box bytes come from the journal's `box` payload,
