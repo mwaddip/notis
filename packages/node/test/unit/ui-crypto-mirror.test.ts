@@ -228,15 +228,15 @@ const GOLDEN_TREASURY_BOX: TreasuryBox = {
 /**
  * The box types the mirror covers, **keyed so coverage is a compile error.**
  *
- * ⛔ **This was a hand-kept array, and that is the defect it exists to close.**
- * NODE_INTERFACE (→ the mirror's coverage rule) states the enforceable rule is
- * coverage rather than documentation: *"with every box type in the mirror, a
- * missing `binaryFields` entry fails mechanically instead of waiting for
- * someone to notice the list is a manual copy of a type definition."* A list
- * nothing checks is that manual copy — appending a row per box type re-arms it
- * for the next tag. `satisfies` over the union makes the next one fail to
- * compile here. Same shape the mint-reason golden table now uses in
- * `@dagsocial/types`.
+ * ⛔ **`satisfies Record<MirroredBoxType, AnyBox>` is what makes the coverage
+ * structural: a box type added to the union without a fixture here is a compile
+ * error.** NODE_INTERFACE (→ the mirror's coverage rule) states the enforceable
+ * rule is coverage rather than documentation: *"with every box type in the
+ * mirror, a missing `binaryFields` entry fails mechanically instead of waiting
+ * for someone to notice the list is a manual copy of a type definition."* An
+ * array is that manual copy — an array of the union is satisfied by any subset
+ * of it, so it tracks the set only by hand. Same shape as `MINT_REASON_GOLDENS`
+ * in `@dagsocial/types`.
  *
  * `genesis_proof` is the one deliberate exclusion, in the type rather than by
  * omission, and it is covered separately in the byte form only — `toUiForm`

@@ -243,12 +243,15 @@ describe('block-apply journal recording', () => {
     const creditInserts = boxInserts(saved!, (b) => b.boxType === 'credit');
     expect(creditInserts.length).toBe(block!.utxoTxTree.coinbaseOutputs.length);
 
-    // ⚠ **The coinbase is no longer the block's only mutation, and this used to
-    // assert that it was.** A paying block also spends the emission box to its
-    // successor and accrues to the treasury box, so the journal carries those
-    // three besides — which is what makes them roll back with everything else.
-    // Named individually rather than counted, so a count that happens to match
-    // for different reasons cannot pass.
+    // ⚠ **A paying block mutates four boxes, not one.** Besides the coinbase
+    // mint it spends the emission box to its successor and accrues to the
+    // treasury box, and all three journal like every other mutation — which is
+    // what makes them roll back with the block.
+    //
+    // Named individually rather than counted: a total alone is satisfied by any
+    // four mutations, so it would stay green if a transition were replaced by
+    // an unrelated one. The count below is the residual check that nothing
+    // *else* also mutated.
     expect(boxInserts(saved!, (b) => b.boxType === 'emission')).toHaveLength(1);
     expect(boxInserts(saved!, (b) => b.boxType === 'treasury')).toHaveLength(1);
     const removes = saved!.mutations.filter((m) => m.kind === 'box' && m.op === 'remove');

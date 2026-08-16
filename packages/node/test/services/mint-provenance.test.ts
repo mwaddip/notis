@@ -43,13 +43,13 @@ const HEIGHT = 4242;
  * Every reason, built at one height, **keyed by the reason so coverage is a
  * compile error.**
  *
- * ⛔ **This was a hand-kept array that never tracked the union, and it had
- * already drifted.** It held eight entries while `MintReason` held eleven —
- * `invite-claim`, `bond-settle` and `bond-return` were never in it — so the
- * "covers every MintReason exactly once" test below was asserting a list
- * against itself and passing. `satisfies Record<MintReason, …>` makes the next
- * reason fail to compile here instead. Same shape the mint-reason golden table
- * and the UI mirror's box-type fixtures now use.
+ * ⛔ **`satisfies Record<MintReason, …>` is what makes the coverage structural:
+ * a member added to the union without a row here is a compile error.** An array
+ * cannot carry that property — an array of the union is satisfied by any subset
+ * of it, so it tracks the set only by hand, and the "covers every MintReason
+ * exactly once" test below would then be comparing a hand-kept list against
+ * itself. Same shape as `MINT_REASON_GOLDENS` in `@dagsocial/types` and the UI
+ * mirror's box-type fixtures.
  *
  * Several entries deliberately share a subject: `like-payout` and `decay` are
  * one raw pubkey each, and the three invite reasons are all the invitee's key,
@@ -95,12 +95,12 @@ describe('mint provenance — subject encodings', () => {
 
   it('covers every MintReason exactly once — the table is the whole union', () => {
     // ⛔ **Coverage is enforced by `satisfies Record<MintReason, …>` on the
-    // table itself, not by this list.** This test previously restated eight
-    // reasons and claimed the union had exactly eight; the union held eleven,
-    // so it compared a hand-kept list against itself and passed while three
-    // reasons went unencoded. What survives here is the half a type cannot
-    // check: that the key each entry is filed under is the reason its context
-    // actually carries.
+    // table itself, and restating the reasons here would not add to it** — a
+    // list written out by hand is satisfied by whatever it happens to contain.
+    // What this asserts is the half a type cannot: that the key each entry is
+    // filed under is the reason its context actually carries, so a context
+    // pasted under the wrong key is caught rather than counted as coverage of
+    // the key it sits beside.
     for (const [key, { ctx }] of Object.entries(ALL_CONTEXTS)) {
       expect(ctx.reason, `filed under ${key}`).toBe(key as MintReason);
     }

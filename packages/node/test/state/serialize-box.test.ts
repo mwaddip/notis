@@ -59,12 +59,12 @@ describe('serializeBox', () => {
     // as some other type, which is what makes the rejection a property of the
     // tag table instead of a special case somebody has to remember.
     //
-    // ⛔ **The number is load-bearing and moves with the table.** It was `7`
-    // until `emission` took that tag, at which point these two bytes became a
-    // complete, valid emission box at value 0 — the format's floor — and the
-    // call still threw, as a short read on `txId`. The next tag assignment
-    // must move it again; `packages/types` pins the same number in
-    // `utxo.test.ts` and in the golden corpus's reject vector.
+    // ⛔ **The literal moves with `BOX_TYPE_TAGS`, and the next tag assignment
+    // has to move it.** Two bytes under an *assigned* tag are a complete box at
+    // value 0 — the format's floor — so they parse, and the throw lands further
+    // in, as a short read on `txId` (`truncated`). `packages/types` pins the
+    // same number in `utxo.test.ts` and in the golden corpus's reject vector,
+    // so all three move together.
     //
     // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
     // *assigned* tag put here throws too — on the fields it then misreads — so a

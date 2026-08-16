@@ -314,12 +314,11 @@ describe('config', () => {
       expect(cfg.karmaMinimum).toBe(10n);
       expect(cfg.avlKeyLength).toBe(32);
 
-      // `TREASURY_PUBKEY` has no `Config` field to assert against — the
-      // treasury is a box no key can spend (ARCHITECTURE → Treasury), so the
-      // field was deleted outright rather than moved to the profile. Scanning
-      // the values catches a reintroduction under **any** name, which an
-      // assertion naming the old field could not: the guard here is that the
-      // variable reaches nothing, not that one particular field ignores it.
+      // `TREASURY_PUBKEY` has no `Config` field to assert against: the treasury
+      // is a box no key can spend (ARCHITECTURE → Treasury), so no field on any
+      // profile names it. Scanning the values is what catches a reintroduction
+      // under **any** name — the guard here is that the variable reaches
+      // nothing, which is a stronger claim than one named field ignoring it.
       expect(Object.values(cfg)).not.toContain('ff'.repeat(32));
     });
   });
