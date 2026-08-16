@@ -1,29 +1,43 @@
-# DAGsocial
+# Notis
 
-Read and apply `~/projects/OVERRIDES.md` before anything else.
+An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG**
+(author-sovereign, prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable
+**credits**), bound together by **stumps**. Consensus is PoW — user sub-blocks plus validator ordering
+blocks. TypeScript monorepo, pnpm workspaces, Node.js ≥ 22, SQLite storage.
 
-Decentralized social network. Phase 1: local HTTP node with identity, two-phase PoW, DAG post storage in SQLite. TypeScript monorepo, pnpm workspaces, Node.js ≥ 22.
+Repo directory is `dagsocial`; the project is Notis.
+
+> **Use the `notis-node-development` skill** if it is available to you. It carries the depth this file
+> summarises — the dual-ledger architecture, the positional wire format, hashing and signature rules,
+> totality (sentinels versus throws), the S.P.E.C.I.A.L. attention weights, the verification gate and
+> the deploy gate.
 
 ## Quick commands
 
 ```bash
-pnpm build                # Build all five packages
-pnpm test                 # Run all tests across the five packages
-pnpm typecheck            # Type-check all packages — src AND test trees, both configs
-node packages/node/dist/index.js   # Start node on :3000
+pnpm build                          # Build all five packages
+pnpm test                           # Run all tests
+pnpm typecheck                      # src AND test trees, both configs
+node packages/node/dist/index.js    # Start a node on :3000
 ```
 
-`pnpm test` does **not** prove a package builds (test code resolves
-`@dagsocial/*` to `src`, never `dist`), so
-`pnpm -r build && pnpm -r typecheck && pnpm -r test` is the gate before any
-commit — see ARCHITECTURE → "Build and test resolution".
+**`pnpm test` does not prove a package builds** — test code resolves `@dagsocial/*` to `src`, never
+`dist`. The gate before any commit is:
+
+```bash
+pnpm -r build && pnpm -r typecheck && pnpm -r test
+```
+
+Run the last two **per package**: `pnpm -r test` fails fast and hides everything after a red package.
+See ARCHITECTURE → "Build and test resolution".
 
 ## Architecture
 
-Five packages:
-- `@dagsocial/types` — data structures, base58, CBOR, hashing, protocol constants. Pure functions only.
-- `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
+Five packages, in dependency order:
+
+- `@dagsocial/types` — data structures, base58, CBOR, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
+- `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/net` — libp2p + Gossipsub relay, header-first sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
 
@@ -31,187 +45,114 @@ Future: `@dagsocial/web` (React client).
 
 ## Design by Contract
 
-This project uses Design by Contract for multi-session workflow. The `contracts/` directory is the source of truth for interfaces. Contracts lead; code follows.
+`contracts/` is the source of truth for every interface. **Contracts lead; code follows** — update the
+contract first, then implement against it, never the reverse.
 
 - `contracts/ARCHITECTURE.md` — system overview, invariants, protocol versioning
-- `contracts/TYPES_INTERFACE.md` — types package contract
-- `contracts/VALIDATION_INTERFACE.md` — validation package contract (pure stateless checks)
-- `contracts/NODE_INTERFACE.md` — node package contract (API, verifier, store interface)
-- `contracts/NET_INTERFACE.md` — networking contract (libp2p, gossip, sync)
-- `contracts/WEB_INTERFACE.md` — web client contract (Phase 2)
-- `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice (specified, nothing conforms yet)
+- `contracts/TYPES_INTERFACE.md` — types package
+- `contracts/VALIDATION_INTERFACE.md` — stateless checks
+- `contracts/NODE_INTERFACE.md` — API, verifier, store interface
+- `contracts/NET_INTERFACE.md` — libp2p, gossip, sync
+- `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/SUBBLOCK_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
+- `contracts/WEB_INTERFACE.md` — web client (Phase 2)
+- `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
+- `contracts/SPECIAL.md` — per-subsystem attention weights
 
-### Workflow
-
-1. Update the contract first in `contracts/`
-2. Write a dispatch prompt in `prompts/<component>-<task>.md` with required boilerplate (see below)
-3. Dispatch via kitty:
-
-```bash
-# Capture main window id
-MAIN_WINDOW=$KITTY_WINDOW_ID
-
-# Spawn new window with cwd INSIDE the target package, so packages/<component>/CLAUDE.md
-# auto-loads (along with the repo-root CLAUDE.md) as the session's standing context.
-NEW_WIN=$(kitty @ launch --type=window --cwd=/home/mwaddip/projects/dagsocial/packages/<component>)
-
-# Launch dclaude
-kitty @ send-text --match=id:$NEW_WIN 'ac'
-kitty @ send-text --match=id:$NEW_WIN $'\r'
-
-# Wait ~10s for Claude to come up, then inject prompt instruction.
-# EVERY cross-session message is prefixed [sender->recipient] (user, 2026-08-11) — several
-# windows are live at once, and an unprefixed line says nothing about where it came from.
-kitty @ send-text --match=id:$NEW_WIN '[notismain-><component>] use the receiving-prompts skill to execute the work in /home/mwaddip/projects/dagsocial/prompts/<name>.md'
-
-# Delay, submit, and VERIFY (see the warning below). No approval gate — main
-# dispatches autonomously (user, 2026-08-09). The verification below is NOT the
-# gate and is not waived: it guards the swallowed-Enter trap, which is a
-# mechanical failure, not an approval question.
-sleep 1; kitty @ send-text --match=id:$NEW_WIN $'\r'
-sleep 3; kitty @ get-text --match=id:$NEW_WIN | tail -5   # prompt line must be EMPTY
-```
-
-> ⚠ **A long `send-text` swallows the Enter, silently.** Anything long enough
-> arrives as a **bracketed paste**, and a `\r` chained in the same command
-> (`send-text '<long msg>' && send-text $'\r'`) lands *inside* the paste instead
-> of submitting it. The window then sits at `❯ [Pasted text #1 +N lines]`
-> forever while every `kitty @` call exits 0 — nothing reports failure. Measured
-> 2026-08-08; it cost ~18 minutes of executor idle time before anyone looked.
-> **Always put a delay between the text and the Enter, and always verify with
-> `kitty @ get-text` that the prompt line came back empty.** "The command
-> succeeded" is not evidence the message landed.
->
-> `kitty @ get-text --match=id:N` is also the general way to see what a
-> component window is actually doing. Note that `kitty @ ls` **tab** titles
-> reflect the most recently active window in that tab — read the per-window
-> `title` before concluding you dispatched to the wrong session.
-
-4. **No dispatch gate** — main dispatches autonomously (user, 2026-08-09; previously waived
-   per-session at Phase 1d, now standing). The post-submit `get-text` verification is separate
-   and still required.
-5. Component session reads contracts, implements, tests, reports back via kitty `send-text` to main window. **Component sessions commit their own work; they never push.** Main reviews, pushes, and opens the PR.
-6. **The contract change rides the same branch as the code that implements it** (user, 2026-08-11).
-   Not merged ahead of it — one PR shows the rule and its implementation together, so a reviewer can
-   check they agree instead of taking it on trust. It also means the executor's tree already holds the
-   contract they are building against.
-
-### Prompt boilerplate
-
-The session launches with its cwd inside the target package (step 3), so that package's `CLAUDE.md`
-auto-loads and supplies the read-first list (OVERRIDES, RTK, root CLAUDE.md, ARCHITECTURE, the
-interface contract). A dispatch prompt therefore doesn't repeat those reads — it opens with a
-one-line reminder and the task:
-
-```
-Read ./CLAUDE.md and follow its read-first list before starting.
-
-## <task title>
-...
-
-## Coordination
-When done, send a brief completion summary back to the main session window. **Keep the
-`[<component>->notismain]` prefix** — main has several windows reporting into it, and an
-unprefixed line does not identify itself as a reply:
-    kitty @ send-text --match=id:<MAIN_WINDOW_ID> '[<component>->notismain] one-line summary of what was done'
-    kitty @ send-text --match=id:<MAIN_WINDOW_ID> $'\r'
-```
-
-### Main session vs component sessions
-
-The main session owns contracts and prompts. It never edits component source code. Component sessions own one component each, read contracts, implement against them, and **commit** their own work. **Pushing is main's, always** — a component session that pushes has published work nobody reviewed.
+**The contract change rides the same branch as the code that implements it** — not merged ahead of it.
+One PR shows the rule and its implementation together, so a reviewer can check they agree instead of
+taking it on trust.
 
 ## What we write down
 
 **Everything we write describes reality as it is.** Code comments, commit bodies, PR bodies, titles —
 all of it states the present tense of the current tree.
 
-**Not backward-looking.** How it used to work, what was fixed, what went wrong before, what a previous
-encoder did, why the change is justified. None of that is a fact about the tree a reader is holding,
-and each such sentence is a second claim that decays on its own schedule.
+**Not backward-looking.** How it used to work, what was fixed, what went wrong before, why the change
+is justified. None of that is a fact about the tree a reader is holding, and each such sentence is a
+second claim that decays on its own schedule.
 
 **Forward-looking only when it is a deliberate stub for planned work**, and marked as one — the
 contracts' `AHEAD OF CODE`. That is the single exception, because a stub's whole purpose is to say the
 code is not there yet.
 
-The two sections below are this rule applied to code and to changelog prose. Where reasoning genuinely
-has to survive, it goes in `contracts/` as a rule or in a `prompts/<task>-REPORT.md`, both of which a
-reader can check against the tree.
+Where reasoning genuinely has to survive, **it goes in `contracts/` as a rule** — somewhere a reader
+can check it against the tree.
 
 ## Comment style
 
-**Cite the CONTRACT, not the spec.** `docs/specs/` is gitignored and holds **zero tracked files**, so
-`(Phase 3b; spec §1.2)` in a committed comment points at a document nobody who clones this repo can
-open, and a bare `Phase N` resolves to nothing anywhere. A comment either states the rule as it stands
-now, or names the contract section that states it — `TYPES_INTERFACE → Layout — Stump`, never `Phase 2`.
+**Cite the CONTRACT.** A comment either states the rule as it stands now, or names the contract section
+that states it — `TYPES_INTERFACE → Layout — Stump`.
 
-**`prompts/` is the same dead end and is easier to miss** — **3 of its 291 `.md` files are tracked**,
-so a comment citing an executor REPORT there resolves for whoever wrote it and for nobody else. The
-two known instances both cite `prompts/node-fail-stop-reachability-measure-REPORT.md`, which is not
-one of the three. **`contracts/` is the only citable directory.** A measurement worth keeping belongs
-in the contract, not behind a pointer to a file that was never committed.
+⛔ **`contracts/` is the only citable directory.** A comment pointing anywhere else in this repo may be
+pointing at nothing: `.gitignore` excludes whole directories of working material, so a citation that
+resolves on the author's machine can resolve nowhere for everyone else. A measurement worth keeping
+belongs in the contract, not behind a pointer.
 
-**Cite a contract section by its PROSE NAME, never by a phase-tagged parenthetical.** Several headings
-embed their own tags — `### Bond transition rules (P2-B phase 1)`, `### Per-block like settlement
-(P2-D — replaced the epoch tally)`. The prose name is what a reader greps and what survives; the
-parenthetical is the half the reconciliation will rewrite.
+**Never cite a phase.** A bare `Phase N` resolves to nothing anywhere.
 
-**Never narrate replaced code.** How a function used to behave is not a fact about the current tree.
-No reader has to reason about code that is gone, and a narrated history is a second claim that decays
-independently of the one beside it. This is the retroactive half of *comments point, don't narrate*.
+**Cite a contract section by its PROSE NAME, never by a phase-tagged parenthetical.** Some headings
+embed their own tags — `### Bond transition rules (P2-B phase 1)`. The prose name is what a reader
+greps and what survives; the parenthetical is the half a reconciliation will rewrite.
 
-⚠ **This binds code comments. `contracts/` is deliberately exempt for now** — it carries 8
-`docs/specs/` citations and 110 lines with a `Phase N` tag, and some are load-bearing while the
-contract-vs-code reconciliation is unwritten (user, 2026-08-11). **Do not sweep `contracts/` under
-this rule.** The exemption ends with that reconciliation spec, not with this cleanup.
+**Never narrate replaced code.** How a function used to behave is not a fact about the current tree. No
+reader has to reason about code that is gone, and a narrated history is a second claim that decays
+independently of the one beside it.
+
+⚠ **This binds code comments. `contracts/` is deliberately exempt for now** — some phase citations
+there are load-bearing while the contract-vs-code reconciliation is unwritten (user, 2026-08-11). **Do
+not sweep `contracts/` under this rule.** The exemption ends with that reconciliation, not with a
+cleanup.
 
 ## Commit and PR bodies
 
 Same principle one level up: **describe what the change does, not the road to it.**
 
-**The what, not the why.** *"Fixes an issue where `x` became `y`"* is a complete description. *"…because
-`x` is not `y`, and the last time `a` became `b` it went unnoticed for months"* is a justification
-nobody asked for. **A fix needs no excuse.** The reasoning that produced a change belongs in the REPORT
-or the contract, where it can be checked; in a PR it is unfalsifiable padding.
+**The what, not the why.** *"Fixes an issue where `x` became `y`"* is a complete description.
+*"…because `x` is not `y`, and the last time `a` became `b` it went unnoticed for months"* is a
+justification nobody asked for. **A fix needs no excuse.**
 
-**No anecdotes, no history.** A body recounting how a node once burned a core for weeks is telling a
-story rather than describing a diff — and stories drift: that one overstated the lifetime of a
-ten-day-old package. If a past incident genuinely bears on the change, it belongs in the contract as a
-rule, not in a PR as a memory.
+**No anecdotes, no history.** A body recounting a past incident is telling a story rather than
+describing a diff, and stories drift. If an incident genuinely bears on the change, it belongs in the
+contract as a rule.
 
-**Caps: ~800 characters for a commit body, ~2000 for a PR** (user, 2026-08-10). Over the cap, cut a
-whole section rather than trimming sentences — detail relocates to the REPORT, referenced by path.
+**Caps: ~800 characters for a commit body, ~2000 for a PR.** Over the cap, cut a whole section rather
+than trimming sentences.
 
-**Titles are `type(scope): plain summary` — and the summary names the SUBJECT, not the class of
-change** (user, 2026-08-11). *"correct five service-test claims that time had made false"* describes a
-category of fix and could head twenty different commits; *"karma, decay and credits stop citing the
-removed `sortKeys` pass"* names what was actually wrong and where. **The test: if swapping in a
-different subject leaves the title still true, it is too abstract.** Plain means concrete, not vague —
-naming a function, file or claim is what makes a title plain, and dropping the technical noun is what
-makes it useless.
+**Titles are `type(scope): plain summary`, and the summary names the SUBJECT, not the class of
+change.** *"correct five service-test claims that time had made false"* describes a category and could
+head twenty different commits; *"karma, decay and credits stop citing the removed `sortKeys` pass"*
+names what was wrong and where. **The test: if swapping in a different subject leaves the title still
+true, it is too abstract.** Plain means concrete, not vague — naming a function, file or claim is what
+makes a title plain.
 
 ## Key invariants
 
 - Post content: 1–300 UTF-8 bytes (`MAX_CONTENT_BYTES`)
 - Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
-- Slot validity: measured in block height, not wall clock
-- Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, ...)` using a KeyObject.
-- Hashing: `blake2b512` with `.subarray(0, 32)` for all 32-byte outputs (Node.js v22 lacks blake2b256)
-- Wire format: CBOR (`cbor-x`). HTTP API: JSON.
-- Secret keys never in API responses or DTOs crossing component boundaries.
-- Protocol version on every post and block (`PROTOCOL_VERSION = 1`).
+- **On-chain time is block height**, never wall clock
+- Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, …)` and a KeyObject
+- Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
+- Wire format: positional binary, with CBOR survivals. HTTP API: JSON
+- **Value conservation** — user transactions conserve, with a closed set of stated exceptions;
+  `NODE_INTERFACE` → `validateTx` step 5 is the authoritative enumeration. All other mints and burns
+  happen in block-application paths, never inside a user transaction
+- Secret keys never appear in API responses or in DTOs crossing component boundaries
+- Protocol version on every post and block (`PROTOCOL_VERSION = 1`)
+- Single-transaction atomic writes for any multi-table mutation
 
 ## Protocol versioning
 
-All posts and blocks carry a `protocolVersion` field. Validation rules are keyed to this version. Old posts are validated against their declared version forever. A node rejects posts with an unsupported version.
+All posts and blocks carry a `protocolVersion`. Validation rules are keyed to this version; old posts
+are validated against their declared version forever, and a node rejects an unsupported one.
 
 > ⚠ **NOT IMPLEMENTED — this describes the intended design, not the running code.**
 > There is no version-keyed rule table. Validation is a **strict equality check against
-> `PROTOCOL_VERSION`**, so nothing is "validated against its declared version forever" and
-> the first version bump makes existing history un-resyncable. The design stands (it is
-> stated on docs.notis.fun as how the protocol evolves) — the mechanism is Phase 2 work.
+> `PROTOCOL_VERSION`**, so nothing is "validated against its declared version forever" and the first
+> version bump makes existing history un-resyncable. The design stands — the mechanism is Phase 2 work.
 > **Do not write code or contract text that assumes version-keyed dispatch exists.**
 
 ## Platform constraint
 
-Node.js v22 does not support `createHash('blake2b256')`. All hashing uses `createHash('blake2b512')` with `.subarray(0, 32)`. The demo UI uses `blakejs` from CDN (`blake2b(data, null, 64).slice(0, 32)`). These must produce identical output — both are standard BLAKE2b-512.
+Node.js v22 does not support `createHash('blake2b256')`. All hashing uses `createHash('blake2b512')`
+with `.subarray(0, 32)`. The demo UI uses `blakejs` from CDN — `blake2b(data, null, 64).slice(0, 32)`.
+**These must produce identical output**; both are standard BLAKE2b-512.
