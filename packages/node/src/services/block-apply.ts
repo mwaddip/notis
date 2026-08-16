@@ -27,6 +27,7 @@ import {
   CorruptChainStateError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
+  failStopIfCorruptChain,
 } from './corrupt-state.js';
 import type { DecayDeps } from './decay.js';
 import { config } from '../config.js';
@@ -567,7 +568,9 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   const handle = tryGetAvlProver();
   if (handle) {
     const { consumed, created, recordPuts } = proverFeedFromJournal(journal);
-    const computedDigest = applyBlockMutations(handle.prover, consumed, created, recordPuts);
+    const computedDigest = applyBlockMutations(
+      handle.prover, block.header.height, consumed, created, recordPuts,
+    );
 
     // Verify against block header (gated). The prover is restored by the
     // funnel's single rollback point, not here.
@@ -729,6 +732,19 @@ export type StateRootSpeculation =
  * the apply funnel treats the same throw as a rejection of the block, so a
  * body that crashes speculation is a body no node — this one included —
  * will apply.
+ *
+ * ⛔ **`CorruptChainStateError` is the exception, and it calls the boundary
+ * here rather than re-throwing.** Producing is where the fault would otherwise
+ * be silent: mapped to `body-rejected` it would stop this node producing while
+ * it stayed up, which is the one outcome `services/corrupt-state.ts` exists to
+ * prevent. Re-throwing is not open either — the caller in `createOrderingBlock`
+ * has no try/catch around it, and its neighbours already call
+ * `failStopIfCorruptChain` directly.
+ *
+ * ⚠ **The `finally` below does NOT run on that arm.** `process.exit(1)` does not
+ * unwind, so the journal abort and the prover restore are both skipped. That is
+ * correct — the process is ending and nothing reads the tree afterwards — but a
+ * reader who assumes `finally` always runs will mis-reason about it.
  */
 export function computePostBlockStateRoot(
   block: OrderingBlock,
@@ -747,7 +763,7 @@ export function computePostBlockStateRoot(
       // The digest rides out on the throw: nothing this run did may survive.
       throw new SpeculativeRollback(
         Buffer.from(
-          applyBlockMutations(handle.prover, consumed, created, recordPuts),
+          applyBlockMutations(handle.prover, height, consumed, created, recordPuts),
         ).toString('hex'),
       );
     })();
@@ -762,6 +778,11 @@ export function computePostBlockStateRoot(
         `own mutation phase — the block cannot be produced`,
       );
       return { kind: 'body-rejected' };
+    }
+    // Above the unclaimed-throw arm, because that arm would swallow it into a
+    // verdict about the block. Never returns.
+    if (err instanceof CorruptChainStateError) {
+      failStopIfCorruptChain(err);
     }
     // No arm above claimed this throw, so it is not a rejection this node
     // decided. The verdict stays `body-rejected` — the apply funnel converts

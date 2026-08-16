@@ -195,8 +195,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const boxes = [makeKarmaBox('11'.repeat(32))];
     const puts: RecordPut[] = [{ key: 'ab'.repeat(32), record: REC }];
 
-    const without = applyBlockMutations(p1, [], boxes);
-    const with_ = applyBlockMutations(p2, [], boxes, puts);
+    const without = applyBlockMutations(p1, 1, [], boxes);
+    const with_ = applyBlockMutations(p2, 1, [], boxes, puts);
 
     expect(Buffer.from(with_).toString('hex')).not.toBe(
       Buffer.from(without).toString('hex'),
@@ -207,8 +207,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const { prover: p1 } = createAvlProver(db);
     const { prover: p2 } = createAvlProver(db2);
 
-    const d1 = applyBlockMutations(p1, [], [], [{ key: 'cd'.repeat(32), record: REC }]);
-    const d2 = applyBlockMutations(p2, [], [], [
+    const d1 = applyBlockMutations(p1, 1, [], [], [{ key: 'cd'.repeat(32), record: REC }]);
+    const d2 = applyBlockMutations(p2, 1, [], [], [
       { key: 'cd'.repeat(32), record: { lastActivityBlock: 43, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
     ]);
 
@@ -220,9 +220,9 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const key = 'ef'.repeat(32);
 
     // First block creates it, second updates it — no existence lookup needed.
-    applyBlockMutations(prover, [], [], [{ key, record: REC }]);
+    applyBlockMutations(prover, 1, [], [], [{ key, record: REC }]);
     expect(() =>
-      applyBlockMutations(prover, [], [], [
+      applyBlockMutations(prover, 1, [], [], [
         { key, record: { lastActivityBlock: 99, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
       ]),
     ).not.toThrow();
@@ -233,15 +233,15 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const key = '55'.repeat(32);
 
     const afterCreate = Buffer.from(
-      applyBlockMutations(p1, [], [], [{ key, record: REC }]),
+      applyBlockMutations(p1, 1, [], [], [{ key, record: REC }]),
     ).toString('hex');
     const afterSame = Buffer.from(
-      applyBlockMutations(p1, [], [], [{ key, record: REC }]),
+      applyBlockMutations(p1, 1, [], [], [{ key, record: REC }]),
     ).toString('hex');
     expect(afterSame).toBe(afterCreate);
 
     const afterChange = Buffer.from(
-      applyBlockMutations(p1, [], [], [
+      applyBlockMutations(p1, 1, [], [], [
         { key, record: { lastActivityBlock: 100, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
       ]),
     ).toString('hex');
@@ -262,8 +262,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       record: { lastActivityBlock: 1, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
     }));
 
-    const d1 = applyBlockMutations(p1, [], boxes, puts);
-    const d2 = applyBlockMutations(p2, [], [...boxes].reverse(), [...puts].reverse());
+    const d1 = applyBlockMutations(p1, 1, [], boxes, puts);
+    const d2 = applyBlockMutations(p2, 1, [], [...boxes].reverse(), [...puts].reverse());
 
     expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
   });
@@ -278,8 +278,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       record: { lastActivityBlock: 9, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
     }));
 
-    const d1 = applyBlockMutations(p1, [], boxes, puts);
-    const d2 = applyBlockMutations(p2, [], [...boxes].reverse(), [
+    const d1 = applyBlockMutations(p1, 1, [], boxes, puts);
+    const d2 = applyBlockMutations(p2, 1, [], [...boxes].reverse(), [
       puts[2]!, puts[0]!, puts[1]!,
     ]);
 
@@ -289,10 +289,11 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   it('removes, inserts and record puts coexist in one block', () => {
     const { prover } = createAvlProver(db);
     const pre = makeKarmaBox('12'.repeat(32), 100n);
-    applyBlockMutations(prover, [], [pre]);
+    applyBlockMutations(prover, 1, [], [pre]);
 
     const digest = applyBlockMutations(
       prover,
+      1,
       ['12'.repeat(32)],
       [makeKarmaBox('34'.repeat(32), 90n)],
       [{ key: '9a'.repeat(32), record: REC }],
@@ -308,8 +309,8 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     // `recordPuts` is inert when empty: a caller that passes no records reaches
     // the same digest as one that omits the argument. Without this, adding a
     // record kind to the feed would silently move every box-only caller's root.
-    const d1 = applyBlockMutations(p1, [], boxes);
-    const d2 = applyBlockMutations(p2, [], boxes, []);
+    const d1 = applyBlockMutations(p1, 1, [], boxes);
+    const d2 = applyBlockMutations(p2, 1, [], boxes, []);
     expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
   });
 });
@@ -443,8 +444,8 @@ describe('the always-present fields in the record encoding', () => {
       record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 2n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
     };
 
-    const d1 = applyBlockMutations(p1, [], [], [put]);
-    const d2 = applyBlockMutations(p2, [], [], [put]);
+    const d1 = applyBlockMutations(p1, 1, [], [], [put]);
+    const d2 = applyBlockMutations(p2, 1, [], [], [put]);
     expect(Buffer.from(d1).toString('hex')).toBe(Buffer.from(d2).toString('hex'));
   });
 
@@ -453,12 +454,12 @@ describe('the always-present fields in the record encoding', () => {
     const key = 'b2'.repeat(32);
 
     const at0 = Buffer.from(
-      applyBlockMutations(prover, [], [], [
+      applyBlockMutations(prover, 1, [], [], [
         { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
       ]),
     ).toString('hex');
     const at3 = Buffer.from(
-      applyBlockMutations(prover, [], [], [
+      applyBlockMutations(prover, 1, [], [], [
         { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
       ]),
     ).toString('hex');
@@ -471,10 +472,10 @@ describe('the always-present fields in the record encoding', () => {
     const { prover: p2 } = createAvlProver(db2);
     const key = 'c3'.repeat(32);
 
-    const d1 = applyBlockMutations(p1, [], [], [
+    const d1 = applyBlockMutations(p1, 1, [], [], [
       { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
     ]);
-    const d2 = applyBlockMutations(p2, [], [], [
+    const d2 = applyBlockMutations(p2, 1, [], [], [
       { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, likeCarry: 3n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
     ]);
     expect(Buffer.from(d1).toString('hex')).not.toBe(Buffer.from(d2).toString('hex'));

@@ -37,7 +37,7 @@ import {
   makeTestIdentity,
   mineNextBlock,
   signHeader,
-  solveHeaderPow, fixturePostId, seedPostTx, fillerTx } from '../helpers.js';
+  solveHeaderPow, fixturePostId, seedPostTx, fillerTx, activateProverOverStore } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -1744,16 +1744,17 @@ describe('reorg', () => {
     const genesisRoot = root();
     expect(genesisRoot).toBe(config.profile.genesisStateRoot);
 
-    const author = makeTestIdentity();
-    const { encodePost } = await import('@dagsocial/types');
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
+    // Coinbase-only blocks, and deliberately so: the state has to move off
+    // genesis, and every block moves it by releasing the emission box and
+    // creating its coinbase. A post transaction would need a karma box seeded
+    // into the store *after* `seedGenesisState` built the tree from
+    // `getUnspentBoxes()` — a box the tree never received, which the block
+    // spending it cannot remove. Seeding it earlier is not open either: the
+    // genesis feed is that same read, so the box would land in the genesis tree
+    // and `assertGenesisRoot` would refuse the pinned root.
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     for (let i = 0; i < 3; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `to genesis ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
-      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 
@@ -1800,11 +1801,12 @@ describe('reorg abort', () => {
     db.initDb(':memory:');
 
     // Activate the AVL prover singleton against the test DB — the same
-    // instance tryGetAvlProver() hands to block-apply and reorg().
-    const { createAvlProver, tryGetAvlProver } = (await import(
+    // instance tryGetAvlProver() hands to block-apply and reorg(). Over the
+    // store, so the emission box every block below releases is in the tree.
+    const { tryGetAvlProver } = (await import(
       '../../src/state/avl-prover.js'
     )) as typeof import('../../src/state/avl-prover.js');
-    createAvlProver();
+    await activateProverOverStore();
 
     // Chain of 3 empty blocks (coinbase only); every box in the prover's tree
     // arrived through the apply funnel, so tree and DB agree.
@@ -2232,16 +2234,14 @@ describe('reorg — a missing AVL version at the fork height', () => {
     const genesis = await import('../../src/services/genesis-state.js');
     genesis.seedGenesisState(system.initSystemKeypair().publicKey);
 
-    const author = makeTestIdentity();
-    const { encodePost } = await import('@dagsocial/types');
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
+    // Coinbase-only, for the reason stated on the fork-point-of-0 case: a post's
+    // karma box can be seeded neither after the genesis bootstrap (the tree
+    // never receives it) nor before it (it would land in the genesis tree and
+    // move the pinned root).
     const bc = await importBlockCreator();
     const utxo = await importUtxo();
     bc.startBlockCreator(testConfig);
     for (let i = 0; i < 3; i++) {
-      const { tx: postTx } = await seedPostTx(author, `pruned version ${i}`);
-      mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
 

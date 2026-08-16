@@ -56,7 +56,7 @@ describe('avl-prover', () => {
     const consumed: string[] = [];
     const created = [box];
 
-    const newDigest = applyBlockMutations(prover, consumed, created);
+    const newDigest = applyBlockMutations(prover, 1, consumed, created);
     expect(newDigest).not.toEqual(initialDigest);
     expect(newDigest.length).toBe(33);
   });
@@ -68,10 +68,10 @@ describe('avl-prover', () => {
     const box2 = makeKarmaBox('bb'.repeat(32), 50n, 2);
 
     // Create box1
-    const d1 = applyBlockMutations(prover, [], [box1]);
+    const d1 = applyBlockMutations(prover, 1, [], [box1]);
 
     // Create box2, consume box1
-    const d2 = applyBlockMutations(prover, ['aa'.repeat(32)], [box2]);
+    const d2 = applyBlockMutations(prover, 2, ['aa'.repeat(32)], [box2]);
 
     expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(false);
   });
@@ -81,8 +81,8 @@ describe('avl-prover', () => {
     const { prover: p2 } = createAvlProver(db);
 
     const box = makeKarmaBox('cc'.repeat(32), 42n, 1);
-    const d1 = applyBlockMutations(p1, [], [box]);
-    const d2 = applyBlockMutations(p2, [], [box]);
+    const d1 = applyBlockMutations(p1, 1, [], [box]);
+    const d2 = applyBlockMutations(p2, 1, [], [box]);
 
     expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
   });
@@ -118,13 +118,13 @@ describe('block-apply integration', () => {
     const box1 = makeKarmaBox('11'.repeat(32), 100n, 1);
     const box2 = makeKarmaBox('22'.repeat(32), 50n, 1);
 
-    applyBlockMutations(handle, [], [box1, box2]);
+    applyBlockMutations(handle, 1, [], [box1, box2]);
     checkpointProver({ prover: handle, storage: new SqliteAvlStorage(db, AVL_CONFIG) }, 1);
     const digestAfterCreate = handle.digest()!;
 
     // Consume box1, create box3
     const box3 = makeKarmaBox('33'.repeat(32), 25n, 2);
-    applyBlockMutations(handle, ['11'.repeat(32)], [box3]);
+    applyBlockMutations(handle, 2, ['11'.repeat(32)], [box3]);
     checkpointProver({ prover: handle, storage: new SqliteAvlStorage(db, AVL_CONFIG) }, 2);
     const digestAfterConsume = handle.digest()!;
 
@@ -135,7 +135,7 @@ describe('block-apply integration', () => {
     const { prover: handle } = createAvlProver(db);
 
     const box1 = makeKarmaBox('aa'.repeat(32), 100n, 1);
-    applyBlockMutations(handle, [], [box1]);
+    applyBlockMutations(handle, 1, [], [box1]);
     checkpointProver({ prover: handle, storage: new SqliteAvlStorage(db, AVL_CONFIG) }, 1);
 
     // After checkpoint, digest should still be accessible
@@ -172,7 +172,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
   /** Fresh prover with the same five-box starting tree. */
   function seededProver(database: Database.Database) {
     const { prover } = createAvlProver(database);
-    applyBlockMutations(prover, [], BASE_IDS.map((id) => makeKarmaBox(id, 10n, 1)));
+    applyBlockMutations(prover, 1, [], BASE_IDS.map((id) => makeKarmaBox(id, 10n, 1)));
     return prover;
   }
 
@@ -183,9 +183,10 @@ describe('canonical prover-feed ordering (M-12)', () => {
     const consumed = ['ee'.repeat(32), '11'.repeat(32), '88'.repeat(32)];
     const created = ['cc', '22', '99'].map((b) => makeKarmaBox(b.repeat(32), 7n, 2));
 
-    const d1 = applyBlockMutations(p1, consumed, created);
+    const d1 = applyBlockMutations(p1, 1, consumed, created);
     const d2 = applyBlockMutations(
       p2,
+      1,
       [consumed[2]!, consumed[0]!, consumed[1]!],
       [created[1]!, created[2]!, created[0]!],
     );
@@ -198,8 +199,8 @@ describe('canonical prover-feed ordering (M-12)', () => {
     const p2 = seededProver(db2);
     const before = new Uint8Array(p1.digest()!);
 
-    const d1 = applyBlockMutations(p1, [], []);
-    const d2 = applyBlockMutations(p2, [], []);
+    const d1 = applyBlockMutations(p1, 1, [], []);
+    const d2 = applyBlockMutations(p2, 1, [], []);
 
     expect(Buffer.from(d1).equals(Buffer.from(before))).toBe(true);
     expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
@@ -211,11 +212,13 @@ describe('canonical prover-feed ordering (M-12)', () => {
 
     const d1 = applyBlockMutations(
       p1,
+      1,
       ['aa'.repeat(32), '55'.repeat(32), 'ee'.repeat(32)],
       [],
     );
     const d2 = applyBlockMutations(
       p2,
+      1,
       ['ee'.repeat(32), 'aa'.repeat(32), '55'.repeat(32)],
       [],
     );
@@ -228,8 +231,8 @@ describe('canonical prover-feed ordering (M-12)', () => {
     const p2 = seededProver(db2);
 
     const boxes = ['cc', '22', '99', '44'].map((b) => makeKarmaBox(b.repeat(32), 5n, 2));
-    const d1 = applyBlockMutations(p1, [], boxes);
-    const d2 = applyBlockMutations(p2, [], [...boxes].reverse());
+    const d1 = applyBlockMutations(p1, 1, [], boxes);
+    const d2 = applyBlockMutations(p2, 1, [], [...boxes].reverse());
 
     expect(Buffer.from(d1).equals(Buffer.from(d2))).toBe(true);
   });
@@ -284,7 +287,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
 
     // Live: boxes and records arrive together, as one block's mutations.
     const live = createAvlProver(db);
-    applyBlockMutations(live.prover, [], boxes, records);
+    applyBlockMutations(live.prover, 1, [], boxes, records);
 
     // Restarted: same committed state, rebuilt from the store.
     const restarted = createAvlProver(db2);
@@ -304,7 +307,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
     ];
 
     const live = createAvlProver(db);
-    applyBlockMutations(live.prover, [], boxes, records);
+    applyBlockMutations(live.prover, 1, [], boxes, records);
 
     const restarted = createAvlProver(db2);
     bootstrapAvlProver(restarted, boxes, 0, []); // the forgotten argument

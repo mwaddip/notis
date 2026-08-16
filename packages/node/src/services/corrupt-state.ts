@@ -43,7 +43,8 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
       site,
       height,
       `our stored header at height ${height} is outside the encodable domain — ` +
-      `the ordering store disagrees with the apply gate`,
+      `the ordering store disagrees with the apply gate ` +
+      `(store/ordering.ts → createOrderingBlock)`,
     );
   }
 }
@@ -97,7 +98,8 @@ export class UnreadableStoredBlockError extends CorruptChainStateError {
     super(
       site,
       height,
-      `our stored block at height ${height} does not decode — ` +
+      `our stored block at height ${height} does not decode ` +
+      `(store/ordering.ts → createOrderingBlock) — ` +
       `${cause instanceof Error ? cause.message : String(cause)}`,
     );
     // The reader's own diagnosis, kept whole. Which field of which struct
@@ -138,7 +140,61 @@ export class MissingStoredBlockError extends CorruptChainStateError {
       site,
       height,
       `no block at height ${height}, below a tip we do hold — the ordering ` +
-      `store is not contiguous`,
+      `store is not contiguous (store/ordering.ts → createOrderingBlock)`,
+    );
+  }
+}
+
+/**
+ * The AVL+ tree refuses an operation the UTXO store implies must succeed.
+ *
+ * `performOneOperation` answers `{ success: false }` for exactly two engine-level
+ * preconditions: `Insert` on a key already present, `Remove` on a key that is
+ * absent. The tree mirrors `utxo_boxes`, so either answer says **the mirror has
+ * drifted** — and the two arms are one fault seen from opposite sides, which is
+ * why they share a class. The detail sentence says which side; the boundary must
+ * not act differently on them.
+ *
+ * **Why this is corruption and not a rejection, stated per arm as provenance.**
+ *
+ * The **`Insert`** arm: `utxo_boxes.id` is `TEXT PRIMARY KEY` and the writer is a
+ * plain `INSERT`, deliberately not `INSERT OR REPLACE` — stated on
+ * `store/utxo.ts`'s `insertBox`. A duplicate box id therefore dies on the
+ * constraint inside the applying transaction, **before the prover feed is built
+ * from the journal**. An `Insert` reaching the tree with its key already present
+ * means the tree holds a box the store does not.
+ *
+ * The **`Remove`** arm: consumed ids reach the feed only as `kind: 'box'`,
+ * `op: 'remove'` journal entries, and the sole writer of those is `consumeBox`.
+ * ⚠ **`consumeBox`'s `UPDATE` is unguarded — it checks no row count**, so the
+ * property that every journaled remove spent a live row is kept by its *callers*,
+ * not by the primitive. The peer-facing one is the gate that matters:
+ * `applyTx` runs only after `validateTx` step 2 has resolved every input through
+ * `getBox`, which filters `spent_at_block IS NULL`, in the same transaction
+ * immediately before. A key in that list the tree does not hold means the tree
+ * lacks a box the store had.
+ *
+ * Neither arm is reachable from peer input, which is what puts the condition
+ * outside the funnel's totality promise. And a drifted tree refuses the *next*
+ * block identically — so rejecting rather than stopping would reject forever
+ * while staying up, the precise failure this file exists to prevent.
+ */
+export class DivergedStateTreeError extends CorruptChainStateError {
+  constructor(
+    site: string,
+    height: number,
+    readonly op: 'Insert' | 'Remove',
+    readonly key: string,
+  ) {
+    super(
+      site,
+      height,
+      `the AVL+ tree refused ${op} of key ${key} at height ${height} — ` +
+      (op === 'Remove'
+        ? `the tree lacks a box the UTXO store held ` +
+          `(store/utxo.ts → consumeBox, via the journal feed)`
+        : `the tree holds a box the UTXO store does not ` +
+          `(store/utxo.ts → insertBox)`),
     );
   }
 }
@@ -164,15 +220,16 @@ export class MissingStoredBlockError extends CorruptChainStateError {
 export function failStopIfCorruptChain(err: unknown): never {
   if (err instanceof CorruptChainStateError) {
     // The operator's conclusion, not the argument for it: an operator reading
-    // this at 3am needs "do not go looking for a bad peer", and the provenance
-    // it rests on is one hop away for whoever wants to check it. Restating that
-    // provenance here would be a copy that decays on its own schedule, in the
-    // one artifact nobody greps when the store gains a second writer.
+    // this at 3am needs "do not go looking for a bad peer". The pointer to the
+    // file that argument rests on rides `err.message`, because it belongs to
+    // the subclass that has it — the members do not share one provenance, and a
+    // pointer hardcoded here would name the ordering store for a fault in the
+    // state tree. What this line adds is the half that IS true of every member
+    // by construction, and the decision.
     console.error(
-      `FATAL: ${err.message}. Nothing a peer sent can have caused this ` +
-      `(store/ordering.ts → createOrderingBlock). Stopping rather than ` +
-      `serving, mining or deciding fork choice from a chain this node ` +
-      `cannot read.`,
+      `FATAL: ${err.message}. Nothing a peer sent can have caused this. ` +
+      `Stopping rather than serving, mining or deciding fork choice from ` +
+      `state this node cannot trust.`,
     );
     process.exit(1);
   }

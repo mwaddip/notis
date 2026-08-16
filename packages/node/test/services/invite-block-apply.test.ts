@@ -37,12 +37,20 @@ import {
   makeTestIdentity,
   mineNextBlock,
   seedAsOneTx,
-  seedEmissionBox,
   signTransaction,
-  type TestIdentity, fixturePostId, fillerTx, seedPostTx } from '../helpers.js';
+  type TestIdentity, fixturePostId, fillerTx, seedPostTx, activateProverOverStore } from '../helpers.js';
 
 /** Short enough that the deadline is reachable by mining a few real blocks. */
 const PROBATION = 3;
+
+/** One pre-seeded like: the post to publish, and the karma box that likes it. */
+interface LikeFixture {
+  post: ReturnType<typeof makePost>;
+  postTx: UtxoTransaction;
+  postId: string;
+  liker: TestIdentity;
+  karma: KarmaBox;
+}
 
 const testConfig = makeTestConfig({
   dbPath: ':memory:',
@@ -72,9 +80,6 @@ async function importTopology() {
 }
 async function importBlockCreator() {
   return await import('../../src/services/block-creator.js');
-}
-async function importAvl() {
-  return await import('../../src/state/avl-prover.js');
 }
 
 describe('the invite at block application', () => {
@@ -111,18 +116,13 @@ describe('the invite at block application', () => {
    * consume, a record put — and a suite without one would assert the SQL side of
    * settlement while leaving the `stateRoot` untouched.
    */
-  async function seedPair(bondValue = INVITE_BOND_KARMA) {
+  async function seedPair(
+    bondValue = INVITE_BOND_KARMA,
+    likeRounds: Array<{ count: number; nonceBase: number }> = [],
+  ) {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
-    const avl = await importAvl();
-    avl.createAvlProver();
-    // Before `startBlockCreator`, not merely before the mine. Its first
-    // `rebuildTemplate` speculates over a body this store cannot apply without
-    // an emission box, and a `body-rejected` speculation **evicts the included
-    // mempool entries** — so a seed that arrived later would leave the creator
-    // building correct, empty blocks over a pool it had already thrown away.
-    await seedEmissionBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
@@ -146,8 +146,35 @@ describe('the invite at block application', () => {
     utxo.insertBox(invite!);
     utxo.insertBox(bond!);
 
+    // Every like round's boxes, seeded here rather than between the blocks that
+    // spend them: a karma box inserted after the bootstrap is one the tree never
+    // received, and the block spending it would ask for a removal the tree
+    // refuses. `poolLikes` pools and mines each batch later.
+    const likeBatches: LikeFixture[][] = [];
+    for (const round of likeRounds) {
+      const batch: LikeFixture[] = [];
+      for (let i = 0; i < round.count; i++) {
+        const nonce = round.nonceBase + i;
+        const { post, tx: postTx, postId } = await seedPostTx(invitee, `post ${nonce}`);
+        const liker = makeTestIdentity();
+        const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
+        utxo.insertBox(karma);
+        batch.push({ post, postTx, postId, liker, karma });
+      }
+      likeBatches.push(batch);
+    }
+
+    // Last, so the tree is built over the invite, the bond and every like box
+    // the blocks below spend. Still ahead of `startBlockCreator`, which is what
+    // the emission box this also seeds has to precede: the creator's first
+    // `rebuildTemplate` speculates over a body this store cannot apply without
+    // one, and a `body-rejected` speculation **evicts the included mempool
+    // entries** — so a seed arriving later would leave the creator building
+    // correct, empty blocks over a pool it had already thrown away.
+    await activateProverOverStore();
+
     return {
-      utxo, inviter, invitee,
+      utxo, inviter, invitee, likeBatches,
       invite: invite as InviteBox,
       bond: bond as BondBox,
     };
@@ -436,28 +463,20 @@ describe('the invite at block application', () => {
    * confirm-and-like-in-one-block is the valid shape. Distinct posts and
    * distinct likers, because one liker may like a post once.
    */
-  async function earnLikes(author: TestIdentity, count: number, nonceBase: number) {
+  /** Pool one pre-seeded batch of posts and their likes, and mine it. */
+  async function poolLikes(batch: LikeFixture[]) {
     const posts = await import('../../src/store/posts.js');
     const mempool = await importMempool();
-    const utxo = await importUtxo();
     const types = await import('@dagsocial/types');
 
-    const postIds: string[] = [];
-    for (let i = 0; i < count; i++) {
-      const nonce = nonceBase + i;
-      const { post, tx: postTx, postId } = await seedPostTx(author, `post ${nonce}`);
+    for (const { post, postTx, postId, liker, karma } of batch) {
       posts.insertPost(postId, post, types.encodePost(post));
       mempool.insertUtxoTx(postTx, 1000);
-      postIds.push(postId);
-
-      const liker = makeTestIdentity();
-      const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
-      utxo.insertBox(karma);
       mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), 1000);
     }
 
     expect(await mineOne()).not.toBeNull();
-    return postIds;
+    return batch.map((f) => f.postId);
   }
 
   /** Mine until the chain tip is `target`. */
@@ -484,7 +503,10 @@ describe('the invite at block application', () => {
     // accumulation from overwriting: a settlement that assigned this block's
     // count instead of adding it would leave the same total after a single
     // block and only diverge here.
-    const { utxo, inviter, invitee, invite, bond } = await seedPair();
+    const { utxo, inviter, invitee, invite, bond, likeBatches } = await seedPair(
+      INVITE_BOND_KARMA,
+      [{ count: 3, nonceBase: 0 }, { count: 2, nonceBase: 10 }],
+    );
     const mempool = await importMempool();
     const records = await importRecords();
 
@@ -493,9 +515,9 @@ describe('the invite at block application', () => {
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
     // Block A: three likes. Block B: two more. floor(5 / 5) = 1 karma vested.
-    await earnLikes(invitee, 3, 0);
+    await poolLikes(likeBatches[0]!);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(3n);
-    await earnLikes(invitee, 2, 10);
+    await poolLikes(likeBatches[1]!);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived)
       .toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
 
@@ -511,7 +533,10 @@ describe('the invite at block application', () => {
     // is a THIRD PARTY's action: the thread's author prunes, and under a count
     // derived from those rows the inviter — who did nothing — loses karma.
     // Design track §1.4.1 forbids destroying someone else's stake.
-    const { utxo, inviter, invitee, invite, bond } = await seedPair();
+    const { utxo, inviter, invitee, invite, bond, likeBatches } = await seedPair(
+      INVITE_BOND_KARMA,
+      [{ count: INVITE_BOND_VEST_PER_LIKES, nonceBase: 100 }],
+    );
     const mempool = await importMempool();
     const records = await importRecords();
     const db = await importDb();
@@ -519,7 +544,7 @@ describe('the invite at block application', () => {
     mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const invitedAtBlock = (await mineOne())!.header.height;
 
-    const postIds = await earnLikes(invitee, INVITE_BOND_VEST_PER_LIKES, 100);
+    const postIds = await poolLikes(likeBatches[0]!);
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
     expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
 
@@ -598,9 +623,6 @@ describe('the invite at block application — decay adjacency', () => {
     const ordering = await import('../../src/store/ordering.js');
     const bc = await import('../../src/services/block-creator.js');
     const types = await import('@dagsocial/types');
-    (await import('../../src/state/avl-prover.js')).createAvlProver();
-    // Ahead of the first `startBlockCreator` below — see `seedEmissionBox`.
-    await seedEmissionBox();
 
     const cfg = makeTestConfig({
       dbPath: ':memory:',
@@ -631,6 +653,24 @@ describe('the invite at block application — decay adjacency', () => {
     utxo.insertBox(invite!);
     utxo.insertBox(bond!);
 
+    // Every box the run spends, seeded before the tree is built from the store.
+    // The transactions are pooled block by block below; only the boxes have to
+    // be here, because a box the tree never received is one the block that
+    // spends it cannot remove.
+    const likeFixtures = [];
+    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
+      const { tx: postTx, postId } = await seedPostTx(invitee, `decay post ${i}`);
+      const liker = makeTestIdentity();
+      const karma = makeKarmaBox(100n, liker.userId, 0, 900 + i);
+      utxo.insertBox(karma);
+      likeFixtures.push({ postTx, postId, liker, karma });
+    }
+
+    // Last, so the tree covers every box the blocks below spend, and still ahead
+    // of the first `startBlockCreator`, which the emission box it seeds must
+    // precede.
+    await activateProverOverStore();
+
     const claim: UtxoTransaction = {
       inputs: [invite!.id!],
       outputs: [{
@@ -645,16 +685,12 @@ describe('the invite at block application — decay adjacency', () => {
     const invitedAtBlock = (await mine()).header.height;
 
     // Five likes in one block → floor(5 / 5) = 1 karma vested at the deadline.
-    for (let i = 0; i < INVITE_BOND_VEST_PER_LIKES; i++) {
-      const { tx: postTx, postId } = await seedPostTx(invitee, `decay post ${i}`);
+    for (const { postTx, postId, liker, karma } of likeFixtures) {
       // The post transaction itself, ahead of the like that targets it: a like
       // is rejected unless `block_topology` already names its target, and that
       // row is written when this transaction applies (NODE_INTERFACE → Post
       // transactions). Both ride the same block, in this order.
       mempool.insertUtxoTx(postTx, 1000);
-      const liker = makeTestIdentity();
-      const karma = makeKarmaBox(100n, liker.userId, 0, 900 + i);
-      utxo.insertBox(karma);
       mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), 1000);
     }
     await mine();

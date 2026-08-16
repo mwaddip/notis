@@ -5,7 +5,7 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import { computePostId, encodePost, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { makePost, makeTestConfig, makeTestIdentity, mineNextBlock, fixturePostId, seedPostTx } from '../helpers.js';
+import { makePost, makeTestConfig, mineNextBlock, fixturePostId } from '../helpers.js';
 
 /**
  * Genesis is **state, not a block**, and this suite pins the half of that claim
@@ -296,16 +296,13 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
     bc: typeof import('../../src/services/block-creator.js');
   }> {
     const { s } = await seededRoot(':memory:');
-    const author = makeTestIdentity();
-    const posts = await import('../../src/store/posts.js');
-    const mempool = await import('../../src/store/mempool.js');
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
 
-    // A block with a post in it — the tx carries the post, so the block that
-    // mines it is what stores and confirms it.
-    const { tx: postTx } = await seedPostTx(author, 'past genesis');
-    mempool.insertUtxoTx(postTx, 1000);
+    // One block past genesis is the whole requirement, and coinbase-only is what
+    // this fixture can build: a post's karma box seeded after `seededRoot` is
+    // absent from the tree the genesis bootstrap already built, and seeding it
+    // before would put it in the genesis feed and move the pinned root.
     expect(await mineNextBlock(bc)).not.toBeNull();
 
     // Erase the flag, which leaves exactly the store an upgrade produces: the
@@ -363,11 +360,8 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
     try {
-      const author = makeTestIdentity();
-      const posts = await import('../../src/store/posts.js');
-      const mempool = await import('../../src/store/mempool.js');
-      const { tx: postTx } = await seedPostTx(author, 'past genesis');
-      mempool.insertUtxoTx(postTx, 1000);
+      // One block past genesis, coinbase-only — the flag, not the body, is what
+      // this control turns on.
       expect(await mineNextBlock(bc)).not.toBeNull();
 
       const keypair = s.system.getSystemKeypair()!;
@@ -514,14 +508,12 @@ describe('assertGenesisRoot', () => {
     // applied a block. The check belongs on the path that builds the state.
     const { root: genesisRoot, s } = await seededRoot(':memory:');
 
-    const author = makeTestIdentity();
-    const posts = await import('../../src/store/posts.js');
-    const mempool = await import('../../src/store/mempool.js');
     const bc = await import('../../src/services/block-creator.js');
     bc.startBlockCreator(makeTestConfig({ dbPath: ':memory:', nodeRole: 'miner' as const }));
     try {
-      const { tx: postTx } = await seedPostTx(author, 'past genesis');
-      mempool.insertUtxoTx(postTx, 1000);
+      // Coinbase-only still moves the tree off genesis — the block releases the
+      // emission box and creates its coinbase — and it is what this fixture can
+      // build without seeding a box the genesis tree never received.
       expect(await mineNextBlock(bc)).not.toBeNull();
 
       expect(rootOf(s)).not.toBe(genesisRoot);

@@ -3,6 +3,7 @@ import { SqliteAvlStorage } from './avl-storage.js';
 import { serializeBox, serializeIdentityRecord } from './serialize-box.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
+import { DivergedStateTreeError } from '../services/corrupt-state.js';
 import type { AnyBox } from '@dagsocial/types';
 import type { IdentityRecord } from '../store/identity-records.js';
 
@@ -102,17 +103,29 @@ export function bootstrapAvlProver(
   for (const box of sortByBoxId(unspentBoxes)) {
     const key = hexToBytes(box.id!);
     const value = serializeBox(box);
-    handle.prover.performOneOperation({ tag: 'Insert', key, value });
+    const result = handle.prover.performOneOperation({ tag: 'Insert', key, value });
+    if (!result.success) {
+      throw new DivergedStateTreeError(
+        'bootstrapAvlProver', currentHeight, 'Insert', box.id!,
+      );
+    }
   }
   // `Insert`, not `InsertOrUpdate`: the tree is empty and the store holds one
   // row per identity, so a repeat here would mean a duplicate key and should
-  // fail loudly rather than silently keep the last one.
+  // fail loudly rather than silently keep the last one — which is what reading
+  // the verdict is for. The choice of operation only sets up the refusal; the
+  // throw is what makes it loud.
   for (const put of [...records].sort((a, b) => byHexBoxId(a.key, b.key))) {
-    handle.prover.performOneOperation({
+    const result = handle.prover.performOneOperation({
       tag: 'Insert',
       key: hexToBytes(put.key),
       value: serializeIdentityRecord(put.record),
     });
+    if (!result.success) {
+      throw new DivergedStateTreeError(
+        'bootstrapAvlProver', currentHeight, 'Insert', put.key,
+      );
+    }
   }
   // Checkpoint at current tip
   handle.prover.generateProofAndUpdateStorage([
@@ -127,6 +140,18 @@ export function bootstrapAvlProver(
  * The feed is sorted internally, so callers MUST NOT rely on their input order
  * reaching the tree — it is deliberately discarded.
  *
+ * **The tree is asked, and a refusal stops the node** (NODE_INTERFACE → AVL+
+ * State Root). `Remove` of an absent key and `Insert` of a present one are the
+ * two answers `performOneOperation` can refuse, and each says the tree and
+ * `utxo_boxes` have drifted — see `DivergedStateTreeError` for the per-arm
+ * provenance. The throw is the short-circuit: the first refusal stops the feed,
+ * leaving the tree wherever it got to, which is why every caller snapshots the
+ * digest and restores it.
+ *
+ * `height` is second, not last, because a required parameter cannot follow the
+ * defaulted `recordPuts`.
+ *
+ * @param height - the block height these mutations belong to, for the diagnostic
  * @param consumed - hex-encoded box IDs consumed in this block, any order
  * @param created - full box objects created in this block, any order
  * @param recordPuts - identity-record writes, any order, **one entry per key**
@@ -137,6 +162,7 @@ export function bootstrapAvlProver(
  */
 export function applyBlockMutations(
   prover: PersistentBatchAVLProver,
+  height: number,
   consumed: string[],
   created: AnyBox[],
   recordPuts: RecordPut[] = [],
@@ -166,19 +192,31 @@ export function applyBlockMutations(
   // chooses.
   for (const boxId of [...consumed].sort(byHexBoxId)) {
     const key = hexToBytes(boxId);
-    prover.performOneOperation({ tag: 'Remove', key });
+    const result = prover.performOneOperation({ tag: 'Remove', key });
+    if (!result.success) {
+      throw new DivergedStateTreeError('applyBlockMutations', height, 'Remove', boxId);
+    }
   }
 
   // Insert created boxes, same canonical order
   for (const box of sortByBoxId(created)) {
     const key = hexToBytes(box.id!);
     const value = serializeBox(box);
-    prover.performOneOperation({ tag: 'Insert', key, value });
+    const result = prover.performOneOperation({ tag: 'Insert', key, value });
+    if (!result.success) {
+      throw new DivergedStateTreeError('applyBlockMutations', height, 'Insert', box.id!);
+    }
   }
 
   // Record puts use InsertOrUpdate: a put is a create on first write and an
   // update afterwards, and the feed does not know which — InsertOrUpdate
   // collapses that distinction so the feed needs no existence lookup.
+  //
+  // The one discarded verdict in this file, and the only one that carries no
+  // information: `InsertOrUpdate` is total. Its update function returns the new
+  // value unconditionally, so both the key-present and key-absent descents
+  // succeed and `{ success: false }` has no path here. Narrowing it would add a
+  // branch nothing can enter.
   for (const put of [...recordPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
     prover.performOneOperation({
       tag: 'InsertOrUpdate',

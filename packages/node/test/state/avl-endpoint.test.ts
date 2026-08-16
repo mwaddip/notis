@@ -40,7 +40,7 @@ describe('GET /api/v1/proof/:boxId', () => {
       ...fixtureProvenance(candidate, 1),
     };
     // One tree holds both entity kinds, so the fixture does too.
-    applyBlockMutations(handle.prover, [], [box], [
+    applyBlockMutations(handle.prover, 1, [], [box], [
       { key: RECORD_KEY, record: { lastActivityBlock: 7, lastDecayBlock: 3, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
     ]);
     checkpointProver(handle, 1);
@@ -122,7 +122,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     // The historical answer is built by a separate branch from the at-tip one,
     // with its own `decodeValue` call, so covering the tip proves nothing here.
     const handle = createAvlProver(db);
-    applyBlockMutations(handle.prover, [], [], [
+    applyBlockMutations(handle.prover, 2, [], [], [
       { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
     ]);
     checkpointProver(handle, 2);

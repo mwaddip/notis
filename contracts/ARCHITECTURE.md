@@ -1852,9 +1852,9 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > truncating numeric cast, and a rule phrased against truncation does not catch it.
   >
   > ⚠ **"Untrusted" is load-bearing.** The fail-stop family deliberately ends the process, but
-  > only on this node's own stored bytes — see `NODE_INTERFACE` and
-  > `node/src/services/corrupt-state.ts`. That is not an exception to this bullet; it is a
-  > different subject.
+  > only on this node's own state — its stored bytes, or two of its own stores disagreeing. See
+  > `NODE_INTERFACE` and `node/src/services/corrupt-state.ts`. That is not an exception to this
+  > bullet; it is a different subject.
 - **Validate, don't trust** — independently recompute every self-reported
   claim. A post's parent hash, PoW solution, and signature MUST be verified
   by the local node before the post enters the store.

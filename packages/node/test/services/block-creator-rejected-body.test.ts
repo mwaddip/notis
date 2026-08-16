@@ -15,6 +15,7 @@ import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import type { TestIdentity } from '../helpers.js';
 import {
+  makeApplicableBlock,
   makeKarmaBox,
   makeTestConfig,
   makeTestIdentity,
@@ -22,6 +23,7 @@ import {
   seedProvenance,
   signTransaction,
   type Stored,
+  activateProverOverStore,
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -116,12 +118,10 @@ async function importAvl() {
 
 /** Prover singleton on the test DB, seeded boxes bootstrapped — src/index.ts wiring. */
 async function activateProver() {
-  const avlMod = await importAvl();
-  const utxo = await importUtxo();
-  const handle = avlMod.createAvlProver();
-  const unspent = utxo.getUnspentBoxes();
-  if (unspent.length > 0) avlMod.bootstrapAvlProver(handle, unspent, 0, []);
-  expect(avlMod.tryGetAvlProver()).not.toBeNull();
+  // Ordering lives in the shared helper: committed state into the store, then
+  // the tree built from it (helpers.ts → `activateProverOverStore`).
+  const handle = await activateProverOverStore();
+  expect((await importAvl()).tryGetAvlProver()).not.toBeNull();
   return handle;
 }
 
@@ -399,6 +399,95 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // A stated rejection, not the catch-all: the arm returns false, so the
     // speculation exits through `BlockRejected` and the prover is restored.
     expect(computePostBlockStateRoot(candidate, 1)).toEqual({ kind: 'body-rejected' });
+    expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
+  });
+
+  it('a corrupt state tree found while producing STOPS the node, and is not a body-rejected', async () => {
+    // ⛔ The arm that must sit ABOVE the catch-all. Mapped to `body-rejected`
+    // instead, a diverged tree would stop this node producing while it stayed
+    // up — forever, because the fault is in our state rather than in the body,
+    // so the next candidate fails identically. "Rejects everything while
+    // staying up" is the outcome `services/corrupt-state.ts` exists to prevent,
+    // and it is indistinguishable from a quiet network until somebody reads the
+    // logs.
+    //
+    // `process.exit` is stubbed to throw, because a real one takes the test
+    // runner with it. That the stub is reached at all is the assertion — the
+    // same shape `corrupt-state.test.ts` uses for the other three subclasses.
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    // Armed after the candidate is built, so the block itself is honest: the
+    // first speculation runs the real prover, and only the direct call below
+    // meets the refusal. A fixture cannot express the condition any other way —
+    // a store and a tree that disagree is not something a body can carry.
+    let armed = false;
+    const badKey = 'ab'.repeat(32);
+    // ⚠ **Resolved here, not by a static import at the top of the file.**
+    // `vi.resetModules()` gives each module graph its own copy of
+    // `corrupt-state.js`, so a statically-imported class is a *different object*
+    // from the one `block-apply.js` closes over — and `instanceof` against it is
+    // false, which silently routes this case into the catch-all arm and makes
+    // the test assert the opposite of what it says.
+    const { DivergedStateTreeError } = await import('../../src/services/corrupt-state.js');
+    vi.doMock('../../src/state/avl-prover.js', async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import('../../src/state/avl-prover.js')>();
+      return {
+        ...actual,
+        applyBlockMutations: (
+          ...args: Parameters<typeof actual.applyBlockMutations>
+        ): Uint8Array => {
+          if (armed) {
+            throw new DivergedStateTreeError('applyBlockMutations', 1, 'Remove', badKey);
+          }
+          return actual.applyBlockMutations(...args);
+        },
+      };
+    });
+
+    const utxo = await importUtxo();
+    utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
+    const handle = await activateProver();
+    const preDigest = Buffer.from(handle.prover.digest()!).toString('hex');
+
+    const candidate = await makeApplicableBlock({ height: 1 });
+
+    const exited: number[] = [];
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exited.push(code ?? 0);
+      throw new Error('process.exit');
+    }) as never);
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((msg: unknown) => {
+      errors.push(String(msg));
+    });
+
+    const { computePostBlockStateRoot } = await import(
+      '../../src/services/block-apply.js'
+    );
+
+    armed = true;
+    // It never returns a verdict: the boundary is reached instead, and the
+    // stubbed exit is what comes back out.
+    expect(() => computePostBlockStateRoot(candidate, 1)).toThrow('process.exit');
+    expect(exited).toEqual([1]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('FATAL');
+    expect(errors[0]).toContain(badKey);
+    expect(errors[0]).toContain('Nothing a peer sent can have caused this');
+
+    // ⛔ **That the `finally` never runs is NOT assertable here, and pretending
+    // otherwise would be the test asserting a fiction.** In production
+    // `process.exit(1)` does not unwind, so the journal abort and the prover
+    // restore are skipped; under a stub that *throws* instead, the `finally`
+    // runs exactly as it would for any other exception. The stub is what keeps
+    // the runner alive, and it is precisely what removes the property from
+    // view. It is stated on `computePostBlockStateRoot` instead, where a reader
+    // meets it.
+    //
+    // The prover is untouched here for an unrelated reason — the injection
+    // throws before the real mutation runs — so it says nothing either way.
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
   });
 });
