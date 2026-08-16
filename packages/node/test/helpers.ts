@@ -30,6 +30,7 @@ import type {
   Post,
   KarmaBox,
   CreditBox,
+  FeeBox,
   BlockHeader,
   OrderingBlock,
   PruneEntry,
@@ -433,13 +434,18 @@ export function makeCreditBox(
 }
 
 /**
- * A signed credit transfer that leaves `fee` unspent — the deficit the block
- * carrying it claims in its coinbase (MINING_INTERFACE → Coinbase Application).
+ * A signed credit transfer that names `fee` in a `FeeBox` output — what the
+ * block carrying it claims in its coinbase (MINING_INTERFACE → Coinbase
+ * Application).
  *
- * The change goes back to the spender, so the only value that leaves the
- * transaction's own arithmetic is the fee. `inputs` are boxes, not ids, because
- * the sum has to be taken over what they actually hold: a fee stated against a
- * mis-stated input total is a fixture that tests the wrong number.
+ * The change goes back to the spender and the fee is written down, so the
+ * transaction balances exactly: a credit transaction conserves strictly
+ * (NODE_INTERFACE → `validateTx` step 5). `inputs` are boxes, not ids, because
+ * the change has to be taken over what they actually hold — a fee stated
+ * against a mis-stated input total is a fixture that tests the wrong number.
+ *
+ * A `fee` of `0` emits no box at all: zero fee means no box, and a zero-value
+ * `FeeBox` is refused by the credit transition rule.
  */
 export function makeCreditTx(
   spender: TestIdentity,
@@ -457,6 +463,9 @@ export function makeCreditTx(
         owner: recipient ?? spender.userId,
         guard: 'owner_signature',
       } as CreditBox,
+      ...(fee > 0n
+        ? [{ boxType: 'fee', value: fee, guard: 'block_apply' } as FeeBox]
+        : []),
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
@@ -509,6 +518,21 @@ export function makeLikeTx(
  */
 export function changeBoxOf(tx: UtxoTransaction): KarmaBox {
   return materializeOutput(tx.outputs[0]!, computeTxId(tx), 0) as KarmaBox;
+}
+
+/**
+ * The `FeeBox` a `makeCreditTx` transaction creates, with the id block
+ * application will give it — output 1, where the change box is output 0.
+ *
+ * Routed through `materializeOutput` for the same reason `changeBoxOf` is: the
+ * id a test asserts against has to be the id apply produced, not one the
+ * fixture derived a second way. Returns `null` for a zero-fee transaction,
+ * which carries no box at all.
+ */
+export function feeBoxOf(tx: UtxoTransaction): AnyBox | null {
+  const out = tx.outputs[1];
+  if (!out || out.boxType !== 'fee') return null;
+  return materializeOutput(out, computeTxId(tx), 1);
 }
 
 /**

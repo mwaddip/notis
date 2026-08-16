@@ -41,7 +41,7 @@ import { extractDeclaration as extractDeclarationFrom } from './extract-declarat
 import type {
   CandidateOf,
   Post, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
-  EmissionBox, TreasuryBox,
+  EmissionBox, TreasuryBox, FeeBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
 
@@ -225,6 +225,12 @@ const GOLDEN_TREASURY_BOX: TreasuryBox = {
   txId: COVERAGE_TX_ID, index: 5,
 };
 
+const GOLDEN_FEE_BOX: FeeBox = {
+  boxType: 'fee', value: 1000n,
+  guard: 'block_apply',
+  txId: COVERAGE_TX_ID, index: 6,
+};
+
 /**
  * The box types the mirror covers, **keyed so coverage is a compile error.**
  *
@@ -254,6 +260,7 @@ const BOX_TYPE_FIXTURES = {
   vouch: GOLDEN_VOUCH_BOX,
   emission: GOLDEN_EMISSION_BOX,
   treasury: GOLDEN_TREASURY_BOX,
+  fee: GOLDEN_FEE_BOX,
 } satisfies Record<MirroredBoxType, AnyBox>;
 
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> =

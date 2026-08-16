@@ -32,8 +32,8 @@ import type { IdentityRecord } from '../store/identity-records.js';
 
 /**
  * The box types that hold karma: spendable in a `karma` box, escrowed in the
- * other four. `credit`, `emission` and `treasury` are the other ledger and
- * `genesis_proof` is unspendable at 0 (NODE_INTERFACE → the `/status` row).
+ * other four. `credit`, `emission`, `treasury` and `fee` are the other ledger
+ * and `genesis_proof` is unspendable at 0 (NODE_INTERFACE → the `/status` row).
  *
  * One statement, two readers. The karma transition arm below admits exactly
  * these as the outputs of a karma spend, and `/status` sums `totalKarma` over
@@ -523,14 +523,37 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // CreditBox → CreditBox(es) (any owner)
+    // CreditBox → CreditBox(es) and/or FeeBox (any owner)
     // ------------------------------------------------------------------
     case 'credit': {
-      const creditOutputs = outputs.filter((o) => o.boxType === 'credit');
-      if (creditOutputs.length === 0 || creditOutputs.length !== outputs.length) {
+      const allowed = outputs.every(
+        (o) => o.boxType === 'credit' || o.boxType === 'fee',
+      );
+      if (outputs.length === 0 || !allowed) {
         return {
           valid: false,
-          error: `CreditBox can only be spent to create CreditBox outputs`,
+          error: `CreditBox can only be spent to create CreditBox or FeeBox outputs`,
+        };
+      }
+      // Zero or one, never two. A second fee output carries no information and
+      // gives one economic fact two encodings with different `utxoTxRoot`,
+      // which is the same "one block, one encoding" the zero-value coinbase
+      // output is refused for (NODE_INTERFACE → the credit transition row).
+      const feeOutputs = outputs.filter((o) => o.boxType === 'fee');
+      if (feeOutputs.length > 1) {
+        return {
+          valid: false,
+          error: `A transaction carries at most one FeeBox output`,
+        };
+      }
+      // Zero fee means no box. A zero-value fee box conserves, so nothing
+      // downstream refuses it and this is the only gate that can. Same rule
+      // the emission successor carries — one block, one encoding
+      // (TYPES_INTERFACE → EmissionBox).
+      if (feeOutputs.some((o) => o.value === 0n)) {
+        return {
+          valid: false,
+          error: `A zero-value FeeBox is not created; zero fee means no box`,
         };
       }
       return { valid: true };
@@ -1069,6 +1092,13 @@ const OUTPUT_SHAPE: Record<
       targetId: 'bytes32',
       guard: null,
     }),
+    // The shared prefix and nothing else: a fee box names no owner, because
+    // block application is its only spender and the coinbase already decides
+    // which key the value reaches (TYPES_INTERFACE → FeeBox). No optional
+    // fields, because there is no tail for one to sit in. That `block_apply`
+    // rides a user-created box is the shape `bond` and `post_lock` already
+    // have (NODE_INTERFACE → Output shape).
+    fee: shape({ boxType: null, value: 'u64', guard: null }),
   };
 })();
 
@@ -1213,7 +1243,7 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *
  * Karma and credits are minted or burned only in block-application paths (like
  * settlement, decay, coinbase, bond settlement), never inside a user
- * transaction, so no box type gets a blanket exemption. **Four stated
+ * transaction, so no box type gets a blanket exemption. **Three stated
  * exceptions and no others** (NODE_INTERFACE → `validateTx` step 5):
  *
  * - **The like burn** — `likeTarget` present ⟺ the transaction burns
@@ -1241,12 +1271,12 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *   separately. A cancelled invite is *also* a zero-output spend but needs no
  *   exemption: the box holds `0`, so it conserves arithmetically.
  *
- * - **The transaction fee** — a spend of `credit` boxes may leave a deficit of
- *   any size, zero included, and the block claims it. Not a biconditional and
- *   not an amount: any deficit is legal and no fee is required, because the
- *   price of inclusion is relay policy and block assembly rather than validity.
- *   A *surplus* on credit inputs is refused inside the same arm, which is what
- *   keeps the invite claim the only mint.
+ * All three move karma. **A credit transaction conserves strictly**: its fee is
+ * a `FeeBox` output it names (TYPES_INTERFACE → FeeBox), so what the miner takes
+ * is inside the output sum rather than a gap between two sums, and a credit-side
+ * deficit is refused by the strict equality below like any other. That leaves
+ * the like burn as the only deficit in the system, which is what lets
+ * `likeTarget` ⟺ a deficit stay exact with no ledger argument behind it.
  *
  * The BondBox has **no** exemption and needs none: a bond is destroyed by the
  * probation-deadline settlement, which is block application, and this gate
@@ -1302,32 +1332,6 @@ function checkValueConservation(
         error:
           `Claim non-conservation: a claim must mint exactly ${INVITE_KARMA_AMOUNT} ` +
           `karma (inputs=${totalInputValue}, outputs=${totalOutputValue})`,
-      };
-    }
-    return { valid: true };
-  }
-
-  // Fee carve. A transaction spending credit boxes may leave a deficit of any
-  // size, zero included; the block carrying it claims the difference in its
-  // coinbase (MINING_INTERFACE → Coinbase Application). A surplus stays
-  // invalid — a deficit is a fee, a surplus is a mint, and the invite claim
-  // above is the only mint a user transaction may perform.
-  //
-  // Keyed on the input ledger, which is a property of the transaction rather
-  // than of this check: `validateTx` step 3 pins every input to one boxType and
-  // the transition table admits only credit → credit. That is what makes the
-  // key disjoint from the two karma carves above, which additionally require
-  // all-karma inputs and `invite → karma` respectively.
-  //
-  // No amount is checked here. A zero-fee transaction is valid consensus; the
-  // price is each node's relay policy (MEMPOOL_INTERFACE → Fee floor).
-  if (inputType === 'credit') {
-    if (totalOutputValue > totalInputValue) {
-      return {
-        valid: false,
-        error:
-          `Credit non-conservation: outputs exceed inputs ` +
-          `(inputs=${totalInputValue}, outputs=${totalOutputValue})`,
       };
     }
     return { valid: true };

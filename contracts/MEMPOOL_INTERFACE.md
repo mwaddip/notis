@@ -502,9 +502,15 @@ its own as entries expire or confirm.
 
 ### Fee floor
 
-A node refuses a credit transaction whose fee rate — deficit in base units per
-**in-block byte** — falls below `MIN_FEE_RATE_PER_BYTE`. This is **relay policy,
-not consensus**: a zero-fee transaction is valid and a miner may mine one.
+A node refuses a credit transaction whose fee rate — the value of its `FeeBox` output in
+base units per **in-block byte** — falls below `MIN_FEE_RATE_PER_BYTE`. This is **relay
+policy, not consensus**: a transaction carrying no fee box is valid and a miner may mine one.
+
+⛔ **A bid is read from the transaction's own bytes and resolves nothing.** The fee is a
+`FeeBox` output (TYPES_INTERFACE → FeeBox), so a node prices an entry exactly whether or not
+it has ever seen the inputs — the same standing the class already has, since
+`outputs.every(…)` decides that from the same bytes. **There is no unpriceable credit
+entry**, and no state a node must hold before it can order its own pool.
 
 ⚠ **The denominator is the in-block cost, not the bare encoded length.** A
 transaction occupies its length-prefixed body *and* its fixed-width `utxoTxIds`

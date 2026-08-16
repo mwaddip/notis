@@ -9,12 +9,13 @@
  *    transition arm already rejects unknown output types on its own;
  *  - full `validateTx` runs against a real store for the consensus surface:
  *    every boxType's honest shape still validates through a legal transition
- *    (including the two declared optionals present and absent), and each of
- *    the six boxTypes rejects a wrong-but-known-elsewhere guard.
+ *    (including the two declared optionals present and absent), and every
+ *    output boxType rejects a wrong-but-known-elsewhere guard.
  *
- * `BOX_TYPES` below is the six types a transaction may CREATE, which is what
- * this file is about — not every box type. `genesis_proof` is excluded from
- * `OUTPUT_SHAPE` by protocol rule and is covered in
+ * `BOX_TYPES` below is the types a transaction may CREATE, which is what this
+ * file is about — not every box type. `genesis_proof`, `emission` and
+ * `treasury` have no `OUTPUT_SHAPE` row because no transaction may create
+ * them; `genesis_proof`'s refusal is covered in
  * `genesis-proof-not-in-tx.test.ts`.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -114,22 +115,47 @@ function honestCandidate(
         targetId: new Uint8Array(32).fill(0xcc),
         guard: 'owner_signature',
       };
+    case 'fee':
+      // The shared prefix and nothing else — no owner, no tail
+      // (TYPES_INTERFACE → FeeBox).
+      return {
+        boxType: 'fee',
+        value: 10n,
+        guard: 'block_apply',
+      };
     default:
       throw new Error(`no honest candidate for ${boxType}`);
   }
 }
 
-const BOX_TYPES = ['karma', 'credit', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+/**
+ * The types a transaction may CREATE — `OUTPUT_SHAPE`'s key set, restated as a
+ * type so the tables below are **compile-checked rather than hand-kept**.
+ *
+ * ⛔ **An array of the union is satisfied by any subset of it**, so `BOX_TYPES`
+ * alone tracks the set by hand and a new output type would silently go
+ * uncovered by every loop in this file. `WRONG_GUARD` is keyed on the union
+ * instead, which makes the omission a compile error, and `BOX_TYPES` is
+ * derived from its keys. Same shape as `MirroredBoxType` in
+ * `ui-crypto-mirror.test.ts`.
+ */
+type OutputBoxType = Exclude<
+  AnyBox['boxType'],
+  'genesis_proof' | 'emission' | 'treasury'
+>;
 
 /** A guard string that is canonical for a DIFFERENT boxType. */
-const WRONG_GUARD: Record<(typeof BOX_TYPES)[number], string> = {
+const WRONG_GUARD: Record<OutputBoxType, string> = {
   karma: 'block_apply',
   credit: 'block_apply',
   invite: 'owner_signature',
   bond: 'owner_signature',
   post_lock: 'owner_signature',
   vouch: 'invite_dual',
+  fee: 'owner_signature',
 };
+
+const BOX_TYPES = Object.keys(WRONG_GUARD) as readonly OutputBoxType[];
 
 function shapeOf(outputs: unknown[]) {
   return checkOutputShape(outputs as AnyBoxCandidate[]);
@@ -186,13 +212,16 @@ describe('checkOutputShape (direct)', () => {
   });
 
   it('rejects a missing required key on every boxType (last non-guard key dropped)', () => {
-    const dropped: Record<string, string> = {
+    // `fee` has no field but `value` — the shared prefix is its whole shape —
+    // so dropping the last non-guard key is dropping `value` itself.
+    const dropped: Record<OutputBoxType, string> = {
       karma: 'owner',
       credit: 'owner',
       invite: 'inviteePublicKey',
       bond: 'inviteePublicKey',
       post_lock: 'originalValue',
       vouch: 'targetId',
+      fee: 'value',
     };
     for (const t of BOX_TYPES) {
       const c = honestCandidate(t, owner);

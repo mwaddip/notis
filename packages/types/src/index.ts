@@ -123,6 +123,7 @@ export type {
   VouchBox,
   EmissionBox,
   TreasuryBox,
+  FeeBox,
   AnyBox,
   UtxoTransaction,
   TxId,

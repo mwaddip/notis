@@ -32,7 +32,7 @@ whatever the other income terms yield — fees, and storage rent when it arrives
 |-----------|-------|-------------|
 | `CREDIT_INITIAL_REWARD` | 100 | Credits per block in fixed-rate period |
 | `CREDIT_REWARD_REDUCTION` | 2 | Credits reduced per epoch |
-| `CREDIT_MINER_REWARD_DELAY` | 720 | Blocks before coinbase can be spent (~12h) |
+| `CREDIT_MINER_REWARD_DELAY` | 1440 | Blocks before coinbase can be spent (24h at 60s) |
 | `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
 | `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
 | `COINBASE_BACKER_PCT` | 35 | Backer pool. **AHEAD OF CODE** — nothing stakes, so it falls to the miner floor |
@@ -317,14 +317,20 @@ validator key), stores it, broadcasts it, and applies coinbase mints.
 
 ## Coinbase Application
 
-The coinbase carries the block's **income**, not a fixed reward: `emission(height)`
-plus the deficits the block's credit transactions left unclaimed (ARCHITECTURE → UTXO
-conservation). Storage rent becomes a third term, and nothing in this rule is revisited
-when it arrives — that is the point of stating it income-shaped.
+The coinbase carries the block's **income**, not a fixed reward: `emission(height)` plus the
+value of the `FeeBox` outputs the block's transactions carry (TYPES_INTERFACE → FeeBox).
+Storage rent becomes a third term, and nothing in this rule is revisited when it arrives —
+that is the point of stating it income-shaped.
+
+⛔ **`fees` is a sum over boxes, and resolves no inputs.** Every fee in the block is written
+down in it, so the total is a property of the body's own bytes. **Block application consumes
+the fee boxes in the block that created them**; the pair nets out of the prover feed, so they
+never reach the AVL tree and `stateRoot` is unaffected (NODE_INTERFACE → the prover feed
+derivation).
 
 ### On block creation (miner):
 1. Fill the body **first** — the fees and the actor count are properties of what was included
-2. `income = computeBlockReward(height) + fees`
+2. `income = computeBlockReward(height) + fees`, `fees = Σ FeeBox.value` over the body
 3. Split per the slice table below. **Only the miner's slice becomes a `CoinbaseOutput`**; the
    treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
 4. Include `CoinbaseOutput[]` in block

@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHash } from 'crypto';
 import { computeBoxId, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { CreditBox, UtxoTransaction } from '@dagsocial/types';
+import type { CreditBox, FeeBox, UtxoTransaction } from '@dagsocial/types';
 
 const originalFloor = process.env['MIN_FEE_RATE_PER_BYTE'];
 
@@ -27,12 +27,20 @@ function creditBox(label: string, value: bigint): CreditBox {
   return { ...box, id: computeBoxId(box as never) } as CreditBox;
 }
 
+/**
+ * A credit spend that names its fee in a `FeeBox` output — which is the whole
+ * of what the floor measures, since `bidOf` resolves no inputs
+ * (MEMPOOL_INTERFACE → Fee floor).
+ */
 function spend(box: CreditBox, fee: bigint): UtxoTransaction {
   return {
     inputs: [box.id!],
-    outputs: [{
-      boxType: 'credit', value: box.value - fee, owner: box.owner, guard: 'owner_signature',
-    } as CreditBox],
+    outputs: [
+      {
+        boxType: 'credit', value: box.value - fee, owner: box.owner, guard: 'owner_signature',
+      } as CreditBox,
+      { boxType: 'fee', value: fee, guard: 'block_apply' } as FeeBox,
+    ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   } as UtxoTransaction;

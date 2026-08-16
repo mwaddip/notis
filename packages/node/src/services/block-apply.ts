@@ -38,7 +38,6 @@ import {
 } from './block-creator.js';
 import {
   countKarmaActors,
-  isCreditSideTx,
   splitCoinbase,
   type EmbeddedTx,
 } from './coinbase-split.js';
@@ -1168,6 +1167,14 @@ function applyMutationPhase(
   // first input speak for the transaction rather than being the producer's
   // choice.
   let fees = 0n;
+  // The `FeeBox` ids this body creates, consumed at step 11a. **Block
+  // application consumes the fee boxes in the block that created them**
+  // (MINING_INTERFACE → Coinbase Application): block application is the only
+  // spender we have and it runs once per block, so a fee box surviving its
+  // block would hand its value to a later miner and break the coinbase
+  // identity. The insert/remove pair nets out of the prover feed, so neither
+  // reaches the AVL tree and `stateRoot` is unaffected.
+  const feeBoxIds: string[] = [];
   const appliedTxs: EmbeddedTx[] = [];
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
@@ -1314,18 +1321,21 @@ function applyMutationPhase(
       }
 
       // Before `applyTx` consumes them. Every input is present (tested at the
-      // top of this iteration) and `validateTx` has just passed for this
-      // transaction, so the deficit is the one the conservation gate admitted
-      // and it cannot be negative (NODE_INTERFACE → `validateTx` step 5).
+      // top of this iteration) and reading the first is sound because
+      // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
       const firstInput = item.tx.inputs[0];
       if (firstInput !== undefined) {
         appliedTxs.push({ tx: item.tx, inputBoxes: [getBox(firstInput)!] });
       }
-      if (isCreditSideTx(item.tx)) {
-        let inputSum = 0n;
-        for (const inputId of item.tx.inputs) inputSum += getBox(inputId)!.value;
-        const outputSum = item.tx.outputs.reduce((sum, o) => sum + o.value, 0n);
-        fees += inputSum - outputSum;
+      // ⛔ **A sum over boxes, resolving no inputs** (MINING_INTERFACE →
+      // Coinbase Application). Every fee in the block is written down in it, so
+      // the total is a property of the body's own bytes — `item.outputs` are
+      // the materialized outputs `validateTx` computed, the same ones `applyTx`
+      // is about to insert, so the id collected here is the id that exists.
+      for (const out of item.outputs) {
+        if (out.boxType !== 'fee') continue;
+        fees += out.value;
+        feeBoxIds.push(out.id!);
       }
 
       applyTx(utxoDeps, item.tx, item.outputs, height);
@@ -1473,6 +1483,19 @@ function applyMutationPhase(
   // Which key the miner pays their own slice to, and across how many outputs,
   // is the producer's business and is committed to in `utxoTxRoot` like
   // everything else.
+
+  // 11a-i. The fee boxes fund the coinbase just verified, and block application
+  // is their only spender — so they are consumed here, in the block that
+  // created them (MINING_INTERFACE → Coinbase Application). After the coinbase
+  // checks, because a rejected block must not have spent anything; the funnel's
+  // transaction would unwind it either way, and the ordering says which
+  // rejection is the block's fault.
+  //
+  // Every insert above is followed by its remove here, so `proverFeedFromJournal`
+  // nets the pair and neither operation reaches the prover — the fee box is
+  // absent from the AVL tree in the only block it ever exists in, and
+  // `stateRoot` is identical to one computed without materializing it at all.
+  for (const feeBoxId of feeBoxIds) consumeBox(feeBoxId, height);
 
   // 11a-ii. The emission and treasury box transitions.
   if (!settleEmissionAndTreasury(height, emission, split.treasury)) return false;

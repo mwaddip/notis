@@ -654,7 +654,7 @@ function postFieldBytes(content, authorBytes, parentRefs, protocolVersion, times
  * no tail — so a missing entry does not throw, it derives a **wrong id that
  * looks well-formed**.
  */
-const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6, emission: 7, treasury: 8 };
+const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6, emission: 7, treasury: 8, fee: 9 };
 
 /**
  * Byte-identical mirror of `canonicalBoxBytes` in @dagsocial/types
@@ -738,14 +738,15 @@ function boxTypeFields(box) {
       ]);
     case 'emission':
     case 'treasury':
-      // **Empty on purpose, and not the same as the `default` below.** Neither
-      // box has an owner — block application is their only spender, which
+    case 'fee':
+      // **Empty on purpose, and not the same as the `default` below.** None of
+      // the three has an owner — block application is their only spender, which
       // `block_apply` already says — so the shared prefix
       // `enum8(boxType) ‖ vlqU64(value)` is the whole encoding, and these are
-      // the two types whose content bytes carry no tail at all
-      // (TYPES_INTERFACE → EmissionBox / TreasuryBox). The `default` arm
-      // returns the same zero bytes after a *reserved 0xff* tag; these return
-      // them after their own assigned tag, so the two can never collide.
+      // the types whose content bytes carry no tail at all
+      // (TYPES_INTERFACE → EmissionBox / TreasuryBox / FeeBox). The `default`
+      // arm returns the same zero bytes after a *reserved 0xff* tag; these
+      // return them after their own assigned tag, so the two can never collide.
       return new Uint8Array(0);
     default:
       // Unreachable from a valid box. Returning rather than throwing is what

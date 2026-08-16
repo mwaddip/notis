@@ -380,10 +380,17 @@ Classes are defined in `NODE_INTERFACE.md → Configuration`.
 > The values are in `types/`. Right line numbers, wrong package: the failure mode carried
 > register #25 describes, found here independently.
 >
-> The karma pair were the **only** constants on a 2-minute basis — `CREDIT_MINER_REWARD_DELAY`
-> and `MEMPOOL_EXPIRY_BLOCKS` (both `720` = ~12h), `CREDIT_EPOCH_BLOCKS` (`129_600` = ~90d)
-> and `CREDIT_FIXED_RATE_BLOCKS` ("at 60s blocks") all agree on 60s. So at the block time
-> the node runs, these two delivered **14 days and 12 hours instead of 28 and 24**.
+> The karma pair were the **only** constants on a 2-minute basis — `MEMPOOL_EXPIRY_BLOCKS`
+> (`720` = ~12h), `CREDIT_EPOCH_BLOCKS` (`129_600` = ~90d) and `CREDIT_FIXED_RATE_BLOCKS`
+> ("at 60s blocks") all agree on 60s. So at the block time the node runs, these two delivered
+> **14 days and 12 hours instead of 28 and 24**.
+>
+> ⛔ **That sweep checked each annotation against its own arithmetic, and nothing more.** A ✓
+> beside a constant means its comment and its value agree at 60 seconds; it is **not** evidence
+> that the duration was chosen. `CREDIT_MINER_REWARD_DELAY` was cited here as a second
+> `720`-for-12h control and passed on exactly that basis — its duration had never been decided,
+> and it is now **1440 for 24h** (TYPES_INTERFACE → Credit emission). **Do not read a passing
+> unit check as a settled value.**
 >
 > ⚠ **The 28-day figure is separately still open.** The economics design track wants a
 > short, days-scale grace window ("e.g. ~5, not 28"), so `40320` is a faithful translation
@@ -1654,11 +1661,12 @@ forever. A node rejects objects with an unsupported protocol version.
   above carries and for the same reason: this entry read *"exactly one stated exception"*
   while that list already held three. All other mints and burns happen only in
   block-application paths, never inside a user transaction.
-  > **The exceptions span both ledgers, and that is what keeps each shape exact.** The
-  > like burn and the invite-claim surplus move **karma**; a transaction fee is a
-  > **credit** deficit. A karma deficit is a like ⟺ `likeTarget`; a credit deficit is a
-  > fee. Were a fee ever charged on a karma-moving operation, the two would collide in a
-  > single check.
+  > **Every exception is on the karma ledger, and credits conserve strictly.** A fee is a
+  > `FeeBox` output the transaction names (TYPES_INTERFACE → FeeBox), so what the miner
+  > takes is inside the output sum rather than a gap between two sums. **There is exactly
+  > one deficit in the system** — the like burn — so `likeTarget` ⟺ a deficit stays exact
+  > with no ledger argument behind it: there is no second deficit for it to be confused
+  > with, and no shape a fee could take that would collide with it.
   > Conservation is **enforced** since P2-B (`checkValueConservation` per transaction,
   > full re-validation at apply; the unvouch and `sendCredits` violations closed in its
   > phases 2–3) — this entry's previous `⚠ UNENFORCED` marker had outlived its defect.

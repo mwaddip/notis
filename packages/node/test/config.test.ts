@@ -188,7 +188,7 @@ describe('config', () => {
       // is what keeps profile-sourcing them a devnet-only consensus change.
       expect(cfg.vouchCooldownBlocks).toBe(60);
       expect(cfg.inviteProbationBlocks).toBe(43200);
-      expect(cfg.creditMinerRewardDelay).toBe(720);
+      expect(cfg.creditMinerRewardDelay).toBe(1440);
       expect(cfg.creditFixedRateBlocks).toBe(1_051_200);
       expect(cfg.creditEpochBlocks).toBe(129_600);
     });

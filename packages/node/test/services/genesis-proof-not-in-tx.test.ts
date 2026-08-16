@@ -71,7 +71,7 @@ describe('a genesis_proof box may never be a transaction OUTPUT', () => {
     }
   });
 
-  it('refuses it at any position, and leaves the other six types alone', () => {
+  it('refuses it at any position, and leaves the other output types alone', () => {
     const karma = {
       boxType: 'karma', value: 10n, owner: new Uint8Array(32).fill(1),
       guard: 'owner_signature',

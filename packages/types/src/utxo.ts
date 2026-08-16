@@ -83,6 +83,7 @@ export const BOX_TYPE_TAGS = Object.freeze({
   vouch: 6,
   emission: 7,
   treasury: 8,
+  fee: 9,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -110,11 +111,12 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
  *   | emission      | (none)                                                    |
  *   | treasury      | (none)                                                    |
+ *   | fee           | (none)                                                    |
  *
- * **`emission` and `treasury` stop after the prefix**, and an empty cell above
- * is a layout rather than an omission (TYPES_INTERFACE → Layout — Boxes).
- * Neither box names an owner, so there is no trailing field to write and the
- * smallest legal box of any type is two bytes.
+ * **`emission`, `treasury` and `fee` stop after the prefix**, and an empty cell
+ * above is a layout rather than an omission (TYPES_INTERFACE → Layout — Boxes).
+ * None of the three names an owner, so there is no trailing field to write and
+ * the smallest legal box of any type is two bytes.
  *
  * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
  * Boxes). It is a pure function of `boxType` — one guard string per type, with
@@ -152,10 +154,10 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * Layout — Boxes). `enum8(boxType)` is field 1, so the tag is what makes the
  * encoding injective across the two; `value` happens to differ as well — an
  * invite is always `0` — but nothing may rely on that. It is the standing
- * `karma` and `credit` already have. **`emission` and `treasury` stand in the
- * same relation with no fields at all**, so at equal `value` the tag is the
- * whole of the difference and their ids part on the provenance `computeBoxId`
- * appends.
+ * `karma` and `credit` already have. **`emission`, `treasury` and `fee` stand
+ * in the same relation with no fields at all**, so at equal `value` the tag is
+ * the whole of the difference and their ids part on the provenance
+ * `computeBoxId` appends.
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
@@ -214,9 +216,10 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       return;
     case 'emission':
     case 'treasury':
+    case 'fee':
       // The tail is empty by layout, not by oversight (TYPES_INTERFACE →
-      // Layout — Boxes). Neither box names an owner — block application is the
-      // only spender and `block_apply` already says so — so the content
+      // Layout — Boxes). None of the three names an owner — block application
+      // is the only spender and `block_apply` already says so — so the content
       // encoding is the shared prefix alone. Stated as its own arm rather than
       // left to `default`, which is the unknown-tag sentinel below and would
       // write these bytes for a reason that is not this one.
@@ -331,11 +334,12 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       };
     case 'emission':
     case 'treasury':
-      // Nothing follows the prefix on either arm, so the box is complete at
-      // the point the tag and value have been read. `boxRecordFromBytes`'
-      // exhaustion check is what makes that a decoding rather than a silent
-      // stop: bytes past this point are `trailing-bytes`, not a tail this
-      // reader declined to walk.
+    case 'fee':
+      // Nothing follows the prefix on any of the three arms, so the box is
+      // complete at the point the tag and value have been read.
+      // `boxRecordFromBytes`' exhaustion check is what makes that a decoding
+      // rather than a silent stop: bytes past this point are `trailing-bytes`,
+      // not a tail this reader declined to walk.
       return { boxType, value };
   }
 }
@@ -442,7 +446,8 @@ export type DecodedBoxCandidate =
   | Omit<CandidateOf<PostLockBox>, 'guard'>
   | Omit<CandidateOf<VouchBox>, 'guard'>
   | Omit<CandidateOf<EmissionBox>, 'guard'>
-  | Omit<CandidateOf<TreasuryBox>, 'guard'>;
+  | Omit<CandidateOf<TreasuryBox>, 'guard'>
+  | Omit<CandidateOf<FeeBox>, 'guard'>;
 
 /**
  * The box-record layout, written once and walked from both ends.
@@ -659,7 +664,7 @@ export interface BoxCandidate {
   // type wearing the name would make old-vs-new greps and historical debugging
   // ambiguous forever.
   boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
-    | 'emission' | 'treasury';
+    | 'emission' | 'treasury' | 'fee';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
@@ -902,6 +907,42 @@ export interface TreasuryBox extends BoxBase {
   guard: 'block_apply';       // Consumable only by block application
 }
 
+// --- Fee ---
+
+/**
+ * What a credit transaction pays for its inclusion, named as an output so the
+ * transaction balances exactly — TYPES_INTERFACE → FeeBox.
+ *
+ * A credit-side transaction carries zero or one. Block application sums the
+ * block's fee boxes into the coinbase's income term and consumes them in the
+ * same block (MINING_INTERFACE → Coinbase Application).
+ *
+ * **No owner, and therefore no trailing fields.** Block application is the only
+ * spender, and which key the fee reaches is already decided — the coinbase pays
+ * `split.miner`. A field naming the recipient would be a second statement of
+ * that, free for a producer to set and never read.
+ *
+ * ⛔ **A zero-value fee box is not created: zero fee means no box.** Both
+ * encodings would express one economic fact with different `utxoTxRoot`, which
+ * is the rule `EmissionBox` states for the zero-value successor and the coinbase
+ * states for its own outputs. **A transaction carrying no fee box is valid
+ * consensus** — no amount is checked anywhere, because the price of inclusion is
+ * relay policy and block assembly rather than validity (MEMPOOL_INTERFACE → Fee
+ * floor). Both rules are node's; this encoder writes any value in the u64.
+ *
+ * **At most one per transaction**, for the same one-block-one-encoding reason: a
+ * second carries no information a producer could not put in the first.
+ *
+ * ⚠ **`fee` is not a member of the karma family**, so a fee output on a
+ * karma-side transaction is rejected by the karma transition arm rather than by
+ * a rule of its own (NODE_INTERFACE → the karma transition rules).
+ */
+export interface FeeBox extends BoxBase {
+  boxType: 'fee';
+  value: bigint;              // Credits paid to the block's miner, in base units
+  guard: 'block_apply';       // Consumable only by block application
+}
+
 // ---------------------------------------------------------------------------
 // Union type
 // ---------------------------------------------------------------------------
@@ -915,7 +956,8 @@ export type AnyBox =
   | PostLockBox
   | VouchBox
   | EmissionBox
-  | TreasuryBox;
+  | TreasuryBox
+  | FeeBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
@@ -927,7 +969,8 @@ export type AnyBoxCandidate =
   | CandidateOf<PostLockBox>
   | CandidateOf<VouchBox>
   | CandidateOf<EmissionBox>
-  | CandidateOf<TreasuryBox>;
+  | CandidateOf<TreasuryBox>
+  | CandidateOf<FeeBox>;
 
 // ---------------------------------------------------------------------------
 // Guard table
@@ -964,6 +1007,7 @@ export const BOX_GUARDS = Object.freeze({
   vouch: 'owner_signature',
   emission: 'block_apply',
   treasury: 'block_apply',
+  fee: 'block_apply',
 } as const satisfies { [T in AnyBox['boxType']]: Extract<AnyBox, { boxType: T }>['guard'] });
 
 // ---------------------------------------------------------------------------

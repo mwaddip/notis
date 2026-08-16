@@ -20,7 +20,7 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
 | `post.json` | `postFieldBytes` — the post payload inside its creating transaction's `TxId` preimage |
-| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type, both states of `bond.inviteePublicKey`, both states of `genesis_proof.payload`, and `emission` at zero, which is the format's two-byte floor |
+| `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type, both states of `bond.inviteePublicKey`, both states of `genesis_proof.payload`, and `emission` and `fee` at zero, which is the format's two-byte floor |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage |
 | `block.json` | The block header, the one body tree and the ordering-block framing, plus the coinbase leaf preimage |
 | `harness.ts` | Codec registry, the JSON value forms, the readable byte diff |

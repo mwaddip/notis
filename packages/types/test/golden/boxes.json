@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is. Two pairs are deliberate: invite and bond share identical trailing fields, and emission and treasury share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds. Two groups are deliberate: invite and bond share identical trailing fields, and emission, treasury and fee share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -137,7 +137,7 @@
         "value": "42264000000000000"
       },
       "bytes": "078080a696a5dc894b",
-      "note": "The first box type whose whole encoding is the shared prefix - tag byte, value, and nothing after it. There is no owner because block application is the only spender and the block_apply guard already says so, and guard is absent from the consensus bytes on every type. The value is mainnet's entire emission total, 422,640,000 credits at 8 decimals, which is what genesis puts in the box; eight VLQ bytes carry it, so the whole box is nine. Read against box/treasury below: with no trailing fields at all, the tag byte is the whole of what separates the two types."
+      "note": "The first box type whose whole encoding is the shared prefix - tag byte, value, and nothing after it. There is no owner because block application is the only spender and the block_apply guard already says so, and guard is absent from the consensus bytes on every type. The value is mainnet's entire emission total, 422,640,000 credits at 8 decimals, which is what genesis puts in the box; eight VLQ bytes carry it, so the whole box is nine. Read against box/treasury below: with no trailing fields at all, the tag byte is the whole of what separates the empty-tail types."
     },
     {
       "name": "box/treasury",
@@ -147,7 +147,7 @@
         "value": "42264000000000000"
       },
       "bytes": "088080a696a5dc894b",
-      "note": "Byte-for-byte box/emission under tag 08, deliberately at the same value: the pair is one empty layout with two tags, the same standing box/invite and box/bond have with two shared fields. Their ids part on the provenance computeBoxId appends, never on these bytes. A treasury box never actually holds the emission total - the value is chosen to make the collision case the vector, not to describe a reachable state."
+      "note": "Byte-for-byte box/emission under tag 08, deliberately at the same value: the empty layout carries three tags - emission, treasury and fee - the same standing box/invite and box/bond have with two shared fields, and this pair is where the corpus holds it at equal value. Their ids part on the provenance computeBoxId appends, never on these bytes. A treasury box never actually holds the emission total - the value is chosen to make the collision case the vector, not to describe a reachable state."
     },
     {
       "name": "box/emission-zero",
@@ -158,6 +158,26 @@
       },
       "bytes": "0700",
       "note": "Two bytes - the smallest legal box of any type, and the floor for the whole format. Every other arm carries a tail: box/genesis-proof-empty-payload is three because its empty payload still spends a length prefix. The value is 0 for the byte width alone; block application creates no successor at zero, so this is a shape the encoder must handle and the ledger never holds."
+    },
+    {
+      "name": "box/fee",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "fee",
+        "value": "1000000"
+      },
+      "bytes": "09c0843d",
+      "note": "What a credit transaction pays for its inclusion, named as an output so the transaction balances exactly. The third type whose whole encoding is the shared prefix, under tag 09: no owner, because block application is the only spender and the coinbase already decides which key the fee reaches. 1000000 base units is 0.01 credits and takes three VLQ bytes - c0 84 3d, the low group first - so the value's multi-byte form is covered on an empty-tail arm as well as on box/emission."
+    },
+    {
+      "name": "box/fee-zero",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "fee",
+        "value": "0"
+      },
+      "bytes": "0900",
+      "note": "Two bytes, box/emission-zero under the other tag. A zero-value fee box is one consensus never creates - zero fee means no box - and it still ENCODES: the no-zero rule belongs to block application, not to this encoder, whose domain on value is the whole u64. That split is the same one an over-bound genesis_proof payload has, one direction over."
     }
   ],
   "rejects": [
@@ -169,11 +189,11 @@
       "note": "A 513-byte payload, one past MAX_GENESIS_PROOF_PAYLOAD_BYTES. Every byte of it is present and the lp field is well formed, so nothing here is truncated and nothing re-encodes differently - the bound is the only rule that can refuse these bytes, and 8104 is the count that makes them 513 rather than 512. The bound is per-type and lives in the genesis_proof arm of the reader, never in readLp, which every lp field shares; box/genesis-proof-typical is the same layout inside the bound. An over-bound payload still ENCODES, exactly as an unknown boxType does - the writers are total and the refusal is one-way."
     },
     {
-      "name": "box/unassigned-tag-9",
+      "name": "box/unassigned-tag-10",
       "codec": "boxContent",
-      "bytes": "0901",
+      "bytes": "0a01",
       "failure": "reader-fault",
-      "note": "9 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way. The number here is load-bearing: a tag this vector names is one the table must not claim, so assigning it is what moves this vector."
+      "note": "10 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way. The number here is load-bearing and STAYS LITERAL: a corpus deriving its input from the code under test checks nothing, so a tag this vector names is one the table must not claim, and assigning it is what moves this vector. packages/types/test/utxo.test.ts derives the same number from BOX_TYPE_TAGS, which is the other half of the pair - one side follows the table, one side pins it."
     },
     {
       "name": "box/unknown-tag-255",

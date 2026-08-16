@@ -64,11 +64,11 @@ const MIGRATIONS = [
   //
   `CREATE TABLE IF NOT EXISTS utxo_boxes (
     id TEXT PRIMARY KEY,
-    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch' | 'emission' | 'treasury'
+    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch' | 'emission' | 'treasury' | 'fee'
     value INTEGER NOT NULL,
     created_at_block INTEGER NOT NULL,
     spent_at_block INTEGER,           -- NULL = unspent
-    owner BLOB,                       -- 32-byte public key (NULL for invite/genesis_proof/bond/vouch/emission/treasury boxes)
+    owner BLOB,                       -- 32-byte public key (NULL for invite/genesis_proof/bond/vouch/emission/treasury/fee boxes)
     guard TEXT NOT NULL,
     extra_data TEXT,                  -- JSON for box-specific fields (inviteePublicKey, targetPostId, etc.)
     tx_id TEXT NOT NULL,              -- Creating transaction — real or synthetic mint (Spec G)
