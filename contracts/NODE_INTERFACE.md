@@ -867,21 +867,30 @@ tree collapse into clean rejections:
 > **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
 > deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
 > one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
-> a boundary edit to be fatal"*. There are now **three** subclasses, and that test's design intent has
-> since been vindicated by a real third case that needed **zero** boundary edits:
+> a boundary edit to be fatal"*. There are now **four** subclasses, and that test's design intent has
+> been vindicated twice: the third and fourth cases each needed **zero** boundary edits.
 >
 > | Subclass | Raised when | Raising site |
 > |---|---|---|
 > | `UnhashableStoredHeaderError` | a header already in our store cannot be hashed | ⚠ **now dead `src`** — see below |
 > | `MissingStoredBlockError` | a block the chain refers to is absent from the store | store |
-> | **`UnreadableStoredBlockError`** | **a stored block's bytes will not decode** | **`store/ordering.ts` → `rowToOrderingBlock`** |
+> | `UnreadableStoredBlockError` | a stored block's bytes will not decode | `store/ordering.ts` → `rowToOrderingBlock` |
+> | **`DivergedStateTreeError`** | **the AVL+ tree refuses an operation the UTXO store implies must succeed** | **`state/avl-prover.ts`** |
 >
 > The class is outside the totality property's scope by construction, and the argument is about
-> **provenance, not validation**: peer bytes are never stored. **The provenance claim is stated
-> once, on `createOrderingBlock` in `node/src/store/ordering.ts`** — one INSERT, one `src` caller,
-> this node's own re-encoding of an already-decoded block — and that statement carries the
-> re-derivation, because neither obvious grep reproduces it. An attacker inverting it would have to
-> make our writer emit bytes our reader rejects: a bug in us, which is what fail-stop is for.
+> **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
+>
+> **Stored bytes: peer bytes are never stored.** The provenance claim is stated once, on
+> `createOrderingBlock` in `node/src/store/ordering.ts` — one INSERT, one `src` caller, this node's
+> own re-encoding of an already-decoded block — and that statement carries the re-derivation,
+> because neither obvious grep reproduces it. An attacker inverting it would have to make our writer
+> emit bytes our reader rejects: a bug in us, which is what fail-stop is for.
+>
+> **Two stores disagreeing: neither arm is reachable from peer input.** `DivergedStateTreeError`
+> examines nothing a peer sent — it fires when the AVL+ tree and `utxo_boxes` have drifted apart. A
+> duplicate box id dies on `utxo_boxes.id`'s primary key inside the applying transaction, before the
+> prover feed is built; a consumed id reaches that feed only through a journal entry written against
+> a row that existed. See AVL+ State Root → "the tree is asked".
 >
 > ⚠ **The store is now a raising site, and that is the point.** An earlier draft of this section
 > implied the boundary lives only at apply's callers. **It cannot.** By the time a `ReaderError`
@@ -2667,19 +2676,25 @@ also identity records (see "Two entity kinds" below).
   journal-derived (P1) — so a mismatch means genuine state divergence, not a
   representation difference. A rejected block leaves the prover restored by
   the funnel's single rollback point
-- ⛔ **A box block application SPENDS must already be in the tree, and a violation is
-  SILENT.** Removing a key the tree never held is not an error anyone sees: `applyBlockMutations`
-  issues the `Remove` and **discards `performOneOperation`'s result**, so the digest simply
-  diverges with nothing raised. The genesis boxes get this right by construction —
-  `bootstrapAvlProver` runs over `getUnspentBoxes()` at height 0, before any block — but nothing
-  stated it until the `EmissionBox` made it reachable: seed that box after the prover bootstrap
-  and block 1 removes a key that was never inserted.
+- ⛔ **A box block application SPENDS must already be in the tree, and THE TREE IS ASKED.**
+  `applyBlockMutations` and `bootstrapAvlProver` read `performOneOperation`'s verdict at every
+  operation that can refuse one — `Remove` of an absent key, `Insert` of a present one — and throw
+  `DivergedStateTreeError` on a refusal. The first refusal stops the feed. `InsertOrUpdate` is
+  total and carries no verdict to read. The genesis boxes satisfy the rule by construction:
+  `bootstrapAvlProver` runs over `getUnspentBoxes()` at height 0, before any block — seed a box
+  *after* the prover bootstrap and block 1 removes a key that was never inserted.
 
-  ⚠ **A single-node test cannot catch this class.** Producer and verifier are the same process,
-  so both compute the same wrong root and it matches. What exposes it is a fixture ordering, not
-  an assertion — three suites needed the seed moved ahead of `createAvlProver` /
-  `startBlockCreator`. **This is the concrete cost of the discarded `performOneOperation` result**
-  (`avl-prover.ts`), which is what turns a genuine state violation into silence.
+  ⛔ **A refusal is a FAIL-STOP, not a block rejection, and that is the half a later reader must
+  not "correct".** The tree mirrors `utxo_boxes`, so both arms say the mirror has drifted rather
+  than that a peer sent something wrong — the two-arm provenance argument is under "The one
+  condition this node stops for". A drifted tree refuses the *next* block identically, so
+  rejecting would reject forever while staying up.
+
+  ⚠ **A single-node ROOT COMPARISON cannot catch this class.** Producer and verifier are the same
+  process, so both compute the same wrong root and it matches. **Three suites' fixture orderings
+  are load-bearing for that reason** — the seed sits ahead of `createAvlProver` /
+  `startBlockCreator`, and no root comparison would catch it moving. **What is assertable is the
+  throw**; a test that seeds a divergence and compares digests passes for the wrong reason.
 - **Journal-fed:** the per-block mutation set is derived from
   `BlockJournal.mutations` — intra-block insert+remove pairs for the same
   boxId net out; inserted box bytes come from the journal's `box` payload,
@@ -2698,7 +2713,11 @@ also identity records (see "Two entity kinds" below).
 - **Rejection-safe:** the apply funnel snapshots the prover digest before any
   mutation and rolls the prover back on **every** rejection path — explicit
   rejection, stateRoot mismatch, and the totality catch (closes the open
-  f4a683f remnant)
+  f4a683f remnant). ⚠ **The fail-stop is where restoring stops mattering, and
+  the two paths reach that differently.** The funnel's corrupt-state arm
+  restores before re-throwing; `computePostBlockStateRoot` calls the boundary
+  inside its `catch`, and `process.exit(1)` does not unwind, so its `finally`
+  restore never runs. Both are correct — nothing reads the tree after the exit
 - **Reorg-abort-safe:** `reorg()` snapshots the prover digest before reverting
   anything; if applying the new chain fails mid-way, the reorg transaction
   rolls the DB (including AVL storage rows) back wholesale, and the reorg's
@@ -2958,12 +2977,18 @@ here because the contract previously stated both rules without saying which
 function owns the collapse.)*
 
 `applyBlockMutations`' `recordPuts` parameter is **optional and defaults to
-empty**, so the many existing three-argument call sites keep working. That
+empty**, so the many existing four-argument call sites keep working. That
 default is a convenience for tests only: **every production caller MUST pass the
 feed derivation's own `recordPuts`**, never omit it and never assemble one by
 hand. Omitting it silently drops records from the digest, and if one of the two
 callers omitted it, the producer and the verifier would disagree — the exact
 failure H-6 exists to prevent.
+
+**`applyBlockMutations` takes the block height as its second parameter**, ahead
+of both feeds and required, because a `DivergedStateTreeError` carries `site`
+and `height` as *fields* and the state layer has no other way to know the
+height. Second rather than last, because a required parameter cannot follow the
+defaulted `recordPuts`.
 
 ### dag_meta Table
 
