@@ -1340,9 +1340,14 @@ than by a user transaction — coinbase, karma mints, decay, epoch post-locks,
 genesis — have no transaction, so each mint *event* derives a synthetic one:
 
 ```
-mintTxId = blake2b512( MINT_ID_DOMAIN ‖ u32BE(height) ‖ reason ‖ subject )[0:32]
+mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 boxId    = blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes(candidate) ‖ utf8(mintTxId) ‖ u32BE(index) )[0:32]
 ```
+
+⚠ **Corrected 2026-08-16 — this line read `u32BE(height) ‖ reason ‖ subject` in all three fields.**
+`computeMintTxId` writes `writeVlqU`, an `enum8` tag byte and `writeLp`; `reason` has not been ASCII
+in the preimage since the tag table existed. Found while adding the two rows below, by reading the
+function beside the claim.
 
 Box derivation is then identical to the user-transaction path — one derivation,
 not two.
@@ -1350,13 +1355,26 @@ not two.
 ### The subject encoding rule
 
 > **Every per-reason `subject` encoding MUST be fixed-length or
-> self-delimiting.** `subject` carries no length prefix, so within a single
-> reason two different subjects could otherwise concatenate to identical bytes
-> and collide. *Across* reasons uniqueness holds unconditionally — no
-> `MintReason` is a prefix of another (verified and test-pinned in types) — but
-> that says nothing about within-reason collisions. `@dagsocial/types` cannot
-> enforce this: it takes `subject: Uint8Array` and the caller owns the bytes.
-> **This contract is the other half of that guarantee.**
+> self-delimiting** — and the reason is the subject's own INTERNAL structure, not
+> its boundary. `computeMintTxId` writes `lp(subject)`, so one whole subject can
+> never be confused with another; what `lp` cannot do is separate the **parts** of
+> a multi-part subject, which it wraps as one opaque run. `prune-refund-author` is
+> `utf8(hex) ‖ raw`, and were either part variable-width, two different
+> `(rootPostHash, owner)` pairs could concatenate to the same 96 bytes and collide
+> inside one reason. Fixed-width parts are what close that.
+>
+> *Across* reasons uniqueness holds unconditionally, because `enum8(reason)` is a
+> single distinguishing byte ahead of the subject. `@dagsocial/types` cannot
+> enforce the within-reason half: it takes `subject: Uint8Array` and the caller
+> owns the bytes. **This contract is the other half of that guarantee.**
+>
+> ⚠ **Corrected 2026-08-16.** This read *"`subject` carries no length prefix"* and
+> justified across-reason uniqueness by no `MintReason` being a prefix of another.
+> Both describe an earlier preimage: the subject is `lp`-wrapped and the reason is
+> an `enum8` byte, so ASCII prefix-freeness decides nothing about ids. **The rule
+> survives the correction; only its justification was wrong** — which is the more
+> dangerous half to leave standing, because a reader deriving a NEW subject
+> encoding from a false reason reaches a false conclusion about what is safe.
 
 Two byte-form rules, both inherited from `TYPES_INTERFACE.md` → Pinned byte
 forms, so a mirror implementation derives the same ids:
@@ -1375,7 +1393,9 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting → `mintKarma(post.author, toUnlock)` |
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
-| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof, `3` = emission | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` |
+| `emission-release` | — | *(empty)* | 0 | block application, the `EmissionBox` successor |
+| `treasury-accrue` | — | *(empty)* | 0 | block application, the `TreasuryBox` successor |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
 | `invite-claim` | `inviteePublicKey` | raw | 32 | invite claim → `mintKarma(invitee, INVITE_KARMA_AMOUNT)` |
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
@@ -1387,6 +1407,24 @@ same sense `vouch-settle` re-mints an escrow — a synthetic txId for a box that
 block application creates, not a new unit of karma. `ARCHITECTURE` → "Karma supply
 changes" names this table as authoritative, so the distinction has to be readable
 here rather than inferred.
+
+⛔ **`emission-release` and `treasury-accrue` create no credits.** Both name a box that block
+application spends and recreates: the emission box's successor holds what the schedule has not yet
+released, the treasury box's holds what has accrued. A synthetic txId is what any created box needs
+in order to have an identity, and needing one is not a claim that value was minted — the same
+standing `vouch-settle`, `bond-settle` and `bond-return` already have on the karma side.
+
+**Why `(height, reason, subject)` cannot repeat for the two empty subjects.** An empty subject is
+the honest encoding when there is nothing to discriminate, and it is self-delimiting because
+`computeMintTxId` writes `lp(subject)` — a zero length, not an absence. Exactly one emission
+successor and one treasury successor exist per height, so the height alone separates every instance
+within a reason, and `enum8(reason)` separates the two reasons from each other and from every other
+row. This satisfies the third requirement of "Discriminants are semantic, never positional" outright
+rather than by argument.
+
+⚠ **This is why the count is not `coinbaseOutputs.length`.** Deriving either subject from a position
+in the block would be exactly the position-derived identity that section forbids, and it would be
+collision-free — which is what makes it tempting and does not make it permitted.
 
 **Why `(height, reason, subject)` cannot repeat for these three.** All three take
 the invitee's public key as subject; an invite may not name an existing account
@@ -1451,14 +1489,18 @@ The liker leg is **already gone**: P2-D deleted `prune-refund-liker` with
 Retired names stay reserved.
 
 Every encoding above is **fixed-length**, so the rule holds by construction
-rather than by inspection.
+rather than by inspection. **The two empty subjects are fixed-length at zero**, which is not an
+exception to that: `computeMintTxId` writes `lp(subject)`, so an empty one encodes as a zero length
+and remains self-delimiting — an absent field and a present-but-empty one are the same bytes here
+only because there is no absent case.
 
 ⚠ **`genesis` deliberately does not use the ASCII tags `system-karma` /
 `faucet-credits`** that Spec G §3.2 sketched. Those are variable-length and
 neither self-delimiting nor fixed — they are merely *prefix-free*, which happens
 to be sufficient for this pair but is not a property the rule can check per
-encoding. A `u32BE` selector satisfies the rule outright. Adding a third genesis
-box then costs one integer, not a re-examination of prefix-freeness.
+encoding. A `u32BE` selector satisfies the rule outright. Adding a genesis box then costs one
+integer, not a re-examination of prefix-freeness — which is exactly what the emission box's
+selector `3` cost.
 
 `reason` is the discriminant that separates `like-payout` from `postlock-unlock` —
 both can mint to the same author at the same height; the reason alone already

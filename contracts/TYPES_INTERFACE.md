@@ -300,20 +300,24 @@ decay, post-lock vesting, genesis) derive a **synthetic transaction id**, so the
 one derivation path:
 
 ```
-mintTxId = blake2b512( MINT_ID_DOMAIN ‖ u32BE(height) ‖ reason ‖ subject )[0:32]
+mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 ```
 
-`reason` is an ASCII tag from a closed set; `subject` is a canonical byte encoding defined per
-reason. The discriminant is **semantic, never positional** — deriving it from journal position
-would make identity order-dependent, the failure class M-12 closed for the AVL feed. Full
-reason/subject table in `NODE_INTERFACE.md`.
+`reason` is a tag from a closed set, written into the preimage as a single `enum8` byte; `subject`
+is a canonical byte encoding defined per reason. The discriminant is **semantic, never positional** —
+deriving it from journal position would make identity order-dependent, the failure class M-12 closed
+for the AVL feed. Full reason/subject table in `NODE_INTERFACE.md`.
 
 > **Injectivity is only half-guaranteed here, and the other half is `NODE_INTERFACE.md`'s.**
-> *Across* reasons it holds unconditionally, because no `MintReason` is a prefix of another
-> (verified and test-pinned). *Within* one reason it does **not** hold automatically: `subject`
-> carries no length prefix, so two different subjects could concatenate identically. Every
-> per-reason subject encoding MUST therefore be **fixed-length or self-delimiting**. This
-> package cannot enforce it — the caller owns the bytes.
+> *Across* reasons it holds unconditionally, because `enum8(reason)` is a single distinguishing
+> byte ahead of the subject. *Within* one reason, `lp(subject)` separates any two whole subjects —
+> what it cannot separate is the **parts** of a multi-part subject, which it wraps as one opaque
+> run. Every per-reason subject encoding MUST therefore be **fixed-length or self-delimiting** in
+> its parts. This package cannot enforce it — the caller owns the bytes.
+>
+> ⚠ **Corrected 2026-08-16.** This read *"`subject` carries no length prefix"* and justified
+> across-reason uniqueness by ASCII prefix-freeness. `computeMintTxId` writes
+> `vlqU(height) ‖ enum8(reason) ‖ lp(subject)`; neither premise held.
 
 #### Pinned byte forms
 
@@ -328,8 +332,8 @@ computes different ids.
     (via `txIdBytes`), `postFieldBytes`' `parentRefs`, and `boxRecordBytes`' `txId`.
   - **A free byte string concatenated into a hash enters as the UTF-8 bytes of its
     64-character hex text.** This covers `computePostId`'s `txId` and the `postlock-unlock`,
-    `postlock-remainder` and `prune-refund-author` mint subjects. `reason` likewise enters
-    as ASCII.
+    `postlock-remainder` and `prune-refund-author` mint subjects. **`reason` does NOT enter
+    this way** — it is an `enum8` tag byte, not ASCII text (corrected 2026-08-16).
 
   ⛔ **The dividing line is a FIXED WIDTH, and that is why it is principled rather than
   historical.** A positional reader finds every later field by offset, so a `b32` row must
