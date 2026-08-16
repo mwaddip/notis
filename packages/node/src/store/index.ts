@@ -20,6 +20,8 @@ export {
   getKarmaBoxes,
   getKarmaValue,
   getGenesisProofBox,
+  getEmissionBox,
+  getTreasuryBox,
   getCreditBox,
   getCreditBoxes,
   getUnlockedCreditBoxes,

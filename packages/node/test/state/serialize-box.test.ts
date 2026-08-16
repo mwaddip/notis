@@ -54,10 +54,17 @@ describe('serializeBox', () => {
   });
 
   it('an unassigned box tag has no decoding — the AVL value reader refuses it', () => {
-    // 7 is the first number `BOX_TYPE` does not assign (TYPES_INTERFACE →
+    // 9 is the first number `BOX_TYPE` does not assign (TYPES_INTERFACE →
     // Layout — Boxes). Bytes carrying it must fail at the tag rather than parse
     // as some other type, which is what makes the rejection a property of the
     // tag table instead of a special case somebody has to remember.
+    //
+    // ⛔ **The number is load-bearing and moves with the table.** It was `7`
+    // until `emission` took that tag, at which point these two bytes became a
+    // complete, valid emission box at value 0 — the format's floor — and the
+    // call still threw, as a short read on `txId`. The next tag assignment
+    // must move it again; `packages/types` pins the same number in
+    // `utxo.test.ts` and in the golden corpus's reject vector.
     //
     // ⚠ **The `invalid-tag` code is the assertion, not `toThrow` alone.** An
     // *assigned* tag put here throws too — on the fields it then misreads — so a
@@ -65,7 +72,7 @@ describe('serializeBox', () => {
     // decodes, into something else". `packages/types` pins the same property the
     // same way, at `boxRecordFromBytes` and in the golden corpus; three sites
     // agreeing on one property is the point.
-    const bytes = new Uint8Array([0x07, 0x00]); // unassigned tag + a value byte
+    const bytes = new Uint8Array([0x09, 0x00]); // unassigned tag + a value byte
     let thrown: unknown;
     try {
       deserializeBox(bytes);

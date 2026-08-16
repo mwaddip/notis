@@ -395,6 +395,13 @@ export function createApp(config: Config): express.Express {
           .get() as { s: bigint };
         return row.s;
       },
+      // Credits in circulation. ⛔ **`emission` and `treasury` are deliberately
+      // not summed here.** The emission box holds what has never been released
+      // and the treasury holds what is out of circulation with no rule to
+      // release it (ARCHITECTURE → Treasury), so counting either would report a
+      // supply larger than anyone can hold. Keyed on `credit` by name rather
+      // than by excluding the two, so a later credit-bearing box type is a
+      // deliberate addition here.
       getTotalCredits: () => {
         const row = db
           .prepare(

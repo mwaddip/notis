@@ -281,6 +281,46 @@ export function computeBlockReward(height: number): bigint {
   return reward > 0n ? reward : 0n;
 }
 
+/**
+ * The sum of `computeBlockReward` over every height — this network's whole
+ * credit emission, and the value genesis puts in the `EmissionBox`
+ * (MINING_INTERFACE → Emission Schedule; TYPES_INTERFACE → EmissionBox).
+ *
+ * ```
+ * total = F·R + E · Σ(k = 1..K) (R − k·d)     K = the largest k with R − k·d > 0
+ * ```
+ *
+ * `F` = `creditFixedRateBlocks`, `E` = `creditEpochBlocks`,
+ * `R` = `CREDIT_INITIAL_REWARD`, `d` = `CREDIT_REWARD_REDUCTION`. The closed
+ * form is the same schedule the loop above walks: heights `1..F` pay `R`, and
+ * epoch `k` covers exactly `E` heights paying `R − k·d`.
+ *
+ * ⛔ **Derived here rather than carried per profile, and that is the whole
+ * point.** A stored total that disagreed with `computeBlockReward` fails in one
+ * of two silent ways: too small and the box is empty before the terminus, so
+ * every block from that height on is unproducible; too large and a residue is
+ * stranded that no rule can ever release. Sharing the parameters makes the two
+ * unable to disagree. `test/services/genesis-state.test.ts` pins mainnet's
+ * result at `422,640,000 × 10⁸` so a schedule change is caught here instead of
+ * silently re-deriving a different genesis.
+ *
+ * Every network derives its own: devnet's compressed `F` and `E` give a
+ * different total against the same economics (ARCHITECTURE → Network Identity:
+ * compress time, never economics).
+ */
+export function emissionTotal(): bigint {
+  const fixed = BigInt(nodeConfig.creditFixedRateBlocks) * CREDIT_INITIAL_REWARD;
+  let decay = 0n;
+  for (
+    let reward = CREDIT_INITIAL_REWARD - CREDIT_REWARD_REDUCTION;
+    reward > 0n;
+    reward -= CREDIT_REWARD_REDUCTION
+  ) {
+    decay += reward;
+  }
+  return fixed + BigInt(nodeConfig.creditEpochBlocks) * decay;
+}
+
 // ---------------------------------------------------------------------------
 // Core block creation
 // ---------------------------------------------------------------------------
@@ -566,18 +606,22 @@ function finalizeBlock(block: OrderingBlock): void {
  * The largest encoding any coinbase can take, used to seed the fill's budget
  * before the real one is known.
  *
- * Two outputs is the maximum the split produces, and `value` is bounded by its
- * own encoder at `2^64 − 1`, so no real coinbase encodes wider than this. Over-
- * reserving costs at most a transaction's place in a block that was within a
+ * One output is the maximum the split produces — the miner's slice is the whole
+ * coinbase (MINING_INTERFACE → Coinbase Application) — and `value` is bounded by
+ * its own encoder at `2^64 − 1`, so no real coinbase encodes wider than this.
+ * Over-reserving costs at most a transaction's place in a block that was within a
  * few bytes of the budget; under-reserving would put the assembled body over a
  * budget every peer measures.
  */
 export function worstCaseCoinbaseOutputs(height: number): CoinbaseOutput[] {
   const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
-  const widest = { owner: new Uint8Array(32), value: 2n ** 64n - 1n, lockedUntilBlock };
   return [
-    { ...widest, isTreasury: false },
-    { ...widest, isTreasury: true },
+    {
+      owner: new Uint8Array(32),
+      value: 2n ** 64n - 1n,
+      lockedUntilBlock,
+      isTreasury: false,
+    },
   ];
 }
 
@@ -643,12 +687,16 @@ export function predictIncome(
  * (MINING_INTERFACE → Coinbase Application).
  *
  * ⛔ **Every value here is consensus and none of it comes from the injected
- * config.** The applier recomputes this same split and compares it output by
- * output, so a creator reading a local value would build coinbases its own
- * network refuses. The percentages are universal constants and the treasury key
- * is profile data — "this network has no treasury" is a property of the
- * network, which is what stops two nodes on one network disagreeing about it.
- * Same rule, and the same reason, as the maturity lock below.
+ * config.** The applier recomputes this same split and compares it against the
+ * coinbase, so a creator reading a local value would build coinbases its own
+ * network refuses. The percentages are universal constants; the maturity lock
+ * below reads the singleton for the same reason.
+ *
+ * **The coinbase carries the miner's slice and nothing else.** The treasury's
+ * share and the forfeited inclusion bonus accrue to the `TreasuryBox`, and the
+ * released emission comes out of the `EmissionBox` — both derived from the same
+ * `split`, neither an output here (MINING_INTERFACE → Coinbase Application:
+ * "emission and the treasury slice come from opposite directions").
  */
 export function buildCoinbaseOutputs(
   height: number,
@@ -664,27 +712,18 @@ export function buildCoinbaseOutputs(
   const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
 
   // Skipped at zero, because no coinbase output may carry a zero value.
+  //
+  // `isTreasury: false` on the one output there is. The field has exactly one
+  // legal value under this design and apply rejects a block carrying `true`, so
+  // it is accurate rather than vestigial (TYPES_INTERFACE → Coinbase output
+  // marks it AHEAD OF CODE for deletion, which reaches four packages and is its
+  // own unit).
   if (split.miner > 0n) {
     outputs.push({
       owner: minerOwner,
       value: split.miner,
       lockedUntilBlock,
       isTreasury: false,
-    });
-  }
-
-  // On a profile with no treasury key the treasury's share and the forfeited
-  // bonus are simply not minted, and the block's income is smaller by exactly
-  // that much. They are never handed to the miner: a miner who recovered their
-  // own forfeit would make the inclusion bonus a delay rather than a cost, and
-  // the bonus would price nothing.
-  const treasuryKeyHex = nodeConfig.profile.treasuryPubKey;
-  if (treasuryKeyHex.length === 64 && split.treasury > 0n) {
-    outputs.push({
-      owner: new Uint8Array(Buffer.from(treasuryKeyHex, 'hex')),
-      value: split.treasury,
-      lockedUntilBlock,
-      isTreasury: true,
     });
   }
 

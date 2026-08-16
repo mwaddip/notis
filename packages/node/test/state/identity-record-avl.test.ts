@@ -76,7 +76,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   });
 
   it('NO box type is shadowed by the record tag', () => {
-    // Every box type, not just karma: a record tag chosen inside the 0x01-0x07
+    // Every box type, not just karma: a record tag chosen inside the 0x00-0x08
     // range would make one real box type decode as a record (deserializeAvlValue
     // tests the record tag first) and make deserializeBox reject it outright.
     // Asserting only the tag literal would leave that consequence untested.
@@ -92,7 +92,11 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       makeKarmaBox('01'.repeat(32)),
       withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n,
         owner, guard: 'owner_signature' }),
-      // No 0x03 row: that tag is the reserved `like` gap, and no box emits it.
+      // ⚠ These fills are AVL **keys**, chosen so the assertions below read
+      // in order — they are not box tags and do not track the tag table.
+      // `genesis_proof` is the type with no row: it carries an `lp` payload no
+      // fixture here needs, and its tag is covered by the two ownerless rows
+      // at the end.
       withProvenance('04'.repeat(32), { boxType: 'invite', value: 0n,
         inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)),
         guard: 'invite_dual' }),
@@ -104,6 +108,15 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
         originalValue: 5n, owner, targetPostId: '66'.repeat(32), guard: 'block_apply' }),
       withProvenance('07'.repeat(32), { boxType: 'vouch', value: 1n,
         voucherId: owner, targetId: owner, guard: 'owner_signature' }),
+      // The two ownerless block-application boxes. Their serialized leaf is the
+      // shared prefix alone — `enum8(boxType) ‖ vlqU64(value)` and nothing else
+      // (TYPES_INTERFACE → EmissionBox / TreasuryBox) — which makes them the
+      // shortest values the tree ever holds and so the sharpest case for a tag
+      // that must not be mistaken for a record.
+      withProvenance('08'.repeat(32), { boxType: 'emission', value: 4226400000000n,
+        guard: 'block_apply' }),
+      withProvenance('09'.repeat(32), { boxType: 'treasury', value: 500n,
+        guard: 'block_apply' }),
     ];
 
     for (const box of boxes) {
@@ -122,15 +135,19 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const val = deserializeAvlValue(bytes);
     expect(val.kind).toBe('record');
     // And the record's tag byte is not one any box can emit.
-    const boxTags = new Set([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+    // Every assigned box tag, `karma: 0` … `treasury: 8`. ⛔ **The range is
+    // load-bearing and grows with `BOX_TYPE_TAGS`** — a set that understates it
+    // still passes, because 0x80 is in neither, so nothing here fails when a
+    // tag is added.
+    const boxTags = new Set([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
     expect(boxTags.has(bytes[0]!)).toBe(false);
   });
 
   it('the record tag is outside the box-type range, with the high bit set', () => {
     expect(IDENTITY_RECORD_TAG).toBe(0x80);
-    // "box" vs "not a box" is a single bit test, and 0x01-0x07 stays open.
+    // "box" vs "not a box" is a single bit test, and 0x00-0x08 stays open.
     expect(IDENTITY_RECORD_TAG & 0x80).toBe(0x80);
-    expect(IDENTITY_RECORD_TAG).toBeGreaterThan(0x07);
+    expect(IDENTITY_RECORD_TAG).toBeGreaterThan(0x08);
     expect(serializeIdentityRecord(REC)[0]).toBe(IDENTITY_RECORD_TAG);
   });
 

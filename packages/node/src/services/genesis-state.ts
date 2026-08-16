@@ -3,7 +3,9 @@ import {
   ensureSystemKarmaBox,
   ensureFaucetCreditBox,
   ensureGenesisProofBox,
+  ensureEmissionBox,
 } from '../store/system.js';
+import { emissionTotal } from './block-creator.js';
 import { getAllIdentityRecords, identityRecordKey } from '../store/identity-records.js';
 import { getCurrentHeight } from '../store/ordering.js';
 import { getUnspentBoxes } from '../store/utxo.js';
@@ -97,8 +99,9 @@ function markGenesisCommitted(): void {
  * note carries the measurement behind that.
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
- * **fixed, known set** — the proof box on every network, plus the system karma
- * and faucet credit boxes on the faucet-bearing ones — and the order is
+ * **fixed, known set** — the proof box and the emission box on every network,
+ * plus the system karma and faucet credit boxes on the faucet-bearing ones —
+ * and the order is
  * specified rather than whatever a set read produced. Every node on a network
  * performs the identical operation on an identical empty tree, so the resulting
  * root is reproducible by construction.
@@ -231,12 +234,29 @@ export function seedGenesisState(systemPubKey: Uint8Array): void {
       // Every network, mainnet included — this box IS the network axis. The two
       // boxes above are byte-identical on testnet and devnet (one hardcoded system
       // identity, one pair of values), so their ids and their AVL entries match
-      // exactly; the proof box's per-network payload is the only thing separating
-      // those two genesis roots.
+      // exactly; and testnet and devnet share mainnet's economics while
+      // compressing only its timescale, so the emission box below separates them
+      // by value but leaves testnet's identical to mainnet's. The proof box's
+      // per-network payload is the only thing separating testnet's genesis root
+      // from mainnet's.
       ensureGenesisProofBox(
         new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
         GENESIS_HEIGHT,
       );
+
+      // Every network too, and for a sharper reason than the proof box's: this
+      // is what every block's coinbase is paid out of (TYPES_INTERFACE →
+      // EmissionBox). A network seeded without it releases nothing and produces
+      // no block at all.
+      //
+      // `emissionTotal()` rather than a per-profile constant — the box's value
+      // and `computeBlockReward` read the same two profile fields, so they
+      // cannot disagree about where the schedule ends.
+      ensureEmissionBox(emissionTotal(), GENESIS_HEIGHT);
+
+      // ⛔ **No treasury box.** It would hold `0`, and a zero-value box is not
+      // created (TYPES_INTERFACE → EmissionBox's rule, which TreasuryBox
+      // inherits). The first block whose `split.treasury` is nonzero creates it.
 
       // **The feed is read back from the store, never assembled from what the
       // seeders returned.** What the state root must cover is the UTXO set, so

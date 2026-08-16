@@ -312,8 +312,15 @@ describe('config', () => {
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);
       expect(cfg.karmaDecayAmount).toBe(5n);
       expect(cfg.karmaMinimum).toBe(10n);
-      expect(cfg.treasuryPubKey).toBe('');
       expect(cfg.avlKeyLength).toBe(32);
+
+      // `TREASURY_PUBKEY` has no `Config` field to assert against — the
+      // treasury is a box no key can spend (ARCHITECTURE → Treasury), so the
+      // field was deleted outright rather than moved to the profile. Scanning
+      // the values catches a reintroduction under **any** name, which an
+      // assertion naming the old field could not: the guard here is that the
+      // variable reaches nothing, not that one particular field ignores it.
+      expect(Object.values(cfg)).not.toContain('ff'.repeat(32));
     });
   });
 
@@ -332,61 +339,6 @@ describe('config', () => {
     });
   });
 
-  // The treasury key reaches `CoinbaseOutput.owner`, whose writer demands
-  // exactly 32 bytes, through a `Buffer.from(s, 'hex')` that truncates at the
-  // first pair outside the alphabet instead of failing. The profile table is
-  // its only source, so the profile is what these mock — a value no env var
-  // can set is still a value a chain's genesis data can carry.
-  describe('9. treasury key fail-fast', () => {
-    // `config.ts` ends in `export const config = loadConfig()`, so the refusal
-    // lands on the import — the same shape section 5 asserts for MINING_SECRET,
-    // and the reason this is a startup failure rather than a mining-time one.
-    function importWithTreasuryKey(treasuryPubKey: string) {
-      vi.doMock('@dagsocial/types', async (importOriginal) => {
-        const actual = await importOriginal<typeof import('@dagsocial/types')>();
-        return {
-          ...actual,
-          profileFor: (networkType: string) => ({
-            ...actual.profileFor(networkType as never),
-            treasuryPubKey,
-          }),
-        };
-      });
-      return import('../src/config.js');
-    }
-
-    it('accepts a 64-character hex key', async () => {
-      const { loadConfig } = await importWithTreasuryKey('ab'.repeat(32));
-      expect(loadConfig().treasuryPubKey).toBe('ab'.repeat(32));
-    });
-
-    it('accepts an empty key — no treasury is configured', async () => {
-      const { loadConfig } = await importWithTreasuryKey('');
-      expect(loadConfig().treasuryPubKey).toBe('');
-    });
-
-    // 64 characters, 0 bytes out of `Buffer.from(…, 'hex')`. A width check
-    // passes it; the coinbase leaf writer does not.
-    it('refuses 64 non-hex characters', async () => {
-      await expect(importWithTreasuryKey('z'.repeat(64))).rejects.toThrow(
-        /treasuryPubKey/,
-      );
-    });
-
-    // 64 characters, 31 bytes — the near-miss a width check cannot see at all.
-    it('refuses 62 hex characters followed by a non-hex pair', async () => {
-      await expect(importWithTreasuryKey('ab'.repeat(31) + 'zz')).rejects.toThrow(
-        /treasuryPubKey/,
-      );
-    });
-
-    it('refuses a short hex key', async () => {
-      await expect(importWithTreasuryKey('ab'.repeat(16))).rejects.toThrow(
-        /treasuryPubKey/,
-      );
-    });
-  });
-
   // The producer half of the ordering-block floor. `verifyOrderingBlockStructure`
   // refuses an arriving header below it (VALIDATION_INTERFACE →
   // orderingPowTarget); `expectedTarget()` returns the configured value
@@ -394,7 +346,7 @@ describe('config', () => {
   // verifier — and every peer's — refuses: a node that stays up, mines, and
   // never produces. The profile table is the only source, so the profile is
   // what this mocks.
-  describe('10. ordering-block target floor', () => {
+  describe('9. ordering-block target floor', () => {
     // Refusal, never clamping: silently raising a below-floor value mines the
     // chain against a target nobody configured. `config.ts` ends in
     // `export const config = loadConfig()`, so the refusal lands on the import.
@@ -433,7 +385,7 @@ describe('config', () => {
   // first character pair outside the alphabet instead of failing, and `writeLp`
   // is total by sentinel rather than throwing, so a malformed payload moves the
   // genesis state root with nothing raised anywhere.
-  describe('11. genesis proof payload fail-fast', () => {
+  describe('10. genesis proof payload fail-fast', () => {
     function importWithProofPayload(genesisProofPayload: string) {
       vi.doMock('@dagsocial/types', async (importOriginal) => {
         const actual = await importOriginal<typeof import('@dagsocial/types')>();
@@ -496,7 +448,7 @@ describe('config', () => {
   // still answers within, so `reorg` finds no version at its fork height and
   // aborts with the node still on its own chain. Refusal at load is what makes
   // that unreachable rather than merely loud.
-  describe('12. proof history covers the reorg depth', () => {
+  describe('11. proof history covers the reorg depth', () => {
     function importWithProofHistory(value: string) {
       process.env['MAX_PROOF_HISTORY'] = value;
       return import('../src/config.js');
@@ -538,7 +490,7 @@ describe('config', () => {
     });
   });
 
-  describe('13. block body budget is clamped to the consensus bound', () => {
+  describe('12. block body budget is clamped to the consensus bound', () => {
     function importWithBudget(value: string) {
       process.env['BLOCK_BODY_BUDGET_BYTES'] = value;
       return import('../src/config.js');

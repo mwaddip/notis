@@ -13,6 +13,11 @@ import {
   decayContext,
   genesisContext,
   pruneRefundAuthorContext,
+  inviteClaimContext,
+  bondSettleContext,
+  bondReturnContext,
+  emissionSuccessorContext,
+  treasurySuccessorContext,
   mintTxIdFor,
 } from '../../src/mint-provenance.js';
 import type { MintContext } from '../../src/mint-provenance.js';
@@ -26,6 +31,7 @@ const POST_B = postId('b');
 const VOUCHER = pubkey(0x11);
 const TARGET = pubkey(0x22);
 const OWNER = pubkey(0x44);
+const INVITEE = pubkey(0x55);
 
 /** Two prune entries, i.e. two subtrees settled at one height. */
 const ROOT_A = postId('c');
@@ -33,61 +39,73 @@ const ROOT_B = postId('d');
 
 const HEIGHT = 4242;
 
-/** Every reason, built at one height, in the contract's table order.
+/**
+ * Every reason, built at one height, **keyed by the reason so coverage is a
+ * compile error.**
  *
- * `likePayoutContext` and `decayContext` deliberately share OWNER: their
- * subjects are byte-identical (one raw pubkey), so the pairwise-distinct
- * txId test below covers the pair the reason tag alone separates.
+ * ⛔ **This was a hand-kept array that never tracked the union, and it had
+ * already drifted.** It held eight entries while `MintReason` held eleven —
+ * `invite-claim`, `bond-settle` and `bond-return` were never in it — so the
+ * "covers every MintReason exactly once" test below was asserting a list
+ * against itself and passing. `satisfies Record<MintReason, …>` makes the next
+ * reason fail to compile here instead. Same shape the mint-reason golden table
+ * and the UI mirror's box-type fixtures now use.
+ *
+ * Several entries deliberately share a subject: `like-payout` and `decay` are
+ * one raw pubkey each, and the three invite reasons are all the invitee's key,
+ * so the pairwise-distinct txId test below covers exactly the pairs the reason
+ * tag alone separates.
  */
+const ALL_CONTEXTS = {
+  coinbase: { ctx: coinbaseContext(0), bytes: 4 },
+  'vouch-settle': { ctx: vouchSettleContext(VOUCHER, TARGET), bytes: 64 },
+  'like-payout': { ctx: likePayoutContext(OWNER), bytes: 32 },
+  'postlock-unlock': { ctx: postlockUnlockContext(POST_A), bytes: 64 },
+  'postlock-remainder': { ctx: postlockRemainderContext(POST_A), bytes: 64 },
+  decay: { ctx: decayContext(OWNER), bytes: 32 },
+  genesis: { ctx: genesisContext(GENESIS_SYSTEM_KARMA), bytes: 4 },
+  'prune-refund-author': { ctx: pruneRefundAuthorContext(ROOT_A, OWNER), bytes: 96 },
+  'invite-claim': { ctx: inviteClaimContext(INVITEE), bytes: 32 },
+  'bond-settle': { ctx: bondSettleContext(INVITEE), bytes: 32 },
+  'bond-return': { ctx: bondReturnContext(INVITEE), bytes: 32 },
+  // Zero-width, which is a subject rather than the absence of one: the preimage
+  // writes `lp(subject)`, so an empty subject is a zero length and stays
+  // self-delimiting (NODE_INTERFACE → The subject encoding rule).
+  'emission-release': { ctx: emissionSuccessorContext(), bytes: 0 },
+  'treasury-accrue': { ctx: treasurySuccessorContext(), bytes: 0 },
+} satisfies Record<MintReason, { ctx: MintContext; bytes: number }>;
+
 function allContexts(): Array<{ ctx: MintContext; bytes: number }> {
-  return [
-    { ctx: coinbaseContext(0), bytes: 4 },
-    { ctx: vouchSettleContext(VOUCHER, TARGET), bytes: 64 },
-    { ctx: likePayoutContext(OWNER), bytes: 32 },
-    { ctx: postlockUnlockContext(POST_A), bytes: 64 },
-    { ctx: postlockRemainderContext(POST_A), bytes: 64 },
-    { ctx: decayContext(OWNER), bytes: 32 },
-    { ctx: genesisContext(GENESIS_SYSTEM_KARMA), bytes: 4 },
-    { ctx: pruneRefundAuthorContext(ROOT_A, OWNER), bytes: 96 },
-  ];
+  return Object.values(ALL_CONTEXTS);
 }
 
 describe('mint provenance — subject encodings', () => {
-  // The fixed-length rule is the invariant this module exists to satisfy:
-  // `subject` carries no length prefix, so within one reason two different
-  // subjects could otherwise concatenate to identical bytes and collide.
+  // The fixed-length rule is the invariant this module exists to satisfy, and
+  // what it protects is the subject's own INTERNAL structure: `computeMintTxId`
+  // writes `lp(subject)`, so one whole subject can never be confused with
+  // another — what `lp` cannot separate is the *parts* of a multi-part subject,
+  // which it wraps as one opaque run (NODE_INTERFACE → The subject encoding
+  // rule). `prune-refund-author` is the live case: `utf8(hex) ‖ raw`, where a
+  // variable-width part would let two pairs concatenate to the same 96 bytes.
   it('every reason encodes a subject of exactly the width the contract pins', () => {
-    const widths = allContexts().map(({ ctx, bytes }) => [ctx.reason, ctx.subject.length, bytes]);
-    expect(widths).toEqual([
-      ['coinbase', 4, 4],
-      ['vouch-settle', 64, 64],
-      ['like-payout', 32, 32],
-      ['postlock-unlock', 64, 64],
-      ['postlock-remainder', 64, 64],
-      ['decay', 32, 32],
-      ['genesis', 4, 4],
-      ['prune-refund-author', 96, 96],
-    ]);
+    for (const { ctx, bytes } of allContexts()) {
+      expect(ctx.subject.length, ctx.reason).toBe(bytes);
+    }
   });
 
   it('covers every MintReason exactly once — the table is the whole union', () => {
-    // Full-coverage claim, restored by T2b: `MintReason` has exactly 8 members
-    // after the retired epoch/prune-liker reasons left the union, and every one
-    // has exactly one context encoder in this table (N2b gap closed —
-    // `likePayoutContext` existed in src but was missing here).
+    // ⛔ **Coverage is enforced by `satisfies Record<MintReason, …>` on the
+    // table itself, not by this list.** This test previously restated eight
+    // reasons and claimed the union had exactly eight; the union held eleven,
+    // so it compared a hand-kept list against itself and passed while three
+    // reasons went unencoded. What survives here is the half a type cannot
+    // check: that the key each entry is filed under is the reason its context
+    // actually carries.
+    for (const [key, { ctx }] of Object.entries(ALL_CONTEXTS)) {
+      expect(ctx.reason, `filed under ${key}`).toBe(key as MintReason);
+    }
     const reasons = allContexts().map(({ ctx }) => ctx.reason);
-    const expected: MintReason[] = [
-      'coinbase',
-      'vouch-settle',
-      'like-payout',
-      'postlock-unlock',
-      'postlock-remainder',
-      'decay',
-      'genesis',
-      'prune-refund-author',
-    ];
-    expect([...reasons].sort()).toEqual([...expected].sort());
-    expect(new Set(reasons).size).toBe(8);
+    expect(new Set(reasons).size).toBe(reasons.length);
   });
 
   it('hex-typed values enter as UTF-8 text, raw-typed values as raw bytes', () => {

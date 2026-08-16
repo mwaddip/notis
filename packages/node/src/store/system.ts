@@ -1,10 +1,17 @@
 import { createPrivateKey, sign } from 'crypto';
 import { computeBoxId } from '@dagsocial/types';
-import type { KarmaBox, CreditBox, GenesisProofBox } from '@dagsocial/types';
+import type { KarmaBox, CreditBox, GenesisProofBox, EmissionBox } from '@dagsocial/types';
 import { getDb } from './db.js';
-import { insertBox, getKarmaBox, getCreditBoxes, getGenesisProofBox } from './utxo.js';
+import {
+  insertBox,
+  getKarmaBox,
+  getCreditBoxes,
+  getGenesisProofBox,
+  getEmissionBox,
+} from './utxo.js';
 import { putIdentityRecord } from './identity-records.js';
 import {
+  GENESIS_EMISSION,
   GENESIS_FAUCET_CREDITS,
   GENESIS_PROOF,
   GENESIS_SYSTEM_KARMA,
@@ -226,6 +233,51 @@ export function ensureGenesisProofBox(
     payload,
     guard: 'unspendable',
     txId: mintTxIdFor(genesisContext(GENESIS_PROOF), genesisHeight),
+    index: MINT_OUTPUT_INDEX,
+  };
+  box.id = computeBoxId(box);
+  insertBox(box);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
+// Emission box
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the emission box exists, holding this network's whole emission total.
+ * Idempotent — if one is already seeded, returns it without creating.
+ *
+ * **Seeded on every network, mainnet included** (TYPES_INTERFACE → EmissionBox).
+ * Unlike the karma and credit boxes above there is no faucet gate: emission is
+ * what every network pays its miners out of, so a network without this box
+ * produces no block at all.
+ *
+ * `total` is a parameter rather than a config read, following
+ * `ensureGenesisProofBox`: the caller supplies what distinguishes the box, so
+ * this function is testable under a total without a module reset and `store/`
+ * gains no edge into the emission schedule. ⚠ **It must be `emissionTotal()`'s
+ * result and never a literal** — a total that disagrees with
+ * `computeBlockReward` starves the box before the terminus, making every block
+ * from that height unproducible, or strands a residue no rule can release.
+ *
+ * ⚠ **No identity record**, for `ensureGenesisProofBox`'s reason: the box has no
+ * owner and holds no karma, so there is no activity clock for a record to hold.
+ */
+export function ensureEmissionBox(total: bigint, currentHeight: number): EmissionBox {
+  const existing = getEmissionBox();
+  if (existing) return existing;
+
+  const genesisHeight = genesisMintHeight(currentHeight);
+
+  // `GENESIS_EMISSION` is the fourth `u32BE` selector — the whole cost of a
+  // fourth genesis box, which is what `genesisContext` was built fixed-width
+  // for (NODE_INTERFACE → "Box Identity and Mint Provenance").
+  const box: EmissionBox = {
+    boxType: 'emission',
+    value: total,
+    guard: 'block_apply',
+    txId: mintTxIdFor(genesisContext(GENESIS_EMISSION), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);

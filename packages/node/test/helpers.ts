@@ -650,6 +650,11 @@ export async function mineNextBlock(bc: {
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
 }): Promise<OrderingBlock | null> {
+  // The store needs this network's emission box before a block below the
+  // terminus can be produced at all — see `seedEmissionBox`. The creator's own
+  // speculative mutation phase releases from it, so a body built without one is
+  // `body-rejected` and this returns null.
+  await seedEmissionBox();
   bc.createOrderingBlock();
   const tpl = bc.getCurrentTemplate();
   if (tpl === null) return null;
@@ -727,6 +732,31 @@ export function makePruneEntry(
  * now and applied after the chain has moved carries a stale root and is
  * rejected — build it against the state it will be applied to.
  */
+/**
+ * Put this network's emission box in the store, if it is not there already.
+ *
+ * ⛔ **A chain below the emission terminus cannot produce a block without one.**
+ * Emission is *released* from a box rather than minted (TYPES_INTERFACE →
+ * EmissionBox), so apply rejects a block whose height the schedule pays at when
+ * the store holds nothing to release from. Genesis seeds it on every network;
+ * these suites build stores directly with `initDb(':memory:')` and never run
+ * `seedGenesisState`, which is what leaves the gap.
+ *
+ * Seeded at height 0 so `genesisMintHeight` clamps it to 1 — the same value the
+ * real seeder passes, which makes the fixture's box **byte-identical to a
+ * genesis one**, id included. A different height here would give the box a
+ * different id and put every fixture's `stateRoot` somewhere no real chain
+ * reaches.
+ *
+ * Idempotent, so suites that mine several blocks call it through
+ * `makeApplicableBlock` once per block at no cost.
+ */
+export async function seedEmissionBox(): Promise<void> {
+  const { ensureEmissionBox } = await import('../src/store/system.js');
+  const { emissionTotal } = await import('../src/services/block-creator.js');
+  ensureEmissionBox(emissionTotal(), 0);
+}
+
 export async function makeApplicableBlock(
   opts: {
     powTargetBits?: number;
@@ -762,6 +792,8 @@ export async function makeApplicableBlock(
     '../src/services/block-creator.js'
   );
   const { expectedTarget } = await import('../src/services/difficulty.js');
+
+  await seedEmissionBox();
 
   const height = opts.height ?? 1;
   let prevBlockHash = ZERO_HASH;

@@ -58,7 +58,6 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   orderingBlockPowTargetBits: 3072,
-  treasuryPubKey: '',
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,

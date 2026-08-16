@@ -76,7 +76,6 @@ const testConfig = makeTestConfig({
   nodeRole: 'miner' as const,
   blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
   orderingBlockPowTargetBits: 3072,
-  treasuryPubKey: '',
   bootstrapPeers: [] as string[],
   listenAddrs: '/ip4/127.0.0.1/tcp/0',
   maxPeers: 50,
@@ -243,7 +242,18 @@ describe('block-apply journal recording', () => {
     // one credit insert, its box bytes carried in the journal payload
     const creditInserts = boxInserts(saved!, (b) => b.boxType === 'credit');
     expect(creditInserts.length).toBe(block!.utxoTxTree.coinbaseOutputs.length);
-    expect(saved!.mutations.length).toBe(creditInserts.length);
+
+    // ⚠ **The coinbase is no longer the block's only mutation, and this used to
+    // assert that it was.** A paying block also spends the emission box to its
+    // successor and accrues to the treasury box, so the journal carries those
+    // three besides — which is what makes them roll back with everything else.
+    // Named individually rather than counted, so a count that happens to match
+    // for different reasons cannot pass.
+    expect(boxInserts(saved!, (b) => b.boxType === 'emission')).toHaveLength(1);
+    expect(boxInserts(saved!, (b) => b.boxType === 'treasury')).toHaveLength(1);
+    const removes = saved!.mutations.filter((m) => m.kind === 'box' && m.op === 'remove');
+    expect(removes).toHaveLength(1);   // the predecessor emission box
+    expect(saved!.mutations.length).toBe(creditInserts.length + 3);
   });
 
   // -----------------------------------------------------------------------
@@ -575,10 +585,10 @@ describe('block-apply journal recording', () => {
     /**
      * The miner's slice of a block at height 1 carrying `fees` and `actors`.
      *
-     * ⚠ **Not the income.** Devnet's profile has no `treasuryPubKey`, so the
-     * treasury's share and the forfeited bonus are never minted and the block's
-     * minted total is smaller than its income by exactly that much. The two
-     * coincide only on a keyed profile.
+     * ⚠ **Not the income, on any network.** The treasury's share and the
+     * forfeited bonus accrue to the `TreasuryBox` rather than to a coinbase
+     * output, so the coinbase is smaller than the block's income by exactly
+     * that much and the two never coincide.
      */
     async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
@@ -793,97 +803,43 @@ describe('block-apply journal recording', () => {
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
     });
 
-    // ⚠ Devnet, testnet and mainnet all carry `treasuryPubKey: ''`, so the rest
-    // of this suite exercises the burn and never mints a treasury output at
-    // all. The keyed path is reachable only by mocking the profile:
-    // `treasuryPubKey` is profile data by design, and a config override would
-    // reach the creator without reaching the applier — the block would then be
-    // refused by the node that built it.
-    describe('on a profile that has a treasury key', () => {
-      const TREASURY_KEY = 'ab'.repeat(32);
+    // `isTreasury` has one legal value on every network, because nothing is
+    // paid to the treasury through the coinbase — the treasury's share accrues
+    // to the `TreasuryBox` (MINING_INTERFACE → Coinbase Application, receipt
+    // step 4b). A block claiming otherwise is rejected rather than
+    // reinterpreted.
+    it('refuses a coinbase output flagged isTreasury, at the correct amount', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      await importUtxo();
+      const blockApply = await importBlockApply();
+      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
 
-      function mockKeyedProfile(): void {
-        vi.doMock('@dagsocial/types', async (importOriginal) => {
-          const actual = await importOriginal<typeof import('@dagsocial/types')>();
-          return {
-            ...actual,
-            profileFor: (networkType: string) => ({
-              ...actual.profileFor(networkType as never),
-              treasuryPubKey: TREASURY_KEY,
-            }),
-          };
-        });
-      }
-
-      afterEach(() => {
-        vi.doUnmock('@dagsocial/types');
-        vi.resetModules();
+      // Exactly the miner's slice, to the miner's own key. The **only** thing
+      // wrong with this coinbase is the flag, so nothing else can be what
+      // rejects it.
+      const miner = makeTestIdentity();
+      const split = splitCoinbase(computeBlockReward(1), 0n, 0);
+      const flagged = await makeApplicableBlock({
+        miner,
+        coinbaseSplit: [
+          { owner: miner.userId, value: split.miner, isTreasury: true },
+        ],
       });
+      expect(blockApply.applyOrderingBlock(flagged)).toBe(false);
 
-      it('mints the treasury its share, and pays the income out in full', async () => {
-        mockKeyedProfile();
-        const db = await importDb();
-        db.initDb(':memory:');
-        const utxo = await importUtxo();
-        const blockApply = await importBlockApply();
-        const { computeBlockReward } = await import('../../src/services/block-creator.js');
-        const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
-
-        const miner = makeTestIdentity();
-        const block = await makeApplicableBlock({ miner });
-        expect(blockApply.applyOrderingBlock(block)).toBe(true);
-
-        const split = splitCoinbase(computeBlockReward(1), 0n, 0);
-        const treasuryOwner = new Uint8Array(Buffer.from(TREASURY_KEY, 'hex'));
-        expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(split.miner);
-        expect(utxo.getCreditBoxes(treasuryOwner)[0]!.value).toBe(split.treasury);
-
-        // Keyed is the case where the minted total and the income coincide:
-        // nothing is burned, so the whole emission lands somewhere.
-        expect(split.miner + split.treasury).toBe(computeBlockReward(1));
+      // ⛔ **The control is what stops this passing for the wrong reason.** An
+      // amount check rejects a great many blocks, so `false` alone says nothing
+      // about which rule fired. The same owner and the same value with the flag
+      // cleared must APPLY — which isolates the flag as the whole difference.
+      const clean = await makeApplicableBlock({
+        miner,
+        coinbaseSplit: [
+          { owner: miner.userId, value: split.miner, isTreasury: false },
+        ],
       });
-
-      it('refuses a treasury output paid to any key but the profile’s', async () => {
-        mockKeyedProfile();
-        const db = await importDb();
-        db.initDb(':memory:');
-        await importUtxo();
-        const blockApply = await importBlockApply();
-        const { computeBlockReward } = await import('../../src/services/block-creator.js');
-        const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
-
-        // Both amounts are exactly what the split requires — only the
-        // destination is wrong. Without the owner check this is how a producer
-        // recovers their own forfeit under the treasury's name.
-        const miner = makeTestIdentity();
-        const split = splitCoinbase(computeBlockReward(1), 0n, 0);
-        const block = await makeApplicableBlock({
-          miner,
-          coinbaseSplit: [
-            { owner: miner.userId, value: split.miner, isTreasury: false },
-            { owner: makeTestIdentity().userId, value: split.treasury, isTreasury: true },
-          ],
-        });
-
-        expect(blockApply.applyOrderingBlock(block)).toBe(false);
-
-        // Control, and it is what stops this passing for the wrong reason: on
-        // an UNKEYED profile the same block is refused too — for carrying a
-        // treasury output at all — so "rejected" alone would prove nothing
-        // about the owner. Swapping in the profile's own key applies it.
-        const keyed = await makeApplicableBlock({
-          miner,
-          coinbaseSplit: [
-            { owner: miner.userId, value: split.miner, isTreasury: false },
-            {
-              owner: new Uint8Array(Buffer.from(TREASURY_KEY, 'hex')),
-              value: split.treasury,
-              isTreasury: true,
-            },
-          ],
-        });
-        expect(blockApply.applyOrderingBlock(keyed)).toBe(true);
-      });
+      expect(blockApply.applyOrderingBlock(clean)).toBe(true);
     });
   });
 

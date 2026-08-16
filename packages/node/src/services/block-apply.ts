@@ -6,9 +6,11 @@ import {
   bondReturnContext,
   bondSettleContext,
   coinbaseContext,
+  emissionSuccessorContext,
   likePayoutContext,
   postlockRemainderContext,
   postlockUnlockContext,
+  treasurySuccessorContext,
   vouchSettleContext,
   mintTxIdFor,
   MINT_OUTPUT_INDEX,
@@ -72,6 +74,8 @@ import {
   getTopologyAuthor,
   getIdentityRecord,
   putIdentityRecord,
+  getEmissionBox,
+  getTreasuryBox,
   hasLikeRecord,
   insertLikeRecord,
   getLikeRecordCount,
@@ -109,11 +113,114 @@ import {
 } from '@dagsocial/types';
 import type {
   AnyBox,
+  EmissionBox,
   KarmaBox,
   OrderingBlock,
   PostLockBox,
+  TreasuryBox,
   UtxoTransaction,
 } from '@dagsocial/types';
+
+/**
+ * The emission and treasury box transitions (MINING_INTERFACE → Coinbase
+ * Application, receipt step 3; TYPES_INTERFACE → EmissionBox / TreasuryBox).
+ *
+ * ```
+ * emission box:  successor.value = predecessor.value − emission
+ * treasury box:  successor.value = (predecessor?.value ?? 0) + treasury
+ * ```
+ *
+ * ⛔ **Nothing about either box rides in the block.** Producer and verifier
+ * derive both from the same body, the way per-block like settlement already
+ * does, so there is no field for the two to disagree about — the results are
+ * committed through `stateRoot`, and `VERIFY_STATE_ROOT` forks an author out at
+ * the next header if their successor was not the one this rule yields. That is
+ * why this function computes rather than checks: deriving it identically **is**
+ * the verification.
+ *
+ * **`=` rather than `≥`.** Under a bound the successor's value would be the
+ * producer's choice within a range, and two valid chains would carry different
+ * emission histories for no gain. Ergo's re-emission contract encodes the same
+ * equality (EIP-27).
+ *
+ * ⛔ **A successor whose value would be zero is not created.** The genesis total
+ * is exactly the schedule's sum, so the last emitting block consumes the box and
+ * leaves none; above the terminus there is no emission box and nothing is
+ * released. This is the box form of the rule the coinbase already carries — one
+ * block, one encoding — and without it a zero-value box would be removed and
+ * reinserted on every block forever. The treasury box is created late for the
+ * same reason: at genesis it would hold zero.
+ *
+ * Returns `false` to reject the block. Both writes go through `insertBox` /
+ * `consumeBox`, so they journal like every other mutation and the rollback
+ * inverse comes for free.
+ *
+ * **Exported for direct testing**, the way `checkOutputShape` is. The terminus
+ * is at height 5,900 on devnet and 7,401,600 on mainnet, so reaching it through
+ * mined blocks is not available to a test — and a rule whose only assertions sit
+ * at heights 1 and 2 is one whose terminus nothing covers.
+ */
+export function settleEmissionAndTreasury(
+  height: number,
+  emission: bigint,
+  treasury: bigint,
+): boolean {
+  // A block at or above the terminus releases nothing and does not touch the
+  // box — which is also the only reason its absence there is not a fault.
+  if (emission > 0n) {
+    const box = getEmissionBox();
+    if (!box) {
+      console.warn(
+        `Rejected block height=${height}: schedule releases ${emission} but this ` +
+        `chain holds no emission box`,
+      );
+      return false;
+    }
+    if (box.value < emission) {
+      // Unreachable while `emissionTotal()` and `computeBlockReward` share the
+      // profile's parameters — the total IS the sum, so the box covers every
+      // release. Kept as the loud failure for the case where they stop
+      // agreeing, because the alternative is a negative successor value.
+      console.warn(
+        `Rejected block height=${height}: emission box holds ${box.value}, ` +
+        `short of the ${emission} this height releases`,
+      );
+      return false;
+    }
+    consumeBox(box.id!, height);
+    const remaining = box.value - emission;
+    if (remaining > 0n) {
+      const successor: EmissionBox = {
+        boxType: 'emission',
+        value: remaining,
+        guard: 'block_apply',
+        txId: mintTxIdFor(emissionSuccessorContext(), height),
+        index: MINT_OUTPUT_INDEX,
+      };
+      successor.id = computeBoxId(successor);
+      insertBox(successor);
+    }
+  }
+
+  // Nothing accrues on a block whose treasury slice rounds to zero, so it does
+  // not touch the box — the shape that holds above the terminus with no fees,
+  // where the block touches neither.
+  if (treasury > 0n) {
+    const box = getTreasuryBox();
+    if (box) consumeBox(box.id!, height);
+    const successor: TreasuryBox = {
+      boxType: 'treasury',
+      value: (box?.value ?? 0n) + treasury,
+      guard: 'block_apply',
+      txId: mintTxIdFor(treasurySuccessorContext(), height),
+      index: MINT_OUTPUT_INDEX,
+    };
+    successor.id = computeBoxId(successor);
+    insertBox(successor);
+  }
+
+  return true;
+}
 
 function processVouchCooldowns(currentHeight: number): void {
   const matured = getMaturedVouchCooldowns(currentHeight);
@@ -1309,23 +1416,18 @@ function applyMutationPhase(
   const actors = countKarmaActors(appliedTxs, block.header.validatorId);
   const split = splitCoinbase(emission, fees, actors);
 
-  // ⚠ **The income and the minted total are different numbers, and only a
-  // keyed profile makes them coincide.** With no `treasuryPubKey` on this
-  // network, the treasury's share and the forfeited bonus are not minted at
-  // all and the block's minted total is smaller by exactly that much — never
-  // redirected to the miner, whose slice is the same either way (MINING_
-  // INTERFACE → Coinbase Application). Read off the profile rather than any
-  // local setting, so every node on one network computes one answer.
-  const treasuryKeyHex = config.profile.treasuryPubKey;
-  const treasuryIsMinted = treasuryKeyHex.length === 64;
-  const expectedMinted = split.miner + (treasuryIsMinted ? split.treasury : 0n);
-
+  // ⚠ **The income and the coinbase are different numbers, on every network.**
+  // The coinbase is the miner's slice alone; the treasury's share and the
+  // forfeited bonus accrue to the `TreasuryBox` and are never an output
+  // (MINING_INTERFACE → Coinbase Application, receipt step 2). A miner who
+  // recovered their own forfeit would face a delay rather than a cost, and the
+  // inclusion bonus would price nothing.
   const totalCoinbase = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
-  if (totalCoinbase !== expectedMinted) {
+  if (totalCoinbase !== split.miner) {
     console.warn(
       `Rejected block height=${height}: coinbase value ${totalCoinbase} != ` +
-      `expected ${expectedMinted} (emission ${emission} + fees ${fees}, ` +
-      `treasury ${treasuryIsMinted ? split.treasury : 0n} of ${split.treasury})`,
+      `miner slice ${split.miner} (emission ${emission} + fees ${fees}, ` +
+      `treasury ${split.treasury} accrues to the treasury box)`,
     );
     return false;
   }
@@ -1341,42 +1443,39 @@ function applyMutationPhase(
     }
   }
 
-  // The split, not only the sum. A block paying the whole income to its miner
-  // sums correctly and forfeits nothing, so a total-only check is the vacuous
-  // one here — the forfeit is the entire mechanism the bonus prices inclusion
-  // with. The treasury side is pinned by amount *and* owner: an output flagged
-  // `isTreasury` but paid to the producer's own key would recover the forfeit
-  // under the treasury's name.
+  // `isTreasury` has exactly one legal value: nothing is paid to the treasury
+  // through the coinbase, so every output is the miner's and `false` is
+  // accurate. A block claiming otherwise is **rejected rather than
+  // reinterpreted** (MINING_INTERFACE → Coinbase Application, receipt step 4b)
+  // — the field is in `utxoTxRoot`, so a `true` one is a different block hash
+  // for a coinbase this node would otherwise treat as identical.
   //
-  // Only the treasury side is pinned. Which key the miner pays their own slice
-  // to, and across how many outputs, is the producer's business and is
-  // committed to in `utxoTxRoot` like everything else.
-  let treasuryPaid = 0n;
+  // ⚠ **This is the check that keeps the field honest until it is deleted.**
+  // Its removal reaches four packages (types, validation, net, node) and is its
+  // own unit; TYPES_INTERFACE → Coinbase output marks it AHEAD OF CODE.
   for (const out of block.utxoTxTree.coinbaseOutputs) {
-    if (!out.isTreasury) continue;
-    if (!treasuryIsMinted) {
+    if (out.isTreasury) {
       console.warn(
-        `Rejected block height=${height}: treasury coinbase output on a network ` +
-        `with no treasury key`,
+        `Rejected block height=${height}: coinbase output flagged isTreasury; ` +
+        `the treasury's share accrues to the treasury box, never to an output`,
       );
       return false;
     }
-    if (Buffer.from(out.owner).toString('hex') !== treasuryKeyHex) {
-      console.warn(
-        `Rejected block height=${height}: treasury coinbase output is not paid ` +
-        `to the network's treasury key`,
-      );
-      return false;
-    }
-    treasuryPaid += out.value;
   }
-  if (treasuryPaid !== (treasuryIsMinted ? split.treasury : 0n)) {
-    console.warn(
-      `Rejected block height=${height}: coinbase pays ${treasuryPaid} to the ` +
-      `treasury, expected ${treasuryIsMinted ? split.treasury : 0n}`,
-    );
-    return false;
-  }
+
+  // The split, not only the sum. A block paying the whole income to its miner
+  // sums correctly and forfeits nothing, so a total-only check would be the
+  // vacuous one here — the forfeit is the entire mechanism the bonus prices
+  // inclusion with. **The two box transitions below are where that is
+  // enforced**: the coinbase check above pins the miner's half, and the
+  // successors pin what was released and what was forfeited.
+  //
+  // Which key the miner pays their own slice to, and across how many outputs,
+  // is the producer's business and is committed to in `utxoTxRoot` like
+  // everything else.
+
+  // 11a-ii. The emission and treasury box transitions.
+  if (!settleEmissionAndTreasury(height, emission, split.treasury)) return false;
 
   // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like
   // settlement"). Entirely derived — nothing rides in the block, so producer
