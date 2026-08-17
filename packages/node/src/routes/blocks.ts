@@ -13,6 +13,13 @@ import { postIdsOf } from '../services/block-posts.js';
  * escrowed karma is held rather than destroyed. `credit`, `emission`, `treasury`
  * and `fee` are the other ledger, and `genesis_proof` holds 0.
  *
+ * ⛔ **`karma_pool` is karma-bearing and is still not summed**, and it is out
+ * for neither of those reasons: the pool holds the karma that is NOT in
+ * circulation (TYPES_INTERFACE → KarmaPoolBox), so summing it reports every
+ * network's supply as the type's ceiling. It is the first type belonging to
+ * neither karma set, which is what makes the allow-list load-bearing rather
+ * than a spelling of "everything but the other ledger".
+ *
  * ⛔ **Not the set the engine's karma transition arm admits as outputs** — that
  * is `KARMA_TRANSITION_TYPES` in `services/utxo-engine.ts`, and neither set is
  * defined as, spread from or derived from the other (NODE_INTERFACE → "Two

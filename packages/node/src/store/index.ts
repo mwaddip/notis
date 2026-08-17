@@ -22,6 +22,7 @@ export {
   getGenesisProofBox,
   getEmissionBox,
   getTreasuryBox,
+  getKarmaPoolBox,
   getCreditBox,
   getCreditBoxes,
   getUnlockedCreditBoxes,

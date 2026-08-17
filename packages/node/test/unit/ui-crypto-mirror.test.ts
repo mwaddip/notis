@@ -41,7 +41,7 @@ import { extractDeclaration as extractDeclarationFrom } from './extract-declarat
 import type {
   CandidateOf,
   Post, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
-  EmissionBox, TreasuryBox, FeeBox,
+  EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
 
@@ -225,6 +225,16 @@ const GOLDEN_FEE_BOX: FeeBox = {
   txId: COVERAGE_TX_ID, index: 6,
 };
 
+// The pool's ordinary state is the top of `vlqU64`'s range, not the two-byte
+// floor its empty-tail siblings sit at (TYPES_INTERFACE → KarmaPoolBox: genesis
+// holds the maximum representable karma). Fixing it at `2⁶⁴ − 1` is what makes
+// the mirror's `vlqU64` agree with the engine's over the longest encoding any
+// box value can take, rather than only over short ones.
+const GOLDEN_KARMA_POOL_BOX: KarmaPoolBox = {
+  boxType: 'karma_pool', value: 2n ** 64n - 1n,
+  txId: COVERAGE_TX_ID, index: 7,
+};
+
 /**
  * The box types the mirror covers, **keyed so coverage is a compile error.**
  *
@@ -255,6 +265,7 @@ const BOX_TYPE_FIXTURES = {
   emission: GOLDEN_EMISSION_BOX,
   treasury: GOLDEN_TREASURY_BOX,
   fee: GOLDEN_FEE_BOX,
+  karma_pool: GOLDEN_KARMA_POOL_BOX,
 } satisfies Record<MirroredBoxType, AnyBox>;
 
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> =

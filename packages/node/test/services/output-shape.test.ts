@@ -13,8 +13,8 @@
  *    output boxType rejects a `guard` key, which no box carries.
  *
  * `BOX_TYPES` below is the types a transaction may CREATE, which is what this
- * file is about — not every box type. `genesis_proof`, `emission` and
- * `treasury` have no `OUTPUT_SHAPE` row because no transaction may create
+ * file is about — not every box type. `genesis_proof`, `emission`, `treasury`
+ * and `karma_pool` have no `OUTPUT_SHAPE` row because no transaction may create
  * them; `genesis_proof`'s refusal is covered in
  * `genesis-proof-not-in-tx.test.ts`.
  */
@@ -134,7 +134,7 @@ function honestCandidate(
  */
 type OutputBoxType = Exclude<
   AnyBox['boxType'],
-  'genesis_proof' | 'emission' | 'treasury'
+  'genesis_proof' | 'emission' | 'treasury' | 'karma_pool'
 >;
 
 /** Every type a transaction may create — the union's key set, not a list. */
