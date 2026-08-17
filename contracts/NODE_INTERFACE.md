@@ -467,11 +467,26 @@ rather than defaulting it, and the faucet enumerates rather than excluding.
 > ✅ **That is what unit C's marker boxes are for**, and it is the load-bearing reason they exist
 > rather than a tidiness argument.
 >
-> ⛔ **AHEAD OF CODE — THE KARMA FAUCET IS REMOVED IN UNIT B; THE CREDIT FAUCET STAYS**
-> (user, 2026-08-17). `POST /faucet` goes. Faucet-bearing networks get karma from
-> **`genesisCommitteeKeys` × `genesisKarmaPerMember`** at genesis instead — by rule, with no signer —
-> which is what those three profile fields were declared for. **It returns in unit C** with a
-> settlement-carried grant that every node can derive.
+> ⛔ **AHEAD OF CODE — THE KARMA FAUCET IS A RULE-AUTHORIZED TRANSACTION THAT SPENDS THE POOL**
+> (user, 2026-08-17). `pool(S) → pool(S − amount) + karma(amount)`, no signature, constrained
+> entirely by shape: faucet-bearing network, fixed amount, no prior grant for that identity.
+>
+> ✅ **It conserves exactly** — a named source and a named sink in one operation, which is all the
+> conservation axiom asks. It is a **transaction**, so the block carries it and every node derives
+> the same effect; the fork that killed the block-application version never arises.
+>
+> ⛔ **IT IS THE ONE PLACE A USER TRANSACTION MAY NAME THE POOL, AND THE REASON IS STRUCTURAL, NOT A
+> CONCESSION.** Every other operation has a party who already holds value and can therefore build a
+> transaction. **The faucet's recipient holds nothing — that is what they are asking to fix — so the
+> source must initiate.** A transaction needs at least one input (`utxo-engine.ts`, and
+> §"Two entity kinds" depends on it for *identity*, since a zero-input transaction is replayable), so
+> there is no shape in which the recipient acts. Marker boxes do not rescue it: a marker still rides
+> a transaction that needs an input.
+>
+> ⚠ **Scope is the whole of its security argument.** `isFaucetNetwork` gates it to devnet and
+> testnet; **on mainnet the transition does not exist.** It is a testing convenience — the
+> requirement is that a devnet tester can get karma to a fresh identity and start posting — and it is
+> deliberately not held to the standard the value paths are.
 >
 > ⚠ **`POST /credits/faucet` is untouched and keeps its keypair.** There is no credit pool, so unit B
 > has no keyless replacement for it, and building one is a separate economic decision.

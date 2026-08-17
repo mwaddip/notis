@@ -901,9 +901,14 @@ likes: likers paid `x`, the author receives `x−1`, **1 returns to the pool** �
 > is created and nothing destroyed — the liker's karma goes to the accrual box, the accrual box goes
 > to the author and the pool.
 >
-> ✅ **The deflation dial survives unchanged in economics.** Per `x` likes the author still receives
-> `x − 1` and 1 still leaves circulation. A holder cannot distinguish "destroyed" from "returned to a
-> pool nothing can spend"; only the accounting identity changes.
+> ✅ **THE REMAINDER GOES TO THE POOL, NOT THE TREASURY** (user, 2026-08-17). ⛔ **Those are different
+> economies and the choice is settled, not incidental**: to the pool it leaves circulation for good
+> and the dial stays **deflationary**; to the treasury it becomes spendable by something later, which
+> is **redistribution wearing deflation's name**.
+>
+> ✅ **The dial's economics are therefore unchanged.** Per `x` likes the author still receives `x − 1`
+> and 1 still leaves circulation. A holder cannot distinguish "destroyed" from "returned to a pool
+> nothing can spend"; only the accounting identity changes.
 >
 > ⛔ **`IdentityRecord.likeCarry` IS REPLACED BY THE BOX'S VALUE.** The counter exists only to
 > remember karma that does not yet exist; once the karma sits in a box, the box *is* the carry.
