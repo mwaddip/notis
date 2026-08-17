@@ -292,9 +292,9 @@ The UTXO layer tracks two non-fungible value types:
 | **Karma** | No | Likes on posts | Invites, likes | Yes (storage rent) | Mint: like rewards. Burn: invite bond forfeiture |
 | **Credits** | Yes | Validator rewards, genesis | Ads, transfers (future) | No | Mint: ordering block rewards |
 
-Both are stored as **boxes** — UTXO entries guarded by cryptographic scripts.
-Boxes are consumed and created in transactions; the set of unspent boxes IS
-the current state.
+Both are stored as **boxes** — UTXO entries a transition must be authorized to
+spend. Boxes are consumed and created in transactions; the set of unspent boxes
+IS the current state.
 
 Box `value` is a uniform **`bigint`** — credits are 8-decimal integer base units
 (10⁻⁸ credit), karma small bigints. No float arithmetic in consensus value math;
@@ -308,7 +308,6 @@ KarmaBox {
   value: bigint                // Karma balance (bigint base units — see value denomination)
   owner: PublicKey             // Ed25519 public key (32 bytes)
   createdAtBlock: number       // Block height when box was created
-  guard: "owner_signature"     // Only the owner can spend
 }
 ```
 
@@ -403,7 +402,6 @@ CreditBox {
   id: BoxId
   value: bigint                // Credit balance (integer base units of 10⁻⁸ credit)
   owner: PublicKey
-  guard: "owner_signature"
   lockedUntilBlock?: number    // Coinbase rewards cannot be spent before this height
 }
 ```
@@ -422,7 +420,6 @@ VouchBox {
   voucherId: UserId           // Who staked the karma
   targetId: UserId            // Who is being vouched for
   createdAtBlock: number      // Block height when vouch was cast
-  guard: "owner_signature"    // Only the voucher may spend (unvouch)
 }
 ```
 
@@ -456,7 +453,7 @@ All box transitions are atomic — a transaction consuming N boxes and creating 
 boxes either fully commits or fully fails. The ledger enforces:
 
 - Total value in = total value out (conservation, except mint/burn)
-- Guard scripts evaluate to true for every consumed box
+- Every consumed box is consumed by a transition whose requirements are satisfied
 - New boxes are valid under protocol rules
 
 **Canonical bytes are the record; typed views are derived.** A box's identity
@@ -480,10 +477,8 @@ over views re-typed from storage.
 
 **Both halves run, in all three respects.** The outbound half since P2-B (value
 fabrication fixed; `rowToBox` reproduces honest boxes byte-exactly). The inbound
-half since the guard-shape pin landed (2026-08-08: closed per-boxType key sets,
-canonical-guard equality, pinned by `computeBoxId(rowToBox(row)) === row.id`
-discriminator tests — which also caught a live instance: an integration fixture
-had carried a lying invite shape since before the check existed). Field **types**
+half since the output-shape schema closed the per-boxType key sets, pinned by
+`computeBoxId(rowToBox(row)) === row.id` discriminator tests. Field **types**
 since the field-type pin (2026-08-08, PR #16): `OUTPUT_SHAPE` carries a runtime
 type per field — `owner` is `bytes32`, `originalValue` is `u64`, every predicate
 total — and `checkOutputShape` moved to `validateTx` **step 4**, ahead of the
@@ -887,9 +882,7 @@ toUnlock        = min(value, shouldUnlock − alreadyUnlocked)
 recreates the reduced box (`postlock-remainder`) unless fully unlocked. The formula is the
 retired epoch schedule evaluated per block; posts are processed in ascending post-id order.
 
-The guard is **`block_apply`** (renamed from `epoch_tally` — there is no epoch, and the
-meaning was always "consumable only by block application"). No user transaction can spend a
-`PostLockBox`.
+No user transaction can spend a `PostLockBox` — block application is its only spender.
 
 ### Like parameters
 
@@ -905,7 +898,7 @@ All universal constants — never per-network (§Network Identity: compress time
 economics). Values are placeholders until the constants session pins them.
 
 **Retired, do not rebuild — names reserved, never reuse:** `LikeBox` and the boxType string
-`'like'` · the `likebox` and `epoch` Merkle leaf domains · the `epoch_tally` guard string ·
+`'like'` · the `likebox` and `epoch` Merkle leaf domains ·
 the free-like tier (`dag_likes` rows as likes) · unlike and every refund path · the epoch
 interval and `EPOCH_BLOCKS` · `LIKE_COST` · `LIKE_THRESHOLD` · `LIKE_MAX_AUTHOR_REWARD` ·
 `LIKE_FREE_THRESHOLD`.
@@ -931,10 +924,10 @@ Create:
   1. Alice's remaining karma box:  K − B
   2. InviteBox:                    0 karma      — a named right to mint
      inviterId = Alice, inviteePublicKey = Bob
-     Guard: invite_dual — Bob's signature claims, Alice's cancels
+     Bob's signature claims it, Alice's cancels it
   3. BondBox:                      B karma
      inviterId = Alice, inviteePublicKey = Bob
-     Guard: block_apply — nobody can spend it
+     No user transaction can spend it
 ```
 
 **Alice pays only the bond.** `G` does not exist yet: the invite is a right to
@@ -1524,7 +1517,7 @@ forever. A node rejects objects with an unsupported protocol version.
 >
 > The distribution is not random and is worth knowing before trusting any of them: of the
 > 21 true, **six are the Block Application Journal block** (written 2026-08-04, *after* its
-> implementation) and five are the bigint/value-denomination and guard/decay rules Specs B
+> implementation) and five are the bigint/value-denomination and authorization/decay rules Specs B
 > and G touched. Of the 15 false, **ten are July text**, and **all ten Ergo-Adopted bullets
 > are July text** — six false, three unenforced or qualified, one true.
 >
@@ -1542,7 +1535,7 @@ forever. A node rejects objects with an unsupported protocol version.
   > **Closed by P2-B (4):** the committed invitee spending the BondBox to their own karma box
   > (phase 1 — settlement now pays only `bond.inviterId`, under a spend-time unlock, and no
   > burn shape exists); unvouch re-minting a constant instead of releasing the stake (phase 2);
-  > a vouch cast carrying a **foreign `voucherId`**, which produces a box guarded by that
+  > a vouch cast carrying a **foreign `voucherId`**, which produces a box naming that
   > foreign key — a `vouch` input's authorization requires the box's own `voucherId` — so A stakes and B
   > collects (phase 2); and **karma inputs never being checked for a shared owner**, so
   > `[karmaA, karmaB] → karmaA` moved karma between accounts whenever both co-signed
@@ -1676,7 +1669,7 @@ forever. A node rejects objects with an unsupported protocol version.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
   (`value < 2⁶⁴`); **no float math in any consensus value path** — floats are
   non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
-- A box can only be consumed if its guard script evaluates to true
+- A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay applied periodically at block application time (not at spend time)
 
 ### Block application journal (Spec B P1)
@@ -1794,8 +1787,8 @@ forfeited part of the inclusion bonus accrues there too, which is what makes the
 to a miner who excludes rather than a delay.
 
 **Unspendable by absent rule.** No protocol rule permits a treasury spend. This is not a
-withheld key: it is a `TreasuryBox` (TYPES_INTERFACE → TreasuryBox) whose guard admits only
-block application, and block application carries no path that releases from it. Inviolable by
+withheld key: it is a `TreasuryBox` (TYPES_INTERFACE → TreasuryBox) that only block application
+may spend, and block application carries no path that releases from it. Inviolable by
 everyone, the project included, because there is nothing to hold.
 
 **A key would be a weaker claim, not a simpler one.** A box paid to a key nobody admits to
@@ -2053,9 +2046,7 @@ Six rules govern it:
    past 2^53); fixtures seeding boxes whose `stored.id !== computeBoxId(stored)`, violating the
    invariant `computeBoxId` calls true by construction (`types/src/utxo.ts`, at the
    `stored.id === computeBoxId(stored)` note above the function — **not `:210-212`, which the old
-   pin named and which is an unrelated comment about `BOX_TYPE.read`**); and two fixtures carrying
-   retired guard strings, which are box CONTENT inside the id preimage and therefore described boxes
-   that cannot exist. Each package
+   pin named and which is an unrelated comment about `BOX_TYPE.read`**). Each package
    carries a `tsconfig.test.json` (`include: ["src", "test"]`) wired into its `typecheck` script, so
    `pnpm -r typecheck` covers what the suites actually execute — an unchecked test tree is exactly
    where a new *required* field (e.g. `UtxoDeps.networkType`) hides as a runtime surprise, and where
@@ -2160,8 +2151,7 @@ fresh. Namespacing keeps the option open to split into separate stores later
   > `types/src/utxo.ts` and a member of the `AnyBox` union. The post bond is real and stays — it is
   > the anti-dodge
   > mechanism. But **"at epoch boundaries" is superseded**: vesting moves to per-block with
-  > the epoch's removal, and the `epoch_tally` guard becomes "consumable only by block
-  > application."
+  > the epoch's removal, and block application is the box's only spender.
 - Sub-blocks + ordering blocks with PoW (user PoW + validator PoW)
 - Verifiable prune: block-level PruneEntry, Ed25519-signed, UTXO-deterministic
   settlement (consumes PostLockBoxes and LikeBoxes, mints refund karma)
