@@ -111,6 +111,34 @@ Validators produce ordering blocks: full PoW, batch all sub-blocks produced
 since the previous ordering block, order the pending UTXO transactions (likes
 included), and distribute credit rewards.
 
+> ## ⚠ AHEAD OF CODE — every block carries ONE SETTLEMENT TRANSACTION, and it is where protocol effects live
+>
+> **One per block, covering both ledgers**, built by the producer and validated by rule. It spends the
+> karma pool and the emission box, consumes the markers the block's user transactions emitted, and
+> emits every box the block's protocol effects create. ⛔ **`CoinbaseOutput` stops being a block-body
+> concept** — coinbase outputs become outputs of this transaction, so the body loses a field and
+> `utxoTxRoot` loses a leaf class (TYPES_INTERFACE → OrderingBlock).
+>
+> **Why exactly one.** The pool's id changes every time it is spent, so two transactions naming it
+> conflict — and unlike an ordinary contended box **the loser is not deferred but permanently
+> invalid.** One protocol spend per block gives zero contention. A transaction may have as many
+> outputs as it needs, so **this bounds nothing** about how many invites, likes or sweeps a block can
+> carry.
+>
+> ⛔ **ITS INPUTS ARE DERIVED, NOT LISTED.** The rule is *"this transaction consumes every marker box
+> the block's transactions emitted, in committed transaction order"* — so its serialized size is
+> proportional to the number of distinct **authors**, never to the number of **likes**, and the
+> enumeration order is already fixed by `utxoTxIds` rather than needing a rule of its own.
+>
+> ⚠ **The cost, stated rather than discovered: the settlement is not validatable from its own bytes.**
+> A validator reconstructs its input set from the rest of the body before checking conservation. That
+> reconstruction is a field read on a pass the validator already makes, and it runs **once per block**.
+>
+> ⛔ **DETERMINISM IS THIS MECHANISM'S WHOLE RISK.** Every node must derive a byte-identical
+> settlement from the same body, or `utxoTxRoot` and `stateRoot` fork. Its construction must be a
+> **pure function of the block's other transactions plus the pool boxes** — no local state, no clock,
+> no iteration order that the block does not already fix. `NODE_INTERFACE` states the construction.
+
 ---
 
 ## ⛔ THE CONSERVATION AXIOM — NOTHING IS EVER CREATED OR DESTROYED AFTER GENESIS
@@ -169,6 +197,27 @@ aggregate from drifting. **Both are replaced by transfer primitives that name a 
 (TYPES_INTERFACE → KarmaPoolBox) and the box choke point accounts for supply changes, but the mint
 and burn paths are still mints and burns. **Every one of them is a defect against this section until
 it names a source and a sink.**
+
+### How a source and a sink get named — the three shapes, and there are only three
+
+⛔ **Most paths already conserve and need only a different primitive.** A bond return, a bond's vested
+part, post-lock vesting, a prune refund and the coinbase all take their value from a box being
+consumed. They are defects here because they call a *mint* function that does not link source to
+destination, **not because the arithmetic is wrong.** Replacing the primitive fixes them with no
+economic decision in it.
+
+For the paths where value genuinely enters or leaves circulation, exactly three shapes are available:
+
+| Shape | When it applies | Example |
+|---|---|---|
+| **the value is already in a box** the transaction consumes | the party holds it | bond return, post-lock vesting, unvouch escrow |
+| **block application spends the pool** | no user transaction is involved | decay, bond forfeiture, the invite grant |
+| **a marker box** the user's transaction outputs, carrying the value | a user transaction moves value to a party it cannot name a box for | the like accrual — **and nothing else** |
+
+⛔ **A MARKER MUST CARRY ITS VALUE.** A zero-value marker means the units it stands for ceased to
+exist between the transaction and the settlement, which is exactly what *"not even as an intermediary
+step"* forbids. This is why the like needs a marker and the invite does not: the invite's bond is
+already a box the transaction creates, so the settlement reads it and no marker is invented.
 
 ## Design Principles
 
@@ -503,6 +552,44 @@ the voucher's karma boxes, not the value of any single one.**
 >
 > ⚠ **Same root as the faucet defect PR #69 fixed** — `getKarmaBox`'s single-box selection, one
 > function with two symptoms. Fix this against what landed there, not from scratch.
+
+> ## ⚠ VIOLATED — "HELD FOR `VOUCH_COOLDOWN_BLOCKS`" IS NOT WHAT THE CODE DOES. Verified 2026-08-17.
+>
+> **The rule is right and the code is wrong.** Measured in `node/src/services/block-apply.ts`, the
+> vouch branch of the apply loop: **the unvouch transaction has zero outputs.** It consumes the
+> `VouchBox`, the karma is destroyed, and a `vouch_cooldowns` row remembers to re-mint it later.
+> Nothing "holds" it — for the length of the cooldown the karma exists nowhere, which is a burn and a
+> mint separated by **blocks, not instants**, and the plainest violation of §The conservation axiom in
+> the tree.
+>
+> ⚠ **The row is node-local SQL and sits OUTSIDE the AVL root.** A node holding the committed state
+> could not tell from it that an obligation exists.
+>
+> ### ⚠ AHEAD OF CODE — the escrow becomes a box, which is what the prose already claims
+>
+> ```
+> VouchEscrowBox {
+>   id: BoxId
+>   value: bigint               // exactly what the VouchBox held — never the constant
+>   owner: UserId               // the voucher; where the karma returns
+>   releaseAtBlock: number      // unvouch height + VOUCH_COOLDOWN_BLOCKS
+> }
+>
+> unvouch tx    VouchBox(V) → VouchEscrowBox(V, owner = voucherId, releaseAtBlock = h + cooldown)
+> settlement    VouchEscrowBox(V) → voucherKarma(+V)      at releaseAtBlock
+> ```
+>
+> ✅ **The value never leaves a box**, so the pool is not involved on this path at all and no marker
+> is needed — the escrow is an ordinary output of the voucher's own transaction.
+>
+> ✅ **The obligation moves into committed state.** An escrow box is in the UTXO set and therefore in
+> the `stateRoot`, so a node that synced without replaying every block holds the obligation itself
+> rather than a root it cannot interpret. **`vouch_cooldowns` is deleted, table and all.**
+>
+> ⛔ **The value is the BOX'S, never `VOUCH_KARMA_AMOUNT`.** The existing escrow row already records
+> the actual staked value for this reason, and the box must keep that property: the round trip is
+> conservation-structural, not true by coincidence, and it must not depend on the cast's pin holding
+> for the box in hand.
 
 #### Box lifecycle
 
@@ -918,9 +1005,34 @@ likes: likers paid `x`, the author receives `x−1`, **1 returns to the pool** �
 > counts as live supply"* has no content once the carry is karma in a box: it is live, it is in the
 > UTXO set, and it is in the `stateRoot` because every box is.
 >
-> ⚠ **The box's mechanics are undecided and are spec work** — whether one accumulating box per author
-> or one box per like, and whether the liker's transaction writes it directly or emits a marker that
-> block application merges. The economics above are settled; the carrier is not.
+> ✅ **THE CARRIER IS TWO OBJECTS, NOT ONE** (user, 2026-08-17). They have different lifetimes and
+> neither substitutes for the other:
+>
+> | | Lifetime | Count |
+> |---|---|---|
+> | **accrual marker** | created and consumed inside one block | one per like |
+> | **carry box** | persists across blocks | one per author, holding `r < LIKES_PER_KARMA_PAYOUT` |
+>
+> ⛔ **A LIKE MUST NOT NAME A SHARED BOX.** If the liker's transaction consumed the author's carry
+> box, two likers of the same author in the same block would name the same box id and the second
+> would be **permanently invalid, not deferred** — a popular author becomes unlikeable. The like
+> therefore emits a **fresh marker per like**, and only the settlement touches the carry box.
+>
+> ⚠ **The marker count is bounded per BLOCK, not per author.** An author may receive any number of
+> likes in one block, so `LIKES_PER_KARMA_PAYOUT` bounds the *carry*, never the markers. What keeps
+> that off the block is that the settlement **derives** its marker inputs rather than listing them.
+>
+> For an author with `n` markers this block and a carry box holding `r`, where
+> `x = LIKES_PER_KARMA_PAYOUT`:
+>
+> ```
+> settlement   markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
+>              total = n + r,   q = ⌊total / x⌋,   r′ = total mod x
+> ```
+>
+> ✅ **The payout draws from the accrual, never from the pool.** The likers funded it. On this path
+> the pool is a **sink** and never a source, so the `like-payout` mint does not gain a funding line —
+> it ceases to exist.
 
 The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent
@@ -971,6 +1083,13 @@ recreates the reduced box (`postlock-remainder`) unless fully unlocked. The form
 retired epoch schedule evaluated per block; posts are processed in ascending post-id order.
 
 No user transaction can spend a `PostLockBox` — block application is its only spender.
+
+> ⚠ **AHEAD OF CODE — "mints that karma" is the WORD, not the mechanism, and this path already
+> conserves.** The karma comes out of the `PostLockBox` being consumed, so source and destination are
+> both present; what is missing is only that the code reaches them through a mint primitive which does
+> not link the two. ✅ **Under §The conservation axiom this is a mechanical substitution with no
+> economic decision in it** — the same as a bond return, a bond's vested part, a prune refund and the
+> coinbase. **It is not one of the paths where value enters or leaves circulation.**
 
 ### Like parameters
 
@@ -1066,6 +1185,61 @@ bond stays locked for exactly that long — which is the whole of the rate limit
 An account can fund `K / B` concurrent invites and no more, so leaving invites
 open costs Alice her own capacity and no rule has to bound it.
 
+> ## ⚠ AHEAD OF CODE — THE INVITE IS ONE TRANSACTION, AND THE THREE SECTIONS ABOVE COLLAPSE INTO IT
+>
+> **`InviteBox`, the claim transaction and the cancellation transaction are all DELETED**
+> (user, 2026-08-17). The two sections above this marker describe the running tree and stay until the
+> code does; **nothing new may be built against them.**
+>
+> ```
+> invite tx    aliceKarma(K) → BondBox(B, inviterId=Alice, inviteePublicKey=Bob) + aliceKarma(K−B)
+> settlement   pool(S) → pool(S−G) + bobKarma(G)
+> ```
+>
+> ⛔ **THE BOND IS THE REQUEST.** The settlement emits `INVITE_KARMA_AMOUNT` to the
+> `inviteePublicKey` of every `BondBox` the block creates. Pairing is **structural** — one bond, one
+> grant — so no rule compares two lists and no box is invented to carry the pairing. This is why the
+> invite needs no marker box while a like does: the bond is already a box the transaction creates and
+> the settlement can read.
+>
+> ✅ **The mint moves to where the source is.** `G` is a **pool spend**, not a creation, which is what
+> §The conservation axiom requires. *"The invite is the network's only source of karma"* survives only
+> as a statement about **circulation**; genesis is the only source of supply.
+>
+> ### What the claim carried
+>
+> **Bob's signature, proving he holds the key — dropped.** It was never the sybil defence; the bond is,
+> and Bob's key could always have been Alice's second key. Consent is already out of band, as
+> §Invite System states: *"Bob gives Alice his public key out of band."*
+>
+> ⚠ **The cost, stated rather than hidden:** Alice may name 32 bytes nobody holds, and `G` lands in a
+> box no one can ever spend. It is **parked, not destroyed** — the axiom holds. ⛔ **What makes it
+> harmless is `B ≥ G`**, so stranding `G` costs at least `G` and there is no arbitrage. **That bound
+> is load-bearing and a re-tuning must not invert it.**
+>
+> **The probation clock — moved.** `IdentityRecord.invitedAtBlock` becomes the invite's own height.
+>
+> **Cancellation — dropped as UNRELIABLE, not as unimportant** (user, 2026-08-17). Bob could always
+> claim faster than Alice could regret, so cancelling was a race she might lose rather than a
+> guarantee she held — and the window is one in which the two are likely still in live contact.
+>
+> ⚠ **The rate limit changes shape, and §Invite cancellation's argument goes with it.** *"Leaving
+> invites open costs Alice her own capacity and no rule has to bound it"* depended on the open invite.
+> The limit becomes **`K / B` invites per `INVITE_PROBATION_BLOCKS`** rather than `K / B` concurrent
+> and indefinite. ✅ **Nothing locks forever any more**, which is the stronger property of the two.
+>
+> ### The rule this owes
+>
+> ⛔ **Two inviters naming the same key in one block must not both grant.** Today the claim absorbs
+> this: Bob claims one invite and the other is cancelled. With no claim, the second invite grants a
+> second `G` to the same key unless **apply-time refuses it** — and a block whose embedded
+> transactions do not all apply is refused whole, so a producer must not pack both. **This was an
+> emergent property and becomes a stated rule.**
+>
+> ⛔ **The eligibility test stays IDENTITY-RECORD existence, never karma-box existence.** §Invite
+> creation's argument is unchanged and still decisive: the weaker test *prints karma*, and a
+> karma-box test carries the same hole in different clothes — an account that spent down to nothing.
+
 ### Bond outcomes
 
 The bond settles **once**, at `IdentityRecord.invitedAtBlock +
@@ -1093,9 +1267,25 @@ identical to accruing instalments**, because the vested amount is a pure functio
 of a monotonic count, which is why no per-block bond pass exists and a `BondBox`
 is byte-identical from creation to the block that consumes it.
 
-Burned karma is permanently destroyed — not redistributed. Against the invite
-mint on the other side, a failed invite is a **net loss of karma to the network**
-and a fully successful one is a net gain.
+> ⚠ **SUPERSEDED by §The conservation axiom — "permanently destroyed" is the one wording it forbids.**
+> This paragraph read *"Burned karma is permanently destroyed — not redistributed. Against the invite
+> mint on the other side, a failed invite is a net loss of karma to the network and a fully successful
+> one is a net gain."*
+>
+> ✅ **A forfeit bond RETURNS TO THE POOL.** Under the fixed vocabulary "burn" is a direction, so the
+> table above reads correctly as written — the karma leaves Alice and does not come back, which is
+> what a holder experiences. What was wrong was the mechanism, not the word.
+>
+> ⛔ **"Net loss to the network" and "net gain" are claims about CIRCULATION, and only about
+> circulation.** Supply is fixed at genesis and neither a failed invite nor a successful one moves it.
+> **Keep the two words apart**: a figure meant as circulating karma excludes the pool, and a figure
+> meant as supply includes it. They were the same number until the pool existed, which is why the
+> distinction reads as pedantry and is not.
+>
+> ✅ **Not redistributed still holds, and it is the load-bearing half.** The pool is not spendable by
+> anything but a stated rule, so a forfeit enriches nobody. Routing it to the treasury instead would
+> be redistribution wearing deflation's name — the same choice §Likes settles for the like remainder,
+> settled the same way.
 
 ### Invite parameters
 
@@ -1105,6 +1295,15 @@ and a fully successful one is a net gain.
 | `INVITE_KARMA_AMOUNT` | Karma minted to the invitee at claim (`G`) |
 | `INVITE_BOND_KARMA` | Karma the inviter locks at creation (`B`) |
 | `INVITE_PROBATION_BLOCKS` | Blocks from the claim to bond settlement |
+
+> ⚠ **AHEAD OF CODE — two of these rows change wording with the invite collapse.**
+> `INVITE_KARMA_AMOUNT` is karma **spent from the pool to the invitee at invite creation** — there is
+> no claim — and `INVITE_PROBATION_BLOCKS` runs **from invite creation** to bond settlement, not from
+> a claim. ⛔ **`INVITE_KARMA_AMOUNT`'s own comment in `constants.ts` says "MINTED … at claim" and is
+> false on both counts.**
+>
+> ⛔ **`B ≥ G` is a bound, not a coincidence.** Both are 25 today. The bound is what makes a grant to
+> a key nobody holds arbitrage-free, and it must survive any re-tuning.
 
 ---
 
@@ -1759,6 +1958,43 @@ forever. A node rejects objects with an unsupported protocol version.
   non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
 - A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay applied periodically at block application time (not at spend time)
+
+> ## ⚠ AHEAD OF CODE — WHAT §The conservation axiom DOES TO EVERY ENTRY ABOVE
+>
+> The entries above describe the running tree. **Each one is narrowed rather than deleted**, and the
+> narrowing is the same in every case: a quantity that had no counterparty gets one.
+>
+> **"Exactly three burns" becomes exactly three TRANSFERS TO THE POOL.** Decay, the like remainder
+> and bond forfeiture all keep their names — a burn is a direction — and each names the pool as its
+> sink. ⛔ **`vouch-settle` no longer "re-mints an escrow"**: the escrow becomes a real box the
+> unvouch transaction outputs, so the value is never absent and there is nothing to re-mint.
+>
+> **"Only one reason increases supply after genesis: `invite-claim`" becomes NO reason does.**
+> `G` is spent from the pool at invite creation. ⚠ **The sentence survives verbatim if "supply" is
+> read as "circulation"** — which is exactly why it must not be. **Supply is fixed at genesis;
+> circulation is what invites and burns move.**
+>
+> ⛔ **"THERE IS EXACTLY ONE DEFICIT IN THE SYSTEM" BECOMES ZERO.** The like transaction outputs an
+> accrual marker carrying `LIKE_KARMA_COST` (§Likes), so it **conserves like every other transaction**
+> and `validateTx` step 5's exception list collapses to nothing. ✅ **The biconditional survives, over
+> a different property**: `likeTarget` present ⟺ the transaction carries exactly one accrual marker
+> of `LIKE_KARMA_COST` naming the target post's author — a statement about **shape**, where it used
+> to be a statement about a **gap between two sums**.
+>
+> ⚠ **That is a strengthening, and it costs the argument that protected it.** *"There is no second
+> deficit for it to be confused with"* was doing real work while a deficit existed. With no deficits
+> at all the confusion cannot arise — **but the marker must then be pinned by shape as tightly as the
+> deficit was**, or a transaction could emit an accrual marker naming an author it never liked.
+>
+> **"All other mints and burns happen only in block-application paths" becomes stronger, not weaker.**
+> No path mints or burns anywhere. Block application spends the pool and receives into it, and it is
+> the **only** spender of the pool — one settlement transaction per block, so two spends never
+> contend (`NODE_INTERFACE` → the settlement transaction).
+>
+> ⛔ **THE ONE INVARIANT THIS BUYS, AND IT IS CHECKABLE:** `sum(every karma-bearing box) + pool` is
+> **constant from genesis at every height**. ⚠ **It is a DIFFERENT sum from `getTotalKarma`**, which
+> reports circulation and deliberately excludes the pool. Asserting either against the other is the
+> error this note exists to prevent.
 
 ### Block application journal (Spec B P1)
 

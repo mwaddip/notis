@@ -336,6 +336,32 @@ derivation).
 4. Include `CoinbaseOutput[]` in block
 5. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
 
+> ## ⚠ AHEAD OF CODE — THE COINBASE BECOMES OUTPUTS OF THE BLOCK'S SETTLEMENT TRANSACTION
+>
+> `CoinbaseOutput` stops being a block-body concept (TYPES_INTERFACE → OrderingBlock,
+> NODE_INTERFACE → the settlement transaction). ⛔ **The slice arithmetic, the income shape and every
+> row of the slice table are UNCHANGED** — what moves is where the result is written down.
+>
+> | Step | Becomes |
+> |---|---|
+> | 4. *"Include `CoinbaseOutput[]` in block"* | the miner's slice becomes **outputs of the settlement transaction**; the body has no `coinbaseOutputs` field |
+> | 5. *"mint credits via `mintCredits`"* | ⛔ **deleted, not repointed.** The credits are **spent from the `EmissionBox`** by the same transaction that emits them, so source and destination are named in one operation |
+>
+> ✅ **Step 1's *"fill the body first"* becomes load-bearing rather than merely efficient.** The
+> settlement depends on the body's content, so it is built last — and it is itself part of the body,
+> which the producer's byte budget must absorb. ⚠ **The reservation that seeds the fill with the
+> largest possible coinbase no longer bounds it**, because the settlement grows with what was
+> selected. The existing trim loop generalises — trimming shrinks the settlement monotonically — but
+> **the settlement must be rebuilt on each trim iteration**, not measured once.
+>
+> ✅ **The fee-box pairing note above is the precedent this generalises.** *"Block application
+> consumes the fee boxes in the block that created them"* is already a marker consumed by a protocol
+> effect; the settlement makes that a transaction instead of an implicit apply-time step.
+>
+> ⛔ **THE `'coinbase'` MERKLE LEAF DOMAIN IS RETIRED AND RESERVED** — never reused, the rule
+> `'like'` and `'subblock'` already carry. A root is the one thing that cannot be re-derived to
+> settle an ambiguity later.
+
 ### The slices
 
 | Slice | Share | Destination |
@@ -384,6 +410,31 @@ derived from the same `splitCoinbase` result and neither is the producer's choic
 **Neither transition rides in the block.** Both are derived from the body the way per-block
 like settlement is, so producer and verifier cannot disagree, and both are committed through
 `stateRoot` — an unbacked successor forks its author out at the next header.
+
+> ## ⚠ AHEAD OF CODE — THE RECEIPT CHECKS SURVIVE; THREE OF THEM STOP BEING SEPARATE CHECKS
+>
+> With the coinbase inside the settlement transaction, the same properties are enforced — several as
+> **consequences of conservation** rather than as their own steps.
+>
+> | Step | Becomes |
+> |---|---|
+> | 2. sum equals the miner's slice | unchanged in substance; the sum is over the settlement's credit outputs |
+> | 3. the two box transitions | ⛔ **unchanged and still the enforcement point.** Emission and treasury successors are inputs and outputs of the same transaction, so *"a block paying the whole income to its miner sums correctly against nothing"* is now refused by **conservation itself** rather than by a separate successor check |
+> | 4. no output carries `value === 0` | ✅ **survives, and its reason survives with it** — two encodings of one block with different `utxoTxRoot`. **It is not made redundant by conservation**, which a zero-value output satisfies |
+> | 4b. no output carries `isTreasury === true` | ⛔ **deleted with the field.** The struct is gone, so there is no flag to misdeclare |
+> | 5. *"For each output, mint credits"* | ⛔ **deleted.** The credits are spent from the `EmissionBox` by the transaction that emits them |
+> | 6. `lockedUntilBlock` | unchanged |
+>
+> ⛔ **"NEITHER TRANSITION RIDES IN THE BLOCK" IS INVERTED, AND THAT IS THE POINT OF THE UNIT.** Both
+> now ride in the block, as a transaction committed under `utxoTxRoot`. ✅ **The property the sentence
+> was protecting is strengthened**: producer and verifier could not disagree because both recomputed
+> the same derivation; now the producer's result is **committed**, so a disagreement is a rejected
+> block rather than a silent divergence.
+>
+> ⚠ **What replaces it as the risk is determinism in the other direction.** The verifier must derive
+> a **byte-identical** settlement from the same body to check the producer's, so every ordering the
+> construction depends on must be one the block already fixes — NODE_INTERFACE → the settlement
+> transaction admits exactly three sources and no fourth.
 
 ## Config
 

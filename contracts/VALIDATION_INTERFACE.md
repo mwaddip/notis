@@ -874,6 +874,32 @@ and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 > also close a measured remote fail-stop — see
 > `prompts/node-fail-stop-reachability-measure-REPORT.md`.
 
+> ## ⚠ AHEAD OF CODE — `coinbaseOutputs` LEAVES THE BODY, AND THE GAP ABOVE CLOSES BY CONSTRUCTION
+>
+> Coinbase outputs become outputs of the block's **settlement transaction**
+> (`TYPES_INTERFACE` → OrderingBlock, `NODE_INTERFACE` → the settlement transaction), so the body
+> carries three arrays and this paragraph loses its `coinbaseOutputs` clause entirely.
+>
+> ✅ **THE DEFECT THIS NOTE RECORDS STOPS BEING POSSIBLE.** The correction above exists because
+> *"no `u64` bound on a coinbase `value` existed anywhere in the repo"* — the field-type table covers
+> transaction **output boxes** and never `CoinbaseOutput`. Once a coinbase output **is** a transaction
+> output box, it inherits that table by being one. ⛔ **The bound stops being a second statement that
+> can rot out of step with the first**, which is the class of defect this file has now found three
+> times.
+>
+> ⚠ **Two of the four pins survive and two do not.** `value` in `[0, BOX_VALUE_BOUND)` and
+> `lockedUntilBlock` (`isU64Safe` **and** ≥ `block.height`) still bind — the second is a coinbase
+> rule with no box-level equivalent and **must be restated as a settlement rule, not dropped as
+> covered.** `owner` is covered by the box field table. `isTreasury` goes with the struct.
+>
+> ⛔ **A new structural obligation replaces them: the body must carry EXACTLY ONE settlement
+> transaction**, and structural validation is where "exactly one" is checkable without state. What
+> the transaction *contains* is consensus and belongs to node.
+>
+> ⚠ **This paragraph also cites `prompts/`, which `.gitignore` excludes wholesale** — the citation
+> resolves for its author and for nobody with a clone. Recorded, not swept: it is one instance of a
+> class, and a sweep of it is its own pass.
+
 Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
 `rootPostHash`, a `subtreePostIds` array of 64-char strings, a 32-byte
 `subtreeMerkleRoot`, a 32-byte `authorId`, a 64-byte `authorSignature`, and a

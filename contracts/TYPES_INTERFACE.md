@@ -544,6 +544,30 @@ cancels it, and their bond stays locked for exactly as long. Their `K /
 INVITE_BOND_KARMA` capacity absorbs the cost, which is what makes the rate limit
 self-enforcing without a rule.
 
+> ## ⚠ AHEAD OF CODE — `InviteBox` IS DELETED, AND SO ARE THE CLAIM AND THE CANCEL
+>
+> The section above describes the running tree and stays until the code does. **Nothing new may be
+> built against it** (user, 2026-08-17; `ARCHITECTURE` → Invite System).
+>
+> ⛔ **The whole type exists to hold a right to mint, and there is no mint.** Under
+> `ARCHITECTURE → The conservation axiom` the invitee's karma is **spent from the pool** by the
+> block's settlement transaction, so there is nothing for a ticket to represent and no second
+> transaction for it to be spent by.
+>
+> ```
+> invite tx    aliceKarma(K) → BondBox(B, inviterId=Alice, inviteePublicKey=Bob) + aliceKarma(K−B)
+> settlement   pool(S) → pool(S−G) + bobKarma(G)
+> ```
+>
+> ⛔ **`BondBox` IS THE REQUEST — that is what removes the need for a marker here.** The settlement
+> emits `INVITE_KARMA_AMOUNT` to the `inviteePublicKey` of every `BondBox` the block creates, so the
+> pairing is structural: one bond, one grant. A like needs a marker because its value goes to a party
+> holding no box in the transaction; an invite already creates one.
+>
+> ⛔ **The boxType string `'invite'` is reserved, never to be reused** — the same rule `~~LikeBox~~`
+> states above, for the same reason. ⚠ **`KARMA_BOX_TYPES` loses `'invite'` and gains the vouch
+> escrow**; anything quoting that list must re-derive it rather than editing a remembered copy.
+
 ### BondBox
 
 ```
@@ -574,6 +598,20 @@ record.
 **Nothing spends a bond.** Creation, claim, cancellation and settlement all move
 it through block application, so no transition admits it into a user transaction —
 the same standing `PostLockBox` has.
+
+> ⚠ **AHEAD OF CODE — the field list survives; two of its justifications do not.**
+> ✅ **`BondBox`'s SHAPE is unchanged** by the invite collapse, and `inviteePublicKey` gains a second
+> job: it is what the settlement reads to address the grant.
+>
+> ⛔ **"The window runs from the claim, not the creation" is false once there is no claim.**
+> `IdentityRecord.invitedAtBlock` becomes the **invite's own height**, so the probation window and
+> the bond's creation now start together. ✅ **The conclusion still holds for a different reason** —
+> the height is still recorded on the identity record, so carrying it here would still be a second
+> copy of committed state. **Do not read the conclusion's survival as the argument's.**
+>
+> ⛔ **"Creation, claim, cancellation and settlement" enumerates two transitions that stop existing.**
+> The list becomes **creation and settlement**. ✅ **"Nothing spends a bond" is untouched** and is the
+> half that matters.
 
 ### PostLockBox
 
@@ -629,6 +667,78 @@ VouchBox extends BoxBase {
   targetId: UserId             // 32 raw bytes — who is being vouched for
 }
 ```
+
+### VouchEscrowBox
+
+> ## ⚠ AHEAD OF CODE — this type does not exist yet
+>
+> It replaces the `vouch_cooldowns` table, which is **node-local SQL outside the AVL root**
+> (`ARCHITECTURE` → Vouch boxes, `⚠ VIOLATED`).
+
+```
+VouchEscrowBox extends BoxBase {
+  boxType: "vouch_escrow"
+  value: bigint                // Exactly what the consumed VouchBox held
+  owner: Uint8Array            // 32 raw bytes — the voucher; where the karma returns
+  releaseAtBlock: number       // Unvouch height + VOUCH_COOLDOWN_BLOCKS
+}
+```
+
+⛔ **`value` IS THE CONSUMED BOX'S, NEVER `VOUCH_KARMA_AMOUNT`.** The round trip has to be
+conservation-**structural** rather than true by coincidence, so it must not depend on the cast's pin
+holding for the box in hand. The escrow row this replaces already records the actual staked value
+for exactly this reason and the box inherits the obligation.
+
+⛔ **This is what makes an unvouch conserve.** The transaction it replaces has **zero outputs** — the
+stake is destroyed and a SQL row remembers to re-mint it — so for the length of the cooldown the
+karma exists nowhere. That is a burn and a mint separated by **blocks, not instants**, which
+`ARCHITECTURE → The conservation axiom` forbids by name.
+
+✅ **The pool is not involved, and no marker is needed.** The value moves from one box the voucher's
+own transaction consumes into another it creates, so both ends are named inside one transaction.
+
+⚠ **`releaseAtBlock` is committed state, and that is the point.** A node holding the `stateRoot`
+holds the obligation, rather than a root it cannot interpret without replaying every block.
+
+### LikeAccrualBox
+
+> ## ⚠ AHEAD OF CODE — this type does not exist yet
+>
+> It is **the only marker box in the design** (`ARCHITECTURE` → The conservation axiom, "the three
+> shapes"), and it replaces `IdentityRecord.likeCarry`.
+
+```
+LikeAccrualBox extends BoxBase {
+  boxType: "like_accrual"
+  value: bigint                // LIKE_KARMA_COST on a marker; the running carry on a carry box
+  author: Uint8Array           // 32 raw bytes — the key the accrual is earmarked for
+}
+```
+
+⛔ **ONE TYPE, TWO LIFETIMES, AND THEY MUST NOT BE CONFLATED.** The settlement consumes both in the
+same step, which is why they share a type rather than being told apart by one:
+
+| Role | Created by | Lives | Count |
+|---|---|---|---|
+| **marker** | the like transaction, as an output | consumed by the same block's settlement | one per like |
+| **carry box** | the settlement | across blocks, until a payout consumes it | one per author, `value < LIKES_PER_KARMA_PAYOUT` |
+
+⛔ **`author` IS ATTRIBUTION, NOT AUTHORIZATION** — the same distinction `BondBox.inviterId` and
+`PostLockBox.owner` carry. **No signature by `author` unlocks this box.** Only the settlement
+transaction consumes it, so no user transition admits one as an input.
+
+⛔ **A LIKE MUST NOT NAME A SHARED BOX.** Two likers of the same author in one block would name the
+same carry-box id and **the second would be permanently invalid, not deferred** — a popular author
+becomes unlikeable. Hence a fresh marker per like, and a carry box only the settlement touches.
+
+⛔ **THE MARKER MUST BE PINNED BY SHAPE AS TIGHTLY AS THE DEFICIT IT REPLACES.** A marker is a
+karma-bearing output earmarked for **someone else**, which is the exact shape the same-owner karma
+rule forbids (`NODE_INTERFACE` → Karma transition rules). Unpinned,
+`myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)` is a **balanced** transaction that
+transfers karma, and karma is non-tradeable. **The biconditional therefore runs both ways**:
+`likeTarget` present ⟺ exactly one marker of `LIKE_KARMA_COST` naming that target's author.
+⚠ **The reverse direction has no predecessor** — the old rule was triggered by arithmetic the
+validator could not be talked out of; this one is triggered by shape it must be told to look for.
 
 ### GenesisProofBox
 
@@ -1085,6 +1195,38 @@ carry. `pruneEntries` moves here rather than keeping a section of its own —
 `utxoTxRoot` commits both, and the leaf domains (`leafHash`'s first argument) are what
 keep a prune leaf from colliding with a transaction leaf.
 
+> ## ⚠ AHEAD OF CODE — `coinbaseOutputs` LEAVES THIS STRUCT, AND `utxoTxRoot` LOSES A LEAF CLASS
+>
+> Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any other
+> (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction). ⛔ **Coinbase
+> outputs become its outputs**, so `CoinbaseOutput` stops being a block-body concept and the struct
+> becomes three fields:
+>
+> ```
+> UtxoTxTree {
+>   utxoTxIds: TxId[]
+>   utxoTxs: Uint8Array[]
+>   pruneEntries: PruneEntry[]
+> }
+> ```
+>
+> ⛔ **THE `'coinbase'` LEAF DOMAIN IS RESERVED, NEVER TO BE REUSED** — the rule `'like'` and
+> `'subblock'` already carry. A later leaf class wearing it would make historical roots ambiguous
+> against new ones, and a root is the one thing that cannot be re-derived to settle the question.
+>
+> ⚠ **This is the same renumbering hazard §Layout — Block states, one level down.** The body layout
+> is positional (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖
+> `arr(coinbaseOutputs)`), so dropping the last array is a deletion **in place** here and does not
+> shift the three before it — but `utxoTxTreeByteLength` computes the same number a second way and
+> **must lose the term in the same change**, or two ways of computing one length diverge with no
+> compiler signal.
+>
+> ⚠ **The producer's byte budget has to absorb a body-dependent tail.** `MAX_BLOCK_BODY_BYTES` is
+> consensus and the settlement's size grows with what the fill selected, so the reservation that
+> currently seeds the budget with the largest possible coinbase no longer bounds it. ✅ **The existing
+> trim loop generalises** — trimming a transaction shrinks the settlement too, monotonically, so the
+> loop converges — **provided the settlement is rebuilt on each iteration** rather than measured once.
+
 **`SubBlockEntry` is deleted, and its H-3 property survives strictly stronger.** That
 struct existed to carry `{postId, parentRefs, author}` in the block so a node syncing
 from ordering blocks alone — never seeing content — could still record an identical
@@ -1132,6 +1274,19 @@ CoinbaseOutput {
 height.** The treasury's slice accrues to a `TreasuryBox` and is never a coinbase output. Node
 rejects a block carrying an output with `isTreasury: true` (MINING_INTERFACE → Coinbase
 Application).
+
+> ## ⚠ AHEAD OF CODE — THE WHOLE STRUCT LEAVES THE BLOCK BODY
+>
+> Coinbase outputs become outputs of the block's **settlement transaction** (§OrderingBlock's marker
+> above; `NODE_INTERFACE` → the settlement transaction), so `CoinbaseOutput` stops being a
+> block-body concept, `coinbaseOutputBytes` stops being a Merkle leaf preimage, and the `'coinbase'`
+> leaf domain is retired and reserved.
+>
+> ⛔ **`isTreasury`'S SEPARATE DELETION IS THEREFORE MOOT, AND THAT CLOSES THE SEQUENCING QUESTION.**
+> Whether that field's removal should ride the settlement work or land ahead of it was the wrong
+> question — the struct it lives on stops existing, so there is nothing to schedule. ⚠ **A deletion
+> pass aimed at the field alone would touch 24 files across four packages and then be redone**, which
+> is the failure this note exists to prevent.
 
 > **AHEAD OF CODE — the field is scheduled for deletion.** It carries no information once no
 > output can be the treasury's, and it survives only because removing it is a wire-format change
@@ -1560,6 +1715,44 @@ no counts or length prefixes. `preimages` already sorted by key, so the normativ
 existing behaviour there; for `signatures` it is new, because they were never hashed.
 
 **Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
+
+> ## ⚠ UNENFORCED — THIS LAYOUT IS SPECIFIED AND THE CODE DOES NOT IMPLEMENT IT. Verified 2026-08-17.
+>
+> **`encodeTx` is `cbor-x`.** The layout above is normative and unbuilt; `serialization.ts` records
+> the same gap in its own words. ⛔ **Nothing here is a new rule** — the work is closing a gap this
+> section already states.
+>
+> **What the gap costs, measured against `packages/types/dist` on 2026-08-17** — a like transaction
+> with one karma input, one karma output, one signature and a `likeTarget`:
+>
+> | | Bytes | |
+> |---|---|---|
+> | ids and keys as **hex strings** | **124** | `BoxId`, `PostId` and the signature-map key are 64 ASCII characters each to carry 32 bytes |
+> | CBOR **field names** | **81** | respelled in full in every transaction |
+> | `boxType` as the string `'karma'` | **5** | this layout already defines a 1-byte tag |
+> | payload | 192 | |
+> | **`encodeTx` today** | **402** | + 32 for the `utxoTxIds` entry + 2 for the length prefix = **436 per like** |
+>
+> The layout above encodes the same transaction in **~199 bytes**, roughly **doubling** how many
+> likes a 2 MB body holds. ⚠ **That figure is hand-derived from this table, not measured from an
+> implementation** — the ratio is the load-bearing part, not the exact number.
+>
+> ### ⛔ TWO CHANGES RIDE HERE AND THEY BREAK DIFFERENT THINGS — DO NOT CONFLATE THEM
+>
+> | Change | Breaks |
+> |---|---|
+> | `encodeTx` cbor-x → the layout above | **The wire only.** `computeTxId` is already positional and `computeUtxoTxRoot`'s leaves are **ids**, so every box id, transaction id, `utxoTxRoot` and `stateRoot` is byte-identical across it |
+> | dropping `preimages` from `txIdBytes` | **Consensus.** It is inside the id preimage, so **every `TxId` in existence changes** |
+>
+> ⚠ **The first is reversible against history and the second is not.** They land in one dispatch
+> because they touch one file, **not because they are one kind of change.**
+>
+> ✅ **`preimages` has no consumer** — no transition requires knowledge of a secret, so nothing reads
+> the map. It is encoded, validated for envelope shape, and never consulted.
+>
+> ✅ **New box types need no change here.** `arr(outputs, boxContentBytes)` reaches them through
+> `boxContentBytes`, so the like accrual marker and the vouch escrow cost this layout one tag each
+> and nothing else.
 
 ### Layout — Block
 
