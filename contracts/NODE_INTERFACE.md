@@ -1349,7 +1349,7 @@ There is **no other legal bond or invite shape**. In particular:
 ### Karma transition rules (P2-B phase 4)
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
-`totalKarma` sums** — see "Two karma sets, and neither derives from the other" under Status. ⚠ **A
+`totalKarma` sums** — see "Three karma sets, and none derives from another" under Status. ⚠ **A
 karma-bearing type may belong to neither**, so "which list?" is the wrong question: ask both
 independently. A single shared list is what would put a box holding the maximum representable karma
 inside the network's reported supply.

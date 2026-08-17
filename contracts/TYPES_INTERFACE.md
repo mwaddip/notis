@@ -809,9 +809,13 @@ its only producer; its content encoding is the shared prefix alone (§Layout —
 identity holds and `getKarmaBoxes` returns. Giving the pool the `karma` type would put the maximum
 supply inside every balance query and every conservation sum in the tree.
 
-⛔ **It belongs to NEITHER karma set** — not the transition set, not the supply set
-(`NODE_INTERFACE` → "Two karma sets, and neither derives from the other"). It is barred from both
-transaction positions, joining `genesis_proof`, `emission` and `treasury`.
+⛔ **It is in the CONSERVATION set and in neither of the other two** — not the transition set, not
+the supply set (`NODE_INTERFACE` → "Three karma sets, and none derives from another"). It is barred
+from both transaction positions, joining `genesis_proof`, `emission` and `treasury`.
+
+⚠ **That combination is why the third set exists.** The pool is not karma anyone holds, so it is not
+supply; it is karma that exists, so it is conservation. **A list serving both questions would have to
+choose, and either choice is wrong.**
 
 > ⛔ **A zero-value successor IS created, and this is the one place the `EmissionBox` rule inverts.**
 > §EmissionBox refuses a zero successor because emission **terminates** — above the terminus no box
