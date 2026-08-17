@@ -329,8 +329,8 @@ export function getBox(boxId: string): AnyBox | null {
  * owner, and a network's genesis state holds exactly one of them.
  *
  * `spent_at_block IS NULL` is carried for uniformity with its siblings, not
- * because the column can move — the box's `unspendable` guard is refused by
- * `checkGuards`, so no transaction can consume it.
+ * because the column can move — no transition admits a `genesis_proof` input,
+ * so no transaction can consume it.
  *
  * `ORDER BY id` because `LIMIT 1` alone names no row: SQLite is free to return
  * any of the matches, so a store holding two proof boxes would answer this
