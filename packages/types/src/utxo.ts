@@ -141,9 +141,13 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  * **`value` throws** outside `[0, 2^64)`, one of the non-total writers
  * TYPES_INTERFACE → Totality names: `value: bigint` spans the entire u64 wire
- * domain, so no sentinel is unreachable — an all-ones u64 is a legal value, and
- * writing it to mean "malformed" would give a malformed box a well-formed box's
- * id. The fixed-width `b32` fields throw for the same structural reason. Their
+ * domain, so no sentinel is unreachable — an all-ones u64 is a value this
+ * encoder must write, and using it to mean "malformed" would give a malformed
+ * box a well-formed box's id. ⛔ **Consensus admitting only
+ * `[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → Box value domain) does not make that
+ * sentinel available**: the domain the argument rests on is this encoder's, and
+ * it is unchanged. The fixed-width `b32` fields throw for the same structural
+ * reason. Their
  * domain is `checkOutputShape`'s (node, `validateTx` step 4); see the note on
  * `computeTxId` for the one call site where that gate has not run yet.
  *

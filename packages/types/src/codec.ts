@@ -297,10 +297,17 @@ export function readVlqS(r: ByteReader): number {
  *
  * **THROWS, and deliberately** (TYPES_INTERFACE → Totality).
  * `value: bigint` fields span the entire u64 wire domain, so no sentinel is
- * unreachable: an all-ones u64 is a legal box value, and writing it to signal
- * "malformed" would make a malformed box encode identically to a well-formed
- * one — a consensus-level id collision, which is strictly worse than the panic
- * it would be avoiding.
+ * unreachable: an all-ones u64 is a value this writer must emit, and writing it
+ * to signal "malformed" would make a malformed box encode identically to a
+ * well-formed one — a consensus-level id collision, which is strictly worse than
+ * the panic it would be avoiding.
+ *
+ * ⛔ **The narrower ACCEPTED domain does not free that sentinel.** Consensus
+ * admits `[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → Box value domain), well
+ * inside this writer's range — but the argument above rests on the **encodable**
+ * domain, and that has not moved. This writer stays total over the whole u64, so
+ * an all-ones value remains reachable **here** whatever consensus accepts, and
+ * sentinelling it would collide exactly as it would have before.
  *
  * Every call site must therefore establish the domain first. Named for that:
  * the exception is visible where it is used, not buried in this docstring.

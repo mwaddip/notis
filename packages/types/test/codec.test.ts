@@ -136,7 +136,10 @@ describe('throwing writers — no unreachable sentinel exists', () => {
 
   it('vlqU64 accepts the whole u64 — which is why it cannot sentinel', () => {
     expect(hex(bytes((w) => writeVlqU64OrThrow(w, 0n)))).toBe('00');
-    // The sentinel's own bytes, as a legal value.
+    // The sentinel's own bytes, as a value this writer must accept — which is
+    // what makes them unavailable to mean "malformed". Consensus accepting a
+    // narrower box-value domain does not change that; the domain here is the
+    // writer's (TYPES_INTERFACE → Box value domain).
     expect(hex(bytes((w) => writeVlqU64OrThrow(w, VLQ_SENTINEL)))).toBe(SENTINEL_HEX);
   });
 
