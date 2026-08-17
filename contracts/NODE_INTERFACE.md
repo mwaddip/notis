@@ -538,12 +538,21 @@ today, and they hold them **for two different reasons** — every karma-bearing 
 also to be one a user transaction may create. That coincidence is a fact about the present type
 list, not a rule, and a single shared constant encodes it as though it were one.
 
-> ⚠ **AHEAD OF CODE — the first member that separates them.** The karma supply pool
-> (`docs/specs` design §3, unit B) is a karma-bearing box a karma spend **must** be able to create,
-> because a mint is `pool → pool′ + karma`. It is also the one box whose value must **never** reach
-> `totalKarma`: it holds the maximum representable karma, so counting it reports the network's
-> supply as `u64::MAX`. **Transition set yes, supply set no.** Until the pool lands the two lists
-> are identical and this section is the only thing distinguishing them.
+> ⚠ **AHEAD OF CODE — the pool does not exist yet** (`docs/specs` design §3, unit B). The rule
+> below is what its membership will be; the three-way reading it forces is true now.
+
+⛔ **A KARMA-BEARING TYPE CAN BELONG TO NEITHER SET, AND THE FIRST ONE WILL.** The karma supply
+pool holds the maximum representable karma and is spent and created **only by block application** —
+it never reaches `validateTx`. So it joins `genesis_proof`, `emission` and `treasury` in being
+**barred from both transaction positions**, which puts it outside the transition set; and its value
+must **never** reach `totalKarma`, or the network reports its supply as `u64::MAX`, which puts it
+outside the supply set.
+
+⚠ **Membership is therefore three-way, not two.** "Which of the two lists?" is the wrong question to
+ask of a new box type. The right one is asked twice, independently: *may a karma spend create it?*
+and *does its value count as karma that exists?* — and **both answers may be no.** That is exactly
+what a single shared list could not express, and it is the reason the two exist even while their
+members coincide.
 
 ✅ **The credit ledger already works this way, and it is the precedent.** The credit transition arm
 names its allowed outputs **inline** (`credit` or `fee`), and `getTotalCredits` keys on `credit`
@@ -1275,9 +1284,10 @@ There is **no other legal bond or invite shape**. In particular:
 ### Karma transition rules (P2-B phase 4)
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
-`totalKarma` sums** — see "Two karma sets, and neither derives from the other" under Status. Reading
-one from the other is what puts a box holding the maximum representable karma inside the network's
-reported supply.
+`totalKarma` sums** — see "Two karma sets, and neither derives from the other" under Status. ⚠ **A
+karma-bearing type may belong to neither**, so "which list?" is the wrong question: ask both
+independently. A single shared list is what would put a box holding the maximum representable karma
+inside the network's reported supply.
 
 - **All karma inputs must share one owner.** The engine pins every karma
   *output* to `inputs[0].owner` and calls the violation "Karma cannot be
