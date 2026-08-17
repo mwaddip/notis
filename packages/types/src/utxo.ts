@@ -64,10 +64,11 @@ export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
  * its own conditions, which TYPES_INTERFACE → Primitives states. A retired
  * **string** is reserved regardless; see `BoxCandidate.boxType`.
  *
- * **Tag 2 is reserved and left out of the table**, so the numbering has a hole
- * in it rather than a renumber closing the gap. It held `invite`, and an
- * unassigned tag has no decoding at all — the same standing every number above
- * the table has (TYPES_INTERFACE → InviteBox).
+ * ⛔ **Tag 2 is reserved and left out of the table**, so the numbering has a hole
+ * in it rather than a renumber closing the gap, and an unassigned tag has no
+ * decoding at all — the same standing every number above the table has.
+ * **TYPES_INTERFACE → Layout — Boxes governs the NUMBER** ("Tag 2 is reserved,
+ * not free"); §InviteBox governs the retired **string**. Two rules, two sections.
  *
  * Exported because a second numbering of one thing is exactly what the
  * never-renumber rule cannot survive. **The demo UI's `BOX_TYPE_TAGS` is the one
@@ -659,9 +660,10 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
  */
 export interface BoxCandidate {
   // `'like'` and `'invite'` are retired box types — strings reserved, never
-  // reuse. A new box type wearing either name would make old-vs-new greps and
-  // historical debugging ambiguous forever. `'invite'` held tag 2, which
-  // `BOX_TYPE_TAGS` leaves out rather than reassigning.
+  // reuse (TYPES_INTERFACE → ~~LikeBox~~, → InviteBox). A new box type wearing
+  // either name would make old-vs-new greps and historical debugging ambiguous
+  // forever. **The retired NUMBER is a separate rule in a separate section** —
+  // §Layout — Boxes reserves tag 2, and `BOX_TYPE_TAGS` leaves it out.
   boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
     | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain

@@ -1463,7 +1463,9 @@ describe('boxRecordFromBytes', () => {
     //
     // ⛔ **The table has a HOLE as well as a top, and both have to be
     // unreadable.** ⛔ **Tag 2 is reserved and never reassigned**
-    // (TYPES_INTERFACE → InviteBox), so it is an unassigned number *inside* the
+    // (TYPES_INTERFACE → Layout — Boxes, "Tag 2 is reserved, not free" — the
+    // section that governs the NUMBER; §InviteBox governs the retired string), so
+    // it is an unassigned number *inside* the
     // range — the case a reader deriving "unassigned" as "above the maximum"
     // would decode into whatever arm it fell through to. `RESERVED_INVITE_TAG`
     // is written down because a reservation is a decision, not a derivation:
@@ -1721,8 +1723,14 @@ describe('transactions', () => {
       // removing the tag from the implementation fails HERE and not only
       // against a frozen hash.
       //
-      //   TX_ID_DOMAIN ‖ arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
-      //                ‖ vlqU(protocolVersion) ‖ opt(likeTarget) ‖ opt(post)
+      //   TxId = blake2b512( TX_ID_DOMAIN ‖ txIdBytes )[0:32],  where
+      //   txIdBytes = arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
+      //             ‖ vlqU(protocolVersion) ‖ opt(likeTarget) ‖ opt(post)
+      //
+      // ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`** — it belongs to the hash, not
+      // to the serialized bytes, which is why `encodeTx` does not ship it
+      // (TYPES_INTERFACE → Layout — UtxoTransaction). Writing the two as one
+      // sequence is the conflation that contract corrects by name.
       //
       // ⛔ **FIVE fields.** This mirror is also the tool for re-pinning: when a
       // field enters or leaves the preimage, hand-derive the new id here rather
