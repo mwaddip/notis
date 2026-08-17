@@ -1,5 +1,6 @@
 import { verify as cryptoVerify } from 'crypto';
 import {
+  BOX_VALUE_BOUND,
   computeBoxId,
   computeTxId,
   INVITE_BOND_KARMA,
@@ -631,15 +632,16 @@ type FieldType =
   | 'string'
   | 'boolean';
 
-const U64_BOUND = 1n << 64n;
-
 const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expected: string }> = {
-  // The value bound: a negative value balances conservation sums while
-  // minting into a sibling box, and at/above 2^64 cbor-x leaves the uniform
-  // uint64 encoding for a tag-2 bignum.
+  // The value bound is `BOX_VALUE_BOUND`, imported rather than restated
+  // (TYPES_INTERFACE → Box value domain). A negative value balances
+  // conservation sums while minting into a sibling box; a value at or above the
+  // bound encodes cleanly and cannot be stored, so admitting one would put a
+  // validly-encoded box into block application to crash there instead of being
+  // rejected here.
   u64: {
-    ok: (v) => typeof v === 'bigint' && v >= 0n && v < U64_BOUND,
-    expected: 'a non-negative bigint < 2^64',
+    ok: (v) => typeof v === 'bigint' && v >= 0n && v < BOX_VALUE_BOUND,
+    expected: 'a non-negative bigint < 2^63',
   },
   bytes32: {
     ok: (v) => v instanceof Uint8Array && v.length === 32,

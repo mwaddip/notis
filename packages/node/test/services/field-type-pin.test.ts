@@ -29,6 +29,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, createHash, type KeyObject } from 'crypto';
 import {
+  BOX_VALUE_BOUND,
+  canonicalBoxBytes,
   computeBoxId,
   computeTxId,
   encodeTx,
@@ -80,7 +82,8 @@ const bytes32 = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 //
 // This suite's subject is `checkOutputShape`, whose job is to reject decoded
 // CBOR that does not match a box type. Its inputs are therefore malformed BY
-// CONSTRUCTION — a field of the wrong type, a value past 2^64, a stray key.
+// CONSTRUCTION — a field of the wrong type, a value at or past BOX_VALUE_BOUND,
+// a stray key.
 // The cast is how the test says "this is the bad input"; making these literals
 // well-typed would delete the only cases the function exists to handle.
 //
@@ -183,7 +186,10 @@ describe('field-type pin', () => {
       // -- wrong-typed fields, one per FieldType --
       ['karma value as number', { ...honest('karma'), value: 10 }],
       ['karma value negative bigint', { ...honest('karma'), value: -1n }],
-      ['karma value at 2^64', { ...honest('karma'), value: 1n << 64n }],
+      // The stranded value: encodable, unstorable, and therefore not accepted
+      // (TYPES_INTERFACE → Box value domain). `2^64` would be rejected under
+      // either bound, so it could not tell the two apart.
+      ['karma value at BOX_VALUE_BOUND', { ...honest('karma'), value: BOX_VALUE_BOUND }],
       ['karma owner as hex string', { ...honest('karma'), owner: 'aa'.repeat(32) }],
       ['karma owner 31 bytes', { ...honest('karma'), owner: new Uint8Array(31) }],
       ['karma owner 33 bytes', { ...honest('karma'), owner: new Uint8Array(33) }],
@@ -303,7 +309,7 @@ describe('field-type pin', () => {
     const WRONG: Record<string, Record<string, unknown>> = {
       karma: { value: 10, owner: new Uint8Array(31), decayBurn: 1 },
       credit: { value: -1n, owner: 'aa'.repeat(32), lockedUntilBlock: -1 },
-      invite: { value: 1n << 64n, inviterId: 7, inviteePublicKey: new Uint8Array(33) },
+      invite: { value: BOX_VALUE_BOUND, inviterId: 7, inviteePublicKey: new Uint8Array(33) },
       bond: {
         value: Number.NaN,
         inviterId: new Uint8Array(0),
@@ -343,11 +349,35 @@ describe('field-type pin', () => {
       expect(r.error).toMatch(/field 'lockedUntilBlock'.*got -0/);
     });
 
-    it('u64 boundary: value 2^64−1 accepted, 2^64 rejected', () => {
-      const atMax = { ...honestCandidate('karma'), value: (1n << 64n) - 1n };
+    it('u64 boundary: the largest accepted value is BOX_VALUE_BOUND − 1', () => {
+      const atMax = { ...honestCandidate('karma'), value: BOX_VALUE_BOUND - 1n };
       expect(checkOutputShape([atMax] as unknown as AnyBoxCandidate[]).valid).toBe(true);
-      const over = { ...honestCandidate('karma'), value: 1n << 64n };
-      expect(checkOutputShape([over] as unknown as AnyBoxCandidate[]).valid).toBe(false);
+    });
+
+    it('u64 boundary: BOX_VALUE_BOUND is rejected, and above it', () => {
+      for (const value of [BOX_VALUE_BOUND, BOX_VALUE_BOUND + 1n, (1n << 64n) - 1n]) {
+        const over = { ...honestCandidate('karma'), value };
+        const r = checkOutputShape([over] as unknown as AnyBoxCandidate[]);
+        expect(r.valid, String(value)).toBe(false);
+        expect(r.error, String(value)).toMatch(/field 'value'/);
+      }
+    });
+
+    it('the stranded values ENCODE — the writer is wider than the gate, deliberately', () => {
+      // ⛔ **Encodable and accepted are two domains, and this is the pair that
+      // keeps them apart** (TYPES_INTERFACE → Box value domain): `vlqU64` keeps
+      // `[0, 2^64)` and consensus admits `[0, BOX_VALUE_BOUND)`. Asserting only
+      // the rejection above would leave "the encoder was narrowed too" as an
+      // equally good reading of a green suite — and narrowing the encoder is the
+      // one thing that WOULD move box ids.
+      for (const value of [BOX_VALUE_BOUND, (1n << 64n) - 1n]) {
+        const box = { ...honestCandidate('karma'), value } as unknown as AnyBoxCandidate;
+        expect(() => canonicalBoxBytes(box), String(value)).not.toThrow();
+        // Round-trip through the id derivation too: a value the writer accepts
+        // has a well-formed identity, which is exactly why the gate has to be
+        // the thing that refuses it.
+        expect(canonicalBoxBytes(box).length, String(value)).toBeGreaterThan(0);
+      }
     });
 
   });
