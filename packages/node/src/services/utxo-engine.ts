@@ -12,11 +12,12 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, BondBox, InviteBox, VouchBox, PostLockBox, Post } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, InviteBox, VouchBox, PostLockBox, Post } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
-// must never grow a local copy: the id it returns is both the hash `checkGuards`
-// verifies signatures against and the `txId` every output is materialized under,
+// must never grow a local copy: the id it returns is both the hash
+// `checkAuthorization` verifies signatures against and the `txId` every output
+// is materialized under,
 // so a second hasher is a divergence surface that agrees only by coincidence —
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
@@ -326,9 +327,9 @@ function checkTransitions(
               `got ${vouchOut.value}`,
           };
         }
-        // voucherId is pinned to the karma input's owner. `checkGuards`
-        // resolves a VouchBox's signer as `owner ?? voucherId`, so a box
-        // carrying a foreign voucherId is guarded by that foreign key: A
+        // voucherId is pinned to the karma input's owner. The unvouch
+        // transition requires the signature of the key at `voucherId`, so a box
+        // carrying a foreign voucherId is spendable by that foreign key: A
         // stakes their karma, B unvouches it, and the escrow matures to B — a
         // karma transfer with no invite, the property the whole invite/bond
         // mechanism protects.
@@ -509,11 +510,11 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // BondBox — consumed by block application only, rejected in guard check
+    // BondBox — consumed by block application only, refused at step 6
     // ------------------------------------------------------------------
     case 'bond': {
-      // Unreachable through `validateTx`: `checkGuards` refuses a `block_apply`
-      // input at step 6, ahead of this. Kept as the second layer, because a
+      // Unreachable through `validateTx`: no transition admits a bond input, so
+      // step 6 refuses it ahead of this. Kept as the second layer, because a
       // transition table that *accepts* any bond shape is a consensus rule
       // waiting to be re-exposed by a reordering.
       return {
@@ -560,7 +561,7 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // PostLockBox — consumed by block application only, rejected in guard check
+    // PostLockBox — consumed by block application only, refused at step 6
     // ------------------------------------------------------------------
     case 'post_lock': {
       return {
@@ -808,8 +809,9 @@ function checkHexKeyedByteMap(
  * non-array `outputs` OBJECT slips that loop (`length` undefined) and throws at
  * conservation's `.reduce`, a missing or `null` `signatures` throws at
  * `tx.signatures[hexKey]`, and `likeTarget: null` plus non-`Uint8Array`
- * `preimages` values throw inside `computeTxId` — which `checkGuards` calls on
- * its first line, so the whole envelope reaches the hasher. Each one is an HTTP
+ * `preimages` values throw inside `computeTxId` — which `checkAuthorization`
+ * calls on its first line, so the whole envelope reaches the hasher. Each one
+ * is an HTTP
  * 500 or, through the block funnel, a whole-block rejection logged as an
  * unexpected failure.
  *
@@ -967,7 +969,8 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   // transaction.** `txIdBytes` writes the payload through `postFieldBytes`,
   // which encodes `author` and every `parentRefs` entry fixed-width — writers
   // with no unreachable sentinel, so they THROW outside their domain
-  // (TYPES_INTERFACE → Totality). `checkGuards` hashes on its first line, so an
+  // (TYPES_INTERFACE → Totality). `checkAuthorization` hashes on its first
+  // line, so an
   // attacker-supplied payload reaches those writers before any transition arm
   // runs. Same obligation as `likeTarget` above, one field deeper.
   //
@@ -996,14 +999,15 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
  * positions). This is the node-side twin of the rule `validation` enforces at
  * the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not create a
  * genesis_proof box"); node owns the input half of the same rule, in
- * `checkGuards`.
+ * `AUTHORIZATION`.
  *
- * ⚠ **The input half is covered for the two new types by a DIFFERENT arm than
- * for `genesis_proof`, and the difference is their guard.** `genesis_proof` is
- * `unspendable`; `emission` and `treasury` are `block_apply`, which
- * `checkGuards` already rejects unconditionally for `BondBox` and `PostLockBox`.
- * So both halves hold, but the reasoning "a second unspendable type is covered
- * without an edit" does not reach them — the `block_apply` arm does.
+ * ⚠ **All three are barred from the input position by the same mechanism —
+ * no transition admitting them — and their entries differ only in which absence
+ * they state.** `emission` and `treasury` share `BLOCK_APPLICATION_ONLY` with
+ * `bond`, `post_lock` and `fee`; `genesis_proof` states the empty set of
+ * transitions. A *new* barred type is covered by whichever of the two it is,
+ * and the table's `Record` over every `boxType` is what makes stating it
+ * unavoidable.
  *
  * Written as an `Exclude` so the exclusion is deliberate and a *new* box type
  * still fails to compile until it is given a shape — an omitted key would be
@@ -1347,99 +1351,167 @@ function checkValueConservation(
   return { valid: true };
 }
 
+// ---------------------------------------------------------------------------
+// Authorization — a property of the transition
+// ---------------------------------------------------------------------------
+
 /**
- * Check guard satisfaction (signatures, hash preimages, settlement guards) for all inputs.
+ * What a transition requires of the transaction performing it
+ * (NODE_INTERFACE → "Legal box transitions").
+ *
+ * Two variants, and the closed set is the point: a transition either requires a
+ * signature by a key **the box itself names**, or no transition admits the input
+ * at all. There is no variant that names a key from anywhere else, so no rule
+ * expressible here can name a privileged key. ⚠ The contract states that
+ * property tree-wide, marks it AHEAD OF CODE, and names its one counter-example
+ * — which is a shape rule in `checkTransitions`, not a requirement in this
+ * table.
+ *
+ * This decides only who must have signed, which is what lets it run ahead of
+ * `checkTransitions`: a transition is identifiable from the input's type and,
+ * for the two invite exits, from whether the transaction produces outputs at
+ * all. The rest of each shape is pinned a step later.
  */
-function checkGuards(
-  deps: UtxoEngineDeps,
-  tx: UtxoTransaction,
-  inputBoxes: AnyBox[],
-): UtxoResult {
+type Authorization =
+  | {
+      /**
+       * The key that must have signed, read out of the box and the transition.
+       * Absent when the box carries no such field, which refuses rather than
+       * throwing — every input reaching here is store-shaped, and a row that is
+       * not is a refusal like any other.
+       */
+      signer: (box: AnyBox, tx: UtxoTransaction) => Uint8Array | undefined;
+      /** The refusal when that key did not sign. */
+      unsigned: (box: AnyBox, tx: UtxoTransaction) => string;
+    }
+  | {
+      /** The refusal, and which absence it is: no transition names this type as an input. */
+      noUserTransition: (box: AnyBox) => string;
+    };
+
+const missingOwnerSignature = (box: AnyBox): string =>
+  `Missing or invalid owner signature for box ${box.id}`;
+
+/**
+ * The transition rows that name no signer require the owner's signature — every
+ * karma and credit row (NODE_INTERFACE → "Legal box transitions").
+ *
+ * The karma post row's *"the signing key is the post's author"* is this
+ * requirement together with `checkTransitions`' pin of `post.author` to the
+ * input owner. Neither half states it alone.
+ */
+const OWNER_SIGNATURE: Authorization = {
+  signer: (box) => (box as KarmaBox | CreditBox).owner,
+  unsigned: missingOwnerSignature,
+};
+
+/**
+ * `bond`, `post_lock` and `fee` are created by user transactions and consumed
+ * only by block application; `emission` and `treasury` are block application's
+ * at both ends (NODE_INTERFACE → "Genesis proof boxes are never in a
+ * transaction"). No transition admits any of them as an input, and this entry
+ * carries that absence's reason.
+ */
+const BLOCK_APPLICATION_ONLY: Authorization = {
+  noUserTransition: () =>
+    'Box with block_apply guard can only be consumed by block application',
+};
+
+/**
+ * Authorization per input box type — one entry per box type, and each is the
+ * requirement of that type's transitions.
+ *
+ * Keyed on the input's **type**, never on `box.guard`: the requirement belongs
+ * to the transition, and `guard` is a pure function of `boxType` carrying no
+ * information and absent from the committed bytes (NODE_INTERFACE → "Legal box
+ * transitions"). Typed over every `boxType`, so a new box type fails to compile
+ * until its authorization is stated — the obligation `OUTPUT_SHAPE` carries for
+ * output shape.
+ *
+ * A type the transition table names as a legal input gets a signer rule; a type
+ * no row names gets the absence. Admitting a type is the deliberate act.
+ */
+const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
+  karma: OWNER_SIGNATURE,
+  credit: OWNER_SIGNATURE,
+
+  // *voucher-signed*. A `VouchBox` names the staking key as `voucherId` and
+  // carries no `owner`, so the key the row means is the one field it has.
+  vouch: {
+    signer: (box) => (box as VouchBox).voucherId,
+    unsigned: missingOwnerSignature,
+  },
+
+  // An InviteBox has exactly two exits, and they are two transitions with
+  // different requirements — *invitee-signed* for the claim, *inviter-signed*
+  // for the cancel — with `outputs.length === 0` the whole discriminant between
+  // them. Accepting either key over either shape is not equivalent: an inviter
+  // signing a claim would mint the invitee's karma without them, bar their key
+  // from any further invite and start a probation clock they never asked for;
+  // an invitee signing a cancel would destroy an invite that is not theirs to
+  // withdraw. `checkTransitions` pins the rest of both shapes at step 7 — a
+  // claim is exactly one karma output owned by the invitee, and nothing else
+  // has zero outputs on an invite input.
+  invite: {
+    signer: (box, tx) =>
+      tx.outputs.length === 0
+        ? (box as InviteBox).inviterId
+        : (box as InviteBox).inviteePublicKey,
+    unsigned: (box, tx) =>
+      tx.outputs.length === 0
+        ? `Invite cancel must be signed by the inviter named on box ${box.id}`
+        : `Invite claim must be signed by the invitee named on box ${box.id}`,
+  },
+
+  bond: BLOCK_APPLICATION_ONLY,
+  post_lock: BLOCK_APPLICATION_ONLY,
+  fee: BLOCK_APPLICATION_ONLY,
+  emission: BLOCK_APPLICATION_ONLY,
+  treasury: BLOCK_APPLICATION_ONLY,
+
+  // Nothing spends a genesis proof box — the empty set of transitions, which is
+  // a stronger statement than block application's and is why it reads
+  // differently (NODE_INTERFACE → "Genesis proof boxes are never in a
+  // transaction"). `validation` owns the output half and cannot own this one:
+  // `tx.inputs` are box **id** strings, so typing one requires the UTXO set.
+  genesis_proof: {
+    noUserTransition: (box) =>
+      `Box with unspendable guard can never be consumed: ` +
+      `box ${box.id} is a ${box.boxType} box`,
+  },
+};
+
+/**
+ * Check every input's authorization: the signer its transition requires signed
+ * this transaction, or no transition admits the input at all.
+ *
+ * Runs ahead of `checkTransitions`, which is why the transition is identified
+ * here from the input's type and the output count rather than from a shape that
+ * has already been validated.
+ */
+function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResult {
   const txHash = Buffer.from(computeTxId(tx), 'hex');
 
   for (const box of inputBoxes) {
-    switch (box.guard) {
-      case 'owner_signature': {
-        const ownerBox = box as { owner?: Uint8Array; voucherId?: Uint8Array };
-        const pubKey = ownerBox.owner ?? ownerBox.voucherId;
-        if (!pubKey || !verifyGuardSignature(tx, txHash, pubKey)) {
-          return {
-            valid: false,
-            error: `Missing or invalid owner signature for box ${box.id}`,
-          };
-        }
-        break;
-      }
+    // Own-property lookup, never a bare index: `boxType` is a store column, so
+    // `boxType: 'constructor'` must land in the arm below rather than retrieve
+    // `Object.prototype.constructor` and throw downstream (NODE_INTERFACE →
+    // "Output shape" states the same rule for the output schema).
+    if (!Object.hasOwn(AUTHORIZATION, box.boxType)) {
+      return {
+        valid: false,
+        error: `No transition admits a ${box.boxType} box as an input: box ${box.id}`,
+      };
+    }
+    const rule = AUTHORIZATION[box.boxType];
 
-      case 'block_apply': {
-        // `PostLockBox`, `BondBox`, `EmissionBox` and `TreasuryBox` are
-        // consumable only by block application — no user transaction spends any
-        // of them. Unconditional, so it is also the INPUT half of "emission and
-        // treasury are barred from both transaction positions"
-        // (NODE_INTERFACE → "Genesis proof boxes are never in a transaction"),
-        // which the `unspendable` arm below does NOT reach: those two carry this
-        // guard, not that one.
-        return {
-          valid: false,
-          error: `Box with ${box.guard} guard can only be consumed by block application`,
-        };
-      }
+    if ('noUserTransition' in rule) {
+      return { valid: false, error: rule.noUserTransition(box) };
+    }
 
-      case 'unspendable': {
-        // The INPUT half of "a `genesis_proof` box may never appear in a
-        // transaction" (spec: `NODE_INTERFACE` → "Genesis proof boxes are never
-        // in a transaction"). `validation` owns the output half and cannot own
-        // this one — `tx.inputs` are box **id** strings, so typing one requires
-        // the UTXO set.
-        //
-        // Keyed on the GUARD rather than on `boxType`, which is the strongest
-        // property available at this site and the one that generalises: an
-        // input box always comes out of the store, where `rowToBox` fabricates
-        // `guard` from the row discriminant, so guard and type agree by
-        // construction — while a second unspendable type added later is covered
-        // here without an edit. The output half must key on `boxType` instead,
-        // because a candidate's own `guard` field is attacker-supplied and is
-        // not checked until after the type is known.
-        return {
-          valid: false,
-          error:
-            `Box with ${box.guard} guard can never be consumed: ` +
-            `box ${box.id} is a ${box.boxType} box`,
-        };
-      }
-
-      case 'invite_dual': {
-        // Satisfied by EITHER key the box names, and the shape decides which
-        // (TYPES_INTERFACE → BoxGuard): invitee → claim, inviter → cancel.
-        //
-        // The binding is here rather than split across two gates because this
-        // is the layer that holds both the transaction and the box. Accepting
-        // either signature over either shape is not equivalent: an inviter
-        // signing a claim would mint the invitee's karma without them, bar
-        // their key from any further invite and start a probation clock they
-        // never asked for; an invitee signing a cancel would destroy an invite
-        // that is not theirs to withdraw.
-        //
-        // `outputs.length === 0` is the whole discriminant this needs.
-        // `checkTransitions` pins the rest of both shapes at step 7 — a claim
-        // is exactly one karma output owned by the invitee, and nothing else
-        // has zero outputs on an invite input.
-        const inviteBox = box as InviteBox;
-        const isCancel = tx.outputs.length === 0;
-        const signer = isCancel ? inviteBox.inviterId : inviteBox.inviteePublicKey;
-        if (!verifyGuardSignature(tx, txHash, signer)) {
-          return {
-            valid: false,
-            error: isCancel
-              ? `Invite cancel must be signed by the inviter named on box ${box.id}`
-              : `Invite claim must be signed by the invitee named on box ${box.id}`,
-          };
-        }
-        break;
-      }
-
-      default:
-        return { valid: false, error: `Unknown guard type: ${(box as AnyBox).guard}` };
+    const signer = rule.signer(box, tx);
+    if (!signer || !verifyGuardSignature(tx, txHash, signer)) {
+      return { valid: false, error: rule.unsigned(box, tx) };
     }
   }
 
@@ -1474,7 +1546,10 @@ function checkGuards(
  *    LIKE_KARMA_COST — the invite-claim surplus of exactly INVITE_KARMA_AMOUNT,
  *    and the zero-output VouchBox spend). The `value` TYPE bound lives in step
  *    4's schema.
- * 6. Guard satisfaction (signatures)
+ * 6. Authorization — the signer the transition requires signed this
+ *    transaction, or no transition admits the input (NODE_INTERFACE → "Legal
+ *    box transitions"). Ahead of step 7, so the transition is identified from
+ *    the input type and the output count rather than from a validated shape.
  * 7. Legal box transitions (`likeTarget`-aware — the like burn shape)
  *
  * Karma decay is handled by the periodic decay engine, not at transaction
@@ -1546,9 +1621,12 @@ export function validateTx(
   const valueCheck = checkValueConservation(inputBoxes, tx.outputs, tx.likeTarget);
   if (!valueCheck.valid) return valueCheck;
 
-  // ---- 6. Guard satisfaction ----
-  const guardCheck = checkGuards(deps, tx, inputBoxes);
-  if (!guardCheck.valid) return guardCheck;
+  // ---- 6. Authorization ----
+  // Ahead of the transition arms, so a transaction that is both unsigned and
+  // malformed is refused for being unsigned. The transition is identified here
+  // from the input type and the output count; step 7 pins the rest of the shape.
+  const authCheck = checkAuthorization(tx, inputBoxes);
+  if (!authCheck.valid) return authCheck;
 
   // ---- 7. Legal box transitions ----
   const transitionCheck = checkTransitions(

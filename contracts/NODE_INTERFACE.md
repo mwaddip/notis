@@ -720,14 +720,16 @@ spent away.
 | Half | Home | Keyed on | Why it can only go there |
 |---|---|---|---|
 | not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. A candidate's own `guard` field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
-| not an **input** | `node`, in `checkGuards` | `guard` | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, where `rowToBox` fabricates `guard` from the row discriminant — so guard and type agree by construction, and a new type barred from inputs is covered without an edit **whichever guard it fixes**: `unspendable` and `block_apply` both reject unconditionally here. |
+| not an **input** | `node`, in the authorization rules | the **transition** | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, so its type is known by construction. A type is barred from inputs by **no transition admitting it**, which is an absence rather than a rejecting arm. |
 
-⚠ **The three barred types do not reach that arm by the same route, and the difference is
-load-bearing for anyone adding a fourth.** `genesis_proof` is `unspendable`; `emission` and
-`treasury` are `block_apply`, the guard `BondBox` and `PostLockBox` already carry. So "barred from
-both positions" is a statement about the *outcome* for all three, and the input half is delivered by
-two different arms. A reader who takes the `unspendable` arm as the mechanism will conclude a
-`block_apply` type needs an edit that it does not.
+✅ **A type barred from inputs needs no edit to be barred.** `genesis_proof`, `emission` and
+`treasury` are unspendable because nothing names them as a legal input, and a *new* barred type
+inherits that by saying nothing about it. The bar is the default, and admitting a type is the
+deliberate act.
+
+> ⚠ **The check that a candidate output's `guard` matches its type does NOT bar anything from the
+> input position.** It is an output-shape pin on a field carrying no information (see the next
+> section), and it is unrelated to what may be spent.
 
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
@@ -737,12 +739,12 @@ ahead of the table lookup: the verdict would be identical either way, but an
 assigned tag refused by protocol rule is not an *unknown* one, and a test
 asserting rejection must be able to assert which rule rejected.
 
-`CANONICAL_GUARD` keeps all nine types even though the output schema carries
-six: its other obligation is agreement with `rowToBox`, and the genesis-seeded
-proof and emission boxes are rebuilt from their rows like any other. The
-`emission` and `treasury` types join `genesis_proof` in being barred from both
-transaction positions — block application is their only producer and their only
-spender.
+`BOX_GUARDS` (TYPES_INTERFACE → Layout — Boxes) keeps every box type even though
+the output schema carries six: its other obligation is agreement with
+`rowToBox`, and the genesis-seeded proof and emission boxes are rebuilt from
+their rows like any other. The `emission` and `treasury` types join
+`genesis_proof` in being barred from both transaction positions — block
+application is their only producer and their only spender.
 
 ### Output shape — the closed per-boxType schema (guard-shape pin + field-type pin)
 
@@ -981,7 +983,7 @@ a missing or `null` `signatures` map threw at `tx.signatures[hexKey]`;
 `outputs` *object* slipped that loop (its `length` is `undefined`) and threw at
 conservation's `.reduce`; `likeTarget: null` passed conservation's
 `!== undefined` presence test and threw at `h.update(null)` inside
-`computeTxId` — which `checkGuards` calls on its FIRST line, so the whole
+`computeTxId` — which `checkAuthorization` calls on its FIRST line, so the whole
 envelope reached the hasher at step 6 — and non-`Uint8Array` `preimages` values
 threw there the same way. Every one was an HTTP 500 or, through the block
 funnel, a whole-block rejection logged as an unexpected failure.
@@ -1113,11 +1115,39 @@ New code should prefer the split functions.
 
 ### Legal box transitions
 
-Every condition in this table is a **consensus rule enforced by the engine**
-(`checkTransitions`, with guard satisfaction from `checkGuards`) — reachable by
-block-embedded transactions, not only by the service layer. Service-layer
-checks (rate limits, fixed amounts, pairing at create) are policy on *this
-node's* mempool entry and are NOT listed here.
+Every condition in this table is a **consensus rule enforced by the engine** — reachable by
+block-embedded transactions, not only by the service layer. Service-layer checks (rate limits, fixed
+amounts, pairing at create) are policy on *this node's* mempool entry and are NOT listed here.
+
+⛔ **AUTHORIZATION IS PART OF THE TRANSITION, NOT A PROPERTY OF THE BOX.** A row states what it
+requires — *invitee-signed*, *inviter-signed*, *voucher-signed*, *the signing key is the post's
+author*, *block application only* — and that statement is the whole authorization rule for that
+transition. There is no second pass that consults the box to decide who may spend it.
+
+**Rows that name no signer require the owner's signature** — every karma and credit row above. That
+is a requirement of those transitions, stated once here, not a property the box carries.
+
+⛔ **No requirement may name a key that is not already in consensus state.** A rule may demand a
+signature by the key at `box.owner`, or by a key the box names (`inviteePublicKey`, `inviterId`,
+`voucherId`), or no signature at all. A rule shape that names a key from **configuration** is what
+makes a privileged key representable, and `ARCHITECTURE` → Treasury requires the opposite property of
+the treasury.
+
+> ⛔ **ONE RULE VIOLATES THIS TODAY, AND IT IS NOT THE TREASURY.** The same-owner karma rule carries a
+> faucet exemption gated on `deps.isSystemBox`, which resolves a box id against a **configured system
+> keypair**. It is wired into block application, so it is a consensus rule and not service-layer
+> policy. The rule above is therefore **AHEAD OF CODE**: it states the property the model requires,
+> and the tree has exactly one counter-example.
+>
+> **What removes it:** the karma supply box, which deletes the system keypair outright — a pool
+> authorized by rule needs no configured owner, so the exemption has nothing left to name. Until then,
+> `isSystemBox` is the one place a key reaches consensus from outside state, and **no second one may
+> be added**.
+
+⚠ **`guard` is not consulted.** It is a pure function of `boxType` carrying no information, it is
+absent from `canonicalBoxBytes`, and nothing in this table depends on it. The output-shape pin that
+checks a candidate's `guard` matches its type is a *shape* check on an uncommitted field and decides
+nothing about who may spend.
 
 | Consumed | Created | Condition |
 |----------|---------|-----------|
@@ -1252,7 +1282,7 @@ There is **no other legal bond or invite shape**. In particular:
   transferred", but never checked that the inputs themselves agree — and
   `validateTx` step 3 only requires a common `boxType`. So
   `[karmaA(10), karmaB(10)] → karmaA(20)` validated: conservation holds,
-  every output matches `inputs[0].owner`, and `checkGuards` gets the owner
+  every output matches `inputs[0].owner`, and `checkAuthorization` gets the owner
   signature it wants from each of A and B. **B's karma became A's.**
   Consensual, but karma is non-transferable *by rule* — a consensual transfer
   is still a transfer, and it prices off-chain. This is the audit's most
@@ -1280,8 +1310,9 @@ There is **no other legal bond or invite shape**. In particular:
   minted from nothing, and a 100-value vouch destroyed 99 (audit
   F-consensus-3).
 - **`voucherId` is pinned at cast: it must equal the karma input's owner.**
-  `checkGuards` resolves a box's signer as `owner ?? voucherId`, so a
-  VouchBox carrying a *foreign* `voucherId` is guarded by that foreign key:
+  A `vouch` input's authorization requires a signature by the box's own
+  `voucherId`, so a VouchBox carrying a *foreign* one is authorized by that
+  foreign key:
   A stakes their own karma, B unvouches it, and the escrow matures to B.
   That is a karma transfer with no invite — the property the whole
   invite/bond mechanism protects. Not in the audit; found deriving this
@@ -1990,7 +2021,7 @@ reads. Above the terminus no emission box exists and nothing is released.
 > in `node/src`.** It is checked when a coinbase output is *created* (`block-apply` rejects a
 > block whose coinbase carries the wrong lock) and used as a *selection* filter
 > (`getUnlockedCreditBoxes` in `node/src/store/utxo.ts`, for the UI and faucet). No validation
-> path reads it: `validateTx`, `checkTransitions` and `checkGuards` never mention it, and
+> path reads it: `validateTx`, `checkTransitions` and `checkAuthorization` never mention it, and
 > `net.onTx` calls `validateTx` and nothing else — so a gossiped transaction naming a locked
 > coinbase box as an input pools and applies today.
 >
