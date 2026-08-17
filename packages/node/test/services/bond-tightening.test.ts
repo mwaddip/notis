@@ -31,7 +31,6 @@ import {
 import type {
   AnyBox,
   KarmaBox,
-  InviteBox,
   BondBox,
   VouchBox,
   UtxoTransaction,
@@ -127,26 +126,19 @@ describe('bond transitions (audit F-consensus-1)', () => {
   }
 
   /**
-   * Seed an invite and its bond as outputs 0 and 1 of one transaction — the
-   * shape invite creation emits, both boxes naming the same invitee.
+   * Seed the bond an invite emits — the whole of what an invite leaves behind
+   * (ARCHITECTURE → Invite System). There is no second box.
    */
-  function seedPair(): { invite: InviteBox; bond: BondBox } {
-    const inviteCandidate = {
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId: inviter.pub,
-      inviteePublicKey: invitee.pub,
-    };
+  function seedPair(): { bond: BondBox } {
     const bondCandidate = {
       boxType: 'bond' as const,
       value: INVITE_BOND_KARMA,
       inviterId: inviter.pub,
       inviteePublicKey: invitee.pub,
     };
-    const [invite, bond] = seedAsOneTx([inviteCandidate, bondCandidate]);
-    storeInsertBox(invite!);
+    const [bond] = seedAsOneTx([bondCandidate]);
     storeInsertBox(bond!);
-    return { invite: invite as InviteBox, bond: bond as BondBox };
+    return { bond: bond as BondBox };
   }
 
   /** A karma output owned by `owner`. */
@@ -196,16 +188,15 @@ describe('bond transitions (audit F-consensus-1)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. cancel-absorb — a cancel that also consumes the bond, sweeping invite +
-  //    bond into one karma box. The cancel transaction names only the invite
-  //    invite, and adding the bond to it is refused by authorization.
+  // 2. bond-absorb — a karma spend that also consumes the bond, sweeping the
+  //    inviter's own stake back into their balance ahead of the deadline.
   // -------------------------------------------------------------------------
 
-  it('cancel-absorb: a cancel may not name the bond alongside the invite', () => {
-    const { invite, bond } = seedPair();
+  it('bond-absorb: a karma spend may not name the bond alongside its karma', () => {
+    const { bond } = seedPair();
     const karma = seedKarma(inviter.pub, 50n);
     const tx: UtxoTransaction = {
-      inputs: [karma.id!, invite.id!, bond.id!],
+      inputs: [karma.id!, bond.id!],
       outputs: [karmaOut(inviter.pub, 50n + INVITE_BOND_KARMA)],
       signatures: {},
       protocolVersion: 1,
@@ -218,11 +209,23 @@ describe('bond transitions (audit F-consensus-1)', () => {
     expect(result.error).toMatch(/Mixed input types|block application/);
   });
 
-  it('cancel non-vacuity: the invite alone, inviter-signed, is accepted', () => {
-    const { invite } = seedPair();
+  it('non-vacuity: the invite that CREATES a bond is accepted', () => {
+    // The live shape, and the control this file needs: without it every
+    // rejection above could be the gate refusing anything a bond is named in.
+    // ⛔ The transaction conserves — the invitee's karma comes from the pool at
+    // settlement, not from the inviter (NODE_INTERFACE → validateTx step 5).
+    const karma = seedKarma(inviter.pub, 50n + INVITE_BOND_KARMA);
     const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [],
+      inputs: [karma.id!],
+      outputs: [
+        karmaOut(inviter.pub, 50n),
+        {
+          boxType: 'bond',
+          value: INVITE_BOND_KARMA,
+          inviterId: inviter.pub,
+          inviteePublicKey: invitee.pub,
+        } as BondBox,
+      ],
       signatures: {},
       protocolVersion: 1,
     };

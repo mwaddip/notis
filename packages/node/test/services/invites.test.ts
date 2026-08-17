@@ -16,7 +16,6 @@ import type {
   AnyBox,
   BondBox,
   CandidateOf,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -36,12 +35,11 @@ import {
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
   getPendingEntries,
 } from '../../src/store/index.js';
-import { createInvite, claimInvite, cancelInvite } from '../../src/services/invites.js';
+import { createInvite } from '../../src/services/invites.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
   rawPublicKey,
-  seedInviteAndBond,
   seedProvenance,
   signTransaction,
   type Stored,
@@ -67,34 +65,6 @@ function createKarmaBox(
   );
   storeInsertBox(box);
   return box;
-}
-
-/**
- * Seed an invite + bond pair into the store.
- *
- * Delegates to the shared `seedInviteAndBond`, which owns the pairing rule and
- * the provenance discriminator. `label` is required there for a reason visible
- * right here: every call site below passes near-identical values, so without the
- * discriminator they would produce the same invite id, bond id and
- * `(txId, index)`.
- */
-function insertInviteAndBond(
-  label: string,
-  inviterId: Uint8Array,
-  inviteePublicKey: Uint8Array,
-  seed = 1,
-  bondValue = INVITE_BOND_KARMA,
-): { inviteBox: Stored<InviteBox>; bondBox: Stored<BondBox> } {
-  const { invite, bond } = seedInviteAndBond({
-    label,
-    inviterId,
-    inviteePublicKey,
-    bondValue,
-    seedHeight: seed,
-  });
-  storeInsertBox(invite);
-  storeInsertBox(bond);
-  return { inviteBox: invite, bondBox: bond };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,86 +132,34 @@ describe('invites service', () => {
   // Builders — the three shapes a client sends
   // -----------------------------------------------------------------------
 
-  /** K(v) → K(v − bond) + Invite(0) + Bond(bond), inviter-signed. */
+  /** K(v) → K(v − bond) + Bond(bond), inviter-signed — the whole invite. */
   function buildCreateTx(
     karmaIn: Stored<KarmaBox>,
     invitee: Uint8Array,
     overrides: {
-      inviteValue?: bigint;
       bondValue?: bigint;
-      inviteInviterId?: Uint8Array;
-      bondInvitee?: Uint8Array;
+      bondInviterId?: Uint8Array;
     } = {},
   ): UtxoTransaction {
     const bondValue = overrides.bondValue ?? INVITE_BOND_KARMA;
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: karmaIn.value - bondValue - (overrides.inviteValue ?? 0n),
+      value: karmaIn.value - bondValue,
       owner: inviterId,
-    };
-    const inviteOut: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: overrides.inviteValue ?? 0n,
-      inviterId: overrides.inviteInviterId ?? inviterId,
-      inviteePublicKey: invitee,
     };
     const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: bondValue,
-      inviterId,
-      inviteePublicKey: overrides.bondInvitee ?? invitee,
+      inviterId: overrides.bondInviterId ?? inviterId,
+      inviteePublicKey: invitee,
     };
     const tx: UtxoTransaction = {
       inputs: [karmaIn.id!],
-      outputs: [karmaOut, inviteOut, bondOut],
+      outputs: [karmaOut, bondOut],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
     signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
-    return tx;
-  }
-
-  /** Invite → one KarmaBox of INVITE_KARMA_AMOUNT, invitee-signed. */
-  function buildClaimTx(
-    invite: Stored<InviteBox>,
-    opts: { owner?: Uint8Array; value?: bigint; signer?: 'invitee' | 'inviter' } = {},
-  ): UtxoTransaction {
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [
-        {
-          boxType: 'karma',
-          value: opts.value ?? INVITE_KARMA_AMOUNT,
-          owner: opts.owner ?? inviteePubKey,
-        } as CandidateOf<KarmaBox>,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    if (opts.signer === 'inviter') {
-      signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
-    } else {
-      signTransaction(tx, inviteePrivKey, inviteePubKeyHex);
-    }
-    return tx;
-  }
-
-  /** Invite → nothing, inviter-signed. */
-  function buildCancelTx(
-    invite: Stored<InviteBox>,
-    signer: 'inviter' | 'invitee' = 'inviter',
-  ): UtxoTransaction {
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    if (signer === 'inviter') {
-      signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
-    } else {
-      signTransaction(tx, inviteePrivKey, inviteePubKeyHex);
-    }
     return tx;
   }
 
@@ -258,21 +176,22 @@ describe('invites service', () => {
     expect(result.status).toBe('pending');
     expect(result.txId).toBe(computeTxId(tx));
     expect(result.expiresAtHeight).toBe(5 + MEMPOOL_EXPIRY_BLOCKS);
-    // Both ids are the ones block application will store: the same
-    // `materializeOutput` at the same positions.
-    expect(result.inviteBox.txId).toBe(result.txId);
-    expect(result.inviteBox.index).toBe(1);
-    expect(result.bondBox.index).toBe(2);
+    // ⛔ **One box id, not two** — the response carries `bondBoxId` alone
+    // (NODE_INTERFACE → Invites). It is the id block application will store:
+    // the same `materializeOutput` at the same position.
+    expect(result.bondBox.txId).toBe(result.txId);
+    expect(result.bondBox.index).toBe(1);
 
     const pooled = getPendingEntries(100);
     expect(pooled).toHaveLength(1);
     expect(computeTxId(decodeTx(pooled[0]!.utxoTxCbor!))).toBe(result.txId);
   });
 
-  it('createInvite charges only the bond — the mint is at the claim', () => {
-    // `INVITE_KARMA_AMOUNT` is not paid here: the invite holds 0 and creation
-    // conserves value like any other transaction (ARCHITECTURE → Invite
-    // creation). A create that paid both would fail conservation.
+  it('createInvite charges only the bond', () => {
+    // `INVITE_KARMA_AMOUNT` is not paid here: it comes out of the karma pool at
+    // settlement, so the invite conserves value like any other transaction
+    // (ARCHITECTURE → Invite System). A create that paid both would fail
+    // conservation.
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
 
@@ -291,10 +210,6 @@ describe('invites service', () => {
       outputs: [
         { boxType: 'karma', value: 0n, owner: inviterId } as CandidateOf<KarmaBox>,
         {
-          boxType: 'invite', value: 0n, inviterId,
-          inviteePublicKey: inviteePubKey, 
-        } as CandidateOf<InviteBox>,
-        {
           boxType: 'bond', value: INVITE_BOND_KARMA, inviterId,
           inviteePublicKey: inviteePubKey, 
         } as CandidateOf<BondBox>,
@@ -308,7 +223,7 @@ describe('invites service', () => {
   });
 
   it('createInvite rejects a key that has already been invited', () => {
-    // A claimed key holds a record, so the bar catches it — but by record
+    // A granted key holds a record, so the bar catches it — but by record
     // existence, not by the height it carries.
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
@@ -327,9 +242,10 @@ describe('invites service', () => {
     // ⚠ The karma-printing case, and the reason the bar is record existence
     // rather than `invitedAtBlock !== 0`. Every genesis committee member and
     // every faucet recipient holds karma without ever having been invited.
-    // Naming one mints it `INVITE_KARMA_AMOUNT` from nothing, and the bond then
-    // vests in full against likes that key had ALREADY earned — so the whole
-    // stake comes back and the inviter's only cost is a probation-length lock.
+    // Naming one draws it `INVITE_KARMA_AMOUNT` out of the pool, and the bond
+    // then vests in full against likes that key had ALREADY earned — so the
+    // whole stake comes back and the inviter's only cost is a probation-length
+    // lock.
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
@@ -357,145 +273,49 @@ describe('invites service', () => {
     expect(createInvite(deps, tx, 5).status).toBe('pending');
   });
 
-  it('createInvite rejects an invite and bond naming different invitees', () => {
-    // The pair is the pairing. Unpinned, the claim would start a probation
-    // clock no bond is dated by, and the bond would settle against a stranger.
+  it('createInvite rejects a bond holding anything but INVITE_BOND_KARMA', () => {
+    // The bond is the whole cost of an invite and the network's only sybil
+    // price. Conservation alone permits any value — the karma change output just
+    // keeps the difference — so this pin is what makes the price real.
     const karma = createKarmaBox(inviterId, 100n, 1);
-    const other = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-    const tx = buildCreateTx(karma, inviteePubKey, { bondInvitee: other });
+    const tx = buildCreateTx(karma, inviteePubKey, { bondValue: INVITE_BOND_KARMA - 1n });
 
-    expect(() => createInvite(deps, tx, 5)).toThrow(/same inviteePublicKey/);
+    expect(() => createInvite(deps, tx, 5))
+      .toThrow(new RegExp(`BondBox must hold exactly ${INVITE_BOND_KARMA}`));
   });
 
-  it('createInvite rejects an InviteBox holding karma', () => {
-    const karma = createKarmaBox(inviterId, 100n, 1);
-    const tx = buildCreateTx(karma, inviteePubKey, { inviteValue: 25n });
-
-    expect(() => createInvite(deps, tx, 5)).toThrow(/InviteBox must hold 0 karma/);
-  });
-
-  it('createInvite rejects a pair naming someone else as inviter', () => {
+  it('createInvite rejects a bond naming someone else as inviter', () => {
+    // Unpinned, the creator emits a bond naming a stranger and the
+    // probation-deadline settlement pays them.
     const karma = createKarmaBox(inviterId, 100n, 1);
     const other = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-    const tx = buildCreateTx(karma, inviteePubKey, { inviteInviterId: other });
+    const tx = buildCreateTx(karma, inviteePubKey, { bondInviterId: other });
 
     expect(() => createInvite(deps, tx, 5)).toThrow(/inviterId must be the karma input's owner/);
   });
 
   // -----------------------------------------------------------------------
-  // claim
+  // ⛔ NO user transaction carries a karma surplus
   // -----------------------------------------------------------------------
 
-  it('claimInvite returns pending and mints to the named key', () => {
-    const { inviteBox } = insertInviteAndBond('claim-ok', inviterId, inviteePubKey);
-    const tx = buildClaimTx(inviteBox);
+  it('the invite itself conserves — the grant comes from the pool', () => {
+    // ⛔ **The invite-claim surplus is GONE, and with it the last one**
+    // (NODE_INTERFACE → validateTx step 5). `INVITE_KARMA_AMOUNT` is spent from
+    // the karma pool by the block's settlement transaction, so the inviter pays
+    // the bond and nothing else, and the sums balance exactly.
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx = buildCreateTx(karma, inviteePubKey);
 
-    const result = claimInvite(deps, tx, 7);
-
-    expect(result.status).toBe('pending');
-    expect(Buffer.from(result.userId).toString('hex')).toBe(inviteePubKeyHex);
-    expect(result.karmaBoxId).toHaveLength(64);
-    expect(getPendingEntries(100)).toHaveLength(1);
+    const inSum = karma.value;
+    const outSum = tx.outputs.reduce((sum, o) => sum + o.value, 0n);
+    expect(outSum).toBe(inSum);
+    expect(validateTx(deps, tx, 5).valid).toBe(true);
   });
 
-  it('a claim needs no bond input — the karma is minted, not moved', () => {
-    // The whole shape: one invite in, one karma box out, and a surplus of
-    // exactly INVITE_KARMA_AMOUNT that the conservation carve admits in this
-    // shape and no other.
-    const { inviteBox, bondBox } = insertInviteAndBond('claim-shape', inviterId, inviteePubKey);
-    const tx = buildClaimTx(inviteBox);
-
-    expect(tx.inputs).toEqual([inviteBox.id!]);
-    expect(validateTx(deps, tx, 7).valid).toBe(true);
-    // And naming the bond alongside it is refused, because a bond has no
-    // user-transaction shape at all.
-    const withBond: UtxoTransaction = { ...tx, inputs: [inviteBox.id!, bondBox.id!] };
-    signTransaction(withBond, inviteePrivKey, inviteePubKeyHex);
-    expect(validateTx(deps, withBond, 7).valid).toBe(false);
-  });
-
-  it('claimInvite rejects a karma output owned by anyone but the named invitee', () => {
-    const { inviteBox } = insertInviteAndBond('claim-owner', inviterId, inviteePubKey);
-    const other = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-    const tx = buildClaimTx(inviteBox, { owner: other });
-
-    expect(() => claimInvite(deps, tx, 7)).toThrow(/must be the invitee named on the InviteBox/);
-  });
-
-  it('claimInvite rejects a claim minting anything but INVITE_KARMA_AMOUNT', () => {
-    const { inviteBox } = insertInviteAndBond('claim-amount', inviterId, inviteePubKey);
-    const tx = buildClaimTx(inviteBox, { value: INVITE_KARMA_AMOUNT + 1n });
-
-    expect(() => claimInvite(deps, tx, 7)).toThrow(/must mint exactly/);
-  });
-
-  it('claimInvite rejects an inviter-signed claim', () => {
-    // Either named key may sign, and the transition arm decides which
-    // shape that key may take. An inviter-signed claim would mint the invitee's
-    // karma without them, bar their key from any further invite, and start a
-    // probation clock they never asked for.
-    const { inviteBox } = insertInviteAndBond('claim-signer', inviterId, inviteePubKey);
-    const tx = buildClaimTx(inviteBox, { signer: 'inviter' });
-
-    expect(() => claimInvite(deps, tx, 7)).toThrow(/must be signed by the invitee/);
-  });
-
-  it('claimInvite rejects a spent invite', () => {
-    const { inviteBox } = insertInviteAndBond('claim-spent', inviterId, inviteePubKey);
-    storeConsumeBox(inviteBox.id!, 6);
-    const tx = buildClaimTx(inviteBox);
-
-    expect(() => claimInvite(deps, tx, 7)).toThrow(/Invite box not found/);
-  });
-
-  // -----------------------------------------------------------------------
-  // cancel
-  // -----------------------------------------------------------------------
-
-  it('cancelInvite returns pending on a zero-output spend', () => {
-    const { inviteBox } = insertInviteAndBond('cancel-ok', inviterId, inviteePubKey);
-    const tx = buildCancelTx(inviteBox);
-
-    const result = cancelInvite(deps, tx, 9);
-
-    expect(result.status).toBe('pending');
-    expect(result.txId).toBe(computeTxId(tx));
-    expect(getPendingEntries(100)).toHaveLength(1);
-  });
-
-  it('a cancel conserves — the box holds nothing to return', () => {
-    // Zero outputs and zero inputs by value, so this needs no conservation
-    // exemption of its own; the bond comes back through block application.
-    const { inviteBox } = insertInviteAndBond('cancel-conserves', inviterId, inviteePubKey);
-    const tx = buildCancelTx(inviteBox);
-
-    expect(inviteBox.value).toBe(0n);
-    expect(validateTx(deps, tx, 9).valid).toBe(true);
-  });
-
-  it('cancelInvite rejects an invitee-signed cancel', () => {
-    const { inviteBox } = insertInviteAndBond('cancel-signer', inviterId, inviteePubKey);
-    const tx = buildCancelTx(inviteBox, 'invitee');
-
-    expect(() => cancelInvite(deps, tx, 9)).toThrow(/carries no signature from the invite/);
-  });
-
-  it('cancelInvite rejects an invite already claimed or cancelled', () => {
-    const { inviteBox } = insertInviteAndBond('cancel-spent', inviterId, inviteePubKey);
-    storeConsumeBox(inviteBox.id!, 8);
-    const tx = buildCancelTx(inviteBox);
-
-    expect(() => cancelInvite(deps, tx, 9)).toThrow(/not found or already spent/);
-  });
-
-  // -----------------------------------------------------------------------
-  // The surplus is the claim's alone
-  // -----------------------------------------------------------------------
-
-  it('no other shape may carry a karma surplus', () => {
-    // The biconditional's other half: a plain karma spend that mints itself
-    // INVITE_KARMA_AMOUNT is refused by strict conservation, so the carve is
-    // confined to the claim shape rather than being a general allowance.
+  it('no shape at all may carry a karma surplus', () => {
+    // A plain karma spend that mints itself INVITE_KARMA_AMOUNT is refused by
+    // strict conservation — and now there is no shape the gate would have let
+    // through, because the exception list is empty.
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx: UtxoTransaction = {
       inputs: [karma.id!],

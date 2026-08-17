@@ -98,13 +98,20 @@ function likeTx(targetPostId: string, likerHex: string) {
   };
 }
 
+/**
+ * An invite, as the pool sees it: one `BondBox` output naming its inviter.
+ *
+ * ⛔ **The bond IS the invite** (ARCHITECTURE → Invite System), so the
+ * `invite_inviter` gate column derives from it. The column's subject — an
+ * inviter with a pending invite — is unchanged; only the box carrying it moved.
+ */
 function inviteTx(inviterHex: string) {
   return {
     inputs: [],
     outputs: [
       {
-        boxType: 'invite',
-        value: 0n,
+        boxType: 'bond',
+        value: 25n,
         inviterId: bytes(inviterHex),
         inviteePublicKey: new Uint8Array(32).fill(0x11),
       },
@@ -478,13 +485,16 @@ describe('mempool store', () => {
       expect(hasPendingLike(TARGET, LIKER_B)).toBe(false);
     });
 
-    it('ignores like-box outputs — the retired output-scan derivation stays dead', async () => {
+    it('derives the like columns from `likeTarget` alone, never from an output', async () => {
+      // ⛔ **The retired output-scan derivation stays dead**, and the box it
+      // scanned for stays unrepresentable: `like` is a reserved boxType with no
+      // interface and no encoder tag (TYPES_INTERFACE → ~~LikeBox~~). So the
+      // fixture carries a real karma output instead, and the property is that a
+      // transaction with outputs and no `likeTarget` derives no liker.
       const { insertUtxoTx, getDbRow } = await importMempoolWithRow();
       insertUtxoTx({
         inputs: [],
-        outputs: [{
-          boxType: 'like', value: 2n, likerId: bytes(LIKER_A),
-        }],
+        outputs: [{ boxType: 'karma', value: 2n, owner: bytes(LIKER_A) }],
         signatures: {},
         protocolVersion: 1,
       } as any, 100);
@@ -996,19 +1006,39 @@ describe('mempool store', () => {
      * `insertUtxoTx` verifies no signature, so this measures size and nothing
      * else.
      */
-    async function txOfEncodedSize(bytes: number) {
-      const { encodeTx } = await import('@dagsocial/types');
-      const build = (pad: string) => ({
-        inputs: [],
+    /**
+     * A transaction whose encoded length is exactly `bytes`.
+     *
+     * ⛔ **Every field the codec writes is fixed-width or bounded**, so the
+     * padding has to come from a length-prefixed one: `inputs` gives 32-byte
+     * steps and a post's `content` gives single-byte steps
+     * (TYPES_INTERFACE → Layout — UtxoTransaction). Padding a signature — a
+     * `b64` writer — has no encoding at all now, which is the shape this helper
+     * used to have.
+     */
+    async function txOfEncodedSize(byteLength: number) {
+      const { encodeTx, PROTOCOL_VERSION } = await import('@dagsocial/types');
+      const build = (inputs: number, content: string) => ({
+        inputs: Array.from({ length: inputs }, (_, i) =>
+          i.toString(16).padStart(64, '0'),
+        ),
         outputs: [],
-        signatures: { [LIKER_A]: pad },
-        protocolVersion: 1,
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+        post: {
+          content,
+          author: new Uint8Array(32).fill(0x33),
+          parentRefs: [],
+          protocolVersion: PROTOCOL_VERSION,
+          timestamp: 1_700_000_000_000,
+        },
       });
-      let pad = 'a'.repeat(Math.max(0, bytes - encodeTx(build('') as any).length));
-      while (encodeTx(build(pad) as any).length < bytes) pad += 'a';
-      while (encodeTx(build(pad) as any).length > bytes) pad = pad.slice(0, -1);
-      const tx = build(pad);
-      expect(encodeTx(tx as any).length).toBe(bytes);
+      let inputs = 0;
+      while (encodeTx(build(inputs + 1, '') as any).length <= byteLength) inputs++;
+      let content = '';
+      while (encodeTx(build(inputs, content) as any).length < byteLength) content += 'a';
+      const tx = build(inputs, content);
+      expect(encodeTx(tx as any).length).toBe(byteLength);
       return tx;
     }
 

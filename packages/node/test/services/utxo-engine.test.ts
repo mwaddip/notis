@@ -25,7 +25,6 @@ import {
 import type {
   AnyBox,
   KarmaBox,
-  InviteBox,
   BondBox,
   Post,
   PostLockBox,
@@ -45,6 +44,7 @@ import {
   getDb,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
+  putIdentityRecord as storePutIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -235,9 +235,9 @@ describe('validateAndApplyTx', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. Valid karma→karma+invite+bond (invite creation)
+  // 2. Valid karma→karma+bond (the invite)
   // -------------------------------------------------------------------------
-  it('valid karma to karma+invite+bond (invite creation)', () => {
+  it('valid karma to karma+bond (the invite)', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
     const invitee = new Uint8Array(32).fill(0xaa);
@@ -246,13 +246,6 @@ describe('validateAndApplyTx', () => {
       // Only the bond is paid: INVITE_KARMA_AMOUNT is minted at the claim.
       value: 100n - INVITE_BOND_KARMA,
       owner: ownerPubKey,
-    };
-
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: 0n,
-      inviterId: ownerUserId,
-      inviteePublicKey: invitee,
     };
 
     const bondBox: CandidateOf<BondBox> = {
@@ -264,7 +257,7 @@ describe('validateAndApplyTx', () => {
 
     const tx = buildSignedTx(
       [karma.id!],
-      [newKarma, inviteBox, bondBox],
+      [newKarma, bondBox],
       ownerPrivKey,
       ownerPubKey,
     );
@@ -273,10 +266,9 @@ describe('validateAndApplyTx', () => {
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
 
-    // All outputs should exist
+    // Both outputs should exist
     expect(deps.getBox(computeCandidateBoxId(newKarma, result.txId!, 0))).not.toBeNull();
-    expect(deps.getBox(computeCandidateBoxId(inviteBox, result.txId!, 1))).not.toBeNull();
-    expect(deps.getBox(computeCandidateBoxId(bondBox, result.txId!, 2))).not.toBeNull();
+    expect(deps.getBox(computeCandidateBoxId(bondBox, result.txId!, 1))).not.toBeNull();
   });
 
   // -------------------------------------------------------------------------
@@ -514,190 +506,139 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 11. The invite's two transitions and the shapes that separate them
+  // 11. The invite is ONE transaction, and the bond is the request
   //
-  // Either key the InviteBox names may sign, and the shape decides which one:
-  // invitee → claim, inviter → cancel (NODE_INTERFACE → Legal box
-  // transitions). Accepting either signature over either shape is not
-  // equivalent, and the pair of rejections below is what pins that.
+  // ⛔ **`InviteBox`, the claim and the cancel are all deleted** (ARCHITECTURE →
+  // Invite System). What is left is `karma → karma + bond`, authorized like any
+  // other karma spend, and the block's settlement grants the invitee out of the
+  // karma pool. These pin the shape rules the arm carries on top of that.
   // ---------------------------------------------------------------------------
-  describe('the invite transitions and their signers', () => {
+  describe('the invite transition', () => {
     let inviterPubKey: Uint8Array;
     let inviterPrivKey: KeyObject;
     let inviteePubKey: Uint8Array;
-    let inviteePrivKey: KeyObject;
     let strangerPubKey: Uint8Array;
     let strangerPrivKey: KeyObject;
-    let inviteBoxId: string;
-    let bondBoxId: string;
+    let karmaBoxId: string;
+
+    const FUNDED = INVITE_BOND_KARMA * 2n + 10n;
 
     beforeEach(() => {
       const inviterKeys = generateKeyPairSync('ed25519');
       inviterPubKey = rawPublicKey(inviterKeys.publicKey);
       inviterPrivKey = inviterKeys.privateKey;
 
-      const inviteeKeys = generateKeyPairSync('ed25519');
-      inviteePubKey = rawPublicKey(inviteeKeys.publicKey);
-      inviteePrivKey = inviteeKeys.privateKey;
+      inviteePubKey = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
 
       const strangerKeys = generateKeyPairSync('ed25519');
       strangerPubKey = rawPublicKey(strangerKeys.publicKey);
       strangerPrivKey = strangerKeys.privateKey;
 
-      // The pair as invite creation emits it: one transaction, both boxes
-      // naming the same invitee.
-      const inviteBox: CandidateOf<InviteBox> = {
-        boxType: 'invite',
-        value: 0n,
-        inviterId: inviterPubKey,
-        inviteePublicKey: inviteePubKey,
+      karmaBoxId = createAndInsertKarma(inviterPubKey, FUNDED, 41).id!;
+    });
+
+    /** karma(FUNDED) → karma(FUNDED − bond) + bond. */
+    function inviteTx(opts: {
+      bondValue?: bigint;
+      bondInviterId?: Uint8Array;
+      invitee?: Uint8Array;
+    } = {}): UtxoTransaction {
+      const bondValue = opts.bondValue ?? INVITE_BOND_KARMA;
+      return {
+        inputs: [karmaBoxId],
+        outputs: [
+          { boxType: 'karma', value: FUNDED - bondValue, owner: inviterPubKey } as KarmaBox,
+          {
+            boxType: 'bond',
+            value: bondValue,
+            inviterId: opts.bondInviterId ?? inviterPubKey,
+            inviteePublicKey: opts.invitee ?? inviteePubKey,
+          } as BondBox,
+        ],
+        signatures: {},
+        protocolVersion: 1,
       };
-      const bondBox: CandidateOf<BondBox> = {
+    }
+
+    const signBy = (tx: UtxoTransaction, pub: Uint8Array, priv: KeyObject): UtxoTransaction => {
+      tx.signatures[Buffer.from(pub).toString('hex')] = signHash(computeTxHash(tx), priv);
+      return tx;
+    };
+
+    it('accepts an inviter-signed invite, and it CONSERVES', () => {
+      const tx = signBy(inviteTx(), inviterPubKey, inviterPrivKey);
+      const inSum = FUNDED;
+      const outSum = tx.outputs.reduce((sum, o) => sum + o.value, 0n);
+      // ⛔ No surplus anywhere: `INVITE_KARMA_AMOUNT` comes from the pool at
+      // settlement, so the invitee's karma is not in this transaction at all
+      // (NODE_INTERFACE → validateTx step 5).
+      expect(outSum).toBe(inSum);
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('rejects a stranger-signed invite — it is the karma owner who signs', () => {
+      const tx = signBy(inviteTx(), strangerPubKey, strangerPrivKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('owner signature');
+    });
+
+    it('rejects a bond holding anything but INVITE_BOND_KARMA', () => {
+      // Conservation alone permits any value — the change output keeps the
+      // difference — so this pin is the whole of the sybil price.
+      for (const v of [0n, INVITE_BOND_KARMA - 1n, INVITE_BOND_KARMA + 1n]) {
+        const tx = signBy(inviteTx({ bondValue: v }), inviterPubKey, inviterPrivKey);
+        const result = validateTx(deps, tx, 10);
+        expect(result.valid, `value=${v}`).toBe(false);
+        expect(result.error).toContain('BondBox must hold exactly');
+      }
+    });
+
+    it('rejects a bond naming someone else as inviter', () => {
+      const tx = signBy(
+        inviteTx({ bondInviterId: strangerPubKey }), inviterPubKey, inviterPrivKey,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("inviterId must be the karma input's owner");
+    });
+
+    it('rejects an invite naming a key that already holds an identity record', () => {
+      // ⛔ Record existence is the test, never karma-box existence: the weaker
+      // reading prints karma (ARCHITECTURE → Invite creation).
+      storePutIdentityRecord(inviteePubKey, {
+        lastActivityBlock: 3,
+        lastDecayBlock: 0,
+        likeCarry: 0n,
+        invitedAtBlock: 0,
+        lifetimeLikesReceived: 900n,
+      });
+      const tx = signBy(inviteTx(), inviterPubKey, inviterPrivKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('may not name an existing account');
+    });
+
+    it('rejects two bonds in one transaction', () => {
+      // One bond, one grant: the pairing is structural, so a transaction
+      // carrying two would owe two grants off one karma spend.
+      const tx = inviteTx();
+      tx.outputs.push({
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: inviterPubKey,
-        inviteePublicKey: inviteePubKey,
-      };
-      const [invite, bond] = seedAsOneTx([inviteBox, bondBox]);
-      deps.insertBox(invite!);
-      deps.insertBox(bond!);
-      inviteBoxId = invite!.id!;
-      bondBoxId = bond!.id!;
-    });
-
-    /** Invite → one KarmaBox for the invitee. */
-    function claimTx(owner = inviteePubKey, value = INVITE_KARMA_AMOUNT): UtxoTransaction {
-      return {
-        inputs: [inviteBoxId],
-        outputs: [{ boxType: 'karma', value, owner } as KarmaBox],
-        signatures: {},
-        protocolVersion: 1,
-      };
-    }
-
-    /** Invite → nothing. */
-    function cancelTx(): UtxoTransaction {
-      return {
-        inputs: [inviteBoxId],
-        outputs: [],
-        signatures: {},
-        protocolVersion: 1,
-      };
-    }
-
-    it('accepts an invitee-signed claim', () => {
-      const tx = claimTx();
-      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-      expect(result.error).toBeUndefined();
-    });
-
-    it('accepts an inviter-signed cancel', () => {
-      const tx = cancelTx();
-      tx.signatures[Buffer.from(inviterPubKey).toString('hex')] = signHash(computeTxHash(tx), inviterPrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-      expect(result.error).toBeUndefined();
-    });
-
-    it('rejects an inviter-signed CLAIM', () => {
-      // Guard-satisfied by a named key, and still refused: the mint belongs to
-      // the invitee's own decision, and applying it bars their address from any
-      // further invite forever.
-      const tx = claimTx();
-      tx.signatures[Buffer.from(inviterPubKey).toString('hex')] = signHash(computeTxHash(tx), inviterPrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('signed by the invitee');
-    });
-
-    it('rejects an invitee-signed CANCEL', () => {
-      const tx = cancelTx();
-      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('signed by the inviter');
-    });
-
-    it('rejects a stranger on either shape', () => {
-      for (const build of [claimTx, cancelTx]) {
-        const tx = build();
-        tx.signatures[Buffer.from(strangerPubKey).toString('hex')] = signHash(computeTxHash(tx), strangerPrivKey);
-        expect(validateTx(deps, tx, 10).valid).toBe(false);
-      }
-    });
-
-    it('rejects a claim paying anyone but the named invitee', () => {
-      const tx = claimTx(strangerPubKey);
-      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain("owned by the invite's inviteePublicKey");
-    });
-
-    it('rejects a claim minting anything but INVITE_KARMA_AMOUNT', () => {
-      for (const value of [INVITE_KARMA_AMOUNT - 1n, INVITE_KARMA_AMOUNT + 1n]) {
-        const tx = claimTx(inviteePubKey, value);
-        tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
-        const result = validateTx(deps, tx, 10);
-        expect(result.valid, `value=${value}`).toBe(false);
-        // The conservation carve fires first: the surplus is wrong before the
-        // transition arm reads the amount. Two layers over one rule.
-        expect(result.error).toContain('non-conservation');
-      }
-    });
-
-    it('rejects a claim that also names the bond', () => {
-      // Every legal shape is single-type, and no user transition consumes a
-      // bond besides.
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, bondBoxId],
-        outputs: [{
-          boxType: 'karma', value: INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
-          owner: inviteePubKey, 
-        } as KarmaBox],
-        signatures: {},
-        protocolVersion: 1,
-      };
-      tx.signatures[Buffer.from(inviteePubKey).toString('hex')] = signHash(computeTxHash(tx), inviteePrivKey);
-
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/Mixed input types|block application/);
-    });
-
-    it('rejects two invites in one transaction', () => {
-      // Shaped as a two-invite CANCEL, not a two-invite claim: both boxes hold
-      // 0 and there are no outputs, so the transaction conserves and reaches
-      // step 7. A two-invite claim would be caught one step earlier by the
-      // conservation carve, which requires exactly one input — the bound would
-      // then be untested rather than proven.
-      const second: CandidateOf<InviteBox> = {
-        boxType: 'invite',
-        value: 0n,
-        inviterId: inviterPubKey,
         inviteePublicKey: strangerPubKey,
-      };
-      const seeded = seedProvenance<InviteBox>(second, 2);
-      deps.insertBox(seeded);
-
-      const tx: UtxoTransaction = {
-        inputs: [inviteBoxId, seeded.id!],
-        outputs: [],
-        signatures: {},
-        protocolVersion: 1,
-      };
-      tx.signatures[Buffer.from(inviterPubKey).toString('hex')] = signHash(computeTxHash(tx), inviterPrivKey);
+      } as BondBox);
+      // Still conserving, so the shape pin is what refuses it and not the sums.
+      (tx.outputs[0] as KarmaBox).value = FUNDED - INVITE_BOND_KARMA * 2n;
+      signBy(tx, inviterPubKey, inviterPrivKey);
 
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('exactly one InviteBox');
+      expect(result.error).toContain('exactly 1 bond output');
     });
   });
 
@@ -909,20 +850,14 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toBeUndefined();
     });
 
-    it('accepts a conserving invite-create tx K(v) -> K(v-25) + Invite(0) + Bond(25)', () => {
+    it('accepts a conserving invite K(v) -> K(v-25) + Bond(25)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
-        // Only the bond leaves the change box: the invite holds nothing.
+        // The bond is the whole of what leaves the change box.
         value: 100n - INVITE_BOND_KARMA,
         owner: ownerPubKey,
-      };
-      const inviteBox: CandidateOf<InviteBox> = {
-        boxType: 'invite',
-        value: 0n,
-        inviterId: ownerUserId,
-        inviteePublicKey: new Uint8Array(32).fill(0xbb),
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
@@ -933,7 +868,7 @@ describe('validateAndApplyTx', () => {
 
       const tx = buildSignedTx(
         [karma.id!],
-        [newKarma, inviteBox, bondBox],
+        [newKarma, bondBox],
         ownerPrivKey,
         ownerPubKey,
       );
@@ -943,7 +878,7 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toBeUndefined();
     });
 
-    it('rejects invite-create that does not debit the change box (audit C-1)', () => {
+    it('rejects an invite that does not debit the change box (audit C-1)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       // The transition arm pins the bond's value but nothing there requires the
@@ -952,12 +887,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 100n,
         owner: ownerPubKey,
-      };
-      const inviteBox: CandidateOf<InviteBox> = {
-        boxType: 'invite',
-        value: 0n,
-        inviterId: ownerUserId,
-        inviteePublicKey: new Uint8Array(32).fill(0xcc),
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
@@ -968,7 +897,7 @@ describe('validateAndApplyTx', () => {
 
       const tx = buildSignedTx(
         [karma.id!],
-        [newKarma, inviteBox, bondBox],
+        [newKarma, bondBox],
         ownerPrivKey,
         ownerPubKey,
       );
@@ -1079,44 +1008,41 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 14. The Invite+Bond sweep (audit H-2), closed by construction
+  // 14. The bond sweep (audit H-2), closed by construction
   //
-  // The attack was a 3-input "cancel shape" — the attacker's own KarmaBox plus
-  // the InviteBox plus the uncommitted BondBox — sweeping both into their own
-  // karma with no inviter signature. It needed a mixed-type input combination,
-  // which `validateTx` step 3 permitted for exactly two shapes.
+  // The attack was a mixed-input "cancel shape" — the attacker's own KarmaBox
+  // alongside the uncommitted BondBox — sweeping both into their own karma with
+  // no inviter signature. It needed a mixed-type input combination, which
+  // `validateTx` step 3 permitted for exactly two shapes.
   //
-  // Both preconditions are gone: every legal shape is single-type now, and a
-  // bond input is refused by authorization whatever else the transaction holds. The
-  // sweep is enumerated here rather than assumed unreachable, because "step 3
-  // admits no exceptions" is a claim a future arm could quietly reverse.
+  // ⛔ **Both preconditions are gone twice over now**: every legal shape is
+  // single-type, a bond input is refused by authorization whatever else the
+  // transaction holds, and the two shapes step 3 used to except no longer exist
+  // at all (ARCHITECTURE → Invite System). The sweep is enumerated here rather
+  // than assumed unreachable, because "step 3 admits no exceptions" is a claim a
+  // future arm could quietly reverse.
   // ---------------------------------------------------------------------------
-  describe('the Invite+Bond sweep (audit H-2)', () => {
-    it('rejects the 3-input sweep, attacker-signed', () => {
+  describe('the bond sweep (audit H-2)', () => {
+    it('rejects the 2-input sweep, attacker-signed', () => {
       const inviterKeys = generateKeyPairSync('ed25519');
       const inviterPubKey = rawPublicKey(inviterKeys.publicKey);
       const attackerKeys = generateKeyPairSync('ed25519');
       const attackerPubKey = rawPublicKey(attackerKeys.publicKey);
 
       const karma = createAndInsertKarma(attackerPubKey, 100n, 3);
-      const [invite, bond] = seedAsOneTx([
-        {
-          boxType: 'invite' as const, value: 0n, inviterId: inviterPubKey,
-          inviteePublicKey: attackerPubKey, 
-        },
+      const [bond] = seedAsOneTx([
         {
           boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviterPubKey,
-          inviteePublicKey: attackerPubKey, 
+          inviteePublicKey: attackerPubKey,
         },
       ]);
-      deps.insertBox(invite!);
       deps.insertBox(bond!);
 
       const tx: UtxoTransaction = {
-        inputs: [karma.id!, invite!.id!, bond!.id!],
+        inputs: [karma.id!, bond!.id!],
         outputs: [{
           boxType: 'karma',
-          value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
+          value: 100n + INVITE_BOND_KARMA,
           owner: attackerPubKey,
         } as KarmaBox],
         signatures: {},
@@ -1129,34 +1055,38 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('Mixed input types');
 
       // The store is untouched: a rejected transaction applies nothing.
-      expect(deps.getBox(invite!.id!)).not.toBeNull();
       expect(deps.getBox(bond!.id!)).not.toBeNull();
     });
 
-    it('every legal shape is single-type — step 3 admits no exceptions', () => {
-      // The precondition itself, stated directly. The two exceptions step 3
-      // used to carry (invite+bond claim, karma+invite+bond cancel) were the
-      // whole of the sweep's admission.
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 4);
-      const [invite] = seedAsOneTx([{
-        boxType: 'invite' as const, value: 0n, inviterId: ownerUserId,
-        inviteePublicKey: new Uint8Array(32).fill(0x5c), 
-      }], 1, 77);
-      deps.insertBox(invite!);
+    it('and the bond ALONE is refused by authorization, not by step 3', () => {
+      // The layer below the mixed-type refusal, which is what makes the bond
+      // unspendable rather than merely awkward to combine: single-type, value
+      // conserving, and still refused because no transition admits a bond input.
+      const attackerKeys = generateKeyPairSync('ed25519');
+      const attackerPubKey = rawPublicKey(attackerKeys.publicKey);
+      const [bond] = seedAsOneTx([
+        {
+          boxType: 'bond' as const, value: INVITE_BOND_KARMA,
+          inviterId: rawPublicKey(generateKeyPairSync('ed25519').publicKey),
+          inviteePublicKey: attackerPubKey,
+        },
+      ], 1, 91);
+      deps.insertBox(bond!);
 
       const tx: UtxoTransaction = {
-        inputs: [karma.id!, invite!.id!],
+        inputs: [bond!.id!],
         outputs: [{
-          boxType: 'karma', value: 100n + INVITE_KARMA_AMOUNT, owner: ownerPubKey,
+          boxType: 'karma', value: INVITE_BOND_KARMA, owner: attackerPubKey,
         } as KarmaBox],
         signatures: {},
         protocolVersion: 1,
       };
-      tx.signatures[Buffer.from(ownerPubKey).toString('hex')] = signHash(computeTxHash(tx), ownerPrivKey);
+      tx.signatures[Buffer.from(attackerPubKey).toString('hex')] = signHash(computeTxHash(tx), attackerKeys.privateKey);
 
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('Mixed input types');
+      expect(result.error).toContain('block application');
+      expect(deps.getBox(bond!.id!)).not.toBeNull();
     });
   });
 

@@ -1,16 +1,11 @@
 import { createHash, createPublicKey, verify } from 'crypto';
 import * as validation from '@dagsocial/validation';
 import { mintKarma } from './karma.js';
-import { mintCredits } from './credits.js';
 import {
-  bondReturnContext,
   bondSettleContext,
-  coinbaseContext,
-  emissionSuccessorContext,
   likePayoutContext,
   postlockRemainderContext,
   postlockUnlockContext,
-  treasurySuccessorContext,
   vouchSettleContext,
   mintTxIdFor,
   MINT_OUTPUT_INDEX,
@@ -39,15 +34,21 @@ import {
 } from './block-creator.js';
 import {
   countKarmaActors,
-  splitCoinbase,
   type EmbeddedTx,
 } from './coinbase-split.js';
+import {
+  bondInviteeOf,
+  checkSettlement,
+  contributeToBody,
+  emptyBody,
+} from './settlement.js';
 import { postsOf, postIdsOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
 import { DagService } from './dag-service.js';
 import {
   applyTx,
   checkOutputShape,
+  checkSettlementOutputShape,
   checkTxEnvelope,
   materializeOutput,
   validateTx,
@@ -76,6 +77,7 @@ import {
   putIdentityRecord,
   getEmissionBox,
   getTreasuryBox,
+  getKarmaPoolBox,
   hasLikeRecord,
   insertLikeRecord,
   getLikeRecordCount,
@@ -121,105 +123,6 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 
-/**
- * The emission and treasury box transitions (MINING_INTERFACE → Coinbase
- * Application, receipt step 3; TYPES_INTERFACE → EmissionBox / TreasuryBox).
- *
- * ```
- * emission box:  successor.value = predecessor.value − emission
- * treasury box:  successor.value = (predecessor?.value ?? 0) + treasury
- * ```
- *
- * ⛔ **Nothing about either box rides in the block.** Producer and verifier
- * derive both from the same body, the way per-block like settlement already
- * does, so there is no field for the two to disagree about — the results are
- * committed through `stateRoot`, and `VERIFY_STATE_ROOT` forks an author out at
- * the next header if their successor was not the one this rule yields. That is
- * why this function computes rather than checks: deriving it identically **is**
- * the verification.
- *
- * **`=` rather than `≥`.** Under a bound the successor's value would be the
- * producer's choice within a range, and two valid chains would carry different
- * emission histories for no gain. Ergo's re-emission contract encodes the same
- * equality (EIP-27).
- *
- * ⛔ **A successor whose value would be zero is not created.** The genesis total
- * is exactly the schedule's sum, so the last emitting block consumes the box and
- * leaves none; above the terminus there is no emission box and nothing is
- * released. This is the box form of the rule the coinbase already carries — one
- * block, one encoding — and without it a zero-value box would be removed and
- * reinserted on every block forever. The treasury box is created late for the
- * same reason: at genesis it would hold zero.
- *
- * Returns `false` to reject the block. Both writes go through `insertBox` /
- * `consumeBox`, so they journal like every other mutation and the rollback
- * inverse comes for free.
- *
- * **Exported for direct testing**, the way `checkOutputShape` is. The terminus
- * is at height 5,900 on devnet and 7,401,600 on mainnet, so reaching it through
- * mined blocks is not available to a test — and a rule whose only assertions sit
- * at heights 1 and 2 is one whose terminus nothing covers.
- */
-export function settleEmissionAndTreasury(
-  height: number,
-  emission: bigint,
-  treasury: bigint,
-): boolean {
-  // A block at or above the terminus releases nothing and does not touch the
-  // box — which is also the only reason its absence there is not a fault.
-  if (emission > 0n) {
-    const box = getEmissionBox();
-    if (!box) {
-      console.warn(
-        `Rejected block height=${height}: schedule releases ${emission} but this ` +
-        `chain holds no emission box`,
-      );
-      return false;
-    }
-    if (box.value < emission) {
-      // Unreachable while `emissionTotal()` and `computeBlockReward` share the
-      // profile's parameters — the total IS the sum, so the box covers every
-      // release. Kept as the loud failure for the case where they stop
-      // agreeing, because the alternative is a negative successor value.
-      console.warn(
-        `Rejected block height=${height}: emission box holds ${box.value}, ` +
-        `short of the ${emission} this height releases`,
-      );
-      return false;
-    }
-    consumeBox(box.id!, height);
-    const remaining = box.value - emission;
-    if (remaining > 0n) {
-      const successor: EmissionBox = {
-        boxType: 'emission',
-        value: remaining,
-        txId: mintTxIdFor(emissionSuccessorContext(), height),
-        index: MINT_OUTPUT_INDEX,
-      };
-      successor.id = computeBoxId(successor);
-      insertBox(successor);
-    }
-  }
-
-  // Nothing accrues on a block whose treasury slice rounds to zero, so it does
-  // not touch the box — the shape that holds above the terminus with no fees,
-  // where the block touches neither.
-  if (treasury > 0n) {
-    const box = getTreasuryBox();
-    if (box) consumeBox(box.id!, height);
-    const successor: TreasuryBox = {
-      boxType: 'treasury',
-      value: (box?.value ?? 0n) + treasury,
-      txId: mintTxIdFor(treasurySuccessorContext(), height),
-      index: MINT_OUTPUT_INDEX,
-    };
-    successor.id = computeBoxId(successor);
-    insertBox(successor);
-  }
-
-  return true;
-}
-
 function processVouchCooldowns(currentHeight: number): void {
   const matured = getMaturedVouchCooldowns(currentHeight);
   for (const row of matured) {
@@ -231,27 +134,6 @@ function processVouchCooldowns(currentHeight: number): void {
     );
     deleteVouchCooldown(row.voucherId, row.targetId);
   }
-}
-
-/**
- * Return a cancelled invite's bond to its inviter, whole.
- *
- * The cancel transaction neither names the bond nor could spend it — no user
- * transition consumes a bond, so no signature admits one (NODE_INTERFACE →
- * "Bond transition rules"). The pairing is `inviteePublicKey` and nothing
- * else: an invite may not name an existing account, and a claim makes the
- * invitee one, so a key is invited at most once and names at most one live pair.
- *
- * No bond is not a fault: a store that has the invite but not its bond is
- * reachable only through a rollback boundary, and re-minting against a bond that
- * is not there would create karma from nothing — the one thing this whole unit
- * exists to confine to the claim.
- */
-function returnBond(inviteePublicKey: Uint8Array, height: number): void {
-  const bond = getBondFor(inviteePublicKey);
-  if (!bond || !bond.id) return;
-  consumeBox(bond.id, height);
-  mintKarma(bond.inviterId, bond.value, height, bondReturnContext(inviteePublicKey));
 }
 
 /**
@@ -508,7 +390,8 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   }
 
   // 4. Merkle root verification — one root over one body (transactions, prune
-  //    entries, coinbase outputs), each kept apart by its `leafHash` domain.
+  //    entries), each kept apart by its `leafHash` domain. The settlement is the
+  //    last transaction leaf, so its position is committed here.
 
   const computedUtxoRoot = computeUtxoTxRoot(block.utxoTxTree);
   if (computedUtxoRoot !== block.header.utxoTxRoot) {
@@ -517,28 +400,10 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     return false;
   }
 
-  // 5. Verify coinbase maturity locks
-  //
-  // The coinbase's *value* is checked in the mutation phase, because it equals
-  // the block's income and the fee term is not known until every embedded
-  // transaction has resolved (MINING_INTERFACE → Coinbase Application). The
-  // lock is not: it is a pure function of height, so it settles here, and it
-  // has to settle somewhere — each output's `lockedUntilBlock` travels into
-  // `mintCredits` exactly as the producer wrote it, so an unchecked `0` mints a
-  // coinbase spendable in the block that created it, bypassing the maturity
-  // delay entirely (MINING invariant 3). The gossip validator's `>= height`
-  // bound is both weaker than that and absent from the sync/reorg path.
-  const expectedLock = block.header.height + config.creditMinerRewardDelay;
-  for (const out of block.utxoTxTree.coinbaseOutputs) {
-    if (out.lockedUntilBlock !== expectedLock) {
-      console.warn(
-        `Rejected block height=${block.header.height}: coinbase lockedUntilBlock ` +
-        `${out.lockedUntilBlock} != expected ${expectedLock}`,
-      );
-      abortBlockJournal();
-      return false;
-    }
-  }
+  // 5. The coinbase's maturity lock is checked with the rest of the settlement,
+  //    in the mutation phase: the coinbase is an output of that transaction
+  //    and every clause about it is one rule in one place
+  //    (`settlement.ts` → checkSettlement).
 
   // 6. Store the block
   storeCreateOrderingBlock(block);
@@ -833,18 +698,12 @@ function applyMutationPhase(
   const blockPosts = postsOf(block);
   recordConfirmedSubBlocks(postIdsOf(block));
 
-  // 7. Apply coinbase — mint credits for each output. The store choke point
-  // journals both the pre-existing boxes the mint merges in and the new box.
-  //
-  // N mint events, not one N-output transaction: each output gets its own
-  // subject and its own synthetic txId. That reflects what the code does — each
-  // `mintCredits` call merges a *different* set of pre-existing credit boxes,
-  // so the outputs share no input set and are not one transaction in any
-  // meaningful sense (NODE_INTERFACE → "`index` is always 0 for mints").
-  for (let i = 0; i < block.utxoTxTree.coinbaseOutputs.length; i++) {
-    const out = block.utxoTxTree.coinbaseOutputs[i]!;
-    mintCredits(out.owner, out.value, height, coinbaseContext(i), out.lockedUntilBlock);
-  }
+  // 7. The coinbase is applied with the rest of the settlement, at §11a — after
+  // the body, because the fees it pays out are a property of what the body
+  // applied. ⛔ **There is no mint**: the credits are spent from the
+  // `EmissionBox` by the same transaction that emits them, so source and
+  // destination are named in one operation (MINING_INTERFACE → Coinbase
+  // Application).
 
   // 7. Store and confirm the posts this block creates.
   //
@@ -1101,9 +960,17 @@ function applyMutationPhase(
     outputs: AnyBox[];
   }
   const queue: QueuedTx[] = [];
+  // ⛔ **The LAST entry is the settlement, and that is the whole of how it is
+  // identified** (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+  // `verifyOrderingBlockStructure` has already refused a body with no entries,
+  // so this index exists; identifying the settlement by position rather than by
+  // what it spends is what lets a node find it with no UTXO set at all.
+  const lastIndex = block.utxoTxTree.utxoTxIds.length - 1;
+  let settlement: { txId: string; tx: UtxoTransaction; outputs: AnyBox[] } | null = null;
   for (let i = 0; i < block.utxoTxTree.utxoTxIds.length; i++) {
     const txId = block.utxoTxTree.utxoTxIds[i]!;
     const txCbor = block.utxoTxTree.utxoTxs[i];
+    const isSettlement = i === lastIndex;
 
     if (!txCbor) {
       console.warn(
@@ -1125,11 +992,16 @@ function applyMutationPhase(
 
     // Both gates run before `computeTxId` hashes the decoded value, and
     // together they are what makes that hash total: the envelope types every
-    // field `txIdBytes` reads directly, `checkOutputShape` the output fields it
+    // field `txIdBytes` reads directly, the output check the fields it
     // reaches through `canonicalBoxBytes`' throwing writers (NODE_INTERFACE →
     // "The output domain check"). Unchecked, an out-of-domain output field
     // becomes an exception absorbed by the funnel's totality handler instead of
     // the stated rejection below.
+    //
+    // ⚠ **The settlement gets the schema that admits the three protocol
+    // boxes.** It creates the emission, treasury and pool successors, which a
+    // user transaction may not — the same closed key set and the same field
+    // types, over a wider set of box types.
     const envelopeCheck = checkTxEnvelope(tx);
     if (!envelopeCheck.valid) {
       console.warn(
@@ -1139,7 +1011,9 @@ function applyMutationPhase(
       return false;
     }
 
-    const outputCheck = checkOutputShape(tx.outputs);
+    const outputCheck = isSettlement
+      ? checkSettlementOutputShape(tx.outputs)
+      : checkOutputShape(tx.outputs);
     if (!outputCheck.valid) {
       console.warn(
         `Rejected block height=${height}: embedded UTXO tx ${txId} has an ` +
@@ -1163,7 +1037,19 @@ function applyMutationPhase(
     const outputs = tx.outputs.map((box, index) =>
       materializeOutput(box as AnyBox, txId, index),
     );
-    queue.push({ txId, tx, outputs });
+    // ⛔ **The settlement never enters the queue.** `validateTx` governs user
+    // transactions: no signer authorizes a settlement and no transition row
+    // admits the pool, the emission box or a fee box as an input, so putting it
+    // through that gate would reject every valid block. Its own rule is
+    // `checkSettlement`, at §11a, after the body it is derived from has applied.
+    if (isSettlement) settlement = { txId, tx, outputs };
+    else queue.push({ txId, tx, outputs });
+  }
+  if (settlement === null) {
+    console.warn(
+      `Rejected block height=${height}: body carries no settlement transaction`,
+    );
+    return false;
   }
 
   // Per-block like accrual: in-memory, this invocation only — the
@@ -1173,28 +1059,36 @@ function applyMutationPhase(
   const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
   const likesPerPost = new Map<string, number>(); // post id → likes this block
 
-  // The block's income, accumulated as each transaction is applied
-  // (MINING_INTERFACE → Coinbase Application). Both quantities are gathered
-  // here rather than ahead of the loop because this is the only place an input
-  // is guaranteed to resolve: a transaction may spend a box an earlier
-  // transaction in this same block creates, and until the loop has applied that
-  // one, the confirmed set this phase reads through does not hold the output.
+  // What the settlement is derived from, accumulated as each transaction is
+  // applied (MINING_INTERFACE → Coinbase Application). Gathered here rather than
+  // ahead of the loop because this is the only place an input is guaranteed to
+  // resolve: a transaction may spend a box an earlier transaction in this same
+  // block creates, and until the loop has applied that one, the confirmed set
+  // this phase reads through does not hold the output.
+  //
+  // ⛔ **Collected in COMMITTED TRANSACTION ORDER, not apply order.** The
+  // deferral loop below may apply a later transaction first, and the settlement
+  // lists its fee-box inputs in the order the body fixes — so each transaction's
+  // contribution is written to its own slot and the slots are flattened after
+  // the loop. That is the difference between an order the block fixes and one
+  // this node's dependency resolution happened to produce.
   //
   // `appliedTxs` carries each transaction with its FIRST input box, which is
   // all `actorOf` reads, and reading it is sound only because `validateTx` has
   // passed by the time it is recorded — step 3's boxType pin is what makes the
   // first input speak for the transaction rather than being the producer's
   // choice.
-  let fees = 0n;
-  // The `FeeBox` ids this body creates, consumed at step 11a. **Block
-  // application consumes the fee boxes in the block that created them**
-  // (MINING_INTERFACE → Coinbase Application): block application is the only
-  // spender we have and it runs once per block, so a fee box surviving its
-  // block would hand its value to a later miner and break the coinbase
-  // identity. The insert/remove pair nets out of the prover feed, so neither
-  // reaches the AVL tree and `stateRoot` is unaffected.
-  const feeBoxIds: string[] = [];
+  const perTxOutputs = new Map<string, AnyBox[]>();
   const appliedTxs: EmbeddedTx[] = [];
+
+  // ⛔ **Two inviters naming the same key in one block must not both grant**
+  // (NODE_INTERFACE → Legal box transitions). The eligibility test each invite
+  // passed is `IdentityRecord` existence, and the grant that writes that record
+  // is the settlement's — which runs after every transaction here — so a
+  // record-existence test cannot see a sibling transaction in the same block.
+  // Without this the second bond draws a second `INVITE_KARMA_AMOUNT` from the
+  // pool for one key.
+  const invitedThisBlock = new Set<string>();
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1319,24 +1213,21 @@ function applyMutationPhase(
         }
       }
 
-      // Detect an invite claim or cancel before the InviteBox is consumed. The
-      // effects run *after* `applyTx`, because the claim's own karma output
-      // bumps the invitee's activity clock and the record write below must
-      // carry that bump rather than overwrite it.
-      let inviteToSettle: { invitee: Uint8Array; isCancel: boolean } | null = null;
-      for (const inputId of item.tx.inputs) {
-        const inputBox = getBox(inputId);
-        if (inputBox && inputBox.boxType === 'invite') {
-          // validateTx pinned an invite transaction to exactly one InviteBox
-          // input and to two shapes — zero outputs is a cancel, one karma
-          // output is a claim — so first-match is exhaustive and the
-          // discriminant is total.
-          inviteToSettle = {
-            invitee: (inputBox as import('@dagsocial/types').InviteBox).inviteePublicKey,
-            isCancel: item.tx.outputs.length === 0,
-          };
-          break;
+      // ⛔ **One invitee per block.** The bond IS the request, so a second bond
+      // naming a key an earlier transaction in this block already named would
+      // draw a second grant from the pool for one key. Refused before `applyTx`,
+      // so a rejected block has mutated nothing on this transaction's account.
+      const invitee = bondInviteeOf(item.outputs);
+      if (invitee !== null) {
+        const inviteeHex = Buffer.from(invitee).toString('hex');
+        if (invitedThisBlock.has(inviteeHex)) {
+          console.warn(
+            `Rejected block height=${height}: invite tx ${item.txId} names ` +
+            `${inviteeHex}, which another bond in this block already names`,
+          );
+          return false;
         }
+        invitedThisBlock.add(inviteeHex);
       }
 
       // Before `applyTx` consumes them. Every input is present (tested at the
@@ -1346,43 +1237,15 @@ function applyMutationPhase(
       if (firstInput !== undefined) {
         appliedTxs.push({ tx: item.tx, inputBoxes: [getBox(firstInput)!] });
       }
-      // ⛔ **A sum over boxes, resolving no inputs** (MINING_INTERFACE →
-      // Coinbase Application). Every fee in the block is written down in it, so
-      // the total is a property of the body's own bytes — `item.outputs` are
-      // the materialized outputs `validateTx` computed, the same ones `applyTx`
-      // is about to insert, so the id collected here is the id that exists.
-      for (const out of item.outputs) {
-        if (out.boxType !== 'fee') continue;
-        fees += out.value;
-        feeBoxIds.push(out.id!);
-      }
+      // Keyed by the declared id rather than pushed, so the settlement reads
+      // these in committed order and not in the order deferral resolved them.
+      // `item.outputs` are the materialized outputs `validateTx` computed, the
+      // same ones `applyTx` is about to insert, so the id collected here is the
+      // id that exists.
+      perTxOutputs.set(item.txId, item.outputs);
 
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
-
-      if (inviteToSettle !== null) {
-        if (inviteToSettle.isCancel) {
-          returnBond(inviteToSettle.invitee, height);
-        } else {
-          // The claim's height, which dates the settlement sweep's deadline
-          // (NODE_INTERFACE → Identity Records). Re-read after `applyTx` so the
-          // activity bump the karma mint just wrote survives; a missing record
-          // means maximally stale ({0, 0}), never "skip".
-          const invitee = inviteToSettle.invitee;
-          const after = getIdentityRecord(invitee);
-          putIdentityRecord(invitee, {
-            lastActivityBlock: after?.lastActivityBlock ?? 0,
-            lastDecayBlock: after?.lastDecayBlock ?? 0,
-            likeCarry: after?.likeCarry ?? 0n,
-            invitedAtBlock: height,
-            // Carried through rather than written, and it is always 0 here: a
-            // legal invitee is not an account yet, so it has never held karma,
-            // never posted and never been liked. The read is what keeps that a
-            // consequence of the bar rather than an assumption this line makes.
-            lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
-          });
-        }
-      }
 
       if (likeToRecord !== null) {
         // Journalled side-record (inverse: deleteLikeRecord), plus the
@@ -1429,95 +1292,88 @@ function applyMutationPhase(
     queue.push(...remaining);
   }
 
-  // 11a. The coinbase carries the block's income (MINING_INTERFACE → Coinbase
-  // Application): the scheduled emission plus the fees the body just yielded.
+  // 11a. The settlement transaction — the block's every protocol effect, in one
+  // transaction committed under `utxoTxRoot` (NODE_INTERFACE → the settlement
+  // transaction).
   //
-  // It sits after the loop because `fees` is a property of what the body
-  // applied, and inside this phase because the phase is the one derivation both
-  // the applier and the creator's speculative run share — so a creator whose
-  // own coinbase does not equal its income declines to produce the block
-  // instead of mining one every peer will refuse.
+  // It sits after the loop because what it consumes and pays is a property of
+  // what the body applied, and inside this phase because the phase is the one
+  // derivation both the applier and the creator's speculative run share — so a
+  // creator whose own settlement does not match its body declines to produce the
+  // block instead of mining one every peer will refuse.
   //
-  // The mints already ran (§7). They can, because the coinbase's values are in
-  // the block and need no fee term; a rejection here unwinds them with
-  // everything else through the funnel's transaction.
-  const emission = computeBlockReward(height);
-  const actors = countKarmaActors(appliedTxs, block.header.validatorId);
-  const split = splitCoinbase(emission, fees, actors);
+  // ⛔ **The body is read in COMMITTED transaction order**, walking
+  // `utxoTxIds` rather than the order deferral applied them in. The settlement
+  // lists its fee-box inputs in that order and its id hashes them in that order,
+  // so a node whose dependency resolution ran differently must still derive the
+  // same transaction.
+  const settlementBody = emptyBody();
+  for (let i = 0; i < lastIndex; i++) {
+    const outputs = perTxOutputs.get(block.utxoTxTree.utxoTxIds[i]!);
+    if (outputs) contributeToBody(settlementBody, outputs);
+  }
+  settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
 
-  // ⚠ **The income and the coinbase are different numbers, on every network.**
-  // The coinbase is the miner's slice alone; the treasury's share and the
-  // forfeited bonus accrue to the `TreasuryBox` and are never an output
-  // (MINING_INTERFACE → Coinbase Application, receipt step 2). A miner who
-  // recovered their own forfeit would face a delay rather than a cost, and the
-  // inclusion bonus would price nothing.
-  const totalCoinbase = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
-  if (totalCoinbase !== split.miner) {
+  const emission = computeBlockReward(height);
+  const settlementCheck = checkSettlement(
+    { getEmissionBox, getTreasuryBox, getKarmaPoolBox, getBox },
+    height,
+    emission,
+    config.creditMinerRewardDelay,
+    settlementBody,
+    settlement.tx,
+  );
+  if (!settlementCheck.valid) {
     console.warn(
-      `Rejected block height=${height}: coinbase value ${totalCoinbase} != ` +
-      `miner slice ${split.miner} (emission ${emission} + fees ${fees}, ` +
-      `treasury ${split.treasury} accrues to the treasury box)`,
+      `Rejected block height=${height}: settlement ${settlement.txId}: ` +
+      `${settlementCheck.error}`,
     );
     return false;
   }
 
-  // One block, one encoding. A zero-value output changes `utxoTxRoot` and the
-  // block hash while changing nothing about what is paid. After the total,
-  // because that is the substantive rule and a coinbase claiming the wrong
-  // amount must be named as that rather than as an encoding fault.
-  for (const out of block.utxoTxTree.coinbaseOutputs) {
-    if (out.value === 0n) {
-      console.warn(`Rejected block height=${height}: zero-value coinbase output`);
-      return false;
-    }
+  // 11a-i. Apply it, like any other transaction: consume the inputs, insert the
+  // outputs. That is what makes the coinbase, the emission and treasury
+  // successors and every invite grant one operation with a named source and a
+  // named sink (ARCHITECTURE → The conservation axiom).
+  //
+  // ⛔ **The fee boxes are consumed HERE, as the settlement's inputs.** Block
+  // application is their only spender and it runs once per block, so a fee box
+  // surviving its block would hand its value to a later miner and break the
+  // coinbase identity. Every insert above is followed by its remove here, so
+  // `proverFeedFromJournal` nets the pair and neither operation reaches the
+  // prover — a fee box is absent from the AVL tree in the only block it ever
+  // exists in.
+  //
+  // ⛔ **NOT `recordAppliedUtxoTx`, and that is not an omission.** The journal's
+  // transaction records exist for one purpose — `revertBlock` re-inserts them
+  // into the mempool — and the settlement is derived from a body rather than
+  // submitted by anyone. Recording it would put a protocol transaction into the
+  // pool on every reorg, where the next fill would draw it in as a user entry.
+  // Its box mutations are journalled by the store choke point like every other,
+  // so the rollback inverse is unaffected.
+  applyTx(utxoDeps, settlement.tx, settlement.outputs, height);
+
+  // 11a-ii. The probation clock, dated by the invite's own height
+  // (ARCHITECTURE → Invite System; NODE_INTERFACE → Identity Records). Read
+  // after the grant so the activity bump the settlement's karma output just
+  // wrote survives; a missing record means maximally stale ({0, 0}), never
+  // "skip". Ascending invitee order, so two grants in one block write in an
+  // order the block fixes rather than one a map's iteration happens to produce.
+  for (const inviteeHex of [...invitedThisBlock].sort()) {
+    const invitee = new Uint8Array(Buffer.from(inviteeHex, 'hex'));
+    const after = getIdentityRecord(invitee);
+    putIdentityRecord(invitee, {
+      lastActivityBlock: after?.lastActivityBlock ?? 0,
+      lastDecayBlock: after?.lastDecayBlock ?? 0,
+      likeCarry: after?.likeCarry ?? 0n,
+      invitedAtBlock: height,
+      // Carried through rather than written, and it is always 0 here: a legal
+      // invitee is not an account yet, so it has never held karma, never posted
+      // and never been liked. The read is what keeps that a consequence of the
+      // bar rather than an assumption this line makes.
+      lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
+    });
   }
-
-  // `isTreasury` has exactly one legal value: nothing is paid to the treasury
-  // through the coinbase, so every output is the miner's and `false` is
-  // accurate. A block claiming otherwise is **rejected rather than
-  // reinterpreted** (MINING_INTERFACE → Coinbase Application, receipt step 4b)
-  // — the field is in `utxoTxRoot`, so a `true` one is a different block hash
-  // for a coinbase this node would otherwise treat as identical.
-  //
-  // ⚠ **This is the check that keeps the field honest until it is deleted.**
-  // Its removal reaches four packages (types, validation, net, node) and is its
-  // own unit; TYPES_INTERFACE → Coinbase output marks it AHEAD OF CODE.
-  for (const out of block.utxoTxTree.coinbaseOutputs) {
-    if (out.isTreasury) {
-      console.warn(
-        `Rejected block height=${height}: coinbase output flagged isTreasury; ` +
-        `the treasury's share accrues to the treasury box, never to an output`,
-      );
-      return false;
-    }
-  }
-
-  // The split, not only the sum. A block paying the whole income to its miner
-  // sums correctly and forfeits nothing, so a total-only check would be the
-  // vacuous one here — the forfeit is the entire mechanism the bonus prices
-  // inclusion with. **The two box transitions below are where that is
-  // enforced**: the coinbase check above pins the miner's half, and the
-  // successors pin what was released and what was forfeited.
-  //
-  // Which key the miner pays their own slice to, and across how many outputs,
-  // is the producer's business and is committed to in `utxoTxRoot` like
-  // everything else.
-
-  // 11a-i. The fee boxes fund the coinbase just verified, and block application
-  // is their only spender — so they are consumed here, in the block that
-  // created them (MINING_INTERFACE → Coinbase Application). After the coinbase
-  // checks, because a rejected block must not have spent anything; the funnel's
-  // transaction would unwind it either way, and the ordering says which
-  // rejection is the block's fault.
-  //
-  // Every insert above is followed by its remove here, so `proverFeedFromJournal`
-  // nets the pair and neither operation reaches the prover — the fee box is
-  // absent from the AVL tree in the only block it ever exists in, and
-  // `stateRoot` is identical to one computed without materializing it at all.
-  for (const feeBoxId of feeBoxIds) consumeBox(feeBoxId, height);
-
-  // 11a-ii. The emission and treasury box transitions.
-  if (!settleEmissionAndTreasury(height, emission, split.treasury)) return false;
 
   // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like
   // settlement"). Entirely derived — nothing rides in the block, so producer

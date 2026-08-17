@@ -5,7 +5,7 @@ import {
   PROTOCOL_VERSION,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
-import type { CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, NetworkType, UtxoTransaction } from '@dagsocial/types';
+import type { CandidateOf, KarmaBox, CreditBox, BondBox, NetworkType, UtxoTransaction } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import { validateTx } from '../services/utxo-engine.js';
 import { admitTx } from '../services/admit-tx.js';
@@ -37,7 +37,6 @@ export interface UtxoDeps {
   getKarmaBoxes(owner: Uint8Array): KarmaBox[];
   getCreditBox(owner: Uint8Array): CreditBox | null;
   getCreditBoxes(owner: Uint8Array): CreditBox[];
-  getOpenInvites(inviterId: Uint8Array): InviteBox[];
   getBondBoxes(inviterId: Uint8Array): BondBox[];
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
@@ -304,23 +303,19 @@ export function createRouter(deps: UtxoDeps): Router {
     res.json({ txId: outcome.txId, amount: FAUCET_AMOUNT.toString() });
   });
 
-  // GET /invites/:userId — the open invites and bonds an inviter holds
+  // GET /invites/:userId — the bonds an inviter holds
+  //
+  // ⛔ **The `open` array is gone with the box it listed.** An invite is one
+  // transaction creating a bond, so a bond IS the open invite and a second list
+  // would be the same rows under another name (ARCHITECTURE → Invite System).
+  // A bond is live from creation until its probation deadline.
   router.get('/invites/:userId', (req, res) => {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    // "open" is the whole of an invite's life apart from claimed and cancelled:
-    // it has no expiry, so nothing else can end one.
-    const open = deps.getOpenInvites(userIdBytes);
     const bonds = deps.getBondBoxes(userIdBytes);
 
     res.json({
-      open: open.map((inv) => ({
-        id: inv.id,
-        value: inv.value.toString(),
-        inviterId: Buffer.from(inv.inviterId).toString('hex'),
-        inviteePublicKey: Buffer.from(inv.inviteePublicKey).toString('hex'),
-      })),
       bonds: bonds.map((b) => ({
         id: b.id,
         value: b.value.toString(),

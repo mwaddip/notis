@@ -120,7 +120,6 @@ describe('checkTxEnvelope — the closed envelope', () => {
     expect(
       checkTxEnvelope(
         envelope({
-          preimages: { [HEX_B]: new Uint8Array([1, 2, 3]) },
           likeTarget: HEX_B,
           signatures: { [HEX_B]: new Uint8Array(64) },
         }),
@@ -164,18 +163,29 @@ describe('checkTxEnvelope — the closed envelope', () => {
     expect(reject(dirty)).toContain("unexpected key 'bogusKey'");
   });
 
-  it('rejects any key present with the value undefined', () => {
-    for (const key of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'preimages', 'likeTarget']) {
+  it('rejects a REQUIRED key present with the value undefined', () => {
+    for (const key of ['inputs', 'outputs', 'signatures', 'protocolVersion']) {
       const err = reject(envelope({ [key]: undefined }));
       expect(err, key).toContain(`key '${key}' is present with value undefined`);
     }
   });
 
-  it('a present-undefined likeTarget hashes as absent — the ambiguity refused', () => {
+  it('a present-undefined likeTarget IS absence — one encoding, so nothing to refuse', () => {
+    // ⛔ **The rule inverted with the codec, and the reason is `opt()`.** An
+    // absent optional field writes a single presence tag, so present-`undefined`
+    // and absent are ONE byte string rather than two — and `computeTxId` reads
+    // it with the same `!== undefined` test. There is no ambiguity left for a
+    // gate to refuse.
+    //
+    // ⚠ **And `decodeTx` produces exactly this shape**: it writes `likeTarget`
+    // and `post` unconditionally, holding `undefined` where the tag said absent.
+    // A gate refusing it refuses every non-like transaction inside a block.
     const absent = envelope() as unknown as UtxoTransaction;
     const present = envelope({ likeTarget: undefined }) as unknown as UtxoTransaction;
     expect(computeTxId(present)).toBe(computeTxId(absent));
-    expect(reject(present)).toContain('present with value undefined');
+    expect(reject(present)).toBeNull();
+    expect(Object.hasOwn(decodeTx(encodeTx(absent)), 'likeTarget')).toBe(true);
+    expect(decodeTx(encodeTx(absent)).likeTarget).toBeUndefined();
   });
 
   it('rejects a missing required key', () => {
@@ -278,55 +288,28 @@ describe('checkTxEnvelope — the closed envelope', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 6. preimages
+  // 6. preimages — the name is RESERVED, never to be reused
   // -------------------------------------------------------------------------
 
-  it('still rejects a present-but-EMPTY preimages map, now as belt-and-braces — the malleability is gone', () => {
-    // ⚠ **The assertion here is INVERTED from what it was, and so is the name.**
-    //
-    // It used to read "…— the CBOR malleability" and assert
-    // `computeTxId(empty) === computeTxId(absent)`: under the old preimage an
-    // absent map and an empty one both appended *nothing*, so two distinct
-    // transactions shared an id and this gate was the only thing preventing it.
-    //
-    // `opt()` closes that structurally — absence is the tag byte `00`, an empty
-    // map is `01 00` — so the equality is now false by construction. A test
-    // called "the CBOR malleability" that proves the malleability is gone is a
-    // name that misleads the next reader, hence the rename rather than a quiet
-    // constant swap.
-    //
-    // The gate is kept and still asserted: it is a *semantic* rule (an empty
-    // preimages map means the sender built something incoherent) and it is
-    // cheaper to reject at the envelope than to let it reach authorization.
-    // What changed is its standing — sole defence, now redundancy.
-    const absent = envelope() as unknown as UtxoTransaction;
-    const empty = envelope({ preimages: {} }) as unknown as UtxoTransaction;
-    expect(computeTxId(empty)).not.toBe(computeTxId(absent));
-    expect(reject(empty)).toContain('preimages is present but empty');
-  });
-
-  it('rejects a non-object preimages map', () => {
-    for (const v of [null, 5, 'x', [], true]) {
+  it('refuses a preimages key as an unexpected one, not as a malformed field', () => {
+    // ⛔ **`preimages` is not a field of `UtxoTransaction`** (TYPES_INTERFACE →
+    // Layout — UtxoTransaction: the name is reserved). It is outside the `TxId`
+    // preimage, so admitting it would be free malleability — two byte strings
+    // carrying one id — which is the class the closed key set exists to close.
+    // The diagnosis is therefore the unknown-key one, and every shape of the
+    // old field lands on it identically.
+    for (const v of [{}, null, 5, { [HEX_B]: new Uint8Array([1]) }, { zz: 1 }]) {
       const err = reject(envelope({ preimages: v }));
-      expect(err, `preimages=${String(v)}`).toContain('preimages must be a plain object');
+      expect(err, String(v)).toContain("unexpected key 'preimages'");
     }
   });
 
-  it('rejects a non-hex preimage key and a non-bytes preimage value', () => {
-    expect(reject(envelope({ preimages: { nope: new Uint8Array([1]) } }))).toContain(
-      'preimages key must be 64 lowercase hex characters',
-    );
-    // The measured `h.update(5)` throw.
-    expect(reject(envelope({ preimages: { [HEX_B]: 5 } }))).toContain('must be a Uint8Array');
-    expect(reject(envelope({ preimages: { [HEX_B]: 'deadbeef' } }))).toContain(
-      'must be a Uint8Array',
-    );
-    expect(reject(envelope({ preimages: { [HEX_B]: null } }))).toContain('must be a Uint8Array');
-  });
-
-  it('puts no length bound on a preimage value', () => {
-    expect(reject(envelope({ preimages: { [HEX_B]: new Uint8Array(0) } }))).toBeNull();
-    expect(reject(envelope({ preimages: { [HEX_B]: new Uint8Array(4096) } }))).toBeNull();
+  it('and the node hashes the same id with or without one', () => {
+    // The malleability, shown rather than asserted: the two differ on the wire
+    // and hash alike, which is exactly why the key set has to be closed.
+    const clean = envelope() as unknown as UtxoTransaction;
+    const stray = envelope({ preimages: { [HEX_B]: new Uint8Array([1]) } }) as unknown as UtxoTransaction;
+    expect(computeTxId(stray)).toBe(computeTxId(clean));
   });
 
   // -------------------------------------------------------------------------
@@ -486,13 +469,14 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     ['signatures: {hex: 63 bytes}', { signatures: { [HEX_A]: new Uint8Array(63) } }],
     ['signatures: {non-hex: bytes}', { signatures: { zz: new Uint8Array(64) } }],
     ['likeTarget: null', { likeTarget: null }],
-    ['likeTarget: present-undefined', { likeTarget: undefined }],
+    // ⛔ **`likeTarget: undefined` is NOT here, and its absence is the rule.**
+    // `opt()` gives absence one encoding, so present-`undefined` is absence
+    // rather than an ambiguity — and it is the shape `decodeTx` produces for
+    // every non-like transaction. Its acceptance is asserted above.
     ['likeTarget: non-hex string', { likeTarget: 'target_post' }],
     ['likeTarget: 5', { likeTarget: 5 }],
-    ['preimages: {hex: 5}', { preimages: { [HEX_B]: 5 } }],
-    ['preimages: {} (empty)', { preimages: {} }],
-    ['preimages: null', { preimages: null }],
-    ['preimages: {non-hex: bytes}', { preimages: { zz: new Uint8Array(1) } }],
+    ['preimages: {hex: 5} (a reserved name)', { preimages: { [HEX_B]: 5 } }],
+    ['preimages: {} (a reserved name)', { preimages: {} }],
     ['protocolVersion: "x"', { protocolVersion: 'x' }],
     ['protocolVersion: 2', { protocolVersion: PROTOCOL_VERSION + 1 }],
     ['protocolVersion: 1.5', { protocolVersion: 1.5 }],
@@ -502,10 +486,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 
   it.each(CORPUS)('rejects %s at step 0 — no throw, no signature wording', (label, patch) => {
     const tx = unsignedTx(patch);
-    if ('likeTarget' in patch && patch.likeTarget === undefined) {
-      // `...over` with an explicit undefined already creates the own key.
-      expect(Object.hasOwn(tx, 'likeTarget')).toBe(true);
-    }
 
     let result: ReturnType<typeof validateTx> | undefined;
     expect(() => {
@@ -587,68 +567,50 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The decode layer — raw CBOR bytes, through decodeTx, into the gate
+// The decode layer — raw bytes, through decodeTx, into the gate
+//
+// ⛔ **THE DECODER IS POSITIONAL, so it cannot hand this gate a hostile map at
+// all.** It reads fixed widths and length prefixes off a byte string, so what it
+// returns is an object with the codec's own key set and the codec's own field
+// types — there is no `__proto__` key to rename, no `outputs: 'no'`, and no
+// arbitrary value to survive. What it CAN do is refuse, and that is what these
+// pin (VALIDATION_INTERFACE → What a decoder subsumes).
+//
+// ⚠ **The gate is not thereby redundant.** It runs at `validateTx` step 0, where
+// the transaction came off the HTTP edge through `jsonToTx` and crossed no
+// decoder — which is the whole reason it is stated once and called from both.
 // ---------------------------------------------------------------------------
 
 describe('checkTxEnvelope at the decode boundary', () => {
-  /** Encode a CBOR map carrying a literal `__proto__` key. */
-  function cborWithProtoKey(payload: unknown): Uint8Array {
-    const o: Record<string, unknown> = {};
-    Object.defineProperty(o, '__proto__', {
-      value: payload,
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-    Object.assign(o, { outputs: [], signatures: {}, protocolVersion: PROTOCOL_VERSION });
-    return cborEncode(o) as unknown as Uint8Array;
-  }
-
-  it('rejects a decoded map carrying a __proto__ key, and nothing escapes', () => {
-    const bytes = cborWithProtoKey({ inputs: [HEX_A], likeTarget: HEX_B });
-    const decoded = decodeTx(bytes);
-
-    // MEASURED, and it corrects the contracted rationale: cbor-x does not set
-    // the prototype from a `__proto__` map key — it RENAMES the key (to
-    // `__proto_`) and leaves Object.prototype intact. So the rejection arm
-    // that fires is the closed-key-set one, not missing-required-key.
-    expect(Object.getPrototypeOf(decoded)).toBe(Object.prototype);
-    expect(Object.hasOwn(decoded, 'inputs')).toBe(false);
-    expect((decoded as unknown as { likeTarget?: unknown }).likeTarget).toBeUndefined();
-
-    const result = checkTxEnvelope(decoded);
-    expect(result.valid).toBe(false);
-    // The exact arm, so this pins the measured decoder behaviour rather than
-    // merely "something rejected": the renamed key is an unknown own key.
-    expect(result.error).toContain("unexpected key '__proto_'");
-
-    // Nothing escaped into the global prototype, and nothing escaped into the
-    // error path either — the message quotes a key name, not a rendered object.
-    expect(({} as Record<string, unknown>).inputs).toBeUndefined();
-    expect(({} as Record<string, unknown>).likeTarget).toBeUndefined();
-    expect(result.error).not.toContain(HEX_B);
-  });
-
-  it('survives an arbitrary decoded CBOR value without throwing', () => {
-    const values: unknown[] = [
-      5,
-      'a string',
-      [1, 2, 3],
+  it('the decoder REFUSES arbitrary bytes rather than producing an object', () => {
+    const values: Uint8Array[] = [
+      new Uint8Array([5]),
       new Uint8Array([1, 2, 3]),
-      null,
-      { inputs: [1, 2], outputs: 'no', signatures: 7, protocolVersion: [] },
-      new Map([['inputs', []]]),
+      new Uint8Array(0),
+      cborEncode({ inputs: [1, 2], outputs: 'no' }) as unknown as Uint8Array,
+      cborEncode(['a string']) as unknown as Uint8Array,
     ];
-    for (const v of values) {
-      const decoded: unknown = decodeTx(cborEncode(v) as unknown as Uint8Array);
-      expect(() => checkTxEnvelope(decoded), JSON.stringify(String(v))).not.toThrow();
-      expect(checkTxEnvelope(decoded).valid, String(v)).toBe(false);
+    for (const bytes of values) {
+      expect(() => decodeTx(bytes), Buffer.from(bytes).toString('hex')).toThrow();
     }
   });
 
-  it('round-trips an honest transaction through CBOR unchanged', () => {
+  it('and what it DOES return carries the closed key set, nothing else', () => {
+    // Including the two optional fields, present and holding `undefined` where
+    // the presence tag said absent — the shape the gate has to accept.
+    const tx = envelope() as unknown as UtxoTransaction;
+    const decoded = decodeTx(encodeTx(tx));
+    for (const key of Object.keys(decoded)) {
+      expect(
+        ['inputs', 'outputs', 'signatures', 'protocolVersion', 'likeTarget', 'post'],
+        key,
+      ).toContain(key);
+    }
+    expect(checkTxEnvelope(decoded)).toEqual({ valid: true });
+  });
+
+  it('round-trips an honest transaction through the codec unchanged', () => {
     const tx = envelope({
-      preimages: { [HEX_B]: new Uint8Array([9, 9]) },
       signatures: { [HEX_A]: new Uint8Array(64).fill(7) },
       likeTarget: HEX_B,
     }) as unknown as UtxoTransaction;

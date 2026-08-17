@@ -43,10 +43,11 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       createdAt: Date.now(),
     },
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      // Every body carries a settlement as its last entry, and this one carries
+      // nothing else (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+      utxoTxIds: ['5e'.repeat(32)],
+      utxoTxs: [new Uint8Array(96).fill(0x5e)],
       pruneEntries: [],
-      coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
   };
@@ -259,7 +260,6 @@ describe('blocks routes', () => {
     );
     const seeded: Array<[string, bigint]> = [
       ['karma', 7n],
-      ['invite', 11n],
       ['bond', 13n],
       ['post_lock', 5n],
       ['vouch', 1n],

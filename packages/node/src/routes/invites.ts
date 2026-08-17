@@ -18,30 +18,7 @@ export interface InvitesDeps extends UtxoEngineDeps {
     status: 'pending';
     txId: string;
     expiresAtHeight: number;
-    inviteBox: { id?: string };
     bondBox: { id?: string };
-    tx: UtxoTransaction;
-  };
-  claimInvite(
-    deps: UtxoEngineDeps,
-    tx: UtxoTransaction,
-    currentBlockHeight: number,
-  ): {
-    status: 'pending';
-    txId: string;
-    expiresAtHeight: number;
-    userId: Uint8Array;
-    karmaBoxId: string;
-    tx: UtxoTransaction;
-  };
-  cancelInvite(
-    deps: UtxoEngineDeps,
-    tx: UtxoTransaction,
-    currentBlockHeight: number,
-  ): {
-    status: 'pending';
-    txId: string;
-    expiresAtHeight: number;
     tx: UtxoTransaction;
   };
   getCurrentHeight(): number;
@@ -83,11 +60,14 @@ export function createRouter(deps: InvitesDeps): Router {
         });
       }
 
+      // ⛔ **`inviteBoxId` is gone from this response, and that is an API
+      // break rather than internal cleanup** (NODE_INTERFACE → Invites). There
+      // is no invite box: the bond is the request, and the block's settlement
+      // grants the invitee their karma out of the pool.
       res.status(201).json({
         status: 'pending',
         txId: result.txId,
         expiresAtHeight: result.expiresAtHeight,
-        inviteBoxId: result.inviteBox.id,
         bondBoxId: result.bondBox.id,
       });
     } catch (err) {
@@ -95,88 +75,9 @@ export function createRouter(deps: InvitesDeps): Router {
     }
   });
 
-  // POST /invites/claim — claim an invite with the preimage secret
-  router.post('/claim', (req, res) => {
-    const body = req.body as { tx?: Record<string, unknown> };
-
-    if (!body.tx) {
-      res.status(400).json({ error: 'tx required' });
-      return;
-    }
-
-    let tx: UtxoTransaction;
-    try {
-      tx = jsonToTx(body.tx);
-    } catch (err) {
-      respondError(res, err, 'POST /invites/claim (tx decode)', 'message');
-      return;
-    }
-
-    try {
-      const currentHeight = deps.getCurrentHeight();
-      const result = deps.claimInvite(deps, tx, currentHeight);
-
-      // Broadcast invite claim tx to peers (fire-and-forget)
-      const net = getNet();
-      if (net) {
-        net.broadcastTx(result.tx).catch((err: Error) => {
-          console.warn(`Failed to broadcast invite claim tx: ${err.message}`);
-        });
-      }
-
-      res.status(201).json({
-        status: 'pending',
-        txId: result.txId,
-        expiresAtHeight: result.expiresAtHeight,
-        userId: Buffer.from(result.userId).toString('hex'),
-        karmaBoxId: result.karmaBoxId,
-      });
-    } catch (err) {
-      respondError(res, err, 'POST /invites/claim', 'message');
-    }
-  });
-
-  // POST /invites/cancel — cancel an unclaimed invite
-  router.post('/cancel', (req, res) => {
-    const body = req.body as { tx?: Record<string, unknown> };
-
-    if (!body.tx) {
-      res.status(400).json({ error: 'tx required' });
-      return;
-    }
-
-    let tx: UtxoTransaction;
-    try {
-      tx = jsonToTx(body.tx);
-    } catch (err) {
-      respondError(res, err, 'POST /invites/cancel (tx decode)', 'message');
-      return;
-    }
-
-    try {
-      const currentHeight = deps.getCurrentHeight();
-      const result = deps.cancelInvite(deps, tx, currentHeight);
-
-      // Broadcast invite cancel tx to peers (fire-and-forget)
-      const net = getNet();
-      if (net) {
-        net.broadcastTx(result.tx).catch((err: Error) => {
-          console.warn(`Failed to broadcast invite cancel tx: ${err.message}`);
-        });
-      }
-
-      res.status(200).json({
-        status: 'pending',
-        txId: result.txId,
-        expiresAtHeight: result.expiresAtHeight,
-      });
-    } catch (err) {
-      // 403 for an inviter mismatch rides on the typed error's statusCode; the
-      // 'already claimed' / 'already spent' branches are 400, the same as the
-      // fallback (audit L-12).
-      respondError(res, err, 'POST /invites/cancel', 'message');
-    }
-  });
+  // `POST /invites/claim` and `POST /invites/cancel` are deleted with the
+  // transactions they submitted (NODE_INTERFACE → Invites). There is one step,
+  // not two.
 
   return router;
 }

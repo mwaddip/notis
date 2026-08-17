@@ -89,18 +89,6 @@ const CASES: readonly Case[] = [
     outputs: () => [],
     signer: 'holder',
   },
-  // *inviter-signed* on the zero-output exit. The claim exit is the same box
-  // under a different transition, and both directions are pinned in
-  // `utxo-engine.test.ts`.
-  {
-    boxType: 'invite',
-    box: (h, o) => ({
-      boxType: 'invite', value: 0n, inviterId: h.userId, inviteePublicKey: o.userId,
-    }),
-    outputs: () => [],
-    signer: 'holder',
-  },
-
   // No transition admits any of these as an input.
   {
     boxType: 'bond',
@@ -134,6 +122,12 @@ const CASES: readonly Case[] = [
     boxType: 'treasury',
     box: () => ({ boxType: 'treasury', value: 10n }),
     outputs: (h) => [creditOut(h.userId, 10n)],
+    signer: null,
+  },
+  {
+    boxType: 'karma_pool',
+    box: () => ({ boxType: 'karma_pool', value: 10n }),
+    outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: null,
   },
   {
@@ -194,11 +188,17 @@ describe('authorization is a property of the transition', () => {
   }
 
   // -------------------------------------------------------------------------
-  // The dichotomy, over every box type. A type is either signature-requiring or
-  // admitted by no transition, and the table must say which for all ten — the
-  // `Record` over `AnyBox['boxType']` makes omitting one a compile error, and
-  // this is the runtime half: every type reaches a verdict, none reaches an
-  // "unknown" arm, and none throws.
+  // The dichotomy, over every box type a transaction can reach. A type is either
+  // signature-requiring or admitted by no transition, and `AUTHORIZATION`'s
+  // `Record` over `AnyBox['boxType']` makes omitting one a compile error; this is
+  // the runtime half: every type reaches a verdict, none reaches an "unknown"
+  // arm, and none throws.
+  //
+  // ⚠ **`like_accrual` and `vouch_escrow` are absent, and it is not an
+  // omission.** Nothing creates either yet, so neither can be seeded as an input
+  // to spend — the unit that first emits one adds its row here
+  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox). Their entry in
+  // `AUTHORIZATION` is `BLOCK_APPLICATION_ONLY` and is asserted by the compiler.
   // -------------------------------------------------------------------------
   describe('every box type is either signature-requiring or admitted by no transition', () => {
     it('covers every box type in `AnyBox`', () => {
@@ -208,7 +208,7 @@ describe('authorization is a property of the transition', () => {
       expect(covered.size).toBe(CASES.length);
       expect([...covered].sort()).toEqual([
         'bond', 'credit', 'emission', 'fee', 'genesis_proof',
-        'invite', 'karma', 'post_lock', 'treasury', 'vouch',
+        'karma', 'karma_pool', 'post_lock', 'treasury', 'vouch',
       ]);
     });
 

@@ -60,7 +60,8 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  solveHeaderPow, fixturePostId, seedPostTx, fillerTx } from '../helpers.js';
+  solveHeaderPow, fixturePostId, seedPostTx, fillerTx,
+  coinbaseOf, withCoinbase } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -243,7 +244,7 @@ describe('block-apply journal recording', () => {
     // Genesis miner has no prior credits, so each coinbase output is exactly
     // one credit insert, its box bytes carried in the journal payload
     const creditInserts = boxInserts(saved!, (b) => b.boxType === 'credit');
-    expect(creditInserts.length).toBe(block!.utxoTxTree.coinbaseOutputs.length);
+    expect(creditInserts.length).toBe(coinbaseOf(block!).length);
 
     // ⚠ **A paying block mutates four boxes, not one.** Besides the coinbase
     // mint it spends the emission box to its successor and accrues to the
@@ -393,9 +394,11 @@ describe('block-apply journal recording', () => {
         createdAt: Date.now(),
       },
       utxoTxTree: {
-        utxoTxIds: [],
-        utxoTxs: [],
-        pruneEntries: [], coinbaseOutputs: [],
+        // A body's last entry is its settlement; PoW is refused before anything
+        // reads it, so an opaque one is enough here.
+        utxoTxIds: ['99'.repeat(32)],
+        utxoTxs: [new Uint8Array(96).fill(0x99)],
+        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -444,9 +447,11 @@ describe('block-apply journal recording', () => {
         createdAt: Date.now(),
       },
       utxoTxTree: {
-        utxoTxIds: [],
-        utxoTxs: [],
-        pruneEntries: [], coinbaseOutputs: [],
+        // A body's last entry is its settlement; PoW is refused before anything
+        // reads it, so an opaque one is enough here.
+        utxoTxIds: ['99'.repeat(32)],
+        utxoTxs: [new Uint8Array(96).fill(0x99)],
+        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -487,9 +492,11 @@ describe('block-apply journal recording', () => {
         createdAt: Date.now(),
       },
       utxoTxTree: {
-        utxoTxIds: [],
-        utxoTxs: [],
-        pruneEntries: [], coinbaseOutputs: [],
+        // A body's last entry is its settlement; PoW is refused before anything
+        // reads it, so an opaque one is enough here.
+        utxoTxIds: ['99'.repeat(32)],
+        utxoTxs: [new Uint8Array(96).fill(0x99)],
+        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -645,9 +652,9 @@ describe('block-apply journal recording', () => {
       const block = await makeApplicableBlock({
         miner,
         utxoTxs: [makeCreditTx(sender, [box], 100n)],
-        coinbaseSplit: [
-          { owner: miner.userId, value: (await minerSliceAt1(100n, 0)) + 1n, isTreasury: false },
-        ],
+        settlement: withCoinbase([
+          { owner: miner.userId, value: (await minerSliceAt1(100n, 0)) + 1n },
+        ]),
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
@@ -672,9 +679,9 @@ describe('block-apply journal recording', () => {
       const block = await makeApplicableBlock({
         miner,
         utxoTxs: [makeCreditTx(sender, [box], 100n)],
-        coinbaseSplit: [
-          { owner: miner.userId, value: await minerSliceAt1(0n, 0), isTreasury: false },
-        ],
+        settlement: withCoinbase([
+          { owner: miner.userId, value: await minerSliceAt1(0n, 0) },
+        ]),
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
@@ -774,10 +781,10 @@ describe('block-apply journal recording', () => {
       const miner = makeTestIdentity();
       const block = await makeApplicableBlock({
         miner,
-        coinbaseSplit: [
-          { owner: miner.userId, value: await minerSliceAt1(0n, 0), isTreasury: false },
-          { owner: makeTestIdentity().userId, value: 0n, isTreasury: false },
-        ],
+        settlement: withCoinbase([
+          { owner: miner.userId, value: await minerSliceAt1(0n, 0) },
+          { owner: makeTestIdentity().userId, value: 0n },
+        ]),
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
@@ -798,21 +805,22 @@ describe('block-apply journal recording', () => {
         miner,
         // The whole emission — what a producer who forfeits nothing pays
         // themselves, and strictly more than the slice they earned.
-        coinbaseSplit: [
-          { owner: miner.userId, value: computeBlockReward(1), isTreasury: false },
-        ],
+        settlement: withCoinbase([
+          { owner: miner.userId, value: computeBlockReward(1) },
+        ]),
       });
 
       expect(computeBlockReward(1)).toBeGreaterThan(await minerSliceAt1(0n, 0));
       expect(blockApply.applyOrderingBlock(block)).toBe(false);
     });
 
-    // `isTreasury` has one legal value on every network, because nothing is
-    // paid to the treasury through the coinbase — the treasury's share accrues
-    // to the `TreasuryBox` (MINING_INTERFACE → Coinbase Application, receipt
-    // step 4b). A block claiming otherwise is rejected rather than
-    // reinterpreted.
-    it('refuses a coinbase output flagged isTreasury, at the correct amount', async () => {
+    // ⛔ **The `isTreasury` flag is GONE with the struct that carried it**
+    // (TYPES_INTERFACE → Coinbase output). A coinbase output is an ordinary
+    // `CreditBox` output of the settlement, so there is no field to misdeclare
+    // and no rejection to test — the shape is unrepresentable rather than
+    // refused. What replaces it as the settlement's own type discipline is
+    // covered by `output-shape.test.ts` → checkSettlementOutputShape.
+    it('refuses a settlement emitting a box type its body does not derive', async () => {
       const db = await importDb();
       db.initDb(':memory:');
       await importUtxo();
@@ -820,28 +828,30 @@ describe('block-apply journal recording', () => {
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
       const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
 
-      // Exactly the miner's slice, to the miner's own key. The **only** thing
-      // wrong with this coinbase is the flag, so nothing else can be what
-      // rejects it.
+      // Exactly the miner's slice, to the miner's own key, PLUS a karma output
+      // no bond in this body asks for. The amount is right, so nothing else can
+      // be what rejects it.
       const miner = makeTestIdentity();
       const split = splitCoinbase(computeBlockReward(1), 0n, 0);
-      const flagged = await makeApplicableBlock({
+      const stranger = makeTestIdentity();
+      const grafted = await makeApplicableBlock({
         miner,
-        coinbaseSplit: [
-          { owner: miner.userId, value: split.miner, isTreasury: true },
-        ],
+        settlement: (tx) => ({
+          ...tx,
+          outputs: [
+            ...tx.outputs,
+            { boxType: 'karma', value: 5n, owner: stranger.userId } as never,
+          ],
+        }),
       });
-      expect(blockApply.applyOrderingBlock(flagged)).toBe(false);
+      expect(blockApply.applyOrderingBlock(grafted)).toBe(false);
 
-      // ⛔ **The control is what stops this passing for the wrong reason.** An
-      // amount check rejects a great many blocks, so `false` alone says nothing
-      // about which rule fired. The same owner and the same value with the flag
-      // cleared must APPLY — which isolates the flag as the whole difference.
+      // ⛔ **The control is what stops this passing for the wrong reason.** The
+      // same settlement without the grafted output must APPLY — which isolates
+      // the extra box as the whole difference.
       const clean = await makeApplicableBlock({
         miner,
-        coinbaseSplit: [
-          { owner: miner.userId, value: split.miner, isTreasury: false },
-        ],
+        settlement: withCoinbase([{ owner: miner.userId, value: split.miner }]),
       });
       expect(blockApply.applyOrderingBlock(clean)).toBe(true);
     });
@@ -1227,7 +1237,8 @@ describe('block-apply embedded tx re-validation', () => {
     const block = await mineBlockOverMempool();
     // Block order is pool order: the two post transactions, then txB ahead of
     // the txA it depends on — the inversion the multi-pass loop has to survive.
-    expect(block!.utxoTxTree.utxoTxIds).toEqual([
+    // The settlement is the body's LAST entry and is not part of the fill.
+    expect(block!.utxoTxTree.utxoTxIds.slice(0, -1)).toEqual([
       computeTxId(postATx),
       computeTxId(postBTx),
       computeTxId(txB),
@@ -1507,12 +1518,13 @@ describe('block-apply mint provenance', () => {
     const blockApply = await importBlockApply();
     const { computeBlockReward } = await import('../../src/services/block-creator.js');
     const { computeMintTxId } = await import('@dagsocial/types');
-    const { coinbaseContext } = await import('../../src/mint-provenance.js');
-
-    // Coinbase is N mint *events*, not one N-output transaction, so each output
-    // carries its own synthetic txId keyed on its index — and
-    // `UNIQUE(tx_id, output_index)` turns a shared txId into a rejected block
-    // rather than silent corruption.
+    // ⛔ **The coinbase is ONE transaction's outputs now, not N mint events.**
+    // Each output is a `CreditBox` of the settlement, so its provenance is the
+    // settlement's own `txId` at the output's own position — no synthetic mint
+    // id, no per-output subject, and `UNIQUE(tx_id, output_index)` is satisfied
+    // by the positions rather than by distinct ids (MINING_INTERFACE → Coinbase
+    // Application: the credits are spent from the `EmissionBox` by the
+    // transaction that emits them).
     //
     // Two outputs on the MINER's side, which is the multi-output shape devnet
     // can reach: only the treasury side is pinned to an amount and an owner, so
@@ -1526,10 +1538,10 @@ describe('block-apply mint provenance', () => {
 
     const block = await makeApplicableBlock({
       miner,
-      coinbaseSplit: [
-        { owner: miner.userId, value: slice - secondShare, isTreasury: false },
-        { owner: second.userId, value: secondShare, isTreasury: false },
-      ],
+      settlement: withCoinbase([
+        { owner: miner.userId, value: slice - secondShare },
+        { owner: second.userId, value: secondShare },
+      ]),
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
 
@@ -1538,13 +1550,14 @@ describe('block-apply mint provenance', () => {
     expect(minerBox).toBeDefined();
     expect(treasuryBox).toBeDefined();
 
-    // Position in `coinbaseOutputs` is the subject; `index` stays 0 because
-    // each event emits exactly one box.
-    expect(minerBox!.txId).toBe(computeMintTxId(1, 'coinbase', coinbaseContext(0).subject));
-    expect(treasuryBox!.txId).toBe(computeMintTxId(1, 'coinbase', coinbaseContext(1).subject));
-    expect(minerBox!.txId).not.toBe(treasuryBox!.txId);
-    expect(minerBox!.index).toBe(0);
-    expect(treasuryBox!.index).toBe(0);
+    // ONE txId — the settlement's — and the positions are what separate them.
+    const settlementId = block.utxoTxTree.utxoTxIds[block.utxoTxTree.utxoTxIds.length - 1]!;
+    expect(minerBox!.txId).toBe(settlementId);
+    expect(treasuryBox!.txId).toBe(settlementId);
+    expect(minerBox!.index).not.toBe(treasuryBox!.index);
+    // …and therefore two distinct box ids, which is the property the shared-txId
+    // hazard was about.
+    expect(minerBox!.id).not.toBe(treasuryBox!.id);
   });
 
   it('a decay box consumed by a vouch settlement in the same block gets a distinct outpoint', async () => {
@@ -1826,7 +1839,7 @@ describe('block-apply consensus schedules', () => {
     const { getCreditBoxes } = (await import('../../src/store/utxo.js')) as {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
-    expect(getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner)).toHaveLength(0);
+    expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
   });
 
   it('rejects a block whose coinbase lock is one block short of maturity', async () => {
@@ -1864,7 +1877,7 @@ describe('block-apply consensus schedules', () => {
     const { getCreditBoxes } = (await import('../../src/store/utxo.js')) as {
       getCreditBoxes: (owner: Uint8Array) => Array<{ lockedUntilBlock?: number }>;
     };
-    const boxes = getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner);
+    const boxes = getCreditBoxes(coinbaseOf(block)[0]!.owner);
     expect(boxes).toHaveLength(1);
     expect(boxes[0]!.lockedUntilBlock).toBe(1 + config.creditMinerRewardDelay);
   });
@@ -1897,7 +1910,7 @@ describe('block-apply consensus schedules', () => {
     const { getCreditBoxes } = (await import('../../src/store/utxo.js')) as {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
-    expect(getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner)).toHaveLength(0);
+    expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
   });
 
   it('rejects a block carrying the all-zero placeholder signature', async () => {
@@ -2433,7 +2446,7 @@ describe('block-apply funnel totality', () => {
     const { getCreditBoxes } = (await import('../../src/store/utxo.js')) as {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
-    expect(getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner)).toHaveLength(0);
+    expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(0);
 
     // The half-built journal is dropped, so the next block does not inherit it.
     const journalStore = await importJournalStore();
@@ -2457,7 +2470,7 @@ describe('block-apply funnel totality', () => {
     const { getCreditBoxes } = (await import('../../src/store/utxo.js')) as {
       getCreditBoxes: (owner: Uint8Array) => unknown[];
     };
-    expect(getCreditBoxes(block.utxoTxTree.coinbaseOutputs[0]!.owner)).toHaveLength(1);
+    expect(getCreditBoxes(coinbaseOf(block)[0]!.owner)).toHaveLength(1);
   });
 
   // -----------------------------------------------------------------------

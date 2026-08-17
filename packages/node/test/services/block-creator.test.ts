@@ -5,7 +5,8 @@ import {
   seedProvenance,
   signTransaction,
   solveHeaderPow,
-  uid, fixturePostId, makePostTx, seedPostTx, fillerTx } from '../helpers.js';
+  uid, fixturePostId, makePostTx, seedPostTx, fillerTx, coinbaseOf,
+  seedEmissionBox } from '../helpers.js';
 import {
   describe,
   it,
@@ -76,14 +77,26 @@ type BlockCreatorModule = {
   getCurrentTemplate: () => OrderingBlock | null;
   submitMinedBlock: (powNonce: number, submittedHeight: number) => string | null;
   computeUtxoTxRoot: (tree: OrderingBlock['utxoTxTree']) => string;
-  worstCaseCoinbaseOutputs: (height: number) => OrderingBlock['utxoTxTree']['coinbaseOutputs'];
 };
 
 async function importDb(): Promise<DbModule> {
   return (await import('../../src/store/db.js')) as unknown as DbModule;
 }
 
+/**
+ * The creator, over a store that holds this network's emission box.
+ *
+ * ⛔ **A miner below the terminus cannot produce a block without one.** The
+ * block's settlement SPENDS the emission for its coinbase (MINING_INTERFACE →
+ * Coinbase Application), so a store with nothing to spend from yields no
+ * template at all — the creator declines rather than mining a body its own
+ * applier refuses. Genesis seeds one on every network; these suites build stores
+ * directly with `initDb(':memory:')`, which is what leaves the gap.
+ *
+ * Idempotent, and always called after `initDb`.
+ */
 async function importBlockCreator(): Promise<BlockCreatorModule> {
+  await seedEmissionBox();
   return (await import(
     '../../src/services/block-creator.js'
   )) as unknown as BlockCreatorModule;
@@ -258,8 +271,11 @@ describe('block-creator', () => {
     // At genesis (height 0→1), this produces a block with coinbase outputs.
     expect(block).not.toBeNull();
     expect(block!.header.height).toBe(1);
-    expect(block!.utxoTxTree.utxoTxIds).toEqual([]);
-    expect(block!.utxoTxTree.coinbaseOutputs.length).toBeGreaterThan(0);
+    // ⛔ **One entry: the settlement.** An "empty" body is not empty — every
+    // block carries the transaction that pays its own coinbase, and it is the
+    // LAST entry (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+    expect(block!.utxoTxTree.utxoTxIds).toHaveLength(1);
+    expect(coinbaseOf(block!).length).toBeGreaterThan(0);
   });
 
   // -----------------------------------------------------------------------
@@ -394,10 +410,11 @@ describe('block-creator', () => {
 
     expect(block).not.toBeNull();
     // The type carries exactly the live keys, so the produced tree does too.
-    // Exact-set, so a stray key sneaking back in — or a new one added
-    // untested — fails here (block body CBOR is consensus-visible bytes).
+    // Exact-set, so a stray key sneaking back in — `coinbaseOutputs` above all,
+    // whose section is retired — or a new one added untested, fails here (the
+    // block body is consensus-visible bytes).
     expect(Object.keys(block!.utxoTxTree).sort()).toEqual(
-      ['coinbaseOutputs', 'pruneEntries', 'utxoTxIds', 'utxoTxs'],
+      ['pruneEntries', 'utxoTxIds', 'utxoTxs'],
     );
   });
 
@@ -426,7 +443,7 @@ describe('block-creator', () => {
       const stored = ordering.getOrderingBlock(height);
       expect(stored).not.toBeNull();
       expect(Object.keys(stored!.utxoTxTree).sort()).toEqual(
-        ['coinbaseOutputs', 'pruneEntries', 'utxoTxIds', 'utxoTxs'],
+        ['pruneEntries', 'utxoTxIds', 'utxoTxs'],
       );
     }
   });
@@ -588,7 +605,9 @@ describe('block-creator', () => {
     // author. So flipping the author moves the transaction id and therefore the
     // root, and a producer cannot rewrite authorship after mining without
     // producing a different block entirely.
-    const { computeUtxoTxRoot } = await importBlockCreator();
+    // Imported directly rather than through `importBlockCreator`, which seeds
+    // an emission box and therefore needs a store — this case opens none.
+    const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
     const author = makeTestIdentity();
     const other = makeTestIdentity();
 
@@ -600,7 +619,7 @@ describe('block-creator', () => {
 
     const treeOf = (txId: string) => ({
       utxoTxIds: [txId], utxoTxs: [new Uint8Array(1)],
-      pruneEntries: [], coinbaseOutputs: [],
+      pruneEntries: [],
     });
     expect(computeTxId(a.tx)).not.toBe(computeTxId(b.tx));
     expect(computeUtxoTxRoot(treeOf(computeTxId(a.tx))))
@@ -665,38 +684,33 @@ describe('block-creator', () => {
 
       // Pass one, at the production budget, to learn what this body costs.
       //
-      // ⚠ The reserve is measured against the **worst-case** coinbase, not the
-      // one the finished template carries. The coinbase's value is the block's
-      // income, so it cannot be built until the fill has chosen a body; the
-      // fill runs against the largest encoding a coinbase could take and the
-      // real one — smaller — replaces it afterwards. Measuring the finished
-      // body's coinbase here models a creator that reserves what it ends up
-      // carrying, and predicts one transaction more than fits.
+      // ⚠ **The reserve is the SETTLEMENT the empty body produces**, not a
+      // worst-case coinbase. The settlement's value depends on the fill, so it
+      // cannot be built until the body is chosen; what the fill budgets against
+      // is its baseline, and `entryByteCost` carries each entry's marginal
+      // growth on top (MEMPOOL_INTERFACE → the settlement replaces
+      // `coinbaseOutputs` here). These fillers add nothing to it — no fee box,
+      // no bond — so the baseline is exact here.
       bc.startBlockCreator(testConfig);
       const full = bc.getCurrentTemplate();
       expect(full).not.toBeNull();
-      expect(full!.utxoTxTree.utxoTxIds).toHaveLength(POOL);
+      // POOL user entries plus the settlement.
+      expect(full!.utxoTxTree.utxoTxIds).toHaveLength(POOL + 1);
 
-      // What the finished body carries, which is what `perTx` must be derived
-      // from — every term but the transactions is unchanged between the two.
-      const carried = utxoTxTreeByteLength({
-        ...full!.utxoTxTree,
-        utxoTxIds: [],
-        utxoTxs: [],
-      });
-      const perTx = (utxoTxTreeByteLength(full!.utxoTxTree) - carried) / POOL;
-      expect(Number.isInteger(perTx)).toBe(true);
-
-      // What the FILL budgeted against, which is what decides how many fit.
+      // What the finished body carries besides the user transactions — the
+      // prune section, the count prefixes, and the settlement itself.
       const reserved = utxoTxTreeByteLength({
         ...full!.utxoTxTree,
-        utxoTxIds: [],
-        utxoTxs: [],
-        coinbaseOutputs: bc.worstCaseCoinbaseOutputs(1),
+        utxoTxIds: full!.utxoTxTree.utxoTxIds.slice(POOL),
+        utxoTxs: full!.utxoTxTree.utxoTxs.slice(POOL),
       });
-      // The seed really is larger than what the block ends up carrying — were
-      // it not, this test would pass while measuring the wrong reserve.
-      expect(reserved).toBeGreaterThan(carried);
+      const perTx = (utxoTxTreeByteLength(full!.utxoTxTree) - reserved) / POOL;
+      expect(Number.isInteger(perTx)).toBe(true);
+      // Non-vacuity: the settlement really is in the reserve, so this is not the
+      // empty-tree constant wearing another name.
+      expect(reserved).toBeGreaterThan(
+        utxoTxTreeByteLength({ utxoTxIds: [], utxoTxs: [], pruneEntries: [] }),
+      );
 
       // Pass two, at a budget that binds mid-pool. Every count prefix in the
       // body is one byte wide below 128 entries, so the arithmetic is exact
@@ -710,8 +724,8 @@ describe('block-creator', () => {
       // ⛔ Both halves, or this asserts only that a block was produced: the
       // measured body against the budget, and *which* entries stayed behind.
       expect(utxoTxTreeByteLength(bound!.utxoTxTree)).toBeLessThanOrEqual(budget);
-      expect(bound!.utxoTxTree.utxoTxIds).toHaveLength(KEEP);
-      expect(bound!.utxoTxTree.utxoTxs).toHaveLength(KEEP);
+      expect(bound!.utxoTxTree.utxoTxIds).toHaveLength(KEEP + 1);
+      expect(bound!.utxoTxTree.utxoTxs).toHaveLength(KEEP + 1);
       // One more would have overrun it — the budget is what bound the fill, not
       // the pool running out.
       expect(reserved + (KEEP + 1) * perTx).toBeGreaterThan(budget);
@@ -742,7 +756,8 @@ describe('block-creator', () => {
       bc.startBlockCreator(testConfig);
       const template = bc.getCurrentTemplate();
       expect(template).not.toBeNull();
-      expect(template!.utxoTxTree.utxoTxIds).toHaveLength(POOL);
+      // Every entry but the settlement's.
+      expect(template!.utxoTxTree.utxoTxIds).toHaveLength(POOL + 1);
       expect(utxoTxTreeByteLength(template!.utxoTxTree))
         .toBeLessThanOrEqual(MAX_BLOCK_BODY_BYTES);
     });
@@ -770,9 +785,12 @@ describe('block-creator', () => {
         `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height)
          VALUES ('utxo_tx', ?, 5000)`,
       );
+      // Deep enough that the CONSENSUS cap binds before the pool runs out: a
+      // `bigTx` encodes to about 4.8 KB, so the cap needs upwards of 400 of
+      // them and the loop leaves margin over that.
       let pooled = 0;
       db.getDb().transaction(() => {
-        for (let i = 0; i < 300; i++) {
+        for (let i = 0; i < 600; i++) {
           const cbor = encodeTx(bigTx(`big_${i}`));
           expect(cbor.length).toBeLessThanOrEqual(10_000);   // a minable size
           ins.run(Buffer.from(cbor));
@@ -794,7 +812,9 @@ describe('block-creator', () => {
       const measured = utxoTxTreeByteLength(template!.utxoTxTree);
       expect(measured).toBeLessThanOrEqual(MAX_BLOCK_BODY_BYTES);
       expect(measured).toBeGreaterThan(MAX_BLOCK_BODY_BYTES - 10_000);
-      expect(template!.utxoTxTree.utxoTxIds.length).toBeLessThan(pooled);
+      // Every entry but the settlement's, so a body that took the whole pool
+      // would still measure `pooled + 1` here.
+      expect(template!.utxoTxTree.utxoTxIds.length - 1).toBeLessThan(pooled);
     });
   });
 
@@ -850,8 +870,15 @@ describe('block-creator', () => {
     }
 
     /** The ids the template carries, in body order. */
+    /**
+     * The USER transactions of a body — every entry but the last.
+     *
+     * ⛔ **The last is the settlement**, which every block carries and no fill
+     * selects (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`), so a fill
+     * assertion that counted it would be measuring the creator's own tail.
+     */
     function idsIn(block: OrderingBlock): string[] {
-      return block.utxoTxTree.utxoTxIds;
+      return block.utxoTxTree.utxoTxIds.slice(0, -1);
     }
 
     it('offers the budget to karma-side entries before credit transactions', async () => {
@@ -874,10 +901,15 @@ describe('block-creator', () => {
       };
       const payerCost = entryByteCost(encodeTx(payer));
       const karmaCost = entryByteCost(encodeTx(fillerTx('karma_side') as UtxoTransaction));
-      const reserved = utxoTxTreeByteLength({
-        utxoTxIds: [], utxoTxs: [], pruneEntries: [],
-        coinbaseOutputs: bc.worstCaseCoinbaseOutputs(1),
-      });
+      // The fill's own reserve: the settlement an empty body produces. Measured
+      // by asking for a budget no user entry can fit into, so what comes back is
+      // the settlement alone — the same seed the fill starts from.
+      bc.startBlockCreator({ ...testConfig, blockBodyBudgetBytes: 1 });
+      const empty = bc.getCurrentTemplate();
+      expect(empty).not.toBeNull();
+      expect(empty!.utxoTxTree.utxoTxIds).toHaveLength(1);
+      const reserved = utxoTxTreeByteLength(empty!.utxoTxTree);
+      bc.stopBlockCreator();
 
       bc.startBlockCreator({
         ...testConfig,

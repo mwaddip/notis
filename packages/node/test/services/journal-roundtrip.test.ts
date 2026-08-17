@@ -153,6 +153,7 @@ async function importUtxo() {
     getBox: (boxId: string) => { id?: string; value: bigint } | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
+    getEmissionBox: () => { id?: string; value: bigint } | null;
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };
 }
@@ -327,11 +328,18 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Coinbase — the mint merges the owner's pre-existing credit box; revert
-  // must restore the merged-in original (the merge-consume value-loss fix).
+  // Coinbase — an OUTPUT of the block's settlement transaction, so revert must
+  // undo the credit box it created and restore the emission box it spent.
+  //
+  // ⛔ **There is no merge, and that is the change.** `mintCredits` consumed
+  // the owner's pre-existing credit boxes and wrote one merged successor; a
+  // settlement output is a new box beside whatever the owner already held
+  // (MINING_INTERFACE → Coinbase Application: the credits are spent from the
+  // `EmissionBox` by the transaction that emits them). What revert has to
+  // restore is therefore an emission predecessor, not a merged-in original.
   // -----------------------------------------------------------------------
 
-  it('coinbase: merge-consumed credit originals restored', async () => {
+  it('coinbase: the settlement\'s credit output and the emission it spent are both reverted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -350,16 +358,20 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     // Baseline block 1 pays a fresh miner — minerB's box is untouched.
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
     const pre = takeSnapshot(db, handle, 1);
+    const emissionBefore = utxo.getEmissionBox()!;
 
-    // Class block: coinbase paying minerB — mintCredits consumes the seeded
-    // box and creates one merged box.
+    // Class block: the settlement pays minerB.
     const classBlock = await makeApplicableBlock({ height: 2, miner: minerB });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    expect(utxo.getBox(seeded.id!)).toBeNull(); // merged in (spent)
-    const merged = utxo.getCreditBoxes(minerB.userId);
-    expect(merged).toHaveLength(1);
-    expect(merged[0]!.value).toBeGreaterThan(100n);
+    // The seeded box is untouched — a settlement output merges nothing.
+    expect(utxo.getBox(seeded.id!)).not.toBeNull();
+    const boxes = utxo.getCreditBoxes(minerB.userId);
+    expect(boxes).toHaveLength(2);
+    expect(boxes.reduce((sum, b) => sum + b.value, 0n)).toBeGreaterThan(100n);
+
+    // And the emission box moved to a successor, which the revert must undo.
+    expect(utxo.getEmissionBox()!.id).not.toBe(emissionBefore.id);
 
     await assertRoundTrip(db, handle, pre, classBlock);
   });

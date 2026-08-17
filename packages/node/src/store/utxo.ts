@@ -14,7 +14,6 @@ import type {
   AnyBox,
   KarmaBox,
   CreditBox,
-  InviteBox,
   GenesisProofBox,
   BondBox,
   PostLockBox,
@@ -55,11 +54,6 @@ interface KarmaExtra {
 
 interface CreditExtra {
   lockedUntilBlock?: number;
-}
-
-interface InviteExtra {
-  inviterId: string;          // hex-encoded pubkey in JSON (Uint8Array in code)
-  inviteePublicKey: string;   // hex-encoded pubkey — `getInviteFor` queries on it
 }
 
 interface GenesisProofExtra {
@@ -186,16 +180,6 @@ function rowToBox(row: UtxoRow): AnyBox {
       }
       return cb;
     }
-
-    case 'invite':
-      return {
-        id: row.id,
-        boxType: 'invite',
-        value: row.value,
-        inviterId: hexToPubkey((extra as InviteExtra).inviterId),
-        inviteePublicKey: hexToPubkey((extra as InviteExtra).inviteePublicKey),
-        ...prov,
-      };
 
     case 'genesis_proof':
       return {
@@ -541,56 +525,13 @@ export function getUnlockedCreditBoxes(
 }
 
 /**
- * Every open invite created by the given inviter — created, neither claimed nor
- * cancelled.
+ * The bond naming this invitee, or null.
  *
- * An invite has no expiry, so "open" is the whole of it: unspent IS open
- * (NODE_INTERFACE → Store).
- */
-export function getOpenInvites(inviterId: Uint8Array): InviteBox[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'invite'
-         AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.inviterId') = ?`,
-    )
-    .safeIntegers()
-    .all(pubkeyToHex(inviterId)) as UtxoRow[];
-  return rows.map((r) => rowToBox(r) as InviteBox);
-}
-
-/**
- * The at-most-one live invite naming this key, or null.
- *
- * At most one because an invite may not name an existing account and a claim
- * makes the invitee one, so a key is invited at most once — and invite creation
- * is where that is enforced (NODE_INTERFACE → "Bond transition rules"). `LIMIT
- * 1` is safe for that reason and not by hope; a second row would mean the
- * create-time bar had been bypassed, which is a consensus fault rather than a
- * case to order around.
- */
-export function getInviteFor(inviteePublicKey: Uint8Array): InviteBox | null {
-  const row = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'invite'
-         AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.inviteePublicKey') = ?
-       LIMIT 1`,
-    )
-    .safeIntegers()
-    .get(pubkeyToHex(inviteePublicKey)) as UtxoRow | undefined;
-  return row ? (rowToBox(row) as InviteBox) : null;
-}
-
-/**
- * The bond paired with this invitee's invite, or null.
- *
- * `inviteePublicKey` IS the pairing — the invite and the bond are pinned to one
- * key at creation and a key is invited at most once, so this names exactly one
- * live pair. The claim, cancel and settlement paths all resolve through here.
+ * `inviteePublicKey` IS the pairing — a key is invited at most once, so this
+ * names exactly one live bond. `LIMIT 1` is safe for that reason and not by
+ * hope: the invite transition bars a key that already holds an identity record,
+ * and block application bars a second bond for a key within one block
+ * (NODE_INTERFACE → Legal box transitions).
  */
 export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
   const row = getDb()
@@ -607,9 +548,9 @@ export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
 }
 
 /**
- * Every live bond whose invitee's claim applied at exactly `invitedAtBlock`.
+ * Every live bond whose invitee's grant applied at exactly `invitedAtBlock`.
  *
- * **Takes the claim height, not the settle height**, so this function knows
+ * **Takes the invite height, not the settle height**, so this function knows
  * nothing about `INVITE_PROBATION_BLOCKS`: the caller subtracts, and no network
  * parameter reaches the store. `processMaturedBonds` is the caller and it is the
  * one place the deadline is computed.
@@ -821,14 +762,6 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
       }
       extraData = ce satisfies CreditExtra;
       owner = Buffer.from(c.owner);
-      break;
-    }
-    case 'invite': {
-      const i = box as InviteBox;
-      extraData = {
-        inviterId: pubkeyToHex(i.inviterId),
-        inviteePublicKey: pubkeyToHex(i.inviteePublicKey),
-      } satisfies InviteExtra;
       break;
     }
     case 'genesis_proof': {

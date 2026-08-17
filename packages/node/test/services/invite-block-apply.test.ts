@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
 // The invite's block-application half.
 //
-// Everything a transaction cannot do lives here: the claim's `invitedAtBlock`
-// write, the cancellation's bond return, and the probation-deadline settlement
-// with its burn. None of the three is expressible as a user transaction — a
-// bond is consumed by no user transition, so no signature reaches it — a suite over
-// `validateTx` cannot see any of them (NODE_INTERFACE → "Bond transition
-// rules").
+// Everything a transaction cannot do lives here: the settlement's grant out of
+// the karma pool, the `invitedAtBlock` write, the within-block duplicate-invitee
+// refusal, and the probation-deadline settlement with its burn. None of them is
+// expressible as a user transaction — a bond is consumed by no user transition,
+// so no signature reaches it — and a suite over `validateTx` cannot see any of
+// them (NODE_INTERFACE → "Bond transition rules").
 //
 // The settlement cases mock `inviteProbationBlocks` down to a handful of
 // blocks. What has to hold is that the sweep fires at exactly
@@ -25,7 +25,6 @@ import {
 } from '@dagsocial/types';
 import type {
   BondBox,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -38,7 +37,8 @@ import {
   mineNextBlock,
   seedAsOneTx,
   signTransaction,
-  type TestIdentity, fixturePostId, fillerTx, seedPostTx, activateProverOverStore } from '../helpers.js';
+  type TestIdentity, fixturePostId, fillerTx, seedPostTx, activateProverOverStore,
+  seedKarmaPoolBox, makeApplicableBlock } from '../helpers.js';
 
 /** Short enough that the deadline is reachable by mining a few real blocks. */
 const PROBATION = 3;
@@ -82,6 +82,39 @@ async function importBlockCreator() {
   return await import('../../src/services/block-creator.js');
 }
 
+/**
+ * karma(v) → karma(v − bond) + BondBox — the whole invite, inviter-signed.
+ *
+ * The invitee's `INVITE_KARMA_AMOUNT` is nowhere in it: the block's settlement
+ * spends the pool for that (ARCHITECTURE → Invite System).
+ */
+function inviteTx(
+  inviter: TestIdentity,
+  invitee: TestIdentity,
+  karmaIn: KarmaBox,
+): UtxoTransaction {
+  const tx: UtxoTransaction = {
+    inputs: [karmaIn.id!],
+    outputs: [
+      {
+        boxType: 'karma',
+        value: karmaIn.value - INVITE_BOND_KARMA,
+        owner: inviter.userId,
+      } as KarmaBox,
+      {
+        boxType: 'bond',
+        value: INVITE_BOND_KARMA,
+        inviterId: inviter.userId,
+        inviteePublicKey: invitee.userId,
+      } as BondBox,
+    ],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  signTransaction(tx, inviter.privateKey, Buffer.from(inviter.userId).toString('hex'));
+  return tx;
+}
+
 describe('the invite at block application', () => {
   beforeEach(async () => {
     // The probation length reaches `processMaturedBonds` through the config
@@ -110,7 +143,12 @@ describe('the invite at block application', () => {
   });
 
   /**
-   * Bring up a store with a live prover, and seed one invite/bond pair.
+   * Bring up a store with a live prover, the karma pool, and one bond already in
+   * place — the state an invite leaves behind once its block has applied.
+   *
+   * ⛔ **The pool is not optional.** The settlement spends it to grant the
+   * invitee, so a store without one cannot produce a block whose body creates a
+   * bond (ARCHITECTURE → The conservation axiom).
    *
    * The prover is live because every path under test writes to it — a mint, a
    * consume, a record put — and a suite without one would assert the SQL side of
@@ -123,17 +161,12 @@ describe('the invite at block application', () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
+    await seedKarmaPoolBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
 
-    const [invite, bond] = seedAsOneTx([
-      {
-        boxType: 'invite' as const,
-        value: 0n,
-        inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId,
-      },
+    const [bond] = seedAsOneTx([
       {
         boxType: 'bond' as const,
         value: bondValue,
@@ -141,7 +174,6 @@ describe('the invite at block application', () => {
         inviteePublicKey: invitee.userId,
       },
     ]);
-    utxo.insertBox(invite!);
     utxo.insertBox(bond!);
 
     // Every like round's boxes, seeded here rather than between the blocks that
@@ -162,7 +194,7 @@ describe('the invite at block application', () => {
       likeBatches.push(batch);
     }
 
-    // Last, so the tree is built over the invite, the bond and every like box
+    // Last, so the tree is built over the pool, the bond and every like box
     // the blocks below spend. Still ahead of `startBlockCreator`, which is what
     // the emission box this also seeds has to precede: the creator's first
     // `rebuildTemplate` speculates over a body this store cannot apply without
@@ -173,37 +205,29 @@ describe('the invite at block application', () => {
 
     return {
       utxo, inviter, invitee, likeBatches,
-      invite: invite as InviteBox,
       bond: bond as BondBox,
     };
   }
 
-  /** Invite → one KarmaBox of INVITE_KARMA_AMOUNT, invitee-signed. */
-  function claimTx(invite: InviteBox, invitee: TestIdentity): UtxoTransaction {
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [{
-        boxType: 'karma',
-        value: INVITE_KARMA_AMOUNT,
-        owner: invitee.userId,
-      } as KarmaBox],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(tx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
-    return tx;
-  }
 
-  /** Invite → nothing, inviter-signed. */
-  function cancelTx(invite: InviteBox, inviter: TestIdentity): UtxoTransaction {
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(tx, inviter.privateKey, Buffer.from(inviter.userId).toString('hex'));
-    return tx;
+  /**
+   * Start the invitee's probation clock, the way the settlement's grant does.
+   *
+   * ⛔ **Seeded rather than mined, for the reason `lifetimeLikesReceived` is:**
+   * the arithmetic under test below is the vesting, not the writer. The
+   * end-to-end path — an invite transaction whose block's settlement writes this
+   * height — is the subject of its own case at the top of this file.
+   */
+  async function startProbation(invitee: TestIdentity, invitedAtBlock: number): Promise<void> {
+    const records = await importRecords();
+    const before = records.getIdentityRecord(invitee.userId);
+    records.putIdentityRecord(invitee.userId, {
+      lastActivityBlock: before?.lastActivityBlock ?? invitedAtBlock,
+      lastDecayBlock: before?.lastDecayBlock ?? 0,
+      likeCarry: before?.likeCarry ?? 0n,
+      invitedAtBlock,
+      lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
+    });
   }
 
   async function mineOne() {
@@ -216,67 +240,76 @@ describe('the invite at block application', () => {
   // The claim
   // -------------------------------------------------------------------------
 
-  it('a claim mints the karma and records the height on the invitee', async () => {
-    const { utxo, invite, invitee } = await seedPair();
+  it('the settlement grants the invitee out of the pool and records the height', async () => {
+    // ⛔ **The grant is a POOL SPEND, not a mint** (ARCHITECTURE → The
+    // conservation axiom). One bond, one grant: the pairing is structural, so
+    // the settlement reads the bond the body created and needs no marker.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    await seedKarmaPoolBox();
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    const karma = makeKarmaBox(INVITE_BOND_KARMA + 10n, inviter.userId, 0, 77);
+    utxo.insertBox(karma);
+    await activateProverOverStore();
+
+    const poolBefore = utxo.getKarmaPoolBox()!.value;
+
     const mempool = await importMempool();
     const records = await importRecords();
-
-    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
     const block = await mineOne();
     expect(block).not.toBeNull();
     const height = block!.header.height;
 
-    // The mint: karma that did not exist before, owned by the named key.
+    // The grant landed on the key the bond names …
     expect(utxo.getKarmaValue(invitee.userId)).toBe(INVITE_KARMA_AMOUNT);
-    // The invite is spent; the bond is NOT — it waits for its deadline.
-    expect(utxo.getBox(invite.id!)).toBeNull();
+    // … and the pool paid for it, exactly.
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - INVITE_KARMA_AMOUNT);
+    // The bond is live: it waits for its deadline.
     expect(utxo.getBondFor(invitee.userId)).not.toBeNull();
+    // The inviter paid the bond and nothing else.
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(10n);
 
-    // The height, recorded once and read by two rules.
+    // The height, recorded once and read by two rules — dated from the INVITE's
+    // own height now that there is no claim (ARCHITECTURE → Invite System).
     const record = records.getIdentityRecord(invitee.userId);
     expect(record!.invitedAtBlock).toBe(height);
-    // The claim's own karma output bumped the activity clock in the same block,
+    // The grant's own karma output bumped the activity clock in the same block,
     // and the record write must carry that through rather than overwrite it.
     expect(record!.lastActivityBlock).toBe(height);
   });
 
-  it('a claim bars the key from any further invite', async () => {
-    // The claim is the record-CREATING event for every legal invitee, and a key
-    // that holds a record is already an account — so one claim is what makes a
-    // second invite for the same key unrepresentable.
-    const { utxo, invite, invitee } = await seedPair();
+  it('the grant bars the key from any further invite', async () => {
+    // The settlement's grant is the record-CREATING event for every legal
+    // invitee, and a key that holds a record is already an account — so one
+    // grant is what makes a second invite for the same key unrepresentable in a
+    // LATER block.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    await seedKarmaPoolBox();
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    const karma = makeKarmaBox(INVITE_BOND_KARMA + 10n, inviter.userId, 0, 78);
+    utxo.insertBox(karma);
+    const secondInviter = makeTestIdentity();
+    const karma2 = makeKarmaBox(INVITE_BOND_KARMA + 10n, secondInviter.userId, 0, 79);
+    utxo.insertBox(karma2);
+    await activateProverOverStore();
+
     const mempool = await importMempool();
     const engine = await import('../../src/services/utxo-engine.js');
     const records = await importRecords();
     const cooldowns = await import('../../src/store/vouch-cooldowns.js');
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
     expect(await mineOne()).not.toBeNull();
 
-    const secondInviter = makeTestIdentity();
-    const karma = makeKarmaBox(100n, secondInviter.userId, 0, 9);
-    utxo.insertBox(karma);
-    const second: UtxoTransaction = {
-      inputs: [karma.id!],
-      outputs: [
-        {
-          boxType: 'karma', value: 100n - INVITE_BOND_KARMA,
-          owner: secondInviter.userId, 
-        } as KarmaBox,
-        {
-          boxType: 'invite', value: 0n, inviterId: secondInviter.userId,
-          inviteePublicKey: invitee.userId, 
-        } as InviteBox,
-        {
-          boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: secondInviter.userId,
-          inviteePublicKey: invitee.userId, 
-        } as BondBox,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(second, secondInviter.privateKey, Buffer.from(secondInviter.userId).toString('hex'));
-
+    const second = inviteTx(secondInviter, invitee, karma2);
     const result = engine.validateTx({
       getBox: utxo.getBox,
       insertBox: utxo.insertBox,
@@ -292,28 +325,75 @@ describe('the invite at block application', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The cancellation
+  // ⛔ Two inviters, one key, one block — the rule the collapse OWES
   // -------------------------------------------------------------------------
 
-  it('a cancel returns the whole bond to the inviter', async () => {
-    const { utxo, invite, inviter, invitee, bond } = await seedPair();
-    const mempool = await importMempool();
+  it('a block whose body names one invitee twice does not apply', async () => {
+    // ⛔ **THIS WAS EMERGENT AND IS NOW A STATED RULE** (NODE_INTERFACE → Legal
+    // box transitions). The claim used to absorb the collision: Bob claimed one
+    // invite and the other was cancelled. With no claim, the second bond draws a
+    // second `INVITE_KARMA_AMOUNT` out of the pool for one key.
+    //
+    // ⚠ **The record-existence test cannot see this.** The grant that writes
+    // Bob's record is the settlement's, and it runs AFTER every embedded
+    // transaction — so at the moment the second invite is validated Bob still
+    // holds no record and that gate passes. Only an apply-time rule keyed on the
+    // block's own body catches it.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    await seedKarmaPoolBox();
+
+    const invitee = makeTestIdentity();
+    const a = makeTestIdentity();
+    const b = makeTestIdentity();
+    const karmaA = makeKarmaBox(INVITE_BOND_KARMA + 10n, a.userId, 0, 81);
+    const karmaB = makeKarmaBox(INVITE_BOND_KARMA + 10n, b.userId, 0, 82);
+    utxo.insertBox(karmaA);
+    utxo.insertBox(karmaB);
+    await activateProverOverStore();
+
+    const blockApply = await import('../../src/services/block-apply.js');
     const records = await importRecords();
 
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(0n);
+    // Both invites in ONE body, built directly — the creator's own fill skips
+    // the second as an assembly preference, so a mined block could never carry
+    // the pair and the consensus rule would go untested through that path.
+    const block = await makeApplicableBlock({
+      utxoTxs: [inviteTx(a, invitee, karmaA), inviteTx(b, invitee, karmaB)],
+    });
 
-    mempool.insertUtxoTx(cancelTx(invite, inviter), 1000);
-    expect(await mineOne()).not.toBeNull();
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
 
-    // Whole, not vested: a cancellation happens before any claim, so there is
-    // no probation to have failed.
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(bond.value);
-    expect(utxo.getBox(bond.id!)).toBeNull();
-    expect(utxo.getBondFor(invitee.userId)).toBeNull();
-    expect(utxo.getInviteFor(invitee.userId)).toBeNull();
+    // Nothing applied: no grant, no record, and both karma boxes untouched.
+    expect(records.getIdentityRecord(invitee.userId)).toBeNull();
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(0n);
+    expect(utxo.getBox(karmaA.id!)).not.toBeNull();
+    expect(utxo.getBox(karmaB.id!)).not.toBeNull();
+  });
 
-    // No claim happened, so the invitee's key is not barred and no clock ran.
-    expect(records.getIdentityRecord(invitee.userId)?.invitedAtBlock ?? 0).toBe(0);
+  it('non-vacuity: the same two invites in SEPARATE blocks — the first applies', async () => {
+    // Without this the rejection above could be the body failing for any other
+    // reason. One invite alone applies and grants; the second is then refused by
+    // the record-existence gate instead, which is the LATER-block half.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    await seedKarmaPoolBox();
+
+    const invitee = makeTestIdentity();
+    const a = makeTestIdentity();
+    const karmaA = makeKarmaBox(INVITE_BOND_KARMA + 10n, a.userId, 0, 83);
+    utxo.insertBox(karmaA);
+    await activateProverOverStore();
+
+    const blockApply = await import('../../src/services/block-apply.js');
+    const records = await importRecords();
+
+    const block = await makeApplicableBlock({ utxoTxs: [inviteTx(a, invitee, karmaA)] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(INVITE_KARMA_AMOUNT);
+    expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(1);
   });
 
   // -------------------------------------------------------------------------
@@ -332,18 +412,18 @@ describe('the invite at block application', () => {
    */
   async function claimThenSettle(likes: bigint, bondValue = INVITE_BOND_KARMA) {
     const seeded = await seedPair(bondValue);
-    const { utxo, inviter, invitee, invite, bond } = seeded;
+    const { utxo, inviter, invitee, bond } = seeded;
     const mempool = await importMempool();
     const records = await importRecords();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
-    const claimBlock = await mineOne();
-    expect(claimBlock).not.toBeNull();
-    const invitedAtBlock = claimBlock!.header.height;
+    const firstBlock = await mineOne();
+    expect(firstBlock).not.toBeNull();
+    const invitedAtBlock = firstBlock!.header.height;
 
-    const claimed = records.getIdentityRecord(invitee.userId)!;
-    expect(claimed.invitedAtBlock).toBe(invitedAtBlock);
-    records.putIdentityRecord(invitee.userId, { ...claimed, lifetimeLikesReceived: likes });
+    await startProbation(invitee, invitedAtBlock);
+    const started = records.getIdentityRecord(invitee.userId)!;
+    expect(started.invitedAtBlock).toBe(invitedAtBlock);
+    records.putIdentityRecord(invitee.userId, { ...started, lifetimeLikesReceived: likes });
 
     const deadline = invitedAtBlock + PROBATION;
     let height = invitedAtBlock;
@@ -500,15 +580,15 @@ describe('the invite at block application', () => {
     // accumulation from overwriting: a settlement that assigned this block's
     // count instead of adding it would leave the same total after a single
     // block and only diverge here.
-    const { utxo, inviter, invitee, invite, bond, likeBatches } = await seedPair(
+    const { utxo, inviter, invitee, bond, likeBatches } = await seedPair(
       INVITE_BOND_KARMA,
       [{ count: 3, nonceBase: 0 }, { count: 2, nonceBase: 10 }],
     );
     const mempool = await importMempool();
     const records = await importRecords();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const invitedAtBlock = (await mineOne())!.header.height;
+    await startProbation(invitee, invitedAtBlock);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
     // Block A: three likes. Block B: two more. floor(5 / 5) = 1 karma vested.
@@ -530,7 +610,7 @@ describe('the invite at block application', () => {
     // is a THIRD PARTY's action: the thread's author prunes, and under a count
     // derived from those rows the inviter — who did nothing — loses karma.
     // Design track §1.4.1 forbids destroying someone else's stake.
-    const { utxo, inviter, invitee, invite, bond, likeBatches } = await seedPair(
+    const { utxo, inviter, invitee, bond, likeBatches } = await seedPair(
       INVITE_BOND_KARMA,
       [{ count: INVITE_BOND_VEST_PER_LIKES, nonceBase: 100 }],
     );
@@ -538,8 +618,8 @@ describe('the invite at block application', () => {
     const records = await importRecords();
     const db = await importDb();
 
-    mempool.insertUtxoTx(claimTx(invite, invitee), 1000);
     const invitedAtBlock = (await mineOne())!.header.height;
+    await startProbation(invitee, invitedAtBlock);
 
     const postIds = await poolLikes(likeBatches[0]!);
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
@@ -637,18 +717,12 @@ describe('the invite at block application — decay adjacency', () => {
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
-    const [invite, bond] = seedAsOneTx([
-      {
-        boxType: 'invite' as const, value: 0n, inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId, 
-      },
-      {
-        boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId, 
-      },
-    ]);
-    utxo.insertBox(invite!);
-    utxo.insertBox(bond!);
+    // ⛔ **The invite rides a real block here**, because the invitee's karma has
+    // to come from the settlement's grant: decay acts on karma boxes, and a
+    // hand-seeded bond leaves the invitee holding nothing for it to act on.
+    await seedKarmaPoolBox();
+    const inviterKarma = makeKarmaBox(INVITE_BOND_KARMA + 5n, inviter.userId, 0, 880);
+    utxo.insertBox(inviterKarma);
 
     // Every box the run spends, seeded before the tree is built from the store.
     // The transactions are pooled block by block below; only the boxes have to
@@ -668,17 +742,15 @@ describe('the invite at block application — decay adjacency', () => {
     // precede.
     await activateProverOverStore();
 
-    const claim: UtxoTransaction = {
-      inputs: [invite!.id!],
-      outputs: [{
-        boxType: 'karma', value: INVITE_KARMA_AMOUNT, owner: invitee.userId,
-      } as KarmaBox],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(claim, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
-    mempool.insertUtxoTx(claim, 1000);
+    // The invitee already holds the karma boxes their posts will lock, so the
+    // grant is asserted as a DELTA rather than as a balance.
+    const inviteeBefore = utxo.getKarmaValue(invitee.userId);
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, inviterKarma), 1000);
     const invitedAtBlock = (await mine()).header.height;
+    // The settlement granted, and the grant started the clock.
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + INVITE_KARMA_AMOUNT);
+    expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
+    const bond = utxo.getBondFor(invitee.userId)!;
 
     // Five likes in one block → floor(5 / 5) = 1 karma vested at the deadline.
     for (const { postTx, postId, liker, karma } of likeFixtures) {
@@ -703,7 +775,7 @@ describe('the invite at block application — decay adjacency', () => {
     // ...and the counter survived every one of those writes.
     expect(after.lifetimeLikesReceived).toBe(earned);
     // ...so the bond settled on it rather than forfeiting.
-    expect(utxo.getBox(bond!.id!)).toBeNull();
-    expect(utxo.getKarmaValue(inviter.userId)).toBe(1n);
+    expect(utxo.getBox(bond.id!)).toBeNull();
+    expect(utxo.getKarmaValue(inviter.userId)).toBe(5n + 1n);
   });
 });

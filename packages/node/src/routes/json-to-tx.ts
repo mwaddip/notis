@@ -21,8 +21,14 @@ const BINARY_BOX_FIELDS = new Set([
 
 /**
  * Convert a JSON tx object (as received over the HTTP API) into a
- * {@link UtxoTransaction}.  Hex-encoded Uint8Array fields in signatures,
- * preimages, and box outputs are decoded to raw `Uint8Array`.
+ * {@link UtxoTransaction}.  Hex-encoded Uint8Array fields in signatures and box
+ * outputs are decoded to raw `Uint8Array`.
+ *
+ * ⛔ **A `preimages` key is not read and not carried through**, so
+ * `checkTxEnvelope`'s closed key set never sees one: the name is reserved and
+ * never to be reused (TYPES_INTERFACE → Layout — UtxoTransaction). Dropping it
+ * silently is right here and only here — this edge builds the transaction, so a
+ * key it does not build is a key that never existed.
  */
 export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // ---- signatures ----
@@ -33,16 +39,6 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
       throw new ClientError(`signature for ${key} must be a hex string`);
     }
     signatures[key] = hexToBytes(val);
-  }
-
-  // ---- preimages ----
-  const rawPreimages = (raw.preimages ?? {}) as Record<string, string>;
-  const preimages: Record<string, Uint8Array> = {};
-  for (const [key, val] of Object.entries(rawPreimages)) {
-    if (typeof val !== 'string') {
-      throw new ClientError(`preimage for ${key} must be a hex string`);
-    }
-    preimages[key] = hexToBytes(val);
   }
 
   // ---- outputs ----
@@ -78,13 +74,6 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     inputs: (raw.inputs ?? []) as string[],
     outputs,
     signatures,
-    // A conditional SPREAD, not `: undefined` — the same idiom `likeTarget`
-    // uses one line below, and for the same reason. `preimages: undefined`
-    // leaves a present key holding `undefined`, which `computeTxId` hashes as
-    // absent (falsy) but `checkTxEnvelope` rejects as the CBOR-reachable
-    // ambiguity it is. "Normalizes {} to absent" has to hold in structure, not
-    // merely in effect: a present key holding `undefined` is not an absent key.
-    ...(Object.keys(preimages).length > 0 ? { preimages } : {}),
     protocolVersion,
     ...(likeTarget !== undefined ? { likeTarget } : {}),
     ...(post !== undefined ? { post } : {}),

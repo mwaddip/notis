@@ -360,7 +360,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)], pruneEntries: [] },
       validatorSignature: new Uint8Array(64),
     };
 
@@ -384,7 +384,7 @@ describe('extendsOurTip', () => {
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
       },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)], pruneEntries: [] },
       validatorSignature: new Uint8Array(64),
     };
 
@@ -817,7 +817,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
       },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)], pruneEntries: [] },
       validatorSignature: new Uint8Array(64),
     });
 
@@ -929,7 +929,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: 65536,
         createdAt: Number.MAX_SAFE_INTEGER,
       },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)], pruneEntries: [] },
       validatorSignature: new Uint8Array(64),
     };
     ordering.createOrderingBlock(extremes);
@@ -1031,7 +1031,7 @@ describe('a stored header that cannot be hashed', () => {
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
       },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)], pruneEntries: [] },
       validatorSignature: new Uint8Array(64),
     });
     for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h));

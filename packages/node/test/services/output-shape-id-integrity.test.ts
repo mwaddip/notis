@@ -215,15 +215,9 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     for (const out of r.computedOutputs!) expectIdClean(out.id!);
   });
 
-  it('honest karma → karma + invite + bond applies and round-trips id-clean', () => {
+  it('honest karma → karma + bond applies and round-trips id-clean', () => {
     const karma = seedKarma(100n);
     const invitee = new Uint8Array(32).fill(0xaa);
-    const invite = {
-      boxType: 'invite',
-      value: 0n,
-      inviterId: ownerPubKey,
-      inviteePublicKey: invitee,
-    };
     const bond = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
@@ -232,7 +226,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     };
     const tx = signedTx(
       [karma.id!],
-      [karmaChange(100n - INVITE_BOND_KARMA), invite, bond],
+      [karmaChange(100n - INVITE_BOND_KARMA), bond],
     );
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
@@ -322,12 +316,11 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     expect(r.error).toMatch(/field 'lockedUntilBlock'.*got -0/);
   });
 
-  it('class-4c mutant, now closed: an invite pair with HEX-STRING keys is rejected; the honest pair round-trips id-clean', () => {
-    // The class in the form it now takes. Both boxes carry `inviteePublicKey`,
-    // and the create arm pairs them by comparing
-    // `Buffer.from(x).toString('hex')` — which two identical hex STRINGS satisfy
-    // just as well as two identical byte arrays. So the arm cannot catch this:
-    // the pairing check passes, and the wrong-typed field reaches
+  it('class-4c mutant, now closed: a bond with a HEX-STRING key is rejected; the honest one round-trips id-clean', () => {
+    // The class in the form it now takes. The invite arm compares
+    // `Buffer.from(bond.inviterId).toString('hex')` against the karma input's
+    // owner — which a hex STRING satisfies just as well as a byte array. So the
+    // arm cannot catch this: its check passes, and the wrong-typed field reaches
     // `writeBytesNOrThrow` inside `computeTxId` at the last line of
     // `validateTx` — a throw on adversary-supplied input, which the no-panic
     // rule forbids. The schema's `bytes32` is what has to reject it.
@@ -335,10 +328,6 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const inviteeHex = 'bb'.repeat(32);
     const lyingPair = (key: unknown) => [
       karmaChange(100n - INVITE_BOND_KARMA),
-      {
-        boxType: 'invite', value: 0n, inviterId: ownerPubKey,
-        inviteePublicKey: key,
-      },
       {
         boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: ownerPubKey,
         inviteePublicKey: key,

@@ -20,8 +20,6 @@ import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   createInvite,
-  claimInvite,
-  cancelInvite,
 } from '../../src/services/invites.js';
 import {
   generateKeyPair,
@@ -35,7 +33,6 @@ import type {
   AnyBox,
   BondBox,
   CandidateOf,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -59,15 +56,10 @@ interface UiBuilders {
     pubKeyHex: string,
     inviteePubKeyHex: string,
   ) => Record<string, unknown>;
-  buildClaimInviteTx: (
-    inviteBoxId: string,
-    inviteePubKeyHex: string,
-  ) => Record<string, unknown>;
-  buildCancelInviteTx: (inviteBoxId: string) => Record<string, unknown>;
 }
 
 /**
- * The page's three invite builders and its bigint replacer, lifted by name from
+ * The page's one invite builder and its bigint replacer, lifted by name from
  * `public/index.html` — the same extraction the crypto mirrors use.
  *
  * Lifted rather than restated: a builder copied into a test asserts agreement
@@ -121,8 +113,6 @@ async function request(
       hasActiveVouchCooldown: storeHasActiveVouchCooldown,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
       createInvite,
-      claimInvite,
-      cancelInvite,
       getCurrentHeight,
     };
     const app = express();
@@ -194,24 +184,20 @@ describe('invites routes', () => {
     return karma;
   }
 
-  /** Seed an invite and its bond as the two outputs of one transaction. */
-  function seedPair(label: string, invitee: Uint8Array): { invite: InviteBox; bond: BondBox } {
-    const inviteCandidate = {
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId,
-      inviteePublicKey: invitee,
-    };
-    const bondCandidate = {
-      boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
-      inviterId,
-      inviteePublicKey: invitee,
-    };
-    const [invite, bond] = seedAsOneTx([inviteCandidate, bondCandidate], 1, labelNonce(label));
-    storeInsertBox(invite!);
-    storeInsertBox(bond!);
-    return { invite: invite as InviteBox, bond: bond as BondBox };
+  /** Seed the bond an invite leaves behind — there is no second box. */
+  function seedBondFor(label: string, invitee: Uint8Array): { bond: BondBox } {
+    const bond = seedProvenance<BondBox>(
+      {
+        boxType: 'bond' as const,
+        value: INVITE_BOND_KARMA,
+        inviterId,
+        inviteePublicKey: invitee,
+      },
+      1,
+      labelNonce(label),
+    );
+    storeInsertBox(bond);
+    return { bond };
   }
 
   it('POST /invites creates invite and returns 201 with pending', async () => {
@@ -223,12 +209,6 @@ describe('invites routes', () => {
       value: 100n - INVITE_BOND_KARMA,
       owner: inviterId,
     };
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: 0n,
-      inviterId,
-      inviteePublicKey: invitee,
-    };
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
@@ -238,7 +218,7 @@ describe('invites routes', () => {
 
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
-      outputs: [newKarma, inviteBox, bondBox],
+      outputs: [newKarma, bondBox],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
@@ -250,8 +230,10 @@ describe('invites routes', () => {
     expect(body.status).toBe('pending');
     expect(typeof body.txId).toBe('string');
     expect(typeof body.expiresAtHeight).toBe('number');
-    expect(typeof body.inviteBoxId).toBe('string');
     expect(typeof body.bondBoxId).toBe('string');
+    // ⛔ **`inviteBoxId` is gone from the response, and that is an API break**
+    // (NODE_INTERFACE → Invites). There is no invite box for it to name.
+    expect(body.inviteBoxId).toBeUndefined();
     // No secret in any of it — the response carries nothing the inviter has to
     // pass on out of band beyond what they already knew.
     expect(body.secretHash).toBeUndefined();
@@ -262,77 +244,15 @@ describe('invites routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('POST /invites/commit is gone', async () => {
-    // The route died with the instrument it served: two steps, not three.
-    const res = await request('/commit', 'POST', { tx: {} });
-    expect(res.status).toBe(404);
-  });
-
-  it('POST /invites/claim claims an invite and returns 201 with pending', async () => {
-    const inviteeKp = generateKeyPair();
-    const inviteeHex = Buffer.from(inviteeKp.publicKey).toString('hex');
-    const inviteePriv = createPrivateKey({
-      key: Buffer.from(inviteeKp.secretKey), format: 'der', type: 'pkcs8',
-    });
-    const { invite } = seedPair('route-claim', inviteeKp.publicKey);
-
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [{
-        boxType: 'karma',
-        value: INVITE_KARMA_AMOUNT,
-        owner: inviteeKp.publicKey,
-      } as CandidateOf<KarmaBox>],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(tx, inviteePriv, inviteeHex);
-
-    const res = await request('/claim', 'POST', { tx: txToJson(tx) });
-    expect(res.status).toBe(201);
-    const body = res.data as Record<string, unknown>;
-    expect(body.status).toBe('pending');
-    expect(body.userId).toBe(inviteeHex);
-    expect(typeof body.karmaBoxId).toBe('string');
-  });
-
-  it('POST /invites/cancel cancels an open invite and returns 200 with pending', async () => {
-    const invitee = generateKeyPair().publicKey;
-    const { invite } = seedPair('route-cancel', invitee);
-
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(tx, inviterPrivKeyObj, inviterPubKeyHex);
-
-    const res = await request('/cancel', 'POST', { tx: txToJson(tx) });
-    expect(res.status).toBe(200);
-    const body = res.data as Record<string, unknown>;
-    expect(body.status).toBe('pending');
-    expect(typeof body.txId).toBe('string');
-  });
-
-  it('POST /invites/cancel with the wrong signer returns 403', async () => {
-    const inviteeKp = generateKeyPair();
-    const inviteeHex = Buffer.from(inviteeKp.publicKey).toString('hex');
-    const inviteePriv = createPrivateKey({
-      key: Buffer.from(inviteeKp.secretKey), format: 'der', type: 'pkcs8',
-    });
-    const { invite } = seedPair('route-cancel-403', inviteeKp.publicKey);
-
-    const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(tx, inviteePriv, inviteeHex);
-
-    const res = await request('/cancel', 'POST', { tx: txToJson(tx) });
-    expect(res.status).toBe(403);
+  it('POST /invites/commit, /claim and /cancel are all gone', async () => {
+    // ⛔ **There is ONE step.** `/commit` died with the instrument it served;
+    // `/claim` and `/cancel` died with the transactions they submitted, because
+    // the settlement grants the invitee out of the pool and nothing stays open
+    // for a cancel to withdraw (NODE_INTERFACE → Invites).
+    for (const path of ['/commit', '/claim', '/cancel']) {
+      const res = await request(path, 'POST', { tx: {} });
+      expect(res.status, path).toBe(404);
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -396,52 +316,20 @@ describe('invites routes', () => {
       expect(res.status, JSON.stringify(res.data)).toBe(201);
       const data = res.data as Record<string, unknown>;
       expect(data.status).toBe('pending');
-      expect(typeof data.inviteBoxId).toBe('string');
       expect(typeof data.bondBoxId).toBe('string');
+      expect(data.inviteBoxId).toBeUndefined();
 
-      const [change, invite, bond] = jsonToTx(body).outputs as [KarmaBox, InviteBox, BondBox];
+      // ⛔ **Two outputs, not three.** The page must build `karma + bond` and
+      // nothing else: an invite box is not a type any more, so a builder still
+      // emitting one is refused at the output schema.
+      const outputs = jsonToTx(body).outputs as [KarmaBox, BondBox];
+      expect(outputs).toHaveLength(2);
+      const [change, bond] = outputs;
       expect(change.value).toBe(funded - INVITE_BOND_KARMA);
-      expect(invite.value).toBe(0n);
+      expect(bond.boxType).toBe('bond');
       expect(bond.value).toBe(INVITE_BOND_KARMA);
     });
 
-    it('POST /invites/claim accepts what the Claim button sends', async () => {
-      const invitee = inviteeKeys();
-      const { invite } = seedPair('ui-claim', invitee.pub);
-
-      const body = signedBody(
-        ui.buildClaimInviteTx(invite.id!, invitee.hex),
-        invitee.priv,
-        invitee.hex,
-      );
-
-      const res = await request('/claim', 'POST', { tx: body });
-      expect(res.status, JSON.stringify(res.data)).toBe(201);
-      const data = res.data as Record<string, unknown>;
-      expect(data.status).toBe('pending');
-      // The mint landed on the invitee, and the surplus was admitted: the
-      // InviteBox held 0 and the karma output holds INVITE_KARMA_AMOUNT.
-      expect(data.userId).toBe(invitee.hex);
-      const [minted] = jsonToTx(body).outputs as [KarmaBox];
-      expect(minted.value).toBe(INVITE_KARMA_AMOUNT);
-    });
-
-    it('POST /invites/cancel accepts what the Cancel button sends', async () => {
-      const invitee = inviteeKeys();
-      const { invite } = seedPair('ui-cancel', invitee.pub);
-
-      const body = signedBody(
-        ui.buildCancelInviteTx(invite.id!),
-        inviterPrivKeyObj,
-        inviterPubKeyHex,
-      );
-
-      const res = await request('/cancel', 'POST', { tx: body });
-      expect(res.status, JSON.stringify(res.data)).toBe(200);
-      expect((res.data as Record<string, unknown>).status).toBe('pending');
-      // Zero outputs is the shape — the bond is neither named nor spent here.
-      expect(jsonToTx(body).outputs).toEqual([]);
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -488,8 +376,8 @@ describe('invites routes', () => {
     });
 
     it('carries a typed status on the error instead of sniffing the message', async () => {
-      const res = await request('/cancel', 'POST', { tx: EMPTY_TX }, {
-        cancelInvite: () => {
+      const res = await request('/', 'POST', { tx: EMPTY_TX }, {
+        createInvite: () => {
           throw new ClientError('not the inviter', 403);
         },
       });
@@ -499,8 +387,8 @@ describe('invites routes', () => {
     });
 
     it('maps a full mempool to 503 with a generic body', async () => {
-      const res = await request('/claim', 'POST', { tx: EMPTY_TX }, {
-        claimInvite: () => {
+      const res = await request('/', 'POST', { tx: EMPTY_TX }, {
+        createInvite: () => {
           throw new MempoolFullError(10000);
         },
       });

@@ -67,13 +67,11 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       pruneEntries: block.utxoTxTree.pruneEntries,
       // CBOR fields omitted from JSON — UTXO tx CBOR has no meaningful
       // textual representation.
+      //
+      // ⛔ **There is no `coinbaseOutputs` field.** The coinbase is an output of
+      // the block's settlement transaction, which is the last `utxoTxIds` entry
+      // (TYPES_INTERFACE → OrderingBlock).
       utxoTxs: [],
-      coinbaseOutputs: block.utxoTxTree.coinbaseOutputs.map((o) => ({
-        owner: Buffer.from(o.owner).toString('hex'),
-        value: o.value.toString(),
-        lockedUntilBlock: o.lockedUntilBlock,
-        isTreasury: o.isTreasury,
-      })),
     },
     validatorSignature: Buffer.from(block.validatorSignature).toString('hex'),
   };

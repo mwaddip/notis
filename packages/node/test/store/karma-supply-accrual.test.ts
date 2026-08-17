@@ -59,7 +59,6 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
     case 'credit':
       base['owner'] = OWNER;
       break;
-    case 'invite':
     case 'bond':
       base['inviterId'] = OWNER;
       base['inviteePublicKey'] = OTHER;
@@ -101,7 +100,6 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
  */
 const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   karma: true,
-  invite: true,
   bond: true,
   post_lock: true,
   vouch: true,
@@ -113,6 +111,12 @@ const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   // ⛔ Karma-bearing and still `false`. The pool holds what is NOT in
   // circulation, so counting it would have the supply account for itself.
   karma_pool: false,
+  // ⚠ Karma-bearing by their type definitions and `false` because no transition
+  // emits either yet, so neither can hold karma. The unit that first emits one
+  // adds it to the supply set (TYPES_INTERFACE → LikeAccrualBox /
+  // VouchEscrowBox).
+  like_accrual: false,
+  vouch_escrow: false,
 };
 
 describe('the karma supply is accounted at the box mutation choke point', () => {
@@ -123,7 +127,21 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     vi.resetModules();
   });
 
+  // ⚠ **`like_accrual` and `vouch_escrow` are answered by the predicate alone.**
+  // Nothing creates either yet, so the store carries no row mapping for them and
+  // there is no choke-point behaviour to measure — the unit that first emits one
+  // adds both together (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  const UNPRODUCED: ReadonlySet<string> = new Set(['like_accrual', 'vouch_escrow']);
+
   for (const [boxType, counts] of Object.entries(COUNTS_AS_CIRCULATING)) {
+    if (UNPRODUCED.has(boxType)) {
+      it(`'${boxType}': the supply set ${counts ? 'admits' : 'excludes'} it`, async () => {
+        const { countsAsCirculatingKarma } = await import('../../src/karma-supply.js');
+        expect(countsAsCirculatingKarma(boxType as AnyBox['boxType'])).toBe(counts);
+      });
+      continue;
+    }
+
     it(`'${boxType}': inserting one ${counts ? 'raises' : 'leaves'} circulating karma`, async () => {
       const s = await freshStore();
       s.beginBlockJournal(1);
@@ -194,18 +212,43 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-LIKE_KARMA_COST);
   });
 
-  it('⚠ VIOLATION: an invite claim creates INVITE_KARMA_AMOUNT and names no source', async () => {
+  it('an invite grant draws INVITE_KARMA_AMOUNT from the pool and names it', async () => {
+    // ⛔ **THE CASE THIS FILE'S HEADER PREDICTED, AND IT IS NOW LIVE.** The
+    // settlement spends the pool to the invitee, so the delta below is a
+    // CIRCULATION change with a named source, not a unit called into being
+    // (ARCHITECTURE → The conservation axiom). `karma_pool` sits outside the
+    // supply set deliberately, which is why a legitimate transfer still moves
+    // this number — a reader who takes a nonzero delta here as the defect will
+    // read it backwards.
     const s = await freshStore();
-    // The claimed invite holds 0, so the whole karma output is a surplus — the
-    // only karma a user transaction may create (NODE_INTERFACE → the claim row).
-    // Under the axiom the ticket has to carry what it hands over.
-    const invite = boxOfType('invite', 0n);
-    s.insertBox(invite);
+    const pool = boxOfType('karma_pool', 1000n);
+    s.insertBox(pool);
 
     s.beginBlockJournal(1);
-    s.consumeBox(invite.id!, 1);
+    s.consumeBox(pool.id!, 1);
+    s.insertBox(boxOfType('karma_pool', 1000n - INVITE_KARMA_AMOUNT));
     s.insertBox(boxOfType('karma', INVITE_KARMA_AMOUNT));
+
+    // Circulation grew by the grant …
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(INVITE_KARMA_AMOUNT);
+    // … and the pool fell by exactly the same amount, which is the half the
+    // supply delta cannot see and the half the axiom is about.
+    const poolAfter = s.getKarmaPoolBox();
+    expect(poolAfter!.value).toBe(1000n - INVITE_KARMA_AMOUNT);
+  });
+
+  it('⚠ VIOLATION: a bond forfeit ends karma and names no sink', async () => {
+    // The remainder a bond forfeits at its probation deadline is destroyed by
+    // the ABSENCE of a mint (`processMaturedBonds`), which leaves no box holding
+    // it. C3b routes it back to the pool; until then this witness stands.
+    const s = await freshStore();
+    const bond = boxOfType('bond', 40n);
+    s.insertBox(bond);
+
+    s.beginBlockJournal(1);
+    s.consumeBox(bond.id!, 1);
+    s.insertBox(boxOfType('karma', 10n));
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-30n);
   });
 
   it('⚠ VIOLATION: an unvouch moves the stake to a sink no box names', async () => {

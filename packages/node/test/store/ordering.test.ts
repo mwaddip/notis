@@ -48,7 +48,6 @@ function makeOrderingBlock(
       utxoTxIds: ['1a'.repeat(32)],
       utxoTxs: [],
       pruneEntries: [],
-      coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64).fill(0xab),
     ...overrides,
@@ -99,17 +98,12 @@ describe('ordering store', () => {
         createdAt: 1234567890,
       },
       utxoTxTree: {
+        // The settlement is the last entry, and here it is the only one — the
+        // shape every body has (NODE_INTERFACE → It is the LAST entry in
+        // `utxoTxIds`). The store round-trips bytes and reads none of them.
         utxoTxIds: ['2b'.repeat(32)],
-        utxoTxs: [],
+        utxoTxs: [new Uint8Array(96).fill(0x2b)],
         pruneEntries: [],
-        coinbaseOutputs: [
-          {
-            owner: uid('coinbase-recipient'),
-            value: 100n,
-            lockedUntilBlock: 100,
-            isTreasury: false,
-          },
-        ],
       },
       validatorSignature: new Uint8Array(64).fill(0xcd),
     });
@@ -135,25 +129,22 @@ describe('ordering store', () => {
 
     // utxoTxTree
     //
-    // `UtxoTxTree` has exactly four fields (TYPES_INTERFACE → Layout —
-    // UtxoTxTree) and all four are asserted, so this covers the whole struct
+    // `UtxoTxTree` has exactly three fields (TYPES_INTERFACE → Layout —
+    // UtxoTxTree) and all three are asserted, so this covers the whole struct
     // rather than a sample of it.
     //
     // Asserting a name the struct does not declare is the trap here: it reads
     // as coverage while pinning the storage codec's tolerance for an unknown
-    // key, which is a property of cbor-x and not of the protocol.
-    expect(result!.utxoTxTree.utxoTxs).toEqual([]);
+    // key, which is a property of the codec and not of the protocol.
     expect(result!.utxoTxTree.pruneEntries).toEqual([]);
-    //
-    // ⚠ `CoinbaseOutput.value` is a **bigint**, and both the fixture at the top
-    // of this test and the assertion below must spell it `100n`. A round-trip
-    // test is the one shape where a fixture and an assertion can agree with each
-    // other while both disagree with the type: write `100` in the fixture, assert
-    // `toBe(100)`, and the test passes on data no real block produces — so it
-    // detects nothing, which is the single thing it exists to do.
     expect(result!.utxoTxTree.utxoTxIds).toEqual(['2b'.repeat(32)]);
-    expect(result!.utxoTxTree.coinbaseOutputs).toHaveLength(1);
-    expect(result!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
+    // The settlement's bytes come back byte-for-byte, and the payload is
+    // height-bearing rather than a shared constant: a store returning some other
+    // block's body would pass an assertion on a value every block shares.
+    expect(result!.utxoTxTree.utxoTxs).toHaveLength(1);
+    expect(Buffer.from(result!.utxoTxTree.utxoTxs[0]!)).toEqual(
+      Buffer.from(new Uint8Array(96).fill(0x2b)),
+    );
 
     // getCurrentHeight should reflect the inserted block
     const { getCurrentHeight } = await importOrderingFresh();

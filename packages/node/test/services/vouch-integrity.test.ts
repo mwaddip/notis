@@ -31,7 +31,6 @@ import type {
   AnyBox,
   BondBox,
   CandidateOf,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
   VouchBox,
@@ -343,12 +342,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       value: karmaBox.value - bondValue,
       owner: inviter.pub,
     };
-    const inviteOut = {
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId: inviter.pub,
-      inviteePublicKey: invitee,
-    } as InviteBox;
     const bondOut = {
       boxType: 'bond' as const,
       value: bondValue,
@@ -357,7 +350,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     } as BondBox;
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
-      outputs: [karmaOut, inviteOut, bondOut],
+      outputs: [karmaOut, bondOut],
       signatures: {},
       protocolVersion: 1,
     };
@@ -365,10 +358,11 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     return tx;
   }
 
-  it('V4: rejects an invite create whose bond holds nothing', () => {
+  it('V4: rejects an invite whose bond holds nothing', () => {
     // Conservation alone permits a 0-value bond: the karma output simply keeps
-    // the difference. Without the value pin the inviter gets a live, claimable
-    // InviteBox for no stake at all.
+    // the difference. Without the value pin the settlement grants the invitee
+    // `INVITE_KARMA_AMOUNT` out of the pool for no stake at all — and `B >= G`
+    // is what makes the grant arbitrage-free (ARCHITECTURE → Invite System).
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 0n);

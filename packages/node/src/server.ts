@@ -15,7 +15,7 @@ import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services
 import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
-import { createInvite, claimInvite, cancelInvite } from './services/invites.js';
+import { createInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
@@ -265,8 +265,6 @@ export function createApp(config: Config): express.Express {
     '/invites',
     inviteRoutes({
       createInvite,
-      claimInvite,
-      cancelInvite,
       getCurrentHeight: store.getCurrentHeight,
       getBox: store.getBoxWithPending,
       insertBox: store.insertBox,
@@ -321,7 +319,6 @@ export function createApp(config: Config): express.Express {
       getKarmaBoxes: store.getKarmaBoxes,
       getCreditBox: store.getCreditBox,
       getCreditBoxes: store.getCreditBoxes,
-      getOpenInvites: store.getOpenInvites,
       getBondBoxes: store.getBondBoxes,
       getCurrentHeight: store.getCurrentHeight,
       getUtxoEngineDeps: () => utxoEngineDeps,

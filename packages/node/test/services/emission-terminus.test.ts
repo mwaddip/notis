@@ -1,4 +1,4 @@
-import { makeApplicableBlock, makeTestIdentity, ZERO_HASH } from '../helpers.js';
+import { coinbaseOf, makeApplicableBlock, makeTestIdentity, ZERO_HASH } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   CREDIT_INITIAL_REWARD,
@@ -169,12 +169,16 @@ describe('credit emission terminates', () => {
     await seedChainAt(LAST_PAYING_HEIGHT);
 
     // No transactions, so no fees: the block's income is `0 + 0`, `splitCoinbase`
-    // leaves nothing for either slice, and `buildCoinbaseOutputs` pushes neither.
-    // The empty list is the only encoding a block can carry here — no coinbase
+    // leaves nothing for either slice, and the settlement emits no credit output
+    // at all. That is the only encoding a block can carry here — no coinbase
     // output may hold a zero value (MINING_INTERFACE → Coinbase Application,
     // invariant 1), so there is nothing to write instead of writing nothing.
+    //
+    // ⛔ **The coinbase is inside the settlement now**, which is the body's last
+    // entry, so the assertion reads its outputs rather than a body field
+    // (TYPES_INTERFACE → OrderingBlock).
     const block = await makeApplicableBlock({ height: TERMINUS_HEIGHT });
-    expect(block.utxoTxTree.coinbaseOutputs).toEqual([]);
+    expect(coinbaseOf(block)).toEqual([]);
 
     // And the apply path takes it. This is the rule exercised through a block
     // rather than through `splitCoinbase` alone: the zero-value scan walks an
@@ -184,8 +188,7 @@ describe('credit emission terminates', () => {
 
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(TERMINUS_HEIGHT);
-    expect(ordering.getOrderingBlock(TERMINUS_HEIGHT)!.utxoTxTree.coinbaseOutputs)
-      .toEqual([]);
+    expect(coinbaseOf(ordering.getOrderingBlock(TERMINUS_HEIGHT)!)).toEqual([]);
   });
 
   it('the same empty block one height lower still pays (control)', async () => {
@@ -196,9 +199,9 @@ describe('credit emission terminates', () => {
     // Identical body, identical absence of fees. What differs is the height, so
     // the empty list above is the terminus's doing and not the empty body's.
     const block = await makeApplicableBlock({ height: LAST_PAYING_HEIGHT });
-    expect(block.utxoTxTree.coinbaseOutputs.length).toBeGreaterThan(0);
+    expect(coinbaseOf(block).length).toBeGreaterThan(0);
 
-    const paid = block.utxoTxTree.coinbaseOutputs.reduce((sum, o) => sum + o.value, 0n);
+    const paid = coinbaseOf(block).reduce((sum, o) => sum + o.value, 0n);
     expect(paid).toBeGreaterThan(0n);
 
     const blockApply = await importBlockApply();

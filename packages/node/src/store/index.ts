@@ -26,8 +26,6 @@ export {
   getCreditBox,
   getCreditBoxes,
   getUnlockedCreditBoxes,
-  getOpenInvites,
-  getInviteFor,
   getBondFor,
   getBondsInvitedAt,
   getBondBoxes,

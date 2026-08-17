@@ -10,7 +10,6 @@ import {
 import type {
   BondBox,
   CandidateOf,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -25,17 +24,16 @@ import {
 } from '../helpers.js';
 
 /**
- * The invite flow's *predicted* box ids.
+ * The invite's *predicted* box id.
  *
- * The client is handed an InviteBox id before the box exists, bakes it into
- * `bond.inviteBoxId`, and `utxo-engine.ts` dereferences it on-chain at bond
- * commit. If the service predicts a different id than block application
- * materializes, the bond dangles — and it fails as a missing box at commit
- * time, not as a visible error at prediction time.
+ * `POST /invites` hands the client a `bondBoxId` before the box exists. If the
+ * service predicts a different id than block application materializes, the
+ * client is holding a name for nothing — and it fails as a missing box at some
+ * later read, not as a visible error at prediction time.
  *
- * The invite output sits at index **1** of `tx.outputs` (karma, invite, bond),
- * so this also pins that positions come from the output's real position rather
- * than from a per-box counter or a hardcoded 0.
+ * The bond output sits at index **1** of `tx.outputs` (karma, bond), so this
+ * also pins that positions come from the output's real position rather than
+ * from a per-box counter or a hardcoded 0.
  */
 
 describe('invite id prediction carries transaction provenance', () => {
@@ -61,7 +59,7 @@ describe('invite id prediction carries transaction provenance', () => {
     closeDb();
   });
 
-  /** A valid invite tx: consumes one KarmaBox, produces karma + invite + bond. */
+  /** A valid invite tx: consumes one KarmaBox, produces karma + bond. */
   function buildInviteTx(): UtxoTransaction {
     const karma = seedProvenance<KarmaBox>({
       boxType: 'karma',
@@ -75,14 +73,8 @@ describe('invite id prediction carries transaction provenance', () => {
       value: 100n - INVITE_BOND_KARMA,
       owner: inviterId,
     };
-    // Both boxes name the same invitee — that key IS the pairing, and the
-    // create transition rejects a pair that disagrees on it.
-    const inviteBox: CandidateOf<InviteBox> = {
-      boxType: 'invite',
-      value: 0n,
-      inviterId,
-      inviteePublicKey: invitee,
-    };
+    // ⛔ **The bond IS the request** — that key is the whole pairing, and the
+    // settlement grants it out of the pool (ARCHITECTURE → Invite System).
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
@@ -94,7 +86,6 @@ describe('invite id prediction carries transaction provenance', () => {
       inputs: [karma.id!],
       outputs: [
         newKarma,
-        inviteBox,
         bondBox,
       ],
       signatures: {},
@@ -119,12 +110,10 @@ describe('invite id prediction carries transaction provenance', () => {
     const tx = buildInviteTx();
     const result = createInvite(deps() as never, tx, HEIGHT);
 
-    expect(result.inviteBox.txId).toBe(result.txId);
     expect(result.bondBox.txId).toBe(result.txId);
-    // karma=0, invite=1, bond=2 — a hardcoded 0 or a per-box counter would
-    // disagree with the position block application uses.
-    expect(result.inviteBox.index).toBe(1);
-    expect(result.bondBox.index).toBe(2);
+    // karma=0, bond=1 — a hardcoded 0 or a per-box counter would disagree with
+    // the position block application uses.
+    expect(result.bondBox.index).toBe(1);
   });
 
   it('predicts exactly what the apply path materializes for the same tx', () => {
@@ -144,8 +133,7 @@ describe('invite id prediction carries transaction provenance', () => {
     // starts biting at phase G, which is too late to learn that the prediction
     // and the apply path disagree.
     for (const [predicted, materialized] of [
-      [result.inviteBox, applied.computedOutputs![1]!],
-      [result.bondBox, applied.computedOutputs![2]!],
+      [result.bondBox, applied.computedOutputs![1]!],
     ] as const) {
       expect(predicted.txId).toBe(materialized.txId);
       expect(predicted.index).toBe(materialized.index);
@@ -163,6 +151,6 @@ describe('invite id prediction carries transaction provenance', () => {
     // why the ordering has to be pinned rather than trusted to fail loudly.
     expect(computeTxId(tx)).toBe(result.txId);
     const rematerialized = materializeOutput(tx.outputs[1]!, result.txId, 1);
-    expect(rematerialized.id).toBe(result.inviteBox.id);
+    expect(rematerialized.id).toBe(result.bondBox.id);
   });
 });

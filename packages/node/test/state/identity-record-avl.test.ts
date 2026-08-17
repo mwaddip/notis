@@ -98,8 +98,6 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       // `genesis_proof` is the type with no row: it carries an `lp` payload no
       // fixture here needs, and its tag is covered by the two ownerless rows
       // at the end.
-      withProvenance('04'.repeat(32), { boxType: 'invite', value: 0n,
-        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)) }),
       withProvenance('05'.repeat(32), { boxType: 'bond', value: 10n,
         inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)) }),
       withProvenance('06'.repeat(32), { boxType: 'post_lock', value: 5n,
@@ -114,6 +112,9 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
       // that must not be mistaken for a record.
       withProvenance('08'.repeat(32), { boxType: 'emission', value: 4226400000000n }),
       withProvenance('09'.repeat(32), { boxType: 'treasury', value: 500n }),
+      // The pool joins them: karma-bearing, ownerless, and the widest value the
+      // tree holds (TYPES_INTERFACE → KarmaPoolBox).
+      withProvenance('0a'.repeat(32), { boxType: 'karma_pool', value: 500n }),
     ];
 
     for (const box of boxes) {

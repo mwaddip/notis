@@ -12,11 +12,11 @@
  *    (including the two declared optionals present and absent), and every
  *    output boxType rejects a `guard` key, which no box carries.
  *
- * `BOX_TYPES` below is the types a transaction may CREATE, which is what this
- * file is about — not every box type. `genesis_proof`, `emission`, `treasury`
- * and `karma_pool` have no `OUTPUT_SHAPE` row because no transaction may create
- * them; `genesis_proof`'s refusal is covered in
- * `genesis-proof-not-in-tx.test.ts`.
+ * `BOX_TYPES` below is the types a USER transaction may create, which is what
+ * this file is about — not every box type. ⛔ **`emission`, `treasury` and
+ * `karma_pool` are refused of a user transaction and ADMITTED of a settlement**
+ * (NODE_INTERFACE → the settlement transaction); `genesis_proof` is refused of
+ * both, and its refusal is covered in `genesis-proof-not-in-tx.test.ts`.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
@@ -55,7 +55,12 @@ import {
   consumeBox as storeConsumeBox,
   hasActiveVouchCooldown as storeHasActiveVouchCooldown,
 } from '../../src/store/index.js';
-import { validateTx, checkOutputShape } from '../../src/services/utxo-engine.js';
+import {
+  validateTx,
+  applyTx,
+  checkOutputShape,
+  checkSettlementOutputShape,
+} from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {
@@ -80,13 +85,6 @@ function honestCandidate(
         boxType: 'credit',
         value: 10n,
         owner,
-      };
-    case 'invite':
-      return {
-        boxType: 'invite',
-        value: 0n,
-        inviterId: owner,
-        inviteePublicKey: new Uint8Array(32).fill(0xaa),
       };
     case 'bond':
       return {
@@ -116,6 +114,19 @@ function honestCandidate(
         boxType: 'fee',
         value: 10n,
       };
+    case 'like_accrual':
+      return {
+        boxType: 'like_accrual',
+        value: 10n,
+        author: new Uint8Array(32).fill(0xdd),
+      };
+    case 'vouch_escrow':
+      return {
+        boxType: 'vouch_escrow',
+        value: 10n,
+        owner,
+        releaseAtBlock: 40,
+      };
     default:
       throw new Error(`no honest candidate for ${boxType}`);
   }
@@ -137,15 +148,24 @@ type OutputBoxType = Exclude<
   'genesis_proof' | 'emission' | 'treasury' | 'karma_pool'
 >;
 
-/** Every type a transaction may create — the union's key set, not a list. */
+/**
+ * Every type a **user** transaction's outputs may be typed against — the
+ * union's key set, not a list.
+ *
+ * ⚠ **A row here is a shape, never a licence.** No transition arm admits
+ * `like_accrual` or `vouch_escrow` as an output today, so a transaction naming
+ * one is refused at step 7 with its shape already checked; this table is what
+ * pins the field types when it gets there.
+ */
 const CREATABLE: Record<OutputBoxType, true> = {
   karma: true,
   credit: true,
-  invite: true,
   bond: true,
   post_lock: true,
   vouch: true,
   fee: true,
+  like_accrual: true,
+  vouch_escrow: true,
 };
 
 const BOX_TYPES = Object.keys(CREATABLE) as readonly OutputBoxType[];
@@ -210,11 +230,12 @@ describe('checkOutputShape (direct)', () => {
     const dropped: Record<OutputBoxType, string> = {
       karma: 'owner',
       credit: 'owner',
-      invite: 'inviteePublicKey',
       bond: 'inviteePublicKey',
       post_lock: 'originalValue',
       vouch: 'targetId',
       fee: 'value',
+      like_accrual: 'author',
+      vouch_escrow: 'releaseAtBlock',
     };
     for (const t of BOX_TYPES) {
       const c = honestCandidate(t, owner);
@@ -225,16 +246,26 @@ describe('checkOutputShape (direct)', () => {
     }
   });
 
-  it('rejects an optional key present with value undefined (it enters the id preimage but not the store round-trip)', () => {
-    const r = shapeOf([{ ...honestCandidate('karma', owner), decayBurn: undefined }]);
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/present with value undefined/);
+  it('treats an optional key holding undefined as ABSENT, and so does the encoder', async () => {
+    // ⛔ **The two are one shape, not two** — measured through the encoder
+    // rather than argued: `canonicalBoxBytes` writes a single byte string for an
+    // absent optional field, so there is no ambiguity for the gate to refuse.
+    // ⚠ And `decodeTx` produces exactly this shape for every optional field, so
+    // a gate refusing it refuses every ordinary output arriving inside a block.
+    const { canonicalBoxBytes } = await import('@dagsocial/types');
+    const absent = honestCandidate('karma', owner);
+    const undef = { ...absent, decayBurn: undefined };
+    expect(shapeOf([undef]).valid).toBe(true);
+    expect(Buffer.from(canonicalBoxBytes(undef as never)).toString('hex'))
+      .toBe(Buffer.from(canonicalBoxBytes(absent as never)).toString('hex'));
   });
 
-  it('rejects a required key present with value undefined', () => {
+  it('rejects a REQUIRED key present with value undefined', () => {
+    // The half that survives: an absent required field is a missing field, not
+    // an absent optional, and it is refused by the required-key loop.
     const r = shapeOf([{ ...honestCandidate('post_lock', owner), originalValue: undefined }]);
     expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/present with value undefined/);
+    expect(r.error).toMatch(/missing required key 'originalValue'/);
   });
 
   it('rejects a guard key on every boxType — no box carries one', () => {
@@ -436,15 +467,9 @@ describe('validateTx output shape (integration)', () => {
     expect(r.valid, r.error).toBe(true);
   });
 
-  it('accepts karma → karma + invite + bond (honest)', () => {
+  it('accepts karma → karma + bond (the honest invite)', () => {
     const karma = seedKarma(100n);
     const invitee = new Uint8Array(32).fill(0xaa);
-    const invite = {
-      boxType: 'invite',
-      value: 0n,
-      inviterId: ownerPubKey,
-      inviteePublicKey: invitee,
-    };
     const bond = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
@@ -452,7 +477,7 @@ describe('validateTx output shape (integration)', () => {
       inviteePublicKey: invitee,
     };
     const change = karmaChange(100n - INVITE_BOND_KARMA);
-    const r = validateTx(deps, signedTx([karma.id!], [change, invite, bond]), 10);
+    const r = validateTx(deps, signedTx([karma.id!], [change, bond]), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
@@ -513,15 +538,20 @@ describe('validateTx output shape (integration)', () => {
     expect(r.error).toMatch(/missing required key 'originalValue'/);
   });
 
-  it('rejects an optional key present with undefined through validateTx (CBOR can encode it, the store cannot round-trip it)', () => {
+  it('an optional key holding undefined passes through validateTx as ABSENT', () => {
+    // ⛔ **The rule inverted with the codec.** `canonicalBoxBytes` writes one
+    // byte string for an absent optional field, so present-`undefined` is not a
+    // second shape — and `decodeTx` produces exactly this object for every
+    // output arriving inside a block, so a gate refusing it would refuse the
+    // ordinary case. What the box round-trips is the absent form.
     const karma = seedKarma(100n);
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [{ ...karmaChange(100n), decayBurn: undefined }]),
-      10,
-    );
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/present with value undefined/);
+    const tx = signedTx([karma.id!], [{ ...karmaChange(100n), decayBurn: undefined }]);
+    const r = validateTx(deps, tx, 10);
+    expect(r.valid, r.error).toBe(true);
+    applyTx(deps, tx, r.computedOutputs!, 10);
+    const stored = deps.getBox(r.computedOutputs![0]!.id!);
+    expect(stored).not.toBeNull();
+    expect('decayBurn' in stored!).toBe(false);
   });
 
   // ---- unknown boxType: the step-4 schema rejects it first ----
@@ -536,5 +566,61 @@ describe('validateTx output shape (integration)', () => {
     const r = validateTx(deps, signedTx([karma.id!], [{ ...karmaChange(90n) }, alien]), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unknown boxType wat/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The settlement's schema — the same closed key set over a wider type set
+// ---------------------------------------------------------------------------
+
+describe('checkSettlementOutputShape', () => {
+  const PROTOCOL = ['emission', 'treasury', 'karma_pool'] as const;
+
+  it('admits the three protocol boxes a user transaction may not create', () => {
+    for (const t of PROTOCOL) {
+      // ⛔ The shared prefix and nothing else: each names no owner, because the
+      // settlement is its only spender and its only producer (TYPES_INTERFACE →
+      // EmissionBox / TreasuryBox / KarmaPoolBox).
+      const r = checkSettlementOutputShape([{ boxType: t, value: 7n }] as AnyBoxCandidate[]);
+      expect(r.valid, t).toBe(true);
+    }
+  });
+
+  it('refuses those same three through the user gate, by name', () => {
+    // The two gates differ on exactly this set, which is what makes the split
+    // load-bearing rather than cosmetic.
+    for (const t of PROTOCOL) {
+      const r = shapeOf([{ boxType: t, value: 7n }]);
+      expect(r.valid, t).toBe(false);
+      expect(r.error, t).toMatch(new RegExp(`a ${t} box may not be a transaction output`));
+    }
+  });
+
+  it('refuses a genesis_proof output on BOTH gates', () => {
+    // ⛔ The absolute one: no transaction of any kind creates a genesis proof,
+    // so widening the settlement's set does not reach it.
+    const candidate = [{ boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(1) }];
+    for (const [name, check] of [
+      ['user', shapeOf],
+      ['settlement', (o: unknown[]) => checkSettlementOutputShape(o as AnyBoxCandidate[])],
+    ] as const) {
+      const r = check(candidate);
+      expect(r.valid, name).toBe(false);
+      expect(r.error, name).toMatch(/a genesis_proof box may not be a transaction output/);
+    }
+  });
+
+  it('still closes the key set and the field types over the wider type set', () => {
+    const stray = checkSettlementOutputShape(
+      [{ boxType: 'karma_pool', value: 7n, owner: new Uint8Array(32) }] as unknown as AnyBoxCandidate[],
+    );
+    expect(stray.valid).toBe(false);
+    expect(stray.error).toMatch(/unexpected key 'owner'/);
+
+    const mistyped = checkSettlementOutputShape(
+      [{ boxType: 'emission', value: 7 }] as unknown as AnyBoxCandidate[],
+    );
+    expect(mistyped.valid).toBe(false);
+    expect(mistyped.error).toMatch(/field 'value'/);
   });
 });

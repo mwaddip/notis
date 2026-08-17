@@ -57,11 +57,6 @@ export function txToApi(tx: UtxoTransaction): Record<string, unknown> {
     signatures: Object.fromEntries(
       Object.entries(tx.signatures).map(([k, v]) => [k, hex(v as Uint8Array)]),
     ),
-    preimages: tx.preimages
-      ? Object.fromEntries(
-          Object.entries(tx.preimages).map(([k, v]) => [k, hex(v as Uint8Array)]),
-        )
-      : undefined,
     protocolVersion: tx.protocolVersion,
     // Present ⟺ the tx is a like — the JSON edge must not drop it, since it
     // sits inside the signed bytes.

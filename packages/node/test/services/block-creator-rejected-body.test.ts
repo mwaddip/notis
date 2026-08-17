@@ -390,7 +390,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
       },
       // One declared id, no body beside it — the misalignment structure would
       // have caught on every other path into the mutation phase.
-      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [], pruneEntries: [] },
       validatorSignature: new Uint8Array(64),
     };
 

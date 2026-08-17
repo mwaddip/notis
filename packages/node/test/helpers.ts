@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeTxId,
+  decodeTx,
   computePostId,
   postFieldBytes,
   computeBoxId,
@@ -27,7 +28,6 @@ import type {
   AnyBox,
   BondBox,
   BoxId,
-  InviteBox,
   Post,
   KarmaBox,
   CreditBox,
@@ -344,57 +344,42 @@ export function labelNonce(label: string): number {
 }
 
 /**
- * Seed an invite and its bond as the two outputs of ONE synthetic transaction.
+ * Seed a bond — the whole of an invite in the store.
  *
- * Production emits the pair from one transaction, and every rule that reads them
- * assumes it: both boxes carry the same `inviterId` and the same
- * `inviteePublicKey`, and that key IS the pairing — an address is invited once,
- * ever, so it names exactly one live pair.
+ * ⛔ **There is no invite box to pair it with.** An invite is one transaction
+ * producing a karma output and a bond, and the block's settlement grants the
+ * invitee out of the pool (ARCHITECTURE → Invite System), so the bond alone
+ * carries `inviterId` and `inviteePublicKey` and that key IS the pairing: an
+ * address is invited once, ever.
  *
  * **`label` is required, and it is the whole point.** `seedAsOneTx` derives the
- * shared txId from `candidates[0]` alone, so two pairs whose *invite* is
- * structurally identical at the same `seedHeight` get the same txId — and
- * therefore colliding box ids. Measured, and it is sharper than it first looks:
- * because only `candidates[0]` feeds the txId, a difference confined to the
- * **bond** does not separate the pairs either. Two such pairs produce bonds with
- * *different ids* sharing one `(txId, index)`, which is exactly what
- * `UNIQUE(tx_id, output_index)` forbids. Centralising the pattern here would
- * multiply that hazard across every caller, so `label` has no default: forgetting
- * it is a compile error rather than a silent collision. Pinned by
- * `helpers.test.ts`.
+ * shared txId from `candidates[0]` alone, so two structurally identical bonds at
+ * the same `seedHeight` get the same txId — and therefore colliding box ids,
+ * which is exactly what `UNIQUE(tx_id, output_index)` forbids. `label` has no
+ * default: forgetting it is a compile error rather than a silent collision.
+ * Pinned by `helpers.test.ts`.
  */
-export function seedInviteAndBond(opts: {
-  /** Distinguishes this pair from every other. Required — see above. */
+export function seedBond(opts: {
+  /** Distinguishes this bond from every other. Required — see above. */
   label: string;
   inviterId: Uint8Array;
-  inviteValue?: bigint;
   bondValue?: bigint;
   inviteePublicKey?: Uint8Array;
   seedHeight?: number;
-}): { invite: Stored<InviteBox>; bond: Stored<BondBox> } {
+}): { bond: Stored<BondBox> } {
   const invitee = opts.inviteePublicKey ?? new Uint8Array(32).fill(0xaa);
-  const inviteCandidate = {
-    boxType: 'invite' as const,
-    // An invite holds nothing; the karma it names is minted at the claim.
-    value: opts.inviteValue ?? 0n,
-    inviterId: opts.inviterId,
-    inviteePublicKey: invitee,
-  };
   const bondCandidate = {
     boxType: 'bond' as const,
     value: opts.bondValue ?? INVITE_BOND_KARMA,
     inviterId: opts.inviterId,
     inviteePublicKey: invitee,
   };
-  const [invite, bond] = seedAsOneTx(
-    [inviteCandidate, bondCandidate],
+  const [bond] = seedAsOneTx(
+    [bondCandidate],
     opts.seedHeight ?? 1,
     labelNonce(opts.label),
   );
-  return {
-    invite: invite as Stored<InviteBox>,
-    bond: bond as Stored<BondBox>,
-  };
+  return { bond: bond as Stored<BondBox> };
 }
 
 export function makeKarmaBox(
@@ -776,6 +761,25 @@ export async function seedEmissionBox(): Promise<void> {
 }
 
 /**
+ * Put this network's karma pool box in the store, if it is not there already.
+ *
+ * ⛔ **A block whose body creates a bond cannot be produced without one.** The
+ * invitee's `INVITE_KARMA_AMOUNT` is *spent from the pool* by the settlement
+ * rather than minted (ARCHITECTURE → The conservation axiom), so a store holding
+ * no pool has nothing to spend and both the creator and apply refuse the block.
+ * Genesis seeds it on every network; suites that build stores directly with
+ * `initDb(':memory:')` need this.
+ *
+ * Seeded at height 0 with **nothing granted out**, so the box is byte-identical
+ * to the one a network with no committee grants seeds — the same reason
+ * `seedEmissionBox` gives.
+ */
+export async function seedKarmaPoolBox(): Promise<void> {
+  const { ensureKarmaPoolBox } = await import('../src/store/system.js');
+  ensureKarmaPoolBox(0n, 0);
+}
+
+/**
  * Activate the singleton prover over everything the store already holds —
  * **committed state first, tree second**, which is the order
  * `seedGenesisState` itself runs in (`ensureEmissionBox`, then
@@ -844,14 +848,15 @@ export async function makeApplicableBlock(
      *  suite's apply measures. Listed in the order given — dependency order
      *  is the apply loop's job. */
     utxoTxs?: UtxoTransaction[];
-    /** Replace the coinbase outright. The default is the one the block's own
-     *  body requires — `splitCoinbase` over the emission, the fees the embedded
-     *  transactions leave, and the actors they carry — so a test states this
-     *  only to deviate from it deliberately. */
-    coinbaseSplit?: Array<{ owner: Uint8Array; value: bigint; isTreasury: boolean }>;
+    /** Rewrite the settlement this body requires before it rides in the block.
+     *  The default is the one the creator would have produced — the emission and
+     *  treasury successors, the pool draw the body's bonds owe, and the miner's
+     *  slice — so a test states this only to deviate from it deliberately, and
+     *  what it measures is that deviation. */
+    settlement?: (tx: UtxoTransaction) => UtxoTransaction;
   } = {},
 ): Promise<OrderingBlock> {
-  const { computeUtxoTxRoot, buildCoinbaseOutputs, predictIncome } = await import(
+  const { computeUtxoTxRoot, buildBlockSettlement } = await import(
     '../src/services/block-creator.js'
   );
   const { expectedTarget } = await import('../src/services/difficulty.js');
@@ -874,25 +879,34 @@ export async function makeApplicableBlock(
     prevBlockHash = prevHash;
   }
   const miner = opts.miner ?? makeTestIdentity();
-  const lockedUntilBlock = opts.lockedUntilBlock ?? height + config.creditMinerRewardDelay;
   const embeddedTxs = opts.utxoTxs ?? [];
   const txCbors = embeddedTxs.map((tx) => encodeTx(tx));
 
-  // The coinbase this body requires, built the way the creator builds it — the
-  // helper's contract is a block that passes every apply check, and since the
-  // coinbase became the block's income that is a function of the body rather
-  // than of the height alone. A test that wants a wrong coinbase says so.
-  const { fees, actors } = predictIncome(txCbors, miner.userId);
+  // The settlement this body requires, built the way the creator builds it — the
+  // helper's contract is a block that passes every apply check, and every
+  // protocol effect the block has is inside this one transaction. It is the
+  // body's LAST entry, which is the whole of how apply identifies it
+  // (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+  const built = buildBlockSettlement(txCbors, height, miner.userId, miner.userId);
+  if ('error' in built) {
+    throw new Error(`makeApplicableBlock: the body has no valid settlement: ${built.error}`);
+  }
+  // The maturity-lock override reaches the coinbase's credit outputs, which is
+  // where the lock now lives — one deviation, applied to the settlement the
+  // creator built rather than to a coinbase list that no longer exists.
+  const relocked = opts.lockedUntilBlock === undefined
+    ? built.tx
+    : {
+        ...built.tx,
+        outputs: built.tx.outputs.map((o) =>
+          o.boxType === 'credit' ? { ...o, lockedUntilBlock: opts.lockedUntilBlock! } : o,
+        ),
+      };
+  const settlementTx = opts.settlement ? opts.settlement(relocked) : relocked;
   const utxoTxTree = {
-    utxoTxIds: embeddedTxs.map((tx) => computeTxId(tx)),
-    utxoTxs: txCbors,
+    utxoTxIds: [...embeddedTxs.map((tx) => computeTxId(tx)), computeTxId(settlementTx)],
+    utxoTxs: [...txCbors, encodeTx(settlementTx)],
     pruneEntries: opts.pruneEntries ?? [],
-    coinbaseOutputs: opts.coinbaseSplit
-      ? opts.coinbaseSplit.map((share) => ({ ...share, lockedUntilBlock }))
-      : buildCoinbaseOutputs(height, fees, actors, miner.userId).map((out) => ({
-          ...out,
-          lockedUntilBlock,
-        })),
   };
 
   const header = {
@@ -953,14 +967,70 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
     signatures: Object.fromEntries(
       Object.entries(tx.signatures).map(([k, v]) => [k, Buffer.from(v).toString('hex')]),
     ),
-    preimages: tx.preimages
-      ? Object.fromEntries(
-          Object.entries(tx.preimages).map(([k, v]) => [k, Buffer.from(v).toString('hex')]),
-        )
-      : undefined,
     protocolVersion: tx.protocolVersion,
     // Present ⟺ the tx is a like — the JSON edge must not drop it, since it
     // sits inside the signed bytes.
     ...(tx.likeTarget !== undefined ? { likeTarget: tx.likeTarget } : {}),
+  };
+}
+
+/**
+ * The block's settlement transaction — its LAST `utxoTxs` entry, decoded
+ * (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+ *
+ * Position is the whole of how a node identifies it, so this is the same
+ * identification block application makes rather than a fixture-side convention.
+ */
+export function settlementOf(block: OrderingBlock): UtxoTransaction {
+  const txs = block.utxoTxTree.utxoTxs;
+  const last = txs[txs.length - 1];
+  if (!last) throw new Error('settlementOf: the body carries no transactions');
+  return decodeTx(last);
+}
+
+/**
+ * The block's coinbase — the credit outputs of its settlement transaction.
+ *
+ * ⛔ **There is no `coinbaseOutputs` body field.** The miner's slice is paid by
+ * the same transaction that spends the `EmissionBox` for it, so a test asking
+ * "what did this block pay" reads the settlement (TYPES_INTERFACE →
+ * OrderingBlock).
+ */
+export function coinbaseOf(block: OrderingBlock): CreditBox[] {
+  return settlementOf(block).outputs.filter(
+    (o): o is CreditBox => o.boxType === 'credit',
+  );
+}
+
+/**
+ * Rewrite a settlement's coinbase — its credit outputs — leaving every other
+ * output where it is.
+ *
+ * The `settlement` override's common shape: a test that wants a WRONG coinbase
+ * says exactly which one, and nothing else about the block deviates. The
+ * maturity lock is carried over from the settlement the creator built, so a
+ * deviation in the amount is not also a deviation in the lock.
+ */
+export function withCoinbase(
+  shares: Array<{ owner: Uint8Array; value: bigint }>,
+): (tx: UtxoTransaction) => UtxoTransaction {
+  return (tx) => {
+    const existing = tx.outputs.find((o): o is CreditBox => o.boxType === 'credit');
+    if (!existing) {
+      throw new Error('withCoinbase: this settlement pays no coinbase to rewrite');
+    }
+    const lockedUntilBlock = existing.lockedUntilBlock;
+    return {
+      ...tx,
+      outputs: [
+        ...tx.outputs.filter((o) => o.boxType !== 'credit'),
+        ...shares.map((share) => ({
+          boxType: 'credit' as const,
+          value: share.value,
+          owner: share.owner,
+          ...(lockedUntilBlock !== undefined ? { lockedUntilBlock } : {}),
+        })),
+      ],
+    };
   };
 }

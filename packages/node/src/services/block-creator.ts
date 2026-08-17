@@ -5,17 +5,16 @@ import {
 } from 'crypto';
 import {
   PROTOCOL_VERSION,
-  BOX_VALUE_BOUND,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   decodeTx,
+  encodeTx,
   computeTxId,
   leafHash,
   buildMerkleRoot,
   serializePruneEntry,
-  coinbaseOutputBytes,
   hexToBuf,
   utxoTxTreeByteLength,
 } from '@dagsocial/types';
@@ -27,9 +26,9 @@ import type {
   OrderingBlock,
   BlockHeader,
   UtxoTxTree,
-  CoinbaseOutput,
   Post,
   AnyBox,
+  UtxoTransaction,
 } from '@dagsocial/types';
 // The process config, distinct from the injected `config` below. The two
 // emission values read off it are re-checked by the applier against the same
@@ -45,9 +44,15 @@ import {
 } from './block-apply.js';
 import {
   countKarmaActors,
-  splitCoinbase,
   type EmbeddedTx,
 } from './coinbase-split.js';
+import {
+  bondInviteeOf,
+  buildSettlement,
+  contributeToBody,
+  emptyBody,
+  type SettlementBody,
+} from './settlement.js';
 import { materializeOutput } from './utxo-engine.js';
 import {
   MissingStoredBlockError,
@@ -66,14 +71,17 @@ import {
   getCurrentHeight,
   getPost,
   getBox,
+  getEmissionBox,
+  getTreasuryBox,
+  getKarmaPoolBox,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
 // Merkle root computation
 //
 // Every leaf preimage is the committed struct's own wire bytes, supplied by
-// `@dagsocial/types` — `serializePruneEntry`, `coinbaseOutputBytes`, and a bare
-// 32-byte id for `utxotx`. Node states no
+// `@dagsocial/types` — `serializePruneEntry`, and a bare 32-byte id for
+// `utxotx`. Node states no
 // layout of its own here (TYPES_INTERFACE → "Merkle leaf preimages are the
 // struct's own wire bytes"): a second statement of a layout in a second package
 // drifts with no compiler signal, and a consistent transposition round-trips
@@ -86,15 +94,17 @@ import {
  * The block's one committed root.
  *
  * ⛔ **Leaf ORDER is normative and it is `UtxoTxTree`'s field order** — every
- * transaction, then every prune entry, then every coinbase output
- * (TYPES_INTERFACE → OrderingBlock). Reordering is a consensus change with no
- * compiler signal.
+ * transaction, then every prune entry (TYPES_INTERFACE → OrderingBlock).
+ * Reordering is a consensus change with no compiler signal. The settlement is
+ * the last `utxoTxIds` entry, so it is the last transaction leaf and its
+ * position is committed here rather than stated anywhere else.
  *
- * What keeps the three kinds apart inside one root is the `leafHash` domain tag,
- * not their position: `'utxotx'`, `'prune'` and `'coinbase'` are distinct and
- * NUL-terminated, so they are prefix-free and a prune leaf cannot be reread as a
- * transaction leaf. The retired `'subblock'` domain is reachable from no leaf
- * here and stays reserved.
+ * What keeps the two kinds apart inside one root is the `leafHash` domain tag,
+ * not their position: `'utxotx'` and `'prune'` are distinct and NUL-terminated,
+ * so they are prefix-free and a prune leaf cannot be reread as a transaction
+ * leaf. The retired `'subblock'` and `'coinbase'` domains are reachable from no
+ * leaf here and stay reserved, never to be reused — a root is the one thing that
+ * cannot be re-derived to settle an ambiguity later.
  */
 export function computeUtxoTxRoot(tree: UtxoTxTree): string {
   const leaves: Uint8Array[] = [
@@ -102,8 +112,6 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
       leafHash('utxotx', hexToBuf(id))),
     ...tree.pruneEntries.map((entry) =>
       leafHash('prune', Buffer.from(serializePruneEntry(entry)))),
-    ...tree.coinbaseOutputs.map((o) =>
-      leafHash('coinbase', coinbaseOutputBytes(o))),
   ];
   return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
 }
@@ -333,14 +341,15 @@ export function createOrderingBlock(): OrderingBlock | null {
   purgeExpired(currentHeight);
 
   // 2. The prune entries, which the drain reads off the pool alone. The
-  //    coinbase cannot be built here: its value is the block's income and its
-  //    split is scaled by the actors the body carries, so it depends on what
-  //    the fill selects — which in turn depends on the budget the coinbase
-  //    leaves. The budget is seeded with the largest encoding a coinbase could
-  //    take, and the real one replaces it once the fill is done.
+  //    settlement cannot be built here: it consumes the fee boxes the body
+  //    creates and pays a coinbase scaled by the actors the body carries, so it
+  //    depends on what the fill selects — and it is itself part of the body the
+  //    fill is spending. ⛔ **It has no bounded worst case to reserve**
+  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here), so
+  //    instead each entry's `entryByteCost` carries its own marginal cost to it
+  //    and the sizer below has the last word.
   const MAX_PRUNES_PER_BLOCK = 32;
   const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
-  const coinbaseOutputs = worstCaseCoinbaseOutputs(newHeight);
 
   // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
   //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
@@ -362,14 +371,37 @@ export function createOrderingBlock(): OrderingBlock | null {
   //    H-3). The ids are derived from the bytes that ride beside them rather
   //    than read off the pool row, because that derivation is the property
   //    block application re-checks and rejects on.
-  const utxoTxIds: string[] = [];
-  const utxoTxCbors: Uint8Array[] = [];
+  //
+  //    ⚠ **These two hold the USER transactions, and the tree holds the body.**
+  //    The settlement is appended to the tree by `rebuildBody` rather than
+  //    pushed here, so the fill and the trim both operate on the list they
+  //    select from and never on the tail they do not own.
+  const userTxIds: string[] = [];
+  const userTxCbors: Uint8Array[] = [];
   const includedRowids: number[] = [];
   const utxoTxTree: UtxoTxTree = {
-    utxoTxIds,
-    utxoTxs: utxoTxCbors,
+    utxoTxIds: [],
+    utxoTxs: [],
     pruneEntries,
-    coinbaseOutputs,
+  };
+
+  /**
+   * Re-derive the settlement from the user transactions currently selected and
+   * write the whole body — the users' entries then the settlement, last.
+   */
+  const rebuildBody = (): { valid: boolean; error?: string } => {
+    const built = buildSettlement(
+      settlementDeps,
+      newHeight,
+      computeBlockReward(newHeight),
+      nodeConfig.creditMinerRewardDelay,
+      predictSettlementBody(userTxCbors, validatorId),
+      currentMinerPubkey ?? validatorId,
+    );
+    if ('error' in built) return { valid: false, error: built.error };
+    utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
+    utxoTxTree.utxoTxs = [...userTxCbors, encodeTx(built.tx)];
+    return { valid: true };
   };
 
   // 5. Spend what the mandatory sections left. Karma-side entries are offered
@@ -388,60 +420,115 @@ export function createOrderingBlock(): OrderingBlock | null {
   //    profitable, and only the second survives a miner who re-implements this.
   //
   //    ⛔ **The pool's stored `tx_fee` orders this loop and never feeds the
-  //    coinbase.** `predictIncome` below resolves every input itself, because
-  //    the applier computes the block's fees from its own resolution of the
-  //    body — a stored fee that has gone stale, or the zero an unpriceable
+  //    coinbase.** `predictSettlementBody` below resolves every input itself,
+  //    because the applier computes the block's fees from its own resolution of
+  //    the body — a stored fee that has gone stale, or the zero an unpriceable
   //    entry carries, would make this node emit a coinbase its own applier
   //    rejects. Ordering by a stale number costs nothing; summing one costs the
   //    block.
+  //
+  //    ⛔ **An invitee may be named ONCE per block.** A second bond for the same
+  //    key makes the whole body inapplicable (`block-apply` §11), so a fill that
+  //    selected both would produce nothing at all. Skipping the second is an
+  //    assembly preference like the karma-first ordering, not a consensus rule.
+  //
+  //    ⛔ **The accumulator is SEEDED with the settlement an empty body
+  //    produces**, which is the position `coinbaseOutputs`' worst-case
+  //    reservation used to hold. Its baseline — the emission and treasury
+  //    successors and the coinbase — is there whatever the fill selects, and
+  //    `entryByteCost` carries only each entry's MARGINAL growth on top
+  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here). Left
+  //    out, the accumulator under-counts by the whole settlement and the trim
+  //    loop stops running at most once.
+  //
+  //    ⚠ **A chain that cannot back even the empty settlement produces
+  //    nothing**, and says so here rather than after a wasted fill.
+  const seeded = rebuildBody();
+  if (!seeded.valid) {
+    console.warn(`Not producing block at height ${newHeight}: ${seeded.error}`);
+    currentTemplate = null;
+    confirmedRowids = new Set();
+    return null;
+  }
   let spent = utxoTxTreeByteLength(utxoTxTree);
+  const invitedThisBlock = new Set<string>();
   const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
     for (const entry of iteratePendingEntries({ klass })) {
       if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
+      const tx = decodeTx(entry.utxoTxCbor);
+      const txId = computeTxId(tx);
+      const invitee = bondInviteeOf(
+        tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
+      );
+      if (invitee !== null) {
+        const inviteeHex = Buffer.from(invitee).toString('hex');
+        if (invitedThisBlock.has(inviteeHex)) continue;
+        invitedThisBlock.add(inviteeHex);
+      }
       const cost = entryByteCost(entry.utxoTxCbor);
       if (spent + cost > budget) return;
       spent += cost;
-      utxoTxIds.push(computeTxId(decodeTx(entry.utxoTxCbor)));
-      utxoTxCbors.push(entry.utxoTxCbor);
+      userTxIds.push(txId);
+      userTxCbors.push(entry.utxoTxCbor);
       includedRowids.push(entry.rowid);
     }
   };
   offerBudgetTo('karma');
   offerBudgetTo('credit');
 
-  // 6. The real coinbase, from the transactions the fill actually selected.
-  //    Replacing the worst-case seed can only shrink the body, so the trim
-  //    below has less to do than it was given room for, never more.
-  const filled = predictIncome(utxoTxCbors, validatorId);
-  utxoTxTree.coinbaseOutputs = buildCoinbaseOutputs(newHeight, filled.fees, filled.actors, currentMinerPubkey ?? validatorId);
-
-  // 7. The sizer has the last word. `spent` is exact per entry and blind to the
-  //    two array count prefixes, which widen with the entry COUNT rather than
-  //    with any one entry, so the assembled body can measure a few bytes above
-  //    what the accumulator tracked — at most one entry's worth. What
-  //    `utxoTxTreeByteLength` returns over the finished tree is the number
-  //    `verifyOrderingBlockStructure` measures, and a body above the budget is
-  //    one every peer refuses.
+  // 6. The settlement, from the transactions the fill actually selected, and
+  //    appended as the body's LAST entry — which is the whole of how every node
+  //    identifies it (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
   //
-  //    It terminates with the coinbase in the loop, because popping a
-  //    transaction can only remove a fee and can only remove an actor, so the
-  //    income can only fall and the coinbase's encoding can only shrink or
-  //    hold — monotone downward, never oscillating. The split moves value
-  //    between the two outputs without changing their total, so it cannot widen
-  //    the encoding on its own; an output count that changes does so by a slice
-  //    reaching zero, which only removes an output.
-  while (utxoTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
-    utxoTxIds.pop();
-    utxoTxCbors.pop();
+  //    ⛔ **Only the producer can build it**, since only they know the block's
+  //    contents — the position the coinbase already occupied. A chain that
+  //    cannot back it (no emission box at a height that releases, a pool short
+  //    of the grants the body owes) yields no block: mining a body this node's
+  //    own applier refuses spends PoW on a block no peer accepts.
+  const settled = rebuildBody();
+  if (!settled.valid) {
+    console.warn(`Not producing block at height ${newHeight}: ${settled.error}`);
+    currentTemplate = null;
+    confirmedRowids = new Set();
+    return null;
+  }
+
+  // 7. The sizer has the last word. `spent` is exact per entry — its own
+  //    encoding plus its marginal cost to the settlement — and blind to the two
+  //    array count prefixes, which widen with the entry COUNT rather than with
+  //    any one entry, so the assembled body can measure a few bytes above what
+  //    the accumulator tracked. What `utxoTxTreeByteLength` returns over the
+  //    finished tree is the number `verifyOrderingBlockStructure` measures, and
+  //    a body above the budget is one every peer refuses.
+  //
+  //    ⛔ **The settlement is REBUILT on each iteration**, not measured once
+  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here).
+  //    Popping is still monotone: removing a transaction removes its fee, its
+  //    actor and its bond, so the income can only fall, the settlement's input
+  //    and output counts can only fall, and the body shrinks. The split moves
+  //    value between the miner and the treasury without changing their total,
+  //    so it cannot widen the encoding on its own.
+  //
+  //    ⚠ **The pop takes a USER entry**, never the settlement: a body with no
+  //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
+  while (userTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
+    userTxIds.pop();
+    userTxCbors.pop();
     includedRowids.pop();
-    const trimmed = predictIncome(utxoTxCbors, validatorId);
-    utxoTxTree.coinbaseOutputs = buildCoinbaseOutputs(newHeight, trimmed.fees, trimmed.actors, currentMinerPubkey ?? validatorId);
+    const retrimmed = rebuildBody();
+    if (!retrimmed.valid) {
+      console.warn(`Not producing block at height ${newHeight}: ${retrimmed.error}`);
+      currentTemplate = null;
+      confirmedRowids = new Set();
+      return null;
+    }
   }
 
   // 11. Always produce a block — a block with no user work still pays its
   //     miner the scheduled emission. Above the terminus it pays nothing, and
-  //     an empty body there carries no coinbase outputs; the block is produced
-  //     either way, because the chain advancing is not conditional on income.
+  //     the settlement there carries no credit output at all; the block is
+  //     produced either way, because the chain advancing is not conditional on
+  //     income.
 
   // 12. Track confirmed rowids for finalizeBlock cleanup
   confirmedRowids = new Set<number>(includedRowids);
@@ -599,139 +686,101 @@ function finalizeBlock(block: OrderingBlock): void {
 }
 
 // ---------------------------------------------------------------------------
-// Coinbase
+// The settlement's body
 // ---------------------------------------------------------------------------
 
 /**
- * The largest encoding any coinbase can take, used to seed the fill's budget
- * before the real one is known.
+ * The three protocol boxes the settlement moves, read from this node's store.
  *
- * One output is the maximum the split produces — the miner's slice is the whole
- * coinbase (MINING_INTERFACE → Coinbase Application) — and `value` is bounded at
- * `BOX_VALUE_BOUND - 1n` by what consensus accepts rather than by what the
- * encoder can write (TYPES_INTERFACE → Box value domain), so no real coinbase
- * encodes wider than this. Over-reserving costs at most a transaction's place in
- * a block that was within a few bytes of the budget; under-reserving would put
- * the assembled body over a budget every peer measures.
+ * Each getter is `ORDER BY id LIMIT 1`, so "the emission box" names one row and
+ * not whichever SQLite returned first — the stated total order the determinism
+ * obligation requires of anything read from a table (NODE_INTERFACE → the
+ * settlement transaction's determinism obligation).
  */
-export function worstCaseCoinbaseOutputs(height: number): CoinbaseOutput[] {
-  const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
-  return [
-    {
-      owner: new Uint8Array(32),
-      value: BOX_VALUE_BOUND - 1n,
-      lockedUntilBlock,
-      isTreasury: false,
-    },
-  ];
-}
+export const settlementDeps = {
+  getEmissionBox,
+  getTreasuryBox,
+  getKarmaPoolBox,
+  getBox,
+};
 
 /**
- * The fees and the actor count a body of these transactions will yield.
+ * Everything a body of these transactions contributes to the settlement: the
+ * fee total and the fee box ids, the karma-side actor count, and the invitee of
+ * every bond.
  *
- * ⚠ **A prediction, not the rule.** The rule is the applier's, which sums the
+ * ⚠ **A prediction, not the rule.** The rule is the applier's, which gathers the
  * same quantities while walking the transactions in dependency order
- * (`block-apply` → the coinbase carries the block's income). This runs before
- * the body has been applied and cannot use that walk, because the coinbase it
- * feeds has to exist before the mutation phase can run at all.
+ * (`block-apply` → the settlement carries the block's income). This runs before
+ * the body has been applied and cannot use that walk, because the settlement it
+ * feeds is part of the body the mutation phase runs over.
  *
- * A wrong prediction cannot produce a bad block: the coinbase check lives in
- * the mutation phase, and `computePostBlockStateRoot` runs that phase over this
- * body, so a coinbase that does not match its income makes the speculation
+ * A wrong prediction cannot produce a bad block: `checkSettlement` runs in the
+ * mutation phase, and `computePostBlockStateRoot` runs that phase over this
+ * body, so a settlement that does not match its body makes the speculation
  * `body-rejected` and this node declines to produce rather than mining a block
  * every peer refuses.
  *
  * Inputs resolve against the confirmed set **and this block's own outputs**,
  * because a transaction may spend a box an earlier one here creates. Order does
- * not matter to either quantity — a sum and a set are both commutative — so
- * this agrees with the applier's dependency-ordered walk without reproducing
- * it. An input that resolves to neither leaves the body unappliable, which the
- * speculation above is what catches.
+ * not matter to the actor count — a set is commutative — and the fee box ids and
+ * invitees are collected in the order the body itself fixes, which is the order
+ * the applier walks them in. An input that resolves to neither leaves the body
+ * unappliable, which the speculation above is what catches.
  */
-export function predictIncome(
+export function predictSettlementBody(
   txCbors: Uint8Array[],
   validator: Uint8Array,
-): { fees: bigint; actors: number } {
+): SettlementBody {
   const txs = txCbors.map((cbor) => decodeTx(cbor));
 
+  const materialized: AnyBox[][] = [];
   const ownOutputs = new Map<string, AnyBox>();
   for (const tx of txs) {
     const txId = computeTxId(tx);
-    (tx.outputs ?? []).forEach((out, index) => {
-      const box = materializeOutput(out as AnyBox, txId, index);
-      if (box.id) ownOutputs.set(box.id, box);
-    });
+    const outputs = (tx.outputs ?? []).map((out, index) =>
+      materializeOutput(out, txId, index),
+    );
+    materialized.push(outputs);
+    for (const box of outputs) if (box.id) ownOutputs.set(box.id, box);
   }
   const resolve = (boxId: string): AnyBox | null =>
     getBox(boxId) ?? ownOutputs.get(boxId) ?? null;
 
-  let fees = 0n;
+  const body = emptyBody();
   const embedded: EmbeddedTx[] = [];
-  for (const tx of txs) {
+  for (let i = 0; i < txs.length; i++) {
+    const tx = txs[i]!;
     const inputBoxes = (tx.inputs ?? [])
       .map(resolve)
       .filter((box): box is AnyBox => box !== null);
     embedded.push({ tx, inputBoxes });
-
-    // ⛔ **A sum over boxes, resolving no inputs** (MINING_INTERFACE → Coinbase
-    // Application). The fee is a `FeeBox` output the transaction names, so this
-    // needs neither the class test nor a resolvable input: a fee output cannot
-    // reach a karma-side transaction — `KARMA_TRANSITION_TYPES` is an allowlist
-    // and `fee` is outside it — so the filter is exhaustive on its own. That is
-    // what makes the creator's prediction and the applier's sum the same
-    // arithmetic over the same bytes rather than two walks that must agree.
-    for (const out of tx.outputs) {
-      if (out.boxType === 'fee') fees += out.value;
-    }
+    contributeToBody(body, materialized[i]!);
   }
 
-  return { fees, actors: countKarmaActors(embedded, validator) };
+  body.actors = countKarmaActors(embedded, validator);
+  return body;
 }
 
 /**
- * The coinbase for a block of this income and this many karma-side actors
- * (MINING_INTERFACE → Coinbase Application).
+ * Build the settlement a body of these transactions requires, ready to ride as
+ * the body's last entry.
  *
- * ⛔ **Every value here is consensus and none of it comes from the injected
- * config.** The applier recomputes this same split and compares it against the
- * coinbase, so a creator reading a local value would build coinbases its own
- * network refuses. The percentages are universal constants; the maturity lock
- * below reads the singleton for the same reason.
- *
- * **The coinbase carries the miner's slice and nothing else.** The treasury's
- * share and the forfeited inclusion bonus accrue to the `TreasuryBox`, and the
- * released emission comes out of the `EmissionBox` — both derived from the same
- * `split`, neither an output here (MINING_INTERFACE → Coinbase Application:
- * "emission and the treasury slice come from opposite directions").
+ * Shared with the test harness so a fixture's settlement is the one this node
+ * would have produced, rather than a second construction that agrees by hand.
  */
-export function buildCoinbaseOutputs(
+export function buildBlockSettlement(
+  txCbors: Uint8Array[],
   height: number,
-  fees: bigint,
-  actors: number,
+  validator: Uint8Array,
   minerOwner: Uint8Array,
-): CoinbaseOutput[] {
-  const split = splitCoinbase(computeBlockReward(height), fees, actors);
-  const outputs: CoinbaseOutput[] = [];
-
-  // The applier rejects any coinbase whose lock is not exactly this
-  // (MINING invariant 3), so it reads the singleton, not the injected config.
-  const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
-
-  // Skipped at zero, because no coinbase output may carry a zero value.
-  //
-  // `isTreasury: false` on the one output there is. The field has exactly one
-  // legal value under this design and apply rejects a block carrying `true`, so
-  // it is accurate rather than vestigial (TYPES_INTERFACE → Coinbase output
-  // marks it AHEAD OF CODE for deletion, which reaches four packages and is its
-  // own unit).
-  if (split.miner > 0n) {
-    outputs.push({
-      owner: minerOwner,
-      value: split.miner,
-      lockedUntilBlock,
-      isTreasury: false,
-    });
-  }
-
-  return outputs;
+): { tx: UtxoTransaction } | { error: string } {
+  return buildSettlement(
+    settlementDeps,
+    height,
+    computeBlockReward(height),
+    nodeConfig.creditMinerRewardDelay,
+    predictSettlementBody(txCbors, validator),
+    minerOwner,
+  );
 }

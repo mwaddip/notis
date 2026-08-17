@@ -16,7 +16,6 @@ import {
 } from '@dagsocial/types';
 import type {
   AnyBox,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
   VouchBox,
@@ -52,16 +51,21 @@ export function isCreditSideTx(tx: UtxoTransaction): boolean {
  * ⛔ **Never from `tx.signatures`.** Producing a signature is free, so a
  * signature-keyed count is inflated to any size by appending keys that hold
  * nothing. Every karma-side operation spends a box that names its actor, and
- * what bounds the count is that *creating* one of those boxes cost karma — an
- * `InviteBox` holds `0` and exists only because someone bonded
- * `INVITE_BOND_KARMA` (NODE_INTERFACE → the invite and vouch transition rules).
+ * what bounds the count is that spending one of those boxes cost karma —
+ * an invite bonds `INVITE_BOND_KARMA` and a vouch stakes `VOUCH_KARMA_AMOUNT`
+ * (NODE_INTERFACE → Bond transition rules, Vouch transition rules).
  *
  * Reading `inputBoxes[0]` alone is sound only after `validateTx`: step 3 pins
  * every input to one `boxType`, karma inputs additionally share one owner, and
- * the invite and vouch arms each bound the transaction to a single input. On an
- * unvalidated body the first input is the producer's choice.
+ * the vouch arm bounds the transaction to a single input. On an unvalidated
+ * body the first input is the producer's choice.
+ *
+ * ⛔ **The box is the whole input, and the transaction is not consulted.** Every
+ * karma-side row of the transition table names its actor in the box it spends
+ * (NODE_INTERFACE → Legal box transitions), so no arm needs the output list to
+ * tell two shapes apart.
  */
-export function actorOf(tx: UtxoTransaction, inputBoxes: AnyBox[]): Uint8Array | null {
+export function actorOf(inputBoxes: AnyBox[]): Uint8Array | null {
   const first = inputBoxes[0];
   if (!first) return null;
   switch (first.boxType) {
@@ -69,14 +73,6 @@ export function actorOf(tx: UtxoTransaction, inputBoxes: AnyBox[]): Uint8Array |
       return (first as KarmaBox).owner;
     case 'vouch':
       return (first as VouchBox).voucherId;
-    case 'invite':
-      // The two invite shapes have different actors and the output list is the
-      // discriminant the transition rules already use: a cancel spends to
-      // nothing and is the inviter's, a claim mints to the key the box names
-      // and is the invitee's.
-      return (tx.outputs ?? []).length === 0
-        ? (first as InviteBox).inviterId
-        : (first as InviteBox).inviteePublicKey;
     default:
       // Credit — the other ledger. It pays a fee instead, and counting it here
       // would pay for one transaction twice.
@@ -97,8 +93,8 @@ export function countKarmaActors(
 ): number {
   const seen = new Set<string>();
   const self = Buffer.from(validatorId).toString('hex');
-  for (const { tx, inputBoxes } of embedded) {
-    const actor = actorOf(tx, inputBoxes);
+  for (const { inputBoxes } of embedded) {
+    const actor = actorOf(inputBoxes);
     if (!actor) continue;
     const actorHex = Buffer.from(actor).toString('hex');
     if (actorHex !== self) seen.add(actorHex);

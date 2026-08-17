@@ -2,9 +2,15 @@ import type { AnyBox } from '@dagsocial/types';
 
 /**
  * The box types whose value counts as karma that exists — what `getTotalKarma`
- * sums. Karma is spendable in a `karma` box and escrowed in the other four, and
+ * sums. Karma is spendable in a `karma` box and escrowed in the other three, and
  * escrowed karma is held rather than destroyed. `credit`, `emission`, `treasury`
  * and `fee` are the other ledger, and `genesis_proof` holds 0.
+ *
+ * ⚠ **`like_accrual` and `vouch_escrow` are OUT, and that describes the tree
+ * rather than the design.** No transition emits either today, so neither can
+ * hold karma; both are karma-bearing by their type definitions
+ * (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox), so whichever unit first
+ * emits one adds it here — separately, per the three-sets rule below.
  *
  * ⛔ **`karma_pool` is karma-bearing and is still not summed**, and it is out
  * for neither of those reasons: the pool holds the karma that is NOT in
@@ -38,7 +44,7 @@ import type { AnyBox } from '@dagsocial/types';
  * the two-set rule exists to prevent — the store asks the **supply** question,
  * not the transition one.
  */
-export const KARMA_SUPPLY_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+export const KARMA_SUPPLY_TYPES = ['karma', 'bond', 'post_lock', 'vouch'] as const;
 
 /**
  * Does a box of this type hold karma that is in circulation?
