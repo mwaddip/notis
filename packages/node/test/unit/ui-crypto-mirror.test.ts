@@ -660,8 +660,9 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     },
   );
 
-  it('no guard string reaches the consensus bytes on either side (C10)', () => {
-    // No box carries a guard field (NODE_INTERFACE → Legal box transitions).
+  it('no guard string reaches the consensus bytes on either side', () => {
+    // No box carries a guard field, and the layout is positional
+    // (TYPES_INTERFACE → Layout — Boxes).
     // Both halves are pinned: no such string is in the bytes, *and* a stray
     // `guard` key attached to a box object moves no id — on either side.
     const bytes = hexOf(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE));

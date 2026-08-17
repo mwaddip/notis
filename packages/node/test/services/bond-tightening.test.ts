@@ -198,7 +198,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
   // -------------------------------------------------------------------------
   // 2. cancel-absorb — a cancel that also consumes the bond, sweeping invite +
   //    bond into one karma box. The cancel transaction names only the invite
-  //    now, and adding the bond to it is refused by authorization.
+  //    invite, and adding the bond to it is refused by authorization.
   // -------------------------------------------------------------------------
 
   it('cancel-absorb: a cancel may not name the bond alongside the invite', () => {
@@ -211,8 +211,8 @@ describe('bond transitions (audit F-consensus-1)', () => {
       protocolVersion: 1,
     };
     addSignature(tx, inviter);
-    // Mixed input types are refused ahead of authorization now (step 3), which is a
-    // second layer over the same shape rather than a different verdict.
+    // Mixed input types are refused at step 3, ahead of authorization, which is
+    // a second layer over the same shape rather than a different verdict.
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/Mixed input types|block application/);

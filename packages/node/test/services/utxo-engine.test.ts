@@ -654,8 +654,8 @@ describe('validateAndApplyTx', () => {
     });
 
     it('rejects a claim that also names the bond', () => {
-      // Mixed input types have no legal shape any more, and no user
-      // transition consumes a bond besides.
+      // Every legal shape is single-type, and no user transition consumes a
+      // bond besides.
       const tx: UtxoTransaction = {
         inputs: [inviteBoxId, bondBoxId],
         outputs: [{

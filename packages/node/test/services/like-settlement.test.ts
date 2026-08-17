@@ -776,7 +776,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     );
   });
 
-  it('T2a: the vesting remainder is content-true, and no guard string is in the id (C10)', async () => {
+  it('T2a: the vesting remainder is content-true, and no guard string is in the id', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -808,8 +808,9 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // hash of the content the store reconstructs.
     expect(computeBoxId(remainder!)).toBe(remainder!.id);
 
-    // Both halves of C10 are pinned here, because "the field is not hashed" is
-    // only half a claim: a stray key on the object does not move the id —
+    // Both halves are pinned here (TYPES_INTERFACE → Layout — Boxes), because
+    // "no such field is hashed" is only half a claim: a stray key on the object
+    // does not move the id —
     // `canonicalBoxBytes` writes the fields its layout declares and no other…
     const withStrayKey = { ...remainder!, guard: 'epoch_tally' } as unknown as PostLockBox;
     expect(computeBoxId(withStrayKey)).toBe(computeBoxId(remainder!));

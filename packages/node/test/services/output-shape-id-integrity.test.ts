@@ -151,9 +151,9 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
   }
 
   it('a post_lock carrying a guard key is rejected, nothing applied', () => {
-    // No box declares `guard` (NODE_INTERFACE → Legal box transitions), so the
-    // retired field is a stray key like any other and cannot be smuggled back
-    // into the id preimage.
+    // No box declares `guard` (NODE_INTERFACE → Legal box transitions), so a
+    // `guard` key is a stray key like any other and cannot reach the id
+    // preimage.
     const karma = seedKarma(100n);
     const lyingLock = {
       boxType: 'post_lock',
