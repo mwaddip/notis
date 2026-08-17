@@ -551,10 +551,13 @@ cancels it, and their bond stays locked for exactly as long. Their `K /
 INVITE_BOND_KARMA` capacity absorbs the cost, which is what makes the rate limit
 self-enforcing without a rule.
 
-> ## ⚠ AHEAD OF CODE — `InviteBox` IS DELETED, AND SO ARE THE CLAIM AND THE CANCEL
+> ## ⚠ PARTIAL — the type is gone from `types`; the transitions it served are still in `node`
 >
-> The section above describes the running tree and stays until the code does. **Nothing new may be
-> built against it** (user, 2026-08-17; `ARCHITECTURE` → Invite System).
+> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface is deleted and tag **2** is unassigned.
+> ⚠ **Still ahead of code in `node`** — the claim and cancel transitions, their HTTP endpoints and
+> the settlement that replaces them are unbuilt, so the section above still describes the running
+> tree there. **Nothing new may be built against it** (user, 2026-08-17; `ARCHITECTURE` → Invite
+> System).
 >
 > ⛔ **The whole type exists to hold a right to mint, and there is no mint.** Under
 > `ARCHITECTURE → The conservation axiom` the invitee's karma is **spent from the pool** by the
@@ -677,7 +680,11 @@ VouchBox extends BoxBase {
 
 ### VouchEscrowBox
 
-> ## ⚠ AHEAD OF CODE — this type does not exist yet
+> ## ⚠ PARTIAL — the type and its layout exist; nothing produces or consumes one
+>
+> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface, tag **12** and the wire layout below.
+> ⚠ **Still ahead of code in `node`** — the unvouch transition does not emit one and the settlement
+> does not consume one, so no escrow box is ever built.
 >
 > It replaces the `vouch_cooldowns` table, which is **node-local SQL outside the AVL root**
 > (`ARCHITECTURE` → Vouch boxes, `⚠ VIOLATED`).
@@ -709,7 +716,11 @@ holds the obligation, rather than a root it cannot interpret without replaying e
 
 ### LikeAccrualBox
 
-> ## ⚠ AHEAD OF CODE — this type does not exist yet
+> ## ⚠ PARTIAL — the type and its layout exist; nothing produces or consumes one
+>
+> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface, tag **11** and the wire layout below.
+> ⚠ **Still ahead of code in `node`** — the like transition does not emit a marker, the settlement
+> does not consume one, and `IdentityRecord.likeCarry` is still the carry.
 >
 > It is **the only marker box in the design** (`ARCHITECTURE` → The conservation axiom, "the three
 > shapes"), and it replaces `IdentityRecord.likeCarry`.
@@ -893,7 +904,15 @@ rejected by the karma transition arm rather than by a rule of its own
 
 ### KarmaPoolBox
 
-> ⚠ **AHEAD OF CODE** (`docs/specs` design §3, unit B). The type does not exist yet.
+> ⚠ **PARTIAL — the type exists; nothing spends it.** ✅ Landed by unit B (**#87**): the interface,
+> tag **10**, the wire layout, and a genesis pool seeded from it. ⚠ **No transition spends the pool
+> yet** — the settlement transaction that draws from it and returns to it is `node`'s and unbuilt, so
+> every mint and burn path is still a defect against `ARCHITECTURE` → The conservation axiom.
+>
+> ⛔ **This block read `AHEAD OF CODE — the type does not exist yet` from before #87 until
+> 2026-08-17**, and it also cited `docs/specs`, which `.gitignore` excludes wholesale — **a tracked
+> contract pointing at a path that resolves for nobody with a clone.** Both corrected together
+> because they were found by the same read.
 
 ```
 KarmaPoolBox extends BoxBase {
@@ -1202,7 +1221,10 @@ carry. `pruneEntries` moves here rather than keeping a section of its own —
 `utxoTxRoot` commits both, and the leaf domains (`leafHash`'s first argument) are what
 keep a prune leaf from colliding with a transaction leaf.
 
-> ## ⚠ AHEAD OF CODE — `coinbaseOutputs` LEAVES THIS STRUCT, AND `utxoTxRoot` LOSES A LEAF CLASS
+> ## ✅ RESOLVED in `types` (C1, 2026-08-17) — `coinbaseOutputs` IS GONE AND `utxoTxRoot` LOST A LEAF CLASS
+>
+> ⚠ **The settlement transaction that replaces it is still ahead of code in `node`**, so the body
+> is three arrays and nothing yet fills the role the fourth played.
 >
 > Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any other
 > (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction). ⛔ **Coinbase
@@ -1282,7 +1304,7 @@ height.** The treasury's slice accrues to a `TreasuryBox` and is never a coinbas
 rejects a block carrying an output with `isTreasury: true` (MINING_INTERFACE → Coinbase
 Application).
 
-> ## ⚠ AHEAD OF CODE — THE WHOLE STRUCT LEAVES THE BLOCK BODY
+> ## ✅ RESOLVED in `types` (C1, 2026-08-17) — THE WHOLE STRUCT HAS LEFT THE BLOCK BODY
 >
 > Coinbase outputs become outputs of the block's **settlement transaction** (§OrderingBlock's marker
 > above; `NODE_INTERFACE` → the settlement transaction), so `CoinbaseOutput` stops being a
@@ -1629,8 +1651,8 @@ from this table — a use that reads every cell as an instruction rather than as
 | 8 | `treasury` |
 | 9 | `fee` |
 | 10 | `karma_pool` |
-| 11 | ⚠ **AHEAD OF CODE** — `like_accrual` |
-| 12 | ⚠ **AHEAD OF CODE** — `vouch_escrow` |
+| 11 | `like_accrual` |
+| 12 | `vouch_escrow` |
 | **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
 
 > ## ⛔ TAG 2 IS RESERVED, NOT FREE
@@ -1674,8 +1696,8 @@ from this table — a use that reads every cell as an instruction rather than as
 | `treasury` | *(none)* |
 | `fee` | *(none)* |
 | `karma_pool` | *(none)* |
-| `like_accrual` | ⚠ **AHEAD OF CODE** — `b32(author)` |
-| `vouch_escrow` | ⚠ **AHEAD OF CODE** — `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
+| `like_accrual` | `b32(author)` |
+| `vouch_escrow` | `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
 
 > ⚠ **`releaseAtBlock` is `vlqU`, NOT `vlqU64`, and NOT `opt`.** It is a block height, so it takes
 > the same writer as `credit.lockedUntilBlock` — and unlike that field it is **always present**, since
@@ -1806,13 +1828,14 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 
 **Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
 
-> ## ⚠ UNENFORCED — THIS LAYOUT IS SPECIFIED AND THE CODE DOES NOT IMPLEMENT IT. Verified 2026-08-17.
+> ## ✅ RESOLVED — the layout is implemented. Closed 2026-08-17.
 >
-> **`encodeTx` is `cbor-x`.** The layout above is normative and unbuilt; `serialization.ts` records
-> the same gap in its own words. ⛔ **Nothing here is a new rule** — the work is closing a gap this
-> section already states.
+> **`encodeTx` is positional and reaches `writeTxIdFields`**, so the wire form and the `TxId`
+> preimage share one writer rather than agreeing by inspection. This banner read `⚠ UNENFORCED`
+> against a `cbor-x` implementation; the gap `serialization.ts` recorded in its own words is closed
+> on the `encodeTx` half and **still open on `Stump`**.
 >
-> **What the gap costs, measured against `packages/types/dist` on 2026-08-17** — a like transaction
+> **What the gap cost, measured against `packages/types/dist` on 2026-08-17** — a like transaction
 > with one karma input, one karma output, one signature and a `likeTarget`:
 >
 > | | Bytes | |
@@ -2158,6 +2181,21 @@ what rots is the name itself, spelled exactly.
 ⚠ **Reading the contract does not find these.** Four dead rows sat in two tables through a session
 that edited this file five times, because a table row is read as inventory rather than as a claim.
 **Grep the symbol; do not re-read the section.**
+
+⛔ **THERE IS A SECOND TRIGGER AND DELETION-GREP CANNOT SEE IT: A DISPATCH THAT *IMPLEMENTS* WHAT A
+MARKER DISCLAIMS.** Nothing is removed, so no name goes stale — the marker itself becomes the false
+claim. `Layout — UtxoTransaction` carried `⚠ UNENFORCED — the code does not implement it` **dated the
+same day the code implemented it**, and a comment in another package cited that section, so a reader
+following the pointer landed on a banner contradicting the sentence that sent them.
+
+✅ **This one IS greppable, and by an easier search than the first.** The marker vocabulary is closed
+and stated at the top of `ARCHITECTURE.md` — `NOT IMPLEMENTED`, `PARTIAL`, `UNENFORCED`, `VIOLATED`,
+`AHEAD OF CODE`. **After any dispatch, re-read every marker whose subject that dispatch touched.**
+
+⚠ **The two triggers have opposite shapes and both are needed:** deletion strands a **name** while
+the claim around it still reads true; implementation strands a **claim** while every name in it
+still resolves. ⛔ **A marker is the one contract element whose whole purpose is to be falsified**,
+and nothing in this repo watches for the moment it happens.
 
 ---
 
