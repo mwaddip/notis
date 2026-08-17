@@ -8,8 +8,7 @@ import {
   getCurrentHeight,
   createOrderingBlock,
 } from '../../src/store/ordering.js';
-import { createRouter } from '../../src/routes/blocks.js';
-import { KARMA_BOX_TYPES } from '../../src/services/utxo-engine.js';
+import { createRouter, KARMA_SUPPLY_TYPES } from '../../src/routes/blocks.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { unlinkSync } from 'fs';
@@ -89,11 +88,11 @@ async function request(
         const row = db
           .prepare(
             `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
-              WHERE box_type IN (${KARMA_BOX_TYPES.map(() => '?').join(', ')})
+              WHERE box_type IN (${KARMA_SUPPLY_TYPES.map(() => '?').join(', ')})
                 AND spent_at_block IS NULL`,
           )
           .safeIntegers()
-          .get(...KARMA_BOX_TYPES) as { s: bigint };
+          .get(...KARMA_SUPPLY_TYPES) as { s: bigint };
         return row.s;
       },
       getLiquidKarma: () => {
@@ -239,10 +238,16 @@ describe('blocks routes', () => {
 
   // -------------------------------------------------------------------------
   // `totalKarma` is karma in existence and `liquidKarma` is karma its owner can
-  // spend now (NODE_INTERFACE → the `/status` row). One box of each karma-family
-  // type, so a sixth type added to `KARMA_BOX_TYPES` without a fixture here
+  // spend now (NODE_INTERFACE → the `/status` row). One box per member of the
+  // supply set, so a type added to `KARMA_SUPPLY_TYPES` without a fixture here
   // shows up as a sum that no longer matches rather than as silent
   // under-counting.
+  //
+  // ⛔ **The assertion below pins the supply set — "does this type's value count
+  // as karma that exists?" — and not the transition set** (NODE_INTERFACE →
+  // "Two karma sets, and neither derives from the other"). A type the karma arm
+  // admits as an output but the supply sum leaves out belongs in one list only,
+  // and this test stays green when it is added.
   // -------------------------------------------------------------------------
 
   it('GET /status counts escrowed karma in totalKarma and only spendable karma in liquidKarma', async () => {
@@ -271,7 +276,7 @@ describe('blocks routes', () => {
     const body = res.data as Record<string, unknown>;
 
     const expectedTotal = seeded.reduce((sum, [, value]) => sum + value, 0n);
-    expect(seeded.map(([boxType]) => boxType)).toEqual([...KARMA_BOX_TYPES]);
+    expect(seeded.map(([boxType]) => boxType)).toEqual([...KARMA_SUPPLY_TYPES]);
     expect(body.totalKarma).toBe(expectedTotal.toString());
     expect(body.liquidKarma).toBe('7');
     expect(body.totalCredits).toBe('100');

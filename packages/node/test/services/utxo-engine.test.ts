@@ -1579,9 +1579,9 @@ describe('validateAndApplyTx', () => {
     });
 
     // `fee` is excluded by construction rather than by a clause naming it:
-    // `KARMA_BOX_TYPES` is an allowlist and the karma arm rejects any output
-    // outside it (NODE_INTERFACE → a FeeBox is reachable only from the credit
-    // row). A karma transaction holds no credits to pay with.
+    // `KARMA_TRANSITION_TYPES` is an allowlist and the karma arm rejects any
+    // output outside it (NODE_INTERFACE → a FeeBox is reachable only from the
+    // credit row). A karma transaction holds no credits to pay with.
     it('rejects a fee box on a karma-side transaction', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 143);
       const tx = buildSignedTx(

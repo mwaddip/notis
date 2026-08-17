@@ -27,19 +27,23 @@ import { ed25519PublicKeyToKeyObject, verifyPostFieldDomains } from '@dagsocial/
 import type { IdentityRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
-// The karma family
+// The karma transition set
 // ---------------------------------------------------------------------------
 
 /**
- * The box types that hold karma: spendable in a `karma` box, escrowed in the
- * other four. `credit`, `emission`, `treasury` and `fee` are the other ledger
- * and `genesis_proof` is unspendable at 0 (NODE_INTERFACE → the `/status` row).
+ * The box types a karma spend may create. The karma transition arm below admits
+ * exactly these as its outputs and refuses every other type, which is what keeps
+ * a `fee` output off the karma side with no clause naming `fee`.
  *
- * One statement, two readers. The karma transition arm below admits exactly
- * these as the outputs of a karma spend, and `/status` sums `totalKarma` over
- * them — a sixth karma-bearing box type is named here and both follow.
+ * ⛔ **Not the set `/status` sums into `totalKarma`** — that is
+ * `KARMA_SUPPLY_TYPES` in `routes/blocks.ts`, and neither set is defined as,
+ * spread from or derived from the other (NODE_INTERFACE → "Two karma sets, and
+ * neither derives from the other"). They hold the same members for two
+ * different reasons: this one answers whether a karma spend may create the
+ * type, that one whether the type's value is karma in existence. A
+ * karma-bearing type is added to each separately.
  */
-export const KARMA_BOX_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+export const KARMA_TRANSITION_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -168,14 +172,14 @@ function checkTransitions(
       const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
 
-      // A karma spend produces karma-family outputs and nothing else. A
+      // A karma spend produces the transition set's types and nothing else. A
       // 'like'-type output is an illegal transition in particular: a like is a
       // burn transaction named by `likeTarget`, never a box.
-      const karmaFamily: readonly string[] = KARMA_BOX_TYPES;
-      if (outputs.some((o) => !karmaFamily.includes(o.boxType))) {
+      const allowedOutputTypes: readonly string[] = KARMA_TRANSITION_TYPES;
+      if (outputs.some((o) => !allowedOutputTypes.includes(o.boxType))) {
         return {
           valid: false,
-          error: `Illegal karma transition: outputs contain non-${KARMA_BOX_TYPES.join('/')} boxes`,
+          error: `Illegal karma transition: outputs contain non-${KARMA_TRANSITION_TYPES.join('/')} boxes`,
         };
       }
 

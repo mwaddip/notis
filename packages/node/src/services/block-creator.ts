@@ -674,8 +674,8 @@ export function predictIncome(
     // ⛔ **A sum over boxes, resolving no inputs** (MINING_INTERFACE → Coinbase
     // Application). The fee is a `FeeBox` output the transaction names, so this
     // needs neither the class test nor a resolvable input: a fee output cannot
-    // reach a karma-side transaction — `KARMA_BOX_TYPES` is an allowlist and
-    // `fee` is outside it — so the filter is exhaustive on its own. That is
+    // reach a karma-side transaction — `KARMA_TRANSITION_TYPES` is an allowlist
+    // and `fee` is outside it — so the filter is exhaustive on its own. That is
     // what makes the creator's prediction and the applier's sum the same
     // arithmetic over the same bytes rather than two walks that must agree.
     for (const out of tx.outputs) {
