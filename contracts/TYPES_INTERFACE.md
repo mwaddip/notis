@@ -215,10 +215,17 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 
 > **Forward constraint — this is a consensus rule with no test behind it.** The scheme is
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
-> leaf preimage can ever begin with `0x00`. The five live domains are `stump`, `subblock`,
-> `prune`, `utxotx`, `coinbase` — all printable, none a prefix of another, so the NUL
-> delimiter suffices. (`likebox` and `epoch` were retired by P2-D; both strings stay
-> **reserved** — a future domain reusing them would collide with historical leaf meanings.)
+> leaf preimage can ever begin with `0x00`. The **three** live domains are `stump`, `prune`,
+> `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
+> **Four are retired and every one of their strings stays reserved**, because a future domain
+> reusing one would collide with historical leaf meanings: `likebox` and `epoch` (P2-D),
+> `subblock` (a post is a transaction, so it rides `utxotx`), and `coinbase` (⚠ **AHEAD OF
+> CODE** — coinbase outputs become outputs of the settlement transaction).
+>
+> ⛔ **This sentence said "five live domains" and named `subblock` among them while
+> §OrderingBlock already reserved it as retired — a contradiction inside one contract, corrected
+> 2026-08-17.** A live/retired list restated in two places is the drift class this file names
+> everywhere else; **there is one list and it is here.**
 > **Adding a leaf domain that begins with a non-printable byte silently reopens
 > leaf/internal-node confusion.** No test enforces
 > this; it is a contract and review rule, recorded here because it previously existed only
@@ -1620,7 +1627,10 @@ from this table — a use that reads every cell as an instruction rather than as
 > marker took 11. Re-pinning it to 13 reproduces the defect one addition later.
 >
 > ✅ **`enum8` is a table lookup over `u8`, so 255 and "first unassigned" exercise the same path.**
-> Nothing is lost by choosing the stable one.
+> Nothing is lost by choosing the stable one. ⛔ **Verified 2026-08-17, not assumed**: `enum8.read`
+> is `reverse.get(tag)` over a `Map` with **no range comparison**. Had it been a range check, an
+> unassigned tag *below* the maximum and one *above* it would be different paths and folding the two
+> probes into one would have been wrong — **which is why this was checked rather than reasoned.**
 >
 > ⚠ **The corpus must still not import `BOX_TYPE_TAGS`.** Deriving the probe from the writer's own
 > table would make the reader circular, which §Layout — Boxes forbids by construction. **255 is a
@@ -1743,9 +1753,24 @@ and both were found by someone searching from a direction the previous searcher 
 
 **Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
 
-`TX_ID_DOMAIN` ‖ `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖
-`opt(arr(preimages sorted, b32(boxId) ‖ lp(preimage)))` ‖ `vlqU(protocolVersion)` ‖
+`arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖ `vlqU(protocolVersion)` ‖
 `opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)`
+
+> ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`. Corrected 2026-08-17.** This line listed it first while
+> §UtxoTransaction's formula applies it outside — `TxId = blake2b512(TX_ID_DOMAIN ‖ txIdBytes)[0:32]`
+> — so one contract stated the preimage two ways. **The code has always applied it outside**, and the
+> wire codec row below depends on which is meant: `encodeTx` is `txIdBytes ‖ arr(signatures)`, and a
+> 17-byte domain tag riding the wire would be a different format from the one measured at 236 bytes
+> per like.
+>
+> ⚠ **A domain tag belongs to the HASH, not to the bytes.** It exists so two different structs
+> cannot collide in one hash function; putting it inside the serialized form would also ship it to
+> every peer, which is the opposite of what it is for.
+>
+> ⚠ **`preimages` is gone from this line** (2026-08-17) — it was `opt(arr(preimages sorted,
+> b32(boxId) ‖ lp(preimage)))` between the outputs and `protocolVersion`. ⛔ **Removing it moved
+> every `TxId` in existence**, because `opt` spends a one-byte absence marker even on a transaction
+> that never carried one. See "Re-pinning a frozen vector when a preimage changes".
 
 `post` needs no length prefix inside its `opt`: `postFieldBytes` is self-delimiting (every
 field is fixed-width, length-prefixed or a VLQ) and it is last, so nothing follows it to be
@@ -2034,9 +2059,15 @@ discriminate are the VLQ width boundaries and the sentinel branches above.
 > four-step boundary check on every `decodeX`.
 >
 > ⚠ **The rows below were "left describing CBOR" and that wording is now the hazard.** Any row
-> still describing a CBOR encode is describing the old format, **except** the `Tx` and `Stump`
-> rows, where CBOR is still correct (carried register #6). Read a CBOR mention here as stale
-> unless it names one of those two.
+> still describing a CBOR encode is describing the old format, **except** the `Stump` rows,
+> where CBOR is still correct (carried register #6). Read a CBOR mention here as stale unless
+> it names `Stump`.
+>
+> ⛔ **The exception used to name `Tx` as well, and it stopped being true when `encodeTx` went
+> positional (2026-08-17).** `encodeTx` / `decodeTx` are `txIdBytes ‖ arr(signatures)` — see
+> Layout — UtxoTransaction — and the rows below still say "CBOR encode"/"CBOR decode".
+> ⚠ **An exception list is the worst place for a stale entry**: every other stale CBOR mention
+> is caught by the disclaimer, and the ones it exempts are caught by nothing.
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in

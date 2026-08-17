@@ -67,6 +67,36 @@ value path. Node-side obligations:
   `value`/`total` with `BigInt()`. A box-value mirror test (extending the M-1 post
   mirror) pins the byte-identity.
 
+> ## ⛔ THE DEMO UI IS A SECOND IMPLEMENTATION OF CONSENSUS RULES, AND NO GATE REACHES IT
+>
+> `vitest` never loads this file and nginx serves it statically, so **every mirror in it is checked
+> by reading and by running the browser, and by nothing else.** Its own doc block states the failure
+> mode: *a missing entry does not throw, it derives a **wrong id that looks well-formed**.*
+>
+> ### ⚠ AHEAD OF CODE — what unit C owes this file, and it is four changes
+>
+> 1. **`BOX_TYPE_TAGS`** — drop `invite: 2`, add `like_accrual: 11`, `vouch_escrow: 12`.
+> 2. **The `boxTypeFields` `invite` arm** — delete it; add `b32(author)` and
+>    `b32(owner) ‖ vlqU(releaseAtBlock)`. ⛔ **Doing (1) without (2) is exactly the silent-wrong-id
+>    case the file warns about** — the tag table would accept a type the field writer cannot encode.
+> 3. **The `bond` arm's comment** — *"Byte-for-byte the `invite` arm above"* stops being true; the
+>    pair is bond/vouch now.
+> 4. ⛔ **`computeTxId`'s `preimages` field — THE ONE THAT BREAKS USERS.** The UI holds a full
+>    `computeTxId` mirror and `signTx` signs its output. Left as it is, the browser signs the **old**
+>    id, the node computes a different one, and **every browser-built transaction is rejected.** No
+>    typecheck and no test in this repo can see it.
+>
+> ⛔ **THE LIKE TRANSACTION IS A FIFTH CHANGE OF A DIFFERENT KIND** — §Likes states it: the UI must
+> build the `LikeAccrualBox` output and learn the target's **author** to name in it, from
+> `block_topology` and never `dag_posts.author`.
+>
+> ### ✅ Only the consensus change reaches the browser; the wire change does not
+>
+> The HTTP API is **JSON**, so the UI has no `encodeTx` mirror and the positional codec costs it
+> nothing — while the `txIdBytes` change hits it squarely. ⛔ **Two changes rode one dispatch and
+> exactly one of them reaches this file**, which is the practical form of the rule that they break
+> different things. **Ask which layer a change crosses, not how big it was.**
+
 ---
 
 ## Unified Mempool
