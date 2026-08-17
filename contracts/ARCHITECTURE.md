@@ -126,6 +126,25 @@ included), and distribute credit rewards.
 **Every operation is a TRANSFER.** A unit of karma or credit moves between boxes and is never called
 into being or ended. Genesis fixes both totals; from height 1 onward the ledger only rearranges them.
 
+### The vocabulary, fixed — "burn" and "mint" are directions, not events
+
+⛔ **This has been settled several times in conversation and never written down, which is why it kept
+being re-settled** (user, 2026-08-17). It is now written down.
+
+| Word | Means, and means only |
+|---|---|
+| **burn** | **move back to the supply pool.** Nothing is destroyed. |
+| **mint** | **spend out of the supply pool.** Nothing is created. |
+
+⛔ **A LITERAL BURN DOES NOT EXIST AND CANNOT BE ADDED.** Where existing prose, a function name or a
+comment says "burned", it means *returned to the pool* — and where the **code** actually destroys
+value, that code is a defect against this section, not a definition of the word.
+
+⚠ **Read every "burn" in this directory under this definition.** The like deficit, decay, bond
+forfeiture and a pruner's own locks are all named as burns elsewhere; **all four are transfers to the
+pool.** The naming survives because it is what a holder experiences — the karma leaves them and does
+not come back.
+
 ⛔ **"Not even as an intermediary step" is the demanding clause, and it rules out the obvious
 implementations:**
 
@@ -870,7 +889,33 @@ key, one mint per author per block. `carry` is written back to the author's comm
 `IdentityRecord` (`likeCarry`) **even when `paid` is 0**, and the record is in the
 `stateRoot` — two nodes can never disagree on the next payout undetected. All integer
 arithmetic; a float intermediate is a consensus fork. Per `x = LIKES_PER_KARMA_PAYOUT`
-likes: likers paid `x`, the author receives `x−1`, **1 is burned** — the deflation dial.
+likes: likers paid `x`, the author receives `x−1`, **1 returns to the pool** — the deflation dial.
+
+> ⛔ **AHEAD OF CODE — THE ACCRUAL IS A BOX, NOT A COUNTER** (user, 2026-08-17). Under §The
+> conservation axiom the model above mints `paid` and burns 1, and neither is permitted. The
+> replacement:
+>
+> **A like moves its `LIKE_KARMA_COST` into a box earmarked for the author.** When that box's
+> contents reach a multiple of `LIKES_PER_KARMA_PAYOUT` it becomes spendable: **`x − 1` to the
+> author, the remainder back to the supply pool.** Every step names a source and a sink, so nothing
+> is created and nothing destroyed — the liker's karma goes to the accrual box, the accrual box goes
+> to the author and the pool.
+>
+> ✅ **The deflation dial survives unchanged in economics.** Per `x` likes the author still receives
+> `x − 1` and 1 still leaves circulation. A holder cannot distinguish "destroyed" from "returned to a
+> pool nothing can spend"; only the accounting identity changes.
+>
+> ⛔ **`IdentityRecord.likeCarry` IS REPLACED BY THE BOX'S VALUE.** The counter exists only to
+> remember karma that does not yet exist; once the karma sits in a box, the box *is* the carry.
+> Keeping both would be two representations of one quantity, free to disagree.
+>
+> ✅ **This dissolves the open question below rather than answering it.** *"Whether outstanding carry
+> counts as live supply"* has no content once the carry is karma in a box: it is live, it is in the
+> UTXO set, and it is in the `stateRoot` because every box is.
+>
+> ⚠ **The box's mechanics are undecided and are spec work** — whether one accumulating box per author
+> or one box per like, and whether the liker's transaction writes it directly or emits a marker that
+> block application merges. The economics above are settled; the carrier is not.
 
 The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent

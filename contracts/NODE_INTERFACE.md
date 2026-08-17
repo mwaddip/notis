@@ -567,15 +567,27 @@ endpoint semantics in `MINING_INTERFACE.md`.
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
 > other ledger and `genesis_proof` holds no value on either.
 
-#### Two karma sets, and neither derives from the other
+#### Three karma sets, and none derives from another
 
-**A box type being a legal karma-side output and a box type counting toward karma in existence are
-different questions, and each has its own set:**
+**Each is a different question, and a box type may answer them differently:**
 
 | Set | Answers | Read by |
 |---|---|---|
 | the **transition** set | may a karma spend create this box type? | `utxo-engine.ts`'s karma transition arm |
-| the **supply** set | does this box type's value count as karma that exists? | `getTotalKarma` |
+| the **supply** set | does this box type's value count as karma that **exists**? | `getTotalKarma` |
+| the **conservation** set | does this box type participate in the total that **never changes**? | the axiom's check (ARCHITECTURE → The conservation axiom) |
+
+⛔ **`karma_pool` IS THE FIRST TYPE WHOSE ANSWERS DIFFER, AND IT IS WHY THE THIRD SET EXISTS.**
+Transition **no**, supply **no**, conservation **yes**. Every earlier case had the answers coincide,
+so a single shared list happened to be right; here it would be **actively wrong**.
+
+⛔ **THE CONSERVATION TOTAL IS `circulating + pool`, AND IT IS A DIFFERENT SUM FROM `getTotalKarma`.**
+Measured, not reasoned: a like burn given a correct pool sink — consume `karma(40)`, insert
+`karma(39)`, consume `pool(P)`, insert `pool(P+1)` — still moves the circulating accrual by `−1`,
+because the pool is deliberately outside the supply set. ⚠ **So "the circulating delta is zero at
+every commit" is NOT the axiom's check** — it is true only while nothing can name the pool, and it
+stops being true the moment anything legitimately does. **Do not use the supply accrual to assert
+conservation.**
 
 ⛔ **NEITHER SET MAY BE DEFINED AS THE OTHER, OR DERIVED FROM IT.** They hold the same members
 today, and they hold them **for two different reasons** — every karma-bearing type currently happens
