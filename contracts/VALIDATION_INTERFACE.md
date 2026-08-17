@@ -519,6 +519,39 @@ that the verdict does not consult runtime category data.
 
 ## Structural Validation
 
+### ⛔ What a decoder subsumes depends on the ENTRY PATH, and a store read is one
+
+Since the positional codecs, a fixed-width field has **exactly one encodable width** — `readBytesN(r, 32)`
+either yields 32 bytes or throws. So a check of the form *"is this field 32 bytes"* is **subsumed**
+when the object came through a decoder, and **live** when it did not.
+
+⛔ **THE QUESTION IS NEVER "IS THIS CHECK REDUNDANT" — IT IS "BY WHICH PATHS CAN THIS OBJECT
+ARRIVE".** The same check on the same field has opposite verdicts in two packages, and the field is
+not what decides it.
+
+**Measured in `@dagsocial/net`, 2026-08-18 — four entry paths, and only half cross a decoder:**
+
+| Path | Decoded? | Width checks |
+|---|---|---|
+| gossip | ✅ `decodeTx` / `decodeOrderingBlock` | **subsumed** |
+| sync codec | ✅ | **subsumed** |
+| **store read** | ⛔ **no** — `encodeServable` takes `value: unknown` and casts `value as T` | ⚠ **LIVE** |
+| `broadcastTx` / `broadcast*` | ⛔ no | the **encoder** throws instead |
+
+⚠ **A STORE READ IS A NON-DECODER ENTRY AND IT DOES NOT LOOK LIKE ONE.** It is internal, it carries
+no untrusted-input smell, and the data never crosses a codec in either direction — it comes back out
+of SQLite as objects. **Reasoning about entry paths by looking for *edges* misses it**, which is the
+error this section exists to prevent: `net` was predicted "fully subsumed, because it has no HTTP
+edge", and the prediction was refuted by the package's own module header.
+
+⛔ **`@dagsocial/node` has BOTH a store and an HTTP edge**, so the identical checks there are live
+twice over. **Do not carry net's answer into node.**
+
+⛔ **NEVER DELETE A SUBSUMED CHECK.** Unreachable is not wrong, and it costs nothing; it is what
+stands where a future non-decoder caller would land, and that failure would be silent. ⚠ **Say so
+beside it** — a defensive check with no comment reads as a live one, and the next reader reasons
+about a path that cannot happen.
+
 ### verifyPostFieldDomains
 
 ```
