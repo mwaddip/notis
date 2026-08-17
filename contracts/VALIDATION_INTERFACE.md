@@ -893,8 +893,18 @@ and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 > covered.** `owner` is covered by the box field table. `isTreasury` goes with the struct.
 >
 > ⛔ **A new structural obligation replaces them: the body must carry EXACTLY ONE settlement
-> transaction**, and structural validation is where "exactly one" is checkable without state. What
-> the transaction *contains* is consensus and belongs to node.
+> transaction, and it must be the LAST entry in `utxoTxIds`** (NODE_INTERFACE → the settlement
+> transaction). What the transaction *contains* is consensus and belongs to node.
+>
+> ✅ **Position is what makes this checkable here at all.** Identifying the settlement by what it
+> spends would need the UTXO set, and identifying it by a flag would let a producer set two.
+> `utxoTxIds` order is already committed, so **a body with no settlement, or with one that is not
+> last, is refused without reading a single box** — which is exactly the loose-structural half of
+> this package's split.
+>
+> ⚠ **A non-empty body is therefore the precondition, and it is new.** Every block must carry at
+> least one transaction now, because the settlement is one. A structural check that admitted an
+> empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
 >
 > ⚠ **This paragraph also cites `prompts/`, which `.gitignore` excludes wholesale** — the citation
 > resolves for its author and for nobody with a clone. Recorded, not swept: it is one instance of a

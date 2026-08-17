@@ -2293,6 +2293,27 @@ refactor. That is the load-bearing reason marker boxes exist rather than a tidin
 ascending box id, and ascending height. Anything read from a table needs a stated total order or it
 is not one.
 
+#### ⛔ It is the LAST entry in `utxoTxIds`, and that is how it is identified
+
+**The settlement is the final transaction of the body. A block whose last transaction is not a
+well-formed settlement is invalid, and a block carrying a settlement anywhere else is invalid.**
+
+⛔ **Identity has to be POSITIONAL, because every other answer needs state.** "The transaction that
+spends the pool" requires knowing which box is the pool; "the one flagged as settlement" adds a
+consensus field a producer could set on two transactions. Position is already committed —
+`utxoTxIds` order is normative and `computeUtxoTxRoot` lays its leaves in it — so **structural
+validation can find the settlement with no UTXO set at all**, which is what lets `exactly one` be
+checked before any state is loaded.
+
+✅ **Last is also the only position it could occupy.** It depends on the block's content, so the
+producer builds it after the fill; it consumes markers the other transactions emit, so it must apply
+after them. Construction order, apply order and wire position are one fact rather than three that
+have to agree.
+
+⚠ **"Exactly one" is a structural claim and belongs to `@dagsocial/validation`; what the settlement
+*contains* is consensus and belongs here.** A body with zero settlements, or with a settlement that
+is not last, is refused without reading a single box.
+
 #### Construction ordering
 
 1. It depends on the block's **content**, not only on its inputs, so it is built last and validated
