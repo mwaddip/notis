@@ -454,22 +454,51 @@ This is the third place in this design that chooses fail-closed over convenient-
 identical reasoning: `profileFor` throws rather than defaulting, `NetConfig` requires `magic`
 rather than defaulting it, and the faucet enumerates rather than excluding.
 
-> ⛔ **AHEAD OF CODE — THE FAUCET DRAWS STRAIGHT FROM THE POOL, AND STOPS BEING A SIGNED
-> TRANSACTION** (user, 2026-08-17; `docs/specs` design §3, unit B). It becomes a **block-application
-> effect** — the same shape as a like payout — rather than a UTXO transaction built and signed with a
-> system secret. Three things follow, and the third is an API change:
+> ⛔ **A BLOCK-APPLICATION EFFECT MUST BE DERIVABLE FROM BLOCK CONTENT, AND A FAUCET GRANT IS NOT.**
+> This is the criterion, and it is why the karma faucet cannot simply "become block application".
 >
-> - ✅ **No key.** `getSystemKeypair` and `signWithSystemKey` go, and with them the last privileged
->   key in the protocol (§0d **84-1**). The network gate stays: `isFaucetNetwork` reads
->   **configuration**, not a key, and a rule naming a network is not a rule naming a signer.
-> - ✅ **No supply cap, because the pool cannot empty.** The finite `SYSTEM_KARMA_INITIAL` balance the
->   faucet spent down disappears. ⚠ **`faucet_grants` is NOT that cap** — it is a once-per-identity
->   record and it stays, as abuse prevention rather than accounting.
-> - ⛔ **`txId` leaves the response.** A block-application mint takes a **synthetic** id from
->   `computeMintTxId(height, reason, subject)`, and the height is unknown when the request is
->   answered. Nothing replaces it: the grant is **once per identity**, so the identity is already the
->   handle. ✅ **The demo UI is the only live consumer and already writes `(data.txId || '')`**, so it
->   degrades rather than breaks — the display line goes with the field.
+> A like payout, post-lock vesting and bond settlement are all derived from **what the block
+> contains**, so every node computes the same effect from the same body. **A faucet grant is derived
+> from a local HTTP request.** Its only record, `faucet_grants`, is node-local SQL with **no network
+> path and no block-body carrier** — verified: zero hits in `packages/net/src`. Node A would mint at
+> height H, node B would not, and with `verifyStateRoot` defaulting **ON** the block is rejected.
+> **A protocol effect with no in-block carrier is a fork, not a refactor.**
+>
+> ✅ **That is what unit C's marker boxes are for**, and it is the load-bearing reason they exist
+> rather than a tidiness argument.
+>
+> ⛔ **AHEAD OF CODE — THE KARMA FAUCET IS REMOVED IN UNIT B; THE CREDIT FAUCET STAYS**
+> (user, 2026-08-17). `POST /faucet` goes. Faucet-bearing networks get karma from
+> **`genesisCommitteeKeys` × `genesisKarmaPerMember`** at genesis instead — by rule, with no signer —
+> which is what those three profile fields were declared for. **It returns in unit C** with a
+> settlement-carried grant that every node can derive.
+>
+> ⚠ **`POST /credits/faucet` is untouched and keeps its keypair.** There is no credit pool, so unit B
+> has no keyless replacement for it, and building one is a separate economic decision.
+>
+> ✅ **84-1 closes and 84-2 closes with it.** `isSystemBox` and the same-owner exemption it gated go
+> with the karma faucet — that exemption existed only because the faucet posed as a karma
+> **transition**. 84-2's unstated different-owner rule closes **by the rule disappearing**, not by
+> gaining a row.
+>
+> ⚠ **An admin keypair still EXISTS, and 84-1's closure does not claim otherwise.** It survives as the
+> plain **owner** of a genesis-seeded credit box: the state names it, spending needs an owner
+> signature like any credit box, and no consensus rule resolves against configuration. That satisfies
+> §2's "no privileged key is representable". It does **not** satisfy *"a private key for an admin pair
+> should never exist"* — that waits on a credit-side answer.
+>
+> Three things follow from the karma faucet's removal:
+>
+> - ✅ **`POST /faucet` and its route go entirely**, along with `ensureSystemKarmaBox` and the finite
+>   `SYSTEM_KARMA_INITIAL` balance the grant spent down. ⚠ **`faucet_grants` is a once-per-identity
+>   record, not a supply cap** — the **credit** faucet still writes it, so the table stays.
+> - ✅ **`isFaucetNetwork` stays and still gates the credit faucet.** It reads **configuration**, not a
+>   key, and a rule naming a network is not a rule naming a signer.
+> - ⛔ **`getSystemKeypair` and `signWithSystemKey` STAY**, because `POST /credits/faucet` signs with
+>   them and genesis seeds a credit box owned by that key. **Only `ensureSystemKarmaBox` and
+>   `isSystemBox` go.** ⚠ **This is narrower than an earlier draft of this section claimed**, and the
+>   difference is the whole of what unit B can honestly deliver: the **karma** side loses its
+>   privileged key, the **credit** side keeps an ordinary owner key.
 >
 > ⚠ **The three-gates rule below becomes two.** With no system karma box to seed, there is nothing
 > to provision — the provisioning gate has no subject. **Mount and handler remain, and they still
