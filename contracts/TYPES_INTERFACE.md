@@ -2197,6 +2197,27 @@ the claim around it still reads true; implementation strands a **claim** while e
 still resolves. ⛔ **A marker is the one contract element whose whole purpose is to be falsified**,
 and nothing in this repo watches for the moment it happens.
 
+### A third failure is born wrong rather than decaying: an INVENTED prose name
+
+⛔ **A citation of the form `FILE → prose name` can point at a heading that does not exist, while
+every symbol in it resolves and the sentence around it is true.** Nothing decayed; the pointer was
+never good. ⚠ **A plausible prose name reads exactly like a real one**, and no search over the
+*claim* distinguishes them — the sentence is correct, so re-reading it finds nothing.
+
+⚠ **Measured 2026-08-18:** one invented name reached **six files** in a single dispatch before its
+author caught it, because it was written once and copied. **Invented pointers propagate at
+copy-paste speed**, which the two decay classes do not.
+
+✅ **This one is the cheapest of the three to check, and it is mechanical:** take every
+`FILE → prose name` a diff **adds**, and grep the cited text against that file's **headings**. A
+prefix of a real heading is fine — it still resolves — but a name that matches no heading is a
+dangling pointer regardless of how true the sentence is.
+
+⚠ **Re-check against `HEAD`, not against the contract as it stood when the citation was written.**
+A section's line range moves when anything above it grows, so a citation can stay correct while the
+rule it points at leaves the section — confirm the cited section still **contains** the claim, not
+merely that the heading still exists.
+
 ---
 
 ## Base58 (`base58.ts`)
