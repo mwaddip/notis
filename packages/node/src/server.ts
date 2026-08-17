@@ -374,7 +374,7 @@ export function createApp(config: Config): express.Express {
       // `KARMA_SUPPLY_TYPES`, which answers that question and only that one —
       // it is independent of the transition set the engine's karma arm admits
       // as outputs, and a karma-bearing type is added to each separately
-      // (NODE_INTERFACE → "Two karma sets, and neither derives from the other").
+      // (NODE_INTERFACE → "Three karma sets, and none derives from another").
       getTotalKarma: () => {
         const row = db
           .prepare(

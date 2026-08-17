@@ -90,10 +90,14 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
  *
  * `Record<AnyBox['boxType'], boolean>` rather than a list of the true ones: a
  * new box type is then a **compile error here**, which is the shape the
- * three-way membership rule asks for — *may a karma spend create it?* and *does
- * its value count as karma that exists?* are asked separately, and both answers
- * may be no (NODE_INTERFACE → "Two karma sets, and neither derives from the
- * other").
+ * membership rule asks for — *may a karma spend create it?*, *does its value
+ * count as karma that exists?* and *does it belong to the total that never
+ * changes?* are asked separately, and the answers may differ (NODE_INTERFACE →
+ * "Three karma sets, and none derives from another").
+ *
+ * ⛔ **This table answers the SECOND question only.** `karma_pool` is `false`
+ * here and `true` in the conservation set, which is the one type that makes the
+ * distinction more than bookkeeping.
  */
 const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   karma: true,

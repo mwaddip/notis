@@ -37,12 +37,17 @@ import type { IdentityRecord } from '../store/identity-records.js';
  * a `fee` output off the karma side with no clause naming `fee`.
  *
  * ⛔ **Not the set `/status` sums into `totalKarma`** — that is
- * `KARMA_SUPPLY_TYPES` in `routes/blocks.ts`, and neither set is defined as,
- * spread from or derived from the other (NODE_INTERFACE → "Two karma sets, and
- * neither derives from the other"). They hold the same members for two
- * different reasons: this one answers whether a karma spend may create the
- * type, that one whether the type's value is karma in existence. A
+ * `KARMA_SUPPLY_TYPES` in `karma-supply.ts`, and no set here is defined as,
+ * spread from or derived from another (NODE_INTERFACE → "Three karma sets, and
+ * none derives from another"). This one answers whether a karma spend may create
+ * the type; that one whether the type's value is karma in existence; the
+ * conservation set whether it belongs to the total that never changes. A
  * karma-bearing type is added to each separately.
+ *
+ * ⚠ **The three coincide here only by accident of the current type list.**
+ * `karma_pool` already answers them differently — transition no, supply no,
+ * conservation yes — which is what makes the separation load-bearing rather
+ * than tidy.
  */
 export const KARMA_TRANSITION_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
 

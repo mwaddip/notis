@@ -11,17 +11,24 @@ import type { AnyBox } from '@dagsocial/types';
  * circulation (TYPES_INTERFACE → KarmaPoolBox), so `pool + circulating` is the
  * invariant — **a constant**. Summing the pool here would make `getTotalKarma`
  * return that constant at every height on every network, which is to say it
- * would stop reporting anything. It is the first type belonging to neither karma
- * set, which is what makes the allow-list load-bearing rather than a spelling of
- * "everything but the other ledger".
+ * would stop reporting anything. It is out of the transition set too, which is
+ * what makes the allow-list load-bearing rather than a spelling of "everything
+ * but the other ledger".
  *
  * ⛔ **Not the set the engine's karma transition arm admits as outputs** — that
- * is `KARMA_TRANSITION_TYPES` in `services/utxo-engine.ts`, and neither set is
- * defined as, spread from or derived from the other (NODE_INTERFACE → "Two
- * karma sets, and neither derives from the other"). They hold the same members
- * for two different reasons: that one answers whether a karma spend may create
- * the type, this one whether the type's value is karma in existence. A
- * karma-bearing type is added to each separately.
+ * is `KARMA_TRANSITION_TYPES` in `services/utxo-engine.ts`, and no set is
+ * defined as, spread from or derived from another (NODE_INTERFACE → "Three
+ * karma sets, and none derives from another"). That one answers whether a karma
+ * spend may create the type, this one whether the type's value is karma in
+ * existence, the conservation set whether it belongs to the total that never
+ * changes. A karma-bearing type is added to each separately.
+ *
+ * ⛔ **`karma_pool` is the type whose three answers DIFFER — transition no,
+ * supply no, conservation yes — and it is why a third set exists.** So this list
+ * is not the conservation set with the pool struck out; the conservation total
+ * is `circulating + pool`, a different sum from `getTotalKarma`, and using this
+ * one to check the axiom measures the wrong thing (ARCHITECTURE → The
+ * conservation axiom).
  *
  * ⛔ **It lives here rather than beside either reader, because it has two and
  * they sit at opposite ends of the package.** `routes/blocks.ts` re-exports it
