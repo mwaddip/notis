@@ -1593,10 +1593,23 @@ forms, so a mirror implementation derives the same ids:
 > box. Whether the pool takes `0` or a fresh number is undecided; the chain restarts either way, so
 > nothing is at risk beyond legibility.
 
-⛔ **`invite-claim` is the only row on this table that increases karma supply.**
-`bond-settle` and `bond-return` re-mint karma that a `BondBox` already held, in the
-same sense `vouch-settle` re-mints an escrow — a synthetic txId for a box that
-block application creates, not a new unit of karma. `ARCHITECTURE` → "Karma supply
+> ⛔ **"INCREASES KARMA SUPPLY" LOSES ITS REFERENT ONCE THE POOL EXISTS, AND THE PHRASE IS NOW TWO
+> CLAIMS.** ⚠ **AHEAD OF CODE until the per-block settlement lands.** **Total** karma is constant —
+> the pool is the only source and the only sink, so **no row increases it.** What rows differ on is
+> their net effect on **circulating** karma:
+>
+> | Net effect | Rows |
+> |---|---|
+> | **draws from the pool** | `invite-claim`, `like-payout`, `vouch-settle`, `genesis-committee` |
+> | **recirculates** — net zero | `bond-return`, `postlock-unlock`, `prune-refund-author` |
+> | **returns to the pool** | `decay`, and the burns that are an *absence* of a mint (bond forfeiture, a pruner's own locks) |
+>
+> ✅ **The invite family's distinction survives, in the new vocabulary.** `invite-claim` draws karma
+> the invitee did not have; `bond-settle` and `bond-return` recirculate what a `BondBox` already
+> held, in the same sense `vouch-settle` returns an escrow — a synthetic txId for a box block
+> application creates, not a unit of karma coming into existence.
+
+`ARCHITECTURE` → "Karma supply
 changes" names this table as authoritative, so the distinction has to be readable
 here rather than inferred.
 
