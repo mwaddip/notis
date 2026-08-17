@@ -148,13 +148,12 @@ export function makePostTx(
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
     outputs: [
-      { boxType: 'karma', value: 1n, owner: author.userId, guard: 'owner_signature' } as never,
+      { boxType: 'karma', value: 1n, owner: author.userId } as never,
       {
         boxType: 'post_lock',
         value: lock,
         originalValue: lock,
         owner: author.userId,
-        guard: 'block_apply',
       } as never,
     ],
     signatures: {},
@@ -380,14 +379,12 @@ export function seedInviteAndBond(opts: {
     value: opts.inviteValue ?? 0n,
     inviterId: opts.inviterId,
     inviteePublicKey: invitee,
-    guard: 'invite_dual' as const,
   };
   const bondCandidate = {
     boxType: 'bond' as const,
     value: opts.bondValue ?? INVITE_BOND_KARMA,
     inviterId: opts.inviterId,
     inviteePublicKey: invitee,
-    guard: 'block_apply' as const,
   };
   const [invite, bond] = seedAsOneTx(
     [inviteCandidate, bondCandidate],
@@ -410,7 +407,6 @@ export function makeKarmaBox(
     boxType: 'karma' as const,
     value,
     owner,
-    guard: 'owner_signature' as const,
   };
   const box: KarmaBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
   box.id = computeBoxId(box);
@@ -427,7 +423,6 @@ export function makeCreditBox(
     boxType: 'credit' as const,
     value,
     owner,
-    guard: 'owner_signature' as const,
   };
   const box: CreditBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
   box.id = computeBoxId(box);
@@ -462,10 +457,9 @@ export function makeCreditTx(
         boxType: 'credit',
         value: total - fee,
         owner: recipient ?? spender.userId,
-        guard: 'owner_signature',
       } as CreditBox,
       ...(fee > 0n
-        ? [{ boxType: 'fee', value: fee, guard: 'block_apply' } as FeeBox]
+        ? [{ boxType: 'fee', value: fee } as FeeBox]
         : []),
     ],
     signatures: {},
@@ -498,7 +492,6 @@ export function makeLikeTx(
         boxType: 'karma',
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: liker.userId,
-        guard: 'owner_signature',
       },
     ],
     signatures: {},

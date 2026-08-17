@@ -80,21 +80,19 @@ const GOLDEN_POST_HEX_AUTHOR = {
 
 // ---------------------------------------------------------------------------
 // Golden box vectors — must stay identical to packages/types/test/utxo.test.ts
-// (positional: enum8(boxType) ‖ vlqU(value) ‖ per-type, no `guard` — C10)
+// (positional: enum8(boxType) ‖ vlqU(value) ‖ per-type)
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   boxType: 'karma',
   value: 100n,
   owner: GOLDEN_AUTHOR,
-  guard: 'owner_signature',
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   boxType: 'credit',
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — why box values are bigint
   owner: GOLDEN_AUTHOR,
-  guard: 'owner_signature',
 };
 
 const GOLDEN_UTXO_TX: UtxoTransaction = {
@@ -190,44 +188,40 @@ const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
 
 const GOLDEN_INVITE_BOX: InviteBox = {
   boxType: 'invite', value: 0n,
-  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE, guard: 'invite_dual',
+  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE,
   txId: COVERAGE_TX_ID, index: 0,
 };
 
 const GOLDEN_BOND_BOX: BondBox = {
   boxType: 'bond', value: 5n,
-  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE, guard: 'block_apply',
+  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE,
   txId: COVERAGE_TX_ID, index: 1,
 };
 
 const GOLDEN_POST_LOCK_BOX: PostLockBox = {
   boxType: 'post_lock', value: 8n,
   originalValue: 10n, owner: GOLDEN_AUTHOR,
-  guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 2,
 };
 
 const GOLDEN_VOUCH_BOX: VouchBox = {
   boxType: 'vouch', value: 1n,
-  voucherId: GOLDEN_AUTHOR, targetId: BYTES_TARGET, guard: 'owner_signature',
+  voucherId: GOLDEN_AUTHOR, targetId: BYTES_TARGET,
   txId: COVERAGE_TX_ID, index: 3,
 };
 
 const GOLDEN_EMISSION_BOX: EmissionBox = {
   boxType: 'emission', value: 4226400000000n,
-  guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 4,
 };
 
 const GOLDEN_TREASURY_BOX: TreasuryBox = {
   boxType: 'treasury', value: 77n,
-  guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 5,
 };
 
 const GOLDEN_FEE_BOX: FeeBox = {
   boxType: 'fee', value: 1000n,
-  guard: 'block_apply',
   txId: COVERAGE_TX_ID, index: 6,
 };
 
@@ -666,17 +660,17 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     },
   );
 
-  it('guard has left the consensus bytes on both sides (C10)', () => {
-    // `guard` is a pure function of `boxType` — one string per type, with no box
-    // choosing between two — so it carried zero information while costing bytes
-    // in every box id. Both halves are pinned: the string is absent from the
-    // bytes, *and* changing it moves no id.
+  it('no guard string reaches the consensus bytes on either side', () => {
+    // No box carries a guard field, and the layout is positional
+    // (TYPES_INTERFACE → Layout — Boxes).
+    // Both halves are pinned: no such string is in the bytes, *and* a stray
+    // `guard` key attached to a box object moves no id — on either side.
     const bytes = hexOf(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE));
     expect(bytes).not.toContain(Buffer.from('owner_signature').toString('hex'));
-    const reguarded = { ...GOLDEN_KARMA_BOX, guard: 'block_apply' as never };
-    expect(ui.computeBoxId(reguarded as unknown as Record<string, unknown>))
+    const withStrayKey = { ...GOLDEN_KARMA_BOX, guard: 'block_apply' as never };
+    expect(ui.computeBoxId(withStrayKey as unknown as Record<string, unknown>))
       .toBe(GOLDEN_KARMA_BOX_ID);
-    expect(computeBoxId(reguarded)).toBe(GOLDEN_KARMA_BOX_ID);
+    expect(computeBoxId(withStrayKey)).toBe(GOLDEN_KARMA_BOX_ID);
   });
 
   it('a stray key is unrepresentable — the encoder reads only what it declares', () => {
@@ -708,7 +702,6 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
         boxType: 'genesis_proof',
         value: 0n,
         payload: new Uint8Array(len).fill(0x78),
-        guard: 'unspendable',
       };
       const fromUi = ui.canonicalBoxBytes(box as unknown as Record<string, unknown>);
       const fromTypes = canonicalBoxBytes(box);
@@ -762,7 +755,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // `lp`'s injectivity and the empty payload is the smallest legal box.
     for (const payload of [new Uint8Array([0xde, 0xad, 0xbe, 0xef]), new Uint8Array(0)]) {
       const box: GenesisProofBox = {
-        boxType: 'genesis_proof', value: 0n, payload, guard: 'unspendable',
+        boxType: 'genesis_proof', value: 0n, payload,
         txId: COVERAGE_TX_ID, index: 5,
       };
       const label = `payload=${payload.length}`;
@@ -778,7 +771,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // with @dagsocial/types moves every id derived here.
     const box: GenesisProofBox = {
       boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([0x01]),
-      guard: 'unspendable', txId: COVERAGE_TX_ID, index: 5,
+      txId: COVERAGE_TX_ID, index: 5,
     };
     expect(hexOf(canonicalBoxBytes(box)).slice(0, 2)).toBe('03');
     expect(hexOf(ui.canonicalBoxBytes(box as unknown as Record<string, unknown>)).slice(0, 2))
@@ -1477,9 +1470,6 @@ describe('demo UI invite builders ↔ the id the node derives', () => {
     expect(Buffer.from(bond.inviterId).toString('hex')).toBe(INVITER_HEX);
     expect(Buffer.from(invite.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);
     expect(Buffer.from(bond.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);
-    // Either key satisfies the invite; nothing user-signed satisfies the bond.
-    expect(invite.guard).toBe('invite_dual');
-    expect(bond.guard).toBe('block_apply');
     expect(decoded.protocolVersion).toBe(PROTOCOL_VERSION);
 
     // The first box covers the bond on its own, so the second is not selected
@@ -1489,7 +1479,7 @@ describe('demo UI invite builders ↔ the id the node derives', () => {
 
     // The per-boxType output shape is CLOSED — a key it does not declare is a
     // rejection, not a spare field. `invite` and `bond` declare exactly
-    // `boxType`, `value`, `inviterId`, `inviteePublicKey` and `guard`.
+    // `boxType`, `value`, `inviterId` and `inviteePublicKey`.
     for (const box of [invite, bond] as unknown as Array<Record<string, unknown>>) {
       for (const dead of [
         'secretHash', 'inviteOutputIndex', 'probationStartBlock', 'probationEndBlock',
@@ -1512,7 +1502,6 @@ describe('demo UI invite builders ↔ the id the node derives', () => {
     expect(minted.boxType).toBe('karma');
     expect(minted.value).toBe(INVITE_KARMA_AMOUNT);
     expect(Buffer.from(minted.owner).toString('hex')).toBe(INVITEE_HEX);
-    expect(minted.guard).toBe('owner_signature');
   });
 
   it('the cancel spends one invite and produces nothing', () => {

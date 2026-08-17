@@ -107,7 +107,6 @@ describe('stateRoot verification (P3 acceptance)', () => {
       boxType: 'credit' as const,
       value: 100n,
       owner: holder.userId,
-      guard: 'owner_signature' as const,
     }, 1);
     seeded.id = computeBoxId(seeded);
     (await importUtxo()).insertBox(seeded);

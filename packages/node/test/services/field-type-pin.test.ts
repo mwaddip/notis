@@ -8,11 +8,11 @@
  *    fields, wrong-typed fields, `null`/non-object entries, unknown or
  *    prototype-colliding boxTypes — `validateTx` returns `{valid: false}`
  *    and never throws. Corpus transactions are deliberately UNSIGNED: the
- *    shape gate must reject before guards are ever consulted, so a
+ *    shape gate must reject before authorization is ever consulted, so a
  *    signature-shaped error (or a throw) here is a placement regression;
  *  - PER-FIELD rejects: for each boxType, each pinned field with a
  *    wrong-typed value → invalid, error names index, boxType, and key;
- *  - ACCEPT controls the guard-shape suite does not already cover: the
+ *  - ACCEPT controls the output-shape suite does not already cover: the
  *    honest bond commit (typed probation numbers — the class-4c coercion
  *    shape, now dead) and the honest unvouch;
  *  - CBOR INGRESS: a block embedding the class-3 poison tx (string
@@ -22,7 +22,7 @@
  *    row made every later read of it throw (the before-leg probes).
  *
  * The accept controls for every other legal transition live in
- * output-shape.test.ts (guard-shape pin) and utxo-engine.test.ts; the
+ * output-shape.test.ts (output-shape pin) and utxo-engine.test.ts; the
  * id-integrity discriminator, fed the class-4 mutants, lives in
  * output-shape-id-integrity.test.ts.
  */
@@ -80,7 +80,7 @@ const bytes32 = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 //
 // This suite's subject is `checkOutputShape`, whose job is to reject decoded
 // CBOR that does not match a box type. Its inputs are therefore malformed BY
-// CONSTRUCTION — a field of the wrong type, a value past 2^64, a lying guard.
+// CONSTRUCTION — a field of the wrong type, a value past 2^64, a stray key.
 // The cast is how the test says "this is the bad input"; making these literals
 // well-typed would delete the only cases the function exists to handle.
 //
@@ -130,7 +130,6 @@ describe('field-type pin', () => {
         boxType: 'karma',
         value,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       },
       1,
     );
@@ -157,7 +156,6 @@ describe('field-type pin', () => {
       boxType: 'karma',
       value,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
   }
 
@@ -169,19 +167,19 @@ describe('field-type pin', () => {
     /**
      * Corpus of malformed outputs. Each runs as the outputs of an UNSIGNED
      * transaction over one live karma input: the step-4 gate must produce the
-     * reject before conservation, guards, or transitions can read the object
+     * reject before conservation, authorization, or transitions can read the object
      * (an unsigned tx surfacing a signature error — or a throw — means the
      * gate moved).
      */
     const karmaOwner32 = bytes32(0x11);
     const CORPUS: Array<[string, unknown]> = [
       // -- missing fields (the class-1 validate-time-throw sites) --
-      ['karma missing owner', { boxType: 'karma', value: 10n, guard: 'owner_signature' }],
-      ['karma missing value', { boxType: 'karma', owner: karmaOwner32, guard: 'owner_signature' }],
-      ['vouch missing voucherId', { boxType: 'vouch', value: 1n, targetId: karmaOwner32, guard: 'owner_signature' }],
-      ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32, guard: 'block_apply' }],
-      ['invite missing inviteePublicKey', { boxType: 'invite', value: 0n, inviterId: karmaOwner32, guard: 'invite_dual' }],
-      ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, owner: karmaOwner32, guard: 'block_apply' }],
+      ['karma missing owner', { boxType: 'karma', value: 10n }],
+      ['karma missing value', { boxType: 'karma', owner: karmaOwner32 }],
+      ['vouch missing voucherId', { boxType: 'vouch', value: 1n, targetId: karmaOwner32 }],
+      ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32 }],
+      ['invite missing inviteePublicKey', { boxType: 'invite', value: 0n, inviterId: karmaOwner32 }],
+      ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, owner: karmaOwner32 }],
       // -- wrong-typed fields, one per FieldType --
       ['karma value as number', { ...honest('karma'), value: 10 }],
       ['karma value negative bigint', { ...honest('karma'), value: -1n }],
@@ -217,27 +215,27 @@ describe('field-type pin', () => {
       ['boolean entry', true],
       ['array entry', []],
       // -- unknown and prototype-colliding boxTypes --
-      ["boxType 'constructor'", { boxType: 'constructor', value: 10n, guard: 'owner_signature' }],
-      ["boxType 'toString'", { boxType: 'toString', value: 10n, guard: 'owner_signature' }],
-      ["boxType 'like' (retired)", { boxType: 'like', value: 10n, guard: 'owner_signature' }],
-      ['boxType as number', { boxType: 7, value: 10n, guard: 'owner_signature' }],
-      ['boxType missing', { value: 10n, guard: 'owner_signature' }],
+      ["boxType 'constructor'", { boxType: 'constructor', value: 10n }],
+      ["boxType 'toString'", { boxType: 'toString', value: 10n }],
+      ["boxType 'like' (retired)", { boxType: 'like', value: 10n }],
+      ['boxType as number', { boxType: 7, value: 10n }],
+      ['boxType missing', { value: 10n }],
     ];
 
     function honest(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature' };
+          return { boxType, value: 10n, owner: karmaOwner32 };
         case 'credit':
-          return { boxType, value: 10n, owner: karmaOwner32, guard: 'owner_signature' };
+          return { boxType, value: 10n, owner: karmaOwner32 };
         case 'invite':
-          return { boxType, value: 0n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa), guard: 'invite_dual' };
+          return { boxType, value: 0n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
         case 'bond':
-          return { boxType, value: 10n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa), guard: 'block_apply' };
+          return { boxType, value: 10n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
         case 'post_lock':
-          return { boxType, value: 10n, originalValue: 10n, owner: karmaOwner32, guard: 'block_apply' };
+          return { boxType, value: 10n, originalValue: 10n, owner: karmaOwner32 };
         case 'vouch':
-          return { boxType, value: 1n, voucherId: karmaOwner32, targetId: bytes32(0xcc), guard: 'owner_signature' };
+          return { boxType, value: 1n, voucherId: karmaOwner32, targetId: bytes32(0xcc) };
         default:
           throw new Error(boxType);
       }
@@ -284,25 +282,24 @@ describe('field-type pin', () => {
     function honestCandidate(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', decayBurn: false };
+          return { boxType, value: 10n, owner: bytes32(1), decayBurn: false };
         case 'credit':
-          return { boxType, value: 10n, owner: bytes32(1), guard: 'owner_signature', lockedUntilBlock: 5 };
+          return { boxType, value: 10n, owner: bytes32(1), lockedUntilBlock: 5 };
         case 'invite':
-          return { boxType, value: 0n, inviterId: bytes32(1), inviteePublicKey: bytes32(2), guard: 'invite_dual' };
+          return { boxType, value: 0n, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
         case 'bond':
-          return { boxType, value: 10n, inviterId: bytes32(1), inviteePublicKey: bytes32(2), guard: 'block_apply' };
+          return { boxType, value: 10n, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
         case 'post_lock':
-          return { boxType, value: 10n, originalValue: 10n, owner: bytes32(1), guard: 'block_apply' };
+          return { boxType, value: 10n, originalValue: 10n, owner: bytes32(1) };
         case 'vouch':
-          return { boxType, value: 1n, voucherId: bytes32(1), targetId: bytes32(0xcc), guard: 'owner_signature' };
+          return { boxType, value: 1n, voucherId: bytes32(1), targetId: bytes32(0xcc) };
         default:
           throw new Error(boxType);
       }
     }
 
     // For each boxType, every pinned field and a value violating its spec.
-    // (guard/boxType are pinned by their own arms, tested in the guard-shape
-    // suite.)
+    // (`boxType` is pinned by its own arm, tested in the output-shape suite.)
     const WRONG: Record<string, Record<string, unknown>> = {
       karma: { value: 10, owner: new Uint8Array(31), decayBurn: 1 },
       credit: { value: -1n, owner: 'aa'.repeat(32), lockedUntilBlock: -1 },
@@ -356,7 +353,7 @@ describe('field-type pin', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Accept controls the guard-shape suite does not cover
+  // Accept controls the output-shape suite does not cover
   // -------------------------------------------------------------------------
 
   describe('accept controls (honest typed outputs through validateTx)', () => {
@@ -367,14 +364,12 @@ describe('field-type pin', () => {
         value: 0n,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
-        guard: 'invite_dual' as const,
       };
       const bond = {
         boxType: 'bond' as const,
         value: INVITE_BOND_KARMA,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
-        guard: 'block_apply' as const,
       };
       const [seededInvite, seededBond] = seedAsOneTx([invite, bond]);
       storeInsertBox(seededInvite!);
@@ -391,7 +386,6 @@ describe('field-type pin', () => {
         boxType: 'karma',
         value: INVITE_KARMA_AMOUNT,
         owner: invitee.userId,
-        guard: 'owner_signature',
       };
       const tx: UtxoTransaction = {
         inputs: [seededInvite.id!],
@@ -414,7 +408,6 @@ describe('field-type pin', () => {
         value: 1n,
         voucherId: ownerPubKey,
         targetId: bytes32(0xcc),
-        guard: 'owner_signature' as const,
       };
       const seeded = { ...vouch, ...fixtureProvenance(vouch, 1) } as AnyBox;
       seeded.id = computeBoxId(seeded);
@@ -456,7 +449,6 @@ describe('field-type pin', () => {
           value: POST_LOCK_THREAD_COST,
           originalValue: POST_LOCK_THREAD_COST,
           owner: ownerPubKey,
-          guard: 'block_apply',
         };
         const tx = signedTx(
           [karma.id!],
@@ -465,7 +457,6 @@ describe('field-type pin', () => {
               boxType: 'karma',
               value: 100n - POST_LOCK_THREAD_COST,
               owner: ownerPubKey,
-              guard: 'owner_signature',
             },
             lock,
           ] as unknown as UtxoTransaction['outputs'],
@@ -518,7 +509,6 @@ describe('field-type pin', () => {
             boxType: 'karma',
             value: 100n - POST_LOCK_THREAD_COST,
             owner: attacker.userId,
-            guard: 'owner_signature',
             note: 'x', // not in the layout: never encoded, so the tx still hashes
           },
           {
@@ -526,7 +516,6 @@ describe('field-type pin', () => {
             value: POST_LOCK_THREAD_COST,
             originalValue: POST_LOCK_THREAD_COST,
             owner: attacker.userId,
-            guard: 'block_apply',
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
@@ -600,7 +589,6 @@ describe('field-type pin', () => {
             boxType: 'karma',
             value: 100n,
             owner: attacker.userId,
-            guard: 'owner_signature',
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
@@ -618,7 +606,6 @@ describe('field-type pin', () => {
             value: POST_LOCK_THREAD_COST,
             originalValue: String(POST_LOCK_THREAD_COST), // vlqU64 THROWS on a string
             owner: attacker.userId,
-            guard: 'block_apply',
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
@@ -670,14 +657,12 @@ describe('field-type pin', () => {
             boxType: 'karma',
             value: 100n - POST_LOCK_THREAD_COST,
             owner: author.userId,
-            guard: 'owner_signature',
           },
           {
             boxType: 'post_lock',
             value: POST_LOCK_THREAD_COST,
             originalValue: POST_LOCK_THREAD_COST,
             owner: author.userId,
-            guard: 'block_apply',
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},

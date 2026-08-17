@@ -486,7 +486,6 @@ describe('mintKarma consolidates order-independently', () => {
             boxType: 'karma' as const,
             value: EQUAL_VALUE,
             owner: OWNER,
-            guard: 'owner_signature' as const,
           },
           1,
           labelNonce(tag),

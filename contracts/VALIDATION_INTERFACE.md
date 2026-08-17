@@ -741,7 +741,7 @@ is what establishes the domain for the `opt(b32)` writer in `txIdBytes`. The
 claim was misplaced, not a missing check — but a contract that names the wrong
 layer is how a later reader deletes the real check as redundant.
 
-Also does NOT check UTXO conservation, guard satisfaction, or the like
+Also does NOT check UTXO conservation, authorization, or the like
 biconditional (`likeTarget` ⟺ deficit) — those are Stage 2 (stateful) checks.
 
 #### The size bound measures `encodeTx`, and runs last

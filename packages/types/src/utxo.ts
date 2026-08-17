@@ -118,11 +118,6 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * None of the three names an owner, so there is no trailing field to write and
  * the smallest legal box of any type is two bytes.
  *
- * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
- * Boxes). It is a pure function of `boxType` — one guard string per type, with
- * no box choosing between two — so it carries zero information in a preimage.
- * The field stays on the interfaces; it is not hashed.
- *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
  * the candidate bytes" is a property of this encoder rather than a rule a
@@ -219,10 +214,10 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'fee':
       // The tail is empty by layout, not by oversight (TYPES_INTERFACE →
       // Layout — Boxes). None of the three names an owner — block application
-      // is the only spender and `block_apply` already says so — so the content
-      // encoding is the shared prefix alone. Stated as its own arm rather than
-      // left to `default`, which is the unknown-tag sentinel below and would
-      // write these bytes for a reason that is not this one.
+      // is the only spender — so the content encoding is the shared prefix
+      // alone. Stated as its own arm rather than left to `default`, which is
+      // the unknown-tag sentinel below and would write these bytes for a
+      // reason that is not this one.
       return;
     default:
       // Unreachable from a valid box, and returning rather than throwing is
@@ -247,12 +242,6 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
  * `genesis_proof.payload` is bounded at `MAX_GENESIS_PROOF_PAYLOAD_BYTES`. Every
  * other refusal this reader makes belongs to a primitive in `codec.ts` and
  * therefore to every field that uses it; this one binds a single arm.
- *
- * **`guard` is not returned**, because it is not in the bytes. It is a
- * pure function of `boxType` — each box interface types it as a single literal —
- * so a consumer that needs it synthesises it from the discriminator. Returning
- * it here would have this package assert an authorization fact it does not own,
- * and would put the guard table in two places.
  *
  * One absence is mapped rather than passed through, and it is what makes the
  * re-encode compare close: `opt` fields decode to `undefined`, not `null`.
@@ -406,9 +395,6 @@ export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: numbe
  * the readers themselves. So a value the store hands back is not merely
  * parseable — it is the *only* byte string that decodes to it.
  *
- * **`candidate.guard` is absent**: it is not in the bytes and it is a pure
- * function of `boxType`. See `readBoxContentFields`.
- *
  * @throws {ReaderError} — `CodecError` for a boundary-check failure, wire's own
  *   for a short read or an unknown tag. Callers convert it to a verdict.
  */
@@ -424,30 +410,14 @@ export interface BoxRecord {
 }
 
 /**
- * A box candidate as the **bytes** carry it — every per-type field except the
- * one that has no encoding.
+ * A box candidate as the **bytes** carry it — every field a candidate has, so
+ * this is `AnyBoxCandidate` and not a narrowing of it.
  *
- * `guard` is omitted because it is a pure function of `boxType` and is absent
- * from the layout table. A reader cannot return it without inventing it, and a
- * type that promised it would make every consumer's `undefined` check
- * unreachable while the value was missing at runtime anyway.
- *
- * The omission is applied per union member, not to the union: `Omit` on a union
- * collapses it to the common keys, which here would leave `boxType` and `value`
- * and discard every field that distinguishes one box type from another. Same
- * reason `CandidateOf` is written the way it is.
+ * It has its own name because it names the **reader's** side of the layout:
+ * `readBoxContentFields` and `BoxRecord.candidate` answer with one, and the
+ * round-trip claim reads as a claim with both directions named.
  */
-export type DecodedBoxCandidate =
-  | Omit<CandidateOf<KarmaBox>, 'guard'>
-  | Omit<CandidateOf<CreditBox>, 'guard'>
-  | Omit<CandidateOf<InviteBox>, 'guard'>
-  | Omit<CandidateOf<GenesisProofBox>, 'guard'>
-  | Omit<CandidateOf<BondBox>, 'guard'>
-  | Omit<CandidateOf<PostLockBox>, 'guard'>
-  | Omit<CandidateOf<VouchBox>, 'guard'>
-  | Omit<CandidateOf<EmissionBox>, 'guard'>
-  | Omit<CandidateOf<TreasuryBox>, 'guard'>
-  | Omit<CandidateOf<FeeBox>, 'guard'>;
+export type DecodedBoxCandidate = AnyBoxCandidate;
 
 /**
  * The box-record layout, written once and walked from both ends.
@@ -635,26 +605,6 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
 // Box types
 // ---------------------------------------------------------------------------
 
-// `'block_apply'` means "consumable only by block application"; there is no
-// epoch. `'unspendable'` names no spender at all, which no other member does.
-//
-// `'invite_dual'` is satisfied by EITHER key the InviteBox names, and the shape
-// that key may take is the transition's: invitee → claim, inviter → cancel. Two
-// signatures, no preimage — the claimant proves identity, not knowledge of a
-// secret.
-//
-// **RESERVED, never to be reused:** `'epoch_tally'`, `'hash_preimage_with_bond'`,
-// `'bond_dual'`, `'hash_preimage'`, `'inviter_signature'`. Guard strings are box
-// content, so a reused name makes two different rules share a byte string; and
-// node's `checkOutputShape` rejects any guard that is not the canonical one for
-// its `boxType`, so reinstating a name would silently make an output shape that
-// is invalid today valid.
-//
-// Every box fixes its guard to a literal and this union holds one member per
-// reachable spender, so node's guard switch is total over the names the store can
-// write (TYPES_INTERFACE → BoxGuard).
-export type BoxGuard = 'owner_signature' | 'block_apply' | 'invite_dual' | 'unspendable';
-
 /**
  * The creator-chosen fields — what a client builds and what `computeTxId`
  * hashes. No `id`, no provenance.
@@ -709,7 +659,6 @@ export type CandidateOf<B extends BoxBase> = Omit<B, 'id' | 'txId' | 'index'>;
 export interface KarmaBox extends BoxBase {
   boxType: 'karma';
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
-  guard: 'owner_signature';
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
   decayBurn?: boolean;
@@ -720,7 +669,6 @@ export interface KarmaBox extends BoxBase {
 export interface CreditBox extends BoxBase {
   boxType: 'credit';
   owner: Uint8Array;          // 32 raw bytes
-  guard: 'owner_signature';
   lockedUntilBlock?: number;  // Block height before which credits cannot be spent
 }
 
@@ -746,7 +694,6 @@ export interface InviteBox extends BoxBase {
   value: bigint;                   // Always 0 — a claim ticket, not a container
   inviterId: UserId;               // May cancel
   inviteePublicKey: Uint8Array;    // 32 raw bytes — may claim; the key INVITE_KARMA_AMOUNT mints to
-  guard: 'invite_dual';            // Invitee signature (claim) OR inviter signature (cancel)
 }
 
 // --- Genesis proof ---
@@ -754,10 +701,11 @@ export interface InviteBox extends BoxBase {
 /**
  * The box that makes one network's genesis state differ from another's.
  *
- * `guard: 'unspendable'` names no spender at all. Nothing in this package
- * enforces a guard — it is not in the id preimage (see `canonicalBoxBytes`),
- * and the rules that read it belong to validation and to node's output-shape
- * check.
+ * **The type is barred from both transaction positions** (TYPES_INTERFACE →
+ * GenesisProofBox), and neither half is this package's: the output rule is
+ * `VALIDATION_INTERFACE`'s, because a candidate output is a whole box and
+ * typing it reads nothing, and the input rule is `NODE_INTERFACE`'s, because
+ * `tx.inputs` are box id strings and typing one requires the UTXO set.
  *
  * `value` is `0n`: the box holds neither karma nor credits, so it never enters
  * supply accounting.
@@ -770,7 +718,6 @@ export interface GenesisProofBox extends BoxBase {
    * `NetworkProfile.genesisProofPayload` carries the per-network value as hex.
    */
   payload: Uint8Array;
-  guard: 'unspendable';
 }
 
 // --- Bond ---
@@ -793,15 +740,14 @@ export interface GenesisProofBox extends BoxBase {
  * partial state exists to record.
  *
  * **Nothing spends a bond.** Creation, claim, cancellation and settlement all
- * move it through block application, so the guard admits no user transaction at
- * all — the same standing `PostLockBox` has.
+ * move it through block application, so no transition admits it into a user
+ * transaction — the same standing `PostLockBox` has.
  */
 export interface BondBox extends BoxBase {
   boxType: 'bond';
   value: bigint;                   // B karma deposited by the inviter
   inviterId: UserId;               // Owner — the inviter
   inviteePublicKey: Uint8Array;    // 32 raw bytes — set at creation, the key the paired invite names
-  guard: 'block_apply';            // Consumable only by block application
 }
 
 // --- Post Lock ---
@@ -832,7 +778,6 @@ export interface PostLockBox extends BoxBase {
   value: bigint;              // Current locked karma (vests per block as likes accumulate)
   originalValue: bigint;      // Initial lock amount (POST_LOCK_THREAD_COST or POST_LOCK_REPLY_COST)
   owner: Uint8Array;          // 32 raw bytes — post author's Ed25519 public key
-  guard: 'block_apply';       // Only consumable by block application
 }
 
 // --- Vouch ---
@@ -842,7 +787,6 @@ export interface VouchBox extends BoxBase {
   value: 1n;                         // always 1 karma
   voucherId: UserId;                 // who staked the karma
   targetId: UserId;                  // who is being vouched for
-  guard: 'owner_signature';          // voucher controls spend
 }
 
 // --- Emission ---
@@ -858,8 +802,8 @@ export interface VouchBox extends BoxBase {
  * schedule they trust.
  *
  * **No owner, and therefore no trailing fields.** The box names no spender
- * because block application is the only one and `block_apply` already says so,
- * so its content encoding is the shared prefix alone (see `canonicalBoxBytes`).
+ * because block application is the only one, so its content encoding is the
+ * shared prefix alone (see `canonicalBoxBytes`).
  *
  * ⛔ **A successor whose value would be `0` is not created.** The total equals
  * the schedule's sum exactly, so the last emitting block consumes the box and
@@ -876,7 +820,6 @@ export interface VouchBox extends BoxBase {
 export interface EmissionBox extends BoxBase {
   boxType: 'emission';
   value: bigint;              // Credits not yet released, in base units
-  guard: 'block_apply';       // Consumable only by block application
 }
 
 // --- Treasury ---
@@ -904,7 +847,6 @@ export interface EmissionBox extends BoxBase {
 export interface TreasuryBox extends BoxBase {
   boxType: 'treasury';
   value: bigint;              // Credits accrued, in base units
-  guard: 'block_apply';       // Consumable only by block application
 }
 
 // --- Fee ---
@@ -940,7 +882,6 @@ export interface TreasuryBox extends BoxBase {
 export interface FeeBox extends BoxBase {
   boxType: 'fee';
   value: bigint;              // Credits paid to the block's miner, in base units
-  guard: 'block_apply';       // Consumable only by block application
 }
 
 // ---------------------------------------------------------------------------
@@ -973,44 +914,6 @@ export type AnyBoxCandidate =
   | CandidateOf<FeeBox>;
 
 // ---------------------------------------------------------------------------
-// Guard table
-// ---------------------------------------------------------------------------
-
-/**
- * The one guard each box type fixes — **the single source of that mapping.**
- *
- * `guard` is a pure function of `boxType` (TYPES_INTERFACE → Layout — Boxes),
- * and every interface above declares it as a single string literal rather than
- * a union, so the discriminator determines it completely. This table is that
- * function written out, and it belongs to this package because the property it
- * states is this package's: the box types are declared here.
- *
- * **A copy of it cannot be caught by anything the chain computes.** `guard` is
- * absent from `canonicalBoxBytes`, so two consumers that disagree still produce
- * identical box ids and an identical `stateRoot` — the disagreement surfaces
- * only as one path accepting a candidate another rebuilt differently.
- *
- * The `satisfies` clause is what makes the table checked rather than asserted:
- * a value that disagrees with the interface declaring it, a box type with no
- * row, or a row for a type that no longer exists is a compile error in this
- * file. `as const` keeps each entry's literal type, so a consumer building a
- * typed `KarmaBox` can write `BOX_GUARDS.karma` into a field whose type is the
- * literal `'owner_signature'`.
- */
-export const BOX_GUARDS = Object.freeze({
-  karma: 'owner_signature',
-  credit: 'owner_signature',
-  invite: 'invite_dual',
-  genesis_proof: 'unspendable',
-  bond: 'block_apply',
-  post_lock: 'block_apply',
-  vouch: 'owner_signature',
-  emission: 'block_apply',
-  treasury: 'block_apply',
-  fee: 'block_apply',
-} as const satisfies { [T in AnyBox['boxType']]: Extract<AnyBox, { boxType: T }>['guard'] });
-
-// ---------------------------------------------------------------------------
 // UTXO transaction
 // ---------------------------------------------------------------------------
 
@@ -1025,7 +928,7 @@ export interface UtxoTransaction {
   outputs: AnyBoxCandidate[];
   signatures: Record<string, Uint8Array>;  // publicKey (hex) → Ed25519 sig (64 bytes) over txId
   /**
-   * ⛔ **No consumer.** With no hash-locked guard left in `BoxGuard`, nothing
+   * ⛔ **No consumer.** No transition requires knowledge of a secret, so nothing
    * reads this map — but it stays field 3 of the encoding, sorted by key and
    * hashed into every `TxId`, so it is a consensus surface that carries no
    * meaning. Removing it changes every transaction id, which is why it goes with

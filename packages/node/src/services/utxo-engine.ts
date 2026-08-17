@@ -1,6 +1,5 @@
 import { verify as cryptoVerify } from 'crypto';
 import {
-  BOX_GUARDS,
   computeBoxId,
   computeTxId,
   INVITE_BOND_KARMA,
@@ -487,8 +486,8 @@ function checkTransitions(
       }
       const karmaOut = karmaOutputs[0] as KarmaBox;
       // The mint lands on the key the box names and on no other. Unpinned, the
-      // inviter's own signature would satisfy `invite_dual` over a claim paying
-      // themselves — karma created from nothing, into the wrong hands.
+      // inviter's own signature would authorize a claim paying themselves —
+      // karma created from nothing, into the wrong hands.
       if (Buffer.from(karmaOut.owner).toString('hex') !==
           Buffer.from(inviteIn.inviteePublicKey).toString('hex')) {
         return {
@@ -897,10 +896,10 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   }
 
   // ---- 5. signatures: a hex-keyed map of 64-byte signatures ----
-  // An EMPTY map is legal: the uncommitted-bond cancel path is guard-satisfied
-  // by preimage alone. Extra well-formed keys are shape-legal too — guards only
-  // look keys up, nothing iterates, and the like path's exactly-one-signature
-  // rule is `castLike` policy, not envelope shape.
+  // An EMPTY map is legal: the uncommitted-bond cancel path is authorized by
+  // preimage alone. Extra well-formed keys are shape-legal too —
+  // `checkAuthorization` only looks keys up, nothing iterates, and the like
+  // path's exactly-one-signature rule is `castLike` policy, not envelope shape.
   const signatures = tx.signatures;
   if (!isPlainObject(signatures)) {
     return {
@@ -1025,9 +1024,8 @@ type OutputBoxType = Exclude<
  * be present; `optional` keys may be present or absent; nothing else may
  * appear; every present field must satisfy its `FieldType`.
  *
- * `boxType` and `guard` carry `null` specs: the discriminant is pinned by the
- * own-property table lookup itself, and `guard` by the `BOX_GUARDS` equality
- * below — both stricter than any type check.
+ * `boxType` carries a `null` spec: the discriminant is pinned by the
+ * own-property table lookup itself, which is stricter than any type check.
  */
 const OUTPUT_SHAPE: Record<
   OutputBoxType,
@@ -1053,11 +1051,11 @@ const OUTPUT_SHAPE: Record<
   });
   return {
     karma: shape(
-      { boxType: null, value: 'u64', owner: 'bytes32', guard: null },
+      { boxType: null, value: 'u64', owner: 'bytes32' },
       { decayBurn: 'boolean' },
     ),
     credit: shape(
-      { boxType: null, value: 'u64', owner: 'bytes32', guard: null },
+      { boxType: null, value: 'u64', owner: 'bytes32' },
       { lockedUntilBlock: 'uint' },
     ),
     // Two rows, one field list — the boxTypes differ and nothing else does.
@@ -1068,14 +1066,12 @@ const OUTPUT_SHAPE: Record<
       value: 'u64',
       inviterId: 'bytes32',
       inviteePublicKey: 'bytes32',
-      guard: null,
     }),
     bond: shape({
       boxType: null,
       value: 'u64',
       inviterId: 'bytes32',
       inviteePublicKey: 'bytes32',
-      guard: null,
     }),
     post_lock: shape({
       boxType: null,
@@ -1087,28 +1083,26 @@ const OUTPUT_SHAPE: Record<
       // the field would have to be known before the `TxId` that produces it
       // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
       // held by the store.
-      guard: null,
     }),
     vouch: shape({
       boxType: null,
       value: 'u64',
       voucherId: 'bytes32',
       targetId: 'bytes32',
-      guard: null,
     }),
     // The shared prefix and nothing else: a fee box names no owner, because
     // block application is its only spender and the coinbase already decides
     // which key the value reaches (TYPES_INTERFACE → FeeBox). No optional
-    // fields, because there is no tail for one to sit in. That `block_apply`
-    // rides a user-created box is the shape `bond` and `post_lock` already
-    // have (NODE_INTERFACE → Output shape).
-    fee: shape({ boxType: null, value: 'u64', guard: null }),
+    // fields, because there is no tail for one to sit in. That a user-created
+    // box is consumed only by block application is the shape `bond` and
+    // `post_lock` already have (NODE_INTERFACE → Output shape).
+    fee: shape({ boxType: null, value: 'u64' }),
   };
 })();
 
 /**
- * Output shape — the closed per-boxType schema (guard-shape pin + field-type
- * pin, NODE_INTERFACE → "Output shape").
+ * Output shape — the closed per-boxType schema (field-type pin,
+ * NODE_INTERFACE → "Output shape").
  *
  * Outputs are attacker-controlled structure (HTTP JSON via `jsonToTx`, gossip
  * and block-embedded CBOR). The committed encoders are positional —
@@ -1120,9 +1114,8 @@ const OUTPUT_SHAPE: Record<
  * `originalValue` in a stored row makes every later `rowToBox` of that box
  * throw.
  *
- * Four rules per output:
+ * Three rules per output:
  * - a key outside the closed set is a REJECT, never a silent strip;
- * - `guard` must equal the boxType's one canonical guard;
  * - every present field's runtime type matches its `FieldType` spec in
  *   OUTPUT_SHAPE (`TYPES_INTERFACE` box definitions are the authority);
  * - an unknown `boxType` — or a `null`/non-object entry — is a reject here,
@@ -1205,22 +1198,6 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
           error: `Invalid output shape at index ${i} (${boxType}): missing required key '${key}'`,
         };
       }
-    }
-    // A guard is a pure function of the discriminant — it carries zero
-    // information of its own — so any other value on an output is a lie about
-    // the box, not an alternative spend policy. `BOX_GUARDS` is that function
-    // (`TYPES_INTERFACE` → Layout — Boxes). ⚠ **`guard` is NOT in the consensus
-    // bytes**: `canonicalBoxBytes` writes `boxType`, `value` and the per-type
-    // tail and never the guard, so this decides nothing about the id preimage
-    // or the AVL leaf — it is an interface rule the schema enforces on
-    // candidates.
-    if (box.guard !== BOX_GUARDS[boxType]) {
-      return {
-        valid: false,
-        error:
-          `Invalid output shape at index ${i} (${boxType}): guard must be ` +
-          `'${BOX_GUARDS[boxType]}', got ${describeValue(box.guard)}`,
-      };
     }
     for (const [key, fieldType] of Object.entries(shape.types)) {
       const value = box[key];
@@ -1413,20 +1390,19 @@ const OWNER_SIGNATURE: Authorization = {
  * carries that absence's reason.
  */
 const BLOCK_APPLICATION_ONLY: Authorization = {
-  noUserTransition: () =>
-    'Box with block_apply guard can only be consumed by block application',
+  noUserTransition: (box) =>
+    `No user transition consumes box ${box.id}: ` +
+    `a ${box.boxType} box is consumed only by block application`,
 };
 
 /**
  * Authorization per input box type — one entry per box type, and each is the
  * requirement of that type's transitions.
  *
- * Keyed on the input's **type**, never on `box.guard`: the requirement belongs
- * to the transition, and `guard` is a pure function of `boxType` carrying no
- * information and absent from the committed bytes (NODE_INTERFACE → "Legal box
- * transitions"). Typed over every `boxType`, so a new box type fails to compile
- * until its authorization is stated — the obligation `OUTPUT_SHAPE` carries for
- * output shape.
+ * Keyed on the input's **type**: the requirement belongs to the transition, not
+ * to the box (NODE_INTERFACE → "Legal box transitions"). Typed over every
+ * `boxType`, so a new box type fails to compile until its authorization is
+ * stated — the obligation `OUTPUT_SHAPE` carries for output shape.
  *
  * A type the transition table names as a legal input gets a signer rule; a type
  * no row names gets the absence. Admitting a type is the deliberate act.
@@ -1476,8 +1452,8 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
   // `tx.inputs` are box **id** strings, so typing one requires the UTXO set.
   genesis_proof: {
     noUserTransition: (box) =>
-      `Box with unspendable guard can never be consumed: ` +
-      `box ${box.id} is a ${box.boxType} box`,
+      `No transition consumes box ${box.id}: ` +
+      `a ${box.boxType} box can never be consumed`,
   },
 };
 
@@ -1536,9 +1512,9 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
  * 2. All inputs exist and are unspent
  * 3. All inputs have the same boxType
  * 4. Output shape — every output is a non-null object matching the closed
- *    per-boxType schema: exact key set, the boxType's one canonical guard,
- *    and every field's runtime type (guard-shape pin + field-type pin,
- *    NODE_INTERFACE → "Output shape"). This is the first step that reads
+ *    per-boxType schema: exact key set, and every field's runtime type
+ *    (field-type pin, NODE_INTERFACE → "Output shape"). This is the first
+ *    step that reads
  *    `tx.outputs`, so steps 5–7 dereference output fields under a schema
  *    guarantee.
  * 5. Face-value conservation — sum(in) == sum(out) for every box type (three
@@ -1606,8 +1582,7 @@ export function validateTx(
     }
   }
 
-  // ---- 4. Output shape: the closed per-boxType schema (guard-shape pin +
-  // field-type pin) ----
+  // ---- 4. Output shape: the closed per-boxType schema (field-type pin) ----
   // First consumer of `tx.outputs`, ahead of every semantic rule: steps 5–7
   // dereference output fields under the schema's key-set and type guarantees
   // instead of defending per-site. Placing it here rather than at step 7

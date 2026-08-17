@@ -189,7 +189,6 @@ describe('invites routes', () => {
       boxType: 'karma',
       value,
       owner: inviterId,
-      guard: 'owner_signature',
     }, 1, nonce);
     storeInsertBox(karma);
     return karma;
@@ -202,14 +201,12 @@ describe('invites routes', () => {
       value: 0n,
       inviterId,
       inviteePublicKey: invitee,
-      guard: 'invite_dual' as const,
     };
     const bondCandidate = {
       boxType: 'bond' as const,
       value: INVITE_BOND_KARMA,
       inviterId,
       inviteePublicKey: invitee,
-      guard: 'block_apply' as const,
     };
     const [invite, bond] = seedAsOneTx([inviteCandidate, bondCandidate], 1, labelNonce(label));
     storeInsertBox(invite!);
@@ -225,21 +222,18 @@ describe('invites routes', () => {
       boxType: 'karma',
       value: 100n - INVITE_BOND_KARMA,
       owner: inviterId,
-      guard: 'owner_signature',
     };
     const inviteBox: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: 0n,
       inviterId,
       inviteePublicKey: invitee,
-      guard: 'invite_dual',
     };
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
       inviteePublicKey: invitee,
-      guard: 'block_apply',
     };
 
     const tx: UtxoTransaction = {
@@ -288,7 +282,6 @@ describe('invites routes', () => {
         boxType: 'karma',
         value: INVITE_KARMA_AMOUNT,
         owner: inviteeKp.publicKey,
-        guard: 'owner_signature',
       } as CandidateOf<KarmaBox>],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

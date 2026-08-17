@@ -48,7 +48,6 @@ function makeKarmaBox(id: string, value = 10n): KarmaBox {
     boxType: 'karma' as const,
     value,
     owner: new Uint8Array(randomBytes(32)),
-    guard: 'owner_signature' as const,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, 1, hashSeed(id)) };
 }
@@ -93,32 +92,28 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
     const boxes: AnyBox[] = [
       makeKarmaBox('01'.repeat(32)),
       withProvenance('02'.repeat(32), { boxType: 'credit', value: 5n,
-        owner, guard: 'owner_signature' }),
+        owner }),
       // ⚠ These fills are AVL **keys**, chosen so the assertions below read
       // in order — they are not box tags and do not track the tag table.
       // `genesis_proof` is the type with no row: it carries an `lp` payload no
       // fixture here needs, and its tag is covered by the two ownerless rows
       // at the end.
       withProvenance('04'.repeat(32), { boxType: 'invite', value: 0n,
-        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)),
-        guard: 'invite_dual' }),
+        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)) }),
       withProvenance('05'.repeat(32), { boxType: 'bond', value: 10n,
-        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)),
-        guard: 'block_apply' }),
+        inviterId: owner, inviteePublicKey: new Uint8Array(randomBytes(32)) }),
       withProvenance('06'.repeat(32), { boxType: 'post_lock', value: 5n,
         // `b32` in the id preimage — `'p1'` has no encoding.
-        originalValue: 5n, owner, targetPostId: '66'.repeat(32), guard: 'block_apply' }),
+        originalValue: 5n, owner, targetPostId: '66'.repeat(32) }),
       withProvenance('07'.repeat(32), { boxType: 'vouch', value: 1n,
-        voucherId: owner, targetId: owner, guard: 'owner_signature' }),
+        voucherId: owner, targetId: owner }),
       // The two ownerless block-application boxes. Their serialized leaf is the
       // shared prefix alone — `enum8(boxType) ‖ vlqU64(value)` and nothing else
       // (TYPES_INTERFACE → EmissionBox / TreasuryBox) — which makes them the
       // shortest values the tree ever holds and so the sharpest case for a tag
       // that must not be mistaken for a record.
-      withProvenance('08'.repeat(32), { boxType: 'emission', value: 4226400000000n,
-        guard: 'block_apply' }),
-      withProvenance('09'.repeat(32), { boxType: 'treasury', value: 500n,
-        guard: 'block_apply' }),
+      withProvenance('08'.repeat(32), { boxType: 'emission', value: 4226400000000n }),
+      withProvenance('09'.repeat(32), { boxType: 'treasury', value: 500n }),
     ];
 
     for (const box of boxes) {

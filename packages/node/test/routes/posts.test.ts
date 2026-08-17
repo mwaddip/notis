@@ -222,7 +222,6 @@ describe('posts routes', () => {
       boxType: 'karma',
       value: 100n,
       owner: userId,
-      guard: 'owner_signature',
     }, 1);
     const karmaBoxId = karmaBox.id;
     insertBox({ ...karmaBox, id: karmaBoxId });
@@ -237,7 +236,6 @@ describe('posts routes', () => {
       boxType: 'karma',
       value: 100n - POST_LOCK_THREAD_COST,
       owner: userId,
-      guard: 'owner_signature',
     }, 1);
     const newKarmaId = newKarma.id;
 
@@ -251,7 +249,6 @@ describe('posts routes', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: userId,
-      guard: 'block_apply',
     };
 
     const post = {

@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout, with `guard` absent from the consensus bytes. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds. Two groups are deliberate: invite and bond share identical trailing fields, and emission, treasury and fee share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds. Two groups are deliberate: invite and bond share identical trailing fields, and emission, treasury and fee share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -137,7 +137,7 @@
         "value": "42264000000000000"
       },
       "bytes": "078080a696a5dc894b",
-      "note": "The first box type whose whole encoding is the shared prefix - tag byte, value, and nothing after it. There is no owner because block application is the only spender and the block_apply guard already says so, and guard is absent from the consensus bytes on every type. The value is mainnet's entire emission total, 422,640,000 credits at 8 decimals, which is what genesis puts in the box; eight VLQ bytes carry it, so the whole box is nine. Read against box/treasury below: with no trailing fields at all, the tag byte is the whole of what separates the empty-tail types."
+      "note": "The first box type whose whole encoding is the shared prefix - tag byte, value, and nothing after it. There is no owner because block application is the only spender. The value is mainnet's entire emission total, 422,640,000 credits at 8 decimals, which is what genesis puts in the box; eight VLQ bytes carry it, so the whole box is nine. Read against box/treasury below: with no trailing fields at all, the tag byte is the whole of what separates the empty-tail types."
     },
     {
       "name": "box/treasury",

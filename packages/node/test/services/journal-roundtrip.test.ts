@@ -341,7 +341,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       boxType: 'credit',
       value: 100n,
       owner: minerB.userId,
-      guard: 'owner_signature',
     }, 1);
     utxo.insertBox(seeded);
 
@@ -381,7 +380,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       boxType: 'credit',
       value: 100n,
       owner: sender.userId,
-      guard: 'owner_signature',
     }, 1);
     utxo.insertBox(senderBox);
 
@@ -400,13 +398,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
           boxType: 'credit',
           value: 40n,
           owner: recipient.userId,
-          guard: 'owner_signature',
         } as CreditBox,
         {
           boxType: 'credit',
           value: 60n,
           owner: sender.userId,
-          guard: 'owner_signature',
         } as CreditBox,
       ],
       signatures: {},

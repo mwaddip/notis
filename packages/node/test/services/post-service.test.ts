@@ -29,7 +29,6 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
         boxType: 'karma',
         value: 100n,
         owner: new Uint8Array(32),
-        guard: 'owner_signature',
       }) as AnyBox,
     ...overrides,
   };
@@ -69,14 +68,12 @@ function makePostTx(post: Post = makePost(), input: string = BOX_1): UtxoTransac
         boxType: 'karma',
         value: 75n,
         owner: new Uint8Array(32),
-        guard: 'owner_signature',
       } as KarmaBox,
       {
         boxType: 'post_lock',
         value: 25n,
         originalValue: 25n,
         owner: new Uint8Array(32),
-        guard: 'block_apply',
       } as AnyBox,
     ],
     signatures: {},

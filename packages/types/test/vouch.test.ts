@@ -33,7 +33,6 @@ describe('VouchBox', () => {
       value: 1n,
       voucherId,
       targetId,
-      guard: 'owner_signature',
       txId: FIXTURE_TX_ID,
       index: 0,
     };
@@ -57,12 +56,12 @@ describe('VouchBox', () => {
     // call-site literal. Naming the real type is the accurate fix.
     const boxA: Omit<VouchBox, 'id'> = {
       boxType: 'vouch', value: 1n,
-      voucherId, targetId: target1, guard: 'owner_signature',
+      voucherId, targetId: target1,
       txId: FIXTURE_TX_ID, index: 0,
     };
     const boxB: Omit<VouchBox, 'id'> = {
       boxType: 'vouch', value: 1n,
-      voucherId, targetId: target2, guard: 'owner_signature',
+      voucherId, targetId: target2,
       txId: FIXTURE_TX_ID, index: 0,
     };
     const id1 = computeBoxId(boxA);

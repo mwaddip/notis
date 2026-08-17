@@ -267,7 +267,7 @@ type AnyBoxCandidate = CandidateOf<KarmaBox> | CandidateOf<CreditBox> | …   //
 **`BoxCandidate` is the base, `CandidateOf<B>` is the per-type candidate.** An earlier draft of
 this block wrote `BoxCandidate` with a `…per-type fields` placeholder, which read as though one
 name covered both; it does not, and typing `UtxoTransaction.outputs` as the base would erase
-`owner`, `guard`, `originalValue` and force a cast at every consumer. `Omit` is applied **per union
+`owner`, `originalValue` and force a cast at every consumer. `Omit` is applied **per union
 member** — omitting from a union collapses it to the common keys. `UtxoTransaction.outputs` is
 `AnyBoxCandidate[]`.
 
@@ -436,7 +436,6 @@ See `docs/specs/2026-08-01-node-consensus-determinism.md` P0.
 KarmaBox extends BoxBase {
   boxType: "karma"
   owner: Uint8Array            // 32 raw bytes — Ed25519 public key
-  guard: "owner_signature"     // Only owner may spend
   decayBurn?: boolean          // Set by the decay engine on its burn outputs; gates the decay clock
 }
 ```
@@ -468,7 +467,6 @@ ids**. Removing the consolidation is a separate change and is not owed by this r
 CreditBox extends BoxBase {
   boxType: "credit"
   owner: Uint8Array            // 32 raw bytes
-  guard: "owner_signature"
   lockedUntilBlock?: number    // Block height before which credits cannot be spent
 }
 ```
@@ -499,7 +497,6 @@ InviteBox extends BoxBase {
   value: bigint                       // Always 0 — a claim ticket, not a container
   inviterId: UserId                   // May cancel
   inviteePublicKey: Uint8Array(32)    // May claim — the key INVITE_KARMA_AMOUNT mints to
-  guard: "invite_dual"                // invitee signature (claim) OR inviter signature (cancel)
 }
 ```
 
@@ -508,18 +505,13 @@ named right to mint, held open until one of the two parties acts: the invitee
 spends it into a `KarmaBox` of `INVITE_KARMA_AMOUNT`, which is where the mint
 happens, or the inviter spends it to nothing and takes their bond back. There is
 no secret and no preimage — each party proves who they are with an ordinary
-Ed25519 signature over the transaction, so `hash_preimage_with_bond` and
-`hash_preimage` both go.
+Ed25519 signature over the transaction.
 
 **An invite never expires.** With no deadline there is no sweep and no
 `expiryBlock` field; an unclaimed invite stays claimable until the inviter
 cancels it, and their bond stays locked for exactly as long. Their `K /
 INVITE_BOND_KARMA` capacity absorbs the cost, which is what makes the rate limit
 self-enforcing without a rule.
-
-`'hash_preimage_with_bond'` and `'bond_dual'` join the **reserved** guard strings
-under BoxGuard below — box content, inside the box-id preimage, on the same
-argument that reserved `'epoch_tally'`.
 
 ### BondBox
 
@@ -529,7 +521,6 @@ BondBox extends BoxBase {
   value: bigint                       // B karma deposited by the inviter
   inviterId: UserId                   // Owner — the inviter
   inviteePublicKey: Uint8Array(32)    // Set at creation — the key the paired invite names
-  guard: "block_apply"                // Consumable only by block application
 }
 ```
 
@@ -550,7 +541,7 @@ arithmetically identical to accumulated instalments. No partial state exists to
 record.
 
 **Nothing spends a bond.** Creation, claim, cancellation and settlement all move
-it through block application, so the guard admits no user transaction at all —
+it through block application, so no transition admits it into a user transaction —
 the same standing `PostLockBox` has.
 
 ### PostLockBox
@@ -561,7 +552,6 @@ PostLockBox extends BoxBase {
   value: bigint                // Current locked karma (decreases per block as likes accumulate)
   originalValue: bigint        // Initial lock amount (POST_LOCK_THREAD_COST or POST_LOCK_REPLY_COST)
   owner: Uint8Array            // 32 raw bytes — post author's Ed25519 public key
-  guard: "block_apply"         // Consumable only by block application (per-block vesting)
 }
 ```
 
@@ -606,7 +596,6 @@ VouchBox extends BoxBase {
   value: 1n                    // VOUCH_KARMA_AMOUNT — always 1n (bigint)
   voucherId: UserId            // 32 raw bytes — who staked the karma
   targetId: UserId             // 32 raw bytes — who is being vouched for
-  guard: "owner_signature"     // Only the voucher may spend (unvouch)
 }
 ```
 
@@ -617,7 +606,6 @@ GenesisProofBox extends BoxBase {
   boxType: "genesis_proof"
   value: 0n                    // Neither karma nor credits — never enters supply accounting
   payload: Uint8Array          // Opaque bytes; lp on the wire, hex in the profile
-  guard: "unspendable"         // No spender exists
 }
 ```
 
@@ -674,7 +662,6 @@ argument for the choice.
 EmissionBox extends BoxBase {
   boxType: "emission"
   value: bigint                // Credits not yet released, in base units
-  guard: "block_apply"         // Consumable only by block application
 }
 ```
 
@@ -685,8 +672,8 @@ what remains to be emitted is a value an observer reads rather than a schedule t
 what `ARCHITECTURE` → UTXO conservation rests its bound on.
 
 **No owner, and therefore no per-type trailing fields.** The box names no spender because block
-application is the only one, and `block_apply` already says so. Its content encoding is the shared
-prefix alone — one of three box types with an empty tail (§Layout — Boxes).
+application is the only one. Its content encoding is the shared prefix alone — one of three box
+types with an empty tail (§Layout — Boxes).
 
 ⛔ **A successor whose value would be `0` is not created.** The total equals the schedule's sum
 exactly, so the last emitting block consumes the box and leaves none; above the terminus no emission
@@ -704,7 +691,6 @@ making every block from that height unproducible, or strands a residue no rule c
 TreasuryBox extends BoxBase {
   boxType: "treasury"
   value: bigint                // Credits accrued, in base units
-  guard: "block_apply"         // Consumable only by block application
 }
 ```
 
@@ -729,7 +715,6 @@ reach unreleased emission, rather than a rule computing how much of one box it m
 FeeBox extends BoxBase {
   boxType: "fee"
   value: bigint                // Credits paid to the block's miner, in base units
-  guard: "block_apply"         // Consumable only by block application
 }
 ```
 
@@ -757,27 +742,6 @@ miner. Nothing in the design gives that shape a meaning worth forbidding.
 ⚠ **`fee` is not a member of the karma family**, so a fee output on a karma-side transaction is
 rejected by the karma transition arm rather than by a rule of its own
 (`NODE_INTERFACE` → the karma transition rules).
-
-### BoxGuard
-
-```
-type BoxGuard = "owner_signature" | "block_apply" | "invite_dual" | "unspendable"
-// "unspendable" names no spender at all, which no other member does — "block_apply" is still
-//   consumable, by block application. Carried only by GenesisProofBox.
-// "invite_dual" is satisfied by EITHER named key's signature, and the transition arm decides
-//   which shape that key may take: invitee → claim, inviter → cancel. Two signatures, no
-//   preimage — the claimant proves identity, not knowledge of a secret.
-// RESERVED, never to be reused: "epoch_tally", "hash_preimage_with_bond", "bond_dual",
-//   "hash_preimage", "inviter_signature". Guard strings are box content, inside the
-//   box-id preimage, so a reused name makes two different rules share a byte string.
-```
-
-Every box fixes its guard to a literal and the union holds one member per
-reachable spender, so the engine's switch is total over the names the store can
-write. `"hash_preimage"` and `"inviter_signature"` never had a box type that could
-carry them — they existed only as the two paths *inside* `bond_dual`, and they go
-when it does. That closes the hazard this section used to describe, a new box type
-given a guard the engine has no case for, by deletion rather than by warning.
 
 ### UtxoTransaction
 
@@ -856,8 +820,8 @@ without circularity, so ids are derived once `TxId` is known; the ledger materia
 `i` into a `BoxBase` with `txId` and `index: i` at apply. (Pre-Spec-G this was `AnyBox[]` whose
 per-output `id` was excluded from the hash — the same exclusion, now expressed in the type.)
 
-⛔ **`preimages` has no consumer.** With no hash-locked guard left in `BoxGuard`,
-nothing reads the map — but it stays field 3 of the encoding, sorted by key and
+⛔ **`preimages` has no consumer.** No transition requires knowledge of a secret,
+so nothing reads the map — but it stays field 3 of the encoding, sorted by key and
 hashed into every `TxId`, so it is a consensus surface that carries no meaning.
 **Removing it changes every transaction id**, which is why it goes with the
 transaction-representation work rather than here. Until then it is encoded,
@@ -1324,22 +1288,15 @@ runtime strip somebody must remember:
 - **`boxRecordBytes`** — `boxContentBytes ‖ b32(txId) ‖ vlqU(index)`. What the AVL value and the
   store hold. The `id` is never encoded: it *is* the hash.
 
-**`BOX_TYPE_TAGS` is the single source of the box-type numbering, and `BOX_GUARDS` is the single
-source of the guard mapping.** Both are exported from `@dagsocial/types`, and no other package may
-declare either — node's `utxo-engine.ts`, `state/serialize-box.ts` and `store/utxo.ts` import them.
-**The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
+**`BOX_TYPE_TAGS` is the single source of the box-type numbering.** It is exported from
+`@dagsocial/types` and consumed inside the package by `enum8`; node's AVL tag tests import it to
+**derive** the first unassigned tag rather than writing a number down. No other package may declare
+it. **The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
 construction; the golden corpus's reverse tag table is a deliberate independent restatement rather
 than a copy.
 
-**The two mappings fail in opposite ways, which is why one needed this more than the other.** A
-wrong **tag** moves every box id and every `stateRoot` covering it — loudly, and everywhere. A wrong
-**guard** moves nothing at all: `guard` is absent from `canonicalBoxBytes`, so two consumers that
-disagree still compute identical ids, and the drift surfaces only as one path accepting a candidate
-another rebuilt differently.
-
-`BOX_GUARDS` is `as const satisfies` the box interfaces' own `guard` literals, so a value
-disagreeing with its interface, a missing box type, or a row for a retired one is a compile error.
-`BOX_TYPE_TAGS` gets no equivalent check for **uniqueness** — a duplicate tag is an `enum8`
+A wrong tag moves every box id and every `stateRoot` covering it — loudly, and everywhere.
+`BOX_TYPE_TAGS` gets no compile-time check for **uniqueness** — a duplicate tag is an `enum8`
 construction throw, not a type error.
 
 > ⚠ **"What the AVL value holds" means the AVL value IS `boxRecordBytes` — no wrapper, no extra
@@ -1359,13 +1316,7 @@ construction throw, not a type error.
 > argues the AVL value must carry everything the id derivation consumes, so that *"a box id is a
 > total function of the stored box"* is checkable **from a proof** rather than trusted. With the
 > value equal to `boxRecordBytes`, that becomes literal: **`boxId = blake2b512(BOX_ID_DOMAIN ‖
-> avlValue)[0:32]`**, so a light client recomputes the key from the value it was served. Under the
-> cbor form it was only nearly true — the value carried `guard` (which the derivation does not
-> consume) and omitted `boxType` (which it does).
->
-> **`guard` is therefore dropped from the AVL value, and that is lossless** — it is a pure function
-> of `boxType` (C10), each of the nine box types declares exactly one literal, and a decoder
-> synthesises it from the discriminator. Verified field-by-field by the Phase 5 executor, 2026-08-10.
+> avlValue)[0:32]`**, so a light client recomputes the key from the value it was served.
 
 > ⚠ **`boxRecordBytes` is paired with `boxRecordFromBytes(bytes) → { candidate, txId, index }`, and
 > BOTH live in this package. Decided 2026-08-10.**
@@ -1381,16 +1332,14 @@ construction throw, not a type error.
 > would have been the first, and the asymmetry is what made the gap invisible: nothing was *missing*
 > from any list, because no list of readers existed to be short.
 >
-> `boxRecordFromBytes` carries the four-part boundary check like every other decoder. It does **not**
-> return `guard` — that is not in the bytes; `node` synthesises it. **The proof obligation is a
-> round-trip over all nine box types**, which is strictly stronger than a frozen vector: a frozen
-> vector can pass while writer and reader disagree, a round-trip cannot.
+> `boxRecordFromBytes` carries the four-part boundary check like every other decoder. **The proof
+> obligation is a round-trip over all nine box types**, which is strictly stronger than a frozen
+> vector: a frozen vector can pass while writer and reader disagree, a round-trip cannot.
 >
 > Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
 > in `node` even as a stopgap.
 
-Shared prefix: `enum8(boxType)` ‖ **`vlqU64(value)`**. **`guard` is absent** — it is a pure function
-of `boxType` and carries zero information in a preimage (C10).
+Shared prefix: `enum8(boxType)` ‖ **`vlqU64(value)`**.
 
 ⚠ **`value` is `vlqU64`, not `vlqU` — corrected 2026-08-10, and the distinction is a domain, not a
 width.** This cell and the `post_lock.originalValue` cell below both said `vlqU` while the code has

@@ -79,7 +79,6 @@ function karmaSelfSpend(id: TestIdentity, box: KarmaBox): UtxoTransaction {
         boxType: 'karma',
         value: box.value,
         owner: id.userId,
-        guard: 'owner_signature',
       } as unknown as KarmaBox,
     ],
     signatures: {},
@@ -250,7 +249,6 @@ describe('block funnel — the embedded-tx proof obligation', () => {
         value: 100n,
         originalValue: '100', // vlqU64 THROWS on a string
         owner: alice.userId,
-        guard: 'block_apply',
       },
     ] as unknown as UtxoTransaction['outputs'];
     // Clears the envelope — which types `inputs`, `signatures`,

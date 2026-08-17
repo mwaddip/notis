@@ -188,7 +188,6 @@ function makeKarmaBox(
     boxType: 'karma',
     value,
     owner,
-    guard: 'owner_signature',
   }, seed);
   const id = box.id;
   box.id = id;
@@ -214,7 +213,6 @@ function makeLikeTx(
         boxType: 'karma',
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: liker.userId,
-        guard: 'owner_signature',
       } as KarmaBox,
     ],
     signatures: {},
@@ -825,7 +823,6 @@ describe('block-creator', () => {
         boxType: 'credit' as const,
         value,
         owner: new Uint8Array(owner),
-        guard: 'owner_signature' as const,
       };
       const box = seedProvenance(candidate, 1, labelNonceOf(label));
       utxo.insertBox(box);
@@ -838,7 +835,7 @@ describe('block-creator', () => {
       }));
       // Zero fee means no box (NODE_INTERFACE → the credit transition row).
       if (fee > 0n) {
-        outputs.push({ boxType: 'fee' as const, value: fee, guard: 'block_apply' as const });
+        outputs.push({ boxType: 'fee' as const, value: fee });
       }
       return {
         inputs: [box.id!],

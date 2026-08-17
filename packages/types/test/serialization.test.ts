@@ -126,7 +126,6 @@ function makeKarmaBox(): CandidateOf<KarmaBox> {
     boxType: 'karma',
     value: 100n,
     owner: new Uint8Array(32).fill(0xaa),
-    guard: 'owner_signature',
   };
 }
 
@@ -574,7 +573,7 @@ describe('positional serialization', () => {
       // `computeUtxoTxRoot`) and never reads `utxoTxs`; the id itself is
       // `computeTxId`, positional and routed through `canonicalBoxBytes`. A move
       // here is a consensus event only if the BlockHeader pin above moved too.
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('3e33a8d68ff4af334b3b143a70c71fddc296fbfbd9b4cef7e91788fd8fe21b2d');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('110b0deca7717dd358414a53268080070fbad7fe928addf32e5e26c25156aa3e');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

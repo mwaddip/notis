@@ -153,7 +153,6 @@ function makePostLockBox(
     value,
     originalValue: value,
     owner,
-    guard: 'block_apply' as const,
   }, seed);
   return { box, targetPostId };
 }
@@ -167,7 +166,6 @@ function makeKarmaBox(
     boxType: 'karma' as const,
     value,
     owner,
-    guard: 'owner_signature' as const,
   }, seed);
 }
 

@@ -64,7 +64,6 @@ export function mintCredits(
     boxType: 'credit',
     value: newValue,
     owner,
-    guard: 'owner_signature',
     ...(mergedLockedUntilBlock !== undefined ? { lockedUntilBlock: mergedLockedUntilBlock } : {}),
     txId: mintTxIdFor(ctx, blockHeight),
     index: MINT_OUTPUT_INDEX,
@@ -93,7 +92,7 @@ export interface CreditTransferResult {
  * Receives a pre-built, signed UtxoTransaction from the client and does what
  * every other tx route does: `validateTx`, then `admitTx`. Credits move at
  * block application on every node, not when the HTTP call returns — signature
- * verification stays inside `validateTx`'s guard check, and the fee floor
+ * verification stays inside `validateTx`'s authorization check, and the fee floor
  * inside `admitTx`'s.
  *
  * Building the transfer server-side and applying it with

@@ -4,7 +4,7 @@
 // Everything a transaction cannot do lives here: the claim's `invitedAtBlock`
 // write, the cancellation's bond return, and the probation-deadline settlement
 // with its burn. None of the three is expressible as a user transaction — a
-// bond's guard is `block_apply` and no signature satisfies it — so a suite over
+// bond is consumed by no user transition, so no signature reaches it — a suite over
 // `validateTx` cannot see any of them (NODE_INTERFACE → "Bond transition
 // rules").
 //
@@ -133,14 +133,12 @@ describe('the invite at block application', () => {
         value: 0n,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
-        guard: 'invite_dual' as const,
       },
       {
         boxType: 'bond' as const,
         value: bondValue,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
-        guard: 'block_apply' as const,
       },
     ]);
     utxo.insertBox(invite!);
@@ -188,7 +186,6 @@ describe('the invite at block application', () => {
         boxType: 'karma',
         value: INVITE_KARMA_AMOUNT,
         owner: invitee.userId,
-        guard: 'owner_signature',
       } as KarmaBox],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -264,15 +261,15 @@ describe('the invite at block application', () => {
       outputs: [
         {
           boxType: 'karma', value: 100n - INVITE_BOND_KARMA,
-          owner: secondInviter.userId, guard: 'owner_signature',
+          owner: secondInviter.userId, 
         } as KarmaBox,
         {
           boxType: 'invite', value: 0n, inviterId: secondInviter.userId,
-          inviteePublicKey: invitee.userId, guard: 'invite_dual',
+          inviteePublicKey: invitee.userId, 
         } as InviteBox,
         {
           boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: secondInviter.userId,
-          inviteePublicKey: invitee.userId, guard: 'block_apply',
+          inviteePublicKey: invitee.userId, 
         } as BondBox,
       ],
       signatures: {},
@@ -643,11 +640,11 @@ describe('the invite at block application — decay adjacency', () => {
     const [invite, bond] = seedAsOneTx([
       {
         boxType: 'invite' as const, value: 0n, inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId, guard: 'invite_dual' as const,
+        inviteePublicKey: invitee.userId, 
       },
       {
         boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId, guard: 'block_apply' as const,
+        inviteePublicKey: invitee.userId, 
       },
     ]);
     utxo.insertBox(invite!);
@@ -675,7 +672,6 @@ describe('the invite at block application — decay adjacency', () => {
       inputs: [invite!.id!],
       outputs: [{
         boxType: 'karma', value: INVITE_KARMA_AMOUNT, owner: invitee.userId,
-        guard: 'owner_signature',
       } as KarmaBox],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

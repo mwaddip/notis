@@ -9,7 +9,7 @@
 //
 // Each attack is paired with a non-vacuity control: the same transaction
 // differing only in the field the new rule pins, proving the rejection
-// isolates that one rule rather than tripping over conservation, a guard, or
+// isolates that one rule rather than tripping over conservation, authorization, or
 // a malformed fixture.
 // ---------------------------------------------------------------------------
 
@@ -131,7 +131,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       boxType: 'karma' as const,
       value,
       owner,
-      guard: 'owner_signature' as const,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -158,13 +157,11 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       value: stake,
       voucherId: opts.voucherIdInBox ?? signer.pub,
       targetId: opts.targetId ?? target.pub,
-      guard: 'owner_signature' as const,
     } as unknown as VouchBox;
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - stake,
       owner: karmaBox.owner,
-      guard: 'owner_signature',
     };
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
@@ -216,16 +213,17 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   // -------------------------------------------------------------------------
-  // V2 — voucherId is unpinned at cast. `checkGuards` resolves a box's signer
-  // as `owner ?? voucherId`, so a VouchBox carrying a foreign voucherId is
-  // guarded by the foreign key: A stakes their karma, B unvouches it, and the
-  // escrow matures to B — a karma transfer with no invite.
+  // V2 — voucherId is unpinned at cast. `checkAuthorization` reads a
+  // VouchBox's signer as its `voucherId`, so a VouchBox carrying a foreign
+  // voucherId is spendable by the foreign key: A stakes their karma, B
+  // unvouches it, and the escrow matures to B — a karma transfer with no
+  // invite.
   // -------------------------------------------------------------------------
 
   it('V2: rejects a cast whose voucherId is not the karma input owner', () => {
     // Accepted on HEAD — and the consequence ran to completion there: the
-    // foreign key's unvouch was guard-valid (`checkGuards` resolves a
-    // VouchBox's signer as `owner ?? voucherId`), so the escrow re-minted A's
+    // foreign key's unvouch was authorized (`checkAuthorization` reads a
+    // VouchBox's signer as its `voucherId`), so the escrow re-minted A's
     // stake to B. The block-level half lives in vouch-value-flow.test.ts.
     const foreign = makeKeys();
     const karma = seedKarma(voucher.pub, 100n);
@@ -344,21 +342,18 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       boxType: 'karma',
       value: karmaBox.value - bondValue,
       owner: inviter.pub,
-      guard: 'owner_signature',
     };
     const inviteOut = {
       boxType: 'invite' as const,
       value: 0n,
       inviterId: inviter.pub,
       inviteePublicKey: invitee,
-      guard: 'invite_dual' as const,
     } as InviteBox;
     const bondOut = {
       boxType: 'bond' as const,
       value: bondValue,
       inviterId: inviter.pub,
       inviteePublicKey: invitee,
-      guard: 'block_apply' as const,
     } as BondBox;
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
@@ -407,7 +402,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V4: no transaction can spend a bond back out, whoever signs', () => {
     // The other half. A funded bond is worth nothing as a cost if either party
-    // can reclaim it: the guard is `block_apply`, so neither the inviter's
+    // can reclaim it: no user transition consumes one, so neither the inviter's
     // signature nor the invitee's satisfies it, and the settlement that does
     // release it is block application's alone.
     const inviter = makeKeys();
@@ -426,7 +421,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
         inputs: [bond.id!],
         outputs: [{
           boxType: 'karma', value: bond.value, owner: signer.pub,
-          guard: 'owner_signature',
         }],
         signatures: {},
         protocolVersion: 1,

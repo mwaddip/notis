@@ -75,7 +75,6 @@ function mockDeps(store: MockStore, overrides?: Partial<PostServiceDeps>): PostS
         boxType: 'karma',
         value: 100n,
         owner: new Uint8Array(32),
-        guard: 'owner_signature',
       }) as AnyBox,
     ...overrides,
   };
@@ -96,10 +95,10 @@ function makePostTx(post: Post = makePost(), input: string = BOX_1): UtxoTransac
   return {
     inputs: [input],
     outputs: [
-      { boxType: 'karma', value: 75n, owner: new Uint8Array(32), guard: 'owner_signature' } as KarmaBox,
+      { boxType: 'karma', value: 75n, owner: new Uint8Array(32) } as KarmaBox,
       {
         boxType: 'post_lock', value: 25n, originalValue: 25n,
-        owner: new Uint8Array(32), guard: 'block_apply',
+        owner: new Uint8Array(32), 
       } as AnyBox,
     ],
     signatures: {},

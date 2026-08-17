@@ -236,14 +236,12 @@ export function createRouter(deps: UtxoDeps): Router {
           boxType: 'credit',
           value: FAUCET_AMOUNT,
           owner: toBytes,
-          guard: 'owner_signature',
         }];
         if (change > 0n) {
           outputs.push({
             boxType: 'credit',
             value: change,
-              owner: sysKeypair.publicKey,
-            guard: 'owner_signature',
+            owner: sysKeypair.publicKey,
           });
         }
 
@@ -322,14 +320,12 @@ export function createRouter(deps: UtxoDeps): Router {
         value: inv.value.toString(),
         inviterId: Buffer.from(inv.inviterId).toString('hex'),
         inviteePublicKey: Buffer.from(inv.inviteePublicKey).toString('hex'),
-        guard: inv.guard,
       })),
       bonds: bonds.map((b) => ({
         id: b.id,
         value: b.value.toString(),
         inviterId: Buffer.from(b.inviterId).toString('hex'),
         inviteePublicKey: Buffer.from(b.inviteePublicKey).toString('hex'),
-        guard: b.guard,
       })),
     });
   });

@@ -138,7 +138,6 @@ describe('UTXO routes', () => {
       boxType: 'karma',
       value: 42n,
       owner: kp1.publicKey,
-      guard: 'owner_signature',
     }, 1);
     insertBox(karmaBox);
 
@@ -147,7 +146,6 @@ describe('UTXO routes', () => {
       boxType: 'karma',
       value: 58n,
       owner: kp1.publicKey,
-      guard: 'owner_signature',
     }, 1);
     insertBox(karmaBox2);
 
@@ -159,7 +157,6 @@ describe('UTXO routes', () => {
       boxType: 'credit',
       value: 99n,
       owner: kp2.publicKey,
-      guard: 'owner_signature',
     }, 1);
     insertBox(creditBox);
 
@@ -167,18 +164,14 @@ describe('UTXO routes', () => {
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
-    // ⚠ Guard strings are box CONTENT — they sit inside the box-id preimage —
-    // so a fixture spelling one wrong describes a box that could never exist.
-    // `InviteBox.guard` is `invite_dual`; `BondBox.guard` is `block_apply`
-    // (TYPES_INTERFACE → BoxGuard). Both boxes name the same invitee, which is
-    // the whole of the pairing.
+    // Both boxes name the same invitee, which is the whole of the pairing
+    // (NODE_INTERFACE → Legal box transitions).
     const inviteePublicKey = new Uint8Array(32).fill(0xbb);
     const inviteBox = seedProvenance<InviteBox>({
       boxType: 'invite' as const,
       value: 0n,
       inviterId: inviteUserId,
       inviteePublicKey,
-      guard: 'invite_dual' as const,
     }, 1);
     insertBox(inviteBox);
     const bondBox = seedProvenance<BondBox>({
@@ -186,7 +179,6 @@ describe('UTXO routes', () => {
       value: 5n,
       inviterId: inviteUserId,
       inviteePublicKey,
-      guard: 'block_apply' as const,
     }, 1);
     insertBox(bondBox);
 
@@ -240,8 +232,6 @@ describe('UTXO routes', () => {
     const invite = (body.open as Record<string, unknown>[])[0]!;
     const bond = (body.bonds as Record<string, unknown>[])[0]!;
     expect(invite.inviteePublicKey).toBe(bond.inviteePublicKey);
-    expect(invite.guard).toBe('invite_dual');
-    expect(bond.guard).toBe('block_apply');
   });
 
   // ---------------------------------------------------------------------------
@@ -269,7 +259,6 @@ describe('UTXO routes', () => {
         boxType: 'credit',
         value: 200n,
         owner: senderPubKey,
-        guard: 'owner_signature',
       }, 1);
       seededBoxId = box.id;
       insertBox(box);
@@ -286,14 +275,12 @@ describe('UTXO routes', () => {
         boxType: 'credit',
         value: amount,
         owner: receiverPubKey,
-        guard: 'owner_signature',
       }];
       if (change > 0n) {
         outputs.push({
           boxType: 'credit',
           value: change,
           owner: senderPubKey,
-          guard: 'owner_signature',
         });
       }
 
@@ -343,7 +330,6 @@ describe('UTXO routes', () => {
       boxType: 'credit',
       value: '10',
       owner: 'ab'.repeat(32),
-      guard: 'owner_signature',
     };
 
     it('backstops a non-array inputs with a 400, not the pre-gate 500', async () => {

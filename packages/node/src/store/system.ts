@@ -121,7 +121,6 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
     boxType: 'karma',
     value: SYSTEM_KARMA_INITIAL,
     owner: systemPubKey,
-    guard: 'owner_signature',
     txId: mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
@@ -188,7 +187,6 @@ export function ensureFaucetCreditBox(
     boxType: 'credit',
     value: FAUCET_CREDITS_INITIAL,
     owner: systemPubKey,
-    guard: 'owner_signature',
     txId: mintTxIdFor(genesisContext(GENESIS_FAUCET_CREDITS), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
@@ -231,7 +229,6 @@ export function ensureGenesisProofBox(
     boxType: 'genesis_proof',
     value: 0n,
     payload,
-    guard: 'unspendable',
     txId: mintTxIdFor(genesisContext(GENESIS_PROOF), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
@@ -276,7 +273,6 @@ export function ensureEmissionBox(total: bigint, currentHeight: number): Emissio
   const box: EmissionBox = {
     boxType: 'emission',
     value: total,
-    guard: 'block_apply',
     txId: mintTxIdFor(genesisContext(GENESIS_EMISSION), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };

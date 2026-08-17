@@ -109,8 +109,8 @@ export const KNOWN_FRAME_MAGICS: readonly number[] = Object.freeze([
 // ⚠ PROVISIONAL VALUES — every number below is a placeholder pending the constants-pinning
 // session (TYPES_INTERFACE §Network profiles: "Do not read any number in this contract as
 // decided"). Genesis committee keys are empty placeholders on all three networks until real
-// chains launch. **No field names the treasury**: it is a `TreasuryBox` under `block_apply`
-// and no key can reach it (ARCHITECTURE → Treasury).
+// chains launch. **No field names the treasury**: it is a `TreasuryBox` that block application
+// alone moves, and no key can reach it (ARCHITECTURE → Treasury).
 
 // mainnet: today's constants (constants.ts is the single source while both surfaces exist).
 const MAINNET_PROFILE: NetworkProfile = Object.freeze({

@@ -1,20 +1,21 @@
 // ---------------------------------------------------------------------------
 // Bond transitions — audit F-consensus-1, closed by construction.
 //
-// A `BondBox` has no user-transaction shape at all: its guard is `block_apply`,
-// so `checkGuards` refuses a bond input at step 6 whoever signed and whatever
-// the outputs look like (NODE_INTERFACE → "Bond transition rules"). Every attack
+// A `BondBox` has no user-transaction shape at all: no user transition names
+// one as an input, so `checkAuthorization` refuses a bond input at step 6
+// whoever signed and whatever the outputs look like (NODE_INTERFACE → "Bond
+// transition rules"). Every attack
 // below is one of the shapes that had to be pinned individually while a bond was
 // spendable — settlement theft, cancel-absorb, the burn, and the griefed
 // probation window — and each is now refused by the same rule.
 //
-// Enumerating them rather than asserting the guard once is the point: a rule
+// Enumerating them rather than asserting the rule once is the point: a rule
 // that subsumes four defects is only as good as the demonstration that it
 // reaches all four, and a future transition arm that re-admitted any of these
 // shapes would pass a single generic test.
 //
-// Each attack is paired with a non-vacuity control, so a rejection isolates the
-// guard rather than tripping over conservation or a malformed fixture.
+// Each attack is paired with a non-vacuity control, so a rejection isolates
+// authorization rather than tripping over conservation or a malformed fixture.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -119,7 +120,6 @@ describe('bond transitions (audit F-consensus-1)', () => {
       boxType: 'karma' as const,
       value,
       owner,
-      guard: 'owner_signature' as const,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -136,14 +136,12 @@ describe('bond transitions (audit F-consensus-1)', () => {
       value: 0n,
       inviterId: inviter.pub,
       inviteePublicKey: invitee.pub,
-      guard: 'invite_dual' as const,
     };
     const bondCandidate = {
       boxType: 'bond' as const,
       value: INVITE_BOND_KARMA,
       inviterId: inviter.pub,
       inviteePublicKey: invitee.pub,
-      guard: 'block_apply' as const,
     };
     const [invite, bond] = seedAsOneTx([inviteCandidate, bondCandidate]);
     storeInsertBox(invite!);
@@ -153,7 +151,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
 
   /** A karma output owned by `owner`. */
   function karmaOut(owner: Uint8Array, value: bigint): KarmaBox {
-    return { boxType: 'karma', value, owner, guard: 'owner_signature' } as KarmaBox;
+    return { boxType: 'karma', value, owner } as KarmaBox;
   }
 
   /** Every rejection here names the same rule; assert the reason, not just the verdict. */
@@ -200,7 +198,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
   // -------------------------------------------------------------------------
   // 2. cancel-absorb — a cancel that also consumes the bond, sweeping invite +
   //    bond into one karma box. The cancel transaction names only the invite
-  //    now, and adding the bond to it is refused at the guard.
+  //    invite, and adding the bond to it is refused by authorization.
   // -------------------------------------------------------------------------
 
   it('cancel-absorb: a cancel may not name the bond alongside the invite', () => {
@@ -213,8 +211,8 @@ describe('bond transitions (audit F-consensus-1)', () => {
       protocolVersion: 1,
     };
     addSignature(tx, inviter);
-    // Mixed input types are refused ahead of the guard now (step 3), which is a
-    // second layer over the same shape rather than a different verdict.
+    // Mixed input types are refused at step 3, ahead of authorization, which is
+    // a second layer over the same shape rather than a different verdict.
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/Mixed input types|block application/);
@@ -241,8 +239,8 @@ describe('bond transitions (audit F-consensus-1)', () => {
   // -------------------------------------------------------------------------
 
   // ⚠ Two layers, and the ORDER decides which one answers. Conservation is
-  // `validateTx` step 5 and guards are step 6, so a zero-output bond spend never
-  // reaches the guard: the value is gone and the sums say so first. Asserting
+  // `validateTx` step 5 and authorization is step 6, so a zero-output bond spend
+  // never reaches it: the value is gone and the sums say so first. Asserting
   // 'block application' here would be asserting a message the gate cannot
   // produce for this shape — the burn is refused, by the earlier rule.
   it('bond-burn: a zero-output bond spend is refused, invitee-signed', () => {
@@ -273,9 +271,9 @@ describe('bond transitions (audit F-consensus-1)', () => {
     expect(result.error).toContain('non-conservation');
   });
 
-  it('bond-burn: a VALUE-CONSERVING bond spend is the one the guard answers', () => {
+  it('bond-burn: a VALUE-CONSERVING bond spend is the one authorization answers', () => {
     // The layer below. Sending the bond's value straight back out keeps the
-    // sums balanced, so conservation passes and the guard is what refuses —
+    // sums balanced, so conservation passes and authorization is what refuses —
     // which is the rule that actually makes a bond unspendable.
     const { bond } = seedPair();
     const tx: UtxoTransaction = {
@@ -299,7 +297,6 @@ describe('bond transitions (audit F-consensus-1)', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucher.pub,
         targetId: invitee.pub,
-        guard: 'owner_signature' as const,
       },
       1,
     );
@@ -334,7 +331,6 @@ describe('bond transitions (audit F-consensus-1)', () => {
           value: INVITE_BOND_KARMA,
           inviterId: inviter.pub,
           inviteePublicKey: invitee.pub,
-          guard: 'block_apply',
         } as BondBox,
       ],
       signatures: {},
@@ -345,7 +341,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
   });
 
   it('grief-commit: an unsigned bond spend is refused at the same rule', () => {
-    // The guard admits no signature at all, so an empty signature map fails on
+    // No transition admits a bond at all, so an empty signature map fails on
     // the same clause rather than on a missing-signature one — which is what
     // makes "no user transaction spends a bond" a property of the box rather
     // than of who happens to be asked.

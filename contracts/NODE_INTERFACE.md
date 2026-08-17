@@ -250,9 +250,9 @@ signature. `/invites/commit` is gone with the instrument it served.
 1. Verify an open InviteBox names the signer as `inviteePublicKey`
 2. Build the transaction: consume that InviteBox → one KarmaBox, `owner =
    inviteePublicKey`, value `INVITE_KARMA_AMOUNT`. The bond is **not** an input
-3. `validateTx` checks the `invite_dual` guard against the invitee's signature and
-   the surplus against the conservation carve. Block application then writes
-   `invitedAtBlock`, which starts the probation clock. The key becomes an account
+3. `validateTx` checks the claim transition's requirement against the invitee's
+   signature and the surplus against the conservation carve. Block application
+   then writes `invitedAtBlock`, which starts the probation clock. The key becomes an account
    in the same step, which is what bars any further invite naming it
 4. `insertUtxoTx(tx, null, expiresAtHeight)`
 
@@ -648,9 +648,9 @@ Full read-only validation. Performs all checks without modifying state:
 2. All input boxes exist and are unspent
 3. All inputs have the same boxType
 4. Output shape: every output is a non-null object matching the closed
-   per-boxType schema — exact key set, the boxType's one canonical `guard`,
-   and every field's runtime type (see "Output shape" below). This is the
-   **first step that reads `tx.outputs`**: steps 5–7 operate on outputs whose
+   per-boxType schema — exact key set and every field's runtime type (see
+   "Output shape" below). This is the **first step that reads `tx.outputs`**:
+   steps 5–7 operate on outputs whose
    structure and field types are already pinned, and may dereference output
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
@@ -697,7 +697,8 @@ Full read-only validation. Performs all checks without modifying state:
    **sums**. `assertValidBoxValue` remains at the JSON→tx boundary as the
    HTTP-edge early reject of the same rule — an ergonomics twin, not the
    consensus gate. Conservation sums are `bigint` (P0 — see "Values are BigInt")
-6. Guard satisfaction (signatures verified against tx hash)
+6. Authorization: the transition's requirement is satisfied (signatures verified
+   against tx hash)
 7. Legal box transitions (per the transition table below)
 
 Returns `{ valid, error?, computedOutputs?, txId? }`. On success, `computedOutputs`
@@ -719,17 +720,13 @@ spent away.
 
 | Half | Home | Keyed on | Why it can only go there |
 |---|---|---|---|
-| not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. A candidate's own `guard` field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
+| not an **output** | `validation` (relay gate), and node's twin in `checkOutputShape` | `boxType` | A candidate output is a whole box, so typing it needs no state. Every other field is attacker-supplied and unchecked until after the type is known, so the type is the only trustworthy property at this site. |
 | not an **input** | `node`, in the authorization rules | the **transition** | `tx.inputs` are box **id strings**; typing one requires the UTXO set. An input box always comes out of the store, so its type is known by construction. A type is barred from inputs by **no transition admitting it**, which is an absence rather than a rejecting arm. |
 
 ✅ **A type barred from inputs needs no edit to be barred.** `genesis_proof`, `emission` and
 `treasury` are unspendable because nothing names them as a legal input, and a *new* barred type
 inherits that by saying nothing about it. The bar is the default, and admitting a type is the
 deliberate act.
-
-> ⚠ **The check that a candidate output's `guard` matches its type does NOT bar anything from the
-> input position.** It is an output-shape pin on a field carrying no information (see the next
-> section), and it is unrelated to what may be spent.
 
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
@@ -739,23 +736,19 @@ ahead of the table lookup: the verdict would be identical either way, but an
 assigned tag refused by protocol rule is not an *unknown* one, and a test
 asserting rejection must be able to assert which rule rejected.
 
-`BOX_GUARDS` (TYPES_INTERFACE → Layout — Boxes) keeps every box type even though
-the output schema carries six: its other obligation is agreement with
-`rowToBox`, and the genesis-seeded proof and emission boxes are rebuilt from
-their rows like any other. The `emission` and `treasury` types join
-`genesis_proof` in being barred from both transaction positions — block
-application is their only producer and their only spender.
+The `emission` and `treasury` types join `genesis_proof` in being barred from
+both transaction positions — block application is their only producer and their
+only spender.
 
-### Output shape — the closed per-boxType schema (guard-shape pin + field-type pin)
+### Output shape — the closed per-boxType schema (field-type pin)
 
 Transaction outputs are attacker-controlled structure (HTTP JSON through
 `jsonToTx`, gossip and block-embedded CBOR), and two of their bytes-level
 consumers hash **whatever keys the object carries**: `canonicalBoxBytes` (the id
 preimage) strips only `id`/`txId`/`index`, and `serializeBox` (the AVL leaf, so
 the `stateRoot`) strips only `id`/`boxType`. Nothing between ingress and those
-encoders constrained the shape: transition rules filter on `boxType`,
-`checkOutputValues` reads `value`, and `guard` — a field that is a pure function
-of `boxType`, carrying zero information — passed through verbatim.
+encoders constrained the shape: transition rules filter on `boxType` and
+`checkOutputValues` reads `value`.
 
 `validateTx` therefore rejects any output that does not match the **closed
 schema for its `boxType`**:
@@ -765,21 +758,10 @@ schema for its `boxType`**:
   fields — `KarmaBox.decayBurn`, `CreditBox.lockedUntilBlock` — may be present
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
-- **`guard` equals the boxType's canonical guard**, and **`BOX_GUARDS`
-  (TYPES_INTERFACE → Layout — Boxes) is the authoritative mapping** — read it,
-  never restate it here. It is `as const satisfies` the box interfaces' own
-  `guard` literals, so a box type with no entry is a compile error, which no
-  prose list can be. `rowToBox` fabricates from the same table on read, and the
-  two must never disagree.
-  > ⚠ **Do not restate the mapping in this document.** A prose mirror of a
-  > compile-checked table earns nothing and decays on its own schedule — the one
-  > that stood here named six types and was missing `emission` and `treasury`,
-  > with no signal that it was short.
-  >
-  > **`fee` carries `block_apply` while being user-created**, which is the shape
-  > `bond` and `post_lock` already have: a user transaction creates the box, and
-  > only block application may consume it. The schema below has a row for every
-  > boxType a user transaction may emit — `fee` makes seven. `genesis_proof`,
+  > **`fee` is user-created and consumable only by block application**, which is
+  > the shape `bond` and `post_lock` already have: a user transaction creates the
+  > box, and only block application may consume it. The schema below has a row for
+  > every boxType a user transaction may emit — `fee` makes seven. `genesis_proof`,
   > `emission` and `treasury` have none, because no transaction may create them.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
@@ -811,16 +793,15 @@ schema for its `boxType`**:
   unreachable while the check ran at step 7, are now the defense-in-depth
   layer behind it.
 
-**Why this is a consensus rule and not input hygiene:** an accepted lying guard
-(or stray key) produces a stored box whose committed bytes — id preimage and
-AVL leaf both — disagree with every later reconstruction of it, because
-`rowToBox` rebuilds from the typed row (fabricated canonical guard, no stray
-keys). The store and the tree then permanently disagree about the box's bytes.
+**Why this is a consensus rule and not input hygiene:** an accepted stray key
+produces a stored box whose committed bytes — id preimage and AVL leaf both —
+disagree with every later reconstruction of it, because `rowToBox` rebuilds from
+the typed row. The store and the tree then permanently disagree about the box's bytes.
 That is the unpinned-field class (P2-B found six instances, F1 a seventh, this
 is #8), and the divergence surface under journal replay and any future
 snapshot sync. Ergo closes the whole class structurally — its wire format is a
 closed positional schema with no maps, so a stray field is unrepresentable and
-the guard *is* content (the ErgoTree itself: hashed = stored = enforced); its
+the spending condition *is* content (the ErgoTree itself: hashed = stored = enforced); its
 Rust implementation additionally recomputes every box id from re-serialized
 bytes at each deserialization boundary and hard-errors on mismatch. This check
 is the same move at our one open edge.
@@ -830,14 +811,13 @@ Placement: `validateTx`, so pool entry, gossip relay, and block finalization
 site. A JSON-edge-only check would leave the CBOR paths open.
 
 **Within `validateTx` the check runs at step 4** — before conservation,
-guards, and transitions, as the first consumer of `tx.outputs` (changed by the
-field-type pin; the guard-shape pin had placed it at step 7 to preserve
-arm-specific errors). Steps 5–7 dereference output fields under a schema
-guarantee instead of defending per-site: the alternative — per-arm guards
-before every `Buffer.from(karmaOut.owner)`-shaped read — scatters the totality
-obligation across every current and future transition arm, which is precisely
-the pattern by which the unpinned-field class keeps producing (an arm added
-later forgets its guard). One gate, ahead of all semantic rules, is Ergo's
+authorization, and transitions, as the first consumer of `tx.outputs`. Steps 5–7
+dereference output fields under a schema guarantee instead of defending
+per-site: the alternative — per-arm guards before every
+`Buffer.from(karmaOut.owner)`-shaped read — scatters the totality obligation
+across every current and future transition arm, which is precisely the pattern
+by which the unpinned-field class keeps producing (an arm added later forgets
+its check). One gate, ahead of all semantic rules, is Ergo's
 serializer-is-validator shape: parse-time strictness first, semantics after.
 Consequence of the move: rejections that previously surfaced arm-specific
 errors on *malformed* outputs now surface shape errors; the accepted set for
@@ -968,11 +948,6 @@ tree collapse into clean rejections:
    (a string `owner` becomes a char-array becomes zero-bytes;
    `-0` becomes `0`), breaking `computeBoxId(rowToBox(row)) === row.id`.
 
-**Scheduled follow-up (P2-C bundle):** `guard` leaves the consensus bytes
-entirely — a redundant field has no place in an id preimage. That is a format
-break (every box id moves), so it rides the bundle; when it lands, the guard
-half of this check retires and the key-set half keeps the schema closed.
-
 ### Transaction envelope shape (`checkTxEnvelope`)
 
 **Implemented 2026-08-08.** The pre-gate behaviour it replaced, all measured
@@ -1033,10 +1008,10 @@ The checks:
    are total.
 5. `signatures`: a plain object; every key a 64-char lowercase-hex string
    (an Ed25519 public key), every value a `Uint8Array` of length 64. An
-   empty map is shape-legal; whether any transition can be *guard*-satisfied
-   with no signature is the guard layer's question, not this gate's.
-   Extra well-formed keys are shape-legal (guards only
-   look up, nothing iterates; the like path's exactly-one-signature rule is
+   empty map is shape-legal; whether any transition's requirement can be
+   satisfied with no signature is the authorization layer's question, not this
+   gate's. Extra well-formed keys are shape-legal (authorization only
+   looks up, nothing iterates; the like path's exactly-one-signature rule is
    `castLike`/gate-metadata policy, unchanged).
 6. `preimages`: absent, or a plain **non-empty** object with 64-char
    lowercase-hex keys and `Uint8Array` values. Present-but-empty rejects:
@@ -1074,8 +1049,8 @@ gate it becomes a logged rejection like any other.) `fork-resolution`'s
 mempool reinsert decodes CBOR the node itself produced from once-valid txs —
 outside the gate's call list, deliberately.
 
-**Consensus scope:** a validation tightening in the same class as the
-guard-shape and field-type pins — honest bytes unmoved; txs that previously
+**Consensus scope:** a validation tightening in the same class as the field-type
+pin — honest bytes unmoved; txs that previously
 applied while carrying envelope garbage (junk `protocolVersion`, stray keys)
 become rejections. Covered by the standing fresh-chain gate.
 
@@ -1087,8 +1062,8 @@ revalidateTxInContext(deps, tx: UtxoTransaction, currentBlockHeight: number): Ut
 
 Lightweight liveness-only re-check (are inputs still unspent?). **Not sufficient
 for block application on its own** — a permissionless block producer can embed a
-tx that never passed pool entry or relay validation, so signatures, guards,
-transitions, and conservation must NOT be assumed. Block finalization fully
+tx that never passed pool entry or relay validation, so authorization, transitions,
+and conservation must NOT be assumed. Block finalization fully
 re-validates every embedded tx with `validateTx` (see Block finalization step 5).
 `revalidateTxInContext` remains available for the mempool's own staleness pruning,
 where the tx was already validated on entry — never as the sole gate on applying
@@ -1144,11 +1119,6 @@ the treasury.
 > `isSystemBox` is the one place a key reaches consensus from outside state, and **no second one may
 > be added**.
 
-⚠ **`guard` is not consulted.** It is a pure function of `boxType` carrying no information, it is
-absent from `canonicalBoxBytes`, and nothing in this table depends on it. The output-shape pin that
-checks a candidate's `guard` matches its type is a *shape* check on an uncommitted field and decides
-nothing about who may spend.
-
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
@@ -1175,8 +1145,7 @@ There is **no other legal bond or invite shape**. In particular:
   input: the claim needs no bond alongside it, because the karma it
   produces is minted rather than moved.
 - **A BondBox has no user-transaction shape at all.** It is created as an
-  output of invite creation — which needs no guard, since a guard governs
-  spending — and every later movement is block application's.
+  output of invite creation, and every later movement is block application's.
 - **A karma surplus outside the claim shape is invalid**, and a claim
   whose surplus is not exactly `INVITE_KARMA_AMOUNT` is invalid. The
   biconditional is stated on the conservation gate, in the shape the like
@@ -1213,9 +1182,9 @@ There is **no other legal bond or invite shape**. In particular:
 ### Bond transition rules
 
 - **A bond is never spent, only settled.** Creation, the probation clock,
-  forfeiture and the cancellation return are all block application's, so
-  the guard is `block_apply` and no signature satisfies it. This is what
-  closes audit F-consensus-1 by construction rather than by a rule: there
+  forfeiture and the cancellation return are all block application's, so no
+  transition admits a bond into a user transaction and no signature reaches it.
+  This is what closes audit F-consensus-1 by construction rather than by a rule: there
   is no shape in which any party — inviter or invitee — can direct a
   bond's value anywhere.
 - **The bond's value only ever reaches `bond.inviterId` or the burn.**
@@ -1885,9 +1854,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
    see "Embedded transactions: a mismatch rejects the block": a tx whose bytes
    cannot be proven to be the id declared beside them rejects the block before
    this step sees a queue. Then, for each embedded UTXO tx, once its inputs are all
-   present, **fully re-validate with `validateTx`** (signatures, guards,
-   transitions, conservation — not just liveness), then apply (`applyTx`). A block
-   producer is untrusted (permissionless PoW), so nothing is assumed verified. **If
+   present, **fully re-validate with `validateTx`** (authorization, transitions,
+   conservation — not just liveness), then apply (`applyTx`). A block producer is
+   untrusted (permissionless PoW), so nothing is assumed verified. **If
    a tx whose inputs are present fails validation, the entire block is rejected**
    and nothing is applied — a valid block must not contain an invalid tx. This runs
    on every apply path (local finalization, gossip receipt, reorg). Input *presence*
@@ -3564,8 +3533,8 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 > gate did, and does **not** need to ride the P2-C format-break bundle. It gets
 > expensive only once a second node exists.
 >
-> The lineage already solved this and the research is on record (see the
-> guard-shape pin's Ergo findings): **the serializer is the validator** —
+> The lineage already solved this and the research is on record (see "Output
+> shape — the closed per-boxType schema"): **the serializer is the validator** —
 > closed positional formats, no maps anywhere, parse-time strictness, and
 > serializer-enforced rules explicitly non-soft-forkable. CBOR maps are open by
 > default, which is why this class keeps recurring here and cannot recur there.

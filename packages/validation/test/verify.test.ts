@@ -373,7 +373,7 @@ describe('verifyTxStructure', () => {
   it('accepts a valid transaction', () => {
     const tx: UtxoTransaction = {
       inputs: ['input1'],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
+      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -383,7 +383,7 @@ describe('verifyTxStructure', () => {
   it('rejects transaction with no inputs', () => {
     const tx: UtxoTransaction = {
       inputs: [],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
+      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -403,7 +403,7 @@ describe('verifyTxStructure', () => {
   it('rejects transaction with duplicate inputs', () => {
     const tx: UtxoTransaction = {
       inputs: ['input1', 'input1'],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
+      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -434,7 +434,6 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   const proofOut = (payload: Uint8Array): AnyBoxCandidate => ({
     boxType: 'genesis_proof',
     value: 0n,
-    guard: 'unspendable',
     payload,
   });
 
@@ -447,7 +446,6 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
 
   const karmaOut: AnyBoxCandidate = {
     boxType: 'karma', value: 5n, owner: new Uint8Array(32),
-    guard: 'owner_signature',
   };
 
   /**
@@ -457,11 +455,11 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
    */
   const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
     ['karma', karmaOut],
-    ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature' }],
-    ['invite', { boxType: 'invite', value: 0n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32), guard: 'invite_dual' }],
-    ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32), guard: 'block_apply' }],
-    ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32), guard: 'block_apply' }],
-    ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32), guard: 'owner_signature' }],
+    ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32) }],
+    ['invite', { boxType: 'invite', value: 0n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
+    ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
+    ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32) }],
+    ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) }],
   ];
 
   it('rejects a transaction that outputs a genesis_proof box', () => {
@@ -3056,7 +3054,7 @@ describe('verifyTxStructure — the transaction weight bound', () => {
   const NOT_ENCODABLE = 'Transaction is not encodable';
 
   const karmaOut: AnyBoxCandidate = {
-    boxType: 'karma', value: 5n, owner: new Uint8Array(32), guard: 'owner_signature',
+    boxType: 'karma', value: 5n, owner: new Uint8Array(32),
   };
 
   /** What a cbor-x text string of `k` characters costs: its header plus itself. */

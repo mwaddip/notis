@@ -224,7 +224,6 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               boxType: 'karma',
               value: step.amount,
               owner,
-              guard: 'owner_signature',
             }, step.at, labelNonce(step.tag));
             m.utxo.insertBox(box);
             break;
