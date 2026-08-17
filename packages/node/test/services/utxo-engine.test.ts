@@ -704,12 +704,13 @@ describe('validateAndApplyTx', () => {
   // ---------------------------------------------------------------------------
   // 13. Value conservation (audit C-1, L-11)
   //
-  // sum(inputs) == sum(outputs) for every box type, with the three exceptions
-  // NODE_INTERFACE → `validateTx` step 5 enumerates: the like burn, the
-  // invite-claim surplus, and the zero-output vouch spend. All three move
-  // karma; a credit transaction conserves strictly and names its fee in a box
-  // (section 16). Every other mint or burn happens in a block-application
-  // path, never inside a user transaction.
+  // sum(inputs) == sum(outputs) across the transaction as a whole — one total
+  // per side, not per box type — with the three exceptions NODE_INTERFACE →
+  // `validateTx` step 5 enumerates: the like burn, the invite-claim surplus,
+  // and the zero-output vouch spend. All three move karma; a credit transaction
+  // conserves strictly and names its fee in a box (section 16). Every other
+  // mint or burn happens in a block-application path, never inside a user
+  // transaction.
   // ---------------------------------------------------------------------------
   describe('value conservation (audit C-1, L-11)', () => {
     it('rejects self-signed K(v) -> K(v) + K(2) (mints karma from nothing)', () => {
