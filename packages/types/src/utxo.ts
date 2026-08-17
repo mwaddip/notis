@@ -1086,21 +1086,15 @@ export interface UtxoTransaction {
   outputs: AnyBoxCandidate[];
   signatures: Record<string, Uint8Array>;  // publicKey (hex) → Ed25519 sig (64 bytes) over txId
   /**
-   * ⛔ **`preimages` IS DELETED, AND THE NAME IS RESERVED** (TYPES_INTERFACE →
-   * Layout — UtxoTransaction). It was field 3 of the id preimage — a consensus
-   * surface that carried no meaning, since no transition requires knowledge of a
-   * secret and nothing ever read the map.
+   * ⛔ **THE NAME `preimages` IS RESERVED — never reuse it** (TYPES_INTERFACE →
+   * Layout — UtxoTransaction). No transition requires knowledge of a secret.
    *
-   * ⚠ **Its removal moved every `TxId` in existence**, and through them every box
-   * id derived from one, because it was inside the id preimage rather than only on
-   * the wire. That is the opposite standing from the codec change it rode with:
-   * one broke the wire and no committed hash, this broke consensus. **They landed
-   * together because they touch one layout, not because they are one kind of
-   * change.**
-   *
-   * **Do not re-add a secret-carrying field here.** A transition that needed one
-   * would have to state what reads it, which is precisely what this field never
-   * did.
+   * ⛔ **Do not add a secret-carrying field here.** One would have to state what
+   * reads it, or it is a consensus surface carrying no meaning — and a field in
+   * this list is inside every `TxId`, so adding one moves every transaction id and
+   * every box id derived from one. **A field that belongs on the wire alone goes in
+   * the wire codec, not in this list**: that costs the wire and no committed hash,
+   * which is a different kind of change from this one.
    */
   protocolVersion: number;
   /**
@@ -1143,14 +1137,13 @@ export interface UtxoTransaction {
  *   | 4 | likeTarget      | opt(b32)                                     |
  *   | 5 | post            | opt(postFieldBytes)                          |
  *
- * ⛔ **FIVE FIELDS, and `preimages` was field 3 — so every position after
- * `outputs` MOVED UP BY ONE.** This is a positional layout with no keys, so
- * dropping a field is not a deletion in place unless it is last: a reader that
- * skipped it but kept the old offsets would read `protocolVersion` out of
- * `likeTarget`'s tag and every later field one slot early. **The count and the
- * numbering move together in this table, in the `UtxoTransaction` declaration
- * above, and in both halves of the codec** — the same hazard §Layout — Block
- * states for `subBlockRoot`, one struct over.
+ * ⛔ **FIVE FIELDS, and dropping one RENUMBERS every field after it unless it is
+ * last.** This is a positional layout with no keys, so a reader that skips a field
+ * but keeps the old offsets reads `protocolVersion` out of `likeTarget`'s tag and
+ * every later field one slot early — a silently wrong `TxId`, not a decode error.
+ * **The count and the numbering move together in this table, in the
+ * `UtxoTransaction` declaration above, and in both halves of the codec** — the
+ * same hazard §Layout — Block states for the header, one struct over.
  *
  * **Every field is counted, tagged or length-prefixed, and each one is
  * load-bearing for injectivity:**

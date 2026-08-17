@@ -43,7 +43,7 @@
         "pruneEntries": []
       },
       "bytes": "000000",
-      "note": "THREE count prefixes, not four. coinbaseOutputs was the last array and is gone - coinbase outputs are outputs of the block's settlement transaction, so they arrive inside utxoTxs like every other transaction's. Dropping the last array is a deletion in place, so the three before it keep their positions and no other vector in this file moves for that reason alone."
+      "note": "THREE count prefixes. Coinbase outputs are outputs of the block's settlement transaction, so they arrive inside utxoTxs like every other transaction's and need no section of their own. A section added or removed here moves this vector, and one that is not the LAST also renumbers the sections after it, since a positional format has no keys."
     },
     {
       "name": "utxoTxTree/txs-and-prunes",
@@ -71,7 +71,7 @@
         ]
       },
       "bytes": "02f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101",
-      "note": "The block's ONE committed body: transaction ids, then transactions, then prune entries - the field order, which is also the normative leaf order for utxoTxRoot. These are byte-for-byte the tree inside orderingBlock/full, so a moved element byte fails here AND inside the framing rather than only in one of the two. An empty utxoTx is a bare zero length, which is what the lp prefix on that section exists for. The prune entry is the one element writer left whose width varies: 'coinbase' retired with CoinbaseOutput and 'subblock' before it, so 'prune' and 'utxotx' are the only leaf domains under this root."
+      "note": "The block's ONE committed body: transaction ids, then transactions, then prune entries - the field order, which is also the normative leaf order for utxoTxRoot. These are byte-for-byte the tree inside orderingBlock/full, so a moved element byte fails here AND inside the framing rather than only in one of the two. An empty utxoTx is a bare zero length, which is what the lp prefix on that section exists for. The prune entry is the one element writer whose width varies. 'prune' and 'utxotx' are the only leaf domains under this root, and 'coinbase' and 'subblock' are RESERVED - never reuse either, since a leaf domain sits inside a consensus preimage."
     },
     {
       "name": "orderingBlock/full",
@@ -138,7 +138,7 @@
         "validatorSignature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
       },
       "bytes": "87010101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007777777777777777777777777777777777777777777777777777777777777777008012000300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-      "note": "The smallest legal block: the single body section is three bytes (three empty arrays), so its prefix is one byte. It was four before coinbaseOutputs left the tree - the whole of what the deletion costs the smallest block."
+      "note": "The smallest legal block: the single body section is three bytes (three empty arrays), so its prefix is one byte. The section count is the whole of what this vector measures - a body writing a fourth empty array is four bytes here and its prefix is still one."
     }
   ],
   "rejects": [

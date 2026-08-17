@@ -35,13 +35,13 @@
  * `UtxoTxTree` commits `PruneEntry`, whose preimage is positional — so it is not
  * a consensus preimage and no committed root covers it.
  *
- * ⚠ **`TYPES_INTERFACE` → Layout — Stump specifies a positional form for
- * `Stump` that this file does not implement.** That gap is still open; the
- * `encodeTx` one beside it is closed.
+ * ⚠ **`TYPES_INTERFACE` → Layout — Stump specifies a positional form for `Stump`
+ * that this file does not implement** — an open gap, flagged rather than closed
+ * here, because closing it moves bytes.
  *
  * ✅ **`encodeTx` is positional**, so the codec a post's payload crosses the wire
- * under and the one its `TxId` preimage is taken over are now the same layout, not
- * two dialects — `writeTxIdFields` (`utxo.ts`) is the single statement both reach.
+ * under and the one its `TxId` preimage is taken over are **one layout, not two
+ * dialects** — `writeTxIdFields` (`utxo.ts`) is the single statement both reach.
  */
 
 import { encode, decode } from 'cbor-x';
@@ -276,13 +276,15 @@ function pruneEntryByteLength(e: PruneEntry): number {
  * (TYPES_INTERFACE → OrderingBlock) — the wire form and the committed form walk
  * the sections in step rather than each choosing for itself.
  *
- * ⛔ **THREE SECTIONS, NOT FOUR.** `coinbaseOutputs` was the last array and is
- * gone: coinbase outputs are outputs of the block's settlement transaction, so
- * they arrive inside `utxoTxs` like every other transaction's (`block.ts` →
- * `UtxoTxTree`). Dropping the **last** array is a deletion in place — the three
- * before it keep their positions — but `utxoTxTreeByteLength` computes the same
- * number a second way and loses the term in the same change, or two ways of
- * computing one length diverge with no compiler signal.
+ * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement
+ * transaction, so they arrive inside `utxoTxs` like every other transaction's
+ * (`block.ts` → `UtxoTxTree`).
+ *
+ * ⛔ **`utxoTxTreeByteLength` COMPUTES THIS TREE'S LENGTH A SECOND WAY**, so a
+ * section added here or removed from here owes the matching term there in the same
+ * change — otherwise two ways of computing one length diverge with no compiler
+ * signal. Adding or removing a section that is not the **last** also renumbers the
+ * ones after it, since a positional format has no keys.
  *
  * `utxoTxs` stays opaque: transactions cross as length-prefixed bytes, so this
  * tree does not depend on the transaction codec. `writeLp` is total — a

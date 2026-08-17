@@ -92,14 +92,16 @@ function makeBlockHeader(): BlockHeader {
 }
 
 /**
- * ⛔ **THREE SECTIONS, NOT FOUR.** `coinbaseOutputs` left the body: coinbase
- * outputs are outputs of the block's settlement transaction, so they arrive
- * inside `utxoTxs` like every other transaction's, and `utxoTxRoot` lost the
- * `'coinbase'` leaf class with the field (`block.ts` → `UtxoTxTree`).
+ * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement
+ * transaction, so they arrive inside `utxoTxs` like every other transaction's and
+ * reach `utxoTxRoot` under the `'utxotx'` leaf that transaction's id already gets
+ * (`block.ts` → `UtxoTxTree`). ⛔ **The `'coinbase'` leaf domain is retired and
+ * reserved** — a later leaf class wearing it would make historical roots
+ * ambiguous against new ones.
  *
- * A prune entry stands where the coinbase outputs did: it is the one element
- * writer left whose width varies, so a populated body still exercises an element
- * layout rather than only count prefixes.
+ * The fixture carries a prune entry because it is the **one element writer whose
+ * width varies**, so a populated body exercises an element layout rather than
+ * only count prefixes.
  */
 function makeUtxoTxTree(): UtxoTxTree {
   return {
@@ -299,10 +301,12 @@ describe('positional serialization', () => {
     it('no field name reaches the bytes, and the whole transaction is 41 bytes', () => {
       // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+35 for the
       // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
-      // opt(post)=1, arr(signatures)=1. **42 until `preimages` left** — its
-      // absence marker was a byte on every transaction ever encoded, which is
-      // why removing the field moved every id rather than only the ones that
-      // carried one.
+      // opt(post)=1, arr(signatures)=1.
+      //
+      // ⚠ **Every `opt` costs its tag byte whether or not the field is there**, so
+      // a sixth field would show up here as 42 even on a transaction that carries
+      // none of it — which is why an optional field is inside every id, not only
+      // the ids that use it.
       const bytes = encodeTx(makeTx());
       expect(bytes.length).toBe(41);
       for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
@@ -351,10 +355,9 @@ describe('positional serialization', () => {
       // 2 — trailing bytes are a rejection, not slack.
       expect(failureOf(() => decodeTx(withTrailingByte(bytes)))).toBe('trailing-bytes');
       // 3 — `protocolVersion` padded: same value, longer encoding. Its offset is
-      // asserted rather than assumed — arr(inputs)=1 and arr(outputs)=1+35 put it
-      // at 37 — so a layout change fails here as a wrong-offset error rather than
-      // by silently padding another field. It was 38 while `preimages` sat in
-      // front of it, and this is where that shift is visible.
+      // **asserted rather than assumed** — arr(inputs)=1 and arr(outputs)=1+35 put
+      // it at 37 — so a field inserted ahead of it fails here as a wrong-offset
+      // error rather than by silently padding whatever now sits at 37.
       const PROTOCOL_VERSION_OFFSET = 37;
       expect(bytes[PROTOCOL_VERSION_OFFSET]).toBe(2);
       const padded = new Uint8Array(bytes.length + 1);
@@ -423,17 +426,14 @@ describe('positional serialization', () => {
       expect(typeof back.pruneEntries[0]!.rootPostHash).toBe('string');
     });
 
-    // ⛔ **Two rows of this section lost their subject, not their argument.**
-    // `CoinbaseOutput.value` was the body's only `bigint` — `vlqU` in the table,
-    // `writeVlqU64OrThrow` in the code — and `isTreasury` its only `boolean`,
-    // `u8` in the table and `writeBool` in the code. Both fields are gone with
-    // the struct, and no field left in `UtxoTxTree` reaches either writer, so
-    // there is nothing here for those rows to pin. **The class is still pinned in
-    // this package**, one struct over: box `value` is the `vlqU64` row and
-    // `karma.decayBurn` the `writeBool` one, both in `utxo.test.ts`.
+    // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow` OR `writeBool`**,
+    // so this section pins neither writer and a reader must not infer that the
+    // body covers them. **Both are pinned one struct over**, in `utxo.test.ts`:
+    // box `value` is the `vlqU64` row and `karma.decayBurn` the `writeBool` one.
+    // A `bigint` or `boolean` field added to the body owes a row here.
 
     it('trigger is enum8, and the out-of-table byte has no decoding', () => {
-      // The body's remaining notation-versus-type row: `enum8` in the table and a
+      // The body's one notation-versus-type row: `enum8` in the table and a
       // closed string set in the code, total by a `0xff` its tag set cannot
       // reach. `writeU8OrThrow` would throw on every prune entry; a lenient
       // reader would map 254 byte strings onto one value.
@@ -462,9 +462,9 @@ describe('positional serialization', () => {
       // inspection. Field order is also the normative LEAF order for
       // `utxoTxRoot` (TYPES_INTERFACE → OrderingBlock).
       //
-      // ⛔ **Four until `coinbaseOutputs` left**, and the count is the whole of
-      // what this assertion is for: a tree that still wrote the section would be
-      // four bytes here, and a reader that still read one would run past the end.
+      // ⛔ **The count is the whole of what this assertion is for**: a writer that
+      // emitted a fourth section would be four bytes here, and a reader that
+      // expected one would run past the end.
       const empty: UtxoTxTree = {
         utxoTxIds: [], utxoTxs: [], pruneEntries: [],
       };
@@ -731,31 +731,23 @@ describe('positional serialization', () => {
       expect(hex(bytes)).not.toContain(Buffer.from('prevBlockHash', 'utf8').toString('hex'));
     });
 
-    it('OrderingBlock: the whole frame moved', () => {
+    it('OrderingBlock: the whole frame', () => {
       // ⚠ **Transport, not commitment — this pin moves for reasons the others
       // cannot.** The frame carries `utxoTxs` as `arr(utxoTxs, lp)`, opaque
-      // length-prefixed `encodeTx` output, so adding or removing a *field* on a
-      // box or transaction moves this hash with no format change at all.
+      // length-prefixed `encodeTx` output, so a *field* added to or removed from a
+      // box or a transaction moves this hash with no format change at all, and so
+      // does a change to the body's section list.
       //
       // Nothing committed follows it. `utxoTxRoot` is a Merkle root over
       // `utxoTxIds` and `serializePruneEntry` (node's `computeUtxoTxRoot`) and
       // never reads `utxoTxs`; the id itself is `computeTxId`, positional and
-      // routed through `canonicalBoxBytes`. A move here is a consensus event only
-      // if the BlockHeader pin above moved too — and it did not.
+      // routed through `canonicalBoxBytes`.
       //
-      // ⚠ **It moved THREE times in this unit, for three unrelated reasons**, and
-      // this pin cannot tell them apart — which is the whole content of calling it
-      // transport:
-      //
-      //  1. `coinbaseOutputs` left the body, so the tree lost a section.
-      //  2. `encodeTx` became positional, so the `utxoTxs` payload is other bytes.
-      //  3. `preimages` left the transaction, so that payload lost a byte.
-      //
-      // ⛔ **Only (3) is a consensus event, and NOTHING HERE SAYS WHICH.** The
-      // BlockHeader pin above is untouched by all three; the frozen ids in
-      // `utxo.test.ts` are untouched by (1) and (2) and moved under (3). **Those
-      // are the pins that carry the verdict** — read this one only as "the frame
-      // changed", never as evidence about what.
+      // ⛔ **A MOVE HERE CARRIES NO VERDICT, AND NOTHING HERE SAYS WHICH KIND IT
+      // WAS.** Several unrelated changes reach this one hash and it cannot tell
+      // them apart. The pins that decide are elsewhere: the BlockHeader pin above
+      // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
+      // this one only as "the frame changed" — never as evidence about what.**
       expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('c4130f6fbfdd256cdd6b36c172e8a57c5514e424a4083acd74653415828ce654');
     });
 

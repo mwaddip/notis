@@ -37,12 +37,12 @@ invisible.
 deletion in place — a reader keeping the old offsets produces a silently wrong
 `blockHash`, not a decode error. The `blockHeader` vectors are what catch that.
 
-⛔ **The body tree is THREE arrays.** `coinbaseOutputs` was the last one and is
-gone: coinbase outputs are outputs of the block's settlement transaction, so they
-arrive inside `utxoTxs` like every other transaction's. Dropping the **last**
-array is a deletion in place, so unlike the header's case the three before it keep
-their positions — what moved is the count, and `utxoTxTree/empty` is where that is
-readable.
+⛔ **The body tree is THREE arrays.** Coinbase outputs are outputs of the block's
+settlement transaction, so they arrive inside `utxoTxs` like every other
+transaction's and need no section of their own. Adding or removing the **last**
+array leaves the others in place, so the count is what moves and
+`utxoTxTree/empty` is where it is readable; adding or removing any earlier one
+renumbers everything after it, as the header's case shows.
 
 `prune.json` is the one leaf preimage with a vector of its own —
 `leafHash('prune', …)` under `utxoTxRoot` — because node hashes it directly and a
@@ -54,15 +54,15 @@ than merely parallel ones.
 **Reserved, never to be reused:** the vector names `subBlockEntry`,
 `subBlockTree`, `subBlock`, `coinbaseOutput`, `powNonceTail` and `powPreimage`,
 and the leaf domains `'subblock'` and `'coinbase'`. A post is a transaction, so
-there is no sub-block to encode and no PoW nonce to append; `encodePost` is now
+there is no sub-block to encode and no PoW nonce to append; `encodePost` is
 exactly `postFieldBytes`, so the `postFields` vectors pin the wire post too.
 
 ⛔ **No reject vector may be pinned at "the next free tag."** `boxes.json` probes
 an unassigned box type at the literal **255**, which `enum8` reserves as its
-sentinel and can therefore never assign, and separately at **2**, the hole
-`invite` left inside the assigned range. A vector pinned at the first free number
-stops testing what it was written to test the moment that number is assigned —
-which is what happened when `like_accrual` took 11.
+sentinel and can therefore never assign, and separately at **2**, a reserved hole
+inside the assigned range. A vector pinned at the first free number stops testing
+what it was written to test the moment that number is assigned, and the failure
+surfaces as a vector that mysteriously needs re-pinning.
 
 ### Two kinds of struct codec, and the difference is the point
 

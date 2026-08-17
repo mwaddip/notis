@@ -157,10 +157,11 @@ describe('utxoTxTreeByteLength', () => {
   // Three `vlqU(0)` counts and nothing else. Pinned as a number as well as an
   // equivalence: it is the one tree whose size is short enough to read.
   //
-  // ⛔ **Four until `coinbaseOutputs` left the body** — `utxoTxTreeByteLength`
-  // computes this number a second way, so it had to lose its term in the same
-  // change or the two ways diverge with no compiler signal. This is where that
-  // divergence would show as a one-byte gap on every tree.
+  // ⛔ **`utxoTxTreeByteLength` computes this number a SECOND WAY**, so its terms
+  // and the codec's sections move together or the two diverge with no compiler
+  // signal. A section present in one and not the other shows up here as a
+  // one-byte gap on every tree, which is why the count is pinned as a literal and
+  // not only as an equivalence.
   it('sizes the empty tree at three count prefixes', () => {
     expect(expectSizeMatchesEncoder(EMPTY_TREE)).toBe(3);
   });
@@ -198,9 +199,9 @@ describe('VLQ width boundaries', () => {
     });
   }
 
-  // ⛔ **The prune entry is the ONE element writer left whose width varies** —
-  // `coinbaseOutputByteLength` went with `CoinbaseOutput` — so its count AND its
-  // one variable field both straddle here.
+  // ⛔ **The prune entry is the ONE element writer whose width varies**, so its
+  // count AND its one variable field both straddle here. An element writer added
+  // to the body owes the same pair of loops.
   for (const n of [0, 1, 127, 128]) {
     CASES.push({
       label: `${n} prune entries`,
@@ -269,12 +270,12 @@ describe('sentinel branches', () => {
     expect(utxoTxTreeByteLength(tree) - EMPTY_SIZE).toBe(161 + SENTINEL_WIDTH);
   });
 
-  // ⛔ **The `vlqU`-inside-an-element case lost its instance, not its argument.**
-  // `CoinbaseOutput.lockedUntilBlock` was the body's only `vlqU` field below the
-  // section prefixes, so an unencodable height inside an element has nowhere left
-  // to be. What remains covered is the same writer reached through a **count**
-  // and a **length** prefix — the two cases above — which is where the
-  // under-report actually costs a block, since those scale with the body.
+  // ⛔ **NO FIELD IN THE BODY IS A BARE `vlqU` BELOW THE SECTION PREFIXES**, so
+  // an unencodable value inside an element has nowhere to sit and this section
+  // does not cover that shape. `vlqU`'s sentinel IS covered where it scales with
+  // the body — through a **count** and a **length** prefix, the two cases above —
+  // which is where an under-report costs a block. A `vlqU` field added to an
+  // element owes a case of its own.
 
   // `enum8` is total at BYTE width — an out-of-table trigger still costs exactly
   // one byte, so a sizer that treated it as variable would over-report.

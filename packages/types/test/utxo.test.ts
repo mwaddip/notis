@@ -463,12 +463,11 @@ describe('canonicalBoxBytes', () => {
 /**
  * `bond` and `vouch` carry **identical trailing fields** — two adjacent `b32`
  * key fields each — so `enum8(boxType)` is the whole of what separates their
- * leaves (TYPES_INTERFACE → Layout — Boxes). ⚠ **This pair inherits the property
- * from `invite`/`bond`, which no longer exists**: `invite` is deleted and tag 2
- * is reserved, so the two-tags-over-one-layout case is now bond against vouch.
- * Their values happen to differ too — a vouch is always `1` — but nothing may
- * rely on that: the tests below pin the pair at one shared value as well, which
- * is the case a tag-blind encoder would collide.
+ * leaves (TYPES_INTERFACE → Layout — Boxes). **They are the format's
+ * two-tags-over-one-layout case**, and any pair of arms sharing a tail inherits
+ * these tests' obligations. Their values happen to differ too — a vouch is always
+ * `1` — but nothing may rely on that: the tests below pin the pair at one shared
+ * value as well, which is the case a tag-blind encoder would collide.
  *
  * All four key fields are fixed 32 bytes. A width outside that has **no**
  * encoding rather than sharing one — `writeBytesNOrThrow` throws, and its domain
@@ -573,20 +572,21 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
     expect(computeTxId(repointed)).not.toBe(computeTxId(inviteCreate));
   });
 
-  it('nothing outside the deleted invite arm moved', () => {
-    // The claim that keeps the deletion a one-arm edit rather than a movement of
-    // everything: the other box types and the transaction that carries none are
-    // pinned here, so a change reaching another arm fails at this test rather
-    // than at a moved `stateRoot` much later. Tags 0–10 keep their numbers and
-    // only 2 leaves the table, so every id that exists is an id that stays.
+  it('an edit to one arm reaches no other arm', () => {
+    // ⛔ **What confines a per-arm edit to its arm.** The other box types and a
+    // transaction over them are pinned here, so an edit that reaches a second arm
+    // fails at this test rather than at a moved `stateRoot` much later. Every
+    // assigned tag keeps its own number — a reserved hole is left out of the table
+    // rather than closed — which is what makes "no existing id moves" checkable
+    // instead of asserted.
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
     expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
     expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
     expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
     // post_lock / genesis_proof have no inline golden here; theirs are the
-    // untouched vectors in `test/golden/boxes.json`, asserted by the corpus
-    // suite in both directions.
+    // vectors in `test/golden/boxes.json`, asserted by the corpus suite in both
+    // directions.
   });
 });
 
@@ -595,17 +595,22 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Tags 11 and 12, the first numbers assigned above the table's previous top.
- *
- * Neither layout is in the contract's Layout — Boxes table, which stops at tag
- * 10, so both rows are **derived from the field types plus this format's
- * standing conventions** — `Uint8Array(32)` is `b32`, and a required block
- * height is `vlqU`, as `credit.lockedUntilBlock` and `boxRecord.index` already
- * are. The bytes are hand-assembled here, from those rows.
+ * Tags 11 and 12 — TYPES_INTERFACE → Layout — Boxes, which carries both rows.
  *
  *   0b | 01 | b32(author)                        — like_accrual, value 1
  *   0c | 03 | b32(owner) | vlqU(releaseAtBlock)  — vouch_escrow, value 3
  *   ^tag ^vlqU64(value)
+ *
+ * The bytes are hand-assembled from those rows rather than copied from the
+ * encoder's output — the file's idiom, and the only form that makes a vector an
+ * independent check rather than a screenshot.
+ *
+ * ⚠ **`releaseAtBlock` is `vlqU`, not `vlqU64`, and carries no `opt` tag.** It is
+ * a block height, so it takes the same writer as `credit.lockedUntilBlock`, and it
+ * is always present — an escrow with no release height is not a state the type
+ * admits. The distinction is a **domain**, not a width: `vlqU` is total by
+ * sentinel and `vlqU64` throws, and the bytes agree over the overlapping range, so
+ * no vector can tell them apart.
  *
  * ⛔ **`like_accrual` is the only arm in the table whose tail is one `b32` and
  * nothing else** — every other key-bearing arm carries a second field or an
@@ -618,7 +623,7 @@ const VOUCH_ESCROW_BYTES = '0c' + '03' + '56'.repeat(32) + 'a408';
 describe('like_accrual and vouch_escrow', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-  it('the tags are 11 and 12, and they are the first two above the old table', () => {
+  it('the tags are 11 and 12, and the encoder writes them as byte 0', () => {
     expect(BOX_TYPE_TAGS.like_accrual).toBe(11);
     expect(BOX_TYPE_TAGS.vouch_escrow).toBe(12);
     expect(canonicalBoxBytes(makeLikeAccrualBox())[0]).toBe(11);
@@ -1442,10 +1447,10 @@ describe('boxRecordFromBytes', () => {
     // because it is not the independent reader. ⛔ **The corpus may not, and it
     // may not pin the first free number either**: `test/golden/boxes.json`
     // probes at the literal **255**, the one number `enum8` can never hand to a
-    // type, so its vector never has to move. A vector pinned at the next free
-    // tag stops testing what it was written to test the moment that tag is
-    // assigned, which is what happened at 11 (TYPES_INTERFACE → Layout — Boxes,
-    // "A reject vector must not be pinned to the next free tag").
+    // type, so its vector never has to move. A vector pinned at the next free tag
+    // stops testing what it was written to test the moment that tag is assigned
+    // (TYPES_INTERFACE → Layout — Boxes, "A reject vector must not be pinned to
+    // the next free tag").
     //
     // ⚠ **`not.toBeInstanceOf(CodecError)` is half the assertion.** An
     // *assigned* tag swapped in here throws too — on the fields it then
@@ -1456,8 +1461,8 @@ describe('boxRecordFromBytes', () => {
     // separates them. `golden.test.ts`' reject runner splits the two the same
     // way.
     //
-    // ⛔ **The table now has a HOLE as well as a top, and both have to be
-    // unreadable.** Tag 2 held `invite` and is reserved rather than reassigned
+    // ⛔ **The table has a HOLE as well as a top, and both have to be
+    // unreadable.** ⛔ **Tag 2 is reserved and never reassigned**
     // (TYPES_INTERFACE → InviteBox), so it is an unassigned number *inside* the
     // range — the case a reader deriving "unassigned" as "above the maximum"
     // would decode into whatever arm it fell through to. `RESERVED_INVITE_TAG`
@@ -1719,10 +1724,11 @@ describe('transactions', () => {
       //   TX_ID_DOMAIN ‖ arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
       //                ‖ vlqU(protocolVersion) ‖ opt(likeTarget) ‖ opt(post)
       //
-      // ⛔ **FIVE fields — `preimages` was field 3 and is gone.** This mirror is
-      // what made the removal checkable rather than trusted: adding the absence
-      // byte back here reproduces the OLD frozen id exactly, which is how the new
-      // one was derived without regenerating it from the encoder under test.
+      // ⛔ **FIVE fields.** This mirror is also the tool for re-pinning: when a
+      // field enters or leaves the preimage, hand-derive the new id here rather
+      // than regenerating it from the encoder (TYPES_INTERFACE → "Re-pinning a
+      // frozen vector when a preimage changes"). The test below is the validation
+      // step that makes such a derivation trustworthy.
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));           // arr count
@@ -1735,14 +1741,23 @@ describe('transactions', () => {
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(computeTxId(GOLDEN_TX));
     });
 
-    it('the RETIRED field is what separates the new id from the old one', () => {
-      // ⛔ The removal's proof, stated as an assertion rather than left in a
-      // report: the same mirror with `opt(preimages): absent` restored between
-      // `outputs` and `protocolVersion` reproduces the id this file froze before
-      // the field was deleted. So the id moved for exactly one reason, the field
-      // cost one byte even when absent, and **no frozen TxId could have
-      // survived** — an `opt` writes its `0` tag unconditionally.
-      const PRE_REMOVAL_TX_ID =
+    it('an OPTIONAL field costs a byte in the id even when absent', () => {
+      // ⛔ **The rule that decides what a field's arrival or departure costs.** A
+      // sixth field wedged between `outputs` and `protocolVersion` — an `opt` whose
+      // value is absent, so the cheapest one available — still writes its `0` tag,
+      // and the id below is what this transaction hashes to under that layout. It
+      // is **not** `computeTxId(GOLDEN_TX)`.
+      //
+      // ⛔ **So no frozen id can survive a change to this list**, however optional
+      // the field and however empty every transaction leaves it. `opt` is
+      // unconditional; there is no zero-width field in this format.
+      //
+      // ⚠ **This vector is ALSO the validation step for a re-pin.** Deriving a new
+      // frozen id by hand is only trustworthy if the same hand-built mirror
+      // reproduces a known id, and this is that check standing in the tree rather
+      // than in a commit message (TYPES_INTERFACE → "Re-pinning a frozen vector
+      // when a preimage changes").
+      const SIX_FIELD_TX_ID =
         '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
@@ -1750,12 +1765,12 @@ describe('transactions', () => {
       for (const input of GOLDEN_TX.inputs) h.update(Buffer.from(input, 'hex'));
       h.update(Buffer.from([GOLDEN_TX.outputs.length]));
       for (const out of GOLDEN_TX.outputs) h.update(canonicalBoxBytes(out));
-      h.update(Buffer.from([0]));                                 // opt preimages: ABSENT
+      h.update(Buffer.from([0]));                                 // a sixth field's opt tag: ABSENT
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));
-      h.update(Buffer.from([0]));
-      h.update(Buffer.from([0]));
-      expect(h.digest().subarray(0, 32).toString('hex')).toBe(PRE_REMOVAL_TX_ID);
-      expect(computeTxId(GOLDEN_TX)).not.toBe(PRE_REMOVAL_TX_ID);
+      h.update(Buffer.from([0]));                                 // opt likeTarget: absent
+      h.update(Buffer.from([0]));                                 // opt post: absent
+      expect(h.digest().subarray(0, 32).toString('hex')).toBe(SIX_FIELD_TX_ID);
+      expect(computeTxId(GOLDEN_TX)).not.toBe(SIX_FIELD_TX_ID);
     });
 
     it('the box-id preimage is domain-tagged — independently recomputed', () => {
@@ -1883,29 +1898,28 @@ describe('transactions', () => {
   });
 
   /**
-   * ⛔ **`preimages` IS DELETED, AND FOUR TESTS WENT WITH THEIR SUBJECT** — it
-   * carried no meaning, nothing read it, and it sat inside the id preimage
-   * (TYPES_INTERFACE → Layout — UtxoTransaction).
+   * ⛔ **`preimages` IS RESERVED — the field is not in the transaction and the
+   * name is not to be reused** (TYPES_INTERFACE → Layout — UtxoTransaction). No
+   * transition requires knowledge of a secret, so a field carrying one would have
+   * to state what reads it.
    *
-   * ⚠ **Two of the four asserted properties of the FORMAT rather than of the
-   * field, and those survive elsewhere — named here so the deletion is not read
-   * as dropping them:**
+   * ⚠ **Where this layout's two general properties are pinned**, since neither has
+   * an instance in this file:
    *
-   * - **the normative map sort.** `signatures` is the only map left in this
-   *   layout, and `serialization.test.ts` asserts the same property over it
-   *   ("signatures encode as an array sorted by key") plus the rejection a
-   *   mis-sorted array gets, which the preimages version never had.
-   * - **`lp` inside `arr`, so two entries cannot be re-split.** The surviving
-   *   instance is `arr(utxoTxs, lp)` in the body, and `test/golden/block.json`'s
-   *   tree vector carries a 4-byte and an empty transaction adjacently for it.
+   * - **the normative map sort.** `signatures` is the layout's only map, and
+   *   `serialization.test.ts` asserts the sort over it plus the `non-canonical`
+   *   rejection a mis-sorted or duplicated array gets.
+   * - **`lp` inside `arr`, so two entries cannot be re-split.** The instance is
+   *   `arr(utxoTxs, lp)` in the body, and `test/golden/block.json`'s tree vector
+   *   carries a 4-byte and an empty transaction adjacently for it.
    *
-   * The other two — an empty map distinct from an absent one, and the field
-   * moving the id — have no instance left at all: `signatures` is required, so
-   * present-but-empty is its only empty state, and there is no optional map.
+   * ⚠ **An optional map has no instance in this layout at all** — `signatures` is
+   * required, so present-but-empty is its only empty state and nothing here
+   * separates an empty map from an absent one.
    */
-  describe('the preimages field is gone', () => {
+  describe('the preimages field is reserved', () => {
     it('no transaction can carry one — a stray key is unrepresentable', () => {
-      // The projection step, on the retired field: an object carrying it hashes
+      // The projection step, on the reserved name: an object carrying it hashes
       // to the same id as one without, so there is no transaction a peer could
       // build that would put it back into a preimage.
       const bare: UtxoTransaction = { ...GOLDEN_TX };
@@ -1984,28 +1998,31 @@ describe('transactions', () => {
   });
 
   /**
-   * ⛔ **THE CODEC CHANGE MOVES NO COMMITTED HASH, ASSERTED WHERE THE FROZEN IDS
+   * ⛔ **THE WIRE CODEC MOVES NO COMMITTED HASH, ASSERTED WHERE THE FROZEN IDS
    * LIVE.**
    *
-   * `encodeTx` went from `cbor-x` to the positional layout, and the reason no id
-   * moves is structural: `computeTxId` never read the wire codec. It walks
-   * `writeTxIdFields`, and `computeUtxoTxRoot`'s leaves are `leafHash('utxotx',
-   * id)` — the id, not the encoding.
+   * `computeTxId` does not read `encodeTx`. It walks `writeTxIdFields`, and
+   * `computeUtxoTxRoot`'s leaves are `leafHash('utxotx', id)` — the id, not the
+   * encoding. So a change confined to the wire codec cannot reach a box id, a
+   * transaction id, `utxoTxRoot` or `stateRoot`.
    *
-   * ⚠ **These constants are the load-bearing half and they are UNCHANGED text.**
-   * They were frozen before the positional codec existed, so a diff showing them
-   * untouched beside a rewritten `encodeTx` is the proof; re-deriving them from
-   * the new code would have destroyed it. `serialization.test.ts` holds the other
-   * half — that `encodeTx` IS the preimage plus signatures — because a frozen
-   * value alone could still hold if the two layouts had drifted somewhere no
-   * fixture reaches.
+   * ⛔ **THESE CONSTANTS MUST NEVER BE RE-DERIVED FROM THE ENCODER.** They are the
+   * load-bearing half of the claim, and a pin regenerated from the code it pins
+   * holds equally over a transposed layout — it would look identical in a diff and
+   * assert nothing (TYPES_INTERFACE → "Re-pinning a frozen vector when a preimage
+   * changes"). When a preimage genuinely changes, hand-derive from the layout table
+   * and validate the mirror against a known id before trusting its output.
    *
-   * ⚠ **What neither half can see: a value no fixture carries.** These pin the
-   * box types, options and optional fields the fixtures exercise; a field whose
-   * encoding differs only outside their domain would pass both. The golden corpus
-   * is the width-boundary coverage, and it is likewise unchanged.
+   * ⚠ **`serialization.test.ts` holds the other half** — that `encodeTx` IS the
+   * preimage plus the signature array — because a frozen value alone would still
+   * hold if the two layouts drifted somewhere no fixture reaches.
+   *
+   * ⚠ **What neither half can see: a value no fixture carries.** These pin the box
+   * types, options and optional fields the fixtures exercise; a field whose
+   * encoding differs only outside their domain passes both. The golden corpus is
+   * the width-boundary coverage.
    */
-  describe('the positional encodeTx moved no id', () => {
+  describe('the wire codec moves no id', () => {
     it('every frozen id in this file is still its frozen value', () => {
       expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
       expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
