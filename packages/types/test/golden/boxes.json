@@ -34,7 +34,7 @@
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
       "bytes": "00ffffffffffffffffff01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
-      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a perfectly legal box value. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id."
+      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a value the writer emits without complaint. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id. ENCODABLE, and deliberately NOT acceptable: consensus admits [0, BOX_VALUE_BOUND) and this value is above it, so what the vector pins is the writer's domain \u2014 a vector proving a value encodes is not a claim consensus accepts it."
     },
     {
       "name": "box/credit-transfer-sentinel",
@@ -184,10 +184,10 @@
       "codec": "boxContent",
       "value": {
         "boxType": "karma_pool",
-        "value": "18446744073709551615"
+        "value": "9223372036854775807"
       },
-      "bytes": "0affffffffffffffffff01",
-      "note": "The whole of a network's karma supply as genesis holds it: the maximum representable karma, under tag 0a, with nothing after the prefix. Eleven bytes, ten of them the value - the top of vlqU64's range, and the same ten bytes box/karma-value-u64-max carries ahead of a 33-byte tail. pool.value + circulating karma == 2^64 - 1 at every height, so this is the ceiling the box can hold and the writer is never handed one past it. Genesis committee grants are drawn out of this total rather than minted beside it."
+      "bytes": "0affffffffffffffff7f",
+      "note": "The whole of a network's karma supply as genesis holds it: the maximum STORABLE karma, BOX_VALUE_BOUND - 1, under tag 0a with nothing after the prefix. Ten bytes, nine of them the value - one bit below the writer's ceiling, which box/karma-value-u64-max still pins at ten value bytes. That gap is the point: the ledger is SQLite and INTEGER is signed, so [2^63, 2^64) encodes cleanly and cannot be stored. pool.value + circulating karma == BOX_VALUE_BOUND - 1 at every height, so this is the ceiling the box can hold and the writer is never handed one past it. Genesis committee grants are drawn out of this total rather than minted beside it."
     },
     {
       "name": "box/karma-pool-zero",

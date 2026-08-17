@@ -21,6 +21,7 @@ import {
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
   MAX_GENESIS_PROOF_PAYLOAD_BYTES,
+  BOX_VALUE_BOUND,
   encodeTx,
   decodeTx,
   encodeUtxoTxTree,
@@ -305,6 +306,19 @@ describe('golden vectors (positional box encoding)', () => {
       .toThrow();
     expect(() => canonicalBoxBytes({ ...GOLDEN_KARMA_CANDIDATE, value: 2n ** 64n }))
       .toThrow();
+  });
+
+  it('encodes a value above BOX_VALUE_BOUND — this package publishes the bound and enforces nothing', () => {
+    // ⛔ The encodable domain is `[0, 2^64)` and the accepted one is
+    // `[0, BOX_VALUE_BOUND)`; this package owns only the wider of the two
+    // (→ `BOX_VALUE_BOUND`). Narrowing an encoder to the accepted bound is the
+    // silent way to collapse that split, and this is what it fails on.
+    expect(() => canonicalBoxBytes({ ...GOLDEN_KARMA_CANDIDATE, value: BOX_VALUE_BOUND }))
+      .not.toThrow();
+    // The corpus keeps `box/karma-value-u64-max` for the same reason: a vector
+    // proving a value encodes is not a claim that consensus accepts it.
+    expect(() => canonicalBoxBytes({ ...GOLDEN_KARMA_CANDIDATE, value: 2n ** 64n - 1n }))
+      .not.toThrow();
   });
 });
 
@@ -840,16 +854,18 @@ describe('emission, treasury, fee and karma_pool', () => {
     }
   });
 
-  it('the pool encodes at its genesis value, the top of vlqU64s range', () => {
-    // `2^64 - 1` is the whole of a network's karma supply and the value genesis
-    // puts in the box (TYPES_INTERFACE → KarmaPoolBox). It is also the largest
-    // value `writeVlqU64OrThrow` accepts, so the pool is the one box type whose
-    // ordinary state sits on the writer's ceiling rather than well inside it.
-    // `pool.value + circulating karma == 2^64 - 1` is what keeps it there: a
-    // burn can only return what a mint drew, so nothing can hand this writer a
-    // pool it would refuse.
-    const genesis: CandidateOf<KarmaPoolBox> = { boxType: 'karma_pool', value: 2n ** 64n - 1n };
-    expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffffff01');
+  it('the pool encodes at its genesis value, the top of what the STORE can hold', () => {
+    // `BOX_VALUE_BOUND - 1` is the whole of a network's karma supply and the
+    // value genesis puts in the box (TYPES_INTERFACE → KarmaPoolBox). It is the
+    // maximum STORABLE karma, one bit below the maximum encodable one: the
+    // ledger is SQLite and its `INTEGER` is signed, so the pool is the one box
+    // type whose ordinary state sits on the store's ceiling while the writer's
+    // stays a bit above it (→ `BOX_VALUE_BOUND`).
+    // `pool.value + circulating karma == BOX_VALUE_BOUND - 1` is what keeps it
+    // there: a burn can only return what a mint drew, so nothing can hand this
+    // writer a pool it would refuse.
+    const genesis: CandidateOf<KarmaPoolBox> = { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n };
+    expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffff7f');
     const record = boxRecordFromBytes(boxRecordBytes(genesis, FIXTURE_TX_ID, 0));
     expect(record.candidate).toEqual(genesis);
   });
@@ -1175,9 +1191,9 @@ describe('boxRecordFromBytes', () => {
     ['treasury', TREASURY_CANDIDATE],
     ['fee', FEE_CANDIDATE],
     // At its genesis value rather than at the shared 100: the pool's ordinary
-    // state is the top of `vlqU64`'s range (TYPES_INTERFACE → KarmaPoolBox), so
-    // the row that round-trips is the one carrying the ten-byte value.
-    ['karma_pool', { boxType: 'karma_pool', value: 2n ** 64n - 1n }],
+    // state is `BOX_VALUE_BOUND - 1` (TYPES_INTERFACE → KarmaPoolBox), so the
+    // row that round-trips is the one carrying the nine-byte value.
+    ['karma_pool', { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n }],
   ];
 
   for (const [label, candidate] of ALL_BOX_TYPES) {

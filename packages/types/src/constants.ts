@@ -62,6 +62,41 @@ export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
 export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTxTree
 export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction
 
+/**
+ * The accepted domain of a box `value` — TYPES_INTERFACE → Box value domain.
+ *
+ * A box value is a `bigint` in `[0, BOX_VALUE_BOUND)`. The contract makes this
+ * the **single statement of that number**: every other package and document
+ * cites this constant rather than restating `2⁶³`.
+ *
+ * ⛔ **The encodable domain and the accepted domain are different, and this
+ * package owns only the wider one.**
+ *
+ *   | encodable — what `vlqU64` and `canonicalBoxBytes` write | `[0, 2⁶⁴)` |
+ *   | accepted  — what consensus admits as a box value        | `[0, 2⁶³)` |
+ *
+ * ⚠ **Nothing here enforces it, and no encoder may.** `writeVlqU64OrThrow` keeps
+ * its `[0, 2⁶⁴)` domain, and the golden corpus deliberately carries values above
+ * this bound — a vector proving a value encodes is not a claim that consensus
+ * accepts it. Enforcement belongs to `@dagsocial/node` and
+ * `@dagsocial/validation`, the standing the size caps above already have.
+ *
+ * **Why the accepted domain is narrower: the ledger is SQLite, and `INTEGER` is
+ * a SIGNED 64-bit integer.** A value in `[2⁶³, 2⁶⁴)` encodes cleanly, derives a
+ * box id, passes a `u64` check — and cannot be stored: `better-sqlite3` refuses
+ * the bind, and `SUM()` over the signed ceiling raises `integer overflow`. A
+ * validation domain wider than its storage domain means a validly-encoded box
+ * crashes block application instead of being rejected.
+ *
+ * ✅ **Narrowing is a validation tightening, not a format break.** `vlqU64`
+ * writes identical bytes for every value that was ever storable, so no box id
+ * and no `stateRoot` moves.
+ *
+ * ⚠ **Not an economic constraint, and must not be described as one.** `2⁶³ − 1`
+ * is 9.2 × 10¹⁸ against supplies measured in thousands.
+ */
+export const BOX_VALUE_BOUND = 1n << 63n;
+
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
 

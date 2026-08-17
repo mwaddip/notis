@@ -22,6 +22,7 @@ import {
   INCLUSION_BONUS_K,
   MEMPOOL_CREDIT_SHARE_PCT,
   MIN_FEE_RATE_PER_BYTE,
+  BOX_VALUE_BOUND,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -202,5 +203,32 @@ describe('mempool policy dials', () => {
   it('carries a non-negative bigint fee floor', () => {
     expect(typeof MIN_FEE_RATE_PER_BYTE).toBe('bigint');
     expect(MIN_FEE_RATE_PER_BYTE).toBeGreaterThanOrEqual(0n);
+  });
+});
+
+describe('box value domain', () => {
+  // TYPES_INTERFACE → Box value domain. The number is a relationship rather
+  // than a magnitude: it is where SQLite's signed `INTEGER` stops, which is what
+  // puts the accepted domain under the encodable one.
+  it('sits exactly where a signed 64-bit integer stops', () => {
+    // Demonstrated, not restated. The largest accepted value survives a signed
+    // 64-bit reading; the bound itself comes back negative, which is the bind
+    // the ledger refuses.
+    expect(BigInt.asIntN(64, BOX_VALUE_BOUND - 1n)).toBe(BOX_VALUE_BOUND - 1n);
+    expect(BigInt.asIntN(64, BOX_VALUE_BOUND)).toBeLessThan(0n);
+  });
+
+  // ⛔ Conflating the encodable domain with the accepted one is the defect this
+  // constant exists to prevent, so what gets pinned is the GAP between them.
+  it('is one bit below the encodable ceiling', () => {
+    expect(BOX_VALUE_BOUND).toBe(1n << 63n);
+    expect(BOX_VALUE_BOUND * 2n).toBe(1n << 64n);
+  });
+
+  // Denomination (TYPES_INTERFACE → Denomination): a box value is a bigint, so
+  // the bound naming its domain is one too — a `number` here would lose the
+  // last eleven bits of the domain it bounds.
+  it('is a bigint', () => {
+    expect(typeof BOX_VALUE_BOUND).toBe('bigint');
   });
 });

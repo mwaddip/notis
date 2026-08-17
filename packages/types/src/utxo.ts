@@ -628,6 +628,9 @@ export interface BoxCandidate {
   boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
     | 'emission' | 'treasury' | 'fee' | 'karma_pool';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
+  // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
+  // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
+  // which node and validation enforce; no encoder here narrows to it.
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
   // store holds stops matching its own derivation. The node records the settled
