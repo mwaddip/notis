@@ -42,12 +42,10 @@ import {
   encodeUtxoTxTree,
   encodeOrderingBlock,
 } from '../../src/serialization.js';
-import {
-  coinbaseOutputBytes,
-  type BlockHeader,
-  type CoinbaseOutput,
-  type OrderingBlock,
-  type UtxoTxTree,
+import type {
+  BlockHeader,
+  OrderingBlock,
+  UtxoTxTree,
 } from '../../src/block.js';
 import { hex, registerStruct, type ValueCodec } from './harness.js';
 
@@ -110,14 +108,16 @@ const postFieldsCodec: ValueCodec<PostFields> = {
 export type BoxContent =
   | { boxType: 'karma'; value: bigint; owner: Uint8Array; decayBurn: boolean | null }
   | { boxType: 'credit'; value: bigint; owner: Uint8Array; lockedUntilBlock: number | null }
-  /** `value` is always 0 — the karma an invite names is minted at the claim. */
-  | { boxType: 'invite'; value: bigint; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
   | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
-  /** The same trailing fields as `invite`; the tag is what separates the two. */
+  /** The same trailing fields as `vouch`; the tag is what separates the two. */
   | { boxType: 'bond'; value: bigint; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
   | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array }
   | { boxType: 'vouch'; value: bigint; voucherId: Uint8Array; targetId: Uint8Array }
+  /** A `b32` beside a bare `vlqU` — the only arm that mixes the two. */
+  | { boxType: 'vouch_escrow'; value: bigint; owner: Uint8Array; releaseAtBlock: number }
+  /** One `b32` and nothing after it — the only arm whose tail is a single field. */
+  | { boxType: 'like_accrual'; value: bigint; author: Uint8Array }
   /**
    * No trailing fields on any of the four — the content encoding is the shared
    * prefix alone. Each member carries `boxType` and `value` and nothing else,
@@ -129,11 +129,17 @@ export type BoxContent =
   | { boxType: 'fee'; value: bigint }
   | { boxType: 'karma_pool'; value: bigint };
 
-/** The tag table, restated from the contract so a renumber fails here too. */
+/**
+ * The tag table, restated from the contract so a renumber fails here too.
+ *
+ * **2 is absent deliberately** — it held `invite`, the number is reserved rather
+ * than reassigned, and this reader must have no arm for it. A reverse table with
+ * a hole is what makes "an unassigned tag inside the range has no decoding"
+ * checkable from the independent side.
+ */
 const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
   0: 'karma',
   1: 'credit',
-  2: 'invite',
   3: 'genesis_proof',
   4: 'bond',
   5: 'post_lock',
@@ -142,6 +148,8 @@ const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
   8: 'treasury',
   9: 'fee',
   10: 'karma_pool',
+  11: 'like_accrual',
+  12: 'vouch_escrow',
 };
 
 const boxContentCodec: ValueCodec<BoxContent> = {
@@ -162,13 +170,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           value,
           owner: hex(j.owner as string),
           lockedUntilBlock: (j.lockedUntilBlock ?? null) as number | null,
-        };
-      case 'invite':
-        return {
-          boxType: 'invite',
-          value,
-          inviterId: hex(j.inviterId as string),
-          inviteePublicKey: hex(j.inviteePublicKey as string),
         };
       case 'genesis_proof':
         return { boxType: 'genesis_proof', value, payload: hex(j.payload as string) };
@@ -193,6 +194,15 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           voucherId: hex(j.voucherId as string),
           targetId: hex(j.targetId as string),
         };
+      case 'vouch_escrow':
+        return {
+          boxType: 'vouch_escrow',
+          value,
+          owner: hex(j.owner as string),
+          releaseAtBlock: j.releaseAtBlock as number,
+        };
+      case 'like_accrual':
+        return { boxType: 'like_accrual', value, author: hex(j.author as string) };
       case 'emission':
         return { boxType: 'emission', value };
       case 'treasury':
@@ -232,8 +242,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           owner: readBytesN(r, 32),
           lockedUntilBlock: readOpt(r, readVlqU),
         };
-      case 'invite':
-        return { boxType, value, inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32) };
       case 'genesis_proof': {
         const payload = readLp(r);
         // The payload bound, read off the layout table like every other row in
@@ -252,7 +260,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType, value, payload };
       }
       case 'bond':
-        // Byte-for-byte the `invite` arm above, and reached only by the tag —
+        // Byte-for-byte the `vouch` arm below, and reached only by the tag —
         // which is the property the two vectors in `boxes.json` exist to hold.
         return { boxType, value, inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32) };
       case 'post_lock':
@@ -264,6 +272,15 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         };
       case 'vouch':
         return { boxType, value, voucherId: readBytesN(r, 32), targetId: readBytesN(r, 32) };
+      case 'vouch_escrow':
+        // `vlqU` after the key, not `vlqU64`: the height is a `number`. Reading
+        // it as the bigint writer's field would decode the same bytes and
+        // re-encode identically, so the two are told apart by their domains
+        // rather than by a vector — which is why the row is written here from the
+        // field's type and not from the byte string.
+        return { boxType, value, owner: readBytesN(r, 32), releaseAtBlock: readVlqU(r) };
+      case 'like_accrual':
+        return { boxType, value, author: readBytesN(r, 32) };
       case 'emission':
       case 'treasury':
       case 'fee':
@@ -367,15 +384,6 @@ function readPrune(r: ByteReader): PruneEntry {
   };
 }
 
-function readCoinbase(r: ByteReader): CoinbaseOutput {
-  return {
-    owner: readBytesN(r, 32),
-    value: readVlqU64(r),        // bigint — the throwing writer's row
-    lockedUntilBlock: readVlqU(r),
-    isTreasury: readBool(r),     // strict 0/1; 0xff has no decoding
-  };
-}
-
 function parsePrune(j: Record<string, unknown>): PruneEntry {
   return {
     rootPostHash: j.rootPostHash as string,
@@ -387,40 +395,20 @@ function parsePrune(j: Record<string, unknown>): PruneEntry {
   };
 }
 
-function parseCoinbase(j: Record<string, unknown>): CoinbaseOutput {
-  return {
-    owner: hex(j.owner as string),
-    value: BigInt(j.value as string),   // decimal string — JSON cannot carry a u64
-    lockedUntilBlock: j.lockedUntilBlock as number,
-    isTreasury: j.isTreasury as boolean,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // The element preimage — TYPES_INTERFACE → Layout — Merkle leaf preimages
 // ---------------------------------------------------------------------------
 //
-// `coinbaseOutputBytes` is a Merkle leaf preimage — `leafHash('coinbase', …)`
-// under `utxoTxRoot`, exactly as `serializePruneEntry` is the `'prune'` one, and
-// both now sit under that same root. It earns its own vector rather than riding
-// only inside `utxoTxTree` because node hashes it directly, so it needs the same
-// cross-implementation anchor every other preimage here has — a conformance
-// reader must be able to check one leaf without building a tree around it.
+// `serializePruneEntry` is the one element preimage left under `utxoTxRoot` —
+// `leafHash('prune', …)` — and it has its own vector above, in `prune.json`,
+// where node hashes it directly and a conformance reader can check one leaf
+// without building a tree around it.
 //
-// Reserved, never to be reused: the `subBlockEntry` vector name and the
-// `'subblock'` leaf domain.
-//
-// The reader and parser are the tree codec's own (`readCoinbase`, written
-// independently from the layout table), which is what makes a moved element byte
-// fail here **and** in the enclosing tree vector.
-
-const coinbaseOutputCodec: ValueCodec<CoinbaseOutput> = {
-  parse: (json: unknown): CoinbaseOutput => parseCoinbase(json as Record<string, unknown>),
-  write(w: ByteWriter, o: CoinbaseOutput): void {
-    w.writeBytes(coinbaseOutputBytes(o));
-  },
-  read: readCoinbase,
-};
+// Reserved, never to be reused: the `subBlockEntry` and `coinbaseOutput` vector
+// names, and the `'subblock'` and `'coinbase'` leaf domains. Coinbase outputs
+// are outputs of the block's settlement transaction now, so they reach
+// `utxoTxRoot` through the `'utxotx'` leaf that transaction's id already gets —
+// there is no separate leaf preimage for a conformance reader to hold.
 
 const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   parse(json: unknown): UtxoTxTree {
@@ -429,7 +417,6 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
       utxoTxIds: j.utxoTxIds as string[],
       utxoTxs: (j.utxoTxs as string[]).map(hex),
       pruneEntries: (j.pruneEntries as Record<string, unknown>[]).map(parsePrune),
-      coinbaseOutputs: (j.coinbaseOutputs as Record<string, unknown>[]).map(parseCoinbase),
     };
   },
   write(w: ByteWriter, t: UtxoTxTree): void {
@@ -440,7 +427,6 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
       utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
       utxoTxs: readArr(r, readLp),   // opaque: transactions are length-prefixed bytes
       pruneEntries: readArr(r, readPrune),
-      coinbaseOutputs: readArr(r, readCoinbase),
     };
   },
 };
@@ -485,6 +471,5 @@ registerStruct('postFields', postFieldsCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);
-registerStruct('coinbaseOutput', coinbaseOutputCodec);
 registerStruct('utxoTxTree', utxoTxTreeCodec);
 registerStruct('orderingBlock', orderingBlockCodec);

@@ -32,11 +32,12 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
  *
  * `leafHash` prefixes its input with `utf8(domain + "\0")`, so every leaf
  * preimage begins with the first byte of a domain string. All in-tree domains
- * are printable ASCII ('stump', 'subblock', 'prune', 'utxotx', 'coinbase'),
- * so NUL can never start a leaf preimage — which makes 0x00 a safe reserved
- * tag for internal nodes. Any future leaf domain must likewise be a non-empty
- * printable string. Retired domains — strings reserved, never reuse:
- * 'likebox', 'epoch'.
+ * are printable ASCII ('stump', 'prune', 'utxotx'), so NUL can never start a
+ * leaf preimage — which makes 0x00 a safe reserved tag for internal nodes. Any
+ * future leaf domain must likewise be a non-empty printable string. Retired
+ * domains — strings reserved, never reuse: 'likebox', 'epoch', 'coinbase'
+ * (coinbase outputs are outputs of the block's settlement transaction, so they
+ * reach `utxoTxRoot` under 'utxotx' with every other transaction).
  *
  * Without the tag, `nodeHash(left, right)` is a bare hash of 64 concatenated
  * bytes, so a 64-byte leaf preimage could be re-presented as an internal node

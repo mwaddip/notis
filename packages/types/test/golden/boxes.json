@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds, and a second karma_pool vector at zero, because that zero is one the ledger DOES hold. Two groups are deliberate: invite and bond share identical trailing fields, and emission, treasury, fee and karma_pool share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds, and a second karma_pool vector at zero, because that zero is one the ledger DOES hold, and a second like_accrual vector because one type carries two roles there. Two groups are deliberate: bond and vouch share identical trailing fields, and emission, treasury, fee and karma_pool share the absence of any, so in both the tag byte is the whole of what separates their leaves. The numbering has a HOLE at 2, where invite was, and rejects cover it separately from the past-the-end case at 255: a reader can refuse one and fall through the other. 255 is the permanently-unassigned probe value, so no reject vector here is ever pinned at the next free tag - one that was moved the moment the next box type claimed its number.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -60,18 +60,6 @@
       "note": "value > 2^53 \u2014 the range a `number` cannot hold, which is why box values are bigint at all. Eight VLQ bytes here; box/karma-value-u64-max carries the ten-byte maximum. lockedUntilBlock 720 is present, so the option's other branch is covered on this type and it takes vlqU past one byte: 720 is d0 05."
     },
     {
-      "name": "box/invite",
-      "codec": "boxContent",
-      "value": {
-        "boxType": "invite",
-        "value": "0",
-        "inviterId": "5656565656565656565656565656565656565656565656565656565656565656",
-        "inviteePublicKey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-      },
-      "bytes": "02005656565656565656565656565656565656565656565656565656565656565656cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "note": "An invite always holds 0 \u2014 the karma it names is minted at the claim, not carried here \u2014 so the value byte is 00 and the whole tail is two adjacent b32 fields. Read against box/bond below: the trailing layouts are identical, so a swap of inviterId and inviteePublicKey shows up here rather than as a moved id much later, and the tag byte is the whole of what separates the two types."
-    },
-    {
       "name": "box/genesis-proof-typical",
       "codec": "boxContent",
       "value": {
@@ -103,7 +91,7 @@
         "inviteePublicKey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       },
       "bytes": "04195656565656565656565656565656565656565656565656565656565656565656cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "note": "The same two trailing fields as box/invite under tag 04, so this pair is one layout with two tags and enum8(boxType) is field 1 for exactly that reason. 66 bytes. A bond is byte-identical from creation to the block that consumes it: the invitee key names the paired invite by itself, and no probation field is carried because the window is dated from IdentityRecord.invitedAtBlock."
+      "note": "Two adjacent b32 key fields under tag 04 - the same tail box/vouch carries under tag 06, so that pair is one layout with two tags and enum8(boxType) is field 1 for exactly that reason. 66 bytes. THE BOND IS THE REQUEST: the settlement emits INVITE_KARMA_AMOUNT to this invitee key, so the pairing is structural and no ticket box exists to name. A bond is byte-identical from creation to the block that consumes it, and no probation field is carried because the window is dated from IdentityRecord.invitedAtBlock."
     },
     {
       "name": "box/post-lock",
@@ -147,7 +135,7 @@
         "value": "42264000000000000"
       },
       "bytes": "088080a696a5dc894b",
-      "note": "Byte-for-byte box/emission under tag 08, deliberately at the same value: the empty layout carries three tags - emission, treasury and fee - the same standing box/invite and box/bond have with two shared fields, and this pair is where the corpus holds it at equal value. Their ids part on the provenance computeBoxId appends, never on these bytes. A treasury box never actually holds the emission total - the value is chosen to make the collision case the vector, not to describe a reachable state."
+      "note": "Byte-for-byte box/emission under tag 08, deliberately at the same value: the empty layout carries four tags - emission, treasury, fee and karma_pool - the same standing box/bond and box/vouch have with two shared fields, and this pair is where the corpus holds it at equal value. Their ids part on the provenance computeBoxId appends, never on these bytes. A treasury box never actually holds the emission total - the value is chosen to make the collision case the vector, not to describe a reachable state."
     },
     {
       "name": "box/emission-zero",
@@ -198,6 +186,40 @@
       },
       "bytes": "0a00",
       "note": "Two bytes, box/emission-zero under tag 0a - and the reason inverts. Emission terminates, so no zero successor is created and box/emission-zero is a shape the ledger never holds; the pool never terminates, because a burn must always have somewhere to return, so the box exists at every height whatever its value. This is the one empty-tail zero that is a reachable state rather than an encoder shape, which is exactly what a reader pattern-matching to the emission rule gets backwards."
+    },
+    {
+      "name": "box/like-accrual-marker",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "like_accrual",
+        "value": "1",
+        "author": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+      },
+      "bytes": "0b017a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+      "note": "The marker a like transaction outputs, at LIKE_KARMA_COST. 34 bytes, and the layout is the only one in this table whose tail is a single b32 with nothing after it - box/karma-minimal is 35 at the same value because its absent decayBurn option still costs a byte. That one-byte gap is what a reader expecting a field after the key runs past, and it fails here rather than as a moved id. A MARKER CARRIES ITS VALUE: the 01 is the karma the marker stands for, and a zero-value marker would mean those units ceased to exist between the transaction and the settlement. author is ATTRIBUTION, not authorization - no signature by it unlocks the box, exactly as bond.inviterId names a party that cannot spend."
+    },
+    {
+      "name": "box/like-accrual-carry",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "like_accrual",
+        "value": "4",
+        "author": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+      },
+      "bytes": "0b047a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+      "note": "The same type in its other ROLE: the carry box the settlement outputs, holding a remainder below LIKES_PER_KARMA_PAYOUT. One type, two lifetimes, and the bytes are what shows they are not told apart by a field - only the value differs, so nothing in the encoding distinguishes a marker from a carry box and nothing may try to. The settlement consumes both in one step, which is why they share a tag."
+    },
+    {
+      "name": "box/vouch-escrow",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "vouch_escrow",
+        "value": "3",
+        "owner": "5656565656565656565656565656565656565656565656565656565656565656",
+        "releaseAtBlock": 1060
+      },
+      "bytes": "0c035656565656565656565656565656565656565656565656565656565656565656a408",
+      "note": "Where an unvouched stake waits out its cooldown. The only arm that puts a bare vlqU after a b32, so a408 is the release height at two bytes and its width follows the value rather than the shape. value is the CONSUMED VouchBox's and never VOUCH_KARMA_AMOUNT - 3 here, so a reader substituting the cast's pin of 1 produces different bytes rather than agreeing by coincidence. releaseAtBlock is inside the id preimage, which is the whole point of the type: a node holding the stateRoot holds the obligation instead of a root it cannot interpret without replaying every block."
     }
   ],
   "rejects": [
@@ -209,18 +231,18 @@
       "note": "A 513-byte payload, one past MAX_GENESIS_PROOF_PAYLOAD_BYTES. Every byte of it is present and the lp field is well formed, so nothing here is truncated and nothing re-encodes differently - the bound is the only rule that can refuse these bytes, and 8104 is the count that makes them 513 rather than 512. The bound is per-type and lives in the genesis_proof arm of the reader, never in readLp, which every lp field shares; box/genesis-proof-typical is the same layout inside the bound. An over-bound payload still ENCODES, exactly as an unknown boxType does - the writers are total and the refusal is one-way."
     },
     {
-      "name": "box/unassigned-tag-11",
+      "name": "box/reserved-tag-2",
       "codec": "boxContent",
-      "bytes": "0b01",
+      "bytes": "0201",
       "failure": "reader-fault",
-      "note": "11 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way. The number here is load-bearing and STAYS LITERAL: a corpus deriving its input from the code under test checks nothing, so a tag this vector names is one the table must not claim, and assigning it is what moves this vector. packages/types/test/utxo.test.ts derives the same number from BOX_TYPE_TAGS, which is the other half of the pair - one side follows the table, one side pins it."
+      "note": "2 held invite, and the string and the number are both reserved: the tag is left OUT of the table rather than reassigned, so the numbering has a hole in it and this is the vector that holds the hole open. Distinct from box/unknown-tag-255 in the one way that matters: 255 is past the end, where a reader deriving unassigned as past-the-maximum still refuses it, while 2 is INSIDE the assigned range and such a reader would fall through into whichever arm it reached. Reassigning it would need no surviving history to carry the tag, every other tag to keep its number, and the name to stay reserved - fail any one and the number stays out of the table forever."
     },
     {
       "name": "box/unknown-tag-255",
       "codec": "boxContent",
       "bytes": "ff01",
       "failure": "reader-fault",
-      "note": "0xff is what enum8 WRITES for an unknown boxType, and it must not decode back into anything. That one-wayness is why the tag writer can stay total where the fixed-width writers cannot: a malformed box encodes, but never as a valid one."
+      "note": "0xff is what enum8 WRITES for an unknown boxType, and it must not decode back into anything. That one-wayness is why the tag writer can stay total where the fixed-width writers cannot: a malformed box encodes, but never as a valid one. 255 is ALSO the corpus's permanently-unassigned probe: it is the only number no box type can ever take, since enum8 refuses to build a table claiming the sentinel, so a tag-past-the-end vector pinned here never has to move. This vector read 0b01 as box/unassigned-tag-11 until like_accrual took 11; re-pinning it at the next free number would have reproduced that the following addition, and 13 is not written down anywhere for exactly that reason. The number STAYS LITERAL - a corpus deriving its input from the code under test checks nothing - and enum8 is a table lookup over u8, so 255 and any other unassigned number exercise one path. packages/types/test/utxo.test.ts covers the derived side: the reserved hole at 2, the first tag above the table taken from BOX_TYPE_TAGS, and 0xff."
     },
     {
       "name": "box/non-minimal-value",

@@ -35,42 +35,18 @@
       "note": "The narrowest header: every vlqU field at its one-byte minimum except powTargetBits, which sits at ORDERING_BLOCK_POW_TARGET_FLOOR \u2014 nine whole bits in units of 1/256 of a bit, the lowest difficulty the rule admits \u2014 and takes two. Its two one-byte neighbours are what make a transposition across it visible. stateRoot is 33 bytes, not 32."
     },
     {
-      "name": "coinbaseOutput/miner",
-      "codec": "coinbaseOutput",
-      "value": {
-        "owner": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
-        "value": "1250000000000",
-        "lockedUntilBlock": 720,
-        "isTreasury": false
-      },
-      "bytes": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b580a8b9ceb024d00500",
-      "note": "The 'coinbase' Merkle leaf preimage, tag excluded. value (vlqU64, throwing) and lockedUntilBlock (vlqU, total by sentinel) hold different values at different widths, so swapping them is visible; isTreasury false is writeBool's 0x00 branch."
-    },
-    {
-      "name": "coinbaseOutput/treasury",
-      "codec": "coinbaseOutput",
-      "value": {
-        "owner": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
-        "value": "138888888888",
-        "lockedUntilBlock": 1441,
-        "isTreasury": true
-      },
-      "bytes": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b884b1b38504a10b01",
-      "note": "isTreasury true \u2014 writeBool's 0x01 branch, the only byte that separates a treasury output from a miner one. readBool refuses every other byte, which is why 0xff is unreachable here rather than merely unused."
-    },
-    {
       "name": "utxoTxTree/empty",
       "codec": "utxoTxTree",
       "value": {
         "utxoTxIds": [],
         "utxoTxs": [],
-        "pruneEntries": [],
-        "coinbaseOutputs": []
+        "pruneEntries": []
       },
-      "bytes": "00000000"
+      "bytes": "000000",
+      "note": "THREE count prefixes, not four. coinbaseOutputs was the last array and is gone - coinbase outputs are outputs of the block's settlement transaction, so they arrive inside utxoTxs like every other transaction's. Dropping the last array is a deletion in place, so the three before it keep their positions and no other vector in this file moves for that reason alone."
     },
     {
-      "name": "utxoTxTree/txs-and-coinbase",
+      "name": "utxoTxTree/txs-and-prunes",
       "codec": "utxoTxTree",
       "value": {
         "utxoTxIds": [
@@ -81,24 +57,21 @@
           "deadbeef",
           ""
         ],
-        "pruneEntries": [],
-        "coinbaseOutputs": [
+        "pruneEntries": [
           {
-            "owner": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
-            "value": "500000000000000000",
-            "lockedUntilBlock": 720,
-            "isTreasury": false
-          },
-          {
-            "owner": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
-            "value": "0",
-            "lockedUntilBlock": 0,
-            "isTreasury": true
+            "rootPostHash": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+            "subtreePostIds": [
+              "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+            ],
+            "subtreeMerkleRoot": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+            "authorId": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+            "authorSignature": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+            "trigger": "storage_prune"
           }
         ]
       },
-      "bytes": "02f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef000002b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001",
-      "note": "The block's ONE committed body: transactions, then prune entries, then coinbase outputs \u2014 the field order, which is also the normative leaf order for utxoTxRoot. value is vlqU64 (bigint, throwing); isTreasury is writeBool (total, strict 0/1); an empty utxoTx is a bare zero length."
+      "bytes": "02f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101",
+      "note": "The block's ONE committed body: transaction ids, then transactions, then prune entries - the field order, which is also the normative leaf order for utxoTxRoot. These are byte-for-byte the tree inside orderingBlock/full, so a moved element byte fails here AND inside the framing rather than only in one of the two. An empty utxoTx is a bare zero length, which is what the lp prefix on that section exists for. The prune entry is the one element writer left whose width varies: 'coinbase' retired with CoinbaseOutput and 'subblock' before it, so 'prune' and 'utxotx' are the only leaf domains under this root."
     },
     {
       "name": "orderingBlock/full",
@@ -135,26 +108,12 @@
               "authorSignature": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
               "trigger": "storage_prune"
             }
-          ],
-          "coinbaseOutputs": [
-            {
-              "owner": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
-              "value": "500000000000000000",
-              "lockedUntilBlock": 720,
-              "isTreasury": false
-            },
-            {
-              "owner": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
-              "value": "0",
-              "lockedUntilBlock": 0,
-              "isTreasury": true
-            }
           ]
         },
         "validatorSignature": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
       },
-      "bytes": "910101b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb28833db0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e10102b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
-      "note": "lp(header) || lp(utxoTxTree) || b64(sig) \u2014 TWO sections, not three. vlqU length prefixes, not u32BE. The prune entries ride inside utxoTxTree, which is what the second section used to carry."
+      "bytes": "910101b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb288338b0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "note": "lp(header) || lp(utxoTxTree) || b64(sig) \u2014 TWO sections, not three. vlqU length prefixes, not u32BE. The prune entries ride inside utxoTxTree, which is what the second section used to carry. The body section's prefix moved from db02 to 8b02: 347 bytes to 267, the coinbase count and its two outputs. Only that prefix moved - the header's is unchanged, so the frame shrank at one place rather than shifting."
     },
     {
       "name": "orderingBlock/empty-body",
@@ -174,13 +133,12 @@
         "utxoTxTree": {
           "utxoTxIds": [],
           "utxoTxs": [],
-          "pruneEntries": [],
-          "coinbaseOutputs": []
+          "pruneEntries": []
         },
         "validatorSignature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
       },
-      "bytes": "8701010100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000777777777777777777777777777777777777777777777777777777777777777700801200040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-      "note": "The smallest legal block: the single body section is four bytes (four empty arrays), so its prefix is one byte."
+      "bytes": "87010101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000007777777777777777777777777777777777777777777777777777777777777777008012000300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "note": "The smallest legal block: the single body section is three bytes (three empty arrays), so its prefix is one byte. It was four before coinbaseOutputs left the tree - the whole of what the deletion costs the smallest block."
     }
   ],
   "rejects": [
@@ -208,20 +166,20 @@
     {
       "name": "orderingBlock/trailing-byte",
       "codec": "orderingBlock",
-      "bytes": "910101b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb28833db0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e10102b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdff",
+      "bytes": "910101b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb288338b0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdff",
       "failure": "trailing-bytes"
     },
     {
       "name": "orderingBlock/section-overruns-parent",
       "codec": "orderingBlock",
-      "bytes": "ff7f01b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb28833db0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e10102b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "bytes": "ff7f01b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb288338b0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
       "code": "truncated",
       "note": "The header section declares 16383 bytes inside a frame that has far fewer."
     },
     {
       "name": "orderingBlock/truncated-signature",
       "codec": "orderingBlock",
-      "bytes": "910101b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb28833db0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e10102b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18080c89d9deb96f806d00500b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2000001cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "bytes": "910101b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb288338b0202f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f20204deadbeef0001c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c101a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e101cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
       "code": "truncated",
       "note": "The final b64 is 32 bytes short."
     }

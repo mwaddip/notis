@@ -20,6 +20,8 @@ import {
   INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
+  VOUCH_KARMA_AMOUNT,
+  VOUCH_COOLDOWN_BLOCKS,
   MAX_GENESIS_PROOF_PAYLOAD_BYTES,
   BOX_VALUE_BOUND,
   encodeTx,
@@ -27,7 +29,7 @@ import {
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -67,30 +69,57 @@ function makeCreditBox(): CreditBox {
   };
 }
 
-function makeInviteBox(): InviteBox {
-  return {
-    boxType: 'invite',
-    // An invite is a claim ticket and always holds 0 — the karma it names does
-    // not exist until the claim mints it (TYPES_INTERFACE → InviteBox).
-    value: 0n,
-    inviterId: inviter,
-    inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    txId: FIXTURE_TX_ID,
-    index: 2,
-  };
-}
-
 function makeBondBox(): BondBox {
   return {
     boxType: 'bond',
     value: 20n,
     inviterId: inviter,
-    // The paired invite names the same key, and that is the whole pairing: an
-    // address can be invited once, so this field identifies exactly one live
-    // pair (TYPES_INTERFACE → BondBox).
+    // What the settlement reads to address the grant: an address can be invited
+    // once, so this field identifies exactly one bond (TYPES_INTERFACE →
+    // BondBox).
     inviteePublicKey: new Uint8Array(32).fill(0xcc),
     txId: FIXTURE_TX_ID,
     index: 3,
+  };
+}
+
+function makeVouchBox(): VouchBox {
+  return {
+    boxType: 'vouch',
+    value: 1n,
+    voucherId: inviter,
+    targetId: new Uint8Array(32).fill(0xcc),
+    txId: FIXTURE_TX_ID,
+    index: 4,
+  };
+}
+
+/**
+ * A marker, not a carry box — the two share a type and differ only in who
+ * created them and how long they live (TYPES_INTERFACE → LikeAccrualBox). At
+ * `LIKE_KARMA_COST`, because a marker carries the value it stands for.
+ */
+function makeLikeAccrualBox(): LikeAccrualBox {
+  return {
+    boxType: 'like_accrual',
+    value: LIKE_KARMA_COST,
+    author: new Uint8Array(32).fill(0x7a),
+    txId: FIXTURE_TX_ID,
+    index: 5,
+  };
+}
+
+function makeVouchEscrowBox(): VouchEscrowBox {
+  return {
+    boxType: 'vouch_escrow',
+    // The consumed `VouchBox`'s value, never `VOUCH_KARMA_AMOUNT` — the fixture
+    // carries a value the cast's pin does not, so a reader that substituted the
+    // constant would still be wrong here.
+    value: 3n,
+    owner: inviter,
+    releaseAtBlock: 1_000 + VOUCH_COOLDOWN_BLOCKS,
+    txId: FIXTURE_TX_ID,
+    index: 6,
   };
 }
 
@@ -134,8 +163,10 @@ describe('boxes', () => {
 
     it('works for all box types', () => {
       expect(() => computeBoxId(makeCreditBox())).not.toThrow();
-      expect(() => computeBoxId(makeInviteBox())).not.toThrow();
       expect(() => computeBoxId(makeBondBox())).not.toThrow();
+      expect(() => computeBoxId(makeVouchBox())).not.toThrow();
+      expect(() => computeBoxId(makeLikeAccrualBox())).not.toThrow();
+      expect(() => computeBoxId(makeVouchEscrowBox())).not.toThrow();
     });
 
     it('computeBoxId differs when decayBurn differs', () => {
@@ -153,7 +184,10 @@ describe('boxes', () => {
       //
       // So: moving the same `(txId, index)` pair must move the id, and two
       // indices under one txId must not collide.
-      for (const bare of [makeKarmaBox(), makeCreditBox(), makeInviteBox(), makeBondBox()]) {
+      for (const bare of [
+        makeKarmaBox(), makeCreditBox(), makeBondBox(),
+        makeLikeAccrualBox(), makeVouchEscrowBox(),
+      ]) {
         const at3 = { ...bare, txId: GOLDEN_TX_ID, index: 3 };
         const at4 = { ...bare, txId: GOLDEN_TX_ID, index: 4 };
         const otherTx = { ...bare, txId: 'a'.repeat(64), index: 3 };
@@ -218,11 +252,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
+  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CREDIT_BOX_ID =
-  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
+  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_TX_ID =
-  '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
+  '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -384,9 +418,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
+  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
+  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_MINT_COINBASE_ID =
   'da905d0f72efd81bc5c1ed3074e28fae890d7d1140fcb7f17d155da4bc12ce18';
 const GOLDEN_MINT_DECAY_ID =
@@ -423,65 +457,67 @@ describe('canonicalBoxBytes', () => {
 });
 
 // ---------------------------------------------------------------------------
-// invite and bond — two tags over one trailing layout
+// bond and vouch — two tags over one trailing layout
 // ---------------------------------------------------------------------------
 
 /**
- * `invite` and `bond` carry **identical trailing fields** — `b32(inviterId) ‖
- * b32(inviteePublicKey)` — so `enum8(boxType)` is the whole of what separates
- * their leaves (TYPES_INTERFACE → Layout — Boxes). `value` happens to differ too,
- * since an invite is always `0`, but nothing may rely on that: the tests below
- * pin the pair at one shared value as well, which is the case a tag-blind encoder
- * would collide.
+ * `bond` and `vouch` carry **identical trailing fields** — two adjacent `b32`
+ * key fields each — so `enum8(boxType)` is the whole of what separates their
+ * leaves (TYPES_INTERFACE → Layout — Boxes). ⚠ **This pair inherits the property
+ * from `invite`/`bond`, which no longer exists**: `invite` is deleted and tag 2
+ * is reserved, so the two-tags-over-one-layout case is now bond against vouch.
+ * Their values happen to differ too — a vouch is always `1` — but nothing may
+ * rely on that: the tests below pin the pair at one shared value as well, which
+ * is the case a tag-blind encoder would collide.
  *
- * Both key fields are fixed 32 bytes. A width outside that has **no** encoding
- * rather than sharing one — `writeBytesNOrThrow` throws, and its domain is
- * established upstream by node's output-shape schema (`TYPES_INTERFACE` →
+ * All four key fields are fixed 32 bytes. A width outside that has **no**
+ * encoding rather than sharing one — `writeBytesNOrThrow` throws, and its domain
+ * is established upstream by node's output-shape schema (`TYPES_INTERFACE` →
  * Totality).
  *
  * Hand-assembled from the layout table, not copied from the encoder's output —
  * the file's idiom for a frozen byte string, and the only form that makes a
  * vector an independent check rather than a screenshot.
  *
- *   02 | 00 | b32(inviterId) | b32(inviteePublicKey)     — invite, value 0
- *   04 | 14 | b32(inviterId) | b32(inviteePublicKey)     — bond, value 20
+ *   04 | 14 | b32(inviterId) | b32(inviteePublicKey)     — bond,  value 20
+ *   06 | 01 | b32(voucherId) | b32(targetId)             — vouch, value 1
  *   ^tag ^vlqU64(value)
  */
 const INVITEE_KEY = new Uint8Array(32).fill(0xcc);
 const PAIR_TAIL = '56'.repeat(32) + 'cc'.repeat(32);
-const INVITE_BYTES = '02' + '00' + PAIR_TAIL;
 const BOND_BYTES = '04' + '14' + PAIR_TAIL;
+const VOUCH_BYTES = '06' + '01' + PAIR_TAIL;
 
-describe('invite and bond share a trailing layout, separated by the tag', () => {
+describe('bond and vouch share a trailing layout, separated by the tag', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-  it('an invite encodes to tag, value 0, and the two keys — 66 bytes', () => {
-    expect(hexOf(canonicalBoxBytes(makeInviteBox()))).toBe(INVITE_BYTES);
-    expect(canonicalBoxBytes(makeInviteBox()).length).toBe(66);
-  });
-
-  it('a bond encodes to the same tail under its own tag — 66 bytes', () => {
+  it('a bond encodes to tag, value and the two keys — 66 bytes', () => {
     expect(hexOf(canonicalBoxBytes(makeBondBox()))).toBe(BOND_BYTES);
     expect(canonicalBoxBytes(makeBondBox()).length).toBe(66);
   });
 
+  it('a vouch encodes to the same tail under its own tag — 66 bytes', () => {
+    expect(hexOf(canonicalBoxBytes(makeVouchBox()))).toBe(VOUCH_BYTES);
+    expect(canonicalBoxBytes(makeVouchBox()).length).toBe(66);
+  });
+
   it('the tag alone separates them when value agrees', () => {
-    // The case a tag-blind encoder collides: same inviter, same invitee, same
-    // value, different type. `enum8(boxType)` is field 1, so the leaves differ
-    // in byte 0 and nowhere else — and the ids follow the bytes.
-    const invite = { ...makeInviteBox(), value: 20n };
-    const bond = makeBondBox();
-    const a = hexOf(canonicalBoxBytes(invite));
-    const b = hexOf(canonicalBoxBytes(bond));
+    // The case a tag-blind encoder collides: the same two keys, the same value,
+    // a different type. `enum8(boxType)` is field 1, so the leaves differ in
+    // byte 0 and nowhere else — and the ids follow the bytes.
+    const bond = { ...makeBondBox(), value: 1n };
+    const vouch = makeVouchBox();
+    const a = hexOf(canonicalBoxBytes(bond));
+    const b = hexOf(canonicalBoxBytes(vouch));
     expect(a.slice(2)).toBe(b.slice(2));
-    expect(a.slice(0, 2)).toBe('02');
-    expect(b.slice(0, 2)).toBe('04');
-    expect(computeCandidateBoxId(invite, FIXTURE_TX_ID, 0))
-      .not.toBe(computeCandidateBoxId(bond, FIXTURE_TX_ID, 0));
+    expect(a.slice(0, 2)).toBe('04');
+    expect(b.slice(0, 2)).toBe('06');
+    expect(computeCandidateBoxId(bond, FIXTURE_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(vouch, FIXTURE_TX_ID, 0));
   });
 
   it('both round-trip through the reader', () => {
-    for (const box of [makeInviteBox(), makeBondBox()]) {
+    for (const box of [makeBondBox(), makeVouchBox()]) {
       const { candidate } = boxRecordFromBytes(boxRecordBytes(box, box.txId, box.index));
       expect(hexOf(canonicalBoxBytes(candidate as never))).toBe(hexOf(canonicalBoxBytes(box)));
     }
@@ -491,60 +527,209 @@ describe('invite and bond share a trailing layout, separated by the tag', () => 
     // Not merely rejected late — there is no byte string for it, so a malformed
     // box can never be handed a well-formed box's id.
     for (const width of [0, 1, 31, 33, 64]) {
-      const shortInvitee = new Uint8Array(width);
-      const invite = { ...makeInviteBox(), inviteePublicKey: shortInvitee };
-      expect(() => canonicalBoxBytes(invite)).toThrow(/expected 32 bytes/);
-      const bond = { ...makeBondBox(), inviteePublicKey: shortInvitee };
+      const short = new Uint8Array(width);
+      const bond = { ...makeBondBox(), inviteePublicKey: short };
       expect(() => canonicalBoxBytes(bond)).toThrow(/expected 32 bytes/);
+      const vouch = { ...makeVouchBox(), targetId: short };
+      expect(() => canonicalBoxBytes(vouch)).toThrow(/expected 32 bytes/);
     }
   });
 
   it('a MISSING key throws rather than encoding as anything', () => {
     for (const absent of [undefined, null, []]) {
-      const invite = { ...makeInviteBox(), inviteePublicKey: absent as unknown as Uint8Array };
-      expect(() => canonicalBoxBytes(invite)).toThrow(/expected 32 bytes/);
       const bond = { ...makeBondBox(), inviteePublicKey: absent as unknown as Uint8Array };
       expect(() => canonicalBoxBytes(bond)).toThrow(/expected 32 bytes/);
+      const vouch = { ...makeVouchBox(), targetId: absent as unknown as Uint8Array };
+      expect(() => canonicalBoxBytes(vouch)).toThrow(/expected 32 bytes/);
     }
   });
 
-  it('the invite-creation transaction hashes both outputs', () => {
-    // One transaction emits the InviteBox and its paired BondBox, both naming
-    // the same invitee. The key is inside the signed preimage, so a relay
-    // cannot re-point either box at an invitee of its own.
+  it('the invite transaction emits ONE bond, and the key it names is signed over', () => {
+    // ⛔ The invite collapses to a single transaction: it creates the `BondBox`
+    // and the inviter's karma change, and nothing else (TYPES_INTERFACE →
+    // InviteBox). **The bond IS the request** — the settlement emits
+    // `INVITE_KARMA_AMOUNT` to this key — so there is no second output for a
+    // ticket, and this test would fail against a tree that still built one.
     const inviteCreate: UtxoTransaction = {
       inputs: [IN_1],
       outputs: [
-        { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
-        { boxType: 'bond', value: 25n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+        { boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+        { boxType: 'karma', value: 75n, owner: inviter },
       ],
       signatures: {},
       protocolVersion: 1,
     };
+    expect(inviteCreate.outputs.filter((o) => o.boxType === 'bond')).toHaveLength(1);
     expect(computeTxId(inviteCreate)).toHaveLength(64);
-    const other: UtxoTransaction = {
+    // The invitee key is inside the signed preimage, so a relay cannot re-point
+    // the grant at an invitee of its own.
+    const repointed: UtxoTransaction = {
       ...inviteCreate,
-      outputs: inviteCreate.outputs.map((o) => ({
-        ...(o as CandidateOf<BondBox>),
-        inviteePublicKey: new Uint8Array(32).fill(0xdd),
-      })) as UtxoTransaction['outputs'],
+      outputs: [
+        { ...(inviteCreate.outputs[0] as CandidateOf<BondBox>), inviteePublicKey: new Uint8Array(32).fill(0xdd) },
+        inviteCreate.outputs[1]!,
+      ],
     };
-    expect(computeTxId(other)).not.toBe(computeTxId(inviteCreate));
+    expect(computeTxId(repointed)).not.toBe(computeTxId(inviteCreate));
   });
 
-  it('nothing outside the invite and bond arms moved', () => {
-    // The claim that keeps this a two-arm edit rather than a movement of
+  it('nothing outside the deleted invite arm moved', () => {
+    // The claim that keeps the deletion a one-arm edit rather than a movement of
     // everything: the other box types and the transaction that carries none are
     // pinned here, so a change reaching another arm fails at this test rather
-    // than at a moved `stateRoot` much later.
+    // than at a moved `stateRoot` much later. Tags 0–10 keep their numbers and
+    // only 2 leaves the table, so every id that exists is an id that stays.
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
     expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
     expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
     expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
-    // post_lock / vouch / genesis_proof have no inline golden here; theirs are
-    // the untouched vectors in `test/golden/boxes.json`, asserted by the corpus
+    // post_lock / genesis_proof have no inline golden here; theirs are the
+    // untouched vectors in `test/golden/boxes.json`, asserted by the corpus
     // suite in both directions.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// like_accrual and vouch_escrow — the two arms the settlement transaction adds
+// ---------------------------------------------------------------------------
+
+/**
+ * Tags 11 and 12, the first numbers assigned above the table's previous top.
+ *
+ * Neither layout is in the contract's Layout — Boxes table, which stops at tag
+ * 10, so both rows are **derived from the field types plus this format's
+ * standing conventions** — `Uint8Array(32)` is `b32`, and a required block
+ * height is `vlqU`, as `credit.lockedUntilBlock` and `boxRecord.index` already
+ * are. The bytes are hand-assembled here, from those rows.
+ *
+ *   0b | 01 | b32(author)                        — like_accrual, value 1
+ *   0c | 03 | b32(owner) | vlqU(releaseAtBlock)  — vouch_escrow, value 3
+ *   ^tag ^vlqU64(value)
+ *
+ * ⛔ **`like_accrual` is the only arm in the table whose tail is one `b32` and
+ * nothing else** — every other key-bearing arm carries a second field or an
+ * option tag after it, so it is the one row where a reader that expected
+ * something past the key would run past the box rather than into a short read.
+ */
+const LIKE_ACCRUAL_BYTES = '0b' + '01' + '7a'.repeat(32);
+const VOUCH_ESCROW_BYTES = '0c' + '03' + '56'.repeat(32) + 'a408';
+
+describe('like_accrual and vouch_escrow', () => {
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+  it('the tags are 11 and 12, and they are the first two above the old table', () => {
+    expect(BOX_TYPE_TAGS.like_accrual).toBe(11);
+    expect(BOX_TYPE_TAGS.vouch_escrow).toBe(12);
+    expect(canonicalBoxBytes(makeLikeAccrualBox())[0]).toBe(11);
+    expect(canonicalBoxBytes(makeVouchEscrowBox())[0]).toBe(12);
+  });
+
+  it('a like accrual is tag, value and the author key — 34 bytes, no option tag', () => {
+    expect(hexOf(canonicalBoxBytes(makeLikeAccrualBox()))).toBe(LIKE_ACCRUAL_BYTES);
+    // 34, where `karma` at the same value is 35: the karma arm's absent
+    // `decayBurn` option costs a byte this arm has no field for.
+    expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(34);
+    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(35);
+  });
+
+  it('a vouch escrow is tag, value, owner and the release height', () => {
+    // 1060 = 1000 + VOUCH_COOLDOWN_BLOCKS, which is `e8 07` as a vlqU — two
+    // bytes, so the height's width is visible in the vector rather than hidden
+    // inside a single byte.
+    expect(hexOf(canonicalBoxBytes(makeVouchEscrowBox()))).toBe(VOUCH_ESCROW_BYTES);
+    expect(canonicalBoxBytes(makeVouchEscrowBox()).length).toBe(36);
+  });
+
+  it('a MARKER CARRIES ITS VALUE: the value is in the id preimage', () => {
+    // ⛔ `ARCHITECTURE → The conservation axiom` forbids a zero-value marker,
+    // and this is the encoder half of that: a marker at `LIKE_KARMA_COST` and
+    // one at zero are different bytes and therefore different boxes, so the
+    // value a marker stands for cannot be dropped without moving its id. The
+    // rule that a marker must carry it is node's; what this pins is that the
+    // format can tell the two apart at all.
+    const zero = { ...makeLikeAccrualBox(), value: 0n };
+    expect(hexOf(canonicalBoxBytes(zero))).not.toBe(LIKE_ACCRUAL_BYTES);
+    expect(computeBoxId(zero)).not.toBe(computeBoxId(makeLikeAccrualBox()));
+  });
+
+  it('a vouch escrow holds the CONSUMED box value, not VOUCH_KARMA_AMOUNT', () => {
+    // The escrow's value is the `VouchBox`'s, so an escrow at 3 and one at
+    // `VOUCH_KARMA_AMOUNT` are distinct boxes. A reader that substituted the
+    // constant would produce this fixture's bytes for the wrong value.
+    const atConstant = { ...makeVouchEscrowBox(), value: VOUCH_KARMA_AMOUNT };
+    expect(makeVouchEscrowBox().value).not.toBe(VOUCH_KARMA_AMOUNT);
+    expect(computeBoxId(atConstant)).not.toBe(computeBoxId(makeVouchEscrowBox()));
+  });
+
+  it('releaseAtBlock moves the id, so the obligation is in committed state', () => {
+    // The whole reason the escrow replaces a SQL row: the height a stake is
+    // released at is inside the box's identity, so a node holding the
+    // `stateRoot` holds the obligation rather than a root it cannot interpret.
+    const later = { ...makeVouchEscrowBox(), releaseAtBlock: makeVouchEscrowBox().releaseAtBlock + 1 };
+    expect(computeBoxId(later)).not.toBe(computeBoxId(makeVouchEscrowBox()));
+  });
+
+  it('releaseAtBlock is vlqU — total by sentinel, where the key field throws', () => {
+    // The two writers in one arm behave differently, and the arm is where that
+    // shows: an out-of-domain height takes the ten-byte sentinel and still
+    // encodes, while an off-width owner has no encoding at all.
+    for (const bad of [-1, 1.5, NaN, 2 ** 53]) {
+      const box = { ...makeVouchEscrowBox(), releaseAtBlock: bad };
+      expect(() => canonicalBoxBytes(box)).not.toThrow();
+      expect(hexOf(canonicalBoxBytes(box))).toContain('ffffffffffffffffff01');
+    }
+    // Bound to variables first: `canonicalBoxBytes` takes the BASE
+    // `BoxCandidate`, so excess-property checking rejects a per-type field
+    // written straight into a call-site literal while accepting the identical
+    // value through a variable — the file's existing idiom.
+    const shortOwner: VouchEscrowBox = { ...makeVouchEscrowBox(), owner: new Uint8Array(31) };
+    const shortAuthor: LikeAccrualBox = { ...makeLikeAccrualBox(), author: new Uint8Array(31) };
+    expect(() => canonicalBoxBytes(shortOwner)).toThrow(/expected 32 bytes/);
+    expect(() => canonicalBoxBytes(shortAuthor)).toThrow(/expected 32 bytes/);
+  });
+
+  it('both round-trip through the reader', () => {
+    for (const box of [makeLikeAccrualBox(), makeVouchEscrowBox()]) {
+      const record = boxRecordFromBytes(boxRecordBytes(box, box.txId, box.index));
+      expect(hexOf(canonicalBoxBytes(record.candidate as never))).toBe(hexOf(canonicalBoxBytes(box)));
+    }
+  });
+
+  it('a like accrual and a karma box for the same key are different boxes', () => {
+    // The marker is karma-bearing and earmarked for someone else, which is the
+    // shape the same-owner karma rule forbids of a karma box — so the two must
+    // not share an encoding. The tag and the missing option byte are both what
+    // separates them.
+    const asKarma: CandidateOf<KarmaBox> = { boxType: 'karma', value: LIKE_KARMA_COST, owner: new Uint8Array(32).fill(0x7a) };
+    expect(hexOf(canonicalBoxBytes(asKarma))).not.toBe(LIKE_ACCRUAL_BYTES);
+    expect(computeCandidateBoxId(asKarma, FIXTURE_TX_ID, 0))
+      .not.toBe(computeCandidateBoxId(makeLikeAccrualBox(), FIXTURE_TX_ID, 0));
+  });
+
+  it('a transaction carrying a marker hashes it like any other output', () => {
+    // The like transaction's own shape: its karma change plus one marker for the
+    // author. `arr(outputs, canonicalBoxBytes)` reaches the new arm through the
+    // box encoder, so the transaction layout costs one tag and nothing else.
+    const like: UtxoTransaction = {
+      inputs: [IN_1],
+      outputs: [
+        { boxType: 'karma', value: 99n, owner },
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: new Uint8Array(32).fill(0x7a) },
+      ],
+      signatures: {},
+      protocolVersion: 1,
+      likeTarget: 'ab'.repeat(32),
+    };
+    const otherAuthor: UtxoTransaction = {
+      ...like,
+      outputs: [
+        like.outputs[0]!,
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: new Uint8Array(32).fill(0x7b) },
+      ],
+    };
+    expect(computeTxId(like)).toHaveLength(64);
+    expect(computeTxId(otherAuthor)).not.toBe(computeTxId(like));
   });
 });
 
@@ -682,7 +867,7 @@ describe('genesis_proof', () => {
     // shares. `utxoTxTree.utxoTxs` is `arr(lp)` and goes through the same
     // primitive on the same positional reader, so it is what a bound placed in
     // the primitive would have caught along with this box — and it must not be.
-    const tree = { utxoTxIds: [], utxoTxs: [overBound], pruneEntries: [], coinbaseOutputs: [] };
+    const tree = { utxoTxIds: [], utxoTxs: [overBound], pruneEntries: [] };
     expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
   });
 });
@@ -731,11 +916,12 @@ const KARMA_POOL_CANDIDATE: CandidateOf<KarmaPoolBox> = {
 const TAILED_CANDIDATES: AnyBoxCandidate[] = [
   { boxType: 'karma', value: 0n, owner },
   { boxType: 'credit', value: 0n, owner },
-  { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
   { boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(0) },
   { boxType: 'bond', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
   { boxType: 'post_lock', value: 0n, originalValue: 0n, owner },
   { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
+  { boxType: 'vouch_escrow', value: 0n, owner, releaseAtBlock: 0 },
+  { boxType: 'like_accrual', value: 0n, author: inviter },
 ];
 
 describe('emission, treasury, fee and karma_pool', () => {
@@ -1082,7 +1268,8 @@ describe('boxRecordBytes', () => {
     for (const [candidate, index] of [
       [GOLDEN_KARMA_CANDIDATE, 0],
       [GOLDEN_CREDIT_CANDIDATE, 1],
-      [makeInviteBox(), 7],
+      [makeLikeAccrualBox(), 7],
+      [makeVouchEscrowBox(), 8],
       [makeBondBox(), 2],
     ] as const) {
       const expected = createHash('blake2b512')
@@ -1115,7 +1302,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291' + // b32 txId
+      '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1166,14 +1353,10 @@ describe('boxRecordFromBytes', () => {
     ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, decayBurn: true }],
     ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
     ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
-    ['invite', {
-      boxType: 'invite', value: 0n, inviterId: inviter,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    }],
-    // The same trailing fields under the other tag, at a value an invite never
+    // The same trailing fields under two tags, at values the other never
     // carries. Both rows are here because the pair is one layout with two tags:
-    // a reader that walked the bond arm as an invite would round-trip fine on
-    // the fields and fail only on the discriminant.
+    // a reader that walked the vouch arm as a bond would round-trip fine on the
+    // fields and fail only on the discriminant.
     ['bond', {
       boxType: 'bond', value: 20n, inviterId: inviter,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
@@ -1182,6 +1365,14 @@ describe('boxRecordFromBytes', () => {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
     }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter }],
+    // The escrow the unvouch outputs, and the marker the like outputs. The
+    // escrow is the only arm mixing a `b32` with a bare `vlqU`; the marker is
+    // the only one whose tail is a single `b32`, so a reader expecting a field
+    // after the key fails on it and on nothing else.
+    ['vouch_escrow', {
+      boxType: 'vouch_escrow', value: 3n, owner, releaseAtBlock: 1_060,
+    }],
+    ['like_accrual', { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: inviter }],
     ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
     ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
     // The empty-tail rows. A reader that assumed at least one field followed
@@ -1246,11 +1437,15 @@ describe('boxRecordFromBytes', () => {
     // decoding at all: the tag reader refuses them, so nothing after the tag is
     // read.
     //
-    // The unassigned tag is **derived** from `BOX_TYPE_TAGS` rather than
-    // written down, so it follows every future box type with no edit here. The
-    // reject vector in `test/golden/boxes.json` names its number literally, and
-    // must: a golden corpus deriving its input from the code under test checks
-    // nothing.
+    // The first-unassigned tag is **derived** from `BOX_TYPE_TAGS` here, so it
+    // follows every future box type with no edit — and this file may derive it
+    // because it is not the independent reader. ⛔ **The corpus may not, and it
+    // may not pin the first free number either**: `test/golden/boxes.json`
+    // probes at the literal **255**, the one number `enum8` can never hand to a
+    // type, so its vector never has to move. A vector pinned at the next free
+    // tag stops testing what it was written to test the moment that tag is
+    // assigned, which is what happened at 11 (TYPES_INTERFACE → Layout — Boxes,
+    // "A reject vector must not be pinned to the next free tag").
     //
     // ⚠ **`not.toBeInstanceOf(CodecError)` is half the assertion.** An
     // *assigned* tag swapped in here throws too — on the fields it then
@@ -1260,8 +1455,19 @@ describe('boxRecordFromBytes', () => {
     // else, and the boundary check caught the remainder". Only the class
     // separates them. `golden.test.ts`' reject runner splits the two the same
     // way.
+    //
+    // ⛔ **The table now has a HOLE as well as a top, and both have to be
+    // unreadable.** Tag 2 held `invite` and is reserved rather than reassigned
+    // (TYPES_INTERFACE → InviteBox), so it is an unassigned number *inside* the
+    // range — the case a reader deriving "unassigned" as "above the maximum"
+    // would decode into whatever arm it fell through to. `RESERVED_INVITE_TAG`
+    // is written down because a reservation is a decision, not a derivation:
+    // deriving it from the table would make it follow any future reassignment,
+    // which is the one thing the reservation forbids.
+    const RESERVED_INVITE_TAG = 2;
     const FIRST_UNASSIGNED_BOX_TAG = Math.max(...Object.values(BOX_TYPE_TAGS)) + 1;
-    for (const tag of [FIRST_UNASSIGNED_BOX_TAG, 0xff]) {
+    expect(Object.values(BOX_TYPE_TAGS)).not.toContain(RESERVED_INVITE_TAG);
+    for (const tag of [RESERVED_INVITE_TAG, FIRST_UNASSIGNED_BOX_TAG, 0xff]) {
       const badTag = bytes.slice();
       badTag[0] = tag;
       let thrown: unknown;
@@ -1511,19 +1717,45 @@ describe('transactions', () => {
       // against a frozen hash.
       //
       //   TX_ID_DOMAIN ‖ arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
-      //                ‖ opt(preimages) ‖ vlqU(protocolVersion) ‖ opt(likeTarget)
-      //                ‖ opt(post)
+      //                ‖ vlqU(protocolVersion) ‖ opt(likeTarget) ‖ opt(post)
+      //
+      // ⛔ **FIVE fields — `preimages` was field 3 and is gone.** This mirror is
+      // what made the removal checkable rather than trusted: adding the absence
+      // byte back here reproduces the OLD frozen id exactly, which is how the new
+      // one was derived without regenerating it from the encoder under test.
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));           // arr count
       for (const input of GOLDEN_TX.inputs) h.update(Buffer.from(input, 'hex'));
       h.update(Buffer.from([GOLDEN_TX.outputs.length]));          // arr count
       for (const out of GOLDEN_TX.outputs) h.update(canonicalBoxBytes(out));
-      h.update(Buffer.from([0]));                                 // opt preimages: absent
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));         // vlqU(1)
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
       h.update(Buffer.from([0]));                                 // opt post: absent
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(computeTxId(GOLDEN_TX));
+    });
+
+    it('the RETIRED field is what separates the new id from the old one', () => {
+      // ⛔ The removal's proof, stated as an assertion rather than left in a
+      // report: the same mirror with `opt(preimages): absent` restored between
+      // `outputs` and `protocolVersion` reproduces the id this file froze before
+      // the field was deleted. So the id moved for exactly one reason, the field
+      // cost one byte even when absent, and **no frozen TxId could have
+      // survived** — an `opt` writes its `0` tag unconditionally.
+      const PRE_REMOVAL_TX_ID =
+        '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
+      const h = createHash('blake2b512');
+      h.update(Buffer.from('dagsocial/tx-id/1'));
+      h.update(Buffer.from([GOLDEN_TX.inputs.length]));
+      for (const input of GOLDEN_TX.inputs) h.update(Buffer.from(input, 'hex'));
+      h.update(Buffer.from([GOLDEN_TX.outputs.length]));
+      for (const out of GOLDEN_TX.outputs) h.update(canonicalBoxBytes(out));
+      h.update(Buffer.from([0]));                                 // opt preimages: ABSENT
+      h.update(Buffer.from([GOLDEN_TX.protocolVersion]));
+      h.update(Buffer.from([0]));
+      h.update(Buffer.from([0]));
+      expect(h.digest().subarray(0, 32).toString('hex')).toBe(PRE_REMOVAL_TX_ID);
+      expect(computeTxId(GOLDEN_TX)).not.toBe(PRE_REMOVAL_TX_ID);
     });
 
     it('the box-id preimage is domain-tagged — independently recomputed', () => {
@@ -1650,79 +1882,39 @@ describe('transactions', () => {
     });
   });
 
-  describe('computeTxId with preimages', () => {
-    it('includes preimages in tx hash', () => {
-      const tx: UtxoTransaction = {
-        inputs: [IN_1],
-        outputs: [],
-        signatures: {},
-        preimages: { [IN_1]: new Uint8Array([1, 2, 3]) },
-        protocolVersion: 1,
-      };
-      const id1 = computeTxId(tx);
-
-      const tx2: UtxoTransaction = {
-        ...tx,
-        preimages: { [IN_1]: new Uint8Array([4, 5, 6]) },
-      };
-      const id2 = computeTxId(tx2);
-
-      expect(id1).not.toBe(id2);
-    });
-
-    it('sorts preimage keys for determinism, whatever order they were built in', () => {
-      // The normative sort **ratifies** what this function already did
-      // (`Object.keys().sort()`) rather than changing it — keys are lowercase
-      // hex, so sorting the strings and sorting the decoded bytes agree. It is
-      // load-bearing all the same: without it one transaction has two
-      // encodings, which is the malleability the whole format exists to close.
-      const forward: UtxoTransaction = {
-        inputs: [IN_1, IN_2],
-        outputs: [],
-        signatures: {},
-        preimages: { [IN_1]: new Uint8Array([1]), [IN_2]: new Uint8Array([2]) },
-        protocolVersion: 1,
-      };
-      const reversed: UtxoTransaction = {
-        ...forward,
-        preimages: { [IN_2]: new Uint8Array([2]), [IN_1]: new Uint8Array([1]) },
-      };
-      expect(computeTxId(forward)).toBe(computeTxId(reversed));
-    });
-
-    it('a preimage is length-prefixed, so two entries cannot be re-split', () => {
-      // `lp(preimage)` rather than a bare concatenation: without the prefix a
-      // one-byte and a two-byte preimage under adjacent keys could be traded
-      // for a two-byte and a one-byte one.
-      const a: UtxoTransaction = {
-        inputs: [], outputs: [], signatures: {}, protocolVersion: 1,
-        preimages: { [IN_1]: new Uint8Array([1]), [IN_2]: new Uint8Array([2, 3]) },
-      };
-      const b: UtxoTransaction = {
-        ...a,
-        preimages: { [IN_1]: new Uint8Array([1, 2]), [IN_2]: new Uint8Array([3]) },
-      };
-      expect(computeTxId(a)).not.toBe(computeTxId(b));
-    });
-
-    it('omits preimages from hash when undefined — and an EMPTY map is now distinct', () => {
-      const absent: UtxoTransaction = {
-        inputs: [IN_1],
-        outputs: [],
-        signatures: {},
-        protocolVersion: 1,
-      };
-      const id = computeTxId(absent);
-      expect(typeof id).toBe('string');
-      expect(id.length).toBe(64);
-
-      // An encoding that treated `preimages: {}` as truthy, iterated zero keys
-      // and contributed nothing would give present-but-empty and absent the
-      // identical txId. `checkTxEnvelope` rejects `{}` for exactly that reason;
-      // `opt()` makes the two distinct at the encoding layer as well, so the
-      // gate is not the only thing standing between them.
-      const empty: UtxoTransaction = { ...absent, preimages: {} };
-      expect(computeTxId(empty)).not.toBe(id);
+  /**
+   * ⛔ **`preimages` IS DELETED, AND FOUR TESTS WENT WITH THEIR SUBJECT** — it
+   * carried no meaning, nothing read it, and it sat inside the id preimage
+   * (TYPES_INTERFACE → Layout — UtxoTransaction).
+   *
+   * ⚠ **Two of the four asserted properties of the FORMAT rather than of the
+   * field, and those survive elsewhere — named here so the deletion is not read
+   * as dropping them:**
+   *
+   * - **the normative map sort.** `signatures` is the only map left in this
+   *   layout, and `serialization.test.ts` asserts the same property over it
+   *   ("signatures encode as an array sorted by key") plus the rejection a
+   *   mis-sorted array gets, which the preimages version never had.
+   * - **`lp` inside `arr`, so two entries cannot be re-split.** The surviving
+   *   instance is `arr(utxoTxs, lp)` in the body, and `test/golden/block.json`'s
+   *   tree vector carries a 4-byte and an empty transaction adjacently for it.
+   *
+   * The other two — an empty map distinct from an absent one, and the field
+   * moving the id — have no instance left at all: `signatures` is required, so
+   * present-but-empty is its only empty state, and there is no optional map.
+   */
+  describe('the preimages field is gone', () => {
+    it('no transaction can carry one — a stray key is unrepresentable', () => {
+      // The projection step, on the retired field: an object carrying it hashes
+      // to the same id as one without, so there is no transaction a peer could
+      // build that would put it back into a preimage.
+      const bare: UtxoTransaction = { ...GOLDEN_TX };
+      const withField = { ...GOLDEN_TX, preimages: { [IN_1]: new Uint8Array([1, 2, 3]) } };
+      expect(computeTxId(withField as UtxoTransaction)).toBe(computeTxId(bare));
+      // …and it does not ride the wire either.
+      expect(Buffer.from(encodeTx(withField as UtxoTransaction)).toString('hex'))
+        .toBe(Buffer.from(encodeTx(bare)).toString('hex'));
+      expect(decodeTx(encodeTx(withField as UtxoTransaction))).not.toHaveProperty('preimages');
     });
   });
 
@@ -1764,7 +1956,6 @@ describe('transactions', () => {
       for (const input of tx.inputs) h.update(Buffer.from(input, 'hex'));
       h.update(Buffer.from([tx.outputs.length]));
       for (const out of tx.outputs) h.update(canonicalBoxBytes(out));
-      h.update(Buffer.from([0]));                       // opt preimages: absent
       h.update(Buffer.from([tx.protocolVersion]));      // vlqU(1)
       h.update(Buffer.from([1]));                       // opt likeTarget: present
       h.update(Buffer.from(TARGET_A, 'hex'));           // b32 — raw, not hex text
@@ -1782,13 +1973,69 @@ describe('transactions', () => {
     });
 
     it('likeTarget rides encodeTx/decodeTx and the id survives the round-trip', () => {
-      // Like txs ride `utxoTxs` as CBOR like any other transaction; a wire
+      // Like txs ride `utxoTxs` positionally like any other transaction; a wire
       // codec that dropped the field would re-derive a different id after
       // decode, and the signature over the original id would stop verifying.
       const tx: UtxoTransaction = { ...GOLDEN_TX, likeTarget: TARGET_A };
       const decoded = decodeTx(encodeTx(tx));
       expect(decoded.likeTarget).toBe(TARGET_A);
       expect(computeTxId(decoded)).toBe(computeTxId(tx));
+    });
+  });
+
+  /**
+   * ⛔ **THE CODEC CHANGE MOVES NO COMMITTED HASH, ASSERTED WHERE THE FROZEN IDS
+   * LIVE.**
+   *
+   * `encodeTx` went from `cbor-x` to the positional layout, and the reason no id
+   * moves is structural: `computeTxId` never read the wire codec. It walks
+   * `writeTxIdFields`, and `computeUtxoTxRoot`'s leaves are `leafHash('utxotx',
+   * id)` — the id, not the encoding.
+   *
+   * ⚠ **These constants are the load-bearing half and they are UNCHANGED text.**
+   * They were frozen before the positional codec existed, so a diff showing them
+   * untouched beside a rewritten `encodeTx` is the proof; re-deriving them from
+   * the new code would have destroyed it. `serialization.test.ts` holds the other
+   * half — that `encodeTx` IS the preimage plus signatures — because a frozen
+   * value alone could still hold if the two layouts had drifted somewhere no
+   * fixture reaches.
+   *
+   * ⚠ **What neither half can see: a value no fixture carries.** These pin the
+   * box types, options and optional fields the fixtures exercise; a field whose
+   * encoding differs only outside their domain would pass both. The golden corpus
+   * is the width-boundary coverage, and it is likewise unchanged.
+   */
+  describe('the positional encodeTx moved no id', () => {
+    it('every frozen id in this file is still its frozen value', () => {
+      expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
+      expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
+      expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
+      expect(computeCandidateBoxId(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0))
+        .toBe(GOLDEN_CANDIDATE_KARMA_ID);
+      expect(computeCandidateBoxId(GOLDEN_CREDIT_CANDIDATE, GOLDEN_TX_ID, 1))
+        .toBe(GOLDEN_CANDIDATE_CREDIT_ID);
+    });
+
+    it('a transaction the wire codec round-trips derives the same id', () => {
+      // The property the id rests on, over a transaction carrying every field the
+      // codec has an option for — so a dropped tag shows up as a moved id rather
+      // than as a decoded object that happens to compare equal.
+      const tx: UtxoTransaction = {
+        ...GOLDEN_TX,
+        signatures: { [PUBKEY_HEX]: new Uint8Array(64).fill(0xcd) },
+        likeTarget: 'a'.repeat(64),
+      };
+      expect(computeTxId(decodeTx(encodeTx(tx)))).toBe(computeTxId(tx));
+    });
+
+    it('the id ignores the wire codec: signing a transaction does not move it', () => {
+      const bare: UtxoTransaction = { ...GOLDEN_TX, signatures: {} };
+      const signed: UtxoTransaction = {
+        ...GOLDEN_TX,
+        signatures: { [PUBKEY_HEX]: new Uint8Array(64).fill(0xcd) },
+      };
+      expect(computeTxId(signed)).toBe(GOLDEN_TX_ID);
+      expect(computeTxId(bare)).toBe(GOLDEN_TX_ID);
     });
   });
 
@@ -1911,10 +2158,6 @@ describe('the box-type tables', () => {
   const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
     karma: { boxType: 'karma', value: 100n, owner },
     credit: { boxType: 'credit', value: 500n, owner },
-    invite: {
-      boxType: 'invite', value: 0n, inviterId: inviter,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    },
     genesis_proof: {
       boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([1, 2, 3]),
     },
@@ -1926,6 +2169,8 @@ describe('the box-type tables', () => {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
     },
     vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
+    vouch_escrow: { boxType: 'vouch_escrow', value: 3n, owner, releaseAtBlock: 1_060 },
+    like_accrual: { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: inviter },
     // The arms with no trailing fields at all — the rows that make this map
     // exercise a box whose bytes stop after the shared prefix.
     emission: { boxType: 'emission', value: 100n },
@@ -1961,10 +2206,17 @@ describe('the box-type tables', () => {
 
   // The table pinned whole. A renumber moves every id covering the tag, so it
   // may not happen quietly.
+  //
+  // ⛔ **2 is absent and that is the pin, not an omission.** `invite` held it and
+  // the number is reserved, so what this assertion holds is that deleting a box
+  // type left a hole rather than closing one: every surviving tag keeps its own
+  // number, which is what makes "no existing box id moves" checkable rather than
+  // asserted (TYPES_INTERFACE → Primitives, the reassignment conditions).
   it('pins the table', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
-      karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
+      karma: 0, credit: 1, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
       emission: 7, treasury: 8, fee: 9, karma_pool: 10,
+      like_accrual: 11, vouch_escrow: 12,
     });
   });
 

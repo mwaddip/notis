@@ -34,7 +34,8 @@ import {
   decodeTx,
 } from '../src/serialization.js';
 import { postFieldBytes, type Post } from '../src/post.js';
-import type { Stump } from '../src/stump.js';
+import { computeTxId } from '../src/utxo.js';
+import type { PruneEntry, Stump } from '../src/stump.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -90,22 +91,32 @@ function makeBlockHeader(): BlockHeader {
   };
 }
 
+/**
+ * ⛔ **THREE SECTIONS, NOT FOUR.** `coinbaseOutputs` left the body: coinbase
+ * outputs are outputs of the block's settlement transaction, so they arrive
+ * inside `utxoTxs` like every other transaction's, and `utxoTxRoot` lost the
+ * `'coinbase'` leaf class with the field (`block.ts` → `UtxoTxTree`).
+ *
+ * A prune entry stands where the coinbase outputs did: it is the one element
+ * writer left whose width varies, so a populated body still exercises an element
+ * layout rather than only count prefixes.
+ */
 function makeUtxoTxTree(): UtxoTxTree {
   return {
     utxoTxIds: ['f'.repeat(64)],
-    // `new Uint8Array(...)` around a codec output, and it is not noise: `encodeTx`
-    // is still `cbor-x`, which returns a **Buffer**, while `readLp` returns a
-    // plain `Uint8Array`. Both satisfy `Uint8Array[]` — Buffer is a subclass —
-    // so nothing is wrong, but `toEqual` distinguishes them and a round-trip
-    // that failed on the wrapper rather than the bytes would be reporting the
-    // wrong thing. Node reads these back through `decodeTx`, which does
-    // `Buffer.from`, so neither side cares.
+    // `new Uint8Array(...)` around a codec output: `readLp` returns a plain
+    // `Uint8Array` and `toEqual` distinguishes a subclass, so a round-trip that
+    // failed on the wrapper rather than on the bytes would be reporting the
+    // wrong thing.
     utxoTxs: [new Uint8Array(encodeTx(makeTx()))],
-    pruneEntries: [],
-    coinbaseOutputs: [
-      { owner: userB, value: 5_000_000_00000000n, lockedUntilBlock: 720, isTreasury: false },
-      { owner: userA, value: 1n, lockedUntilBlock: 1, isTreasury: true },
-    ],
+    pruneEntries: [{
+      rootPostHash: 'ee'.repeat(32),
+      subtreePostIds: ['aa'.repeat(32), 'bb'.repeat(32)],
+      subtreeMerkleRoot: new Uint8Array(32).fill(0x44),
+      authorId: userA,
+      authorSignature: sig64,
+      trigger: 'storage_prune',
+    }],
   };
 }
 
@@ -176,23 +187,24 @@ describe('positional serialization', () => {
     it('UtxoTxTree with prune entries — the Merkle-leaf preimage, verbatim', () => {
       // ⛔ Prune entries moved INTO this tree — `utxoTxRoot` commits them now, and
       // the `'prune'` leaf domain is what keeps them apart from the transaction
-      // and coinbase leaves under the same root.
-      const tree: UtxoTxTree = {
-        ...makeUtxoTxTree(),
-        pruneEntries: [{
-          rootPostHash: 'ee'.repeat(32),
-          subtreePostIds: ['aa'.repeat(32), 'bb'.repeat(32)],
-          subtreeMerkleRoot: new Uint8Array(32).fill(0x44),
-          authorId: userA,
-          authorSignature: sig64,
-          trigger: 'storage_prune',
-        }],
-      };
-      expect(decodeUtxoTxTree(encodeUtxoTxTree(tree))).toEqual(tree);
+      // leaves under the same root. Those two are the only leaf classes left:
+      // `'coinbase'` retired with `CoinbaseOutput` and `'subblock'` before it.
+      expect(decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()))).toEqual(makeUtxoTxTree());
     });
 
-    it('UtxoTxTree — including both coinbase arms', () => {
-      expect(decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()))).toEqual(makeUtxoTxTree());
+    it('UtxoTxTree — several entries in one section', () => {
+      // More than one element in the section whose width varies, which is where
+      // a per-element offset error shows up as a decode failure rather than as a
+      // value that happens to round-trip.
+      const tree = makeUtxoTxTree();
+      const two: UtxoTxTree = {
+        ...tree,
+        pruneEntries: [
+          tree.pruneEntries[0]!,
+          { ...tree.pruneEntries[0]!, subtreePostIds: [], trigger: 'author' },
+        ],
+      };
+      expect(decodeUtxoTxTree(encodeUtxoTxTree(two))).toEqual(two);
     });
 
     it('OrderingBlock', () => {
@@ -203,8 +215,176 @@ describe('positional serialization', () => {
       expect(decodeStump(encodeStump(makeStump()))).toEqual(makeStump());
     });
 
-    it('UtxoTransaction — still cbor-x; the tree carries it as opaque lp bytes', () => {
+    it('UtxoTransaction — positional; the tree carries it as opaque lp bytes', () => {
       expect(decodeTx(encodeTx(makeTx()))).toEqual(makeTx());
+    });
+
+    it('UtxoTransaction — every optional field present at once', () => {
+      // `likeTarget` and `post` are mutually exclusive in practice and the
+      // encoding does not rest on it, so the round-trip that matters is the one
+      // where both tags are set and the signature map carries more than one
+      // entry: two options and a map in one tail, which is where a reader that
+      // dropped a presence tag would run the next field's bytes into the wrong
+      // slot. `post` is last and self-delimiting, so it is the one whose bytes a
+      // missing tag before it would swallow whole.
+      const full: UtxoTransaction = {
+        inputs: ['1a'.repeat(32), '2b'.repeat(32)],
+        outputs: [makeKarmaBox()],
+        signatures: { ['3c'.repeat(32)]: sig64, ['4d'.repeat(32)]: new Uint8Array(64).fill(0xef) },
+        protocolVersion: 1,
+        likeTarget: 'ab'.repeat(32),
+        post: makePost(),
+      };
+      expect(decodeTx(encodeTx(full))).toEqual(full);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The transaction codec — positional, and it moves no committed hash
+  // -------------------------------------------------------------------------
+
+  /**
+   * ⛔ **`encodeTx` IS the `TxId` preimage plus the signature array**, and that is
+   * what makes "the codec change moves no committed hash" true by construction
+   * rather than by a frozen hash happening not to move (TYPES_INTERFACE → Layout —
+   * UtxoTransaction, the wire-codec row). `computeTxId` walks the same
+   * `writeTxIdFields`, and `computeUtxoTxRoot`'s leaves are ids rather than
+   * encodings, so box ids, transaction ids, `utxoTxRoot` and `stateRoot` are
+   * byte-identical across it.
+   *
+   * The frozen ids in `utxo.test.ts` are the other half of that claim: they were
+   * pinned before this codec existed and they are unchanged after it. **Both
+   * halves are needed** — the pins alone would still hold if the two layouts had
+   * drifted apart in some way no fixture reaches, and the structural equality
+   * alone would hold if both had moved together.
+   */
+  describe('the transaction codec is the id preimage plus signatures', () => {
+    const PUBKEY_A = '3c'.repeat(32);
+
+    it('the head is the id preimage, byte for byte, and the tail is the signatures', () => {
+      const bare: UtxoTransaction = { ...makeTx(), signatures: {} };
+      const signed: UtxoTransaction = { ...makeTx(), signatures: { [PUBKEY_A]: sig64 } };
+      const bareBytes = encodeTx(bare);
+      const signedBytes = encodeTx(signed);
+      // An empty signature array is one byte, so everything before it is the
+      // preimage — and it must be identical under both.
+      const headLength = bareBytes.length - 1;
+      expect(hex(bareBytes.subarray(headLength))).toBe('00');
+      expect(hex(signedBytes.subarray(0, headLength))).toBe(hex(bareBytes.subarray(0, headLength)));
+      // …and the tail is exactly `arr(sigs, b32(pubkey) ‖ b64(sig))`.
+      expect(hex(signedBytes.subarray(headLength))).toBe('01' + PUBKEY_A + hex(sig64));
+    });
+
+    it('signatures are outside the id, so signing cannot move the id', () => {
+      // They are Ed25519 OVER the id: hashing them would make the id depend on
+      // signatures over itself. This is the property the split exists for.
+      const bare: UtxoTransaction = { ...makeTx(), signatures: {} };
+      const signed: UtxoTransaction = { ...makeTx(), signatures: { [PUBKEY_A]: sig64 } };
+      const other: UtxoTransaction = { ...makeTx(), signatures: { [PUBKEY_A]: new Uint8Array(64).fill(1) } };
+      expect(computeTxId(signed)).toBe(computeTxId(bare));
+      expect(computeTxId(other)).toBe(computeTxId(bare));
+      // …and the WIRE bytes do differ, so the codec is not simply ignoring them.
+      expect(hex(encodeTx(signed))).not.toBe(hex(encodeTx(other)));
+    });
+
+    it('the id survives the round-trip, which is what a relay cannot alter', () => {
+      const signed: UtxoTransaction = {
+        ...makeTx(),
+        signatures: { [PUBKEY_A]: sig64 },
+        likeTarget: 'ab'.repeat(32),
+      };
+      expect(computeTxId(decodeTx(encodeTx(signed)))).toBe(computeTxId(signed));
+    });
+
+    it('no field name reaches the bytes, and the whole transaction is 41 bytes', () => {
+      // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+35 for the
+      // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
+      // opt(post)=1, arr(signatures)=1. **42 until `preimages` left** — its
+      // absence marker was a byte on every transaction ever encoded, which is
+      // why removing the field moved every id rather than only the ones that
+      // carried one.
+      const bytes = encodeTx(makeTx());
+      expect(bytes.length).toBe(41);
+      for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
+        expect(hex(bytes)).not.toContain(Buffer.from(name, 'utf8').toString('hex'));
+      }
+    });
+
+    it('signatures encode as an array sorted by key, whatever order they were built in', () => {
+      // A positional format has no maps, and without the normative sort one
+      // transaction has two encodings — the malleability this format closes,
+      // reopened for the one field a relay handles.
+      const a = '11'.repeat(32), b = '22'.repeat(32);
+      const sigA = new Uint8Array(64).fill(0xa1), sigB = new Uint8Array(64).fill(0xb2);
+      const forward: UtxoTransaction = { ...makeTx(), signatures: { [a]: sigA, [b]: sigB } };
+      const reverse: UtxoTransaction = { ...makeTx(), signatures: { [b]: sigB, [a]: sigA } };
+      expect(hex(encodeTx(forward))).toBe(hex(encodeTx(reverse)));
+      expect(hex(encodeTx(forward))).toContain(a + hex(sigA) + b + hex(sigB));
+    });
+
+    it('a mis-sorted signature array has no encoding — the compare says so', () => {
+      // Not a rule in the codec: the re-encode compare is where every canonicity
+      // rule in this format is enforced, and a swapped pair comes back
+      // non-canonical rather than decoding into a differently-ordered map.
+      const a = '11'.repeat(32), b = '22'.repeat(32);
+      const sigA = new Uint8Array(64).fill(0xa1), sigB = new Uint8Array(64).fill(0xb2);
+      const tx: UtxoTransaction = { ...makeTx(), signatures: { [a]: sigA, [b]: sigB } };
+      const good = hex(encodeTx(tx));
+      const swapped = good.replace(a + hex(sigA) + b + hex(sigB), b + hex(sigB) + a + hex(sigA));
+      expect(swapped).not.toBe(good);
+      expect(failureOf(() => decodeTx(Buffer.from(swapped, 'hex')))).toBe('non-canonical');
+    });
+
+    it('a duplicated signature key has no encoding either', () => {
+      // Two entries collapse into one map key on decode and re-encode shorter, so
+      // the compare rejects them. Nothing in the reader has to count keys.
+      const a = '11'.repeat(32);
+      const sigA = new Uint8Array(64).fill(0xa1);
+      const tx: UtxoTransaction = { ...makeTx(), signatures: { [a]: sigA } };
+      const good = hex(encodeTx(tx));
+      const doubled = good.replace('01' + a + hex(sigA), '02' + a + hex(sigA) + a + hex(sigA));
+      expect(failureOf(() => decodeTx(Buffer.from(doubled, 'hex')))).toBe('non-canonical');
+    });
+
+    it('carries the four-part boundary check like every other decoder', () => {
+      const bytes = encodeTx(makeTx());
+      // 2 — trailing bytes are a rejection, not slack.
+      expect(failureOf(() => decodeTx(withTrailingByte(bytes)))).toBe('trailing-bytes');
+      // 3 — `protocolVersion` padded: same value, longer encoding. Its offset is
+      // asserted rather than assumed — arr(inputs)=1 and arr(outputs)=1+35 put it
+      // at 37 — so a layout change fails here as a wrong-offset error rather than
+      // by silently padding another field. It was 38 while `preimages` sat in
+      // front of it, and this is where that shift is visible.
+      const PROTOCOL_VERSION_OFFSET = 37;
+      expect(bytes[PROTOCOL_VERSION_OFFSET]).toBe(2);
+      const padded = new Uint8Array(bytes.length + 1);
+      padded.set(bytes.subarray(0, PROTOCOL_VERSION_OFFSET));
+      padded.set([0x82, 0x00], PROTOCOL_VERSION_OFFSET);   // vlqU(2), ten-bit form
+      padded.set(bytes.subarray(PROTOCOL_VERSION_OFFSET + 1), PROTOCOL_VERSION_OFFSET + 2);
+      expect(failureOf(() => decodeTx(padded))).toBe('non-canonical');
+      // 1 — truncation is wire's own rejection.
+      const short = failureOf(() => decodeTx(bytes.subarray(0, bytes.length - 3)));
+      expect(short).toBeInstanceOf(ReaderError);
+      expect(short).not.toBeInstanceOf(CodecError);
+      // …and garbage is a ReaderError rather than an accidental TypeError.
+      expect(() => decodeTx(new Uint8Array([0xff, 0xfe, 0xfd]))).toThrow(ReaderError);
+    });
+
+    it('a signature of the wrong width has no encoding at all', () => {
+      // `b64` from bytes, so it throws rather than sentinelling: padding a
+      // 63-byte signature to 64 would map it onto a well-formed one.
+      for (const width of [0, 63, 65]) {
+        const tx: UtxoTransaction = { ...makeTx(), signatures: { [PUBKEY_A]: new Uint8Array(width) } };
+        expect(() => encodeTx(tx)).toThrow();
+      }
+      const badKey: UtxoTransaction = { ...makeTx(), signatures: { ['ZZ'.repeat(32)]: sig64 } };
+      expect(() => encodeTx(badKey)).toThrow();
+    });
+
+    it('junk on a transaction is unrepresentable, as it is on every other struct', () => {
+      const junk = { ...makeTx(), evil: true, moreEvil: 'x'.repeat(200) };
+      expect(hex(encodeTx(junk as UtxoTransaction))).toBe(hex(encodeTx(makeTx())));
+      expect(decodeTx(encodeTx(junk as UtxoTransaction))).toEqual(makeTx());
     });
   });
 
@@ -237,48 +417,33 @@ describe('positional serialization', () => {
       // Both are "a 32-byte Ed25519 public key" written `b32` in the contract,
       // and here both are `Uint8Array` — so the writer follows the schema type
       // rather than the notation. The hex writer would throw on either.
-      const tree = makeUtxoTxTree();
-      const withPrune: UtxoTxTree = {
-        ...tree,
-        pruneEntries: [{
-          rootPostHash: 'ee'.repeat(32),
-          subtreePostIds: [],
-          subtreeMerkleRoot: new Uint8Array(32).fill(0x44),
-          authorId: userA,
-          authorSignature: sig64,
-          trigger: 'author',
-        }],
-      };
-      const back = decodeUtxoTxTree(encodeUtxoTxTree(withPrune));
+      const back = decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()));
       expect(back.pruneEntries[0]!.authorId).toBeInstanceOf(Uint8Array);
       // …while its sibling `rootPostHash` is hex, in the same struct.
       expect(typeof back.pruneEntries[0]!.rootPostHash).toBe('string');
     });
 
-    it('coinbase value is the THROWING bigint writer, not the total number one', () => {
-      // `vlqU` in the table, `writeVlqU64OrThrow` in the code, because the field
-      // is `bigint`. The total `number` writer would have sentinelled every
-      // coinbase output ever produced; here the ceiling throws instead.
-      const tree = makeUtxoTxTree();
-      expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).coinbaseOutputs[0]!.value)
-        .toBe(5_000_000_00000000n);
-      const overflow: UtxoTxTree = {
-        ...tree,
-        coinbaseOutputs: [{ ...tree.coinbaseOutputs[0]!, value: 2n ** 64n }],
-      };
-      expect(() => encodeUtxoTxTree(overflow)).toThrow();
-    });
+    // ⛔ **Two rows of this section lost their subject, not their argument.**
+    // `CoinbaseOutput.value` was the body's only `bigint` — `vlqU` in the table,
+    // `writeVlqU64OrThrow` in the code — and `isTreasury` its only `boolean`,
+    // `u8` in the table and `writeBool` in the code. Both fields are gone with
+    // the struct, and no field left in `UtxoTxTree` reaches either writer, so
+    // there is nothing here for those rows to pin. **The class is still pinned in
+    // this package**, one struct over: box `value` is the `vlqU64` row and
+    // `karma.decayBurn` the `writeBool` one, both in `utxo.test.ts`.
 
-    it('coinbase isTreasury is writeBool, and 0xff has no decoding', () => {
-      // `u8` in the table; the field is `boolean`, so the writer is the total
-      // one whose `{0,1}` domain leaves `0xff` unreachable. `writeU8OrThrow`
-      // would have thrown on every block.
-      const tree = decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()));
-      expect(tree.coinbaseOutputs[0]!.isTreasury).toBe(false);
-      expect(tree.coinbaseOutputs[1]!.isTreasury).toBe(true);
-      // The sentinel a malformed value takes is one-way: it cannot decode back.
-      const bad = { ...makeUtxoTxTree() };
-      bad.coinbaseOutputs = [{ ...bad.coinbaseOutputs[0]!, isTreasury: 'yes' as unknown as boolean }];
+    it('trigger is enum8, and the out-of-table byte has no decoding', () => {
+      // The body's remaining notation-versus-type row: `enum8` in the table and a
+      // closed string set in the code, total by a `0xff` its tag set cannot
+      // reach. `writeU8OrThrow` would throw on every prune entry; a lenient
+      // reader would map 254 byte strings onto one value.
+      const tree = makeUtxoTxTree();
+      expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).pruneEntries[0]!.trigger)
+        .toBe('storage_prune');
+      const bad: UtxoTxTree = {
+        ...tree,
+        pruneEntries: [{ ...tree.pruneEntries[0]!, trigger: 'nonsense' as PruneEntry['trigger'] }],
+      };
       const bytes = encodeUtxoTxTree(bad);
       expect(hex(bytes)).toContain('ff');
       expect(() => decodeUtxoTxTree(bytes)).toThrow(ReaderError);
@@ -290,24 +455,33 @@ describe('positional serialization', () => {
   // -------------------------------------------------------------------------
 
   describe('one body, and the sub-block sections are unrepresentable', () => {
-    it('the tree encodes exactly four arrays, in field order', () => {
-      // An empty tree is four count bytes and nothing else. A fifth array — or a
-      // missing one — shows up as a length delta, which is what makes "the
-      // sections are these four, in this order" a measurement rather than an
+    it('the tree encodes exactly three arrays, in field order', () => {
+      // An empty tree is three count bytes and nothing else. A fourth array — or
+      // a missing one — shows up as a length delta, which is what makes "the
+      // sections are these three, in this order" a measurement rather than an
       // inspection. Field order is also the normative LEAF order for
       // `utxoTxRoot` (TYPES_INTERFACE → OrderingBlock).
+      //
+      // ⛔ **Four until `coinbaseOutputs` left**, and the count is the whole of
+      // what this assertion is for: a tree that still wrote the section would be
+      // four bytes here, and a reader that still read one would run past the end.
       const empty: UtxoTxTree = {
-        utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [],
+        utxoTxIds: [], utxoTxs: [], pruneEntries: [],
       };
       const bytes = encodeUtxoTxTree(empty);
-      expect(bytes.length).toBe(4);
-      expect([...bytes]).toEqual([0, 0, 0, 0]);
+      expect(bytes.length).toBe(3);
+      expect([...bytes]).toEqual([0, 0, 0]);
     });
 
-    it('a decoded tree carries the four sections and nothing else', () => {
+    it('a decoded tree carries the three sections and nothing else', () => {
       const decoded = decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()));
       expect(Object.keys(decoded))
-        .toEqual(['utxoTxIds', 'utxoTxs', 'pruneEntries', 'coinbaseOutputs']);
+        .toEqual(['utxoTxIds', 'utxoTxs', 'pruneEntries']);
+      // The retired section is unrepresentable, not merely unwritten: an object
+      // carrying it encodes to the same bytes as one without.
+      const withCoinbase = { ...makeUtxoTxTree(), coinbaseOutputs: [{ owner: userB, value: 1n }] };
+      expect(hex(encodeUtxoTxTree(withCoinbase as UtxoTxTree)))
+        .toBe(hex(encodeUtxoTxTree(makeUtxoTxTree())));
     });
 
     it('a sub-block section is unrepresentable, not merely unwritten', () => {
@@ -344,15 +518,12 @@ describe('positional serialization', () => {
 
     it('body and entry-level junk likewise', () => {
       const tree = makeUtxoTxTree();
-      // Junk the FIRST output only — the array keeps its length, so a bytes
+      // Junk the entry, not the tree — the array keeps its length, so a bytes
       // difference can only come from the junk key and not from a dropped
       // element.
       const junked: UtxoTxTree = {
         ...tree,
-        coinbaseOutputs: [
-          { ...tree.coinbaseOutputs[0]!, evil: 1 } as never,
-          tree.coinbaseOutputs[1]!,
-        ],
+        pruneEntries: [{ ...tree.pruneEntries[0]!, evil: 1 } as never],
       };
       expect(hex(encodeUtxoTxTree(junked))).toBe(hex(encodeUtxoTxTree(tree)));
     });
@@ -563,17 +734,29 @@ describe('positional serialization', () => {
     it('OrderingBlock: the whole frame moved', () => {
       // ⚠ **Transport, not commitment — this pin moves for reasons the others
       // cannot.** The frame carries `utxoTxs` as `arr(utxoTxs, lp)`, opaque
-      // length-prefixed `encodeTx` output, and `encodeTx` is cbor-x over the
-      // live object: it writes whatever own properties the fixture happens to
-      // carry, key names and all. So adding or removing a *field* on a box or
-      // transaction moves this hash with no format change at all.
+      // length-prefixed `encodeTx` output, so adding or removing a *field* on a
+      // box or transaction moves this hash with no format change at all.
       //
       // Nothing committed follows it. `utxoTxRoot` is a Merkle root over
-      // `utxoTxIds`, `serializePruneEntry` and `coinbaseOutputBytes` (node's
-      // `computeUtxoTxRoot`) and never reads `utxoTxs`; the id itself is
-      // `computeTxId`, positional and routed through `canonicalBoxBytes`. A move
-      // here is a consensus event only if the BlockHeader pin above moved too.
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('110b0deca7717dd358414a53268080070fbad7fe928addf32e5e26c25156aa3e');
+      // `utxoTxIds` and `serializePruneEntry` (node's `computeUtxoTxRoot`) and
+      // never reads `utxoTxs`; the id itself is `computeTxId`, positional and
+      // routed through `canonicalBoxBytes`. A move here is a consensus event only
+      // if the BlockHeader pin above moved too — and it did not.
+      //
+      // ⚠ **It moved THREE times in this unit, for three unrelated reasons**, and
+      // this pin cannot tell them apart — which is the whole content of calling it
+      // transport:
+      //
+      //  1. `coinbaseOutputs` left the body, so the tree lost a section.
+      //  2. `encodeTx` became positional, so the `utxoTxs` payload is other bytes.
+      //  3. `preimages` left the transaction, so that payload lost a byte.
+      //
+      // ⛔ **Only (3) is a consensus event, and NOTHING HERE SAYS WHICH.** The
+      // BlockHeader pin above is untouched by all three; the frozen ids in
+      // `utxo.test.ts` are untouched by (1) and (2) and moved under (3). **Those
+      // are the pins that carry the verdict** — read this one only as "the frame
+      // changed", never as evidence about what.
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('c4130f6fbfdd256cdd6b36c172e8a57c5514e424a4083acd74653415828ce654');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

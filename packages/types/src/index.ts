@@ -113,11 +113,12 @@ export type {
   MintReason,
   KarmaBox,
   CreditBox,
-  InviteBox,
   GenesisProofBox,
   BondBox,
   PostLockBox,
   VouchBox,
+  VouchEscrowBox,
+  LikeAccrualBox,
   EmissionBox,
   TreasuryBox,
   FeeBox,
@@ -133,26 +134,26 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger 
 
 // Blocks
 //
-// `coinbaseOutputBytes` is a block element whose wire bytes are also a Merkle
-// leaf preimage (`'coinbase'` under `utxoTxRoot`). It is exported for the same
-// reason `serializePruneEntry` is: node builds those leaves and must not hold a
-// second statement of the layout. The `leafHash` domain tag is the caller's —
-// see TYPES_INTERFACE → Layout — Merkle leaf preimages.
+// `serializePruneEntry` (above, with the stumps) is the one block element whose
+// wire bytes are also a Merkle leaf preimage, so it is the one this package
+// exports for node to build a leaf from. The `leafHash` domain tag is the
+// caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
 //
-// Reserved, never to be reused: the struct names `SubBlock`, `SubBlockTree` and
-// `SubBlockEntry`, the functions `subBlockEntryBytes` and `subBlockFromPost`,
-// the header field `subBlockRoot`, the body field `subBlockRefs`, and the leaf
-// domain `'subblock'` — a leaf domain sits inside a consensus preimage, so reuse
-// would make two different trees share a byte string.
+// Reserved, never to be reused: the struct names `SubBlock`, `SubBlockTree`,
+// `SubBlockEntry` and `CoinbaseOutput`, the functions `subBlockEntryBytes`,
+// `subBlockFromPost` and `coinbaseOutputBytes`, the header field `subBlockRoot`,
+// the body fields `subBlockRefs` and `coinbaseOutputs`, and the leaf domains
+// `'subblock'` and `'coinbase'` — a leaf domain sits inside a consensus
+// preimage, so reuse would make two different trees share a byte string.
+// Coinbase outputs are outputs of the block's settlement transaction now, so
+// they reach `utxoTxRoot` through the `'utxotx'` leaf its id already gets.
 export {
   EMPTY_STATE_ROOT,
-  coinbaseOutputBytes,
 } from './block.js';
 export type {
   OrderingBlock,
   BlockHeader,
   UtxoTxTree,
-  CoinbaseOutput,
 } from './block.js';
 
 // The positional codec layer (`codec.ts`)

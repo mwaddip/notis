@@ -19,33 +19,29 @@
  * ordering block carrying arbitrary extra keys hashing to a byte-identical
  * `blockHash` while the encoding differs by 395 bytes.
  *
- * ## The three element writers hold no layout of their own
+ * ## The element writer holds no layout of its own
  *
- * `writeSubBlockEntry`, `writePruneEntry` and `writeCoinbaseOutput` are one
- * `w.writeBytes(...)` each, delegating to `subBlockEntryBytes`,
- * `serializePruneEntry` and `coinbaseOutputBytes` beside their structs. Those
- * three are exactly the elements whose bytes are also Merkle leaf preimages, and
- * the delegation is what keeps the wire form and the committed form one
- * statement instead of two. **None of the three may grow a field writer of its
- * own** — a reviewer can check that at a glance, which is the point of the
- * shape.
+ * `writePruneEntry` is one `w.writeBytes(...)`, delegating to
+ * `serializePruneEntry` beside its struct. A prune entry is the one element left
+ * whose bytes are also a Merkle leaf preimage — `'coinbase'` retired with
+ * `CoinbaseOutput` and `'subblock'` before it — and the delegation is what keeps
+ * the wire form and the committed form one statement instead of two. **It may
+ * not grow a field writer of its own** — a reviewer can check that at a glance,
+ * which is the point of the shape.
  *
  * ## What is `cbor-x`, and why that is not an oversight
  *
- * `encodeStump` and `encodeTx`. Neither is reachable from a block struct —
- * `UtxoTxTree` commits `PruneEntry`, not `Stump`, and carries transactions as
- * `arr(utxoTxs, lp)`, opaque length-prefixed bytes. So neither is a consensus
- * preimage: transaction identity comes from `computeTxId`, which is positional,
- * and no committed root covers the stump codec.
+ * `encodeStump`, and nothing else. No block struct embeds a `Stump` —
+ * `UtxoTxTree` commits `PruneEntry`, whose preimage is positional — so it is not
+ * a consensus preimage and no committed root covers it.
  *
  * ⚠ **`TYPES_INTERFACE` → Layout — Stump specifies a positional form for
- * `Stump` that this file does not implement**, and its Serialization section
- * records the same gap for `encodeTx`. Nothing here closes either.
+ * `Stump` that this file does not implement.** That gap is still open; the
+ * `encodeTx` one beside it is closed.
  *
- * ⚠ **`encodeTx` is the codec a post's payload crosses the wire under.** A post
- * rides `UtxoTransaction.post`, and `utxoTxs` carries CBOR — so the positional
- * `POST` codec below is the *id-preimage* statement of a post's layout, and
- * cbor-x is what a block body actually transports.
+ * ✅ **`encodeTx` is positional**, so the codec a post's payload crosses the wire
+ * under and the one its `TxId` preimage is taken over are now the same layout, not
+ * two dialects — `writeTxIdFields` (`utxo.ts`) is the single statement both reach.
  */
 
 import { encode, decode } from 'cbor-x';
@@ -57,15 +53,11 @@ import {
   encodeStruct,
   lpByteLength,
   readArr,
-  readBool,
   readBytesN,
   readHexN,
   readLp,
   readLpUtf8,
   readVlqU,
-  readVlqU64,
-  vlqU64ByteLength,
-  vlqUByteLength,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
@@ -73,15 +65,13 @@ import {
   writeLpUtf8,
   writeVlqU,
 } from './codec.js';
-import type { Post } from './post.js';
-import type { UtxoTransaction } from './utxo.js';
+import { postFieldBytes, readPostFields, type Post } from './post.js';
+import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
 import { TRIGGER, serializePruneEntry, type PruneEntry, type Stump } from './stump.js';
-import {
-  coinbaseOutputBytes,
-  type BlockHeader,
-  type CoinbaseOutput,
-  type UtxoTxTree,
-  type OrderingBlock,
+import type {
+  BlockHeader,
+  UtxoTxTree,
+  OrderingBlock,
 } from './block.js';
 
 // ---------------------------------------------------------------------------
@@ -113,22 +103,17 @@ import {
  */
 const POST: StructCodec<Post> = {
   name: 'post',
+  // ⛔ **Both halves DELEGATE to `post.ts`, and neither restates the layout.**
+  // `postFieldBytes` is the normative writer and `readPostFields` its adjacent
+  // reader, and the same pair is reached from inside `txIdBytes`' `post` option —
+  // so a post's fields have one statement whether they arrive standalone or
+  // inside the transaction that creates them. Restating either half here would
+  // put two statements of one layout in two files, free to disagree with no
+  // compiler signal.
   write(w, p) {
-    writeLpUtf8(w, p.content);
-    writeBytesNOrThrow(w, p.author, 32);
-    writeArr(w, p.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
-    writeVlqU(w, p.protocolVersion);
-    writeVlqU(w, p.timestamp);
+    w.writeBytes(postFieldBytes(p));
   },
-  read(r) {
-    return {
-      content: readLpUtf8(r),
-      author: readBytesN(r, 32),
-      parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
-      protocolVersion: readVlqU(r),
-      timestamp: readVlqU(r),
-    };
-  },
+  read: readPostFields,
 };
 
 export function encodePost(post: Post): Uint8Array {
@@ -284,54 +269,20 @@ function pruneEntryByteLength(e: PruneEntry): number {
 // ---------------------------------------------------------------------------
 
 /**
- * `b32(owner)` ‖ `vlqU64(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`.
- *
- * **The write half delegates to `coinbaseOutputBytes`** — same rule as
- * `writeSubBlockEntry` above: those bytes are the `'coinbase'` Merkle leaf
- * preimage committed under `utxoTxRoot`, so the output's wire form and its
- * committed form are one statement, not two. The three rows where the
- * contract's notation and the field's schema type disagree, and the three
- * missing domain pins that leave two of its writers reachable from the encode
- * side, are documented with the struct in `block.ts`.
- */
-function writeCoinbaseOutput(w: ByteWriter, o: CoinbaseOutput): void {
-  w.writeBytes(coinbaseOutputBytes(o));
-}
-
-function readCoinbaseOutput(r: ByteReader): CoinbaseOutput {
-  return {
-    owner: readBytesN(r, 32),
-    value: readVlqU64(r),
-    lockedUntilBlock: readVlqU(r),
-    isTreasury: readBool(r),
-  };
-}
-
-/**
- * The width `writeCoinbaseOutput` produces. Two of its four fields are variable
- * — a `vlqU` over the full u64 and one over a `number` — so an output's size
- * follows its *values*, not just its shape: a 1-base-unit reward and a
- * 5,000,000-credit one differ by six bytes.
- *
- * `isTreasury` is a byte on every input, per `writeBool`'s `0xff`.
- */
-function coinbaseOutputByteLength(o: CoinbaseOutput): number {
-  return (
-    32 +                                  // owner            b32
-    vlqU64ByteLength(o.value) +           // value            vlqU64
-    vlqUByteLength(o.lockedUntilBlock) +  // lockedUntilBlock vlqU
-    1                                     // isTreasury       u8
-  );
-}
-
-/**
- * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖
- * `arr(coinbaseOutputs)`.
+ * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`.
  *
  * **The block's one committed body.** Field order here is the same order
  * `computeUtxoTxRoot` lays its leaves in, and that order is normative
  * (TYPES_INTERFACE → OrderingBlock) — the wire form and the committed form walk
  * the sections in step rather than each choosing for itself.
+ *
+ * ⛔ **THREE SECTIONS, NOT FOUR.** `coinbaseOutputs` was the last array and is
+ * gone: coinbase outputs are outputs of the block's settlement transaction, so
+ * they arrive inside `utxoTxs` like every other transaction's (`block.ts` →
+ * `UtxoTxTree`). Dropping the **last** array is a deletion in place — the three
+ * before it keep their positions — but `utxoTxTreeByteLength` computes the same
+ * number a second way and loses the term in the same change, or two ways of
+ * computing one length diverge with no compiler signal.
  *
  * `utxoTxs` stays opaque: transactions cross as length-prefixed bytes, so this
  * tree does not depend on the transaction codec. `writeLp` is total — a
@@ -347,14 +298,12 @@ const UTXO_TX_TREE: StructCodec<UtxoTxTree> = {
     writeArr(w, t.utxoTxIds, (ww, id) => writeHexNOrThrow(ww, id, 32));
     writeArr(w, t.utxoTxs, writeLp);
     writeArr(w, t.pruneEntries, writePruneEntry);
-    writeArr(w, t.coinbaseOutputs, writeCoinbaseOutput);
   },
   read(r) {
     return {
       utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
       utxoTxs: readArr(r, readLp),
       pruneEntries: readArr(r, readPruneEntry),
-      coinbaseOutputs: readArr(r, readCoinbaseOutput),
     };
   },
 };
@@ -392,8 +341,7 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
   return (
     arrByteLength(t.utxoTxIds, () => 32) +
     arrByteLength(t.utxoTxs, lpByteLength) +
-    arrByteLength(t.pruneEntries, pruneEntryByteLength) +
-    arrByteLength(t.coinbaseOutputs, coinbaseOutputByteLength)
+    arrByteLength(t.pruneEntries, pruneEntryByteLength)
   );
 }
 
@@ -453,24 +401,72 @@ export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
 }
 
 // ---------------------------------------------------------------------------
-// UTXO transaction — cbor-x
+// UTXO transaction — TYPES_INTERFACE → Layout — UtxoTransaction, wire-codec row
 // ---------------------------------------------------------------------------
-//
-// ⚠ **No `serializeTx` and no `serializeBox` here, and neither may be added.** A
-// transaction's identity comes from `computeTxId` in `utxo.ts`, which is
-// positional and routes outputs through `canonicalBoxBytes`; a third encoder
-// built on cbor-x's *default* `encode` would be neither of the two encoders that
-// matter (`TYPES_INTERFACE` → BoxId).
-//
-// These two are what `UtxoTxTree.utxoTxs` carries, and the tree carries them as
-// `arr(utxoTxs, lp)` — opaque bytes with a length prefix — so no block struct
-// depends on their shape. `TYPES_INTERFACE` → Layout — UtxoTransaction specifies
-// a positional form this codec does not implement.
+
+/**
+ * `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
+ *
+ * ⛔ **The six preimage fields are NOT restated here.** `writeTxIdFields` and
+ * `readTxIdFields` (`utxo.ts`) are the single statement of them, and this codec
+ * is that pair plus the signature array — so the wire form and the `TxId`
+ * preimage share one writer rather than agreeing by inspection.
+ *
+ * ✅ **THIS MOVES NO COMMITTED HASH.** `computeTxId` walks the same
+ * `writeTxIdFields`, and `computeUtxoTxRoot`'s leaves are `leafHash('utxotx',
+ * id)` — the id, never the encoding — so every box id, transaction id,
+ * `utxoTxRoot` and `stateRoot` is byte-identical across the change from `cbor-x`.
+ * What moves is the **wire**: peers must agree on this codec to decode a body at
+ * all, and `utxoTxTreeByteLength` gates `MAX_BLOCK_BODY_BYTES`, so they must agree
+ * in order to agree on whether a block fits.
+ *
+ * **Signatures are the only field this layout adds to the preimage**, and they
+ * are correctly absent from it: they are Ed25519 *over* the `TxId`, so hashing
+ * them would make the id depend on signatures over itself.
+ *
+ * `signatures` is a **map, and a positional format has none** — it encodes as an
+ * array sorted by raw key bytes ascending (TYPES_INTERFACE → Primitives, the
+ * normative map sort), or one transaction would have two encodings and the
+ * malleability this format closes would reopen for the one field a relay handles.
+ * Keys are lowercase hex, so sorting the strings and sorting the decoded bytes
+ * give the same order, and `signatures` is the only map left in this layout for
+ * that argument to carry.
+ *
+ * ⛔ **A duplicate or out-of-order key has no encoding, and the boundary check is
+ * what says so rather than a rule here.** Duplicates collapse into one map entry
+ * on decode and re-encode shorter; a mis-sorted array re-encodes sorted. Both
+ * come back as `non-canonical` from `decodeStruct`'s compare, which is where every
+ * other canonicity rule in this format is enforced.
+ *
+ * ## Totality
+ *
+ * Both signature fields **throw**: a pubkey outside 64 lowercase hex and a
+ * signature that is not exactly 64 bytes have no encoding rather than sharing one
+ * with a well-formed pair (TYPES_INTERFACE → Totality). Their domain is
+ * `checkTxEnvelope`'s (node), which pins the map's keys — and the values are
+ * `b64` for the same reason `validatorSignature` is.
+ */
+const TX: StructCodec<UtxoTransaction> = {
+  name: 'utxoTransaction',
+  write(w, tx) {
+    writeTxIdFields(w, tx);
+    const sortedKeys = Object.keys(tx.signatures).sort();
+    writeArr(w, sortedKeys, (ww, pubkey) => {
+      writeHexNOrThrow(ww, pubkey, 32);
+      writeBytesNOrThrow(ww, tx.signatures[pubkey]!, 64);
+    });
+  },
+  read(r) {
+    const fields = readTxIdFields(r);
+    const entries = readArr(r, (rr) => [readHexN(rr, 32), readBytesN(rr, 64)] as const);
+    return { ...fields, signatures: Object.fromEntries(entries) };
+  },
+};
 
 export function encodeTx(tx: UtxoTransaction): Uint8Array {
-  return encode(tx) as unknown as Uint8Array;
+  return encodeStruct(TX, tx);
 }
 
 export function decodeTx(bytes: Uint8Array): UtxoTransaction {
-  return decode(Buffer.from(bytes)) as UtxoTransaction;
+  return decodeStruct(TX, bytes);
 }

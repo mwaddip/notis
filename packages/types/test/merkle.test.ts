@@ -108,8 +108,11 @@ describe('leaf/node domain separation (L-9)', () => {
 
   it('no leaf domain in use can begin with the node tag', () => {
     // Every leafHash call site in the monorepo passes one of these literals.
-    // ('likebox' and 'epoch' are retired — reserved, never reuse.)
-    for (const d of ['stump', 'subblock', 'prune', 'utxotx', 'coinbase']) {
+    // ('likebox', 'epoch', 'subblock' and 'coinbase' are retired — reserved,
+    // never reuse. 'coinbase' went with `CoinbaseOutput`: coinbase outputs are
+    // outputs of the block's settlement transaction, so they reach `utxoTxRoot`
+    // under 'utxotx' with every other transaction.)
+    for (const d of ['stump', 'prune', 'utxotx']) {
       expect(new TextEncoder().encode(d + '\0')[0]).not.toBe(0x00);
     }
   });
