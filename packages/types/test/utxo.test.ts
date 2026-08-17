@@ -26,7 +26,7 @@ import {
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -672,13 +672,14 @@ describe('genesis_proof', () => {
 });
 
 // ---------------------------------------------------------------------------
-// emission, treasury and fee — the types whose encoding stops at the prefix
+// emission, treasury, fee and karma_pool — the types whose encoding stops at
+// the prefix
 // ---------------------------------------------------------------------------
 
 /**
- * Tags 7, 8 and 9, and **no trailing fields on any of them** (TYPES_INTERFACE →
- * Layout — Boxes). None of the three names an owner — block application is the
- * only spender — so the content encoding is the shared
+ * Tags 7, 8, 9 and 10, and **no trailing fields on any of them**
+ * (TYPES_INTERFACE → Layout — Boxes). None of the four names an owner — block
+ * application is the only spender — so the content encoding is the shared
  * `enum8(boxType) ‖ vlqU64(value)` and nothing else.
  *
  * **The empty tail is the shape the rest of the corpus does not hold.** Every
@@ -694,6 +695,7 @@ describe('genesis_proof', () => {
  *   07 | 64     — emission, value 100
  *   08 | 64     — treasury, value 100
  *   09 | 64     — fee, value 100
+ *   0a | 64     — karma_pool, value 100
  *   ^tag ^vlqU64(value)
  */
 const EMISSION_CANDIDATE: CandidateOf<EmissionBox> = {
@@ -704,6 +706,9 @@ const TREASURY_CANDIDATE: CandidateOf<TreasuryBox> = {
 };
 const FEE_CANDIDATE: CandidateOf<FeeBox> = {
   boxType: 'fee', value: 100n,
+};
+const KARMA_POOL_CANDIDATE: CandidateOf<KarmaPoolBox> = {
+  boxType: 'karma_pool', value: 100n,
 };
 
 /** The tailed arms, at their own floor — one candidate per type that has a tail. */
@@ -717,16 +722,18 @@ const TAILED_CANDIDATES: AnyBoxCandidate[] = [
   { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
 ];
 
-describe('emission, treasury and fee', () => {
+describe('emission, treasury, fee and karma_pool', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
   it('each encodes to its tag and value, and nothing else', () => {
     expect(hexOf(canonicalBoxBytes(EMISSION_CANDIDATE))).toBe('0764');
     expect(hexOf(canonicalBoxBytes(TREASURY_CANDIDATE))).toBe('0864');
     expect(hexOf(canonicalBoxBytes(FEE_CANDIDATE))).toBe('0964');
+    expect(hexOf(canonicalBoxBytes(KARMA_POOL_CANDIDATE))).toBe('0a64');
     expect(canonicalBoxBytes(EMISSION_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.emission);
     expect(canonicalBoxBytes(TREASURY_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.treasury);
     expect(canonicalBoxBytes(FEE_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.fee);
+    expect(canonicalBoxBytes(KARMA_POOL_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.karma_pool);
   });
 
   it('two bytes is the smallest legal box of any type', () => {
@@ -737,6 +744,7 @@ describe('emission, treasury and fee', () => {
     const emptyEmission: CandidateOf<EmissionBox> = { ...EMISSION_CANDIDATE, value: 0n };
     const emptyTreasury: CandidateOf<TreasuryBox> = { ...TREASURY_CANDIDATE, value: 0n };
     const emptyFee: CandidateOf<FeeBox> = { ...FEE_CANDIDATE, value: 0n };
+    const emptyPool: CandidateOf<KarmaPoolBox> = { ...KARMA_POOL_CANDIDATE, value: 0n };
     const smallest = canonicalBoxBytes(emptyEmission);
     expect(hexOf(smallest)).toBe('0700');
     expect(smallest.length).toBe(2);
@@ -745,6 +753,10 @@ describe('emission, treasury and fee', () => {
     // FeeBox), and it still ENCODES: the no-zero rule is node's, and this
     // encoder's domain is the u64.
     expect(hexOf(canonicalBoxBytes(emptyFee))).toBe('0900');
+    // The pool's zero is the one the ledger holds. Emission terminates and
+    // creates no zero successor; the pool never terminates, because a burn must
+    // always have somewhere to return (TYPES_INTERFACE → KarmaPoolBox).
+    expect(hexOf(canonicalBoxBytes(emptyPool))).toBe('0a00');
     // Nothing else reaches two. Every other arm carries a tail, so this is the
     // floor for the whole format rather than for the empty-tail types.
     for (const candidate of TAILED_CANDIDATES) {
@@ -756,13 +768,13 @@ describe('emission, treasury and fee', () => {
     // The `invite`/`bond` case with the trailing fields removed: same value,
     // different type, and byte 0 is the whole of the difference. The ids part
     // on the provenance `computeBoxId` appends, not on the content bytes.
-    const encoded = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]
+    const encoded = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE, KARMA_POOL_CANDIDATE]
       .map((c) => hexOf(canonicalBoxBytes(c)));
-    expect(encoded.map((h) => h.slice(0, 2))).toEqual(['07', '08', '09']);
+    expect(encoded.map((h) => h.slice(0, 2))).toEqual(['07', '08', '09', '0a']);
     expect(new Set(encoded.map((h) => h.slice(2))).size).toBe(1);
-    const ids = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]
+    const ids = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE, KARMA_POOL_CANDIDATE]
       .map((c) => computeCandidateBoxId(c, FIXTURE_TX_ID, 0));
-    expect(new Set(ids).size).toBe(3);
+    expect(new Set(ids).size).toBe(4);
   });
 
   it('identical content bytes still get distinct ids, from provenance alone', () => {
@@ -777,7 +789,9 @@ describe('emission, treasury and fee', () => {
   });
 
   it('round-trips through the box record', () => {
-    for (const candidate of [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]) {
+    for (const candidate of [
+      EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE, KARMA_POOL_CANDIDATE,
+    ]) {
       const record = boxRecordFromBytes(boxRecordBytes(candidate, FIXTURE_TX_ID, 0));
       expect(record).toEqual({
         candidate: { boxType: candidate.boxType, value: 100n },
@@ -821,7 +835,22 @@ describe('emission, treasury and fee', () => {
       expect(() => canonicalBoxBytes({ ...EMISSION_CANDIDATE, value }), `${value}`).toThrow();
       expect(() => canonicalBoxBytes({ ...TREASURY_CANDIDATE, value }), `${value}`).toThrow();
       expect(() => canonicalBoxBytes({ ...FEE_CANDIDATE, value }), `${value}`).toThrow();
+      expect(() => canonicalBoxBytes({ ...KARMA_POOL_CANDIDATE, value }), `${value}`).toThrow();
     }
+  });
+
+  it('the pool encodes at its genesis value, the top of vlqU64s range', () => {
+    // `2^64 - 1` is the whole of a network's karma supply and the value genesis
+    // puts in the box (TYPES_INTERFACE → KarmaPoolBox). It is also the largest
+    // value `writeVlqU64OrThrow` accepts, so the pool is the one box type whose
+    // ordinary state sits on the writer's ceiling rather than well inside it.
+    // `pool.value + circulating karma == 2^64 - 1` is what keeps it there: a
+    // burn can only return what a mint drew, so nothing can hand this writer a
+    // pool it would refuse.
+    const genesis: CandidateOf<KarmaPoolBox> = { boxType: 'karma_pool', value: 2n ** 64n - 1n };
+    expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffffff01');
+    const record = boxRecordFromBytes(boxRecordBytes(genesis, FIXTURE_TX_ID, 0));
+    expect(record.candidate).toEqual(genesis);
   });
 });
 
@@ -1140,10 +1169,14 @@ describe('boxRecordFromBytes', () => {
     // The empty-tail rows. A reader that assumed at least one field followed
     // the shared prefix would fail here and nowhere else — every other row
     // above walks a tail, so nothing in this list exercises a box that ends at
-    // the prefix except these three.
+    // the prefix except these four.
     ['emission', EMISSION_CANDIDATE],
     ['treasury', TREASURY_CANDIDATE],
     ['fee', FEE_CANDIDATE],
+    // At its genesis value rather than at the shared 100: the pool's ordinary
+    // state is the top of `vlqU64`'s range (TYPES_INTERFACE → KarmaPoolBox), so
+    // the row that round-trips is the one carrying the ten-byte value.
+    ['karma_pool', { boxType: 'karma_pool', value: 2n ** 64n - 1n }],
   ];
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
@@ -1868,6 +1901,7 @@ describe('the box-type tables', () => {
     emission: { boxType: 'emission', value: 100n },
     treasury: { boxType: 'treasury', value: 100n },
     fee: { boxType: 'fee', value: 100n },
+    karma_pool: { boxType: 'karma_pool', value: 100n },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -1900,7 +1934,7 @@ describe('the box-type tables', () => {
   it('pins the table', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
       karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
-      emission: 7, treasury: 8, fee: 9,
+      emission: 7, treasury: 8, fee: 9, karma_pool: 10,
     });
   });
 

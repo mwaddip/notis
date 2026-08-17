@@ -119,14 +119,15 @@ export type BoxContent =
   | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array }
   | { boxType: 'vouch'; value: bigint; voucherId: Uint8Array; targetId: Uint8Array }
   /**
-   * No trailing fields on any of the three — the content encoding is the shared
+   * No trailing fields on any of the four — the content encoding is the shared
    * prefix alone. Each member carries `boxType` and `value` and nothing else,
    * which is what a reader assuming at least one field after the prefix gets
    * wrong.
    */
   | { boxType: 'emission'; value: bigint }
   | { boxType: 'treasury'; value: bigint }
-  | { boxType: 'fee'; value: bigint };
+  | { boxType: 'fee'; value: bigint }
+  | { boxType: 'karma_pool'; value: bigint };
 
 /** The tag table, restated from the contract so a renumber fails here too. */
 const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
@@ -140,6 +141,7 @@ const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
   7: 'emission',
   8: 'treasury',
   9: 'fee',
+  10: 'karma_pool',
 };
 
 const boxContentCodec: ValueCodec<BoxContent> = {
@@ -197,6 +199,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType: 'treasury', value };
       case 'fee':
         return { boxType: 'fee', value };
+      case 'karma_pool':
+        return { boxType: 'karma_pool', value };
       default:
         throw new Error(`boxContent: unknown boxType ${String(j.boxType)}`);
     }
@@ -263,6 +267,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
       case 'emission':
       case 'treasury':
       case 'fee':
+      case 'karma_pool':
         // The box is complete at the prefix. An independent reader is where a
         // phantom trailing field would show up as a decode failure rather than
         // as agreement between a writer and a reader that share the mistake.

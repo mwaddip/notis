@@ -84,6 +84,7 @@ export const BOX_TYPE_TAGS = Object.freeze({
   emission: 7,
   treasury: 8,
   fee: 9,
+  karma_pool: 10,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -112,11 +113,12 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | emission      | (none)                                                    |
  *   | treasury      | (none)                                                    |
  *   | fee           | (none)                                                    |
+ *   | karma_pool    | (none)                                                    |
  *
- * **`emission`, `treasury` and `fee` stop after the prefix**, and an empty cell
- * above is a layout rather than an omission (TYPES_INTERFACE → Layout — Boxes).
- * None of the three names an owner, so there is no trailing field to write and
- * the smallest legal box of any type is two bytes.
+ * **`emission`, `treasury`, `fee` and `karma_pool` stop after the prefix**, and
+ * an empty cell above is a layout rather than an omission (TYPES_INTERFACE →
+ * Layout — Boxes). None of the four names an owner, so there is no trailing
+ * field to write and the smallest legal box of any type is two bytes.
  *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
@@ -149,10 +151,10 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * Layout — Boxes). `enum8(boxType)` is field 1, so the tag is what makes the
  * encoding injective across the two; `value` happens to differ as well — an
  * invite is always `0` — but nothing may rely on that. It is the standing
- * `karma` and `credit` already have. **`emission`, `treasury` and `fee` stand
- * in the same relation with no fields at all**, so at equal `value` the tag is
- * the whole of the difference and their ids part on the provenance
- * `computeBoxId` appends.
+ * `karma` and `credit` already have. **`emission`, `treasury`, `fee` and
+ * `karma_pool` stand in the same relation with no fields at all**, so at equal
+ * `value` the tag is the whole of the difference and their ids part on the
+ * provenance `computeBoxId` appends.
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
@@ -212,8 +214,9 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'emission':
     case 'treasury':
     case 'fee':
+    case 'karma_pool':
       // The tail is empty by layout, not by oversight (TYPES_INTERFACE →
-      // Layout — Boxes). None of the three names an owner — block application
+      // Layout — Boxes). None of the four names an owner — block application
       // is the only spender — so the content encoding is the shared prefix
       // alone. Stated as its own arm rather than left to `default`, which is
       // the unknown-tag sentinel below and would write these bytes for a
@@ -324,7 +327,8 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
     case 'emission':
     case 'treasury':
     case 'fee':
-      // Nothing follows the prefix on any of the three arms, so the box is
+    case 'karma_pool':
+      // Nothing follows the prefix on any of the four arms, so the box is
       // complete at the point the tag and value have been read.
       // `boxRecordFromBytes`' exhaustion check is what makes that a decoding
       // rather than a silent stop: bytes past this point are `trailing-bytes`,
@@ -614,7 +618,7 @@ export interface BoxCandidate {
   // type wearing the name would make old-vs-new greps and historical debugging
   // ambiguous forever.
   boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
-    | 'emission' | 'treasury' | 'fee';
+    | 'emission' | 'treasury' | 'fee' | 'karma_pool';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
@@ -884,6 +888,46 @@ export interface FeeBox extends BoxBase {
   value: bigint;              // Credits paid to the block's miner, in base units
 }
 
+// --- Karma supply pool ---
+
+/**
+ * The whole of a network's karma supply, held as state from height 0 —
+ * TYPES_INTERFACE → KarmaPoolBox.
+ *
+ * Genesis creates exactly one, holding the **maximum representable karma**.
+ * Every mint draws from it and every burn returns to it, so the supply is fixed
+ * at the type's ceiling from the first block and no rule anywhere can inflate
+ * it: karma is not scarce by policy, it is non-inflatable by construction.
+ *
+ * ⛔ **`pool.value + circulating karma == 2⁶⁴ − 1`, at every height, forever.**
+ * That invariant is what makes overflow structurally impossible — a burn can
+ * only return what a mint drew, so the pool can never exceed its genesis value
+ * and `writeVlqU64OrThrow` can never be handed one it would refuse. Genesis
+ * committee grants come **out** of the pool rather than alongside it, so it
+ * holds from height 0.
+ *
+ * **No owner, and therefore no trailing fields.** Block application is its only
+ * spender and its only producer, so its content encoding is the shared prefix
+ * alone (see `canonicalBoxBytes`).
+ *
+ * ⛔ **It is NOT a karma box, and it belongs to NEITHER karma set** — not the
+ * transition set, not the supply set (NODE_INTERFACE → "Two karma sets, and
+ * neither derives from the other"). A karma box is something an identity holds;
+ * giving the pool that type would put the maximum supply inside every balance
+ * query and every conservation sum in the tree.
+ *
+ * ⛔ **A zero-value successor IS created, and this is the one place the
+ * `EmissionBox` rule inverts.** Emission terminates, so above the terminus no
+ * box exists and nothing is spent. The pool never terminates: burns must always
+ * have somewhere to return, so the box exists at every height whatever its
+ * value. A reader who pattern-matches to the emission rule here gets it exactly
+ * backwards.
+ */
+export interface KarmaPoolBox extends BoxBase {
+  boxType: 'karma_pool';
+  value: bigint;              // Karma not in circulation. Genesis: 2^64 − 1
+}
+
 // ---------------------------------------------------------------------------
 // Union type
 // ---------------------------------------------------------------------------
@@ -898,7 +942,8 @@ export type AnyBox =
   | VouchBox
   | EmissionBox
   | TreasuryBox
-  | FeeBox;
+  | FeeBox
+  | KarmaPoolBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
@@ -911,7 +956,8 @@ export type AnyBoxCandidate =
   | CandidateOf<VouchBox>
   | CandidateOf<EmissionBox>
   | CandidateOf<TreasuryBox>
-  | CandidateOf<FeeBox>;
+  | CandidateOf<FeeBox>
+  | CandidateOf<KarmaPoolBox>;
 
 // ---------------------------------------------------------------------------
 // UTXO transaction

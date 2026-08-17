@@ -120,6 +120,7 @@ export type {
   EmissionBox,
   TreasuryBox,
   FeeBox,
+  KarmaPoolBox,
   AnyBox,
   UtxoTransaction,
   TxId,
