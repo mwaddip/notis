@@ -935,11 +935,15 @@ export interface FeeBox extends BoxBase {
  * spender and its only producer, so its content encoding is the shared prefix
  * alone (see `canonicalBoxBytes`).
  *
- * ⛔ **It is NOT a karma box, and it belongs to NEITHER karma set** — not the
- * transition set, not the supply set (NODE_INTERFACE → "Two karma sets, and
- * neither derives from the other"). A karma box is something an identity holds;
+ * ⛔ **It is NOT a karma box.** A karma box is something an identity holds;
  * giving the pool that type would put the maximum supply inside every balance
  * query and every conservation sum in the tree.
+ *
+ * ⛔ **It is in the CONSERVATION set and in neither of the other two** — not the
+ * transition set, not the supply set (NODE_INTERFACE → "Three karma sets, and
+ * none derives from another"). The pool is not karma anyone holds, so it is not
+ * supply; it is karma that exists, so it is conservation — **that combination is
+ * why the third set exists.**
  *
  * ⛔ **A zero-value successor IS created, and this is the one place the
  * `EmissionBox` rule inverts.** Emission terminates, so above the terminus no
