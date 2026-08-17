@@ -81,12 +81,10 @@ export type { Post, PostId } from './post.js';
 
 // UTXO
 //
-// `BOX_TYPE_TAGS` and `BOX_GUARDS` are the two box-type mappings, exported for
-// the reason `postFieldBytes` above is: other packages need them and a second
-// statement of either is free to drift. `BOX_TYPE_TAGS` is the numbering inside
-// every box's id preimage, which the demo UI mirrors and cannot import;
-// `BOX_GUARDS` is the guard each type fixes, which is *not* in the bytes and so
-// has nothing to catch a copy of it. See TYPES_INTERFACE → Layout — Boxes.
+// `BOX_TYPE_TAGS` is the box-type mapping, exported for the reason
+// `postFieldBytes` above is: other packages need it and a second statement of it
+// is free to drift. It is the numbering inside every box's id preimage, which
+// the demo UI mirrors and cannot import. See TYPES_INTERFACE → Layout — Boxes.
 export {
   computeBoxId,
   computeCandidateBoxId,
@@ -102,7 +100,6 @@ export {
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
   BOX_TYPE_TAGS,
-  BOX_GUARDS,
 } from './utxo.js';
 export type {
   BoxId,
@@ -112,7 +109,6 @@ export type {
   CandidateOf,
   AnyBoxCandidate,
   BoxBase,
-  BoxGuard,
   MintReason,
   KarmaBox,
   CreditBox,

@@ -102,11 +102,10 @@ const postFieldsCodec: ValueCodec<PostFields> = {
 /**
  * A box as its identity preimage sees it.
  *
- * **`guard` is not a member**, and that is structural rather than an omission:
- * it is not in the consensus bytes (TYPES_INTERFACE → Layout — Boxes), so a
- * corpus entry has no way to carry it and the decode direction could not
- * reconstruct it if it did.
- * Provenance (`id`/`txId`/`index`) is absent for the same reason.
+ * Provenance (`id`/`txId`/`index`) is absent, and that is structural rather than
+ * an omission: it is not in the consensus bytes (TYPES_INTERFACE → Layout —
+ * Boxes), so a corpus entry has no way to carry it and the decode direction
+ * could not reconstruct it if it did.
  */
 export type BoxContent =
   | { boxType: 'karma'; value: bigint; owner: Uint8Array; decayBurn: boolean | null }

@@ -16,7 +16,6 @@ import {
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
   BOX_TYPE_TAGS,
-  BOX_GUARDS,
   INVITE_KARMA_AMOUNT,
   INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
@@ -51,7 +50,6 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
     boxType: 'karma',
     value: 100n,
     owner,
-    guard: 'owner_signature',
     txId: FIXTURE_TX_ID,
     index: 0,
     ...overrides,
@@ -63,7 +61,6 @@ function makeCreditBox(): CreditBox {
     boxType: 'credit',
     value: 500n,
     owner,
-    guard: 'owner_signature',
     txId: FIXTURE_TX_ID,
     index: 1,
   };
@@ -77,7 +74,6 @@ function makeInviteBox(): InviteBox {
     value: 0n,
     inviterId: inviter,
     inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    guard: 'invite_dual',
     txId: FIXTURE_TX_ID,
     index: 2,
   };
@@ -92,7 +88,6 @@ function makeBondBox(): BondBox {
     // address can be invited once, so this field identifies exactly one live
     // pair (TYPES_INTERFACE → BondBox).
     inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    guard: 'block_apply',
     txId: FIXTURE_TX_ID,
     index: 3,
   };
@@ -185,10 +180,9 @@ describe('boxes', () => {
  * Frozen golden vectors — the cross-implementation anchor for the box identity
  * encoding.
  *
- * `value` is `vlqU`, `guard` is absent from the consensus bytes, and field order
- * comes from the layout table rather than from a key sort (TYPES_INTERFACE →
- * Layout — Boxes). Do not "fix" a failure by editing the hashes: the encoding is
- * protocol-breaking and unversioned.
+ * `value` is `vlqU`, and field order comes from the layout table rather than
+ * from a key sort (TYPES_INTERFACE → Layout — Boxes). Do not "fix" a failure by
+ * editing the hashes: the encoding is protocol-breaking and unversioned.
  *
  * **`CreditBox.value` carries the wide-int pin.** `value` is the widest number
  * either of these two arms encodes, so the credit candidate's is deliberately
@@ -207,14 +201,12 @@ const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   boxType: 'karma',
   value: 100n,
   owner: GOLDEN_OWNER,
-  guard: 'owner_signature',
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   boxType: 'credit',
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — the range P0 exists for
   owner: GOLDEN_OWNER,
-  guard: 'owner_signature',
 };
 
 const GOLDEN_TX: UtxoTransaction = {
@@ -284,24 +276,9 @@ describe('golden vectors (positional box encoding)', () => {
   it('golden vector: full canonical identity bytes are frozen', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
-    // 35 bytes: no map header, no key names, no `guard`, a one-byte `value`,
-    // and a one-byte absent option.
+    // 35 bytes: no map header, no key names, a one-byte `value`, and a one-byte
+    // absent option.
     expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(35);
-  });
-
-  it('guard has left the consensus bytes (P2-C row C10)', () => {
-    // `guard` is a pure function of `boxType` — one guard string per type, no
-    // box choosing between two — so it carries zero information in a preimage.
-    // An absent field is only safe where it is derivable, which is the whole
-    // argument, so pin BOTH halves: the string is absent from the bytes, and
-    // changing it changes no id.
-    const hex = Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex');
-    expect(hex).not.toContain(Buffer.from('owner_signature', 'utf8').toString('hex'));
-    const wrongGuard = { ...GOLDEN_KARMA_CANDIDATE, guard: 'block_apply' as never };
-    expect(Buffer.compare(
-      Buffer.from(canonicalBoxBytes(wrongGuard)),
-      Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_CANDIDATE)),
-    )).toBe(0);
   });
 
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
@@ -522,8 +499,8 @@ describe('invite and bond share a trailing layout, separated by the tag', () => 
     const inviteCreate: UtxoTransaction = {
       inputs: [IN_1],
       outputs: [
-        { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'invite_dual' },
-        { boxType: 'bond', value: 25n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'block_apply' },
+        { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+        { boxType: 'bond', value: 25n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
       ],
       signatures: {},
       protocolVersion: 1,
@@ -589,7 +566,7 @@ const PROOF_PAYLOAD = new TextEncoder().encode('mock-headline');
 const PROOF_BYTES = '03' + '00' + '0d' + '6d6f636b2d686561646c696e65';
 
 function makeProofCandidate(payload: Uint8Array): CandidateOf<GenesisProofBox> {
-  return { boxType: 'genesis_proof', value: 0n, guard: 'unspendable', payload };
+  return { boxType: 'genesis_proof', value: 0n, payload };
 }
 
 describe('genesis_proof', () => {
@@ -612,10 +589,7 @@ describe('genesis_proof', () => {
     expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('03000100');
   });
 
-  it('round-trips through the box record, with guard absent from the bytes', () => {
-    // `guard` is `'unspendable'` on the candidate and is not in the encoding —
-    // it is a pure function of `boxType` like every other box's, so the reader
-    // does not invent it and the expectation does not carry it.
+  it('round-trips through the box record', () => {
     const record = boxRecordFromBytes(
       boxRecordBytes(makeProofCandidate(PROOF_PAYLOAD), FIXTURE_TX_ID, 0),
     );
@@ -704,8 +678,8 @@ describe('genesis_proof', () => {
 /**
  * Tags 7, 8 and 9, and **no trailing fields on any of them** (TYPES_INTERFACE →
  * Layout — Boxes). None of the three names an owner — block application is the
- * only spender and `block_apply` already says so — so the content encoding is
- * the shared `enum8(boxType) ‖ vlqU64(value)` and nothing else.
+ * only spender — so the content encoding is the shared
+ * `enum8(boxType) ‖ vlqU64(value)` and nothing else.
  *
  * **The empty tail is the shape the rest of the corpus does not hold.** Every
  * other arm writes at least one field, so a reader that assumed something
@@ -723,24 +697,24 @@ describe('genesis_proof', () => {
  *   ^tag ^vlqU64(value)
  */
 const EMISSION_CANDIDATE: CandidateOf<EmissionBox> = {
-  boxType: 'emission', value: 100n, guard: 'block_apply',
+  boxType: 'emission', value: 100n,
 };
 const TREASURY_CANDIDATE: CandidateOf<TreasuryBox> = {
-  boxType: 'treasury', value: 100n, guard: 'block_apply',
+  boxType: 'treasury', value: 100n,
 };
 const FEE_CANDIDATE: CandidateOf<FeeBox> = {
-  boxType: 'fee', value: 100n, guard: 'block_apply',
+  boxType: 'fee', value: 100n,
 };
 
 /** The tailed arms, at their own floor — one candidate per type that has a tail. */
 const TAILED_CANDIDATES: AnyBoxCandidate[] = [
-  { boxType: 'karma', value: 0n, owner, guard: 'owner_signature' },
-  { boxType: 'credit', value: 0n, owner, guard: 'owner_signature' },
-  { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'invite_dual' },
-  { boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(0), guard: 'unspendable' },
-  { boxType: 'bond', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY, guard: 'block_apply' },
-  { boxType: 'post_lock', value: 0n, originalValue: 0n, owner, guard: 'block_apply' },
-  { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+  { boxType: 'karma', value: 0n, owner },
+  { boxType: 'credit', value: 0n, owner },
+  { boxType: 'invite', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+  { boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(0) },
+  { boxType: 'bond', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+  { boxType: 'post_lock', value: 0n, originalValue: 0n, owner },
+  { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
 ];
 
 describe('emission, treasury and fee', () => {
@@ -802,7 +776,7 @@ describe('emission, treasury and fee', () => {
     expect(new Set(ids).size).toBe(3);
   });
 
-  it('round-trips through the box record, with guard absent from the bytes', () => {
+  it('round-trips through the box record', () => {
     for (const candidate of [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]) {
       const record = boxRecordFromBytes(boxRecordBytes(candidate, FIXTURE_TX_ID, 0));
       expect(record).toEqual({
@@ -1147,7 +1121,7 @@ describe('boxRecordFromBytes', () => {
     ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
     ['invite', {
       boxType: 'invite', value: 0n, inviterId: inviter,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'invite_dual',
+      inviteePublicKey: new Uint8Array(32).fill(0xcc),
     }],
     // The same trailing fields under the other tag, at a value an invite never
     // carries. Both rows are here because the pair is one layout with two tags:
@@ -1155,13 +1129,12 @@ describe('boxRecordFromBytes', () => {
     // the fields and fail only on the discriminant.
     ['bond', {
       boxType: 'bond', value: 20n, inviterId: inviter,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'block_apply',
+      inviteePublicKey: new Uint8Array(32).fill(0xcc),
     }],
     ['post_lock', {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
-      guard: 'block_apply',
     }],
-    ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' }],
+    ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter }],
     ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
     ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
     // The empty-tail rows. A reader that assumed at least one field followed
@@ -1175,14 +1148,10 @@ describe('boxRecordFromBytes', () => {
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
     it(`round-trips ${label}`, () => {
-      // `guard` is not in the bytes and the reader does not invent it, so it is
-      // dropped from the expectation rather than from the assertion — the
-      // difference between "this field is absent by design" and "this field is
-      // not compared". Every other field is compared.
-      const { guard: _guard, ...expected } =
-        candidate as AnyBoxCandidate & { guard: string };
+      // The candidate goes in whole and comes back whole — every field is
+      // compared, with nothing dropped from either side of the expectation.
       const decoded = boxRecordFromBytes(boxRecordBytes(candidate, GOLDEN_TX_ID, 3));
-      expect(decoded).toEqual({ candidate: expected, txId: GOLDEN_TX_ID, index: 3 });
+      expect(decoded).toEqual({ candidate, txId: GOLDEN_TX_ID, index: 3 });
     });
   }
 
@@ -1869,41 +1838,36 @@ describe('selectBoxes', () => {
 });
 
 /**
- * The two box-type mappings this package is the single source of.
+ * The box-type mapping this package is the single source of.
  *
- * `BOX_TYPE_TAGS` is the numbering inside every box's id preimage; `BOX_GUARDS`
- * is the guard each type fixes. Both are exported because other packages hold
- * the same two mappings, and **their failure modes are opposite**: a wrong tag
- * moves every box id and every `stateRoot` covering it, loudly and everywhere,
- * while a wrong guard moves nothing at all — it is absent from the consensus
- * bytes, so no hash disagreement can surface a copy that has drifted.
+ * `BOX_TYPE_TAGS` is the numbering inside every box's id preimage, and it is
+ * exported because other packages hold the same mapping. A wrong tag moves every
+ * box id and every `stateRoot` covering it, loudly and everywhere.
  */
 describe('the box-type tables', () => {
   const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
-    karma: { boxType: 'karma', value: 100n, owner, guard: 'owner_signature' },
-    credit: { boxType: 'credit', value: 500n, owner, guard: 'owner_signature' },
+    karma: { boxType: 'karma', value: 100n, owner },
+    credit: { boxType: 'credit', value: 500n, owner },
     invite: {
       boxType: 'invite', value: 0n, inviterId: inviter,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'invite_dual',
+      inviteePublicKey: new Uint8Array(32).fill(0xcc),
     },
     genesis_proof: {
       boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([1, 2, 3]),
-      guard: 'unspendable',
     },
     bond: {
       boxType: 'bond', value: 20n, inviterId: inviter,
-      inviteePublicKey: new Uint8Array(32).fill(0xcc), guard: 'block_apply',
+      inviteePublicKey: new Uint8Array(32).fill(0xcc),
     },
     post_lock: {
       boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
-      guard: 'block_apply',
     },
-    vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter, guard: 'owner_signature' },
+    vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
     // The arms with no trailing fields at all — the rows that make this map
     // exercise a box whose bytes stop after the shared prefix.
-    emission: { boxType: 'emission', value: 100n, guard: 'block_apply' },
-    treasury: { boxType: 'treasury', value: 100n, guard: 'block_apply' },
-    fee: { boxType: 'fee', value: 100n, guard: 'block_apply' },
+    emission: { boxType: 'emission', value: 100n },
+    treasury: { boxType: 'treasury', value: 100n },
+    fee: { boxType: 'fee', value: 100n },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -1931,51 +1895,18 @@ describe('the box-type tables', () => {
     }
   });
 
-  // Both tables pinned whole. A renumber moves every id covering the tag and a
-  // guard change moves nothing, so neither may happen quietly — and the guard
-  // half is the only tripwire that side has, since the compiler checks the
-  // table against the interfaces and both would be edited together.
-  it('pins both tables', () => {
+  // The table pinned whole. A renumber moves every id covering the tag, so it
+  // may not happen quietly.
+  it('pins the table', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
       karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
       emission: 7, treasury: 8, fee: 9,
     });
-    expect({ ...BOX_GUARDS }).toEqual({
-      karma: 'owner_signature',
-      credit: 'owner_signature',
-      invite: 'invite_dual',
-      genesis_proof: 'unspendable',
-      bond: 'block_apply',
-      post_lock: 'block_apply',
-      vouch: 'owner_signature',
-      emission: 'block_apply',
-      treasury: 'block_apply',
-      fee: 'block_apply',
-    });
-  });
-
-  // Total over the same box types. A consumer synthesising `guard` from the
-  // discriminator meets a table short of one type as an `undefined` guard at
-  // runtime, not as a rejection.
-  it('covers exactly the same box types', () => {
-    expect(Object.keys(BOX_GUARDS).sort()).toEqual(Object.keys(BOX_TYPE_TAGS).sort());
   });
 
   // A single source a consumer can write to is not one. `Object.freeze` is the
   // runtime half of what `as const` states in the type.
-  it('exports both frozen', () => {
+  it('exports it frozen', () => {
     expect(Object.isFrozen(BOX_TYPE_TAGS)).toBe(true);
-    expect(Object.isFrozen(BOX_GUARDS)).toBe(true);
-  });
-
-  // The karma pin above ('guard has left the consensus bytes') generalised to
-  // every type. This is *why* a drifted guard copy has nothing to catch it, and
-  // therefore why the mapping needs one home rather than a test per consumer.
-  it('keeps every guard string out of the consensus bytes', () => {
-    for (const [boxType, guard] of Object.entries(BOX_GUARDS)) {
-      const candidate = CANDIDATE_BY_TYPE[boxType as BoxCandidate['boxType']];
-      const hex = Buffer.from(canonicalBoxBytes(candidate)).toString('hex');
-      expect(hex).not.toContain(Buffer.from(guard, 'utf8').toString('hex'));
-    }
   });
 });
