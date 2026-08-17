@@ -1129,10 +1129,20 @@ is a requirement of those transitions, stated once here, not a property the box 
 
 ⛔ **No requirement may name a key that is not already in consensus state.** A rule may demand a
 signature by the key at `box.owner`, or by a key the box names (`inviteePublicKey`, `inviterId`,
-`voucherId`), or no signature at all. **There is no rule shape that names a key from configuration**,
-which is what makes a privileged or administrative key unrepresentable rather than merely absent —
-`ARCHITECTURE` → Treasury requires exactly that property of the treasury, and it holds here for every
-box type by construction.
+`voucherId`), or no signature at all. A rule shape that names a key from **configuration** is what
+makes a privileged key representable, and `ARCHITECTURE` → Treasury requires the opposite property of
+the treasury.
+
+> ⛔ **ONE RULE VIOLATES THIS TODAY, AND IT IS NOT THE TREASURY.** The same-owner karma rule carries a
+> faucet exemption gated on `deps.isSystemBox`, which resolves a box id against a **configured system
+> keypair**. It is wired into block application, so it is a consensus rule and not service-layer
+> policy. The rule above is therefore **AHEAD OF CODE**: it states the property the model requires,
+> and the tree has exactly one counter-example.
+>
+> **What removes it:** the karma supply box, which deletes the system keypair outright — a pool
+> authorized by rule needs no configured owner, so the exemption has nothing left to name. Until then,
+> `isSystemBox` is the one place a key reaches consensus from outside state, and **no second one may
+> be added**.
 
 ⚠ **`guard` is not consulted.** It is a pure function of `boxType` carrying no information, it is
 absent from `canonicalBoxBytes`, and nothing in this table depends on it. The output-shape pin that
