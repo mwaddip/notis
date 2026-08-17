@@ -743,6 +743,50 @@ miner. Nothing in the design gives that shape a meaning worth forbidding.
 rejected by the karma transition arm rather than by a rule of its own
 (`NODE_INTERFACE` → the karma transition rules).
 
+### KarmaPoolBox
+
+> ⚠ **AHEAD OF CODE** (`docs/specs` design §3, unit B). The type does not exist yet.
+
+```
+KarmaPoolBox extends BoxBase {
+  boxType: "karma_pool"
+  value: bigint                // Karma not in circulation. Genesis: 2⁶⁴ − 1
+}
+```
+
+**The whole of a network's karma supply, held as state from height 0.** Genesis creates exactly one,
+holding the **maximum representable karma**. Every mint draws from it and every burn returns to it,
+so the supply is fixed at the type's ceiling from the first block and **no rule anywhere can inflate
+it**. That is the point: karma is not scarce by policy, it is non-inflatable by construction.
+
+⛔ **`pool.value + circulating karma == 2⁶⁴ − 1`, at every height, forever.** This is the invariant
+the type exists to make checkable, and it is what makes overflow structurally impossible: a burn can
+only return what a mint drew, so the pool can never exceed its genesis value and `vlqU64` can never
+be handed one it would throw on.
+
+⛔ **Genesis committee grants come OUT of the pool, not alongside it.** `genesisCommitteeKeys` ×
+`genesisKarmaPerMember` is minted by drawing the total down, so the invariant holds from height 0.
+Minting them beside a full pool would put total supply above `2⁶⁴ − 1` **at genesis**, which
+`writeVlqU64OrThrow` refuses outright — the invariant is not merely violated, the state is
+unencodable.
+
+**No owner, and therefore no per-type trailing fields.** Block application is its only spender and
+its only producer; its content encoding is the shared prefix alone (§Layout — Boxes).
+
+⛔ **It is NOT a karma box, and the distinction is not cosmetic.** A karma box is something an
+identity holds and `getKarmaBoxes` returns. Giving the pool the `karma` type would put the maximum
+supply inside every balance query and every conservation sum in the tree.
+
+⛔ **It belongs to NEITHER karma set** — not the transition set, not the supply set
+(`NODE_INTERFACE` → "Two karma sets, and neither derives from the other"). It is barred from both
+transaction positions, joining `genesis_proof`, `emission` and `treasury`.
+
+> ⛔ **A zero-value successor IS created, and this is the one place the `EmissionBox` rule inverts.**
+> §EmissionBox refuses a zero successor because emission **terminates** — above the terminus no box
+> exists and nothing is spent. The pool never terminates: burns must always have somewhere to return,
+> so the box exists at every height whatever its value. **A reader who pattern-matches to the
+> emission rule here gets it exactly backwards.**
+
 ### UtxoTransaction
 
 ```
@@ -1363,6 +1407,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 7 | `emission` |
 | 8 | `treasury` |
 | 9 | `fee` |
+| 10 | `karma_pool` |
 
 | Type | Trailing fields |
 |---|---|
@@ -1376,12 +1421,20 @@ from this table — a use that reads every cell as an instruction rather than as
 | `emission` | *(none)* |
 | `treasury` | *(none)* |
 | `fee` | *(none)* |
+| `karma_pool` | *(none)* |
 
-⚠ **`emission`, `treasury` and `fee` have an empty tail, and an empty cell in this table is a layout,
-not an omission.** Their content encoding is the shared prefix alone — `enum8(boxType)` ‖
-`vlqU64(value)` — because none of them names an owner. The `enum8` tag is the whole of what separates
-them from each other, exactly as it separates `invite` from `bond`, and their ids differ from one
-another and across heights through the provenance `computeBoxId` appends.
+⚠ **`emission`, `treasury`, `fee` and `karma_pool` have an empty tail, and an empty cell in this
+table is a layout, not an omission.** Their content encoding is the shared prefix alone —
+`enum8(boxType)` ‖ `vlqU64(value)` — because none of them names an owner. The `enum8` tag is the
+whole of what separates them from each other, exactly as it separates `invite` from `bond`, and
+their ids differ from one another and across heights through the provenance `computeBoxId` appends.
+
+> ⛔ **Assigning tag 10 MOVES A GOLDEN VECTOR, and that is the design working.** The corpus carries
+> `box/unassigned-tag-10` with the number written as a **literal**, deliberately not derived, beside
+> `utxo.test.ts` deriving the same number from `BOX_TYPE_TAGS` — *"one side follows the table, one
+> side pins it."* The derived side moves on its own; **the literal must be re-pinned by hand to the
+> next unassigned tag**, and that re-pin is the act that proves the assignment was intended rather
+> than accidental. The corpus says so itself: *"assigning it is what moves this vector."*
 
 `genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
 decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder

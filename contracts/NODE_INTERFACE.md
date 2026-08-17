@@ -435,9 +435,7 @@ lie this whole bundle exists to remove. A client seeing `null` learns something 
 |--------|------|---------|----------|--------|
 | `POST` | `/faucet` | `{ userId: hex }` | `{ status: "pending", txId, expiresAtHeight }` | 400 if missing fields, 403 on a network without a faucet, 409 if already funded |
 
-Grants 100 karma to an identity, **once per identity, ever** (idempotent). Mints
-from the system keypair — not a transfer. Builds a UTXO transaction creating a
-new karma box and inserts it into the mempool. Gated at **mount** time on
+Grants karma to an identity, **once per identity, ever** (idempotent). Gated at **mount** time on
 `isFaucetNetwork(config.networkType)`, where `config` is the `Config` passed to
 `createApp(config)` — injected, not the module singleton, which is why this gate is testable
 and the `/credits/faucet` handler guard currently is not. `isFaucetNetwork` lives in `config.ts`
@@ -453,12 +451,24 @@ This is the third place in this design that chooses fail-closed over convenient-
 identical reasoning: `profileFor` throws rather than defaulting, `NetConfig` requires `magic`
 rather than defaulting it, and the faucet enumerates rather than excluding.
 
-⚠ **All three gates move together, always** — the provisioning gate (`index.ts`), the mount
-gate (`server.ts`) and the handler guard (`routes/utxo.ts`). A subset is worse than none:
-mount without provisioning gives a faucet with nothing to mint from; provision without
-mounting leaves unreachable system state. They call one shared predicate so they cannot
-drift; the handler guard applies it as a **reject** condition, so a grep for the enabling
-expression finds only two of the three.
+> ⛔ **AHEAD OF CODE — THE FAUCET DRAWS STRAIGHT FROM THE POOL, AND STOPS BEING A SIGNED
+> TRANSACTION** (user, 2026-08-17; `docs/specs` design §3, unit B). It becomes a **block-application
+> effect** — the same shape as a like payout — rather than a UTXO transaction built and signed with a
+> system secret. Three things follow, and the third is an API change:
+>
+> - ✅ **No key.** `getSystemKeypair` and `signWithSystemKey` go, and with them the last privileged
+>   key in the protocol (§0d **84-1**). The network gate stays: `isFaucetNetwork` reads
+>   **configuration**, not a key, and a rule naming a network is not a rule naming a signer.
+> - ✅ **No supply cap, because the pool cannot empty.** The finite `SYSTEM_KARMA_INITIAL` balance the
+>   faucet spent down disappears. ⚠ **`faucet_grants` is NOT that cap** — it is a once-per-identity
+>   record and it stays, as abuse prevention rather than accounting.
+> - ⛔ **`txId` cannot be in the response any more.** A block-application mint takes a **synthetic**
+>   id from `computeMintTxId(height, reason, subject)`, and the height is unknown when the request is
+>   answered. **The response shape has to lose it or name something else**; that decision is open.
+>
+> ⚠ **The three-gates rule below becomes two.** With no system karma box to seed, there is nothing
+> to provision — the provisioning gate has no subject. **Mount and handler remain, and they still
+> move together.**
 
 **The handler guard reads injected config, never the module singleton.** `UtxoDeps` carries
 
@@ -765,6 +775,12 @@ spent away.
 inherits that by saying nothing about it. The bar is the default, and admitting a type is the
 deliberate act.
 
+> ⚠ **AHEAD OF CODE — `karma_pool` is the fourth** (`docs/specs` design §3, unit B). ⛔ **The two
+> halves cost differently, and only one is free.** The **input** bar is inherited by saying nothing.
+> The **output** bar is not: `OUTPUT_SHAPE` is keyed on an `Exclude`, so a new type compiles as
+> *requiring a shape* until it is named in that exclusion — which is the deliberate act the
+> `Exclude` exists to force. **One edit, not two, and not zero.**
+
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
 from a forgotten one — while a *new* box type still fails to compile until it is
@@ -775,7 +791,9 @@ asserting rejection must be able to assert which rule rejected.
 
 The `emission` and `treasury` types join `genesis_proof` in being barred from
 both transaction positions — block application is their only producer and their
-only spender.
+only spender. ⚠ **`karma_pool` joins them** (AHEAD OF CODE, design §3): the karma
+supply pool is drawn down by mints and restored by burns, both block
+application's, and no user transaction may name it in either position.
 
 ### Output shape — the closed per-boxType schema (field-type pin)
 
@@ -1497,6 +1515,22 @@ forms, so a mirror implementation derives the same ids:
 | `invite-claim` | `inviteePublicKey` | raw | 32 | invite claim → `mintKarma(invitee, INVITE_KARMA_AMOUNT)` |
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
 | `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
+
+> ⛔ **AHEAD OF CODE — THE `genesis` SUBJECT IS A SINGLE NUMBER, AND COMMITTEE SEEDING CANNOT USE
+> IT** (`docs/specs` design §3, unit B). `genesis` keys on `u32BE(k)`, one value per genesis box.
+> Seeding N committee members from `genesisCommitteeKeys` produces **N karma boxes**, and every one
+> of them would take the same `k` — so the same synthetic `txId`, the same `computeBoxId` preimage,
+> and the **second insert violates `UNIQUE(tx_id, output_index)`**. The failure is loud, at genesis,
+> on any network with more than one committee member — and invisible on the empty arrays all three
+> networks carry today.
+>
+> ✅ **Committee seeding takes its own reason, keyed on the MEMBER**, the shape `like-payout` already
+> uses: subject = the member's public key, raw, 32 bytes. One mint per member, distinct by
+> construction.
+>
+> ⚠ **What becomes of `k = 0` is open.** `ensureSystemKarmaBox` is deleted, so subject `0` loses its
+> box. Whether the pool takes `0` or a fresh number is undecided; the chain restarts either way, so
+> nothing is at risk beyond legibility.
 
 ⛔ **`invite-claim` is the only row on this table that increases karma supply.**
 `bond-settle` and `bond-return` re-mint karma that a `BondBox` already held, in the
