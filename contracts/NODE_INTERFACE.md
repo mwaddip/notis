@@ -1603,11 +1603,21 @@ Three things about them that are decided, not open:
   (`subtreeMerkleRoot` — raw 32, giving a 64-byte subject — would serve equally
   and commits to the exact post set; `rootPostHash` was chosen because the mint
   id then traces to a post that can be looked up.)
-- **Prefix-freeness still holds** across the post-P2-D set: `like-payout` is not a
-  prefix of any live tag and none is a prefix of it (it also diverges from the *retired*
-  `liker-refund` at the fifth byte, so even historical collisions are impossible).
-  The property is test-pinned over the whole `MintReason` union and re-checks automatically
-  when the set is edited.
+- ⛔ **Prefix-freeness NO LONGER HOLDS, and nothing rests on it.** `genesis` is a proper prefix
+  of `genesis-committee`. **The reason reaches the preimage as `enum8(reason)` — one byte from a
+  closed table — never as its string**, so cross-reason injectivity is structural and the strings
+  carry none of it. The union's own doc block says as much: a one-byte tag is what makes the
+  property unnecessary to maintain.
+
+  ✅ **The test that pinned it was a tripwire, not an invariant, and it fired exactly as designed.**
+  It asserted the property while stating in the same breath that it was *"true, but not required"*
+  and that a member *"could legally be named `decay-extra`"* — so that losing it would read as a
+  deliberate step rather than an accident. It now pins the loss with `genesis-committee` as the
+  named witness, **alongside the distinct-txId assertion that survives it** — which is the live
+  demonstration that the tag carries injectivity.
+
+  ⚠ **This bullet's second claim caught its first.** *"Re-checks automatically when the set is
+  edited"* is what turned a silent regression into a red test the moment the set grew.
 
   ⚠ **Corrected 2026-08-16 — this claimed coverage the test did not have, and that claim is
   why nobody looked.** The check ran over a **hand-written `MintReason[]`** that never tracked
