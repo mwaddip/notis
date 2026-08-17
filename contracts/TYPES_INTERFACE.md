@@ -1775,9 +1775,14 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 > | payload | 192 | |
 > | **`encodeTx` today** | **402** | + 32 for the `utxoTxIds` entry + 2 for the length prefix = **436 per like** |
 >
-> The layout above encodes the same transaction in **~199 bytes**, roughly **doubling** how many
-> likes a 2 MB body holds. ⚠ **That figure is hand-derived from this table, not measured from an
-> implementation** — the ratio is the load-bearing part, not the exact number.
+> ✅ **MEASURED AGAINST THE IMPLEMENTATION, 2026-08-17:** the layout above costs **236 bytes per
+> like** including the `utxoTxIds` entry and the length prefix, against **436** for `cbor-x` — an
+> **85%** gain, or **8,474 likes per 2 MB body** against 4,587.
+>
+> ⚠ **A hand-derivation from this table said 226 and 93%, and it was optimistic by 4%.** The estimate
+> is superseded, not merely refined; quote the measured figure. ⛔ **The direction of the error is the
+> lesson**: a layout read off a table omits what an implementation cannot — so treat any
+> hand-derived encoding size as a **lower bound on cost**, never as a budget.
 >
 > ### ⛔ TWO CHANGES RIDE HERE AND THEY BREAK DIFFERENT THINGS — DO NOT CONFLATE THEM
 >
