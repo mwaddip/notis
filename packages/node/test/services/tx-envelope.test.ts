@@ -19,7 +19,7 @@
 //   signatures: {}          → LEGAL, and must stay legal (uncommitted-bond cancel)
 //   likeTarget: null        → passed conservation's `!== undefined` presence
 //                             test, then TypeError at `h.update(null)` inside
-//                             computeTxId — which checkGuards calls on its FIRST
+//                             computeTxId — which checkAuthorization calls on its FIRST
 //                             line, so the whole envelope reached the hasher
 //   likeTarget: undefined   → hashed identically to absence (measured)
 //   preimages: {n: 5}       → TypeError at `h.update(5)` inside computeTxId
@@ -297,7 +297,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
     //
     // The gate is kept and still asserted: it is a *semantic* rule (an empty
     // preimages map means the sender built something incoherent) and it is
-    // cheaper to reject at the envelope than to let it reach guard evaluation.
+    // cheaper to reject at the envelope than to let it reach authorization.
     // What changed is its standing — sole defence, now redundancy.
     const absent = envelope() as unknown as UtxoTransaction;
     const empty = envelope({ preimages: {} }) as unknown as UtxoTransaction;
@@ -428,7 +428,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       boxType: 'karma' as const,
       value,
       owner: o,
-      guard: 'owner_signature' as const,
     }, 1, nonce);
     storeInsertBox(box);
     return box;
@@ -455,7 +454,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
           boxType: 'karma',
           value: 100n,
           owner: owner.pub,
-          guard: 'owner_signature',
         } as unknown as KarmaBox,
       ],
       signatures: {},
@@ -535,7 +533,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
   it('non-vacuity: the same UNSIGNED tx with a clean envelope reaches step 6', () => {
     // Proves every rejection above isolates the envelope rule rather than
     // tripping over the absent signature — and that step 0 is not swallowing
-    // the guard check.
+    // the authorization check.
     const result = validateTx(deps, unsignedTx(), 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Missing or invalid owner signature');
@@ -574,7 +572,6 @@ describe('validateTx step 0 — the envelope gate in place', () => {
           boxType: 'karma',
           value: 100n - LIKE_KARMA_COST,
           owner: owner.pub,
-          guard: 'owner_signature',
         } as unknown as KarmaBox,
       ],
       signatures: {},

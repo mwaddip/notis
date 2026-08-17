@@ -20,7 +20,6 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
           boxType: 'karma',
           value,
           owner: ownerHex,
-          guard: 'owner_signature',
         },
       ],
       signatures: {},
@@ -85,7 +84,6 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
       boxType: 'karma',
       value: -2n,
       owner: ownerHex,
-      guard: 'owner_signature',
     });
 
     expect(() => jsonToTx(raw)).toThrow(/box value must be a non-negative/);
@@ -100,7 +98,6 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
           value: '5',
           originalValue: '5',
           owner: ownerHex,
-          guard: 'block_apply',
         },
       ],
       signatures: {},

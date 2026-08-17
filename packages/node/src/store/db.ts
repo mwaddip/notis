@@ -69,7 +69,6 @@ const MIGRATIONS = [
     created_at_block INTEGER NOT NULL,
     spent_at_block INTEGER,           -- NULL = unspent
     owner BLOB,                       -- 32-byte public key (NULL for invite/genesis_proof/bond/vouch/emission/treasury/fee boxes)
-    guard TEXT NOT NULL,
     extra_data TEXT,                  -- JSON for box-specific fields (inviteePublicKey, targetPostId, etc.)
     tx_id TEXT NOT NULL,              -- Creating transaction — real or synthetic mint (Spec G)
     output_index INTEGER NOT NULL,    -- u32 position within that transaction's outputs
@@ -171,13 +170,6 @@ const MIGRATIONS = [
     block_height INTEGER PRIMARY KEY,
     journal_cbor BLOB NOT NULL
   )`,
-
-  // Clean invite and bond boxes carrying a retired guard. The five reserved
-  // strings are listed in TYPES_INTERFACE → BoxGuard; a box wearing one is a box
-  // no current rule can spend, and `rowToBox` would hand it back with the
-  // canonical guard fabricated over the top.
-  `DELETE FROM utxo_boxes WHERE (box_type = 'invite' AND guard != 'invite_dual')
-     OR (box_type = 'bond' AND guard != 'block_apply')`,
 
   // dag_meta key-value metadata table
   `CREATE TABLE IF NOT EXISTS dag_meta (

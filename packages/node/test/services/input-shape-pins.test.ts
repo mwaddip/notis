@@ -23,7 +23,7 @@
 //
 // Each rejection is paired with a non-vacuity control: the same transaction
 // differing only in the pinned property, proving the rejection isolates that
-// one rule rather than tripping over conservation, a guard, or a malformed
+// one rule rather than tripping over conservation, authorization, or a malformed
 // fixture.
 // ---------------------------------------------------------------------------
 
@@ -114,7 +114,6 @@ describe('P2-B phase 4 — input-shape pins', () => {
       boxType: 'karma' as const,
       value,
       owner,
-      guard: 'owner_signature' as const,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -133,7 +132,6 @@ describe('P2-B phase 4 — input-shape pins', () => {
       value,
       voucherId,
       targetId,
-      guard: 'owner_signature' as const,
     };
     const box = seedProvenance<VouchBox>(candidate, 1, nonce);
     storeInsertBox(box);
@@ -154,7 +152,6 @@ describe('P2-B phase 4 — input-shape pins', () => {
           boxType: 'karma',
           value: total,
           owner,
-          guard: 'owner_signature',
         } as KarmaBox,
       ],
       signatures: {},
@@ -171,7 +168,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
   it('K1: rejects a cross-owner karma consolidation', () => {
     // Accepted on HEAD — [karmaA(10), karmaB(10)] → karmaA(20) returned
     // { valid: true }: same boxType, conservation holds, every output matches
-    // inputs[0].owner, and checkGuards gets the owner signature it wants from
+    // inputs[0].owner, and checkAuthorization gets the owner signature it wants from
     // each of A and B. B's karma became A's — priced off-chain, consensual,
     // and still a transfer of the non-transferable asset.
     const a = makeKeys();

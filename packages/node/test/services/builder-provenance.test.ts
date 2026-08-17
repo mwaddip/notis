@@ -67,7 +67,6 @@ describe('invite id prediction carries transaction provenance', () => {
       boxType: 'karma',
       value: 100n,
       owner: inviterId,
-      guard: 'owner_signature',
     }, 1);
     insertBox(karma);
 
@@ -75,7 +74,6 @@ describe('invite id prediction carries transaction provenance', () => {
       boxType: 'karma',
       value: 100n - INVITE_BOND_KARMA,
       owner: inviterId,
-      guard: 'owner_signature',
     };
     // Both boxes name the same invitee — that key IS the pairing, and the
     // create transition rejects a pair that disagrees on it.
@@ -84,14 +82,12 @@ describe('invite id prediction carries transaction provenance', () => {
       value: 0n,
       inviterId,
       inviteePublicKey: invitee,
-      guard: 'invite_dual',
     };
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId,
       inviteePublicKey: invitee,
-      guard: 'block_apply',
     };
 
     const tx: UtxoTransaction = {

@@ -249,8 +249,8 @@ describe('blocks routes', () => {
     const db = getDb();
     const insert = db.prepare(
       `INSERT INTO utxo_boxes
-         (id, box_type, value, created_at_block, spent_at_block, owner, guard, tx_id, output_index)
-       VALUES (?, ?, ?, 1, ?, NULL, 'owner_signature', ?, 0)`,
+         (id, box_type, value, created_at_block, spent_at_block, owner, tx_id, output_index)
+       VALUES (?, ?, ?, 1, ?, NULL, ?, 0)`,
     );
     const seeded: Array<[string, bigint]> = [
       ['karma', 7n],

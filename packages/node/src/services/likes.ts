@@ -80,7 +80,7 @@ export function castLike(
     throw new ClientError('Already liked this post');
   }
 
-  // ---- 4. Validate transaction (conservation carve, guards, transitions) ----
+  // ---- 4. Validate transaction (conservation carve, authorization, transitions) ----
   const result = validateTx(deps, tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`Invalid like transaction: ${result.error}`);

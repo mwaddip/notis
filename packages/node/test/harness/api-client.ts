@@ -167,8 +167,8 @@ export class ApiClient {
 
     const lockAmount = parentRefs.length > 0 ? POST_LOCK_REPLY_COST : POST_LOCK_THREAD_COST;
     const k = await this.getKarma(author.publicKeyHex);
-    // Filter to only spendable karma boxes — post_lock boxes have
-    // guard=block_apply and can't be spent with owner_signature.
+    // Filter to only spendable karma boxes — no user transition consumes a
+    // post_lock box.
     const spendableBoxes = k.boxes.filter(b => (b as any).boxType === 'karma' || !(b as any).boxType);
     if (spendableBoxes.length === 0) {
       throw new Error(`No spendable karma boxes for ${author.publicKeyHex.slice(0, 12)}...`);
@@ -190,8 +190,8 @@ export class ApiClient {
     targetPostId: string,
   ): Promise<LikeResponse> {
     const k = await this.getKarma(liker.publicKeyHex);
-    // Filter to only spendable karma boxes — post_lock boxes have
-    // guard=block_apply and can't be spent with owner_signature.
+    // Filter to only spendable karma boxes — no user transition consumes a
+    // post_lock box.
     const karmaBoxes = k.boxes.filter(b => (b as any).boxType === 'karma' || !(b as any).boxType);
     if (karmaBoxes.length === 0) {
       throw new Error(`No spendable karma boxes for ${liker.publicKeyHex.slice(0, 12)}...`);

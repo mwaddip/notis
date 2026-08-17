@@ -674,12 +674,6 @@ const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 
  * producer's own field order is not consensus-visible and no sorting pass is
  * required to make it so.
  *
- * **`guard` is absent from the consensus bytes** (TYPES_INTERFACE → Layout —
- * Boxes). It is a pure function of `boxType`, so it carries zero information in
- * a preimage. It stays on the objects the UI builds because `validateTx`'s
- * output-shape check requires each output to carry its one canonical guard; it
- * is simply not hashed.
- *
  * Total for an unknown `boxType`: `enum8Tag` writes the reserved 0xff and no
  * per-type fields follow, so a malformed box still encodes and can never
  * collide with a well-formed one.
@@ -740,8 +734,8 @@ function boxTypeFields(box) {
     case 'treasury':
     case 'fee':
       // **Empty on purpose, and not the same as the `default` below.** None of
-      // the three has an owner — block application is their only spender, which
-      // `block_apply` already says — so the shared prefix
+      // the three has an owner — block application is their only spender — so
+      // the shared prefix
       // `enum8(boxType) ‖ vlqU64(value)` is the whole encoding, and these are
       // the types whose content bytes carry no tail at all
       // (TYPES_INTERFACE → EmissionBox / TreasuryBox / FeeBox). The `default`
@@ -1009,7 +1003,6 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
     boxType: 'karma',
     value: newKarmaValue,
     owner: pubKeyHex,
-    guard: 'owner_signature',
   };
 
   const postLockOutput = {
@@ -1017,7 +1010,6 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
     value: lockAmount,
     originalValue: lockAmount,
     owner: pubKeyHex,
-    guard: 'block_apply',
   };
 
   return {
@@ -1049,7 +1041,6 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
     boxType: 'karma',
     value: newKarmaValue,
     owner: pubKeyHex,
-    guard: 'owner_signature',
   };
 
   return {
@@ -1081,31 +1072,28 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
     boxType: 'karma',
     value: selectedTotal - INVITE_BOND_KARMA,
     owner: pubKeyHex,
-    guard: 'owner_signature',
   };
 
   // An invite holds nothing: the karma it names does not exist until the claim
   // mints it, and `checkTransitions` pins the value at 0 (TYPES_INTERFACE →
-  // InviteBox). `invite_dual` is satisfied by either named key — the invitee's
-  // signature claims, the inviter's cancels.
+  // InviteBox). Either named key may sign — the invitee's signature claims,
+  // the inviter's cancels.
   const inviteOutput = {
     boxType: 'invite',
     value: 0n,
     inviterId: pubKeyHex,
     inviteePublicKey: inviteePubKeyHex,
-    guard: 'invite_dual',
   };
 
   // The bond is the whole cost of an invite and the network's only sybil price.
-  // `block_apply` admits no user transaction at all: block application settles
-  // it at the probation deadline, or returns it when the invite is cancelled
+  // No user transaction consumes it at all: block application settles it at
+  // the probation deadline, or returns it when the invite is cancelled
   // (TYPES_INTERFACE → BondBox).
   const bondOutput = {
     boxType: 'bond',
     value: INVITE_BOND_KARMA,
     inviterId: pubKeyHex,
     inviteePublicKey: inviteePubKeyHex,
-    guard: 'block_apply',
   };
 
   return {
@@ -1133,7 +1121,6 @@ function buildClaimInviteTx(inviteBoxId, inviteePubKeyHex) {
     boxType: 'karma',
     value: INVITE_KARMA_AMOUNT,
     owner: inviteePubKeyHex,
-    guard: 'owner_signature',
   };
 
   return {
@@ -1182,7 +1169,6 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
     boxType: 'karma',
     value: selectedTotal - VOUCH_KARMA_AMOUNT,
     owner: pubKeyHex,
-    guard: 'owner_signature',
   };
 
   const vouchOutput = {
@@ -1190,7 +1176,6 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
     value: VOUCH_KARMA_AMOUNT,
     voucherId: pubKeyHex,
     targetId: targetIdHex,
-    guard: 'owner_signature',
   };
 
   return {
@@ -2284,14 +2269,12 @@ function buildCreditTransferTx(creditBoxes, recipientHex, amount) {
     boxType: 'credit',
     value: amount,
     owner: recipientHex,
-    guard: 'owner_signature',
   }];
   if (change > 0n) {
     outputs.push({
       boxType: 'credit',
       value: change,
       owner: buf2hex(pubKeyRaw),
-      guard: 'owner_signature',
     });
   }
 

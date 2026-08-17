@@ -1,5 +1,5 @@
 /**
- * Output shape — the closed per-boxType schema (guard-shape pin,
+ * Output shape — the closed per-boxType schema (field-type pin,
  * NODE_INTERFACE → "Output shape").
  *
  * Two layers:
@@ -10,7 +10,7 @@
  *  - full `validateTx` runs against a real store for the consensus surface:
  *    every boxType's honest shape still validates through a legal transition
  *    (including the two declared optionals present and absent), and every
- *    output boxType rejects a wrong-but-known-elsewhere guard.
+ *    output boxType rejects a `guard` key, which no box carries.
  *
  * `BOX_TYPES` below is the types a transaction may CREATE, which is what this
  * file is about — not every box type. `genesis_proof`, `emission` and
@@ -74,14 +74,12 @@ function honestCandidate(
         boxType: 'karma',
         value: 10n,
         owner,
-        guard: 'owner_signature',
       };
     case 'credit':
       return {
         boxType: 'credit',
         value: 10n,
         owner,
-        guard: 'owner_signature',
       };
     case 'invite':
       return {
@@ -89,7 +87,6 @@ function honestCandidate(
         value: 0n,
         inviterId: owner,
         inviteePublicKey: new Uint8Array(32).fill(0xaa),
-        guard: 'invite_dual',
       };
     case 'bond':
       return {
@@ -97,7 +94,6 @@ function honestCandidate(
         value: 10n,
         inviterId: owner,
         inviteePublicKey: new Uint8Array(32).fill(0xaa),
-        guard: 'block_apply',
       };
     case 'post_lock':
       return {
@@ -105,7 +101,6 @@ function honestCandidate(
         value: 10n,
         originalValue: 10n,
         owner,
-        guard: 'block_apply',
       };
     case 'vouch':
       return {
@@ -113,7 +108,6 @@ function honestCandidate(
         value: VOUCH_KARMA_AMOUNT,
         voucherId: owner,
         targetId: new Uint8Array(32).fill(0xcc),
-        guard: 'owner_signature',
       };
     case 'fee':
       // The shared prefix and nothing else — no owner, no tail
@@ -121,7 +115,6 @@ function honestCandidate(
       return {
         boxType: 'fee',
         value: 10n,
-        guard: 'block_apply',
       };
     default:
       throw new Error(`no honest candidate for ${boxType}`);
@@ -134,7 +127,7 @@ function honestCandidate(
  *
  * ⛔ **An array of the union is satisfied by any subset of it**, so `BOX_TYPES`
  * alone tracks the set by hand and a new output type would silently go
- * uncovered by every loop in this file. `WRONG_GUARD` is keyed on the union
+ * uncovered by every loop in this file. `CREATABLE` is keyed on the union
  * instead, which makes the omission a compile error, and `BOX_TYPES` is
  * derived from its keys. Same shape as `MirroredBoxType` in
  * `ui-crypto-mirror.test.ts`.
@@ -144,18 +137,18 @@ type OutputBoxType = Exclude<
   'genesis_proof' | 'emission' | 'treasury'
 >;
 
-/** A guard string that is canonical for a DIFFERENT boxType. */
-const WRONG_GUARD: Record<OutputBoxType, string> = {
-  karma: 'block_apply',
-  credit: 'block_apply',
-  invite: 'owner_signature',
-  bond: 'owner_signature',
-  post_lock: 'owner_signature',
-  vouch: 'invite_dual',
-  fee: 'owner_signature',
+/** Every type a transaction may create — the union's key set, not a list. */
+const CREATABLE: Record<OutputBoxType, true> = {
+  karma: true,
+  credit: true,
+  invite: true,
+  bond: true,
+  post_lock: true,
+  vouch: true,
+  fee: true,
 };
 
-const BOX_TYPES = Object.keys(WRONG_GUARD) as readonly OutputBoxType[];
+const BOX_TYPES = Object.keys(CREATABLE) as readonly OutputBoxType[];
 
 function shapeOf(outputs: unknown[]) {
   return checkOutputShape(outputs as AnyBoxCandidate[]);
@@ -190,7 +183,7 @@ describe('checkOutputShape (direct)', () => {
   });
 
   it('rejects an unknown boxType with a clean UtxoResult error', () => {
-    const r = shapeOf([{ boxType: 'wat', value: 10n, guard: 'owner_signature' }]);
+    const r = shapeOf([{ boxType: 'wat', value: 10n }]);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unknown boxType/);
   });
@@ -211,9 +204,9 @@ describe('checkOutputShape (direct)', () => {
     }
   });
 
-  it('rejects a missing required key on every boxType (last non-guard key dropped)', () => {
+  it('rejects a missing required key on every boxType (last key dropped)', () => {
     // `fee` has no field but `value` — the shared prefix is its whole shape —
-    // so dropping the last non-guard key is dropping `value` itself.
+    // so dropping the last key is dropping `value` itself.
     const dropped: Record<OutputBoxType, string> = {
       karma: 'owner',
       credit: 'owner',
@@ -244,33 +237,22 @@ describe('checkOutputShape (direct)', () => {
     expect(r.error).toMatch(/present with value undefined/);
   });
 
-  it('rejects the wrong-but-known-elsewhere guard on every boxType', () => {
+  it('rejects a guard key on every boxType — no box carries one', () => {
+    // No box interface declares `guard` (NODE_INTERFACE → Legal box
+    // transitions: authorization belongs to the transition, not the box), so
+    // the key is outside every closed set and the value is irrelevant. A
+    // candidate carrying one cannot be stored under a rule that reads it.
     for (const t of BOX_TYPES) {
-      const r = shapeOf([{ ...honestCandidate(t, owner), guard: WRONG_GUARD[t] }]);
+      const r = shapeOf([{ ...honestCandidate(t, owner), guard: 'owner_signature' }]);
       expect(r.valid, t).toBe(false);
-      expect(r.error, t).toMatch(/guard must be/);
+      expect(r.error, t).toMatch(/unexpected key 'guard'/);
     }
-  });
-
-  it('rejects every reserved guard string on the types that once wore them', () => {
-    // Reserved-retired, never to be reused (TYPES_INTERFACE → BoxGuard): a
-    // guard string is box content, so a reinstated name would make two
-    // different rules share a byte string. All of these are lies about the box.
-    for (const retired of ['hash_preimage_with_bond', 'hash_preimage', 'inviter_signature']) {
-      expect(shapeOf([{ ...honestCandidate('invite', owner), guard: retired }]).valid, retired)
-        .toBe(false);
-    }
-    for (const retired of ['bond_dual', 'inviter_signature']) {
-      expect(shapeOf([{ ...honestCandidate('bond', owner), guard: retired }]).valid, retired)
-        .toBe(false);
-    }
-    expect(shapeOf([{ ...honestCandidate('post_lock', owner), guard: 'epoch_tally' }]).valid).toBe(false);
   });
 
   it('names the offending output index in the error', () => {
     const r = shapeOf([
       honestCandidate('karma', owner),
-      { ...honestCandidate('post_lock', owner), guard: 'owner_signature' },
+      { ...honestCandidate('post_lock', owner), notAField: true },
     ]);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/index 1 \(post_lock\)/);
@@ -323,7 +305,6 @@ describe('validateTx output shape (integration)', () => {
         boxType: 'karma',
         value,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       },
       1,
     );
@@ -337,7 +318,6 @@ describe('validateTx output shape (integration)', () => {
         boxType: 'credit',
         value,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       },
       1,
     );
@@ -369,7 +349,6 @@ describe('validateTx output shape (integration)', () => {
       boxType: 'karma',
       value,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
   }
 
@@ -397,7 +376,7 @@ describe('validateTx output shape (integration)', () => {
       deps,
       signedTx(
         [c1.id!],
-        [{ boxType: 'credit', value: 40n, owner: ownerPubKey, guard: 'owner_signature' }],
+        [{ boxType: 'credit', value: 40n, owner: ownerPubKey }],
       ),
       10,
     );
@@ -412,7 +391,6 @@ describe('validateTx output shape (integration)', () => {
             boxType: 'credit',
             value: 40n,
             owner: ownerPubKey,
-            guard: 'owner_signature',
             lockedUntilBlock: 500,
           },
         ],
@@ -429,7 +407,6 @@ describe('validateTx output shape (integration)', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      guard: 'block_apply',
     };
     const r = validateTx(
       deps,
@@ -450,7 +427,6 @@ describe('validateTx output shape (integration)', () => {
       value: VOUCH_KARMA_AMOUNT,
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
-      guard: 'owner_signature',
     };
     const r = validateTx(
       deps,
@@ -468,136 +444,40 @@ describe('validateTx output shape (integration)', () => {
       value: 0n,
       inviterId: ownerPubKey,
       inviteePublicKey: invitee,
-      guard: 'invite_dual',
     };
     const bond = {
       boxType: 'bond',
       value: INVITE_BOND_KARMA,
       inviterId: ownerPubKey,
       inviteePublicKey: invitee,
-      guard: 'block_apply',
     };
     const change = karmaChange(100n - INVITE_BOND_KARMA);
     const r = validateTx(deps, signedTx([karma.id!], [change, invite, bond]), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
-  // ---- guard rejects: same legal transitions, one guard flipped ----
+  // ---- stray-key rejects: same legal transitions, one key added ----
 
-  it('rejects karma output with guard block_apply', () => {
+  it('rejects a karma output carrying a guard key', () => {
     const karma = seedKarma(100n);
     const r = validateTx(
       deps,
-      signedTx([karma.id!], [{ ...karmaChange(100n), guard: 'block_apply' }]),
+      signedTx([karma.id!], [{ ...karmaChange(100n), guard: 'owner_signature' }]),
       10,
     );
     expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/\(karma\): guard must be 'owner_signature'/);
-  });
-
-  it('rejects credit output with guard block_apply', () => {
-    const c = seedCredit(40n);
-    const r = validateTx(
-      deps,
-      signedTx(
-        [c.id!],
-        [
-          {
-            boxType: 'credit',
-            value: 40n,
-            owner: ownerPubKey,
-            guard: 'block_apply',
-          },
-        ],
-      ),
-      10,
-    );
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/\(credit\): guard must be 'owner_signature'/);
-  });
-
-  it('rejects post_lock output with guard owner_signature (the before-leg probe)', () => {
-    const karma = seedKarma(100n);
-    const lyingLock = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
-      guard: 'owner_signature',
-    };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lyingLock]),
-      10,
-    );
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/\(post_lock\): guard must be 'block_apply'/);
-  });
-
-  it('rejects vouch output with guard invite_dual', () => {
-    const karma = seedKarma(100n);
-    const vouch = {
-      boxType: 'vouch',
-      value: VOUCH_KARMA_AMOUNT,
-      voucherId: ownerPubKey,
-      targetId: new Uint8Array(32).fill(0xcc),
-      guard: 'invite_dual',
-    };
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [karmaChange(100n - VOUCH_KARMA_AMOUNT), vouch]),
-      10,
-    );
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/\(vouch\): guard must be 'owner_signature'/);
-  });
-
-  it('rejects invite output with guard owner_signature and bond output with guard owner_signature', () => {
-    const karma = seedKarma(100n);
-    const invitee = new Uint8Array(32).fill(0xaa);
-    const invite = (guard: string) => ({
-      boxType: 'invite',
-      value: 0n,
-      inviterId: ownerPubKey,
-      inviteePublicKey: invitee,
-      guard,
-    });
-    const bond = (guard: string) => ({
-      boxType: 'bond',
-      value: INVITE_BOND_KARMA,
-      inviterId: ownerPubKey,
-      inviteePublicKey: invitee,
-      guard,
-    });
-    const change = karmaChange(100n - INVITE_BOND_KARMA);
-
-    const r1 = validateTx(
-      deps,
-      signedTx([karma.id!], [change, invite('owner_signature'), bond('block_apply')]),
-      10,
-    );
-    expect(r1.valid).toBe(false);
-    expect(r1.error).toMatch(/\(invite\): guard must be 'invite_dual'/);
-
-    const r2 = validateTx(
-      deps,
-      signedTx([karma.id!], [change, invite('invite_dual'), bond('owner_signature')]),
-      10,
-    );
-    expect(r2.valid).toBe(false);
-    expect(r2.error).toMatch(/\(bond\): guard must be 'block_apply'/);
+    expect(r.error).toMatch(/\(karma\): unexpected key 'guard'/);
   });
 
   // ---- key-set rejects through the full pipeline ----
 
-  it('rejects a stray key through validateTx (honest guard + note)', () => {
+  it('rejects a stray key through validateTx', () => {
     const karma = seedKarma(100n);
     const strayLock = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      guard: 'block_apply',
       note: 'x',
     };
     const r = validateTx(
@@ -616,7 +496,6 @@ describe('validateTx output shape (integration)', () => {
       value: POST_LOCK_THREAD_COST,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
-      guard: 'block_apply',
     };
     const tx = signedTx(
       [karma.id!],
@@ -653,7 +532,7 @@ describe('validateTx output shape (integration)', () => {
   // check back behind the arms resurfaces the arm's wording and fails here.
   it('rejects an unknown output boxType at the shape gate (the transition arm backstops it)', () => {
     const karma = seedKarma(100n);
-    const alien = { boxType: 'wat', value: 10n, guard: 'owner_signature' };
+    const alien = { boxType: 'wat', value: 10n };
     const r = validateTx(deps, signedTx([karma.id!], [{ ...karmaChange(90n) }, alien]), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unknown boxType wat/);

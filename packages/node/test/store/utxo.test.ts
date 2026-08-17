@@ -67,7 +67,6 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
     boxType: 'karma' as const,
     value: 100n,
     owner: OWNER_A,
-    guard: 'owner_signature' as const,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -78,7 +77,6 @@ function makeCreditBox(overrides: Partial<CreditBox> = {}): CreditBox {
     boxType: 'credit' as const,
     value: 1000n,
     owner: OWNER_A,
-    guard: 'owner_signature' as const,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -90,7 +88,6 @@ function makeInviteBox(overrides: Partial<InviteBox> = {}): InviteBox {
     value: 0n,
     inviterId: uid('alice-inviter'),
     inviteePublicKey: bytes(32),
-    guard: 'invite_dual' as const,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -102,7 +99,6 @@ function makeBondBox(overrides: Partial<BondBox> = {}): BondBox {
     value: 10n,
     inviterId: uid('alice-inviter'),
     inviteePublicKey: bytes(32),
-    guard: 'block_apply' as const,
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -140,7 +136,6 @@ describe('utxo store', () => {
     expect(result.boxType).toBe('karma');
     expect(result.value).toBe(200n);
     expect(result.owner).toEqual(OWNER_A);
-    expect(result.guard).toBe('owner_signature');
     // Provenance is what the row has to carry back: the box id derives from
     // `txId`/`index`, so a row that lost either reconstructs a box that no
     // longer hashes to its own key.
@@ -183,7 +178,6 @@ describe('utxo store', () => {
     expect(result.boxType).toBe('credit');
     expect(result.value).toBe(5000n);
     expect(result.owner).toEqual(OWNER_A);
-    expect(result.guard).toBe('owner_signature');
   });
 
   it("insertBox throws on the retired 'like' box type — the store has no like arm (T2b)", async () => {
@@ -221,7 +215,6 @@ describe('utxo store', () => {
     expect(result.value).toBe(0n);
     expect(result.inviterId).toEqual(uid('inviter-alice'));
     expect(result.inviteePublicKey).toEqual(invitee);
-    expect(result.guard).toBe('invite_dual');
   });
 
   it('insertBox + getBox round-trip for BondBox', async () => {
@@ -247,7 +240,6 @@ describe('utxo store', () => {
     expect(result.value).toBe(10n);
     expect(result.inviterId).toEqual(uid('inviter-bob'));
     expect(result.inviteePublicKey).toEqual(inviteePk);
-    expect(result.guard).toBe('block_apply');
   });
 
   // --- getBox returns null for unknown id -----------------------------------

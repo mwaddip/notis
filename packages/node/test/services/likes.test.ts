@@ -54,7 +54,6 @@ function createKarmaBox(
       boxType: 'karma',
       value,
       owner,
-      guard: 'owner_signature',
     },
     seed,
   );
@@ -146,7 +145,6 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
           boxType: 'karma',
           value: karma.value - deficit,
           owner: likerPubKey,
-          guard: 'owner_signature',
         } as KarmaBox,
       ],
       signatures: {},
@@ -300,7 +298,6 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
           boxType: 'karma',
           value: otherKarma.value - LIKE_KARMA_COST,
           owner: otherPub,
-          guard: 'owner_signature',
         } as KarmaBox,
       ],
       signatures: {},

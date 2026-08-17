@@ -31,22 +31,22 @@ const VALIDATOR = uid('validator');
 const MALLORY = uid('mallory');
 
 function karmaBox(value: bigint, owner: Uint8Array): KarmaBox {
-  return { boxType: 'karma', value, owner, guard: 'owner_signature' } as KarmaBox;
+  return { boxType: 'karma', value, owner } as KarmaBox;
 }
 
 function creditBox(value: bigint, owner: Uint8Array): CreditBox {
-  return { boxType: 'credit', value, owner, guard: 'owner_signature' } as CreditBox;
+  return { boxType: 'credit', value, owner } as CreditBox;
 }
 
 function vouchBox(voucherId: Uint8Array, targetId: Uint8Array): VouchBox {
   return {
-    boxType: 'vouch', value: 1n, voucherId, targetId, guard: 'owner_signature',
+    boxType: 'vouch', value: 1n, voucherId, targetId, 
   } as VouchBox;
 }
 
 function inviteBox(inviterId: Uint8Array, inviteePublicKey: Uint8Array): InviteBox {
   return {
-    boxType: 'invite', value: 0n, inviterId, inviteePublicKey, guard: 'invite_dual',
+    boxType: 'invite', value: 0n, inviterId, inviteePublicKey, 
   } as InviteBox;
 }
 

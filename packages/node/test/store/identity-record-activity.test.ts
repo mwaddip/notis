@@ -78,7 +78,6 @@ function karmaBox(
     boxType: 'karma',
     value,
     owner: o,
-    guard: 'owner_signature',
     // `seed` is a fixture discriminator, NOT a box field: `seedProvenance`
     // hashes it into the synthetic provenance, so distinct boxes keep distinct
     // ids. The journal height is what the clock assertions turn on.
@@ -92,7 +91,6 @@ function creditBox(o: UserId, value: bigint, seed: number): Stored<CreditBox> {
     boxType: 'credit' as const,
     value,
     owner: o,
-    guard: 'owner_signature' as const,
   }, 1);
 }
 

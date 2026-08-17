@@ -195,7 +195,6 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
     boxType: 'karma',
     value,
     owner,
-    guard: 'owner_signature',
   }, seed);
   return box;
 }
@@ -310,7 +309,6 @@ describe('full-pipeline', () => {
           boxType: 'karma',
           value: changeVal,
           owner: liker.userId,
-          guard: 'owner_signature',
         } as KarmaBox,
       ],
       signatures: {},
@@ -396,7 +394,6 @@ describe('full-pipeline', () => {
           boxType: 'karma',
           value: changeVal,
           owner: liker.userId,
-          guard: 'owner_signature',
         } as KarmaBox,
       ],
       signatures: {},
@@ -457,11 +454,10 @@ describe('full-pipeline', () => {
     // Build invite tx with 3 outputs: karma change + invite + bond. Only the
     // bond is paid — INVITE_KARMA_AMOUNT is minted at the claim.
     //
-    // ⚠ The guard-shape pin rejects a lying invite fixture, and this one has to
-    // stay honest: the canonical guard strings 'invite_dual' / 'block_apply'
-    // (TYPES_INTERFACE → BoxGuard), and one invitee key on both boxes. All of it
-    // is box CONTENT, so a fixture that gets any of it wrong stores boxes that
-    // disagree with every reconstruction of them.
+    // ⚠ The output-shape pin rejects a lying invite fixture, and this one has
+    // to stay honest: one invitee key on both boxes (NODE_INTERFACE → Legal box
+    // transitions). It is box CONTENT, so a fixture that gets it wrong stores
+    // boxes that disagree with every reconstruction of them.
     const invitee = makeTestIdentity().userId;
     const changeVal = 100n - INVITE_BOND_KARMA;
     const inviteTx: UtxoTransaction = {
@@ -471,21 +467,18 @@ describe('full-pipeline', () => {
           boxType: 'karma',
           value: changeVal,
           owner: inviter.userId,
-          guard: 'owner_signature',
         } as KarmaBox,
         {
           boxType: 'invite',
           value: 0n,
           inviterId: inviter.userId,
           inviteePublicKey: invitee,
-          guard: 'invite_dual',
         } as InviteBox,
         {
           boxType: 'bond',
           value: INVITE_BOND_KARMA,
           inviterId: inviter.userId,
           inviteePublicKey: invitee,
-          guard: 'block_apply',
         } as BondBox,
       ],
       signatures: {},
@@ -564,15 +557,15 @@ describe('full-pipeline', () => {
         outputs: [
           {
             boxType: 'karma', value: karmaIn.value - INVITE_BOND_KARMA,
-            owner: inviter.userId, guard: 'owner_signature',
+            owner: inviter.userId,
           },
           {
             boxType: 'invite', value: 0n, inviterId: inviter.userId,
-            inviteePublicKey: invitee, guard: 'invite_dual',
+            inviteePublicKey: invitee,
           },
           {
             boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: inviter.userId,
-            inviteePublicKey: bondInvitee, guard: 'block_apply',
+            inviteePublicKey: bondInvitee,
           },
         ],
         signatures: {},

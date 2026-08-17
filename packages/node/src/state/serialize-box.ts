@@ -1,5 +1,4 @@
 import {
-  BOX_GUARDS,
   ReaderError,
   boxRecordBytes,
   boxRecordFromBytes,
@@ -153,13 +152,9 @@ export function deserializeIdentityRecord(bytes: Uint8Array): IdentityRecord {
  * set, so the layer below would reject it anyway; the explicit check is here to
  * say *which* kind arrived rather than "unknown tag 128".
  *
- * `guard` is reattached from `BOX_GUARDS` because the bytes do not carry it
- * (`TYPES_INTERFACE` → Layout — Boxes: "**`guard` is absent** — it is a pure
- * function of `boxType`"). Dropping it is lossless because every box interface
- * declares `guard` as a **single string literal**, not a union, so the
- * discriminator determines it completely; `@dagsocial/types` owns that mapping,
- * and its `satisfies` over the box interfaces makes a new box type a compile
- * error there rather than an `undefined` guard here.
+ * The candidate is the box less its provenance: `boxRecordFromBytes` returns
+ * every field the layout carries, and `txId`/`index` are reattached from the
+ * record's own provenance tail (`TYPES_INTERFACE` → Layout — Boxes).
  */
 export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   if (bytes.length > 0 && bytes[0] === IDENTITY_RECORD_TAG) {
@@ -169,7 +164,6 @@ export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   const { candidate, txId, index } = boxRecordFromBytes(bytes);
   return {
     ...candidate,
-    guard: BOX_GUARDS[candidate.boxType],
     txId,
     index,
   } as Omit<AnyBox, 'id'>;

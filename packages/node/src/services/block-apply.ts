@@ -193,7 +193,6 @@ export function settleEmissionAndTreasury(
       const successor: EmissionBox = {
         boxType: 'emission',
         value: remaining,
-        guard: 'block_apply',
         txId: mintTxIdFor(emissionSuccessorContext(), height),
         index: MINT_OUTPUT_INDEX,
       };
@@ -211,7 +210,6 @@ export function settleEmissionAndTreasury(
     const successor: TreasuryBox = {
       boxType: 'treasury',
       value: (box?.value ?? 0n) + treasury,
-      guard: 'block_apply',
       txId: mintTxIdFor(treasurySuccessorContext(), height),
       index: MINT_OUTPUT_INDEX,
     };
@@ -238,11 +236,11 @@ function processVouchCooldowns(currentHeight: number): void {
 /**
  * Return a cancelled invite's bond to its inviter, whole.
  *
- * The cancel transaction neither names the bond nor could spend it — a bond's
- * guard is `block_apply` and no signature satisfies it (NODE_INTERFACE → "Bond
- * transition rules"). The pairing is `inviteePublicKey` and nothing else: an
- * invite may not name an existing account, and a claim makes the invitee one, so
- * a key is invited at most once and names at most one live pair.
+ * The cancel transaction neither names the bond nor could spend it — no user
+ * transition consumes a bond, so no signature admits one (NODE_INTERFACE →
+ * "Bond transition rules"). The pairing is `inviteePublicKey` and nothing
+ * else: an invite may not name an existing account, and a claim makes the
+ * invitee one, so a key is invited at most once and names at most one live pair.
  *
  * No bond is not a fault: a store that has the invite but not its bond is
  * reachable only through a rollback boundary, and re-minting against a bond that
@@ -1054,7 +1052,7 @@ function applyMutationPhase(
   //    nothing about an embedded tx may be assumed: it may never have passed
   //    pool entry or relay validation on any node. Once a tx's inputs are all
   //    present it is fully decidable, so it is re-validated here in full —
-  //    signatures, guards, transitions, conservation — and a failure means the
+  //    signatures, authorization, transitions, conservation — and a failure means the
   //    block itself is malformed. A valid block cannot contain an invalid tx.
   const utxoDeps = {
     getBox,
@@ -1594,7 +1592,6 @@ function applyMutationPhase(
         value: remaining,
         originalValue: lockBox.originalValue,
         owner: lockBox.owner,
-        guard: 'block_apply',
         txId: mintTxIdFor(postlockRemainderContext(postId), height),
         index: MINT_OUTPUT_INDEX,
       };

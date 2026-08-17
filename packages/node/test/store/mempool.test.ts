@@ -90,7 +90,6 @@ function likeTx(targetPostId: string, likerHex: string) {
         // branch for a u64, so a plain `99` here has no encoding at all.
         value: 99n,
         owner: bytes(likerHex),
-        guard: 'owner_signature',
       },
     ],
     signatures: { [likerHex]: new Uint8Array(64) },
@@ -108,7 +107,6 @@ function inviteTx(inviterHex: string) {
         value: 0n,
         inviterId: bytes(inviterHex),
         inviteePublicKey: new Uint8Array(32).fill(0x11),
-        guard: 'invite_dual',
       },
     ],
     signatures: {},
@@ -125,7 +123,6 @@ function vouchTx(voucherHex: string, targetHex: string) {
         value: 10n,
         voucherId: bytes(voucherHex),
         targetId: bytes(targetHex),
-        guard: 'owner_signature',
       },
     ],
     signatures: {},
@@ -174,7 +171,7 @@ function creditTxWithInput(label: string): unknown {
   return {
     inputs: [id],
     outputs: [
-      { boxType: 'credit', value: 1n, owner: new Uint8Array(32), guard: 'owner_signature' },
+      { boxType: 'credit', value: 1n, owner: new Uint8Array(32) },
     ],
     signatures: {},
     protocolVersion: 1,
@@ -204,7 +201,6 @@ function seededCreditTx(
     boxType: 'credit' as const,
     value: inputValue,
     owner: new Uint8Array(owner),
-    guard: 'owner_signature' as const,
     txId: createHash('blake2b512').update(`${label}_tx`).digest().subarray(0, 32).toString('hex'),
     index: 0,
   };
@@ -214,13 +210,12 @@ function seededCreditTx(
     boxType: 'credit' as const,
     value: i === 0 ? outputValue - share * BigInt(padding - 1) : share,
     owner: new Uint8Array(owner),
-    guard: 'owner_signature' as const,
   }));
   const fee = inputValue - outputValue;
   // Zero fee means no box, so a zero-bidding entry carries none — which is
   // exactly the shape the flood cases above rely on.
   if (fee > 0n) {
-    outputs.push({ boxType: 'fee' as const, value: fee, guard: 'block_apply' as const });
+    outputs.push({ boxType: 'fee' as const, value: fee });
   }
   return {
     tx: { inputs: [id], outputs, signatures: {}, protocolVersion: 1 },
@@ -598,7 +593,6 @@ describe('mempool store', () => {
       boxType: 'karma',
       value,
       owner: bytes(OWNER),
-      guard: 'owner_signature',
     });
 
     const chainTx = (inputs: string[], outputs: unknown[]) => ({
@@ -656,7 +650,6 @@ describe('mempool store', () => {
         boxType: 'karma' as const,
         value: 100n,
         owner: bytes(OWNER),
-        guard: 'owner_signature' as const,
         txId: '53'.repeat(32),
         index: 0,
       };

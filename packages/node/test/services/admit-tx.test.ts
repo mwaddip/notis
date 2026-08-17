@@ -20,7 +20,6 @@ function creditBox(label: string, value: bigint): CreditBox {
     boxType: 'credit' as const,
     value,
     owner: new Uint8Array(owner),
-    guard: 'owner_signature' as const,
     txId: createHash('blake2b512').update(`${label}_t`).digest().subarray(0, 32).toString('hex'),
     index: 0,
   };
@@ -37,9 +36,9 @@ function spend(box: CreditBox, fee: bigint): UtxoTransaction {
     inputs: [box.id!],
     outputs: [
       {
-        boxType: 'credit', value: box.value - fee, owner: box.owner, guard: 'owner_signature',
+        boxType: 'credit', value: box.value - fee, owner: box.owner, 
       } as CreditBox,
-      { boxType: 'fee', value: fee, guard: 'block_apply' } as FeeBox,
+      { boxType: 'fee', value: fee } as FeeBox,
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,

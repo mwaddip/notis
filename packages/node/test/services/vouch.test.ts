@@ -57,7 +57,6 @@ function createKarmaBox(
       boxType: 'karma' as const,
       value,
       owner,
-      guard: 'owner_signature' as const,
     },
     seed,
   );
@@ -77,7 +76,6 @@ function createVouchBox(
       value: VOUCH_KARMA_AMOUNT,
       voucherId,
       targetId,
-      guard: 'owner_signature' as const,
     },
     seed,
   );
@@ -99,7 +97,6 @@ function vouchTxFor(
         value: VOUCH_KARMA_AMOUNT,
         voucherId,
         targetId,
-        guard: 'owner_signature' as const,
       },
     ],
     signatures: {},
@@ -160,14 +157,12 @@ describe('vouch service', () => {
       boxType: 'karma',
       value: 99n,
       owner,
-      guard: 'owner_signature',
     };
     const vouchBox: CandidateOf<VouchBox> = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
       voucherId: owner,
       targetId,
-      guard: 'owner_signature',
     };
     const tx: UtxoTransaction = {
       inputs: [karmaBoxId],
@@ -258,7 +253,6 @@ describe('vouch service', () => {
             value: VOUCH_KARMA_AMOUNT,
             voucherId: voucherPubKey,
             targetId: new Uint8Array(32), // all zeros
-            guard: 'owner_signature' as const,
           },
         ],
         signatures: {},
@@ -279,7 +273,6 @@ describe('vouch service', () => {
             value: VOUCH_KARMA_AMOUNT,
             voucherId: voucherPubKey,
             targetId: voucherPubKey, // same as voucher
-            guard: 'owner_signature' as const,
           },
         ],
         signatures: {},
@@ -301,7 +294,6 @@ describe('vouch service', () => {
             value: VOUCH_KARMA_AMOUNT,
             voucherId: voucherPubKey,
             targetId: targetPubKey,
-            guard: 'owner_signature' as const,
           },
         ],
         signatures: {},
@@ -324,14 +316,12 @@ describe('vouch service', () => {
         boxType: 'karma',
         value: first.value - VOUCH_KARMA_AMOUNT,
         owner: voucherPubKey,
-        guard: 'owner_signature',
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
         targetId: targetPubKey,
-        guard: 'owner_signature',
       };
       const tx: UtxoTransaction = {
         inputs: [first.id!],
@@ -359,7 +349,6 @@ describe('vouch service', () => {
             value: VOUCH_KARMA_AMOUNT,
             voucherId: voucherPubKey,
             targetId: targetPubKey,
-            guard: 'owner_signature' as const,
           },
         ],
         signatures: {},
@@ -446,7 +435,6 @@ describe('vouch service', () => {
             value: VOUCH_KARMA_AMOUNT,
             voucherId: voucherPubKey,
             targetId: cooldownTarget,
-            guard: 'owner_signature' as const,
           },
         ],
         signatures: {},
@@ -469,7 +457,6 @@ describe('vouch service', () => {
         boxType: 'karma',
         value: 99n,
         owner: voucherPubKey,
-        guard: 'owner_signature',
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
 
@@ -478,7 +465,6 @@ describe('vouch service', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
         targetId: targetPubKey,
-        guard: 'owner_signature',
       };
       Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
 
@@ -520,7 +506,6 @@ describe('vouch service', () => {
         boxType: 'karma',
         value: 99n,
         owner: voucherPubKey,
-        guard: 'owner_signature',
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
 
@@ -529,7 +514,6 @@ describe('vouch service', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId: voucherPubKey,
         targetId: targetPubKey,
-        guard: 'owner_signature',
       };
       Object.assign(vouchBox, fixtureProvenance(vouchBox, 1));
 

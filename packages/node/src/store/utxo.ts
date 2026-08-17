@@ -6,7 +6,7 @@ import {
   recordBoxRemove,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
-import { BOX_GUARDS, computePostId } from '@dagsocial/types';
+import { computePostId } from '@dagsocial/types';
 import type {
   PostId,
   AnyBox,
@@ -140,10 +140,8 @@ function settledHeight(): number {
 /**
  * Reconstruct a typed box from a utxo_boxes row.
  *
- * Columns id, box_type, value and owner are read directly; `guard` comes from
- * `BOX_GUARDS`, which `@dagsocial/types` owns as the one mapping from
- * discriminant to guard. Everything else is parsed from the extra_data JSON
- * column.
+ * Columns id, box_type, value and owner are read directly; everything else is
+ * parsed from the extra_data JSON column.
  *
  * `created_at_block` is deliberately NOT read: it is a store column and never a
  * box field (Spec G D3), and putting it back on the object would change every
@@ -163,7 +161,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'karma',
         value: row.value,
         owner: new Uint8Array(row.owner!),
-        guard: BOX_GUARDS.karma,
         ...prov,
       };
       if (e.decayBurn !== undefined) {
@@ -179,7 +176,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'credit',
         value: row.value,
         owner: new Uint8Array(row.owner!),
-        guard: BOX_GUARDS.credit,
         ...prov,
       };
       if (e.lockedUntilBlock !== undefined) {
@@ -195,7 +191,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         inviterId: hexToPubkey((extra as InviteExtra).inviterId),
         inviteePublicKey: hexToPubkey((extra as InviteExtra).inviteePublicKey),
-        guard: BOX_GUARDS.invite,
         ...prov,
       };
 
@@ -208,7 +203,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         // which documents the pinned constant rather than a storage guarantee.
         value: row.value as GenesisProofBox['value'],
         payload: new Uint8Array((extra as GenesisProofExtra).payload),
-        guard: BOX_GUARDS.genesis_proof,
         ...prov,
       };
 
@@ -220,7 +214,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         inviterId: hexToPubkey(e.inviterId),
         inviteePublicKey: hexToPubkey(e.inviteePublicKey),
-        guard: BOX_GUARDS.bond,
         ...prov,
       };
     }
@@ -236,7 +229,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value,
         originalValue: BigInt(e.originalValue),
         owner: new Uint8Array(e.owner),
-        guard: BOX_GUARDS.post_lock,
         ...prov,
       };
     }
@@ -260,7 +252,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value as VouchBox['value'],
         voucherId: hexToPubkey(e.voucherId),
         targetId: hexToPubkey(e.targetId),
-        guard: BOX_GUARDS.vouch,
         ...prov,
       };
     }
@@ -275,7 +266,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'emission',
         value: row.value,
-        guard: BOX_GUARDS.emission,
         ...prov,
       };
 
@@ -284,7 +274,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'treasury',
         value: row.value,
-        guard: BOX_GUARDS.treasury,
         ...prov,
       };
 
@@ -296,7 +285,6 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'fee',
         value: row.value,
-        guard: BOX_GUARDS.fee,
         ...prov,
       };
 
@@ -870,16 +858,15 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
   db.prepare(
     `INSERT INTO utxo_boxes
        (id, box_type, value, created_at_block, spent_at_block,
-        owner, guard, extra_data,
+        owner, extra_data,
         tx_id, output_index)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
   ).run(
     box.id,
     box.boxType,
     box.value,
     settledHeight(),
     owner,
-    box.guard,
     JSON.stringify(extraData),
     box.txId,
     box.index,

@@ -736,7 +736,6 @@ describe('block-apply journal recording', () => {
           value: VOUCH_KARMA_AMOUNT,
           voucherId: voucher.userId,
           targetId: target.userId,
-          guard: 'owner_signature' as const,
         },
         1,
       );
@@ -1102,7 +1101,6 @@ describe('block-apply embedded tx re-validation', () => {
           boxType: 'karma',
           value: 100n,
           owner: attacker.userId,
-          guard: 'owner_signature',
         } as KarmaBox,
         {
           boxType: 'post_lock',
@@ -1111,7 +1109,6 @@ describe('block-apply embedded tx re-validation', () => {
           owner: attacker.userId,
           // `b32` in the box-id preimage — `'target_post'` has no encoding, and
           // the tx has to be *hashable* for the value check to be what rejects it.
-          guard: 'block_apply',
         } as PostLockBox,
       ],
       signatures: {},
@@ -1280,7 +1277,6 @@ describe('block-apply embedded tx re-validation', () => {
           boxType: 'karma',
           value: karmaBox.value,
           owner: owner.userId,
-          guard: 'owner_signature',
         },
       ],
       signatures: {},
@@ -1311,7 +1307,6 @@ describe('block-apply embedded tx re-validation', () => {
         boxType: 'karma',
         value: box.value,
         owner: makeTestIdentity().userId,
-        guard: 'owner_signature',
       }],
     };
     signTransaction(second, owner.privateKey, Buffer.from(owner.userId).toString('hex'));
@@ -1400,14 +1395,12 @@ describe('block-apply embedded tx re-validation', () => {
           boxType: 'karma',
           value: karmaIn.value - VOUCH_KARMA_AMOUNT,
           owner: voucher.userId,
-          guard: 'owner_signature',
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
           voucherId: voucher.userId,
           targetId,
-          guard: 'owner_signature',
         } as VouchBox,
       ],
       signatures: {},

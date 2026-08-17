@@ -162,7 +162,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma' as const,
         value,
         owner,
-        guard: 'owner_signature' as const,
       },
       seed,
     );
@@ -212,7 +211,6 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -248,7 +246,6 @@ describe('validateAndApplyTx', () => {
       // Only the bond is paid: INVITE_KARMA_AMOUNT is minted at the claim.
       value: 100n - INVITE_BOND_KARMA,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const inviteBox: CandidateOf<InviteBox> = {
@@ -256,7 +253,6 @@ describe('validateAndApplyTx', () => {
       value: 0n,
       inviterId: ownerUserId,
       inviteePublicKey: invitee,
-      guard: 'invite_dual',
     };
 
     const bondBox: CandidateOf<BondBox> = {
@@ -264,7 +260,6 @@ describe('validateAndApplyTx', () => {
       value: INVITE_BOND_KARMA,
       inviterId: ownerUserId,
       inviteePublicKey: invitee,
-      guard: 'block_apply',
     };
 
     const tx = buildSignedTx(
@@ -294,7 +289,6 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 100n - LIKE_KARMA_COST,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx(
@@ -330,7 +324,6 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -351,7 +344,6 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 120n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -378,7 +370,6 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 100n,
       owner: otherPubRaw,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -389,16 +380,15 @@ describe('validateAndApplyTx', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 7. Rejects missing signature for owner_signature guard
+  // 7. Rejects a missing owner signature
   // -------------------------------------------------------------------------
-  it('rejects missing signature for owner_signature guard', () => {
+  it('rejects a missing owner signature', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     // Build tx WITHOUT the owner's signature
@@ -424,7 +414,6 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -463,13 +452,11 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       value: 60n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
     const splitB: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 40n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx(
@@ -495,16 +482,15 @@ describe('validateAndApplyTx', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 10. validateTx checks guards and transitions but does not mutate state
+  // 10. validateTx checks authorization and transitions but does not mutate state
   // -------------------------------------------------------------------------
-  it('validateTx checks guards and transitions but does not mutate state', () => {
+  it('validateTx checks authorization and transitions but does not mutate state', () => {
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
       owner: ownerPubKey,
-      guard: 'owner_signature',
     };
 
     const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -528,14 +514,14 @@ describe('validateAndApplyTx', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 11. invite_dual — the guard and the two shapes it separates
+  // 11. The invite's two transitions and the shapes that separate them
   //
-  // Either key the InviteBox names satisfies the guard, and the shape decides
-  // which one may sign: invitee → claim, inviter → cancel (TYPES_INTERFACE →
-  // BoxGuard). Accepting either signature over either shape is not equivalent,
-  // and the pair of rejections below is what pins that.
+  // Either key the InviteBox names may sign, and the shape decides which one:
+  // invitee → claim, inviter → cancel (NODE_INTERFACE → Legal box
+  // transitions). Accepting either signature over either shape is not
+  // equivalent, and the pair of rejections below is what pins that.
   // ---------------------------------------------------------------------------
-  describe('invite_dual guard and the invite transitions', () => {
+  describe('the invite transitions and their signers', () => {
     let inviterPubKey: Uint8Array;
     let inviterPrivKey: KeyObject;
     let inviteePubKey: Uint8Array;
@@ -565,14 +551,12 @@ describe('validateAndApplyTx', () => {
         value: 0n,
         inviterId: inviterPubKey,
         inviteePublicKey: inviteePubKey,
-        guard: 'invite_dual',
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: inviterPubKey,
         inviteePublicKey: inviteePubKey,
-        guard: 'block_apply',
       };
       const [invite, bond] = seedAsOneTx([inviteBox, bondBox]);
       deps.insertBox(invite!);
@@ -585,7 +569,7 @@ describe('validateAndApplyTx', () => {
     function claimTx(owner = inviteePubKey, value = INVITE_KARMA_AMOUNT): UtxoTransaction {
       return {
         inputs: [inviteBoxId],
-        outputs: [{ boxType: 'karma', value, owner, guard: 'owner_signature' } as KarmaBox],
+        outputs: [{ boxType: 'karma', value, owner } as KarmaBox],
         signatures: {},
         protocolVersion: 1,
       };
@@ -670,13 +654,13 @@ describe('validateAndApplyTx', () => {
     });
 
     it('rejects a claim that also names the bond', () => {
-      // Mixed input types have no legal shape any more, and a bond input is
-      // refused at the guard besides.
+      // Mixed input types have no legal shape any more, and no user
+      // transition consumes a bond besides.
       const tx: UtxoTransaction = {
         inputs: [inviteBoxId, bondBoxId],
         outputs: [{
           boxType: 'karma', value: INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
-          owner: inviteePubKey, guard: 'owner_signature',
+          owner: inviteePubKey, 
         } as KarmaBox],
         signatures: {},
         protocolVersion: 1,
@@ -699,7 +683,6 @@ describe('validateAndApplyTx', () => {
         value: 0n,
         inviterId: inviterPubKey,
         inviteePublicKey: strangerPubKey,
-        guard: 'invite_dual',
       };
       const seeded = seedProvenance<InviteBox>(second, 2);
       deps.insertBox(seeded);
@@ -738,13 +721,11 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 100n,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
       const conjured: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 2n,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
 
       const tx = buildSignedTx(
@@ -772,7 +753,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 100n - LIKE_KARMA_COST,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
 
       const tx = buildSignedTx(
@@ -801,7 +781,7 @@ describe('validateAndApplyTx', () => {
     // sentinel is unreachable), so a fixture that signed over it would die in
     // the helper without ever reaching the check under test. The signature not
     // covering the mutation is immaterial to what is asserted: `checkOutputShape`
-    // is `validateTx` step 4 and `checkGuards` — the only thing that reads a
+    // is `validateTx` step 4 and `checkAuthorization` — the only thing that reads a
     // signature — is step 6, so the rejection under test happens first either
     // way. Under CBOR the malformed value encoded silently and the distinction
     // never arose.
@@ -820,7 +800,6 @@ describe('validateAndApplyTx', () => {
           boxType: 'karma',
           value: 100n,
           owner: ownerPubKey,
-          guard: 'owner_signature',
         };
 
         const tx = buildSignedTx([karma.id!], [newKarma], ownerPrivKey, ownerPubKey);
@@ -842,13 +821,11 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 15n,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
       const negative: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 0n,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
 
       const tx = buildSignedTx(
@@ -876,14 +853,12 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 100n - POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
       const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: POST_LOCK_THREAD_COST,
         originalValue: POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
-        guard: 'block_apply',
       };
 
       // The lock's payload: `post` present ⟺ exactly one `PostLockBox` at the
@@ -913,14 +888,12 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 100n - VOUCH_KARMA_AMOUNT,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
         targetId: targetPubRaw,
-        guard: 'owner_signature',
       };
 
       const tx = buildSignedTx(
@@ -943,21 +916,18 @@ describe('validateAndApplyTx', () => {
         // Only the bond leaves the change box: the invite holds nothing.
         value: 100n - INVITE_BOND_KARMA,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: 0n,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xbb),
-        guard: 'invite_dual',
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xbb),
-        guard: 'block_apply',
       };
 
       const tx = buildSignedTx(
@@ -981,21 +951,18 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value: 100n,
         owner: ownerPubKey,
-        guard: 'owner_signature',
       };
       const inviteBox: CandidateOf<InviteBox> = {
         boxType: 'invite',
         value: 0n,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xcc),
-        guard: 'invite_dual',
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xcc),
-        guard: 'block_apply',
       };
 
       const tx = buildSignedTx(
@@ -1012,16 +979,15 @@ describe('validateAndApplyTx', () => {
 
     it('rejects a BondBox burn (zero outputs) — no zero-output exemption is bond-shaped', () => {
       // The zero-output exemption is vouch-only, so conservation answers first
-      // (step 5, ahead of the guard at step 6): the value is gone and the sums
-      // say so. The guard is the layer under it, and refuses a bond input even
-      // when the sums balance. See test/services/bond-tightening.test.ts for
+      // (step 5, ahead of authorization at step 6): the value is gone and the
+      // sums say so. Authorization is the layer under it, and refuses a bond
+      // input even when the sums balance. See test/services/bond-tightening.test.ts for
       // both layers with their non-vacuity controls.
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: INVITE_BOND_KARMA,
         inviterId: ownerPubKey,
         inviteePublicKey: new Uint8Array(32).fill(0xdd),
-        guard: 'block_apply',
       };
       const seededBondBox = seedProvenance<BondBox>(bondBox, 1);
       const bondBoxId = seededBondBox.id;
@@ -1036,17 +1002,17 @@ describe('validateAndApplyTx', () => {
       expect(deps.getBox(bondBoxId)).not.toBeNull();
 
       // And the layer below, on a shape conservation cannot answer: sending the
-      // bond's value straight back out balances the sums, so the guard is what
-      // refuses.
+      // bond's value straight back out balances the sums, so authorization is
+      // what refuses.
       const conserving = buildSignedTx(
         [bondBoxId],
-        [{ boxType: 'karma', value: INVITE_BOND_KARMA, owner: ownerPubKey, guard: 'owner_signature' } as KarmaBox],
+        [{ boxType: 'karma', value: INVITE_BOND_KARMA, owner: ownerPubKey } as KarmaBox],
         ownerPrivKey,
         ownerPubKey,
       );
-      const guarded = validateTx(deps, conserving, 10);
-      expect(guarded.valid).toBe(false);
-      expect(guarded.error).toContain('block application');
+      const authorized = validateTx(deps, conserving, 10);
+      expect(authorized.valid).toBe(false);
+      expect(authorized.error).toContain('block application');
     });
 
     it('accepts a VouchBox burn (unvouch) — karma escrows into the cooldown', () => {
@@ -1056,7 +1022,6 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
-        guard: 'owner_signature',
       };
       const seededVouchBox = seedProvenance<VouchBox>(vouchBox, 1);
       const vouchBoxId = seededVouchBox.id;
@@ -1091,7 +1056,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'credit' as const,
         value: 100n,
         owner: ownerPubKey,
-        guard: 'owner_signature' as const,
       };
       const seededCreditBox = seedProvenance<CreditBox>(creditBox, 1);
       const creditBoxId = seededCreditBox.id;
@@ -1122,7 +1086,7 @@ describe('validateAndApplyTx', () => {
   // which `validateTx` step 3 permitted for exactly two shapes.
   //
   // Both preconditions are gone: every legal shape is single-type now, and a
-  // bond input is refused at the guard whatever else the transaction holds. The
+  // bond input is refused by authorization whatever else the transaction holds. The
   // sweep is enumerated here rather than assumed unreachable, because "step 3
   // admits no exceptions" is a claim a future arm could quietly reverse.
   // ---------------------------------------------------------------------------
@@ -1137,11 +1101,11 @@ describe('validateAndApplyTx', () => {
       const [invite, bond] = seedAsOneTx([
         {
           boxType: 'invite' as const, value: 0n, inviterId: inviterPubKey,
-          inviteePublicKey: attackerPubKey, guard: 'invite_dual' as const,
+          inviteePublicKey: attackerPubKey, 
         },
         {
           boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviterPubKey,
-          inviteePublicKey: attackerPubKey, guard: 'block_apply' as const,
+          inviteePublicKey: attackerPubKey, 
         },
       ]);
       deps.insertBox(invite!);
@@ -1153,7 +1117,6 @@ describe('validateAndApplyTx', () => {
           boxType: 'karma',
           value: 100n + INVITE_KARMA_AMOUNT + INVITE_BOND_KARMA,
           owner: attackerPubKey,
-          guard: 'owner_signature',
         } as KarmaBox],
         signatures: {},
         protocolVersion: 1,
@@ -1176,7 +1139,7 @@ describe('validateAndApplyTx', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 4);
       const [invite] = seedAsOneTx([{
         boxType: 'invite' as const, value: 0n, inviterId: ownerUserId,
-        inviteePublicKey: new Uint8Array(32).fill(0x5c), guard: 'invite_dual' as const,
+        inviteePublicKey: new Uint8Array(32).fill(0x5c), 
       }], 1, 77);
       deps.insertBox(invite!);
 
@@ -1184,7 +1147,6 @@ describe('validateAndApplyTx', () => {
         inputs: [karma.id!, invite!.id!],
         outputs: [{
           boxType: 'karma', value: 100n + INVITE_KARMA_AMOUNT, owner: ownerPubKey,
-          guard: 'owner_signature',
         } as KarmaBox],
         signatures: {},
         protocolVersion: 1,
@@ -1210,7 +1172,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         value,
         owner,
-        guard: 'owner_signature',
       } as KarmaBox;
     }
 
@@ -1306,7 +1267,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'credit' as const,
         value: 100n,
         owner: ownerPubKey,
-        guard: 'owner_signature' as const,
       };
       Object.assign(creditBox, fixtureProvenance(creditBox, 1));
       const creditId = computeBoxId(creditBox as never);
@@ -1329,7 +1289,6 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
-        guard: 'owner_signature',
       };
       const seededVouchBox = seedProvenance<VouchBox>(vouchBox, 1);
       const vouchBoxId = seededVouchBox.id;
@@ -1362,7 +1321,6 @@ describe('validateAndApplyTx', () => {
         value: 5n,
         originalValue: 5n,
         owner: ownerPubKey,
-        guard: 'block_apply',
       } as PostLockBox;
       const tx = buildSignedTx(
         [karma.id!],
@@ -1386,7 +1344,6 @@ describe('validateAndApplyTx', () => {
         boxType: 'like',
         value: 2n,
         likerId: ownerUserId,
-        guard: 'epoch_tally',
       } as never;
       const tx = buildSignedTx(
         [karma.id!],
@@ -1398,22 +1355,22 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('unknown boxType like');
     });
 
-    it('spending a block_apply-guarded PostLockBox is rejected at the guard (T2a)', () => {
+    it('spending a PostLockBox with the owner signature is refused: no user transition consumes one (T2a)', () => {
       const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: POST_LOCK_THREAD_COST,
         originalValue: POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
-        guard: 'block_apply',
       };
       const seededPostLock = seedProvenance<PostLockBox>(postLock, 1);
       const postLockId = seededPostLock.id;
       storeInsertBox(seededPostLock);
 
-      // The owner's own signature does not open a settlement-guarded box.
-      // Conservation holds (5 in, 5 out), and the transition table would also
-      // reject a post_lock input — so what this pins is the guard arm
-      // specifically: the error must name the actual guard.
+      // The owner's own signature does not open a post_lock box. Conservation
+      // holds (5 in, 5 out), and the transition table would also reject a
+      // post_lock input — so what this pins is the authorization arm
+      // specifically: the refusal must name the box TYPE, which is the key the
+      // per-transition lookup reads.
       const tx = buildSignedTx(
         [postLockId],
         [karmaOut(POST_LOCK_THREAD_COST, ownerPubKey)],
@@ -1421,8 +1378,8 @@ describe('validateAndApplyTx', () => {
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('block_apply guard');
-      expect(result.error).toContain('can only be consumed by block application');
+      expect(result.error).toContain('No user transition consumes');
+      expect(result.error).toContain('a post_lock box is consumed only by block application');
     });
   });
 
@@ -1443,7 +1400,6 @@ describe('validateAndApplyTx', () => {
           boxType: 'credit' as const,
           value,
           owner,
-          guard: 'owner_signature' as const,
         },
         seed,
       );
@@ -1456,12 +1412,11 @@ describe('validateAndApplyTx', () => {
         boxType: 'credit',
         value,
         owner,
-        guard: 'owner_signature',
       };
     }
 
     function feeOut(value: bigint): CandidateOf<FeeBox> {
-      return { boxType: 'fee', value, guard: 'block_apply' };
+      return { boxType: 'fee', value };
     }
 
     // The gap is swept rather than sampled — a 1-unit fee, an ordinary one, and
@@ -1632,7 +1587,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!],
         [
-          { boxType: 'karma', value: 90n, owner: ownerPubKey, guard: 'owner_signature' },
+          { boxType: 'karma', value: 90n, owner: ownerPubKey },
           feeOut(10n),
         ],
         ownerPrivKey, ownerPubKey,
@@ -1656,7 +1611,7 @@ describe('validateAndApplyTx', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 114);
       const tx = buildSignedTx(
         [karma.id!],
-        [{ boxType: 'karma', value: 90n, owner: ownerPubKey, guard: 'owner_signature' }],
+        [{ boxType: 'karma', value: 90n, owner: ownerPubKey }],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
@@ -1690,7 +1645,6 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
-        guard: 'owner_signature',
       };
       const seeded = seedProvenance<VouchBox>(vouchBox, 116);
       storeInsertBox(seeded);

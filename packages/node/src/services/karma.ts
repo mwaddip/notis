@@ -54,7 +54,6 @@ export function mintKarma(
     boxType: 'karma',
     value: newValue,
     owner: userId,
-    guard: 'owner_signature',
     txId: mintTxIdFor(ctx, blockHeight),
     index: MINT_OUTPUT_INDEX,
   };

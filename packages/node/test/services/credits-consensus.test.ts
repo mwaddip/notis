@@ -144,14 +144,12 @@ function buildSignedTransfer(
     boxType: 'credit',
     value: amount,
     owner: to,
-    guard: 'owner_signature',
   }];
   if (change > 0n) {
     outputs.push({
       boxType: 'credit',
       value: change,
       owner: from,
-      guard: 'owner_signature',
     });
   }
 
@@ -176,7 +174,6 @@ function seedCreditBox(
     boxType: 'credit' as const,
     value,
     owner,
-    guard: 'owner_signature' as const,
   }, 1);
   insertBox(box);
   return box;

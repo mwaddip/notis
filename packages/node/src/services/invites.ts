@@ -91,7 +91,7 @@ export function createInvite(
     );
   }
 
-  // ---- 5. Validate transaction (shape, conservation, guards, transitions) ----
+  // ---- 5. Validate transaction (shape, conservation, authorization, transitions) ----
   const result = validateTx(deps, tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`Invalid invite create transaction: ${result.error}`);
@@ -178,8 +178,9 @@ export function claimInvite(
 
   // ---- 3. Validate transaction ----
   //
-  // `validateTx` checks the `invite_dual` guard against the invitee's signature,
-  // the surplus against the conservation carve, and the claim transition.
+  // `validateTx` checks the claim's required signer against the invitee's
+  // signature, the surplus against the conservation carve, and the claim
+  // transition.
   const result = validateTx(deps, tx, currentBlockHeight);
   if (!result.valid) {
     throw new ClientError(`Invalid invite claim transaction: ${result.error}`);
@@ -240,8 +241,8 @@ export function cancelInvite(
 
   // ---- 2. Verify the signer is the inviter ----
   //
-  // Consensus-enforced by the `invite_dual` guard's cancel path; restated here
-  // for the 403, which `validateTx` has no vocabulary for.
+  // Consensus-enforced by the cancel transition's inviter-signed requirement;
+  // restated here for the 403, which `validateTx` has no vocabulary for.
   const inv = inviteBox as InviteBox;
   const inviterHex = Buffer.from(inv.inviterId).toString('hex');
   if (!tx.signatures[inviterHex]) {

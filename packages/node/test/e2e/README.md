@@ -8,8 +8,8 @@ as reference for the rewrite, not maintained. Do not repair them in place.
 Two independent Phase 2 units invalidate the suite, so repairing it now means writing it twice.
 
 **P2-D deletes what the suite tests.** `harness.test.ts`'s "Like accumulation" chapter, and the
-`likeTx` / `castLike` helpers it runs on, build `boxType:'like'` boxes with `guard:'epoch_tally'`
-and wait on epoch boundaries. The design track (§5.3–§5.5) removes `LikeBox` and the epoch interval
+`likeTx` / `castLike` helpers it runs on, build `boxType:'like'` boxes and wait on epoch
+boundaries. The design track (§5.3–§5.5) removes `LikeBox` and the epoch interval
 entirely — a like becomes a burn transaction plus a `(liker, post)` record, settled per block.
 
 **P2-A removes how the suite runs at all.** `harness/node-manager.ts` compresses consensus
@@ -25,7 +25,7 @@ compressed timescale legitimately rather than by per-process override.
 |---|---|
 | `harness.test.ts` | 1 test, 10 chapters. The "Like accumulation" chapter **logs instead of asserting** (`:187-192`) — `likeCount` may be 0 if the epoch never tallied inside the window, and the test passes either way |
 | `decay-full-pipeline.test.ts` | 2 tests. **Load-flake, root-caused**: the fixture paces on wall-clock `wait(4000)` while decay advances on block height, so under parallel load decay outruns the budget and the invite change output goes negative. The node is correctly rejecting a malformed tx |
-| `delete-pipeline.test.ts` | 1 test. PostLockBox create → delete → karma returned. The only one not directly coupled to likes, but it still builds `guard:'epoch_tally'` boxes |
+| `delete-pipeline.test.ts` | 1 test. PostLockBox create → delete → karma returned. The only one not directly coupled to likes |
 
 `.github/workflows/e2e-harness.yml` invokes `--testPathPattern`, which is a **Jest** flag; vitest
 has no such option. What that job actually runs is unverified.

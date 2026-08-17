@@ -119,7 +119,6 @@ function makeVouchBox(
     value,
     voucherId,
     targetId,
-    guard: 'owner_signature' as const,
   }, 1);
 }
 
@@ -230,14 +229,12 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
           boxType: 'karma',
           value: 99n,
           owner: staker.userId,
-          guard: 'owner_signature',
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
           voucherId: foreign.userId,
           targetId: target.userId,
-          guard: 'owner_signature',
         } as VouchBox,
       ],
       signatures: {},

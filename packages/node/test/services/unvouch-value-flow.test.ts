@@ -120,7 +120,6 @@ function makeVouchBox(
     value,
     voucherId,
     targetId,
-    guard: 'owner_signature' as const,
   }, 1);
 }
 

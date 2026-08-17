@@ -89,7 +89,6 @@ describe('the emission box', () => {
     const box = s.utxo.getEmissionBox();
     expect(box).not.toBeNull();
     expect(box!.value).toBe(MAINNET_TOTAL);
-    expect(box!.guard).toBe('block_apply');
     // No owner field at all — not an owner set to zero bytes.
     expect('owner' in box!).toBe(false);
   });
@@ -221,7 +220,6 @@ describe('the treasury box', () => {
     const box = s.utxo.getTreasuryBox();
     expect(box).not.toBeNull();
     expect(box!.value).toBe(expected);
-    expect(box!.guard).toBe('block_apply');
     expect('owner' in box!).toBe(false);
   });
 

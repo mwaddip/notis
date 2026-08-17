@@ -32,7 +32,6 @@ describe('GET /api/v1/proof/:boxId', () => {
       boxType: 'karma' as const,
       value: 100n,
       owner: new Uint8Array(32).fill(0xaa),
-      guard: 'owner_signature' as const,
     };
     const box = {
       id: 'aa'.repeat(32),

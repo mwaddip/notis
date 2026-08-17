@@ -45,7 +45,6 @@ function makeKarmaBox(id: string, value: bigint, block: number, seed: number): S
     boxType: 'karma' as const,
     value,
     owner,
-    guard: 'owner_signature' as const,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }
@@ -57,7 +56,6 @@ function makeCreditBox(id: string, value: bigint, block: number, seed: number): 
     boxType: 'credit' as const,
     value,
     owner,
-    guard: 'owner_signature' as const,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
 }

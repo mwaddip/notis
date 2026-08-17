@@ -84,7 +84,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       boxType: 'credit',
       value,
       owner: alicePubKey,
-      guard: 'owner_signature',
     };
     if (lockedUntilBlock !== undefined) {
       candidate.lockedUntilBlock = lockedUntilBlock;
@@ -109,14 +108,12 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       boxType: 'credit',
       value: amount,
       owner: bobPubKey,
-      guard: 'owner_signature',
     }];
     if (change > 0n) {
       outputs.push({
         boxType: 'credit',
         value: change,
         owner: alicePubKey,
-        guard: 'owner_signature',
       });
     }
 
@@ -176,7 +173,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     expect(pooledTxs()).toHaveLength(1);
   });
 
-  it('rejects an unsigned transfer — the guard check is validateTx, not a hand-rolled mirror', () => {
+  it('rejects an unsigned transfer — the authorization check is validateTx, not a hand-rolled mirror', () => {
     const seeded = seedCredits(500n);
     const tx = buildSignedTransfer(400n);
     tx.signatures = {};
@@ -224,7 +221,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       boxType: 'karma',
       value: 500n,
       owner: bobPubKey,
-      guard: 'owner_signature',
     };
     const tx: UtxoTransaction = {
       inputs: [seeded.id!],
@@ -284,7 +280,6 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
       boxType: 'credit',
       value: 42n,
       owner: bobPubKey,
-      guard: 'owner_signature',
     };
     const tx: UtxoTransaction = {
       inputs: ['ab'.repeat(32)],

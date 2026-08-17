@@ -34,7 +34,6 @@ describe('serializeBox', () => {
       boxType: 'karma' as const,
       value: 100n,
       owner: new Uint8Array(32).fill(0xaa),
-      guard: 'owner_signature' as const,
     });
     const serialized = serializeBox(box);
     const deserialized = deserializeBoxWithId(box.id, serialized);
@@ -46,7 +45,6 @@ describe('serializeBox', () => {
       boxType: 'credit' as const,
       value: 50n,
       owner: new Uint8Array(32).fill(0xbb),
-      guard: 'owner_signature' as const,
       lockedUntilBlock: 20,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box)))
@@ -94,7 +92,6 @@ describe('serializeBox', () => {
       value: 0n,
       inviterId: new Uint8Array(32).fill(0x33),
       inviteePublicKey: new Uint8Array(32).fill(0x22),
-      guard: 'invite_dual' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
@@ -104,16 +101,11 @@ describe('serializeBox', () => {
   // indistinguishable from the end of the box. The empty case is also the
   // smallest legal box of any type, so it is the one that would decode as
   // something else if the prefix went missing.
-  //
-  // `guard` is reattached from `GUARD_FOR` on the way back, and `'unspendable'`
-  // is the first guard naming no spender at all — so a wrong arm in that table
-  // shows up here rather than at the first attempt to spend one.
   it('roundtrips a GenesisProofBox', () => {
     const box = seedProvenance<GenesisProofBox>({
       boxType: 'genesis_proof' as const,
       value: 0n,
       payload: new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
-      guard: 'unspendable' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
@@ -123,7 +115,6 @@ describe('serializeBox', () => {
       boxType: 'genesis_proof' as const,
       value: 0n,
       payload: new Uint8Array(0),
-      guard: 'unspendable' as const,
     });
     const back = deserializeBoxWithId(box.id, serializeBox(box));
     expect(back).toEqual(box);
@@ -146,7 +137,6 @@ describe('serializeBox', () => {
       value: 5n,
       inviterId: new Uint8Array(32).fill(0x33),
       inviteePublicKey: new Uint8Array(32).fill(0x99),
-      guard: 'block_apply' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
@@ -165,7 +155,6 @@ describe('serializeBox', () => {
       owner: new Uint8Array(32).fill(0x44),
       // `b32` in the id preimage, so `'post-2'` has no encoding — the id this
       // fixture derives from itself could not be computed.
-      guard: 'block_apply' as const,
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
@@ -175,7 +164,6 @@ describe('serializeBox', () => {
       boxType: 'karma' as const,
       value: 42n,
       owner: new Uint8Array(32).fill(0x55),
-      guard: 'owner_signature' as const,
     });
     const a = serializeBox(box);
     const b = serializeBox({ ...box });
@@ -187,7 +175,6 @@ describe('serializeBox', () => {
       boxType: 'karma' as const,
       value: 1n,
       owner: new Uint8Array(32),
-      guard: 'owner_signature' as const,
     });
     const fields = deserializeBox(serializeBox(box));
     expect(fields).not.toHaveProperty('id');
@@ -199,7 +186,6 @@ describe('serializeBox', () => {
       boxType: 'karma' as const,
       value: 1n,
       owner: new Uint8Array(32),
-      guard: 'owner_signature' as const,
     });
     const bytes = serializeBox(box);
     expect(() => deserializeBox(bytes.slice(0, 3))).toThrow();
@@ -247,7 +233,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('karma', () => {
     const box: KarmaBox = {
       boxType: 'karma', value: 100n, owner: new Uint8Array(32).fill(0xaa),
-      guard: 'owner_signature', txId: TXID, index: INDEX,
+      txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
       '00' +            // enum8(karma) = 0
@@ -261,7 +247,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('credit — the lock is an option, and absence is not a value', () => {
     const box: CreditBox = {
       boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
-      guard: 'owner_signature', lockedUntilBlock: 20,
+      lockedUntilBlock: 20,
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
@@ -287,7 +273,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('invite', () => {
     const box: InviteBox = {
       boxType: 'invite', value: 0n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x22), guard: 'invite_dual',
+      inviteePublicKey: new Uint8Array(32).fill(0x22),
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
@@ -305,7 +291,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('bond', () => {
     const box: BondBox = {
       boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x22), guard: 'block_apply',
+      inviteePublicKey: new Uint8Array(32).fill(0x22),
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
@@ -321,7 +307,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
     const box: PostLockBox = {
       boxType: 'post_lock', value: 5n, originalValue: 9n,
       owner: new Uint8Array(32).fill(0x44),
-      guard: 'block_apply', txId: TXID, index: INDEX,
+      txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
       '05' +            // enum8(post_lock) = 5
@@ -335,7 +321,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
   it('vouch', () => {
     const box: AnyBox = {
       boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32).fill(0x55),
-      targetId: new Uint8Array(32).fill(0x66), guard: 'owner_signature',
+      targetId: new Uint8Array(32).fill(0x66),
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
@@ -371,28 +357,26 @@ describe('boxId is a total function of the AVL value', () => {
   const cases: Array<[string, AnyBox]> = [
     ['karma', seedProvenance<KarmaBox>({
       boxType: 'karma', value: 100n, owner: new Uint8Array(32).fill(0xaa),
-      guard: 'owner_signature',
     })],
     ['credit', seedProvenance<CreditBox>({
       boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
-      guard: 'owner_signature', lockedUntilBlock: 20,
+      lockedUntilBlock: 20,
     })],
     ['invite', seedProvenance<InviteBox>({
       boxType: 'invite', value: 0n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x22), guard: 'invite_dual',
+      inviteePublicKey: new Uint8Array(32).fill(0x22),
     })],
     ['bond', seedProvenance<BondBox>({
       boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x99), guard: 'block_apply',
+      inviteePublicKey: new Uint8Array(32).fill(0x99),
     })],
     ['post_lock', seedProvenance<PostLockBox>({
       boxType: 'post_lock', value: 5n, originalValue: 9n,
       owner: new Uint8Array(32).fill(0x44),
-      guard: 'block_apply',
     })],
     ['vouch', seedProvenance<VouchBox>({
       boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32).fill(0x55),
-      targetId: new Uint8Array(32).fill(0x66), guard: 'owner_signature',
+      targetId: new Uint8Array(32).fill(0x66),
     })],
   ];
 

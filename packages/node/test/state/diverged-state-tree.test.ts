@@ -41,7 +41,6 @@ function makeKarmaBox(id: string, value = 100n, height = 1): AnyBox & { id: stri
     boxType: 'karma' as const,
     value,
     owner: new Uint8Array(32).fill(0x77),
-    guard: 'owner_signature' as const,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, height) };
 }

@@ -200,7 +200,6 @@ describe('vouch routes — the JSON edge', () => {
         boxType: 'karma' as const,
         value,
         owner,
-        guard: 'owner_signature' as const,
       },
       1,
       nonce,
@@ -220,7 +219,6 @@ describe('vouch routes — the JSON edge', () => {
         value: VOUCH_KARMA_AMOUNT,
         voucherId,
         targetId,
-        guard: 'owner_signature' as const,
       },
       1,
       nonce,
@@ -238,14 +236,12 @@ describe('vouch routes — the JSON edge', () => {
       boxType: 'karma',
       value: karmaBox.value - VOUCH_KARMA_AMOUNT,
       owner: voucher.pub,
-      guard: 'owner_signature',
     };
     const vouchOut: CandidateOf<VouchBox> = {
       boxType: 'vouch' as const,
       value: VOUCH_KARMA_AMOUNT,
       voucherId: voucher.pub,
       targetId: target.pub,
-      guard: 'owner_signature' as const,
     };
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],

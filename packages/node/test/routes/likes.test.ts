@@ -121,7 +121,6 @@ function buildLikeTx(
         boxType: 'karma',
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: likerPubKey,
-        guard: 'owner_signature',
       } as KarmaBox,
     ],
     signatures: {},
@@ -178,7 +177,6 @@ describe('likes routes', () => {
       boxType: 'karma' as const,
       value: 100n,
       owner: likerKp.publicKey,
-      guard: 'owner_signature' as const,
     }, 1);
     insertBox(karmaBox);
   });

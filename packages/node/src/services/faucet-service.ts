@@ -136,14 +136,12 @@ export function faucetGrant(
       boxType: 'karma',
       value: systemBox.value - FAUCET_AMOUNT,
       owner: sysKeypair.publicKey,
-      guard: 'owner_signature',
     };
 
     const userBox: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: FAUCET_AMOUNT,
       owner: userIdBytes,
-      guard: 'owner_signature',
     };
 
     // The outputs carry no precomputed `id`, and nothing needs one: `computeTxId`

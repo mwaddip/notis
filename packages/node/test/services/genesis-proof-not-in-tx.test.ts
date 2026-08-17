@@ -42,7 +42,7 @@ import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
  */
 
 function proofCandidate(payload = new Uint8Array([1, 2, 3])): Record<string, unknown> {
-  return { boxType: 'genesis_proof', value: 0n, payload, guard: 'unspendable' };
+  return { boxType: 'genesis_proof', value: 0n, payload };
 }
 
 describe('a genesis_proof box may never be a transaction OUTPUT', () => {
@@ -63,7 +63,7 @@ describe('a genesis_proof box may never be a transaction OUTPUT', () => {
       { boxType: 'genesis_proof' },
       proofCandidate(new Uint8Array(0)),
       proofCandidate(new Uint8Array(4096)),
-      { ...proofCandidate(), guard: 'owner_signature' },
+      { ...proofCandidate(), owner: new Uint8Array(32) },
     ]) {
       const r = checkOutputShape([out] as unknown as AnyBoxCandidate[]);
       expect(r.valid, JSON.stringify(Object.keys(out))).toBe(false);
@@ -74,7 +74,6 @@ describe('a genesis_proof box may never be a transaction OUTPUT', () => {
   it('refuses it at any position, and leaves the other output types alone', () => {
     const karma = {
       boxType: 'karma', value: 10n, owner: new Uint8Array(32).fill(1),
-      guard: 'owner_signature',
     };
     expect(checkOutputShape([karma] as unknown as AnyBoxCandidate[]).valid).toBe(true);
     const r = checkOutputShape([karma, proofCandidate()] as unknown as AnyBoxCandidate[]);
@@ -105,7 +104,6 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
       boxType: 'genesis_proof' as const,
       value: 0n,
       payload: new Uint8Array([0xaa, 0xbb]),
-      guard: 'unspendable' as const,
     });
     storeInsertBox(proof);
   });
@@ -116,42 +114,38 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
     return { inputs: [proof.id], outputs, signatures: {}, protocolVersion: PROTOCOL_VERSION };
   }
 
-  it('the store hands it back with the unspendable guard', () => {
-    // The input half is keyed on the GUARD, and the guard is fabricated by
-    // `rowToBox` from the row's discriminant rather than stored on the object —
-    // so this is the step that makes guard-keying equivalent to type-keying for
-    // anything that came out of the UTXO set.
+  it('the store hands it back under the discriminant authorization keys on', () => {
+    // The input half is keyed on the box TYPE, and the refusals below read that
+    // type off whatever the UTXO set returns — so this pins the one premise
+    // they share: a box round-trips under the discriminant it was stored with.
     const back = deps.getBox(proof.id);
-    expect(back?.guard).toBe('unspendable');
     expect(back?.boxType).toBe('genesis_proof');
   });
 
-  it('validateTx refuses to spend it, naming the guard', () => {
+  it('validateTx refuses to spend it, naming the box type', () => {
     // Zero outputs, so face-value conservation (0 in, 0 out) HOLDS and cannot be
-    // what rejects this. The verdict has to come from the guard.
+    // what rejects this. The verdict has to come from authorization.
     const result = validateTx(deps, spend([]), 10);
     expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/unspendable guard can never be consumed/);
+    expect(result.error).toMatch(/a genesis_proof box can never be consumed/);
     expect(result.error).toContain(proof.id);
   });
 
   it('refuses it whatever the transaction tries to produce', () => {
     const karmaOut = {
       boxType: 'karma', value: 0n, owner: new Uint8Array(32).fill(2),
-      guard: 'owner_signature',
     } as unknown as AnyBoxCandidate;
     const result = validateTx(deps, spend([karmaOut]), 10);
     expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/unspendable guard can never be consumed/);
+    expect(result.error).toMatch(/a genesis_proof box can never be consumed/);
   });
 
-  it('a proof box mixed with a karma input is refused before the guard check', () => {
+  it('a proof box mixed with a karma input is refused before authorization', () => {
     // Not a weakness: "mixed input types" is a true diagnosis of a real
     // violation, and both orderings reject. Pinned so the ordering is a decision
     // rather than an accident.
     const karma = seedProvenance({
       boxType: 'karma' as const, value: 5n, owner: rawKey(),
-      guard: 'owner_signature' as const,
     });
     storeInsertBox(karma);
     const tx: UtxoTransaction = {

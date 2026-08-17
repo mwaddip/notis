@@ -62,7 +62,6 @@ function createKarmaBox(
       boxType: 'karma',
       value,
       owner,
-      guard: 'owner_signature',
     },
     seed,
   );
@@ -179,21 +178,18 @@ describe('invites service', () => {
       boxType: 'karma',
       value: karmaIn.value - bondValue - (overrides.inviteValue ?? 0n),
       owner: inviterId,
-      guard: 'owner_signature',
     };
     const inviteOut: CandidateOf<InviteBox> = {
       boxType: 'invite',
       value: overrides.inviteValue ?? 0n,
       inviterId: overrides.inviteInviterId ?? inviterId,
       inviteePublicKey: invitee,
-      guard: 'invite_dual',
     };
     const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: bondValue,
       inviterId,
       inviteePublicKey: overrides.bondInvitee ?? invitee,
-      guard: 'block_apply',
     };
     const tx: UtxoTransaction = {
       inputs: [karmaIn.id!],
@@ -217,7 +213,6 @@ describe('invites service', () => {
           boxType: 'karma',
           value: opts.value ?? INVITE_KARMA_AMOUNT,
           owner: opts.owner ?? inviteePubKey,
-          guard: 'owner_signature',
         } as CandidateOf<KarmaBox>,
       ],
       signatures: {},
@@ -294,14 +289,14 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n, owner: inviterId, guard: 'owner_signature' } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 0n, owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'invite', value: 0n, inviterId,
-          inviteePublicKey: inviteePubKey, guard: 'invite_dual',
+          inviteePublicKey: inviteePubKey, 
         } as CandidateOf<InviteBox>,
         {
           boxType: 'bond', value: INVITE_BOND_KARMA, inviterId,
-          inviteePublicKey: inviteePubKey, guard: 'block_apply',
+          inviteePublicKey: inviteePubKey, 
         } as CandidateOf<BondBox>,
       ],
       signatures: {},
@@ -435,7 +430,7 @@ describe('invites service', () => {
   });
 
   it('claimInvite rejects an inviter-signed claim', () => {
-    // The guard admits either named key, and the transition arm decides which
+    // Either named key may sign, and the transition arm decides which
     // shape that key may take. An inviter-signed claim would mint the invitee's
     // karma without them, bar their key from any further invite, and start a
     // probation clock they never asked for.
@@ -509,7 +504,6 @@ describe('invites service', () => {
           boxType: 'karma',
           value: 100n + INVITE_KARMA_AMOUNT,
           owner: inviterId,
-          guard: 'owner_signature',
         } as CandidateOf<KarmaBox>,
       ],
       signatures: {},
