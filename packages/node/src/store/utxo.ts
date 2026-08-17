@@ -4,8 +4,10 @@ import {
   openBlockJournalHeight,
   recordBoxInsert,
   recordBoxRemove,
+  recordKarmaSupplyDelta,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
+import { countsAsCirculatingKarma } from '../karma-supply.js';
 import { computePostId } from '@dagsocial/types';
 import type {
   PostId,
@@ -909,6 +911,13 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
 
   recordBoxInsert(box);
 
+  // A karma-bearing box entering the live set is karma entering circulation, so
+  // the pool owes the same amount (TYPES_INTERFACE → KarmaPoolBox). Accounted at
+  // this choke point rather than at the producers, which is what makes the
+  // supply non-inflatable **by construction**: a mint site added later cannot
+  // forget to draw, because drawing is not something its author does.
+  if (countsAsCirculatingKarma(box.boxType)) recordKarmaSupplyDelta(box.value);
+
   if (activityOwner !== null) bumpActivityClock(activityOwner);
 }
 
@@ -946,15 +955,33 @@ export class BoxNotLiveError extends Error {
  *
  * `recordBoxRemove` runs downstream of the check, so a refused consume journals
  * nothing (NODE_INTERFACE → Store Interface, the `consumeBox` row).
+ *
+ * **`RETURNING` rather than a second read**, and it tightens the guard above
+ * rather than only saving a round trip: the row is the spend that happened, so
+ * the type and value accounted below are the ones this call actually removed —
+ * a `SELECT` beforehand would describe a box the `UPDATE` might then not match.
+ * `safeIntegers`, because `value` is a `bigint` above 2⁵³.
  */
 export function consumeBox(boxId: string, consumedAtBlock: number): void {
-  const result = getDb()
+  const spent = getDb()
     .prepare(
-      'UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL',
+      `UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL
+       RETURNING box_type, value`,
     )
-    .run(consumedAtBlock, boxId);
-  if (result.changes === 0) throw new BoxNotLiveError(boxId);
+    .safeIntegers()
+    .get(consumedAtBlock, boxId) as { box_type: string; value: bigint } | undefined;
+  if (spent === undefined) throw new BoxNotLiveError(boxId);
   recordBoxRemove(boxId);
+
+  // The mirror of `insertBox`'s accounting: karma leaving the live set is karma
+  // leaving circulation, and the pool takes it back (TYPES_INTERFACE →
+  // KarmaPoolBox). Consume and insert are the only writers of the live set —
+  // `deleteBox` and `unconsumeBox` are journal-replay inverses and account
+  // nothing, for the reason they journal nothing — so the pair is the whole of
+  // it.
+  if (countsAsCirculatingKarma(spent.box_type as AnyBox['boxType'])) {
+    recordKarmaSupplyDelta(-spent.value);
+  }
 }
 
 /**

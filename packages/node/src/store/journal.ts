@@ -111,6 +111,26 @@ export interface BlockJournal {
 let openJournal: BlockJournal | null = null;
 
 /**
+ * Net change to circulating karma so far in the open block — positive when the
+ * block has minted, negative when it has burned. Read by the karma supply pool's
+ * settlement, which draws the pool down by exactly this (TYPES_INTERFACE →
+ * KarmaPoolBox).
+ *
+ * ⛔ **Beside the journal rather than a field on it, and the two are not
+ * interchangeable.** `BlockJournal` is the persisted rollback record: every
+ * field of it is CBOR-encoded into `block_journal` by `insertBlockJournal`.
+ * Rollback needs no delta — it replays the pool box's own insert and remove like
+ * any other mutation, so the pool returns to its pre-block value from the
+ * mutation log alone. Carried as a field this would be a column of every stored
+ * journal that nothing ever reads back.
+ *
+ * What the journal *does* supply is the lifetime, which is the whole reason this
+ * lives here: the accumulator is meaningful exactly while a block is being
+ * applied, and the three functions below are its only writers.
+ */
+let openKarmaSupplyDelta = 0n;
+
+/**
  * Open a journal for the block being applied. Throws if one is already open
  * (the apply funnel's totality catch turns that into a block rejection).
  */
@@ -130,6 +150,7 @@ export function beginBlockJournal(height: number): void {
     vouchCooldownInsertions: [],
     vouchCooldownDeletions: [],
   };
+  openKarmaSupplyDelta = 0n;
 }
 
 /** Return the open journal and close it. Throws if none is open. */
@@ -139,12 +160,14 @@ export function finishBlockJournal(): BlockJournal {
   }
   const journal = openJournal;
   openJournal = null;
+  openKarmaSupplyDelta = 0n;
   return journal;
 }
 
 /** Discard the open journal. No-op when none is open. */
 export function abortBlockJournal(): void {
   openJournal = null;
+  openKarmaSupplyDelta = 0n;
 }
 
 /** True while a block journal is open. */
@@ -171,6 +194,35 @@ export function isBlockJournalOpen(): boolean {
  */
 export function openBlockJournalHeight(): number | null {
   return openJournal === null ? null : openJournal.blockHeight;
+}
+
+/**
+ * The net karma the open block has minted, or null when no journal is open.
+ *
+ * `null` rather than `0n` for the closed case, because the two mean different
+ * things and the pool's settlement acts on the difference: a block that moved no
+ * karma is `0n` and leaves the pool alone; no open journal is not a block at all,
+ * and nothing may settle a pool against it.
+ */
+export function openBlockJournalKarmaSupplyDelta(): bigint | null {
+  return openJournal === null ? null : openKarmaSupplyDelta;
+}
+
+/**
+ * Account a box mutation against the block's karma supply (NODE_INTERFACE →
+ * Store Interface). Positive when a karma-bearing box was created, negative when
+ * one was consumed.
+ *
+ * Called from `insertBox` and `consumeBox`, which are the only writers of the
+ * live UTXO set — `deleteBox` and `unconsumeBox` are rollback inverses and
+ * record nothing, here as everywhere else. A silent no-op with no journal open,
+ * like every other hook in this file: genesis accounts for its own grants
+ * against the pool it seeds, and no other path outside block application moves
+ * karma.
+ */
+export function recordKarmaSupplyDelta(amount: bigint): void {
+  if (openJournal === null) return;
+  openKarmaSupplyDelta += amount;
 }
 
 // ---------------------------------------------------------------------------
