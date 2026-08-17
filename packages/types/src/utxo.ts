@@ -489,13 +489,15 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
  * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.
  *
- * `emission-release` and `treasury-accrue` take an **empty** subject, and
- * `lp(subject)` writes that as a zero length rather than as an absence. Exactly
- * one emission successor and one treasury successor exist per height, so the
- * height alone separates every instance within a reason and the tag byte
- * separates the reasons — nothing is derived from a position in the block.
- * Neither creates credits: both name a box that block application spends and
- * recreates (NODE_INTERFACE → Reason and subject table).
+ * `emission-release`, `treasury-accrue` and `pool-settle` take an **empty**
+ * subject, and `lp(subject)` writes that as a zero length rather than as an
+ * absence. Exactly one emission successor, one treasury successor and one pool
+ * successor exist per height, so the height alone separates every instance
+ * within a reason and the tag byte separates the reasons — nothing is derived
+ * from a position in the block. None of the three creates value: each names a
+ * box that block application spends and recreates — the first two on the credit
+ * side, `pool-settle` the `KarmaPoolBox` successor holding the karma that is not
+ * in circulation (NODE_INTERFACE → Reason and subject table).
  *
  * `genesis-committee` keys on the **member** — the raw 32-byte public key, one
  * karma box per `genesisCommitteeKeys` entry, drawn out of the karma pool. The
@@ -523,7 +525,8 @@ export type MintReason =
   | 'bond-return'
   | 'emission-release'
   | 'treasury-accrue'
-  | 'genesis-committee';
+  | 'genesis-committee'
+  | 'pool-settle';
 
 /**
  * The `MintReason` tag table.
@@ -564,6 +567,7 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
   'emission-release': 11,
   'treasury-accrue': 12,
   'genesis-committee': 13,
+  'pool-settle': 14,
 });
 
 /**

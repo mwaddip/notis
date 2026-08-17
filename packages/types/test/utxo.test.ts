@@ -367,6 +367,7 @@ const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
   'emission-release':     '4cb4b95c47aa83dc1330235f096c09348ba7735ad7871eb18f21160ff2f5f0a1',
   'treasury-accrue':      '83b6e7983c2c14be4bdc71da51278d43372a9123ef071a5cf06aefd80fedca65',
   'genesis-committee':    '0cf15bc43dcc566062faad29d7e9569aa12f43e034ecd8babd19bffd85715d12',
+  'pool-settle':          '62836985b94a5679810e0ba68b501d0be64b8ffe92cc031c4ae7d75e04b66cbf',
 };
 
 const MINT_GOLDEN_HEIGHT = 1;
@@ -1388,23 +1389,24 @@ describe('computeMintTxId', () => {
     expect(() => computeMintTxId(1, 'decay', undefined as unknown as Uint8Array)).not.toThrow();
   });
 
-  it('the two empty-subject reasons separate from each other and from an empty-subject peer', () => {
-    // `emission-release` and `treasury-accrue` carry no subject, so the tag byte
-    // is the whole separator between them at one height — including against a
-    // reason whose subject merely happens to be empty in this call.
+  it('the empty-subject reasons separate from each other and from an empty-subject peer', () => {
+    // `emission-release`, `treasury-accrue` and `pool-settle` carry no subject,
+    // so the tag byte is the whole separator between them at one height —
+    // including against a reason whose subject merely happens to be empty in
+    // this call.
     const empty = new Uint8Array(0);
-    const ids = (['emission-release', 'treasury-accrue', 'coinbase'] as const)
+    const ids = (['emission-release', 'treasury-accrue', 'pool-settle', 'coinbase'] as const)
       .map((r) => computeMintTxId(70000, r, empty));
-    expect(new Set(ids).size).toBe(3);
+    expect(new Set(ids).size).toBe(4);
   });
 
   it('an empty-subject reason still separates heights', () => {
     // The property the empty subject rests on. With nothing to discriminate
     // inside a reason, the height is the only thing left, and exactly one
-    // emission successor and one treasury successor exist per height
-    // (NODE_INTERFACE → Reason and subject table).
+    // emission successor, one treasury successor and one pool successor exist
+    // per height (NODE_INTERFACE → Reason and subject table).
     const empty = new Uint8Array(0);
-    for (const reason of ['emission-release', 'treasury-accrue'] as const) {
+    for (const reason of ['emission-release', 'treasury-accrue', 'pool-settle'] as const) {
       const heights = [0, 1, 2, 70000];
       const ids = heights.map((h) => computeMintTxId(h, reason, empty));
       expect(new Set(ids).size, reason).toBe(heights.length);
