@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds. Two groups are deliberate: invite and bond share identical trailing fields, and emission, treasury and fee share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
+  "$description": "Struct-level golden vectors for canonicalBoxBytes \u2014 the box identity encoding that computeBoxId and computeTxId hash (TYPES_INTERFACE -> Layout - Boxes). A positional layout. One vector per box type, because the per-type field lists are separate layouts sharing a two-field prefix \u2014 plus a second genesis_proof vector, because an empty payload is what its length prefix exists for, and a second emission vector at zero, because that is where the format's two-byte floor is, and a second fee vector at zero, because that is a shape the encoder must write and the ledger never holds, and a second karma_pool vector at zero, because that zero is one the ledger DOES hold. Two groups are deliberate: invite and bond share identical trailing fields, and emission, treasury, fee and karma_pool share the absence of any, so in both the tag byte is the whole of what separates their leaves.",
   "vectors": [
     {
       "name": "box/karma-minimal",
@@ -34,7 +34,7 @@
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
       "bytes": "00ffffffffffffffffff01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
-      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a perfectly legal box value. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id."
+      "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a value the writer emits without complaint. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id. ENCODABLE, and deliberately NOT acceptable: consensus admits [0, BOX_VALUE_BOUND) and this value is above it, so what the vector pins is the writer's domain \u2014 a vector proving a value encodes is not a claim consensus accepts it."
     },
     {
       "name": "box/credit-transfer-sentinel",
@@ -178,6 +178,26 @@
       },
       "bytes": "0900",
       "note": "Two bytes, box/emission-zero under the other tag. A zero-value fee box is one consensus never creates - zero fee means no box - and it still ENCODES: the no-zero rule belongs to block application, not to this encoder, whose domain on value is the whole u64. That split is the same one an over-bound genesis_proof payload has, one direction over."
+    },
+    {
+      "name": "box/karma-pool-genesis",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "karma_pool",
+        "value": "9223372036854775807"
+      },
+      "bytes": "0affffffffffffffff7f",
+      "note": "The whole of a network's karma supply as genesis holds it: the maximum STORABLE karma, BOX_VALUE_BOUND - 1, under tag 0a with nothing after the prefix. Ten bytes, nine of them the value - one bit below the writer's ceiling, which box/karma-value-u64-max still pins at ten value bytes. That gap is the point: the ledger is SQLite and INTEGER is signed, so [2^63, 2^64) encodes cleanly and cannot be stored. pool.value + circulating karma == BOX_VALUE_BOUND - 1 at every height, so this is the ceiling the box can hold and the writer is never handed one past it. Genesis committee grants are drawn out of this total rather than minted beside it."
+    },
+    {
+      "name": "box/karma-pool-zero",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "karma_pool",
+        "value": "0"
+      },
+      "bytes": "0a00",
+      "note": "Two bytes, box/emission-zero under tag 0a - and the reason inverts. Emission terminates, so no zero successor is created and box/emission-zero is a shape the ledger never holds; the pool never terminates, because a burn must always have somewhere to return, so the box exists at every height whatever its value. This is the one empty-tail zero that is a reachable state rather than an encoder shape, which is exactly what a reader pattern-matching to the emission rule gets backwards."
     }
   ],
   "rejects": [
@@ -189,11 +209,11 @@
       "note": "A 513-byte payload, one past MAX_GENESIS_PROOF_PAYLOAD_BYTES. Every byte of it is present and the lp field is well formed, so nothing here is truncated and nothing re-encodes differently - the bound is the only rule that can refuse these bytes, and 8104 is the count that makes them 513 rather than 512. The bound is per-type and lives in the genesis_proof arm of the reader, never in readLp, which every lp field shares; box/genesis-proof-typical is the same layout inside the bound. An over-bound payload still ENCODES, exactly as an unknown boxType does - the writers are total and the refusal is one-way."
     },
     {
-      "name": "box/unassigned-tag-10",
+      "name": "box/unassigned-tag-11",
       "codec": "boxContent",
-      "bytes": "0a01",
+      "bytes": "0b01",
       "failure": "reader-fault",
-      "note": "10 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way. The number here is load-bearing and STAYS LITERAL: a corpus deriving its input from the code under test checks nothing, so a tag this vector names is one the table must not claim, and assigning it is what moves this vector. packages/types/test/utxo.test.ts derives the same number from BOX_TYPE_TAGS, which is the other half of the pair - one side follows the table, one side pins it."
+      "note": "11 is the first tag the table does not assign, and an unassigned tag has no decoding at all \u2014 the reader refuses it rather than skipping to the next field. Distinct from box/unknown-tag-255 below: 0xff is the sentinel an unknown boxType WRITES, while this is simply a number nothing claims, and both must be one-way. The number here is load-bearing and STAYS LITERAL: a corpus deriving its input from the code under test checks nothing, so a tag this vector names is one the table must not claim, and assigning it is what moves this vector. packages/types/test/utxo.test.ts derives the same number from BOX_TYPE_TAGS, which is the other half of the pair - one side follows the table, one side pins it."
     },
     {
       "name": "box/unknown-tag-255",

@@ -244,10 +244,10 @@ describe('blocks routes', () => {
   // under-counting.
   //
   // ⛔ **The assertion below pins the supply set — "does this type's value count
-  // as karma that exists?" — and not the transition set** (NODE_INTERFACE →
-  // "Two karma sets, and neither derives from the other"). A type the karma arm
-  // admits as an output but the supply sum leaves out belongs in one list only,
-  // and this test stays green when it is added.
+  // as karma that exists?" — and neither the transition set nor the conservation
+  // one** (NODE_INTERFACE → "Three karma sets, and none derives from another").
+  // A type the karma arm admits as an output but the supply sum leaves out
+  // belongs in one list only, and this test stays green when it is added.
   // -------------------------------------------------------------------------
 
   it('GET /status counts escrowed karma in totalKarma and only spendable karma in liquidKarma', async () => {

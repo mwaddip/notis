@@ -32,7 +32,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   computePostId, postFieldBytes, computeBoxId, computeTxId,
-  computeCandidateBoxId, canonicalBoxBytes, MAX_PARENT_REFS,
+  computeCandidateBoxId, canonicalBoxBytes, BOX_VALUE_BOUND, MAX_PARENT_REFS,
   PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE, u32BE,
   INVITE_KARMA_AMOUNT, INVITE_BOND_KARMA,
 } from '@dagsocial/types';
@@ -41,7 +41,7 @@ import { extractDeclaration as extractDeclarationFrom } from './extract-declarat
 import type {
   CandidateOf,
   Post, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
-  EmissionBox, TreasuryBox, FeeBox,
+  EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
 
@@ -225,6 +225,17 @@ const GOLDEN_FEE_BOX: FeeBox = {
   txId: COVERAGE_TX_ID, index: 6,
 };
 
+// The pool's ordinary state is the top of the ACCEPTED domain, not the two-byte
+// floor its empty-tail siblings sit at (TYPES_INTERFACE → KarmaPoolBox: genesis
+// holds the whole supply). `BOX_VALUE_BOUND - 1n` rather than the top of
+// `vlqU64`'s range: the encoder is wider than the gate, and this fixture is the
+// value a real pool box carries — the encoder's own ceiling is pinned
+// separately, by the `vlqU64` vector below.
+const GOLDEN_KARMA_POOL_BOX: KarmaPoolBox = {
+  boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n,
+  txId: COVERAGE_TX_ID, index: 7,
+};
+
 /**
  * The box types the mirror covers, **keyed so coverage is a compile error.**
  *
@@ -255,6 +266,7 @@ const BOX_TYPE_FIXTURES = {
   emission: GOLDEN_EMISSION_BOX,
   treasury: GOLDEN_TREASURY_BOX,
   fee: GOLDEN_FEE_BOX,
+  karma_pool: GOLDEN_KARMA_POOL_BOX,
 } satisfies Record<MirroredBoxType, AnyBox>;
 
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> =

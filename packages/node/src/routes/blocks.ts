@@ -9,19 +9,10 @@ import { postIdsOf } from '../services/block-posts.js';
 
 /**
  * The box types whose value counts as karma that exists — what `getTotalKarma`
- * sums. Karma is spendable in a `karma` box and escrowed in the other four, and
- * escrowed karma is held rather than destroyed. `credit`, `emission`, `treasury`
- * and `fee` are the other ledger, and `genesis_proof` holds 0.
- *
- * ⛔ **Not the set the engine's karma transition arm admits as outputs** — that
- * is `KARMA_TRANSITION_TYPES` in `services/utxo-engine.ts`, and neither set is
- * defined as, spread from or derived from the other (NODE_INTERFACE → "Two
- * karma sets, and neither derives from the other"). They hold the same members
- * for two different reasons: that one answers whether a karma spend may create
- * the type, this one whether the type's value is karma in existence. A
- * karma-bearing type is added to each separately.
+ * sums. Defined in `karma-supply.ts`, which states the rule; re-exported here
+ * because `GET /status` is the reader this route serves.
  */
-export const KARMA_SUPPLY_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+export { KARMA_SUPPLY_TYPES } from '../karma-supply.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types

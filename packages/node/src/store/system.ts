@@ -1,6 +1,12 @@
 import { createPrivateKey, sign } from 'crypto';
-import { computeBoxId } from '@dagsocial/types';
-import type { KarmaBox, CreditBox, GenesisProofBox, EmissionBox } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, computeBoxId } from '@dagsocial/types';
+import type {
+  KarmaBox,
+  CreditBox,
+  GenesisProofBox,
+  EmissionBox,
+  KarmaPoolBox,
+} from '@dagsocial/types';
 import { getDb } from './db.js';
 import {
   insertBox,
@@ -8,14 +14,17 @@ import {
   getCreditBoxes,
   getGenesisProofBox,
   getEmissionBox,
+  getKarmaPoolBox,
 } from './utxo.js';
 import { putIdentityRecord } from './identity-records.js';
 import {
   GENESIS_EMISSION,
   GENESIS_FAUCET_CREDITS,
+  GENESIS_KARMA_POOL,
   GENESIS_PROOF,
   GENESIS_SYSTEM_KARMA,
   MINT_OUTPUT_INDEX,
+  genesisCommitteeContext,
   genesisContext,
   mintTxIdFor,
 } from '../mint-provenance.js';
@@ -274,6 +283,154 @@ export function ensureEmissionBox(total: bigint, currentHeight: number): Emissio
     boxType: 'emission',
     value: total,
     txId: mintTxIdFor(genesisContext(GENESIS_EMISSION), genesisHeight),
+    index: MINT_OUTPUT_INDEX,
+  };
+  box.id = computeBoxId(box);
+  insertBox(box);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
+// Genesis committee
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed one karma box per genesis committee member and return the total granted.
+ *
+ * The return value is what `ensureKarmaPoolBox` draws out of the supply, and it
+ * is summed from the boxes actually created rather than recomputed from the
+ * profile: two derivations of one number are two chances to disagree, and the
+ * one that matters is what the store holds.
+ *
+ * ⛔ **`genesisCommitteeContext(member)`, never a `genesisContext` selector.**
+ * A selector names one box; this mints one per member, and N boxes under one
+ * `k` derive one synthetic txId, one `computeBoxId` preimage, and the second
+ * insert violates `UNIQUE(tx_id, output_index)` (NODE_INTERFACE → Reason and
+ * subject table).
+ *
+ * Each member gets an identity record for the reason `ensureSystemKarmaBox`
+ * writes one: genesis runs outside block application, so `insertBox`'s choke
+ * point has no open journal and no settled height to bump an activity clock
+ * from. Left unwritten, a member holds karma with no record and decay reads
+ * "never active".
+ *
+ * `invitedAtBlock: 0` — a committee member was never invited, and genesis is the
+ * one event that could not have been a claim, since a claim is a user
+ * transaction and the first block is height 1.
+ *
+ * Idempotent through `getKarmaBox`: a member who already holds karma is not
+ * granted a second box.
+ */
+export function seedGenesisCommittee(
+  committeeKeys: readonly string[],
+  karmaPerMember: bigint,
+  currentHeight: number,
+): bigint {
+  const genesisHeight = genesisMintHeight(currentHeight);
+  let granted = 0n;
+
+  for (const keyHex of committeeKeys) {
+    const member = new Uint8Array(Buffer.from(keyHex, 'hex'));
+    if (member.length !== 32) {
+      throw new Error(
+        `Genesis committee key ${keyHex} is ${member.length} bytes, not 32. Refusing ` +
+        'to seed — a committee member is named by an Ed25519 public key.',
+      );
+    }
+    if (getKarmaBox(member)) continue;
+
+    const box: KarmaBox = {
+      boxType: 'karma',
+      value: karmaPerMember,
+      owner: member,
+      txId: mintTxIdFor(genesisCommitteeContext(member), genesisHeight),
+      index: MINT_OUTPUT_INDEX,
+    };
+    box.id = computeBoxId(box);
+    insertBox(box);
+    granted += box.value;
+
+    putIdentityRecord(member, {
+      lastActivityBlock: genesisHeight,
+      lastDecayBlock: 0,
+      likeCarry: 0n,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+    });
+  }
+
+  return granted;
+}
+
+// ---------------------------------------------------------------------------
+// Karma supply pool
+// ---------------------------------------------------------------------------
+
+/**
+ * The whole of a network's karma supply: the largest value a box may hold, the
+ * top of the accepted domain (TYPES_INTERFACE → Box value domain). Genesis puts
+ * all of it into the pool but what it grants the committee, every later mint
+ * draws the pool down and every burn returns to it, so `pool.value +
+ * circulating karma` equals this at every height, forever. Karma is not scarce
+ * by policy — it is non-inflatable by construction, and this is the number that
+ * makes it so.
+ *
+ * Derived from `BOX_VALUE_BOUND` rather than written out: the pool is the one
+ * box that sits at the ceiling, so a restated literal here is the copy that
+ * would be left behind if the domain ever moved again.
+ */
+export const KARMA_SUPPLY_TOTAL = BOX_VALUE_BOUND - 1n;
+
+/**
+ * Ensure the karma supply pool box exists, holding the karma not in
+ * circulation. Idempotent — if one is already seeded, returns it without
+ * creating.
+ *
+ * **Seeded on every network, mainnet included**, for the reason
+ * `ensureEmissionBox` carries: every karma mint draws from this box, so a
+ * network seeded without it can mint no karma at all.
+ *
+ * `granted` is what genesis hands out — the committee grants — subtracted here
+ * rather than minted beside a full pool. Minting beside one would put total
+ * supply above `KARMA_SUPPLY_TOTAL` **at genesis**, which `writeVlqU64OrThrow`
+ * refuses outright: the invariant is not merely violated, the state is
+ * unencodable (TYPES_INTERFACE → KarmaPoolBox).
+ *
+ * ⛔ **A zero-value pool box IS created, and this is the one place the
+ * `ensureEmissionBox` rule inverts.** Emission terminates, so above its terminus
+ * no box exists and its zero successor is never written. The pool never
+ * terminates: burns must always have somewhere to return, so the box exists at
+ * every height whatever its value. **A reader who pattern-matches to the
+ * emission rule here gets it exactly backwards.**
+ *
+ * ⚠ **No identity record**, for `ensureGenesisProofBox`'s reason: the box has no
+ * owner and no holder, so there is no activity clock for a record to hold.
+ */
+export function ensureKarmaPoolBox(granted: bigint, currentHeight: number): KarmaPoolBox {
+  const existing = getKarmaPoolBox();
+  if (existing) return existing;
+
+  // A grant total above the supply is a profile that cannot be seeded, and it
+  // is refused by name here rather than left to surface as an encoder throw on
+  // a negative `value` — the box the message would name is this one, and the
+  // configuration at fault is not.
+  if (granted > KARMA_SUPPLY_TOTAL) {
+    throw new Error(
+      `Genesis grants ${granted} karma, which is more than the ${KARMA_SUPPLY_TOTAL} ` +
+      'a network can hold. Refusing to seed — the karma supply pool would have to ' +
+      'hold a negative balance for the total to be conserved.',
+    );
+  }
+
+  const genesisHeight = genesisMintHeight(currentHeight);
+
+  // `GENESIS_KARMA_POOL` is the fifth `u32BE` selector — the whole cost of a
+  // fifth genesis box, which is what `genesisContext` was built fixed-width for
+  // (NODE_INTERFACE → "Box Identity and Mint Provenance").
+  const box: KarmaPoolBox = {
+    boxType: 'karma_pool',
+    value: KARMA_SUPPLY_TOTAL - granted,
+    txId: mintTxIdFor(genesisContext(GENESIS_KARMA_POOL), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);

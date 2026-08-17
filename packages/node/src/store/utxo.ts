@@ -4,8 +4,10 @@ import {
   openBlockJournalHeight,
   recordBoxInsert,
   recordBoxRemove,
+  recordKarmaSupplyDelta,
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
+import { countsAsCirculatingKarma } from '../karma-supply.js';
 import { computePostId } from '@dagsocial/types';
 import type {
   PostId,
@@ -19,6 +21,7 @@ import type {
   VouchBox,
   EmissionBox,
   TreasuryBox,
+  KarmaPoolBox,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -256,11 +259,11 @@ function rowToBox(row: UtxoRow): AnyBox {
       };
     }
 
-    // The two block-application boxes read back from the shared columns alone —
-    // no owner, no extra_data (TYPES_INTERFACE → EmissionBox / TreasuryBox: "no
-    // owner, and therefore no per-type trailing fields"). `extra` is parsed
-    // above and deliberately unread here: an arm that touched it would be
-    // asserting a field the layout does not write.
+    // The three block-application boxes read back from the shared columns alone
+    // — no owner, no extra_data (TYPES_INTERFACE → EmissionBox / TreasuryBox /
+    // KarmaPoolBox: "no owner, and therefore no per-type trailing fields").
+    // `extra` is parsed above and deliberately unread here: an arm that touched
+    // it would be asserting a field the layout does not write.
     case 'emission':
       return {
         id: row.id,
@@ -273,6 +276,14 @@ function rowToBox(row: UtxoRow): AnyBox {
       return {
         id: row.id,
         boxType: 'treasury',
+        value: row.value,
+        ...prov,
+      };
+
+    case 'karma_pool':
+      return {
+        id: row.id,
+        boxType: 'karma_pool',
         value: row.value,
         ...prov,
       };
@@ -392,6 +403,31 @@ export function getTreasuryBox(): TreasuryBox | null {
     .safeIntegers()
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as TreasuryBox) : null;
+}
+
+/**
+ * Return the unspent karma supply pool box (TYPES_INTERFACE → KarmaPoolBox).
+ *
+ * **`null` means the store has not been seeded**, and nothing else. Genesis
+ * creates one on every network and the pool never terminates — burns must
+ * always have somewhere to return, so a zero-value successor is created where
+ * the emission box's is not. A caller reading `null` as "the supply is
+ * exhausted" has the type exactly backwards.
+ *
+ * `ORDER BY id` for the reason its two siblings above carry: `LIMIT 1` alone
+ * names no row.
+ */
+export function getKarmaPoolBox(): KarmaPoolBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'karma_pool' AND spent_at_block IS NULL
+       ORDER BY id
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get() as UtxoRow | undefined;
+  return row ? (rowToBox(row) as KarmaPoolBox) : null;
 }
 
 /**
@@ -833,13 +869,14 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
       } satisfies VouchExtra;
       break;
     }
-    // No `owner` and no per-type fields on any of the three, so the columns
+    // No `owner` and no per-type fields on any of the four, so the columns
     // they share with every box carry the whole box — the same shape
     // `genesis_proof` has, minus its payload. `extraData` stays `{}` rather
     // than NULL so `rowToBox`'s `JSON.parse` sees the same empty object every
     // other ownerless arm does.
     case 'emission':
     case 'treasury':
+    case 'karma_pool':
     case 'fee': {
       extraData = {};
       break;
@@ -873,6 +910,13 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
   );
 
   recordBoxInsert(box);
+
+  // A karma-bearing box entering the live set is karma entering circulation, so
+  // the pool owes the same amount (TYPES_INTERFACE → KarmaPoolBox). Accounted at
+  // this choke point rather than at the producers, which is what makes the
+  // supply non-inflatable **by construction**: a mint site added later cannot
+  // forget to draw, because drawing is not something its author does.
+  if (countsAsCirculatingKarma(box.boxType)) recordKarmaSupplyDelta(box.value);
 
   if (activityOwner !== null) bumpActivityClock(activityOwner);
 }
@@ -911,15 +955,33 @@ export class BoxNotLiveError extends Error {
  *
  * `recordBoxRemove` runs downstream of the check, so a refused consume journals
  * nothing (NODE_INTERFACE → Store Interface, the `consumeBox` row).
+ *
+ * **`RETURNING` rather than a second read**, and it tightens the guard above
+ * rather than only saving a round trip: the row is the spend that happened, so
+ * the type and value accounted below are the ones this call actually removed —
+ * a `SELECT` beforehand would describe a box the `UPDATE` might then not match.
+ * `safeIntegers`, because `value` is a `bigint` above 2⁵³.
  */
 export function consumeBox(boxId: string, consumedAtBlock: number): void {
-  const result = getDb()
+  const spent = getDb()
     .prepare(
-      'UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL',
+      `UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL
+       RETURNING box_type, value`,
     )
-    .run(consumedAtBlock, boxId);
-  if (result.changes === 0) throw new BoxNotLiveError(boxId);
+    .safeIntegers()
+    .get(consumedAtBlock, boxId) as { box_type: string; value: bigint } | undefined;
+  if (spent === undefined) throw new BoxNotLiveError(boxId);
   recordBoxRemove(boxId);
+
+  // The mirror of `insertBox`'s accounting: karma leaving the live set is karma
+  // leaving circulation, and the pool takes it back (TYPES_INTERFACE →
+  // KarmaPoolBox). Consume and insert are the only writers of the live set —
+  // `deleteBox` and `unconsumeBox` are journal-replay inverses and account
+  // nothing, for the reason they journal nothing — so the pair is the whole of
+  // it.
+  if (countsAsCirculatingKarma(spent.box_type as AnyBox['boxType'])) {
+    recordKarmaSupplyDelta(-spent.value);
+  }
 }
 
 /**

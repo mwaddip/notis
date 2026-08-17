@@ -19,7 +19,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, BOX_VALUE_BOUND, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
 import type { Post, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
@@ -793,13 +793,18 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
   });
 
-  it('rejects a coinbase output value at 2^64', () => {
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), value: 2n ** 64n }];
-    expect(verifyOrderingBlockStructure(block)).toEqual({
-      valid: false,
-      error: 'Coinbase output invalid value',
-    });
+  it('rejects a coinbase output value at BOX_VALUE_BOUND and above', () => {
+    // The accepted domain is `[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → Box
+    // value domain), so rejection begins at the bound itself — well below the
+    // codec's ceiling, which `2n ** 64n` names.
+    for (const bad of [BOX_VALUE_BOUND, BOX_VALUE_BOUND + 1n, 2n ** 64n]) {
+      const block = makeValidBlock();
+      block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), value: bad }];
+      expect(verifyOrderingBlockStructure(block)).toEqual({
+        valid: false,
+        error: 'Coinbase output invalid value',
+      });
+    }
   });
 
   it('value at 2^64 is the writer throw this pin makes unreachable', () => {
@@ -813,13 +818,36 @@ describe('verifyOrderingBlockStructure', () => {
     expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n - 1n })).not.toThrow();
   });
 
-  it('accepts the coinbase value boundaries the writer encodes faithfully', () => {
+  it('accepts both ends of the accepted value domain', () => {
     const block = makeValidBlock();
     block.utxoTxTree.coinbaseOutputs = [
       { ...goodCoinbase(), value: 0n },
-      { ...goodCoinbase(), value: 2n ** 64n - 1n },
+      { ...goodCoinbase(), value: BOX_VALUE_BOUND - 1n },
     ];
     expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+  });
+
+  it('rejects a value the codec encodes faithfully but the ledger cannot store', () => {
+    // The accepted domain is strictly narrower than the encodable one, and this
+    // value sits in the gap: SQLite's `INTEGER` is signed, so it encodes, hashes
+    // and derives a box id, and no row can hold it (TYPES_INTERFACE → Box value
+    // domain).
+    const stranded = 2n ** 64n - 1n;
+
+    // The rejection is this check's, not an encoder failure standing in for it:
+    // the writer takes the value without throwing and gives it its own bytes,
+    // so neither a throw nor a sentinel collision is what refuses the block.
+    const encoded = hexOf(coinbaseOutputBytes({ ...goodCoinbase(), value: stranded }));
+    expect(encoded).not.toBe(
+      hexOf(coinbaseOutputBytes({ ...goodCoinbase(), value: BOX_VALUE_BOUND - 1n })),
+    );
+
+    const block = makeValidBlock();
+    block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), value: stranded }];
+    expect(verifyOrderingBlockStructure(block)).toEqual({
+      valid: false,
+      error: 'Coinbase output invalid value',
+    });
   });
 
   it('rejects a coinbase lockedUntilBlock outside the vlqU domain', () => {

@@ -1,5 +1,6 @@
 import { verify as cryptoVerify } from 'crypto';
 import {
+  BOX_VALUE_BOUND,
   computeBoxId,
   computeTxId,
   INVITE_BOND_KARMA,
@@ -36,12 +37,17 @@ import type { IdentityRecord } from '../store/identity-records.js';
  * a `fee` output off the karma side with no clause naming `fee`.
  *
  * ⛔ **Not the set `/status` sums into `totalKarma`** — that is
- * `KARMA_SUPPLY_TYPES` in `routes/blocks.ts`, and neither set is defined as,
- * spread from or derived from the other (NODE_INTERFACE → "Two karma sets, and
- * neither derives from the other"). They hold the same members for two
- * different reasons: this one answers whether a karma spend may create the
- * type, that one whether the type's value is karma in existence. A
+ * `KARMA_SUPPLY_TYPES` in `karma-supply.ts`, and no set here is defined as,
+ * spread from or derived from another (NODE_INTERFACE → "Three karma sets, and
+ * none derives from another"). This one answers whether a karma spend may create
+ * the type; that one whether the type's value is karma in existence; the
+ * conservation set whether it belongs to the total that never changes. A
  * karma-bearing type is added to each separately.
+ *
+ * ⚠ **The three coincide here only by accident of the current type list.**
+ * `karma_pool` already answers them differently — transition no, supply no,
+ * conservation yes — which is what makes the separation load-bearing rather
+ * than tidy.
  */
 export const KARMA_TRANSITION_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
 
@@ -631,15 +637,16 @@ type FieldType =
   | 'string'
   | 'boolean';
 
-const U64_BOUND = 1n << 64n;
-
 const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expected: string }> = {
-  // The value bound: a negative value balances conservation sums while
-  // minting into a sibling box, and at/above 2^64 cbor-x leaves the uniform
-  // uint64 encoding for a tag-2 bignum.
+  // The value bound is `BOX_VALUE_BOUND`, imported rather than restated
+  // (TYPES_INTERFACE → Box value domain). A negative value balances
+  // conservation sums while minting into a sibling box; a value at or above the
+  // bound encodes cleanly and cannot be stored, so admitting one would put a
+  // validly-encoded box into block application to crash there instead of being
+  // rejected here.
   u64: {
-    ok: (v) => typeof v === 'bigint' && v >= 0n && v < U64_BOUND,
-    expected: 'a non-negative bigint < 2^64',
+    ok: (v) => typeof v === 'bigint' && v >= 0n && v < BOX_VALUE_BOUND,
+    expected: 'a non-negative bigint < 2^63',
   },
   bytes32: {
     ok: (v) => v instanceof Uint8Array && v.length === 32,
@@ -995,22 +1002,22 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
 /**
  * The box types a transaction may create.
  *
- * Three are excluded **in the type**, not by an omitted entry. `genesis_proof`
- * is written by genesis seeding alone; `emission` and `treasury` are created
- * and spent by block application alone (NODE_INTERFACE → "Genesis proof boxes
- * are never in a transaction": all three are barred from both transaction
- * positions). This is the node-side twin of the rule `validation` enforces at
- * the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not create a
- * genesis_proof box"); node owns the input half of the same rule, in
+ * Four are excluded **in the type**, not by an omitted entry. `genesis_proof`
+ * is written by genesis seeding alone; `emission`, `treasury` and `karma_pool`
+ * are created and spent by block application alone (NODE_INTERFACE → "Genesis
+ * proof boxes are never in a transaction": all four are barred from both
+ * transaction positions). This is the node-side twin of the rule `validation`
+ * enforces at the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not
+ * create a genesis_proof box"); node owns the input half of the same rule, in
  * `AUTHORIZATION`.
  *
- * ⚠ **All three are barred from the input position by the same mechanism —
+ * ⚠ **All four are barred from the input position by the same mechanism —
  * no transition admitting them — and their entries differ only in which absence
- * they state.** `emission` and `treasury` share `BLOCK_APPLICATION_ONLY` with
- * `bond`, `post_lock` and `fee`; `genesis_proof` states the empty set of
- * transitions. A *new* barred type is covered by whichever of the two it is,
- * and the table's `Record` over every `boxType` is what makes stating it
- * unavoidable.
+ * they state.** `emission`, `treasury` and `karma_pool` share
+ * `BLOCK_APPLICATION_ONLY` with `bond`, `post_lock` and `fee`; `genesis_proof`
+ * states the empty set of transitions. A *new* barred type is covered by
+ * whichever of the two it is, and the table's `Record` over every `boxType` is
+ * what makes stating it unavoidable.
  *
  * Written as an `Exclude` so the exclusion is deliberate and a *new* box type
  * still fails to compile until it is given a shape — an omitted key would be
@@ -1018,7 +1025,7 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
  */
 type OutputBoxType = Exclude<
   AnyBox['boxType'],
-  'genesis_proof' | 'emission' | 'treasury'
+  'genesis_proof' | 'emission' | 'treasury' | 'karma_pool'
 >;
 
 /**
@@ -1126,11 +1133,13 @@ const OUTPUT_SHAPE: Record<
  *   not a late throw downstream, and the table lookup is an OWN-PROPERTY
  *   lookup (`Object.hasOwn`): `boxType: 'constructor'` lands in this reject
  *   instead of retrieving `Object.prototype.constructor` and throwing;
- * - `genesis_proof`, `emission` and `treasury` are rejects under their own
- *   names, ahead of that lookup. The `OutputBoxType` exclusion already makes
- *   all three unrepresentable in the table, so the verdict would be the same
- *   either way — the named arm is what keeps the *diagnosis* true, since an
- *   assigned tag refused by protocol rule is not an unknown one.
+ * - `genesis_proof`, `emission`, `treasury` and `karma_pool` are rejects under
+ *   their own names, ahead of that lookup. The `OutputBoxType` exclusion
+ *   already makes all four unrepresentable in the table, so the verdict would
+ *   be the same either way — the named arm is what keeps the *diagnosis* true,
+ *   since an assigned tag refused by protocol rule is not an unknown one. ⚠ The
+ *   `Exclude` is compile-time; this arm is what an attacker-supplied string
+ *   reaches, so a type named in one and not the other is diagnosed as unknown.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
  * they are structurally outside every committed byte (no layout declares them;
@@ -1159,7 +1168,8 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
     if (
       boxTypeValue === 'genesis_proof' ||
       boxTypeValue === 'emission' ||
-      boxTypeValue === 'treasury'
+      boxTypeValue === 'treasury' ||
+      boxTypeValue === 'karma_pool'
     ) {
       return {
         valid: false,
@@ -1397,10 +1407,10 @@ const OWNER_SIGNATURE: Authorization = {
 
 /**
  * `bond`, `post_lock` and `fee` are created by user transactions and consumed
- * only by block application; `emission` and `treasury` are block application's
- * at both ends (NODE_INTERFACE → "Genesis proof boxes are never in a
- * transaction"). No transition admits any of them as an input, and this entry
- * carries that absence's reason.
+ * only by block application; `emission`, `treasury` and `karma_pool` are block
+ * application's at both ends (NODE_INTERFACE → "Genesis proof boxes are never
+ * in a transaction"). No transition admits any of them as an input, and this
+ * entry carries that absence's reason.
  */
 const BLOCK_APPLICATION_ONLY: Authorization = {
   noUserTransition: (box) =>
@@ -1457,6 +1467,11 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
   fee: BLOCK_APPLICATION_ONLY,
   emission: BLOCK_APPLICATION_ONLY,
   treasury: BLOCK_APPLICATION_ONLY,
+
+  // The karma supply pool: mints draw it down and burns return to it, both
+  // block application's, so no user transaction may name it in either position
+  // (TYPES_INTERFACE → KarmaPoolBox).
+  karma_pool: BLOCK_APPLICATION_ONLY,
 
   // Nothing spends a genesis proof box — the empty set of transitions, which is
   // a stronger statement than block application's and is why it reads

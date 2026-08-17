@@ -415,10 +415,41 @@ path (karma/like/vouch hold small bigints; credits are integer base units of
 exceed `Number.MAX_SAFE_INTEGER` (2⁵³) once scaled ×10⁸ — both break consensus.
 See `docs/specs/2026-08-01-node-consensus-determinism.md` P0.
 
-- **`value < 2⁶⁴` (enforced invariant).** cbor-x encodes a bigint `< 2⁶⁴` as a
-  CBOR uint64 (`0x1b` + 8 bytes big-endian); at/above 2⁶⁴ it escalates to a
-  tag-2 bignum — a different layout. The `< 2⁶⁴` bound keeps every value in the
-  uniform `0x1b` form. Comfortably above any planned supply.
+### Box value domain — `[0, 2⁶³)`, stated here and cited everywhere else
+
+⛔ **`BOX_VALUE_BOUND = 1n << 63n`, exported from `@dagsocial/types`. A box value is a `bigint` in
+`[0, BOX_VALUE_BOUND)`. This is the ONLY statement of that domain; every other document and package
+cites it rather than restating the number.**
+
+⛔ **THE ENCODABLE DOMAIN AND THE ACCEPTED DOMAIN ARE DIFFERENT, AND CONFLATING THEM IS THE DEFECT
+THIS RULE FIXES.**
+
+| | Domain | Owner |
+|---|---|---|
+| **encodable** — what `vlqU64` / `canonicalBoxBytes` will write | `[0, 2⁶⁴)` | the writer; **unchanged** |
+| **accepted** — what consensus admits as a box value | `[0, 2⁶³)` | this rule |
+
+**Why the accepted domain is narrower: the ledger is SQLite, and `INTEGER` is a SIGNED 64-bit
+integer.** A value in `[2⁶³, 2⁶⁴)` encodes cleanly, derives a box id, passes a `u64` check — and
+**cannot be stored**: `better-sqlite3` refuses the bind, and `SUM()` over the signed ceiling raises
+`integer overflow`. A validation domain wider than its storage domain means a validly-encoded box
+crashes block application instead of being rejected.
+
+✅ **Narrowing is a validation TIGHTENING, not a format break.** `vlqU64` writes identical bytes for
+every value that was ever storable, so no box id and no `stateRoot` moves. Values in `[2⁶³, 2⁶⁴)`
+become invalid — none exists, and conservation makes none reachable, since karma and credits are
+minted rather than conjured.
+
+⚠ **The golden corpus keeps its `2⁶⁴ − 1` vectors and they keep their meaning.** They pin the
+**encodable** domain, which is the writer's, and the corpus deliberately carries out-of-domain
+vectors. A vector proving a value encodes is not a claim that consensus accepts it.
+
+**The cbor-x argument still holds and is now incidental:** a bigint `< 2⁶⁴` encodes as a CBOR uint64
+(`0x1b` + 8 bytes); at or above it escalates to a tag-2 bignum, a different layout. `2⁶³` is inside
+that, so the uniform `0x1b` form is preserved by a bound chosen for a different reason.
+
+⚠ **`2⁶³ − 1` is 9.2 × 10¹⁸ against supplies measured in thousands.** The ceiling is not an economic
+constraint and must not be described as one.
 - **Box ids and the AVL `stateRoot` change** vs. the old `number` encoding
   (measured: number `5` → `05`; bigint `5n` → `1b0000000000000005`). Hard,
   unversioned format break ⇒ **fresh chain / DB reset, coordinated all-node
@@ -742,6 +773,55 @@ miner. Nothing in the design gives that shape a meaning worth forbidding.
 ⚠ **`fee` is not a member of the karma family**, so a fee output on a karma-side transaction is
 rejected by the karma transition arm rather than by a rule of its own
 (`NODE_INTERFACE` → the karma transition rules).
+
+### KarmaPoolBox
+
+> ⚠ **AHEAD OF CODE** (`docs/specs` design §3, unit B). The type does not exist yet.
+
+```
+KarmaPoolBox extends BoxBase {
+  boxType: "karma_pool"
+  value: bigint                // Karma not in circulation. Genesis: 2⁶³ − 1
+}
+```
+
+**The whole of a network's karma supply, held as state from height 0.** Genesis creates exactly one,
+holding the **maximum STORABLE karma**, `BOX_VALUE_BOUND − 1` (§Box value domain — the ledger is
+SQLite and `INTEGER` is signed, so the ceiling is `2⁶³ − 1`, not `2⁶⁴ − 1`). Every mint draws from it and every burn returns to it,
+so the supply is fixed at the type's ceiling from the first block and **no rule anywhere can inflate
+it**. That is the point: karma is not scarce by policy, it is non-inflatable by construction.
+
+⛔ **`pool.value + circulating karma == BOX_VALUE_BOUND − 1`, at every height, forever.** This is the invariant
+the type exists to make checkable, and it is what makes overflow structurally impossible: a burn can
+only return what a mint drew, so the pool can never exceed its genesis value and `vlqU64` can never
+be handed one it would throw on.
+
+⛔ **Genesis committee grants come OUT of the pool, not alongside it.** `genesisCommitteeKeys` ×
+`genesisKarmaPerMember` is minted by drawing the total down, so the invariant holds from height 0.
+Minting them beside a full pool would put total supply above the bound **at genesis**, which
+`writeVlqU64OrThrow` refuses outright — the invariant is not merely violated, the state is
+unencodable.
+
+**No owner, and therefore no per-type trailing fields.** Block application is its only spender and
+its only producer; its content encoding is the shared prefix alone (§Layout — Boxes).
+
+⛔ **It is NOT a karma box, and the distinction is not cosmetic.** A karma box is something an
+identity holds and `getKarmaBoxes` returns. Giving the pool the `karma` type would put the maximum
+supply inside every balance query and every conservation sum in the tree.
+
+⛔ **It is in the CONSERVATION set and in neither of the other two** — not the transition set, not
+the supply set (`NODE_INTERFACE` → "Three karma sets, and none derives from another"). It is barred
+from both transaction positions, joining `genesis_proof`, `emission` and `treasury`.
+
+⚠ **That combination is why the third set exists.** The pool is not karma anyone holds, so it is not
+supply; it is karma that exists, so it is conservation. **A list serving both questions would have to
+choose, and either choice is wrong.**
+
+> ⛔ **A zero-value successor IS created, and this is the one place the `EmissionBox` rule inverts.**
+> §EmissionBox refuses a zero successor because emission **terminates** — above the terminus no box
+> exists and nothing is spent. The pool never terminates: burns must always have somewhere to return,
+> so the box exists at every height whatever its value. **A reader who pattern-matches to the
+> emission rule here gets it exactly backwards.**
 
 ### UtxoTransaction
 
@@ -1363,6 +1443,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 7 | `emission` |
 | 8 | `treasury` |
 | 9 | `fee` |
+| 10 | `karma_pool` |
 
 | Type | Trailing fields |
 |---|---|
@@ -1376,12 +1457,20 @@ from this table — a use that reads every cell as an instruction rather than as
 | `emission` | *(none)* |
 | `treasury` | *(none)* |
 | `fee` | *(none)* |
+| `karma_pool` | *(none)* |
 
-⚠ **`emission`, `treasury` and `fee` have an empty tail, and an empty cell in this table is a layout,
-not an omission.** Their content encoding is the shared prefix alone — `enum8(boxType)` ‖
-`vlqU64(value)` — because none of them names an owner. The `enum8` tag is the whole of what separates
-them from each other, exactly as it separates `invite` from `bond`, and their ids differ from one
-another and across heights through the provenance `computeBoxId` appends.
+⚠ **`emission`, `treasury`, `fee` and `karma_pool` have an empty tail, and an empty cell in this
+table is a layout, not an omission.** Their content encoding is the shared prefix alone —
+`enum8(boxType)` ‖ `vlqU64(value)` — because none of them names an owner. The `enum8` tag is the
+whole of what separates them from each other, exactly as it separates `invite` from `bond`, and
+their ids differ from one another and across heights through the provenance `computeBoxId` appends.
+
+> ⛔ **Assigning tag 10 MOVES A GOLDEN VECTOR, and that is the design working.** The corpus carries
+> `box/unassigned-tag-10` with the number written as a **literal**, deliberately not derived, beside
+> `utxo.test.ts` deriving the same number from `BOX_TYPE_TAGS` — *"one side follows the table, one
+> side pins it."* The derived side moves on its own; **the literal must be re-pinned by hand to the
+> next unassigned tag**, and that re-pin is the act that proves the assignment was intended rather
+> than accidental. The corpus says so itself: *"assigning it is what moves this vector."*
 
 `genesis_proof.payload` is `lp`, **not** `lpUtf8`: the bytes are opaque to consensus. Whether they
 decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder
@@ -2249,7 +2338,7 @@ above it.
 - A box carries **no block height**. Consensus-relevant time lives in explicit named fields
   (`lockedUntilBlock`) or in committed per-identity state (`IdentityRecord.invitedAtBlock`,
   which is what dates a bond's probation) — never in an implicit creation stamp
-- Box `value` is `bigint` integer base units (uniform across box types), `< 2⁶⁴`
+- Box `value` is `bigint` integer base units (uniform across box types), `< BOX_VALUE_BOUND`
   so it CBOR-encodes as a uint64 (`0x1b`); no float math anywhere in consensus
   value arithmetic
 - Post identity includes PoW nonce; signing hash excludes it

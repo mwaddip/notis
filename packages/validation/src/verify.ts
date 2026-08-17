@@ -5,6 +5,7 @@ import {
   MAX_PARENT_REFS,
   MAX_TX_BYTES,
   MAX_BLOCK_BODY_BYTES,
+  BOX_VALUE_BOUND,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
@@ -146,22 +147,6 @@ function isHex33(v: unknown): v is string {
 function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
   return isBytes(v) && v.length === n;
 }
-
-/**
- * One past the largest value the u64 wire domain carries — the exclusive
- * ceiling of `writeVlqU64OrThrow`'s accepted set, which is `[0, 2^64 - 1]`.
- * That writer is `@dagsocial/types`' (`codec.ts`), not `@dagsocial/wire`'s; it
- * delegates through `ByteWriter.writeVlqBigInt` to `encodeVlqBigInt`, which is
- * where the range is enforced (WIRE_INTERFACE → BigInt VLQ).
- *
- * `isU64Safe` is the `number` counterpart and cannot serve here: a `bigint`
- * field spans the whole u64, far past `MAX_SAFE_INTEGER`, so the two predicates
- * pin different domains for different writers rather than one domain twice.
- *
- * Written `1n << 64n` to match node's `U64_BOUND` (`utxo-engine.ts`) and
- * `json-to-tx.ts`'s edge twin, so the three sites are greppable as one bound.
- */
-const U64_BOUND = 1n << 64n;
 
 /**
  * The domain of every field `postFieldBytes` encodes.
@@ -833,17 +818,25 @@ export function verifyOrderingBlockStructure(
     if (!isBytes(out.owner) || out.owner.length !== 32) {
       return { valid: false, error: 'Coinbase output missing or invalid owner' };
     }
-    // `value` is `bigint`, so its writer is `writeVlqU64OrThrow` — the one
-    // **throwing** writer in the codec, because a `bigint` spans the whole u64
-    // and has no unreachable sentinel to fall back on (TYPES_INTERFACE →
-    // Totality). A sign check alone would leave the ceiling open, and the throw
-    // is reached: node's apply funnel computes `computeUtxoTxRoot` at **step
-    // 4**, ahead of the coinbase sum at step 5, so a value at or above 2^64
-    // dies inside root computation and the funnel's totality catch logs it as
-    // an "unexpected failure" instead of a stated rejection (NODE_INTERFACE →
-    // Ordering block apply-time authorization). Establishing the domain
-    // upstream of the encoder is what makes that throw unreachable.
-    if (typeof out.value !== 'bigint' || out.value < 0n || out.value >= U64_BOUND) {
+    // `value` is `bigint`, and the domain admitted here is the **accepted**
+    // one, `[0, BOX_VALUE_BOUND)` — strictly narrower than what the codec
+    // encodes (TYPES_INTERFACE → Box value domain), with the obligation to
+    // check it assigned to this function (VALIDATION_INTERFACE →
+    // verifyOrderingBlockStructure). A value above the bound but still inside
+    // the codec's domain encodes cleanly and derives a box id, and SQLite's
+    // signed `INTEGER` cannot store it, so admitting one crashes block
+    // application instead of rejecting it.
+    //
+    // Sitting below the codec's own ceiling, the bound also keeps
+    // `writeVlqU64OrThrow` out of reach — the one **throwing** writer in the
+    // codec, because a `bigint` spans the whole u64 and has no unreachable
+    // sentinel to fall back on (TYPES_INTERFACE → Totality). That throw is
+    // reachable otherwise: node's apply funnel computes `computeUtxoTxRoot` at
+    // **step 4**, ahead of the coinbase sum at step 5, so the block would die
+    // inside root computation and the funnel's totality catch would log an
+    // "unexpected failure" instead of a stated rejection (NODE_INTERFACE →
+    // Ordering block apply-time authorization).
+    if (typeof out.value !== 'bigint' || out.value < 0n || out.value >= BOX_VALUE_BOUND) {
       return { valid: false, error: 'Coinbase output invalid value' };
     }
     // `isU64Safe`, not a bare `typeof === 'number'`: the writer is `vlqU` over a

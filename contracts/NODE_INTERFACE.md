@@ -27,9 +27,12 @@ units of 10⁻⁸ credit; karma small bigints). Rationale + the type-level contr
 `TYPES_INTERFACE.md` "Value denomination (P0)". No float math anywhere in a consensus
 value path. Node-side obligations:
 
-- **Authoritative value guard (`< 2⁶⁴`).** `utxo-engine.checkOutputValues` (engine) and
+- **Authoritative value guard.** `utxo-engine.checkOutputValues` (engine) and
   `assertValidBoxValue` (`routes/json-to-tx`, the HTTP→tx edge) enforce
-  `typeof value === 'bigint' && value >= 0n && value < 2⁶⁴` — the **tight** bound.
+  `typeof value === 'bigint' && value >= 0n && value < BOX_VALUE_BOUND` — the **tight** bound.
+  ⛔ **The number is `@dagsocial/types`' (TYPES_INTERFACE → "Box value domain"), imported and never
+  restated** — it was stated three times across two packages, and `validation`'s copy said in its
+  own comment that it was written to match node's.
   `@dagsocial/validation`'s coinbase check is the loose structural pre-filter; this is
   the tight apply-side twin — the two move together. The HTTP edge coerces the incoming
   JSON value (string or number) to `bigint` before it enters consensus.
@@ -435,9 +438,7 @@ lie this whole bundle exists to remove. A client seeing `null` learns something 
 |--------|------|---------|----------|--------|
 | `POST` | `/faucet` | `{ userId: hex }` | `{ status: "pending", txId, expiresAtHeight }` | 400 if missing fields, 403 on a network without a faucet, 409 if already funded |
 
-Grants 100 karma to an identity, **once per identity, ever** (idempotent). Mints
-from the system keypair — not a transfer. Builds a UTXO transaction creating a
-new karma box and inserts it into the mempool. Gated at **mount** time on
+Grants karma to an identity, **once per identity, ever** (idempotent). Gated at **mount** time on
 `isFaucetNetwork(config.networkType)`, where `config` is the `Config` passed to
 `createApp(config)` — injected, not the module singleton, which is why this gate is testable
 and the `/credits/faucet` handler guard currently is not. `isFaucetNetwork` lives in `config.ts`
@@ -453,12 +454,70 @@ This is the third place in this design that chooses fail-closed over convenient-
 identical reasoning: `profileFor` throws rather than defaulting, `NetConfig` requires `magic`
 rather than defaulting it, and the faucet enumerates rather than excluding.
 
-⚠ **All three gates move together, always** — the provisioning gate (`index.ts`), the mount
-gate (`server.ts`) and the handler guard (`routes/utxo.ts`). A subset is worse than none:
-mount without provisioning gives a faucet with nothing to mint from; provision without
-mounting leaves unreachable system state. They call one shared predicate so they cannot
-drift; the handler guard applies it as a **reject** condition, so a grep for the enabling
-expression finds only two of the three.
+> ⛔ **A BLOCK-APPLICATION EFFECT MUST BE DERIVABLE FROM BLOCK CONTENT, AND A FAUCET GRANT IS NOT.**
+> This is the criterion, and it is why the karma faucet cannot simply "become block application".
+>
+> A like payout, post-lock vesting and bond settlement are all derived from **what the block
+> contains**, so every node computes the same effect from the same body. **A faucet grant is derived
+> from a local HTTP request.** Its only record, `faucet_grants`, is node-local SQL with **no network
+> path and no block-body carrier** — verified: zero hits in `packages/net/src`. Node A would mint at
+> height H, node B would not, and with `verifyStateRoot` defaulting **ON** the block is rejected.
+> **A protocol effect with no in-block carrier is a fork, not a refactor.**
+>
+> ✅ **That is what unit C's marker boxes are for**, and it is the load-bearing reason they exist
+> rather than a tidiness argument.
+>
+> ⛔ **AHEAD OF CODE — THE KARMA FAUCET IS A RULE-AUTHORIZED TRANSACTION THAT SPENDS THE POOL**
+> (user, 2026-08-17). `pool(S) → pool(S − amount) + karma(amount)`, no signature, constrained
+> entirely by shape: faucet-bearing network, fixed amount, no prior grant for that identity.
+>
+> ✅ **It conserves exactly** — a named source and a named sink in one operation, which is all the
+> conservation axiom asks. It is a **transaction**, so the block carries it and every node derives
+> the same effect; the fork that killed the block-application version never arises.
+>
+> ⛔ **IT IS THE ONE PLACE A USER TRANSACTION MAY NAME THE POOL, AND THE REASON IS STRUCTURAL, NOT A
+> CONCESSION.** Every other operation has a party who already holds value and can therefore build a
+> transaction. **The faucet's recipient holds nothing — that is what they are asking to fix — so the
+> source must initiate.** A transaction needs at least one input (`utxo-engine.ts`, and
+> §"Two entity kinds" depends on it for *identity*, since a zero-input transaction is replayable), so
+> there is no shape in which the recipient acts. Marker boxes do not rescue it: a marker still rides
+> a transaction that needs an input.
+>
+> ⚠ **Scope is the whole of its security argument.** `isFaucetNetwork` gates it to devnet and
+> testnet; **on mainnet the transition does not exist.** It is a testing convenience — the
+> requirement is that a devnet tester can get karma to a fresh identity and start posting — and it is
+> deliberately not held to the standard the value paths are.
+>
+> ⚠ **`POST /credits/faucet` is untouched and keeps its keypair.** There is no credit pool, so unit B
+> has no keyless replacement for it, and building one is a separate economic decision.
+>
+> ✅ **84-1 closes and 84-2 closes with it.** `isSystemBox` and the same-owner exemption it gated go
+> with the karma faucet — that exemption existed only because the faucet posed as a karma
+> **transition**. 84-2's unstated different-owner rule closes **by the rule disappearing**, not by
+> gaining a row.
+>
+> ⚠ **An admin keypair still EXISTS, and 84-1's closure does not claim otherwise.** It survives as the
+> plain **owner** of a genesis-seeded credit box: the state names it, spending needs an owner
+> signature like any credit box, and no consensus rule resolves against configuration. That satisfies
+> §2's "no privileged key is representable". It does **not** satisfy *"a private key for an admin pair
+> should never exist"* — that waits on a credit-side answer.
+>
+> Three things follow from the karma faucet's removal:
+>
+> - ✅ **`POST /faucet` and its route go entirely**, along with `ensureSystemKarmaBox` and the finite
+>   `SYSTEM_KARMA_INITIAL` balance the grant spent down. ⚠ **`faucet_grants` is a once-per-identity
+>   record, not a supply cap** — the **credit** faucet still writes it, so the table stays.
+> - ✅ **`isFaucetNetwork` stays and still gates the credit faucet.** It reads **configuration**, not a
+>   key, and a rule naming a network is not a rule naming a signer.
+> - ⛔ **`getSystemKeypair` and `signWithSystemKey` STAY**, because `POST /credits/faucet` signs with
+>   them and genesis seeds a credit box owned by that key. **Only `ensureSystemKarmaBox` and
+>   `isSystemBox` go.** ⚠ **This is narrower than an earlier draft of this section claimed**, and the
+>   difference is the whole of what unit B can honestly deliver: the **karma** side loses its
+>   privileged key, the **credit** side keeps an ordinary owner key.
+>
+> ⚠ **The three-gates rule below becomes two.** With no system karma box to seed, there is nothing
+> to provision — the provisioning gate has no subject. **Mount and handler remain, and they still
+> move together.**
 
 **The handler guard reads injected config, never the module singleton.** `UtxoDeps` carries
 
@@ -523,27 +582,48 @@ endpoint semantics in `MINING_INTERFACE.md`.
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
 > other ledger and `genesis_proof` holds no value on either.
 
-#### Two karma sets, and neither derives from the other
+#### Three karma sets, and none derives from another
 
-**A box type being a legal karma-side output and a box type counting toward karma in existence are
-different questions, and each has its own set:**
+**Each is a different question, and a box type may answer them differently:**
 
 | Set | Answers | Read by |
 |---|---|---|
 | the **transition** set | may a karma spend create this box type? | `utxo-engine.ts`'s karma transition arm |
-| the **supply** set | does this box type's value count as karma that exists? | `getTotalKarma` |
+| the **supply** set | does this box type's value count as karma that **exists**? | `getTotalKarma` |
+| the **conservation** set | does this box type participate in the total that **never changes**? | the axiom's check (ARCHITECTURE → The conservation axiom) |
+
+⛔ **`karma_pool` IS THE FIRST TYPE WHOSE ANSWERS DIFFER, AND IT IS WHY THE THIRD SET EXISTS.**
+Transition **no**, supply **no**, conservation **yes**. Every earlier case had the answers coincide,
+so a single shared list happened to be right; here it would be **actively wrong**.
+
+⛔ **THE CONSERVATION TOTAL IS `circulating + pool`, AND IT IS A DIFFERENT SUM FROM `getTotalKarma`.**
+Measured, not reasoned: a like burn given a correct pool sink — consume `karma(40)`, insert
+`karma(39)`, consume `pool(P)`, insert `pool(P+1)` — still moves the circulating accrual by `−1`,
+because the pool is deliberately outside the supply set. ⚠ **So "the circulating delta is zero at
+every commit" is NOT the axiom's check** — it is true only while nothing can name the pool, and it
+stops being true the moment anything legitimately does. **Do not use the supply accrual to assert
+conservation.**
 
 ⛔ **NEITHER SET MAY BE DEFINED AS THE OTHER, OR DERIVED FROM IT.** They hold the same members
 today, and they hold them **for two different reasons** — every karma-bearing type currently happens
 also to be one a user transaction may create. That coincidence is a fact about the present type
 list, not a rule, and a single shared constant encodes it as though it were one.
 
-> ⚠ **AHEAD OF CODE — the first member that separates them.** The karma supply pool
-> (`docs/specs` design §3, unit B) is a karma-bearing box a karma spend **must** be able to create,
-> because a mint is `pool → pool′ + karma`. It is also the one box whose value must **never** reach
-> `totalKarma`: it holds the maximum representable karma, so counting it reports the network's
-> supply as `u64::MAX`. **Transition set yes, supply set no.** Until the pool lands the two lists
-> are identical and this section is the only thing distinguishing them.
+> ⚠ **AHEAD OF CODE — the pool does not exist yet** (`docs/specs` design §3, unit B). The rule
+> below is what its membership will be; the three-way reading it forces is true now.
+
+⛔ **A KARMA-BEARING TYPE CAN BELONG TO NEITHER SET, AND THE FIRST ONE WILL.** The karma supply
+pool holds the maximum representable karma and is spent and created **only by block application** —
+it never reaches `validateTx`. So it joins `genesis_proof`, `emission` and `treasury` in being
+**barred from both transaction positions**, which puts it outside the transition set; and its value
+must **never** reach `totalKarma`, or the network reports its supply as `u64::MAX`, which puts it
+outside the supply set.
+
+⚠ **Membership is therefore three-way, not two.** "Which of the two lists?" is the wrong question to
+ask of a new box type. The right one is asked twice, independently: *may a karma spend create it?*
+and *does its value count as karma that exists?* — and **both answers may be no.** That is exactly
+what a single shared list could not express, and it is the reason the two exist even while their
+members coincide.
 
 ✅ **The credit ledger already works this way, and it is the precedent.** The credit transition arm
 names its allowed outputs **inline** (`credit` or `fee`), and `getTotalCredits` keys on `credit`
@@ -720,7 +800,7 @@ Full read-only validation. Performs all checks without modifying state:
    transaction conserves; karma and credit mint and burn otherwise happen only in
    block-application paths (like settlement, decay, coinbase, bond settlement),
    never inside a user transaction. The `value` **type** bound (non-negative `bigint` base units
-   `< 2⁶⁴` — a negative value could otherwise balance the sums while minting
+   `< BOX_VALUE_BOUND` — a negative value could otherwise balance the sums while minting
    into a sibling box) is pinned by step 4's schema; conservation owns the
    **sums**. `assertValidBoxValue` remains at the JSON→tx boundary as the
    HTTP-edge early reject of the same rule — an ergonomics twin, not the
@@ -756,6 +836,12 @@ spent away.
 inherits that by saying nothing about it. The bar is the default, and admitting a type is the
 deliberate act.
 
+> ⚠ **AHEAD OF CODE — `karma_pool` is the fourth** (`docs/specs` design §3, unit B). ⛔ **The two
+> halves cost differently, and only one is free.** The **input** bar is inherited by saying nothing.
+> The **output** bar is not: `OUTPUT_SHAPE` is keyed on an `Exclude`, so a new type compiles as
+> *requiring a shape* until it is named in that exclusion — which is the deliberate act the
+> `Exclude` exists to force. **One edit, not two, and not zero.**
+
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
 from a forgotten one — while a *new* box type still fails to compile until it is
@@ -766,7 +852,9 @@ asserting rejection must be able to assert which rule rejected.
 
 The `emission` and `treasury` types join `genesis_proof` in being barred from
 both transaction positions — block application is their only producer and their
-only spender.
+only spender. ⚠ **`karma_pool` joins them** (AHEAD OF CODE, design §3): the karma
+supply pool is drawn down by mints and restored by burns, both block
+application's, and no user transaction may name it in either position.
 
 ### Output shape — the closed per-boxType schema (field-type pin)
 
@@ -793,7 +881,8 @@ schema for its `boxType`**:
   > `emission` and `treasury` have none, because no transaction may create them.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
-  - `bigint`, `0 ≤ v < 2⁶⁴`: `value` (every boxType) **and `originalValue`
+  - `bigint`, `0 ≤ v < BOX_VALUE_BOUND` (TYPES_INTERFACE → "Box value domain"):
+    `value` (every boxType) **and `originalValue`
     (post_lock — the read-poison field)**. The bound is absorbed from
     `checkOutputValues`, which retired with this pin (one owner per rule;
     `json-to-tx`'s `assertValidBoxValue` stays as the HTTP-edge twin).
@@ -1275,9 +1364,10 @@ There is **no other legal bond or invite shape**. In particular:
 ### Karma transition rules (P2-B phase 4)
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
-`totalKarma` sums** — see "Two karma sets, and neither derives from the other" under Status. Reading
-one from the other is what puts a box holding the maximum representable karma inside the network's
-reported supply.
+`totalKarma` sums** — see "Three karma sets, and none derives from another" under Status. ⚠ **A
+karma-bearing type may belong to neither**, so "which list?" is the wrong question: ask both
+independently. A single shared list is what would put a box holding the maximum representable karma
+inside the network's reported supply.
 
 - **All karma inputs must share one owner.** The engine pins every karma
   *output* to `inputs[0].owner` and calls the violation "Karma cannot be
@@ -1481,6 +1571,8 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
 | `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof, `3` = emission | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` |
+| `genesis-committee` | the committee member | raw | 32 | ⚠ **AHEAD OF CODE** — genesis seeding, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool. `MINT_REASON` tag **13** |
+| `pool-settle` | — | *(empty)* | 0 | ⚠ **AHEAD OF CODE** — block application, the `KarmaPoolBox` successor. **One per block**, so height alone separates instances within the reason and `enum8` separates it from every other. `MINT_REASON` tag **14** |
 | `emission-release` | — | *(empty)* | 0 | block application, the `EmissionBox` successor |
 | `treasury-accrue` | — | *(empty)* | 0 | block application, the `TreasuryBox` successor |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
@@ -1488,10 +1580,63 @@ forms, so a mirror implementation derives the same ids:
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
 | `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
 
-⛔ **`invite-claim` is the only row on this table that increases karma supply.**
-`bond-settle` and `bond-return` re-mint karma that a `BondBox` already held, in the
-same sense `vouch-settle` re-mints an escrow — a synthetic txId for a box that
-block application creates, not a new unit of karma. `ARCHITECTURE` → "Karma supply
+> ⛔ **AHEAD OF CODE — THE POOL IS SETTLED ONCE PER BLOCK, NOT ONCE PER MINT.** Every mint and burn
+> in a block changes circulating karma; block application moves the **net delta** against the pool in
+> a single transition at the end of the apply phase, accumulated at the store's own choke point
+> (`insertBox` / `consumeBox`) rather than at each mint site.
+>
+> ⛔ **Per-site draws would be a discipline, and this repo has already ruled that class the wrong
+> answer.** A mint site added later that forgot to draw would **inflate the supply**, and a test would
+> only catch it if it happened to exercise that site. The choke point makes the contract's *"no rule
+> anywhere can inflate it"* literally true rather than conditional on every future author. Same shape
+> as `consumeBox` taking its liveness check into the primitive — **the property is the primitive's,
+> not its callers'**.
+>
+> ⚠ **The invariant is a POST-BLOCK-APPLICATION property.** `pool.value + circulating ==
+> BOX_VALUE_BOUND − 1` holds **at every height**, not within a block: between a like transaction
+> burning its deficit and the settlement returning it, it is deliberately unbalanced. `validateTx`
+> step 5 keeps its exceptions verbatim — **user transactions still do not balance on their own, and
+> no user transaction names the pool.**
+>
+> ⛔ **AHEAD OF CODE — THE `genesis` SUBJECT IS A SINGLE NUMBER, AND COMMITTEE SEEDING CANNOT USE
+> IT** (`docs/specs` design §3, unit B). `genesis` keys on `u32BE(k)`, one value per genesis box.
+> Seeding N committee members from `genesisCommitteeKeys` produces **N karma boxes**, and every one
+> of them would take the same `k` — so the same synthetic `txId`, the same `computeBoxId` preimage,
+> and the **second insert violates `UNIQUE(tx_id, output_index)`**. The failure is loud, at genesis,
+> on any network with more than one committee member — and invisible on the empty arrays all three
+> networks carry today.
+>
+> ✅ **Committee seeding takes `genesis-committee`, keyed on the MEMBER** — subject = the member's
+> public key, raw, 32 bytes, the shape `like-payout` already uses. One mint per member, distinct by
+> construction. **`MINT_REASON` tag 13.**
+>
+> ⚠ **A 32-byte subject under the existing `genesis` reason would also be injective, and is still
+> wrong.** `computeMintTxId` writes `lp(subject)`, so `lp(4)` and `lp(32)` differ in their first byte
+> and can never collide — the ids would be fine. **What breaks is the description**: `genesis`'s row
+> says 4 bytes, and a mint carrying 32 makes it false. A correct-but-undescribed encoding fails no
+> test and rots on its own schedule, which is the defect class this table exists to prevent.
+>
+> ⚠ **What becomes of `k = 0` is open.** `ensureSystemKarmaBox` is deleted, so subject `0` loses its
+> box. Whether the pool takes `0` or a fresh number is undecided; the chain restarts either way, so
+> nothing is at risk beyond legibility.
+
+> ⛔ **"INCREASES KARMA SUPPLY" LOSES ITS REFERENT ONCE THE POOL EXISTS, AND THE PHRASE IS NOW TWO
+> CLAIMS.** ⚠ **AHEAD OF CODE until the per-block settlement lands.** **Total** karma is constant —
+> the pool is the only source and the only sink, so **no row increases it.** What rows differ on is
+> their net effect on **circulating** karma:
+>
+> | Net effect | Rows |
+> |---|---|
+> | **draws from the pool** | `invite-claim`, `like-payout`, `vouch-settle`, `genesis-committee` |
+> | **recirculates** — net zero | `bond-return`, `postlock-unlock`, `prune-refund-author` |
+> | **returns to the pool** | `decay`, and the burns that are an *absence* of a mint (bond forfeiture, a pruner's own locks) |
+>
+> ✅ **The invite family's distinction survives, in the new vocabulary.** `invite-claim` draws karma
+> the invitee did not have; `bond-settle` and `bond-return` recirculate what a `BondBox` already
+> held, in the same sense `vouch-settle` returns an escrow — a synthetic txId for a box block
+> application creates, not a unit of karma coming into existence.
+
+`ARCHITECTURE` → "Karma supply
 changes" names this table as authoritative, so the distinction has to be readable
 here rather than inferred.
 
@@ -1550,11 +1695,21 @@ Three things about them that are decided, not open:
   (`subtreeMerkleRoot` — raw 32, giving a 64-byte subject — would serve equally
   and commits to the exact post set; `rootPostHash` was chosen because the mint
   id then traces to a post that can be looked up.)
-- **Prefix-freeness still holds** across the post-P2-D set: `like-payout` is not a
-  prefix of any live tag and none is a prefix of it (it also diverges from the *retired*
-  `liker-refund` at the fifth byte, so even historical collisions are impossible).
-  The property is test-pinned over the whole `MintReason` union and re-checks automatically
-  when the set is edited.
+- ⛔ **Prefix-freeness NO LONGER HOLDS, and nothing rests on it.** `genesis` is a proper prefix
+  of `genesis-committee`. **The reason reaches the preimage as `enum8(reason)` — one byte from a
+  closed table — never as its string**, so cross-reason injectivity is structural and the strings
+  carry none of it. The union's own doc block says as much: a one-byte tag is what makes the
+  property unnecessary to maintain.
+
+  ✅ **The test that pinned it was a tripwire, not an invariant, and it fired exactly as designed.**
+  It asserted the property while stating in the same breath that it was *"true, but not required"*
+  and that a member *"could legally be named `decay-extra`"* — so that losing it would read as a
+  deliberate step rather than an accident. It now pins the loss with `genesis-committee` as the
+  named witness, **alongside the distinct-txId assertion that survives it** — which is the live
+  demonstration that the tag carries injectivity.
+
+  ⚠ **This bullet's second claim caught its first.** *"Re-checks automatically when the set is
+  edited"* is what turned a silent regression into a red test the moment the set grew.
 
   ⚠ **Corrected 2026-08-16 — this claimed coverage the test did not have, and that claim is
   why nobody looked.** The check ran over a **hand-written `MintReason[]`** that never tracked
@@ -2364,10 +2519,17 @@ encoder: `likeCarry` is written **only** by per-block like settlement and is bou
 the band-aid; if this field ever gains a second writer, that writer owns the domain.**
 
 `lifetimeLikesReceived` is `vlqU64` on the same rule and from the same single writer, but its
-domain argument is different: it is unbounded by design and bounded only by `2⁶⁴`. One like per
-block for the life of the chain does not approach that, and the field is a **count**, never an
-amount — a saturating or wrapping write here would silently re-price every bond that settles
+domain argument is different: it is unbounded by design and bounded only by the writer's `2⁶⁴`. One
+like per block for the life of the chain does not approach that, and the field is a **count**, never
+an amount — a saturating or wrapping write here would silently re-price every bond that settles
 afterwards.
+
+> ⚠ **The same encodable-versus-storable gap that narrowed box values applies here, one field over.**
+> `lifetimeLikesReceived` is `vlqU64` into a SQLite `INTEGER`, which is **signed**, so its real
+> ceiling is `2⁶³ − 1` and not the `2⁶⁴` above (TYPES_INTERFACE → "Box value domain"). **Left
+> unnarrowed deliberately**: it is a count bounded by like traffic rather than a value bounded by
+> conservation, so the unreachability argument is stronger here than it ever was for box values.
+> Recorded because the *reasoning* differs, not because the gap does.
 
 ⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
 NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
@@ -3683,7 +3845,9 @@ therefore establish the output domain before hashing, so a bad value produces a 
 rather than an exception absorbed by the funnel's totality handler.
 
 **It does that by calling `checkOutputShape`, not by growing a second check.** That schema already
-pins exactly the domains the writers require — `u64` as a bigint in `[0, 2⁶⁴)`, `hex32` as 64
+pins exactly the domains consensus accepts — `u64` as a bigint in `[0, BOX_VALUE_BOUND)`
+(TYPES_INTERFACE → "Box value domain": narrower than the writer's `[0, 2⁶⁴)`, because the store is
+signed), `hex32` as 64
 lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
 any JS value. A narrower check written for this call site would be a second spelling of one schema,
 which is the fork surface this contract rejects everywhere else. **The obligation is the whole

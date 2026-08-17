@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, PROTOCOL_VERSION, writeVlqU64OrThrow, ByteWriter } from '@dagsocial/types';
 
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 
@@ -7,7 +7,9 @@ import { jsonToTx } from '../../src/routes/json-to-tx.js';
  * `jsonToTx` is the JSON edge, and a client-supplied box `value` copied through
  * it verbatim is a forgery lever. `value` is a bigint at runtime
  * (TYPES_INTERFACE → Value denomination), so this edge coerces a decimal string
- * or a safe-integer number to bigint and enforces `0 <= value < 2^64`.
+ * or a safe-integer number to bigint and enforces
+ * `0 <= value < BOX_VALUE_BOUND` — the accepted domain, which is narrower than
+ * the encodable one (TYPES_INTERFACE → Box value domain).
  */
 describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
   const ownerHex = 'ab'.repeat(32);
@@ -51,9 +53,22 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     expect(jsonToTx(rawTx(0)).outputs[0]!.value).toBe(0n);
   });
 
-  it('accepts a value just below 2^64', () => {
-    const max = ((1n << 64n) - 1n).toString();
-    expect(jsonToTx(rawTx(max)).outputs[0]!.value).toBe((1n << 64n) - 1n);
+  it('accepts a value just below BOX_VALUE_BOUND', () => {
+    const max = (BOX_VALUE_BOUND - 1n).toString();
+    expect(jsonToTx(rawTx(max)).outputs[0]!.value).toBe(BOX_VALUE_BOUND - 1n);
+  });
+
+  it('the stranded values ENCODE — this edge is narrower than the writer, deliberately', () => {
+    // ⛔ **The rejections below say nothing about the encoder, and must not be
+    // read as if they did** (TYPES_INTERFACE → Box value domain). `vlqU64` keeps
+    // `[0, 2^64)`; only what consensus ACCEPTS narrowed. Without this, a suite
+    // green after someone narrowed the writer instead would look identical —
+    // and narrowing the writer moves every box id.
+    for (const value of [BOX_VALUE_BOUND, (1n << 64n) - 1n]) {
+      const w = new ByteWriter();
+      expect(() => writeVlqU64OrThrow(w, value), String(value)).not.toThrow();
+      expect(w.toBytes().length, String(value)).toBeGreaterThan(0);
+    }
   });
 
   for (const [label, badValue] of [
@@ -67,6 +82,10 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     ['a negative string', '-5'],
     ['a fractional string', '1.5'],
     ['a non-decimal string', '0x10'],
+    // The stranded band: accepted under the old bound, refused under this one.
+    // `2^64` alone could not tell the two apart — it was refused either way.
+    ['at BOX_VALUE_BOUND', BOX_VALUE_BOUND.toString()],
+    ['inside the stranded band', ((1n << 64n) - 1n).toString()],
     ['at 2^64', (1n << 64n).toString()],
     ['null', null],
     ['missing', undefined],

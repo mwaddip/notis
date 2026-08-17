@@ -808,7 +808,7 @@ describe('validateAndApplyTx', () => {
         const result = validateAndApplyTx(deps, tx, 10);
 
         expect(result.valid).toBe(false);
-        expect(result.error).toContain("field 'value' must be a non-negative bigint < 2^64");
+        expect(result.error).toContain("field 'value' must be a non-negative bigint < 2^63");
         expect(deps.getBox(karma.id!)).not.toBeNull();
       });
     }
@@ -840,7 +840,7 @@ describe('validateAndApplyTx', () => {
       const result = validateAndApplyTx(deps, tx, 10);
 
       expect(result.valid).toBe(false);
-      expect(result.error).toContain("field 'value' must be a non-negative bigint < 2^64");
+      expect(result.error).toContain("field 'value' must be a non-negative bigint < 2^63");
       expect(deps.getKarmaBox(ownerPubKey)!.value).toBe(10n);
     });
 

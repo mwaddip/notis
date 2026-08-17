@@ -12,11 +12,13 @@ import {
   postlockRemainderContext,
   decayContext,
   genesisContext,
+  genesisCommitteeContext,
   pruneRefundAuthorContext,
   inviteClaimContext,
   bondSettleContext,
   bondReturnContext,
   emissionSuccessorContext,
+  poolSettleContext,
   treasurySuccessorContext,
   mintTxIdFor,
 } from '../../src/mint-provenance.js';
@@ -64,6 +66,10 @@ const ALL_CONTEXTS = {
   'postlock-remainder': { ctx: postlockRemainderContext(POST_A), bytes: 64 },
   decay: { ctx: decayContext(OWNER), bytes: 32 },
   genesis: { ctx: genesisContext(GENESIS_SYSTEM_KARMA), bytes: 4 },
+  // The member's raw key, and the whole reason this is not a `genesis`
+  // selector: a selector names one box, and committee seeding mints one per
+  // member.
+  'genesis-committee': { ctx: genesisCommitteeContext(OWNER), bytes: 32 },
   'prune-refund-author': { ctx: pruneRefundAuthorContext(ROOT_A, OWNER), bytes: 96 },
   'invite-claim': { ctx: inviteClaimContext(INVITEE), bytes: 32 },
   'bond-settle': { ctx: bondSettleContext(INVITEE), bytes: 32 },
@@ -73,6 +79,10 @@ const ALL_CONTEXTS = {
   // self-delimiting (NODE_INTERFACE → The subject encoding rule).
   'emission-release': { ctx: emissionSuccessorContext(), bytes: 0 },
   'treasury-accrue': { ctx: treasurySuccessorContext(), bytes: 0 },
+  // The third of that family, and the reason the empty subject is safe is the
+  // same: one pool successor per height, so the height separates instances
+  // within the reason and the tag separates the reason from the other thirteen.
+  'pool-settle': { ctx: poolSettleContext(), bytes: 0 },
 } satisfies Record<MintReason, { ctx: MintContext; bytes: number }>;
 
 function allContexts(): Array<{ ctx: MintContext; bytes: number }> {

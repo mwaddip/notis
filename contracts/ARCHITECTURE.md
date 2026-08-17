@@ -113,6 +113,63 @@ included), and distribute credit rewards.
 
 ---
 
+## ⛔ THE CONSERVATION AXIOM — NOTHING IS EVER CREATED OR DESTROYED AFTER GENESIS
+
+> **NOWHERE IN THE CODE SHALL EXIST A FUNCTION THAT MINTS OR BURNS ANY SUPPLY OF ANY ASSET, EVER.
+> THE CREATION OF THE GENESIS BOXES CARRYING THE CREDIT SUPPLY AND THE KARMA SUPPLY IS THE ONLY TIME,
+> IN ALL ETERNITY, THAT ASSETS ARE CREATED. NOTHING IS EVER BURNED OR DISAPPEARS FROM SUPPLY —
+> NOT EVEN AS AN INTERMEDIARY STEP.**
+>
+> — user, 2026-08-17. **This outranks every other rule in this directory.** Where any other section
+> conflicts with it, that section is wrong.
+
+**Every operation is a TRANSFER.** A unit of karma or credit moves between boxes and is never called
+into being or ended. Genesis fixes both totals; from height 1 onward the ledger only rearranges them.
+
+### The vocabulary, fixed — "burn" and "mint" are directions, not events
+
+⛔ **This has been settled several times in conversation and never written down, which is why it kept
+being re-settled** (user, 2026-08-17). It is now written down.
+
+| Word | Means, and means only |
+|---|---|
+| **burn** | **move back to the supply pool.** Nothing is destroyed. |
+| **mint** | **spend out of the supply pool.** Nothing is created. |
+
+⛔ **A LITERAL BURN DOES NOT EXIST AND CANNOT BE ADDED.** Where existing prose, a function name or a
+comment says "burned", it means *returned to the pool* — and where the **code** actually destroys
+value, that code is a defect against this section, not a definition of the word.
+
+⚠ **Read every "burn" in this directory under this definition.** The like deficit, decay, bond
+forfeiture and a pruner's own locks are all named as burns elsewhere; **all four are transfers to the
+pool.** The naming survives because it is what a holder experiences — the karma leaves them and does
+not come back.
+
+⛔ **"Not even as an intermediary step" is the demanding clause, and it rules out the obvious
+implementations:**
+
+- **A net-delta reconciliation is NOT conservation.** Removing value at one point and restoring the
+  same amount later — within a block, within a transaction, anywhere — means there was an instant at
+  which the unit did not exist. **Per-block settlement of a net figure is accounting for burns, not
+  an absence of them.**
+- **A marker box standing in for value MUST CARRY THAT VALUE.** A zero-value marker means the units
+  it represents ceased to exist between the transaction and the settlement. This decides
+  `docs/specs` §5's open question in the only direction the axiom permits.
+- **The pool is therefore NAMEABLE.** Value leaving circulation has to go *somewhere* nameable in the
+  same operation that removes it, and value entering has to come from somewhere nameable. A rule that
+  forbids every transaction from naming the supply box forces a burn.
+
+⛔ **`mintKarma` and `mintCredits` VIOLATE THIS AXIOM AS WRITTEN, AND THE VIOLATION IS THE FUNCTION,
+NOT THE NET.** Both consume the owner's existing boxes and insert one holding `existingTotal +
+amount`, with `amount` originating nowhere. That another operation decrements the emission box
+elsewhere does not save `mintCredits`: the axiom bars the *function from existing*, not merely the
+aggregate from drifting. **Both are replaced by transfer primitives that name a source.**
+
+⚠ **AHEAD OF CODE.** The tree does not satisfy this yet. The karma supply pool exists
+(TYPES_INTERFACE → KarmaPoolBox) and the box choke point accounts for supply changes, but the mint
+and burn paths are still mints and burns. **Every one of them is a defect against this section until
+it names a source and a sink.**
+
 ## Design Principles
 
 ### Correct and cheap are separate obligations, and only one is instrumented
@@ -298,7 +355,7 @@ IS the current state.
 
 Box `value` is a uniform **`bigint`** — credits are 8-decimal integer base units
 (10⁻⁸ credit), karma small bigints. No float arithmetic in consensus value math;
-`value < 2⁶⁴`. See `TYPES_INTERFACE.md` "Value denomination" and Spec B P0.
+`value < BOX_VALUE_BOUND`. See `TYPES_INTERFACE.md` → "Box value domain" and Spec B P0.
 
 #### Karma boxes
 
@@ -832,7 +889,38 @@ key, one mint per author per block. `carry` is written back to the author's comm
 `IdentityRecord` (`likeCarry`) **even when `paid` is 0**, and the record is in the
 `stateRoot` — two nodes can never disagree on the next payout undetected. All integer
 arithmetic; a float intermediate is a consensus fork. Per `x = LIKES_PER_KARMA_PAYOUT`
-likes: likers paid `x`, the author receives `x−1`, **1 is burned** — the deflation dial.
+likes: likers paid `x`, the author receives `x−1`, **1 returns to the pool** — the deflation dial.
+
+> ⛔ **AHEAD OF CODE — THE ACCRUAL IS A BOX, NOT A COUNTER** (user, 2026-08-17). Under §The
+> conservation axiom the model above mints `paid` and burns 1, and neither is permitted. The
+> replacement:
+>
+> **A like moves its `LIKE_KARMA_COST` into a box earmarked for the author.** When that box's
+> contents reach a multiple of `LIKES_PER_KARMA_PAYOUT` it becomes spendable: **`x − 1` to the
+> author, the remainder back to the supply pool.** Every step names a source and a sink, so nothing
+> is created and nothing destroyed — the liker's karma goes to the accrual box, the accrual box goes
+> to the author and the pool.
+>
+> ✅ **THE REMAINDER GOES TO THE POOL, NOT THE TREASURY** (user, 2026-08-17). ⛔ **Those are different
+> economies and the choice is settled, not incidental**: to the pool it leaves circulation for good
+> and the dial stays **deflationary**; to the treasury it becomes spendable by something later, which
+> is **redistribution wearing deflation's name**.
+>
+> ✅ **The dial's economics are therefore unchanged.** Per `x` likes the author still receives `x − 1`
+> and 1 still leaves circulation. A holder cannot distinguish "destroyed" from "returned to a pool
+> nothing can spend"; only the accounting identity changes.
+>
+> ⛔ **`IdentityRecord.likeCarry` IS REPLACED BY THE BOX'S VALUE.** The counter exists only to
+> remember karma that does not yet exist; once the karma sits in a box, the box *is* the carry.
+> Keeping both would be two representations of one quantity, free to disagree.
+>
+> ✅ **This dissolves the open question below rather than answering it.** *"Whether outstanding carry
+> counts as live supply"* has no content once the carry is karma in a box: it is live, it is in the
+> UTXO set, and it is in the `stateRoot` because every box is.
+>
+> ⚠ **The box's mechanics are undecided and are spec work** — whether one accumulating box per author
+> or one box per like, and whether the liker's transaction writes it directly or emits a marker that
+> block application merges. The economics above are settled; the carrier is not.
 
 The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent
@@ -1667,7 +1755,7 @@ forever. A node rejects objects with an unsupported protocol version.
   > like arm). P2-B landing first is what made it safe to add — a deficit rule only means
   > something once conservation is otherwise enforced.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
-  (`value < 2⁶⁴`); **no float math in any consensus value path** — floats are
+  (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
   non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
 - A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay applied periodically at block application time (not at spend time)

@@ -84,6 +84,7 @@ export const BOX_TYPE_TAGS = Object.freeze({
   emission: 7,
   treasury: 8,
   fee: 9,
+  karma_pool: 10,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -112,11 +113,12 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | emission      | (none)                                                    |
  *   | treasury      | (none)                                                    |
  *   | fee           | (none)                                                    |
+ *   | karma_pool    | (none)                                                    |
  *
- * **`emission`, `treasury` and `fee` stop after the prefix**, and an empty cell
- * above is a layout rather than an omission (TYPES_INTERFACE → Layout — Boxes).
- * None of the three names an owner, so there is no trailing field to write and
- * the smallest legal box of any type is two bytes.
+ * **`emission`, `treasury`, `fee` and `karma_pool` stop after the prefix**, and
+ * an empty cell above is a layout rather than an omission (TYPES_INTERFACE →
+ * Layout — Boxes). None of the four names an owner, so there is no trailing
+ * field to write and the smallest legal box of any type is two bytes.
  *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
@@ -139,9 +141,13 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  * **`value` throws** outside `[0, 2^64)`, one of the non-total writers
  * TYPES_INTERFACE → Totality names: `value: bigint` spans the entire u64 wire
- * domain, so no sentinel is unreachable — an all-ones u64 is a legal value, and
- * writing it to mean "malformed" would give a malformed box a well-formed box's
- * id. The fixed-width `b32` fields throw for the same structural reason. Their
+ * domain, so no sentinel is unreachable — an all-ones u64 is a value this
+ * encoder must write, and using it to mean "malformed" would give a malformed
+ * box a well-formed box's id. ⛔ **Consensus admitting only
+ * `[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → Box value domain) does not make that
+ * sentinel available**: the domain the argument rests on is this encoder's, and
+ * it is unchanged. The fixed-width `b32` fields throw for the same structural
+ * reason. Their
  * domain is `checkOutputShape`'s (node, `validateTx` step 4); see the note on
  * `computeTxId` for the one call site where that gate has not run yet.
  *
@@ -149,10 +155,10 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * Layout — Boxes). `enum8(boxType)` is field 1, so the tag is what makes the
  * encoding injective across the two; `value` happens to differ as well — an
  * invite is always `0` — but nothing may rely on that. It is the standing
- * `karma` and `credit` already have. **`emission`, `treasury` and `fee` stand
- * in the same relation with no fields at all**, so at equal `value` the tag is
- * the whole of the difference and their ids part on the provenance
- * `computeBoxId` appends.
+ * `karma` and `credit` already have. **`emission`, `treasury`, `fee` and
+ * `karma_pool` stand in the same relation with no fields at all**, so at equal
+ * `value` the tag is the whole of the difference and their ids part on the
+ * provenance `computeBoxId` appends.
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
@@ -212,8 +218,9 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'emission':
     case 'treasury':
     case 'fee':
+    case 'karma_pool':
       // The tail is empty by layout, not by oversight (TYPES_INTERFACE →
-      // Layout — Boxes). None of the three names an owner — block application
+      // Layout — Boxes). None of the four names an owner — block application
       // is the only spender — so the content encoding is the shared prefix
       // alone. Stated as its own arm rather than left to `default`, which is
       // the unknown-tag sentinel below and would write these bytes for a
@@ -324,7 +331,8 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
     case 'emission':
     case 'treasury':
     case 'fee':
-      // Nothing follows the prefix on any of the three arms, so the box is
+    case 'karma_pool':
+      // Nothing follows the prefix on any of the four arms, so the box is
       // complete at the point the tag and value have been read.
       // `boxRecordFromBytes`' exhaustion check is what makes that a decoding
       // rather than a silent stop: bytes past this point are `trailing-bytes`,
@@ -477,17 +485,28 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * key is invited **at most once** — an invite may not name an existing account
  * and a claim makes the invitee one (NODE_INTERFACE → Bond transition rules) —
  * so each `(reason, subject)` pair occurs at most once in the whole history,
- * without reading the height at all. `invite-claim` is the only reason on the
- * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
- * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.
+ * without reading the height at all. **No reason increases total karma** — the
+ * pool is the only source and the only sink (→ `KarmaPoolBox`) — so what the
+ * rows differ on is their net effect on **circulating** karma: `invite-claim`
+ * **draws from the pool**, karma the invitee did not have, while `bond-settle`
+ * and `bond-return` **recirculate** what a `BondBox` already held, in the sense
+ * `vouch-settle` returns an escrow (NODE_INTERFACE → Reason and subject table).
  *
- * `emission-release` and `treasury-accrue` take an **empty** subject, and
- * `lp(subject)` writes that as a zero length rather than as an absence. Exactly
- * one emission successor and one treasury successor exist per height, so the
- * height alone separates every instance within a reason and the tag byte
- * separates the reasons — nothing is derived from a position in the block.
- * Neither creates credits: both name a box that block application spends and
- * recreates (NODE_INTERFACE → Reason and subject table).
+ * `emission-release`, `treasury-accrue` and `pool-settle` take an **empty**
+ * subject, and `lp(subject)` writes that as a zero length rather than as an
+ * absence. Exactly one emission successor, one treasury successor and one pool
+ * successor exist per height, so the height alone separates every instance
+ * within a reason and the tag byte separates the reasons — nothing is derived
+ * from a position in the block. None of the three creates value: each names a
+ * box that block application spends and recreates — the first two on the credit
+ * side, `pool-settle` the `KarmaPoolBox` successor holding the karma that is not
+ * in circulation (NODE_INTERFACE → Reason and subject table).
+ *
+ * `genesis-committee` keys on the **member** — the raw 32-byte public key, one
+ * karma box per `genesisCommitteeKeys` entry, drawn out of the karma pool. The
+ * `genesis` reason cannot carry it: that subject is `u32BE(k)`, one number per
+ * genesis box, so every member would share one synthetic txId (NODE_INTERFACE →
+ * Reason and subject table).
  *
  * **Retired reasons — reserved, never reuse:** `'author-reward'`,
  * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
@@ -508,7 +527,9 @@ export type MintReason =
   | 'bond-settle'
   | 'bond-return'
   | 'emission-release'
-  | 'treasury-accrue';
+  | 'treasury-accrue'
+  | 'genesis-committee'
+  | 'pool-settle';
 
 /**
  * The `MintReason` tag table.
@@ -548,6 +569,8 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
   'bond-return': 10,
   'emission-release': 11,
   'treasury-accrue': 12,
+  'genesis-committee': 13,
+  'pool-settle': 14,
 });
 
 /**
@@ -614,8 +637,11 @@ export interface BoxCandidate {
   // type wearing the name would make old-vs-new greps and historical debugging
   // ambiguous forever.
   boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
-    | 'emission' | 'treasury' | 'fee';
+    | 'emission' | 'treasury' | 'fee' | 'karma_pool';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
+  // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
+  // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
+  // which node and validation enforce; no encoder here narrows to it.
   // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
   // apply-mutated field in the candidate makes the id dishonest: the box the
   // store holds stops matching its own derivation. The node records the settled
@@ -884,6 +910,53 @@ export interface FeeBox extends BoxBase {
   value: bigint;              // Credits paid to the block's miner, in base units
 }
 
+// --- Karma supply pool ---
+
+/**
+ * The whole of a network's karma supply, held as state from height 0 —
+ * TYPES_INTERFACE → KarmaPoolBox.
+ *
+ * Genesis creates exactly one, holding the **maximum STORABLE karma**,
+ * `BOX_VALUE_BOUND − 1` (TYPES_INTERFACE → Box value domain). Every mint draws
+ * from it and every burn returns to it, so the supply is fixed at that ceiling
+ * from the first block and no rule anywhere can inflate it: karma is not scarce
+ * by policy, it is non-inflatable by construction.
+ *
+ * ⛔ **`pool.value + circulating karma == BOX_VALUE_BOUND − 1`, at every height,
+ * forever.** That invariant is what makes overflow structurally impossible — a
+ * burn can only return what a mint drew, so the pool can never exceed its
+ * genesis value. **The binding constraint is the store, not the writer**: that
+ * value sits a full bit below what `writeVlqU64OrThrow` refuses, so a pool past
+ * it would break the ledger's bind while still encoding cleanly. Genesis
+ * committee grants come **out** of the pool rather than alongside it, so it
+ * holds from height 0.
+ *
+ * **No owner, and therefore no trailing fields.** Block application is its only
+ * spender and its only producer, so its content encoding is the shared prefix
+ * alone (see `canonicalBoxBytes`).
+ *
+ * ⛔ **It is NOT a karma box.** A karma box is something an identity holds;
+ * giving the pool that type would put the maximum supply inside every balance
+ * query and every conservation sum in the tree.
+ *
+ * ⛔ **It is in the CONSERVATION set and in neither of the other two** — not the
+ * transition set, not the supply set (NODE_INTERFACE → "Three karma sets, and
+ * none derives from another"). The pool is not karma anyone holds, so it is not
+ * supply; it is karma that exists, so it is conservation — **that combination is
+ * why the third set exists.**
+ *
+ * ⛔ **A zero-value successor IS created, and this is the one place the
+ * `EmissionBox` rule inverts.** Emission terminates, so above the terminus no
+ * box exists and nothing is spent. The pool never terminates: burns must always
+ * have somewhere to return, so the box exists at every height whatever its
+ * value. A reader who pattern-matches to the emission rule here gets it exactly
+ * backwards.
+ */
+export interface KarmaPoolBox extends BoxBase {
+  boxType: 'karma_pool';
+  value: bigint;              // Karma not in circulation. Genesis: BOX_VALUE_BOUND − 1
+}
+
 // ---------------------------------------------------------------------------
 // Union type
 // ---------------------------------------------------------------------------
@@ -898,7 +971,8 @@ export type AnyBox =
   | VouchBox
   | EmissionBox
   | TreasuryBox
-  | FeeBox;
+  | FeeBox
+  | KarmaPoolBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
@@ -911,7 +985,8 @@ export type AnyBoxCandidate =
   | CandidateOf<VouchBox>
   | CandidateOf<EmissionBox>
   | CandidateOf<TreasuryBox>
-  | CandidateOf<FeeBox>;
+  | CandidateOf<FeeBox>
+  | CandidateOf<KarmaPoolBox>;
 
 // ---------------------------------------------------------------------------
 // UTXO transaction

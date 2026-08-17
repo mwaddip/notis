@@ -21,12 +21,13 @@ import {
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
   MAX_GENESIS_PROOF_PAYLOAD_BYTES,
+  BOX_VALUE_BOUND,
   encodeTx,
   decodeTx,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, InviteBox, BondBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
@@ -306,6 +307,19 @@ describe('golden vectors (positional box encoding)', () => {
     expect(() => canonicalBoxBytes({ ...GOLDEN_KARMA_CANDIDATE, value: 2n ** 64n }))
       .toThrow();
   });
+
+  it('encodes a value above BOX_VALUE_BOUND — this package publishes the bound and enforces nothing', () => {
+    // ⛔ The encodable domain is `[0, 2^64)` and the accepted one is
+    // `[0, BOX_VALUE_BOUND)`; this package owns only the wider of the two
+    // (→ `BOX_VALUE_BOUND`). Narrowing an encoder to the accepted bound is the
+    // silent way to collapse that split, and this is what it fails on.
+    expect(() => canonicalBoxBytes({ ...GOLDEN_KARMA_CANDIDATE, value: BOX_VALUE_BOUND }))
+      .not.toThrow();
+    // The corpus keeps `box/karma-value-u64-max` for the same reason: a vector
+    // proving a value encodes is not a claim that consensus accepts it.
+    expect(() => canonicalBoxBytes({ ...GOLDEN_KARMA_CANDIDATE, value: 2n ** 64n - 1n }))
+      .not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -352,6 +366,8 @@ const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
   'bond-return':          '7b6ffca09e60c23b597e01b4e217846117744e64b444ca41523e05912f5705c1',
   'emission-release':     '4cb4b95c47aa83dc1330235f096c09348ba7735ad7871eb18f21160ff2f5f0a1',
   'treasury-accrue':      '83b6e7983c2c14be4bdc71da51278d43372a9123ef071a5cf06aefd80fedca65',
+  'genesis-committee':    '0cf15bc43dcc566062faad29d7e9569aa12f43e034ecd8babd19bffd85715d12',
+  'pool-settle':          '62836985b94a5679810e0ba68b501d0be64b8ffe92cc031c4ae7d75e04b66cbf',
 };
 
 const MINT_GOLDEN_HEIGHT = 1;
@@ -672,13 +688,14 @@ describe('genesis_proof', () => {
 });
 
 // ---------------------------------------------------------------------------
-// emission, treasury and fee — the types whose encoding stops at the prefix
+// emission, treasury, fee and karma_pool — the types whose encoding stops at
+// the prefix
 // ---------------------------------------------------------------------------
 
 /**
- * Tags 7, 8 and 9, and **no trailing fields on any of them** (TYPES_INTERFACE →
- * Layout — Boxes). None of the three names an owner — block application is the
- * only spender — so the content encoding is the shared
+ * Tags 7, 8, 9 and 10, and **no trailing fields on any of them**
+ * (TYPES_INTERFACE → Layout — Boxes). None of the four names an owner — block
+ * application is the only spender — so the content encoding is the shared
  * `enum8(boxType) ‖ vlqU64(value)` and nothing else.
  *
  * **The empty tail is the shape the rest of the corpus does not hold.** Every
@@ -694,6 +711,7 @@ describe('genesis_proof', () => {
  *   07 | 64     — emission, value 100
  *   08 | 64     — treasury, value 100
  *   09 | 64     — fee, value 100
+ *   0a | 64     — karma_pool, value 100
  *   ^tag ^vlqU64(value)
  */
 const EMISSION_CANDIDATE: CandidateOf<EmissionBox> = {
@@ -704,6 +722,9 @@ const TREASURY_CANDIDATE: CandidateOf<TreasuryBox> = {
 };
 const FEE_CANDIDATE: CandidateOf<FeeBox> = {
   boxType: 'fee', value: 100n,
+};
+const KARMA_POOL_CANDIDATE: CandidateOf<KarmaPoolBox> = {
+  boxType: 'karma_pool', value: 100n,
 };
 
 /** The tailed arms, at their own floor — one candidate per type that has a tail. */
@@ -717,16 +738,18 @@ const TAILED_CANDIDATES: AnyBoxCandidate[] = [
   { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
 ];
 
-describe('emission, treasury and fee', () => {
+describe('emission, treasury, fee and karma_pool', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
   it('each encodes to its tag and value, and nothing else', () => {
     expect(hexOf(canonicalBoxBytes(EMISSION_CANDIDATE))).toBe('0764');
     expect(hexOf(canonicalBoxBytes(TREASURY_CANDIDATE))).toBe('0864');
     expect(hexOf(canonicalBoxBytes(FEE_CANDIDATE))).toBe('0964');
+    expect(hexOf(canonicalBoxBytes(KARMA_POOL_CANDIDATE))).toBe('0a64');
     expect(canonicalBoxBytes(EMISSION_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.emission);
     expect(canonicalBoxBytes(TREASURY_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.treasury);
     expect(canonicalBoxBytes(FEE_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.fee);
+    expect(canonicalBoxBytes(KARMA_POOL_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.karma_pool);
   });
 
   it('two bytes is the smallest legal box of any type', () => {
@@ -737,6 +760,7 @@ describe('emission, treasury and fee', () => {
     const emptyEmission: CandidateOf<EmissionBox> = { ...EMISSION_CANDIDATE, value: 0n };
     const emptyTreasury: CandidateOf<TreasuryBox> = { ...TREASURY_CANDIDATE, value: 0n };
     const emptyFee: CandidateOf<FeeBox> = { ...FEE_CANDIDATE, value: 0n };
+    const emptyPool: CandidateOf<KarmaPoolBox> = { ...KARMA_POOL_CANDIDATE, value: 0n };
     const smallest = canonicalBoxBytes(emptyEmission);
     expect(hexOf(smallest)).toBe('0700');
     expect(smallest.length).toBe(2);
@@ -745,6 +769,10 @@ describe('emission, treasury and fee', () => {
     // FeeBox), and it still ENCODES: the no-zero rule is node's, and this
     // encoder's domain is the u64.
     expect(hexOf(canonicalBoxBytes(emptyFee))).toBe('0900');
+    // The pool's zero is the one the ledger holds. Emission terminates and
+    // creates no zero successor; the pool never terminates, because a burn must
+    // always have somewhere to return (TYPES_INTERFACE → KarmaPoolBox).
+    expect(hexOf(canonicalBoxBytes(emptyPool))).toBe('0a00');
     // Nothing else reaches two. Every other arm carries a tail, so this is the
     // floor for the whole format rather than for the empty-tail types.
     for (const candidate of TAILED_CANDIDATES) {
@@ -756,13 +784,13 @@ describe('emission, treasury and fee', () => {
     // The `invite`/`bond` case with the trailing fields removed: same value,
     // different type, and byte 0 is the whole of the difference. The ids part
     // on the provenance `computeBoxId` appends, not on the content bytes.
-    const encoded = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]
+    const encoded = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE, KARMA_POOL_CANDIDATE]
       .map((c) => hexOf(canonicalBoxBytes(c)));
-    expect(encoded.map((h) => h.slice(0, 2))).toEqual(['07', '08', '09']);
+    expect(encoded.map((h) => h.slice(0, 2))).toEqual(['07', '08', '09', '0a']);
     expect(new Set(encoded.map((h) => h.slice(2))).size).toBe(1);
-    const ids = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]
+    const ids = [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE, KARMA_POOL_CANDIDATE]
       .map((c) => computeCandidateBoxId(c, FIXTURE_TX_ID, 0));
-    expect(new Set(ids).size).toBe(3);
+    expect(new Set(ids).size).toBe(4);
   });
 
   it('identical content bytes still get distinct ids, from provenance alone', () => {
@@ -777,7 +805,9 @@ describe('emission, treasury and fee', () => {
   });
 
   it('round-trips through the box record', () => {
-    for (const candidate of [EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE]) {
+    for (const candidate of [
+      EMISSION_CANDIDATE, TREASURY_CANDIDATE, FEE_CANDIDATE, KARMA_POOL_CANDIDATE,
+    ]) {
       const record = boxRecordFromBytes(boxRecordBytes(candidate, FIXTURE_TX_ID, 0));
       expect(record).toEqual({
         candidate: { boxType: candidate.boxType, value: 100n },
@@ -821,7 +851,24 @@ describe('emission, treasury and fee', () => {
       expect(() => canonicalBoxBytes({ ...EMISSION_CANDIDATE, value }), `${value}`).toThrow();
       expect(() => canonicalBoxBytes({ ...TREASURY_CANDIDATE, value }), `${value}`).toThrow();
       expect(() => canonicalBoxBytes({ ...FEE_CANDIDATE, value }), `${value}`).toThrow();
+      expect(() => canonicalBoxBytes({ ...KARMA_POOL_CANDIDATE, value }), `${value}`).toThrow();
     }
+  });
+
+  it('the pool encodes at its genesis value, the top of what the STORE can hold', () => {
+    // `BOX_VALUE_BOUND - 1` is the whole of a network's karma supply and the
+    // value genesis puts in the box (TYPES_INTERFACE → KarmaPoolBox). It is the
+    // maximum STORABLE karma, one bit below the maximum encodable one: the
+    // ledger is SQLite and its `INTEGER` is signed, so the pool is the one box
+    // type whose ordinary state sits on the store's ceiling while the writer's
+    // stays a bit above it (→ `BOX_VALUE_BOUND`).
+    // `pool.value + circulating karma == BOX_VALUE_BOUND - 1` is what keeps it
+    // there: a burn can only return what a mint drew, so nothing can hand this
+    // writer a pool it would refuse.
+    const genesis: CandidateOf<KarmaPoolBox> = { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n };
+    expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffff7f');
+    const record = boxRecordFromBytes(boxRecordBytes(genesis, FIXTURE_TX_ID, 0));
+    expect(record.candidate).toEqual(genesis);
   });
 });
 
@@ -1140,10 +1187,14 @@ describe('boxRecordFromBytes', () => {
     // The empty-tail rows. A reader that assumed at least one field followed
     // the shared prefix would fail here and nowhere else — every other row
     // above walks a tail, so nothing in this list exercises a box that ends at
-    // the prefix except these three.
+    // the prefix except these four.
     ['emission', EMISSION_CANDIDATE],
     ['treasury', TREASURY_CANDIDATE],
     ['fee', FEE_CANDIDATE],
+    // At its genesis value rather than at the shared 100: the pool's ordinary
+    // state is `BOX_VALUE_BOUND - 1` (TYPES_INTERFACE → KarmaPoolBox), so the
+    // row that round-trips is the one carrying the nine-byte value.
+    ['karma_pool', { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n }],
   ];
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
@@ -1272,31 +1323,41 @@ describe('computeMintTxId', () => {
     }
   });
 
-  it('cross-reason injectivity is STRUCTURAL now — the prefix-free rule is retired', () => {
-    // With `reason ‖ subject` appending bare ASCII and no length prefix,
-    // cross-reason injectivity would rest on "no reason is a prefix of
-    // another" — checkable and pinnable, but one careless addition to the set
-    // away from two ambiguous mint preimages.
-    //
-    // `enum8(reason)` is one byte from a closed table, so the question cannot
-    // be asked. Kept as an assertion rather than deleted, because the
-    // ONLY thing that could reopen it is someone changing the reason encoding
-    // back to text — and this is where that would be noticed.
+  it('cross-reason injectivity is STRUCTURAL — the names are not prefix-free, and it does not matter', () => {
+    // `enum8(reason)` is one byte from a closed table, so injectivity across
+    // reasons is a property of the ENCODING and never of the names. This is
+    // where a return to a text reason encoding would be noticed, and the set
+    // carries a witness that such an encoding would be ambiguous.
     const subject = new Uint8Array(8).fill(0x77);
-    const tags = ALL_MINT_REASONS.map((r) => {
-      // The reason contributes exactly one byte, between the height and the
-      // subject's length prefix: vlqU(1) ‖ enum8(reason) ‖ lp(subject).
-      const bytes = Buffer.from(computeMintTxId(1, r, subject), 'hex');
-      return bytes;
-    });
-    expect(new Set(tags.map((b) => b.toString('hex'))).size).toBe(ALL_MINT_REASONS.length);
-    // Prefix-freeness of the STRINGS is not load-bearing: a member could
-    // legally be named `decay-extra`. Asserted anyway, so that making the rule
-    // load-bearing again reads as a deliberate step backwards.
-    const namesArePrefixFree = ALL_MINT_REASONS.every((a) =>
-      ALL_MINT_REASONS.every((b) => a === b || !b.startsWith(a)),
+    // The reason contributes exactly one byte, between the height and the
+    // subject's length prefix: vlqU(1) ‖ enum8(reason) ‖ lp(subject).
+    const ids = ALL_MINT_REASONS.map((r) => computeMintTxId(1, r, subject));
+    expect(new Set(ids).size).toBe(ALL_MINT_REASONS.length);
+
+    // The names are not prefix-free, and the witness is pinned by name:
+    // `genesis` ⊏ `genesis-committee`. Both are the contract's
+    // (NODE_INTERFACE → Reason and subject table), so the pair is not something
+    // this set may rename its way out of.
+    const prefixPairs = ALL_MINT_REASONS.flatMap((a) =>
+      ALL_MINT_REASONS.filter((b) => b !== a && b.startsWith(a)).map((b) => `${a} ⊏ ${b}`),
     );
-    expect(namesArePrefixFree).toBe(true); // true, but not required
+    expect(prefixPairs).toContain('genesis ⊏ genesis-committee');
+
+    // What a text encoding does with that pair, demonstrated rather than
+    // argued: `reason ‖ subject` as bare ASCII gives `genesis` over
+    // `-committee ‖ X` and `genesis-committee` over `X` THE SAME BYTES. Two
+    // reasons, one preimage.
+    const utf8 = (s: string) => Buffer.from(s, 'utf8');
+    const x = Buffer.alloc(4, 0x5a);
+    const suffixed = Buffer.concat([utf8('-committee'), x]);
+    expect(Buffer.concat([utf8('genesis'), suffixed]).toString('hex'))
+      .toBe(Buffer.concat([utf8('genesis-committee'), x]).toString('hex'));
+
+    // Under the encoding the format actually uses, that same pair separates on
+    // the tag byte alone — the collision above has no counterpart here. This is
+    // the whole of "a one-byte tag makes it structural" (→ `MINT_REASON`).
+    expect(computeMintTxId(1, 'genesis', suffixed))
+      .not.toBe(computeMintTxId(1, 'genesis-committee', x));
   });
 
   it('the reason contributes exactly one byte, from a closed table', () => {
@@ -1328,23 +1389,24 @@ describe('computeMintTxId', () => {
     expect(() => computeMintTxId(1, 'decay', undefined as unknown as Uint8Array)).not.toThrow();
   });
 
-  it('the two empty-subject reasons separate from each other and from an empty-subject peer', () => {
-    // `emission-release` and `treasury-accrue` carry no subject, so the tag byte
-    // is the whole separator between them at one height — including against a
-    // reason whose subject merely happens to be empty in this call.
+  it('the empty-subject reasons separate from each other and from an empty-subject peer', () => {
+    // `emission-release`, `treasury-accrue` and `pool-settle` carry no subject,
+    // so the tag byte is the whole separator between them at one height —
+    // including against a reason whose subject merely happens to be empty in
+    // this call.
     const empty = new Uint8Array(0);
-    const ids = (['emission-release', 'treasury-accrue', 'coinbase'] as const)
+    const ids = (['emission-release', 'treasury-accrue', 'pool-settle', 'coinbase'] as const)
       .map((r) => computeMintTxId(70000, r, empty));
-    expect(new Set(ids).size).toBe(3);
+    expect(new Set(ids).size).toBe(4);
   });
 
   it('an empty-subject reason still separates heights', () => {
     // The property the empty subject rests on. With nothing to discriminate
     // inside a reason, the height is the only thing left, and exactly one
-    // emission successor and one treasury successor exist per height
-    // (NODE_INTERFACE → Reason and subject table).
+    // emission successor, one treasury successor and one pool successor exist
+    // per height (NODE_INTERFACE → Reason and subject table).
     const empty = new Uint8Array(0);
-    for (const reason of ['emission-release', 'treasury-accrue'] as const) {
+    for (const reason of ['emission-release', 'treasury-accrue', 'pool-settle'] as const) {
       const heights = [0, 1, 2, 70000];
       const ids = heights.map((h) => computeMintTxId(h, reason, empty));
       expect(new Set(ids).size, reason).toBe(heights.length);
@@ -1367,6 +1429,7 @@ describe('computeMintTxId', () => {
     const empty = new Uint8Array(0);
     expect(computeMintTxId(1, 'emission-release', empty)).toBe(mirror([0x01, 0x0b, 0x00]));
     expect(computeMintTxId(1, 'treasury-accrue', empty)).toBe(mirror([0x01, 0x0c, 0x00]));
+    expect(computeMintTxId(1, 'pool-settle', empty)).toBe(mirror([0x01, 0x0e, 0x00]));
 
     // Drop the length byte and the id moves: present-and-empty is not absent,
     // which is what keeps the subject self-delimiting at width zero.
@@ -1868,6 +1931,7 @@ describe('the box-type tables', () => {
     emission: { boxType: 'emission', value: 100n },
     treasury: { boxType: 'treasury', value: 100n },
     fee: { boxType: 'fee', value: 100n },
+    karma_pool: { boxType: 'karma_pool', value: 100n },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -1900,7 +1964,7 @@ describe('the box-type tables', () => {
   it('pins the table', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
       karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
-      emission: 7, treasury: 8, fee: 9,
+      emission: 7, treasury: 8, fee: 9, karma_pool: 10,
     });
   });
 

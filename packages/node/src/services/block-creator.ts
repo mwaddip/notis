@@ -5,6 +5,7 @@ import {
 } from 'crypto';
 import {
   PROTOCOL_VERSION,
+  BOX_VALUE_BOUND,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   EMPTY_STATE_ROOT,
@@ -606,18 +607,19 @@ function finalizeBlock(block: OrderingBlock): void {
  * before the real one is known.
  *
  * One output is the maximum the split produces — the miner's slice is the whole
- * coinbase (MINING_INTERFACE → Coinbase Application) — and `value` is bounded by
- * its own encoder at `2^64 − 1`, so no real coinbase encodes wider than this.
- * Over-reserving costs at most a transaction's place in a block that was within a
- * few bytes of the budget; under-reserving would put the assembled body over a
- * budget every peer measures.
+ * coinbase (MINING_INTERFACE → Coinbase Application) — and `value` is bounded at
+ * `BOX_VALUE_BOUND - 1n` by what consensus accepts rather than by what the
+ * encoder can write (TYPES_INTERFACE → Box value domain), so no real coinbase
+ * encodes wider than this. Over-reserving costs at most a transaction's place in
+ * a block that was within a few bytes of the budget; under-reserving would put
+ * the assembled body over a budget every peer measures.
  */
 export function worstCaseCoinbaseOutputs(height: number): CoinbaseOutput[] {
   const lockedUntilBlock = height + nodeConfig.creditMinerRewardDelay;
   return [
     {
       owner: new Uint8Array(32),
-      value: 2n ** 64n - 1n,
+      value: BOX_VALUE_BOUND - 1n,
       lockedUntilBlock,
       isTreasury: false,
     },

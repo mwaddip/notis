@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { AnyBox, Post, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
@@ -170,16 +170,17 @@ function coerceBoxValue(raw: unknown, field: string): bigint {
 }
 
 /**
- * A box `value` must be a non-negative bigint below 2^64 — negative values
- * break conservation arithmetic, and at/above 2^64 the CBOR encoding leaves
- * the uniform uint64 form. Rejecting here gives the client a clear 400;
- * `validateTx`'s step-4 output schema (the `u64` field type) enforces the
- * same tight bound for txs arriving over gossip or inside a block.
+ * A box `value` must lie in `[0, BOX_VALUE_BOUND)` — the accepted domain,
+ * imported rather than restated (TYPES_INTERFACE → Box value domain). Negative
+ * values break conservation arithmetic; a value at or above the bound encodes
+ * cleanly and cannot be stored. Rejecting here gives the client a clear 400;
+ * `validateTx`'s step-4 output schema (the `u64` field type) enforces the same
+ * bound for txs arriving over gossip or inside a block.
  */
 function assertValidBoxValue(value: unknown, field = 'value'): void {
-  if (typeof value !== 'bigint' || value < 0n || value >= (1n << 64n)) {
+  if (typeof value !== 'bigint' || value < 0n || value >= BOX_VALUE_BOUND) {
     throw new ClientError(
-      `box ${field} must be a non-negative bigint < 2^64, got ${String(value)}`,
+      `box ${field} must be a non-negative bigint < 2^63, got ${String(value)}`,
     );
   }
 }
