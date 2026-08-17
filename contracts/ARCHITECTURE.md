@@ -113,6 +113,44 @@ included), and distribute credit rewards.
 
 ---
 
+## ⛔ THE CONSERVATION AXIOM — NOTHING IS EVER CREATED OR DESTROYED AFTER GENESIS
+
+> **NOWHERE IN THE CODE SHALL EXIST A FUNCTION THAT MINTS OR BURNS ANY SUPPLY OF ANY ASSET, EVER.
+> THE CREATION OF THE GENESIS BOXES CARRYING THE CREDIT SUPPLY AND THE KARMA SUPPLY IS THE ONLY TIME,
+> IN ALL ETERNITY, THAT ASSETS ARE CREATED. NOTHING IS EVER BURNED OR DISAPPEARS FROM SUPPLY —
+> NOT EVEN AS AN INTERMEDIARY STEP.**
+>
+> — user, 2026-08-17. **This outranks every other rule in this directory.** Where any other section
+> conflicts with it, that section is wrong.
+
+**Every operation is a TRANSFER.** A unit of karma or credit moves between boxes and is never called
+into being or ended. Genesis fixes both totals; from height 1 onward the ledger only rearranges them.
+
+⛔ **"Not even as an intermediary step" is the demanding clause, and it rules out the obvious
+implementations:**
+
+- **A net-delta reconciliation is NOT conservation.** Removing value at one point and restoring the
+  same amount later — within a block, within a transaction, anywhere — means there was an instant at
+  which the unit did not exist. **Per-block settlement of a net figure is accounting for burns, not
+  an absence of them.**
+- **A marker box standing in for value MUST CARRY THAT VALUE.** A zero-value marker means the units
+  it represents ceased to exist between the transaction and the settlement. This decides
+  `docs/specs` §5's open question in the only direction the axiom permits.
+- **The pool is therefore NAMEABLE.** Value leaving circulation has to go *somewhere* nameable in the
+  same operation that removes it, and value entering has to come from somewhere nameable. A rule that
+  forbids every transaction from naming the supply box forces a burn.
+
+⛔ **`mintKarma` and `mintCredits` VIOLATE THIS AXIOM AS WRITTEN, AND THE VIOLATION IS THE FUNCTION,
+NOT THE NET.** Both consume the owner's existing boxes and insert one holding `existingTotal +
+amount`, with `amount` originating nowhere. That another operation decrements the emission box
+elsewhere does not save `mintCredits`: the axiom bars the *function from existing*, not merely the
+aggregate from drifting. **Both are replaced by transfer primitives that name a source.**
+
+⚠ **AHEAD OF CODE.** The tree does not satisfy this yet. The karma supply pool exists
+(TYPES_INTERFACE → KarmaPoolBox) and the box choke point accounts for supply changes, but the mint
+and burn paths are still mints and burns. **Every one of them is a defect against this section until
+it names a source and a sink.**
+
 ## Design Principles
 
 ### Correct and cheap are separate obligations, and only one is instrumented
