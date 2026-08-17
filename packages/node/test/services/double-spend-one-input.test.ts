@@ -13,19 +13,19 @@ import {
  * never asked to remove that id twice.
  *
  * ⛔ **This is what keeps `DivergedStateTreeError` off the peer-reachable side
- * of the fail-stop boundary** (NODE_INTERFACE → "The one condition this node
- * stops for"), and neither half of the mechanism is local to one file. The
- * journal records a remove per `consumeBox` call and `consumeBox` guards on
- * neither `.changes` nor `spent_at_block IS NULL`; `proverFeedFromJournal`
- * cancels insert-then-remove pairs but does **not** dedupe repeated removes. So
- * if both transactions applied, `consumed` would carry the id twice, the second
- * `Remove` would refuse, and peer bytes would reach `process.exit(1)`.
+ * of the fail-stop boundary** (NODE_INTERFACE → "What the funnel's totality
+ * catch is FOR"), and the mechanism is not local to one file. The journal
+ * records a remove per `consumeBox` call, and `proverFeedFromJournal` cancels
+ * insert-then-remove pairs but does **not** dedupe repeated removes — so a
+ * `consumed` list carrying one id twice would refuse on the second `Remove`.
  *
  * What prevents it is the apply loop's liveness pre-check, which runs against
  * state the loop is itself evolving: once the first transaction's `applyTx`
  * marks the box spent, the second fails `getBox(id) !== null`, is deferred to
  * `remaining`, and is never applied. No pass can make progress on it, so the
  * block is rejected rather than applied with a transaction missing.
+ * `consumeBox` is the backstop under that: it refuses a consume of an id no
+ * live row holds, so the second remove could not be journalled at all.
  *
  * The assertion is that the boundary is not reached — a root comparison cannot
  * see this, because the block never gets far enough to produce a root.

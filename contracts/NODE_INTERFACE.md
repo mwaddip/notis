@@ -890,30 +890,32 @@ tree collapse into clean rejections:
 > examines nothing a peer sent — it fires when the AVL+ tree and `utxo_boxes` have drifted apart.
 > See AVL+ State Root → "the tree is asked".
 >
-> The **`Insert`** arm is enforced by the schema: a duplicate box id dies on `utxo_boxes.id`'s
-> primary key inside the applying transaction, before the prover feed is built from the journal.
+> **Both arms are enforced by the store**, and the enforcement is what puts the condition outside
+> peer reach rather than an argument about the callers.
 >
-> ⚠ **The `Remove` arm is CALLER-KEPT, not enforced, and that is the weaker half of this
-> argument.** `consumeBox` is the sole writer of a remove entry — `recordBoxRemove` has exactly one
-> caller — and its `UPDATE` guards on neither the row count nor `spent_at_block IS NULL`. Nothing in
-> the primitive requires that a journalled remove spent a live row. Its **eleven** call sites divide
-> **1 / 9 / 1**:
+> The **`Insert`** arm: a duplicate box id dies on `utxo_boxes.id`'s primary key inside the applying
+> transaction, before the prover feed is built from the journal.
 >
-> - **the peer-facing tx loop**, where `validateTx` step 2 resolves every input through `getBox`'s
->   `spent_at_block IS NULL` filter, in the same transaction immediately before `applyTx`;
-> - **nine block-application paths**, each reading a live-filtered set of its own;
-> - ⚠ **one that reads nothing** — the fee-box consume, which names ids from the block's own outputs
->   and is safe only because `proverFeedFromJournal` cancels the insert+remove pair before it reaches
->   the tree. ✅ **That guard is pinned rather than asserted**: `fee-box-prover-feed.test.ts` proves
->   both halves were journalled *and* that neither reaches either feed, the speculative or the
->   applied. Change the netting and it goes red.
+> The **`Remove`** arm: `consumeBox`'s `UPDATE` carries `AND spent_at_block IS NULL` and refuses a
+> zero row count, so a remove entry follows a spend that really happened. `recordBoxRemove` runs
+> downstream of that check and has exactly one caller, which is what makes the primitive the sole
+> gate rather than one of several. A consume naming an absent or already-spent id throws
+> `BoxNotLiveError` inside the applying transaction, and the funnel's totality catch converts it to a
+> block rejection — the same shape the `Insert` arm's constraint failure takes.
 >
-> ⛔ **A second remove of one id would break peer-unreachability, and two separate mechanisms stop
-> it.** Within one transaction, `validateTx` step 1 rejects duplicate inputs. Across two, the apply
-> loop's liveness pre-check runs against state the loop is itself evolving, so the second transaction
-> defers forever and the block is rejected. **Nothing downstream would catch it** —
-> `proverFeedFromJournal` cancels insert-then-remove pairs but does not dedupe repeated removes, so
-> a second remove reaching the feed would reach the tree.
+> ⛔ **A second remove of one id therefore cannot be journalled at all**, which is the property this
+> arm rests on. Two mechanisms stop it reaching the store: within one transaction, `validateTx`
+> step 1 rejects duplicate inputs; across two, the apply loop's liveness pre-check runs against state
+> the loop is itself evolving, so the second transaction defers forever. **The primitive is the
+> backstop under both**, and it has to be — `proverFeedFromJournal` cancels insert-then-remove pairs
+> but does not dedupe repeated removes, so a second remove reaching the feed would reach the tree.
+> A repeated consume costs the block, never the node.
+>
+> ✅ **The fee-box consume names ids from the block's own outputs**, inserted earlier in the same
+> transaction, so it spends a live row like every other site. Its insert+remove pair nets out in
+> `proverFeedFromJournal` and neither op reaches the tree: `fee-box-prover-feed.test.ts` proves both
+> halves were journalled *and* that neither reaches either feed, the speculative or the applied.
+> Change the netting and it goes red.
 >
 > ⚠ **The store is now a raising site, and that is the point.** An earlier draft of this section
 > implied the boundary lives only at apply's callers. **It cannot.** By the time a `ReaderError`
@@ -2170,7 +2172,7 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | `getUnspentPostLockBoxes()` | `() => PostLockBox[]` |
 | `getPostLockBox(targetPostId)` | `(string) => PostLockBox \| null` |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |
-| `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark as spent; records `{kind:'box', op:'remove', boxId}` while a block journal is open |
+| `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent; records `{kind:'box', op:'remove', boxId}` while a block journal is open. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so the journal entry follows a real spend instead of a caller's assumption. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node |
 | `unconsumeBox(boxId)` | `(string) => void` — un-mark spent (fork-rollback inverse; never records) |
 | `deleteBox(boxId)` | `(string) => void` — (fork-rollback inverse; never records) |
 
