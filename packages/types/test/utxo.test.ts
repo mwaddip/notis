@@ -1429,6 +1429,7 @@ describe('computeMintTxId', () => {
     const empty = new Uint8Array(0);
     expect(computeMintTxId(1, 'emission-release', empty)).toBe(mirror([0x01, 0x0b, 0x00]));
     expect(computeMintTxId(1, 'treasury-accrue', empty)).toBe(mirror([0x01, 0x0c, 0x00]));
+    expect(computeMintTxId(1, 'pool-settle', empty)).toBe(mirror([0x01, 0x0e, 0x00]));
 
     // Drop the length byte and the id moves: present-and-empty is not absent,
     // which is what keeps the subject self-delimiting at width zero.

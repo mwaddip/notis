@@ -485,9 +485,12 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * key is invited **at most once** — an invite may not name an existing account
  * and a claim makes the invitee one (NODE_INTERFACE → Bond transition rules) —
  * so each `(reason, subject)` pair occurs at most once in the whole history,
- * without reading the height at all. `invite-claim` is the only reason on the
- * table that *increases* karma supply; `bond-settle` and `bond-return` re-mint
- * what a `BondBox` already held, in the sense `vouch-settle` re-mints an escrow.
+ * without reading the height at all. **No reason increases total karma** — the
+ * pool is the only source and the only sink (→ `KarmaPoolBox`) — so what the
+ * rows differ on is their net effect on **circulating** karma: `invite-claim`
+ * **draws from the pool**, karma the invitee did not have, while `bond-settle`
+ * and `bond-return` **recirculate** what a `BondBox` already held, in the sense
+ * `vouch-settle` returns an escrow (NODE_INTERFACE → Reason and subject table).
  *
  * `emission-release`, `treasury-accrue` and `pool-settle` take an **empty**
  * subject, and `lp(subject)` writes that as a zero length rather than as an
