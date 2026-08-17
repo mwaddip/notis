@@ -905,15 +905,18 @@ export interface FeeBox extends BoxBase {
  * The whole of a network's karma supply, held as state from height 0 —
  * TYPES_INTERFACE → KarmaPoolBox.
  *
- * Genesis creates exactly one, holding the **maximum representable karma**.
- * Every mint draws from it and every burn returns to it, so the supply is fixed
- * at the type's ceiling from the first block and no rule anywhere can inflate
- * it: karma is not scarce by policy, it is non-inflatable by construction.
+ * Genesis creates exactly one, holding the **maximum STORABLE karma**,
+ * `BOX_VALUE_BOUND − 1` (TYPES_INTERFACE → Box value domain). Every mint draws
+ * from it and every burn returns to it, so the supply is fixed at that ceiling
+ * from the first block and no rule anywhere can inflate it: karma is not scarce
+ * by policy, it is non-inflatable by construction.
  *
- * ⛔ **`pool.value + circulating karma == 2⁶⁴ − 1`, at every height, forever.**
- * That invariant is what makes overflow structurally impossible — a burn can
- * only return what a mint drew, so the pool can never exceed its genesis value
- * and `writeVlqU64OrThrow` can never be handed one it would refuse. Genesis
+ * ⛔ **`pool.value + circulating karma == BOX_VALUE_BOUND − 1`, at every height,
+ * forever.** That invariant is what makes overflow structurally impossible — a
+ * burn can only return what a mint drew, so the pool can never exceed its
+ * genesis value. **The binding constraint is the store, not the writer**: that
+ * value sits a full bit below what `writeVlqU64OrThrow` refuses, so a pool past
+ * it would break the ledger's bind while still encoding cleanly. Genesis
  * committee grants come **out** of the pool rather than alongside it, so it
  * holds from height 0.
  *
@@ -936,7 +939,7 @@ export interface FeeBox extends BoxBase {
  */
 export interface KarmaPoolBox extends BoxBase {
   boxType: 'karma_pool';
-  value: bigint;              // Karma not in circulation. Genesis: 2^64 − 1
+  value: bigint;              // Karma not in circulation. Genesis: BOX_VALUE_BOUND − 1
 }
 
 // ---------------------------------------------------------------------------
