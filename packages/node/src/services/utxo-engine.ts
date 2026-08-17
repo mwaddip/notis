@@ -27,19 +27,23 @@ import { ed25519PublicKeyToKeyObject, verifyPostFieldDomains } from '@dagsocial/
 import type { IdentityRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
-// The karma family
+// The karma transition set
 // ---------------------------------------------------------------------------
 
 /**
- * The box types that hold karma: spendable in a `karma` box, escrowed in the
- * other four. `credit`, `emission`, `treasury` and `fee` are the other ledger
- * and `genesis_proof` is unspendable at 0 (NODE_INTERFACE → the `/status` row).
+ * The box types a karma spend may create. The karma transition arm below admits
+ * exactly these as its outputs and refuses every other type, which is what keeps
+ * a `fee` output off the karma side with no clause naming `fee`.
  *
- * One statement, two readers. The karma transition arm below admits exactly
- * these as the outputs of a karma spend, and `/status` sums `totalKarma` over
- * them — a sixth karma-bearing box type is named here and both follow.
+ * ⛔ **Not the set `/status` sums into `totalKarma`** — that is
+ * `KARMA_SUPPLY_TYPES` in `routes/blocks.ts`, and neither set is defined as,
+ * spread from or derived from the other (NODE_INTERFACE → "Two karma sets, and
+ * neither derives from the other"). They hold the same members for two
+ * different reasons: this one answers whether a karma spend may create the
+ * type, that one whether the type's value is karma in existence. A
+ * karma-bearing type is added to each separately.
  */
-export const KARMA_BOX_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+export const KARMA_TRANSITION_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -168,14 +172,14 @@ function checkTransitions(
       const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
 
-      // A karma spend produces karma-family outputs and nothing else. A
+      // A karma spend produces the transition set's types and nothing else. A
       // 'like'-type output is an illegal transition in particular: a like is a
       // burn transaction named by `likeTarget`, never a box.
-      const karmaFamily: readonly string[] = KARMA_BOX_TYPES;
-      if (outputs.some((o) => !karmaFamily.includes(o.boxType))) {
+      const allowedOutputTypes: readonly string[] = KARMA_TRANSITION_TYPES;
+      if (outputs.some((o) => !allowedOutputTypes.includes(o.boxType))) {
         return {
           valid: false,
-          error: `Illegal karma transition: outputs contain non-${KARMA_BOX_TYPES.join('/')} boxes`,
+          error: `Illegal karma transition: outputs contain non-${KARMA_TRANSITION_TYPES.join('/')} boxes`,
         };
       }
 
@@ -1219,8 +1223,17 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
 }
 
 /**
- * Enforce strict face-value conservation — `sum(inputs) == sum(outputs)` for
- * **every** box type.
+ * Enforce strict face-value conservation — `sum(inputs) == sum(outputs)` across
+ * the transaction as a whole, **one total per side and not per box type**.
+ *
+ * ⛔ **Per-type equality would reject most karma transactions.** Value changes
+ * form inside the karma family: invite creation is `karma → karma + invite +
+ * bond`, where the bond's `INVITE_BOND_KARMA` comes out of the karma output, so
+ * the transaction conserves as one total while the `karma` type alone does not.
+ * Posting and vouch casting have the same shape. Step 3 constrains the
+ * **inputs** to a single box type; the outputs deliberately span several, and
+ * the two `.reduce`s below carry no type predicate (NODE_INTERFACE →
+ * `validateTx` step 5).
  *
  * Karma and credits are minted or burned only in block-application paths (like
  * settlement, decay, coinbase, bond settlement), never inside a user
@@ -1517,11 +1530,11 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
  *    step that reads
  *    `tx.outputs`, so steps 5–7 dereference output fields under a schema
  *    guarantee.
- * 5. Face-value conservation — sum(in) == sum(out) for every box type (three
- *    carve-outs: the like burn — `likeTarget` present ⟺ deficit exactly
- *    LIKE_KARMA_COST — the invite-claim surplus of exactly INVITE_KARMA_AMOUNT,
- *    and the zero-output VouchBox spend). The `value` TYPE bound lives in step
- *    4's schema.
+ * 5. Face-value conservation — sum(in) == sum(out) across the transaction as a
+ *    whole, one total per side and not per box type (three carve-outs: the like
+ *    burn — `likeTarget` present ⟺ deficit exactly LIKE_KARMA_COST — the
+ *    invite-claim surplus of exactly INVITE_KARMA_AMOUNT, and the zero-output
+ *    VouchBox spend). The `value` TYPE bound lives in step 4's schema.
  * 6. Authorization — the signer the transition requires signed this
  *    transaction, or no transition admits the input (NODE_INTERFACE → "Legal
  *    box transitions"). Ahead of step 7, so the transition is identified from

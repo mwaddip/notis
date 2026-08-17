@@ -520,23 +520,42 @@ endpoint semantics in `MINING_INTERFACE.md`.
 | `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
-> **The karma family is `karma`, `invite`, `bond`, `post_lock`, `vouch`** — `credit` is the other
-> ledger and `genesis_proof` is unspendable. `totalKarma` sums all five; `liquidKarma` sums
-> `karma` alone.
->
-> ⚠ **VIOLATED — `totalKarma` currently sums `box_type = 'karma'` only**, so karma escrowed in a
-> post lock, a bond, an invite or a vouch reads as destroyed. Measured on the live chain
-> 2026-08-14: 5 of the 6 karma missing from the initial 50000 sat in one `post_lock` box and only
-> 1 had been burned. **On a chain with real posting activity the understatement grows with every
-> live lock.** `liquidKarma` is the new name for that number, and adding it is what makes
-> correcting `totalKarma` non-lossy.
->
-> ⛔ **The karma family is stated twice and nothing links the two.** `utxo-engine.ts`'s karma
-> transition rule filters exactly those five box types and names them in its error string; the
-> five box interfaces in `types/src/utxo.ts` say the same in prose. **A sixth karma-bearing box
-> type would need this query changed too, with no signal.** Both consumers are in `packages/node`,
-> so one exported constant serves both — the engine's arms reading from it rather than restating
-> it — with no cross-package change.
+> `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
+> other ledger and `genesis_proof` holds no value on either.
+
+#### Two karma sets, and neither derives from the other
+
+**A box type being a legal karma-side output and a box type counting toward karma in existence are
+different questions, and each has its own set:**
+
+| Set | Answers | Read by |
+|---|---|---|
+| the **transition** set | may a karma spend create this box type? | `utxo-engine.ts`'s karma transition arm |
+| the **supply** set | does this box type's value count as karma that exists? | `getTotalKarma` |
+
+⛔ **NEITHER SET MAY BE DEFINED AS THE OTHER, OR DERIVED FROM IT.** They hold the same members
+today, and they hold them **for two different reasons** — every karma-bearing type currently happens
+also to be one a user transaction may create. That coincidence is a fact about the present type
+list, not a rule, and a single shared constant encodes it as though it were one.
+
+> ⚠ **AHEAD OF CODE — the first member that separates them.** The karma supply pool
+> (`docs/specs` design §3, unit B) is a karma-bearing box a karma spend **must** be able to create,
+> because a mint is `pool → pool′ + karma`. It is also the one box whose value must **never** reach
+> `totalKarma`: it holds the maximum representable karma, so counting it reports the network's
+> supply as `u64::MAX`. **Transition set yes, supply set no.** Until the pool lands the two lists
+> are identical and this section is the only thing distinguishing them.
+
+✅ **The credit ledger already works this way, and it is the precedent.** The credit transition arm
+names its allowed outputs **inline** (`credit` or `fee`), and `getTotalCredits` keys on `credit`
+independently. Neither reads the other, so `emission` and `treasury` are not *excluded* from the
+credit supply — they were never in it. `getTotalCredits`'s own comment states the discipline:
+*"Keyed on `credit` by name rather than by excluding them, so a later credit-bearing box type is a
+deliberate addition here."* **An allow-list per question, never one list per ledger.**
+
+⚠ **A fixture assertion pins the supply set and must say so.** `blocks.test.ts` asserts that the box
+types it seeds equal the karma family; keyed on the transition set it turns red when a
+transition-only type is added and invites the wrong repair — adding a fixture, which is exactly the
+defect. **It belongs to the supply set.**
 
 > ✅ **RESOLVED — `inviteProbationBlocks` is served. Verified 2026-08-11.** This read
 > `AHEAD OF CODE` until Phase 9. The node resolves it from the network profile in
@@ -654,8 +673,17 @@ Full read-only validation. Performs all checks without modifying state:
    structure and field types are already pinned, and may dereference output
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
-5. Value conservation: `sum(input values) == sum(output values)` for **every** box
-   type, with **three stated exceptions and no others**:
+5. Value conservation: `sum(input values) == sum(output values)` **across the
+   transaction as a whole — one total per side, not per box type** — with
+   **three stated exceptions and no others**:
+
+   > ⛔ **PER-TYPE EQUALITY WOULD REJECT MOST KARMA TRANSACTIONS.** Value
+   > changes **form** inside the karma family: invite creation is
+   > `karma(K) → karma(K−25) + invite(0) + bond(25)`, which conserves as one
+   > total and fails per type. Posting and vouch casting have the same shape.
+   > Step 3 constrains the **inputs** to a single box type; the outputs
+   > deliberately span several, and `checkValueConservation` reduces each side
+   > to one `bigint` with no type predicate anywhere in it.
    - the **like deficit** — `likeTarget` present ⟺ the sums differ by exactly
      `LIKE_KARMA_COST`, a burn;
    - the **invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
@@ -1245,6 +1273,11 @@ There is **no other legal bond or invite shape**. In particular:
   and no settle height.
 
 ### Karma transition rules (P2-B phase 4)
+
+⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
+`totalKarma` sums** — see "Two karma sets, and neither derives from the other" under Status. Reading
+one from the other is what puts a box holding the maximum representable karma inside the network's
+reported supply.
 
 - **All karma inputs must share one owner.** The engine pins every karma
   *output* to `inputs[0].owner` and calls the violation "Karma cannot be

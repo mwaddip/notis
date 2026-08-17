@@ -50,7 +50,7 @@ per-block like settlement, decay, invites/vouch, faucet, prune settlement, AVL+ 
   transaction burns `LIKE_KARMA_COST` (`likeTarget` present ⟺ that exact deficit — the engine's
   biconditional, P2-D). All other karma/credit mints and burns happen only in explicit
   block-application paths, never inside a user tx. Enforced since P2-B phase 3: `validateTx` checks
-  per-type face-value conservation, block application re-validates every embedded tx, and the last
+  face-value conservation as one total per side, block application re-validates every embedded tx, and the last
   direct-mutation HTTP path (`sendCredits`) is gone — every user-value mutation rides mempool → block.
 - **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; must match the demo
   UI's `blakejs`.

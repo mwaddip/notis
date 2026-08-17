@@ -704,12 +704,13 @@ describe('validateAndApplyTx', () => {
   // ---------------------------------------------------------------------------
   // 13. Value conservation (audit C-1, L-11)
   //
-  // sum(inputs) == sum(outputs) for every box type, with the three exceptions
-  // NODE_INTERFACE → `validateTx` step 5 enumerates: the like burn, the
-  // invite-claim surplus, and the zero-output vouch spend. All three move
-  // karma; a credit transaction conserves strictly and names its fee in a box
-  // (section 16). Every other mint or burn happens in a block-application
-  // path, never inside a user transaction.
+  // sum(inputs) == sum(outputs) across the transaction as a whole — one total
+  // per side, not per box type — with the three exceptions NODE_INTERFACE →
+  // `validateTx` step 5 enumerates: the like burn, the invite-claim surplus,
+  // and the zero-output vouch spend. All three move karma; a credit transaction
+  // conserves strictly and names its fee in a box (section 16). Every other
+  // mint or burn happens in a block-application path, never inside a user
+  // transaction.
   // ---------------------------------------------------------------------------
   describe('value conservation (audit C-1, L-11)', () => {
     it('rejects self-signed K(v) -> K(v) + K(2) (mints karma from nothing)', () => {
@@ -1579,9 +1580,9 @@ describe('validateAndApplyTx', () => {
     });
 
     // `fee` is excluded by construction rather than by a clause naming it:
-    // `KARMA_BOX_TYPES` is an allowlist and the karma arm rejects any output
-    // outside it (NODE_INTERFACE → a FeeBox is reachable only from the credit
-    // row). A karma transaction holds no credits to pay with.
+    // `KARMA_TRANSITION_TYPES` is an allowlist and the karma arm rejects any
+    // output outside it (NODE_INTERFACE → a FeeBox is reachable only from the
+    // credit row). A karma transaction holds no credits to pay with.
     it('rejects a fee box on a karma-side transaction', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 143);
       const tx = buildSignedTx(

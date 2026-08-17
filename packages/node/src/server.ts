@@ -6,7 +6,7 @@ import { createRouter as faucetRoutes } from './routes/faucet.js';
 import { deleteRoutes } from './routes/delete.js';
 import { createRouter as utxoRoutes } from './routes/utxo.js';
 import { createRouter as vouchRoutes } from './routes/vouches.js';
-import { createRouter as blockRoutes } from './routes/blocks.js';
+import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import * as store from './store/index.js';
 import { getSystemKeypair } from './store/system.js';
@@ -20,7 +20,7 @@ import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
 import { getDb } from './store/db.js';
-import { validateTx, KARMA_BOX_TYPES } from './services/utxo-engine.js';
+import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
 import { createAdminRouter } from './routes/admin.js';
 import { registerProofEndpoint } from './state/avl-endpoint.js';
@@ -370,18 +370,20 @@ export function createApp(config: Config): express.Express {
             .get() as { c: number }
         ).c,
       // Karma in existence, escrow included: karma locked in a post lock, a
-      // bond, an invite or a vouch is held, not destroyed. The family comes
-      // from `KARMA_BOX_TYPES`, which the engine's karma transition arm reads
-      // too, so the two cannot name different sets.
+      // bond, an invite or a vouch is held, not destroyed. The types come from
+      // `KARMA_SUPPLY_TYPES`, which answers that question and only that one —
+      // it is independent of the transition set the engine's karma arm admits
+      // as outputs, and a karma-bearing type is added to each separately
+      // (NODE_INTERFACE → "Two karma sets, and neither derives from the other").
       getTotalKarma: () => {
         const row = db
           .prepare(
             `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
-              WHERE box_type IN (${KARMA_BOX_TYPES.map(() => '?').join(', ')})
+              WHERE box_type IN (${KARMA_SUPPLY_TYPES.map(() => '?').join(', ')})
                 AND spent_at_block IS NULL`,
           )
           .safeIntegers()
-          .get(...KARMA_BOX_TYPES) as { s: bigint };
+          .get(...KARMA_SUPPLY_TYPES) as { s: bigint };
         return row.s;
       },
       // Karma its owner can spend now — the escrowed four are excluded by
