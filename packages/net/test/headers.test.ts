@@ -3,11 +3,9 @@ import { encode } from 'cbor-x';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   PROTOCOL_VERSION,
-  CREDIT_MINER_REWARD_DELAY,
   ByteWriter,
   writeVlqU,
   encodeOrderingBlock,
-  encodeUtxoTxTree,
 } from '@dagsocial/types';
 import {
   blockHash,
@@ -106,6 +104,11 @@ function makeMockHeader(
   };
 }
 
+/** A block's settlement id — height-bearing, so a body identifies its block. */
+function settlementId(height: number): string {
+  return height.toString(16).padStart(64, '0');
+}
+
 function makeMockOrderingBlock(
   height: number,
   prevBlockHash: string,
@@ -113,21 +116,18 @@ function makeMockOrderingBlock(
   return {
     header: makeMockHeader(height, prevBlockHash),
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      // Every block carries at least one transaction, because the settlement is
+      // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+      // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). An empty body is
+      // refused at Stage 1, so it is not a block this suite could ever receive.
+      //
+      // Both the id and the payload carry the height, which is what lets a
+      // round-trip assert that THIS block's body came back rather than merely
+      // that a well-formed one did. The bytes stay opaque to every layer that
+      // moves a block, so their content is a plausible weight and nothing more.
+      utxoTxIds: [settlementId(height)],
+      utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
       pruneEntries: [],
-      coinbaseOutputs: [
-        // The coinbase is inert payload for this suite — every assertion is
-        // about heights, hashes and counts, and the block hash covers the
-        // header only. Kept type-correct regardless: nothing here would fail if
-        // it were not, which is exactly how a fixture drifts out of its type.
-        {
-          value: 100n,
-          owner: new Uint8Array(32),
-          lockedUntilBlock: height + CREDIT_MINER_REWARD_DELAY,
-          isTreasury: false,
-        },
-      ],
     },
     validatorSignature: new Uint8Array(64),
   };
@@ -298,9 +298,11 @@ describe('chain response framing', () => {
     expect(decoded).toHaveLength(3);
     expect(decoded!.map((b) => b.header.height)).toEqual([1, 2, 3]);
     // The whole block survives, not just the header — this is the payload the
-    // ordering store writes.
-    expect(decoded![0]!.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
-    expect(decoded![0]!.utxoTxTree.coinbaseOutputs[0]!.isTreasury).toBe(false);
+    // ordering store writes. Both body arrays are asserted against block 1's
+    // own height-bearing values, so a decoder that returned some other block's
+    // body, or a shared one, would fail here rather than pass on shape.
+    expect(decoded![0]!.utxoTxTree.utxoTxIds).toEqual([settlementId(1)]);
+    expect(decoded![0]!.utxoTxTree.utxoTxs[0]).toEqual(new Uint8Array(96).fill(1));
     expect(decoded![0]!.validatorSignature).toBeInstanceOf(Uint8Array);
     expect(decoded![0]!.validatorSignature.length).toBe(64);
     expect(decoded![2]!.header.prevBlockHash).toBe(mockBlockHash(decoded![1]!.header));
@@ -400,29 +402,8 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     return block;
   }
 
-  it('refuses a non-boolean isTreasury', () => {
-    const block = poison((b) => {
-      (b.utxoTxTree.coinbaseOutputs[0] as unknown as Record<string, unknown>)['isTreasury'] =
-        'yes';
-    });
-
-    // `writeBool` is total by sentinel: an out-of-domain value writes `0xff`,
-    // which `readBool` refuses. That is the sentinel discipline working, not a
-    // bug in the writer — the defect it exposes is a path where these bytes
-    // never meet a decoder.
-    //
-    // `isTreasury` is the last field of the last coinbase output, so it is the
-    // final byte of the `utxo_tx_tree` column — the byte the fail-stop
-    // measurement recovers from the store, asserted directly below.
-    const column = encodeUtxoTxTree(block.utxoTxTree);
-    expect(column[column.length - 1]).toBe(0xff);
-
-    expect(decodeBlocks(blocksBody([block]), 1)).toBeNull();
-  });
-
   it('refuses a non-byte-view utxoTxs element', () => {
     const block = poison((b) => {
-      b.utxoTxTree.utxoTxIds = ['ab'.repeat(32)];
       (b.utxoTxTree.utxoTxs as unknown as unknown[])[0] = 'not-bytes';
     });
 
@@ -440,8 +421,7 @@ describe('poisoned block payloads are refused at the sync boundary', () => {
     // where the hole is.
     const honest = makeMockOrderingBlock(1, '00'.repeat(32));
     const bad = poison((b) => {
-      (b.utxoTxTree.coinbaseOutputs[0] as unknown as Record<string, unknown>)['isTreasury'] =
-        null;
+      (b.utxoTxTree.utxoTxs as unknown as unknown[])[0] = null;
     });
 
     expect(
@@ -669,8 +649,8 @@ describe('serve: GetBlocks', () => {
     expect(returned.header.height).toBe(1);
     expect(returned.header.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(returned.utxoTxTree.pruneEntries).toEqual([]);
-    expect(returned.utxoTxTree.coinbaseOutputs.length).toBe(1);
-    expect(returned.utxoTxTree.coinbaseOutputs[0]!.value).toBe(100n);
+    expect(returned.utxoTxTree.utxoTxIds).toEqual([settlementId(1)]);
+    expect(returned.utxoTxTree.utxoTxs[0]).toEqual(new Uint8Array(96).fill(1));
     expect(returned.validatorSignature).toBeInstanceOf(Uint8Array);
     expect(returned.validatorSignature.length).toBe(64);
     // Byte-identical to what the ordering store holds for the same block: one
@@ -764,7 +744,7 @@ describe('chain query round-trip', () => {
 
     expect(blocks!.map((b) => b.header.height)).toEqual([1, 2]);
     expect(blocks![0]!.validatorSignature.length).toBe(64);
-    expect(blocks![1]!.utxoTxTree.coinbaseOutputs.length).toBe(1);
+    expect(blocks![1]!.utxoTxTree.utxoTxIds).toEqual([settlementId(2)]);
     expect(blocks![1]!.header.prevBlockHash).toBe(mockBlockHash(blocks![0]!.header));
   });
 

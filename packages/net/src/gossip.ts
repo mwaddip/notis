@@ -142,9 +142,15 @@ export function subscribeTopics(
         return TopicValidatorResult.Reject;
       }
       // The post relay gate — see `KarmaMembers`. It runs only for a
-      // post-bearing transaction and only after `verifyTxStructure`, which is
-      // what has already established that `tx.post.author` is 32 bytes and so
-      // safe to hex-encode here.
+      // post-bearing transaction and only after `verifyTxStructure`.
+      //
+      // ⚠ What makes the hex-encode safe on THIS path is the decoder, not that
+      // check. `author` is `b32`, read as `readBytesN(r, 32)`, so `decodeTx`
+      // above cannot produce any other width — and it is the only producer of
+      // the object this closure sees. `verifyTxStructure`'s own 32-byte pin is
+      // depth rather than enforcement here; it is left in place because it is
+      // what a caller reaching this gate without a decode would land on, and
+      // that failure would otherwise be silent.
       //
       // ⚠ **Before any store read, and before the signature check**, which is the
       // whole reason it is a set: an unfunded flood costs one hash lookup, not

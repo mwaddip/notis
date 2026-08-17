@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
-  CREDIT_MINER_REWARD_DELAY,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   decodeOrderingBlock,
   encodeOrderingBlock,
@@ -74,18 +73,16 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeOrderingBlock(header: BlockHeader = makeHeader()): OrderingBlock {
   return {
     header,
+    // Verdict-bearing like `powTargetBits` above, and for the same reason:
+    // `encodeServableOrderingBlock` gates on structure, and a body carrying no
+    // transaction is a clause of that verdict (VALIDATION_INTERFACE →
+    // verifyOrderingBlockStructure). Every block carries at least one, because
+    // the settlement is one (NODE_INTERFACE → It is the LAST entry in
+    // `utxoTxIds`).
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      utxoTxIds: [header.height.toString(16).padStart(64, '0')],
+      utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
       pruneEntries: [],
-      coinbaseOutputs: [
-        {
-          value: 100n,
-          owner: new Uint8Array(32),
-          lockedUntilBlock: header.height + CREDIT_MINER_REWARD_DELAY,
-          isTreasury: false,
-        },
-      ],
     },
     validatorSignature: new Uint8Array(64),
   };

@@ -8,7 +8,6 @@ import {
   verifyOrderingBlockStructure,
 } from '@dagsocial/validation';
 import {
-  CREDIT_MINER_REWARD_DELAY,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, Post } from '@dagsocial/types';
@@ -246,16 +245,14 @@ function makeQueryHeader(height: number): BlockHeader {
 function makeQueryBlock(height: number): OrderingBlock {
   return {
     header: makeQueryHeader(height),
+    // Every block carries at least one transaction, because the settlement is
+    // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+    // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). The serve arms
+    // gate on structure, so an empty body answers nothing.
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      utxoTxIds: [height.toString(16).padStart(64, '0')],
+      utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
       pruneEntries: [],
-      coinbaseOutputs: [{
-        value: 100n,
-        owner: new Uint8Array(32),
-        lockedUntilBlock: height + CREDIT_MINER_REWARD_DELAY,
-        isTreasury: false,
-      }],
     },
     validatorSignature: new Uint8Array(64),
   };

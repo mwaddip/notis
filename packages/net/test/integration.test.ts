@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import {
   generateKeyPair,
   PROTOCOL_VERSION,
-  CREDIT_MINER_REWARD_DELAY,
 } from '@dagsocial/types';
 import type { Post, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
 import {
@@ -64,22 +63,23 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
   };
 }
 
+// Every block carries at least one transaction, because the settlement is one
+// (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+// NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). These blocks cross a
+// real gossip topic validator and a real sync boundary, so an empty body is
+// refused before either peer sees it.
+function settlementBody(height: number): OrderingBlock['utxoTxTree'] {
+  return {
+    utxoTxIds: [height.toString(16).padStart(64, '0')],
+    utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
+    pruneEntries: [],
+  };
+}
+
 function makeBlock(header: BlockHeader): OrderingBlock {
   return {
     header,
-    utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
-      pruneEntries: [],
-      coinbaseOutputs: [
-        {
-          value: 100n,
-          owner: new Uint8Array(32),
-          lockedUntilBlock: header.height + CREDIT_MINER_REWARD_DELAY,
-          isTreasury: false,
-        },
-      ],
-    },
+    utxoTxTree: settlementBody(header.height),
     validatorSignature: new Uint8Array(64),
   };
 }
@@ -207,11 +207,7 @@ describe('Two-node integration', () => {
     expect(blockNonce).toBeGreaterThanOrEqual(0);
     const block: OrderingBlock = {
       header: { ...headerBase, powNonce: blockNonce },
-      utxoTxTree: {
-        utxoTxIds: [],
-        utxoTxs: [],
-        pruneEntries: [], coinbaseOutputs: [],
-      },
+      utxoTxTree: settlementBody(headerBase.height),
       validatorSignature: new Uint8Array(64),
     };
 
