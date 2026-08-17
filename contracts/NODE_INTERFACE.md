@@ -1511,6 +1511,7 @@ forms, so a mirror implementation derives the same ids:
 | `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
 | `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof, `3` = emission | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` |
+| `genesis-committee` | the committee member | raw | 32 | ⚠ **AHEAD OF CODE** — genesis seeding, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool. `MINT_REASON` tag **13** |
 | `emission-release` | — | *(empty)* | 0 | block application, the `EmissionBox` successor |
 | `treasury-accrue` | — | *(empty)* | 0 | block application, the `TreasuryBox` successor |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
@@ -1526,9 +1527,15 @@ forms, so a mirror implementation derives the same ids:
 > on any network with more than one committee member — and invisible on the empty arrays all three
 > networks carry today.
 >
-> ✅ **Committee seeding takes its own reason, keyed on the MEMBER**, the shape `like-payout` already
-> uses: subject = the member's public key, raw, 32 bytes. One mint per member, distinct by
-> construction.
+> ✅ **Committee seeding takes `genesis-committee`, keyed on the MEMBER** — subject = the member's
+> public key, raw, 32 bytes, the shape `like-payout` already uses. One mint per member, distinct by
+> construction. **`MINT_REASON` tag 13.**
+>
+> ⚠ **A 32-byte subject under the existing `genesis` reason would also be injective, and is still
+> wrong.** `computeMintTxId` writes `lp(subject)`, so `lp(4)` and `lp(32)` differ in their first byte
+> and can never collide — the ids would be fine. **What breaks is the description**: `genesis`'s row
+> says 4 bytes, and a mint carrying 32 makes it false. A correct-but-undescribed encoding fails no
+> test and rots on its own schedule, which is the defect class this table exists to prevent.
 >
 > ⚠ **What becomes of `k = 0` is open.** `ensureSystemKarmaBox` is deleted, so subject `0` loses its
 > box. Whether the pool takes `0` or a fresh number is undecided; the chain restarts either way, so
