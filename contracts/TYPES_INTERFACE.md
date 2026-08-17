@@ -1599,6 +1599,34 @@ from this table — a use that reads every cell as an instruction rather than as
 | 8 | `treasury` |
 | 9 | `fee` |
 | 10 | `karma_pool` |
+| 11 | ⚠ **AHEAD OF CODE** — `like_accrual` |
+| 12 | ⚠ **AHEAD OF CODE** — `vouch_escrow` |
+| **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
+
+> ## ⛔ TAG 2 IS RESERVED, NOT FREE
+>
+> `invite` is deleted (§InviteBox) and **its number is never reused.** The never-renumber rule
+> governs the string; this row governs the number. A hole **inside** the assigned range is a distinct
+> decode case from a tag past the end, and both need a reject vector.
+>
+> ## ⛔ A REJECT VECTOR MUST NOT BE PINNED TO "THE NEXT FREE TAG"
+>
+> **255 exists so that an unassigned-tag probe never has to move.** A vector pinned at the first
+> unassigned number is invalidated by the **next** box type added, silently — it stops testing what
+> it was written to test the moment its number is assigned, and the failure surfaces as a golden
+> vector that mysteriously needs re-pinning.
+>
+> ⚠ **This already bit.** A golden reject vector was pinned at literal **11**, and the like accrual
+> marker took 11. Re-pinning it to 13 reproduces the defect one addition later.
+>
+> ✅ **`enum8` is a table lookup over `u8`, so 255 and "first unassigned" exercise the same path.**
+> Nothing is lost by choosing the stable one.
+>
+> ⚠ **The corpus must still not import `BOX_TYPE_TAGS`.** Deriving the probe from the writer's own
+> table would make the reader circular, which §Layout — Boxes forbids by construction. **255 is a
+> literal that stays independent AND stays stable** — that is the whole reason to reserve one rather
+> than to derive. ✅ **Node's AVL tag tests deriving the first unassigned tag is a different case and
+> stays right**: they are not the independent reader.
 
 | Type | Trailing fields |
 |---|---|
@@ -1613,6 +1641,20 @@ from this table — a use that reads every cell as an instruction rather than as
 | `treasury` | *(none)* |
 | `fee` | *(none)* |
 | `karma_pool` | *(none)* |
+| `like_accrual` | ⚠ **AHEAD OF CODE** — `b32(author)` |
+| `vouch_escrow` | ⚠ **AHEAD OF CODE** — `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
+
+> ⚠ **`releaseAtBlock` is `vlqU`, NOT `vlqU64`, and NOT `opt`.** It is a block height, so it takes
+> the same writer as `credit.lockedUntilBlock` — and unlike that field it is **always present**, since
+> an escrow with no release height is not a state the type admits. ⛔ **Read the `vlqU` / `vlqU64`
+> correction above before copying either cell**: the distinction is a **domain**, not a width. `vlqU`
+> is total by sentinel and collapses anything past `MAX_SAFE_INTEGER`; `vlqU64` throws outside
+> `[0, 2⁶⁴)`. Heights take `vlqU`; `bigint` values take `vlqU64`.
+>
+> ⚠ **`like_accrual` carries no `owner`, deliberately.** `author` is **attribution, not
+> authorization** (§LikeAccrualBox) — no signature by it unlocks the box, and only the settlement
+> transaction consumes one. Naming the field `owner` would invite exactly the reading the type exists
+> to refuse.
 
 ⚠ **`emission`, `treasury`, `fee` and `karma_pool` have an empty tail, and an empty cell in this
 table is a layout, not an omission.** Their content encoding is the shared prefix alone —
