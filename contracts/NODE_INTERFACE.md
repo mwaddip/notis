@@ -462,9 +462,11 @@ rather than defaulting it, and the faucet enumerates rather than excluding.
 > - ✅ **No supply cap, because the pool cannot empty.** The finite `SYSTEM_KARMA_INITIAL` balance the
 >   faucet spent down disappears. ⚠ **`faucet_grants` is NOT that cap** — it is a once-per-identity
 >   record and it stays, as abuse prevention rather than accounting.
-> - ⛔ **`txId` cannot be in the response any more.** A block-application mint takes a **synthetic**
->   id from `computeMintTxId(height, reason, subject)`, and the height is unknown when the request is
->   answered. **The response shape has to lose it or name something else**; that decision is open.
+> - ⛔ **`txId` leaves the response.** A block-application mint takes a **synthetic** id from
+>   `computeMintTxId(height, reason, subject)`, and the height is unknown when the request is
+>   answered. Nothing replaces it: the grant is **once per identity**, so the identity is already the
+>   handle. ✅ **The demo UI is the only live consumer and already writes `(data.txId || '')`**, so it
+>   degrades rather than breaks — the display line goes with the field.
 >
 > ⚠ **The three-gates rule below becomes two.** With no system karma box to seed, there is nothing
 > to provision — the provisioning gate has no subject. **Mount and handler remain, and they still
