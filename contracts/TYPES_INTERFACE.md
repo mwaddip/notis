@@ -1289,8 +1289,9 @@ runtime strip somebody must remember:
   store hold. The `id` is never encoded: it *is* the hash.
 
 **`BOX_TYPE_TAGS` is the single source of the box-type numbering.** It is exported from
-`@dagsocial/types`, consumed inside the package by `enum8`, and no other package may declare it.
-**The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
+`@dagsocial/types` and consumed inside the package by `enum8`; node's AVL tag tests import it to
+**derive** the first unassigned tag rather than writing a number down. No other package may declare
+it. **The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
 construction; the golden corpus's reverse tag table is a deliberate independent restatement rather
 than a copy.
 
