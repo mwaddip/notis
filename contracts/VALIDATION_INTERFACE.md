@@ -849,11 +849,14 @@ has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char st
 `powNonce` is a non-negative number,
 `powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (2304), `coinbaseOutputs` is
 an array with each output having a 32-byte `owner`, a `bigint` `value` in
-`[0, 2⁶⁴)`, a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
+`[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → "Box value domain"), a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
 and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 **of at most `MAX_TX_BYTES`**. Last, the encoded body is at most `MAX_BLOCK_BODY_BYTES`.
 
-> ⚠ **The `< 2⁶⁴` bound lives HERE, not in node — corrected 2026-08-10.** This
+> ⚠ **The coinbase value bound lives HERE, not in node — corrected 2026-08-10.** ⛔ **The NUMBER
+> is neither this file's nor node's: it is `BOX_VALUE_BOUND` in `@dagsocial/types` (TYPES_INTERFACE
+> → "Box value domain"), imported by both.** What lives here is the coinbase's *obligation to check
+> it*. This
 > passage used to route it to node's apply-time `checkOutputValues` "matching the
 > loose-structural / tight-apply split". **That function is retired**
 > (`utxo-engine.ts:606`), and its successor — the field-type table's `u64` spec —

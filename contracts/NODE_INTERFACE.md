@@ -27,9 +27,12 @@ units of 10⁻⁸ credit; karma small bigints). Rationale + the type-level contr
 `TYPES_INTERFACE.md` "Value denomination (P0)". No float math anywhere in a consensus
 value path. Node-side obligations:
 
-- **Authoritative value guard (`< 2⁶⁴`).** `utxo-engine.checkOutputValues` (engine) and
+- **Authoritative value guard.** `utxo-engine.checkOutputValues` (engine) and
   `assertValidBoxValue` (`routes/json-to-tx`, the HTTP→tx edge) enforce
-  `typeof value === 'bigint' && value >= 0n && value < 2⁶⁴` — the **tight** bound.
+  `typeof value === 'bigint' && value >= 0n && value < BOX_VALUE_BOUND` — the **tight** bound.
+  ⛔ **The number is `@dagsocial/types`' (TYPES_INTERFACE → "Box value domain"), imported and never
+  restated** — it was stated three times across two packages, and `validation`'s copy said in its
+  own comment that it was written to match node's.
   `@dagsocial/validation`'s coinbase check is the loose structural pre-filter; this is
   the tight apply-side twin — the two move together. The HTTP edge coerces the incoming
   JSON value (string or number) to `bigint` before it enters consensus.
@@ -741,7 +744,7 @@ Full read-only validation. Performs all checks without modifying state:
    transaction conserves; karma and credit mint and burn otherwise happen only in
    block-application paths (like settlement, decay, coinbase, bond settlement),
    never inside a user transaction. The `value` **type** bound (non-negative `bigint` base units
-   `< 2⁶⁴` — a negative value could otherwise balance the sums while minting
+   `< BOX_VALUE_BOUND` — a negative value could otherwise balance the sums while minting
    into a sibling box) is pinned by step 4's schema; conservation owns the
    **sums**. `assertValidBoxValue` remains at the JSON→tx boundary as the
    HTTP-edge early reject of the same rule — an ergonomics twin, not the
@@ -822,7 +825,8 @@ schema for its `boxType`**:
   > `emission` and `treasury` have none, because no transaction may create them.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
-  - `bigint`, `0 ≤ v < 2⁶⁴`: `value` (every boxType) **and `originalValue`
+  - `bigint`, `0 ≤ v < BOX_VALUE_BOUND` (TYPES_INTERFACE → "Box value domain"):
+    `value` (every boxType) **and `originalValue`
     (post_lock — the read-poison field)**. The bound is absorbed from
     `checkOutputValues`, which retired with this pin (one owner per rule;
     `json-to-tx`'s `assertValidBoxValue` stays as the HTTP-edge twin).
@@ -2427,10 +2431,17 @@ encoder: `likeCarry` is written **only** by per-block like settlement and is bou
 the band-aid; if this field ever gains a second writer, that writer owns the domain.**
 
 `lifetimeLikesReceived` is `vlqU64` on the same rule and from the same single writer, but its
-domain argument is different: it is unbounded by design and bounded only by `2⁶⁴`. One like per
-block for the life of the chain does not approach that, and the field is a **count**, never an
-amount — a saturating or wrapping write here would silently re-price every bond that settles
+domain argument is different: it is unbounded by design and bounded only by the writer's `2⁶⁴`. One
+like per block for the life of the chain does not approach that, and the field is a **count**, never
+an amount — a saturating or wrapping write here would silently re-price every bond that settles
 afterwards.
+
+> ⚠ **The same encodable-versus-storable gap that narrowed box values applies here, one field over.**
+> `lifetimeLikesReceived` is `vlqU64` into a SQLite `INTEGER`, which is **signed**, so its real
+> ceiling is `2⁶³ − 1` and not the `2⁶⁴` above (TYPES_INTERFACE → "Box value domain"). **Left
+> unnarrowed deliberately**: it is a count bounded by like traffic rather than a value bounded by
+> conservation, so the unreachability argument is stronger here than it ever was for box values.
+> Recorded because the *reasoning* differs, not because the gap does.
 
 ⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
 NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
@@ -3746,7 +3757,9 @@ therefore establish the output domain before hashing, so a bad value produces a 
 rather than an exception absorbed by the funnel's totality handler.
 
 **It does that by calling `checkOutputShape`, not by growing a second check.** That schema already
-pins exactly the domains the writers require — `u64` as a bigint in `[0, 2⁶⁴)`, `hex32` as 64
+pins exactly the domains consensus accepts — `u64` as a bigint in `[0, BOX_VALUE_BOUND)`
+(TYPES_INTERFACE → "Box value domain": narrower than the writer's `[0, 2⁶⁴)`, because the store is
+signed), `hex32` as 64
 lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
 any JS value. A narrower check written for this call site would be a second spelling of one schema,
 which is the fork surface this contract rejects everywhere else. **The obligation is the whole

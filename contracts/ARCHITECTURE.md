@@ -298,7 +298,7 @@ IS the current state.
 
 Box `value` is a uniform **`bigint`** — credits are 8-decimal integer base units
 (10⁻⁸ credit), karma small bigints. No float arithmetic in consensus value math;
-`value < 2⁶⁴`. See `TYPES_INTERFACE.md` "Value denomination" and Spec B P0.
+`value < BOX_VALUE_BOUND`. See `TYPES_INTERFACE.md` → "Box value domain" and Spec B P0.
 
 #### Karma boxes
 
@@ -1667,7 +1667,7 @@ forever. A node rejects objects with an unsupported protocol version.
   > like arm). P2-B landing first is what made it safe to add — a deficit rule only means
   > something once conservation is otherwise enforced.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
-  (`value < 2⁶⁴`); **no float math in any consensus value path** — floats are
+  (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
   non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
 - A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay applied periodically at block application time (not at spend time)
