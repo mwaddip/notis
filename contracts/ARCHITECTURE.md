@@ -1543,7 +1543,7 @@ forever. A node rejects objects with an unsupported protocol version.
   > (phase 1 — settlement now pays only `bond.inviterId`, under a spend-time unlock, and no
   > burn shape exists); unvouch re-minting a constant instead of releasing the stake (phase 2);
   > a vouch cast carrying a **foreign `voucherId`**, which produces a box guarded by that
-  > foreign key — `checkGuards` resolves a signer as `owner ?? voucherId` — so A stakes and B
+  > foreign key — a `vouch` input's authorization requires the box's own `voucherId` — so A stakes and B
   > collects (phase 2); and **karma inputs never being checked for a shared owner**, so
   > `[karmaA, karmaB] → karmaA` moved karma between accounts whenever both co-signed
   > (phase 4).

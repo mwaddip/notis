@@ -983,7 +983,7 @@ a missing or `null` `signatures` map threw at `tx.signatures[hexKey]`;
 `outputs` *object* slipped that loop (its `length` is `undefined`) and threw at
 conservation's `.reduce`; `likeTarget: null` passed conservation's
 `!== undefined` presence test and threw at `h.update(null)` inside
-`computeTxId` — which `checkGuards` calls on its FIRST line, so the whole
+`computeTxId` — which `checkAuthorization` calls on its FIRST line, so the whole
 envelope reached the hasher at step 6 — and non-`Uint8Array` `preimages` values
 threw there the same way. Every one was an HTTP 500 or, through the block
 funnel, a whole-block rejection logged as an unexpected failure.
@@ -1282,7 +1282,7 @@ There is **no other legal bond or invite shape**. In particular:
   transferred", but never checked that the inputs themselves agree — and
   `validateTx` step 3 only requires a common `boxType`. So
   `[karmaA(10), karmaB(10)] → karmaA(20)` validated: conservation holds,
-  every output matches `inputs[0].owner`, and `checkGuards` gets the owner
+  every output matches `inputs[0].owner`, and `checkAuthorization` gets the owner
   signature it wants from each of A and B. **B's karma became A's.**
   Consensual, but karma is non-transferable *by rule* — a consensual transfer
   is still a transfer, and it prices off-chain. This is the audit's most
@@ -1310,8 +1310,9 @@ There is **no other legal bond or invite shape**. In particular:
   minted from nothing, and a 100-value vouch destroyed 99 (audit
   F-consensus-3).
 - **`voucherId` is pinned at cast: it must equal the karma input's owner.**
-  `checkGuards` resolves a box's signer as `owner ?? voucherId`, so a
-  VouchBox carrying a *foreign* `voucherId` is guarded by that foreign key:
+  A `vouch` input's authorization requires a signature by the box's own
+  `voucherId`, so a VouchBox carrying a *foreign* one is authorized by that
+  foreign key:
   A stakes their own karma, B unvouches it, and the escrow matures to B.
   That is a karma transfer with no invite — the property the whole
   invite/bond mechanism protects. Not in the audit; found deriving this
@@ -2020,7 +2021,7 @@ reads. Above the terminus no emission box exists and nothing is released.
 > in `node/src`.** It is checked when a coinbase output is *created* (`block-apply` rejects a
 > block whose coinbase carries the wrong lock) and used as a *selection* filter
 > (`getUnlockedCreditBoxes` in `node/src/store/utxo.ts`, for the UI and faucet). No validation
-> path reads it: `validateTx`, `checkTransitions` and `checkGuards` never mention it, and
+> path reads it: `validateTx`, `checkTransitions` and `checkAuthorization` never mention it, and
 > `net.onTx` calls `validateTx` and nothing else — so a gossiped transaction naming a locked
 > coinbase box as an input pools and applies today.
 >
