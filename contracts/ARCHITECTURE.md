@@ -2246,9 +2246,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > ✅ **RESOLVED — closed by Phase 4, 2026-08-10, re-verified 2026-08-11. The record below is
   > kept because the reasoning
   > generalises, and because "replace, do not specify" is the decision that produced the whole
-  > positional-format bundle.** Both leaves now hash the committed struct's own wire bytes
-  > (`subBlockEntryBytes`, `coinbaseOutputBytes`), stated once in `@dagsocial/types`. All five
-  > leaf types — `subblock`, `prune`, `coinbase`, `utxotx`, `stump` — speak one dialect.
+  > positional-format bundle.** Every leaf hashes the committed struct's own wire bytes, stated
+  > once in `@dagsocial/types`. ⚠ **Three leaf types remain** — `prune`, `utxotx`, `stump` — and
+  > they speak one dialect. `subblock` and `coinbase` are retired with their encoders
+  > (`subBlockEntryBytes`, `coinbaseOutputBytes`), which this sentence named as live and which
+  > have no definition anywhere; **TYPES_INTERFACE → Merkle primitives holds the one live/retired
+  > list** and this line must not restate it.
   >
   > **The record — this text was FALSE on "documented", and the fix was to change the format
   > rather than to document it.** No `⚠`: the defect is closed by the `RESOLVED` above, and a

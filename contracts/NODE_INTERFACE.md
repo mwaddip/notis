@@ -45,11 +45,13 @@ value path. Node-side obligations:
   `total` is serialized as a **decimal string**; the demo UI parses them with `BigInt()`
   (its phase). Same for the SQLite `extra_data` `originalValue` (coerce before
   `JSON.stringify`) and any stdout log field carrying an amount.
-- **`block-creator.computeUtxoTxRoot` coinbase leaf** — **landed, Phase 4 (C7).** The leaf
-  preimage is `coinbaseOutputBytes(output)` from `@dagsocial/types`, so `value` rides as
-  `vlqU64` and **the decimal-string workaround is retired**: the bigint-cannot-cross-JSON
-  constraint that produced it does not apply to a byte encoder. The bullet above still
-  governs every *JSON* boundary; this one is no longer among them. This is the
+- **`block-creator.computeUtxoTxRoot` coinbase leaf** — ⚠ **SUPERSEDED 2026-08-17: the leaf
+  class and its encoder are both gone.** `coinbaseOutputBytes` has no definition anywhere;
+  coinbase outputs are outputs of the block's settlement transaction and reach `utxoTxRoot`
+  under the `'utxotx'` leaf that transaction's id already gets. ✅ **The conclusion this bullet
+  drew survives its subject**: a byte encoder is not a JSON boundary, so the decimal-string
+  workaround stays retired — `value` rides as `vlqU64` inside `boxContentBytes` instead.
+  The bullet above still governs every *JSON* boundary; this one is not among them. This is the
   `utxoTxRoot` coinbase Merkle leaf —
   **consensus**; the *same* function is both producer (block build) and verifier
   (`block-apply` recompute), so the leaf bytes cannot diverge between the two roles. What

@@ -1408,6 +1408,29 @@ callers must remember to invoke is the shape that produced this defect class in 
      type wearing it makes old-vs-new greps and historical debugging ambiguous forever.
 
   Fail any one of them and the number stays reserved — left out of the table, never reused.
+
+  > ## ⛔ AND WHEN ALL THREE HOLD, REUSE IS NOT OPTIONAL (user, 2026-08-17)
+  >
+  > **A new type takes the lowest free tag that satisfies the three conditions above. It does not
+  > take the next number above the table.** This turns the clause from a permission into a rule, and
+  > the permission alone is what produces a sparse table: every retirement leaves a hole nobody is
+  > obliged to fill, so the range grows with the *history* of types rather than with their count.
+  >
+  > ⚠ **This is a live defect, not a hypothetical.** Tag 2 was free and admissible when
+  > `like_accrual` and `vouch_escrow` were assigned **11** and **12** — the reservation prose said
+  > "never to be reused" and the executor followed it. ⛔ **The hole stands** (user, 2026-08-17): the
+  > rule governs types created from here on, and re-cutting a landed assignment buys density in a
+  > table nothing reads by number.
+  >
+  > ✅ **The cleanup is forced rather than remembered.** A number cannot be claimed without editing
+  > the text that reserved it, so the remnants of the retired type surface at exactly the moment
+  > someone is already in that table. **Report them; do not sweep them silently** — what else still
+  > references the retired type is the user's call, not the claimer's.
+  >
+  > ⚠ **Condition 2 binds harder than a fresh chain requires, and that is deliberate.** Under a wipe
+  > no id exists to move, so *renumbering survivors* would also be safe — but "every other tag keeps
+  > its number" is what makes "no existing id moves" checkable by inspection instead of argued from
+  > the deploy gate holding. **Filling holes needs no such argument; compaction does.**
 - **Maps encode as arrays sorted by raw key bytes ascending.** A positional format has no maps, and
   without a normative sort one transaction has two encodings — reopening the malleability being closed.
 - **Encoders are total** (sentinel discipline, per audits M-5/M-6), with one stated exception: see
@@ -1934,20 +1957,30 @@ divergence of exactly the class the queued audit exists to find.
 
 ### Layout — Merkle leaf preimages are the struct's own wire bytes
 
-**Decided 2026-08-10, ahead of Phase 4.** `subBlockRoot` and `utxoTxRoot` commit leaves whose
-preimages are exactly the two structs above: node's `computeSubBlockRoot` hashes
-`{postId, parentRefs, author}` and its `computeUtxoTxRoot` hashes
-`{owner, value, lockedUntilBlock, isTreasury}` — the **full** field set of `SubBlockEntry` and
-`CoinbaseOutput`, in the **same** order. They are therefore the same bytes, and this package is the
-one place that says what those bytes are.
+**Decided 2026-08-10, ahead of Phase 4.** `utxoTxRoot` commits leaves whose preimages are exactly
+the committed struct's own wire bytes, and this package is the one place that says what those bytes
+are.
 
 | Export | Signature | Bytes |
 |---|---|---|
-| `subBlockEntryBytes` | `(SubBlockEntry) => Uint8Array` | `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)` |
-| `coinbaseOutputBytes` | `(CoinbaseOutput) => Uint8Array` | `b32(owner)` ‖ `vlqU64(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)` |
+| `serializePruneEntry` | `(PruneEntry) => Uint8Array` | see Layout — Stump / PruneEntry |
 
-`writeSubBlockEntry` and `writeCoinbaseOutput` **delegate** to these rather than restating the
-layout, so the tree codec and the Merkle leaf cannot drift apart.
+`writePruneEntry` **delegates** to it rather than restating the layout, so the tree codec and the
+Merkle leaf cannot drift apart.
+
+> ⛔ **THIS TABLE HELD TWO MORE ROWS AND BOTH SYMBOLS ARE GONE. Corrected 2026-08-17.**
+> `subBlockEntryBytes` and `coinbaseOutputBytes` were listed with full byte layouts, against
+> `SubBlockEntry` and `CoinbaseOutput` — neither type exists, and neither function has a definition
+> anywhere in `src`. The prose above them named `computeSubBlockRoot`, which does not exist either,
+> and `subBlockRoot`, which is not a header field.
+>
+> ⚠ **A stale EXPORT row is worse than stale prose**, and this is the section that proves it: a
+> reader following `src/index.ts`'s pointer here found a table naming two functions they could not
+> import, with byte layouts for structs they could not construct. **Prose invites judgement; a
+> signature invites a call.**
+>
+> ⛔ **THE DECAY CAME FROM A DISPATCH THAT COULD NOT FIX IT** — see §How a dispatch decays this
+> contract, below.
 
 > ⚠ **`parentRefs` carries 0–`MAX_PARENT_REFS` (currently 1) entries at validation; the writer is
 > uncapped by design.** The domain sits upstream of the encoder (spec §2.5), never inside it —
@@ -2088,17 +2121,43 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeSubBlock(bytes)` | `(Uint8Array) => SubBlock` | CBOR decode |
 | `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | CBOR encode — the input to `blockHash` / `computePowHash` |
 | `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | CBOR decode |
-| `encodeSubBlockTree(t)` | `(SubBlockTree) => Uint8Array` | CBOR encode (body section) |
-| `decodeSubBlockTree(bytes)` | `(Uint8Array) => SubBlockTree` | CBOR decode |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
-| `subBlockEntryBytes(e)` | `(SubBlockEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'subblock'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
-| `coinbaseOutputBytes(o)` | `(CoinbaseOutput) => Uint8Array` | One output's positional bytes. Both the tree codec's element writer and the `'coinbase'` Merkle leaf preimage |
+| `serializePruneEntry(e)` | `(PruneEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'prune'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Length-prefixed wire framing: `u32BE(len)‖headerCbor ‖ … ‖ validatorSignature(64)` |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
-| `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | CBOR encode |
-| `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | CBOR decode |
+| `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
+| `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
+
+> ⛔ **FOUR ROWS DELETED HERE, all naming symbols with no definition in `src`. Corrected
+> 2026-08-17:** `encodeSubBlockTree`, `decodeSubBlockTree`, `subBlockEntryBytes`,
+> `coinbaseOutputBytes`. ⚠ **`encodeTx` / `decodeTx` still said "CBOR encode" / "CBOR decode"**
+> after the codec went positional — the disclaimer above this table was corrected first and the rows
+> were not, which left the table technically readable and practically wrong.
+
+### How a dispatch decays this contract, and why nothing catches it
+
+⛔ **DECAY RUNS IN BOTH DIRECTIONS AND ONLY ONE OF THEM HAS AN OWNER.**
+
+| Direction | Who caused it | Who can fix it |
+|---|---|---|
+| A contract edit falsifies a **comment** a dispatch wrote | the contract author | ✅ the executor — same package, same session |
+| A dispatch deletes a symbol and falsifies a **contract row** | the executor | ⛔ **nobody in that session.** `contracts/` is outside their boundary |
+
+**The second is structurally orphaned.** An executor may not edit `contracts/`, so the most they can
+do is report it — and a report is read once, by one person, who is not editing this file at the time.
+✅ **Both instances of this pair happened in one dispatch on 2026-08-17**, which is what makes the
+asymmetry a measurement rather than a worry.
+
+⛔ **THE TRIGGER IS DELETION OF AN EXPORTED SYMBOL, AND IT IS CHECKABLE.** After any dispatch that
+removes one, grep `contracts/` for **every removed name** — not for the feature, not for the concept.
+A name-keyed search is the wrong instrument for finding behaviour and the **right** one here, because
+what rots is the name itself, spelled exactly.
+
+⚠ **Reading the contract does not find these.** Four dead rows sat in two tables through a session
+that edited this file five times, because a table row is read as inventory rather than as a claim.
+**Grep the symbol; do not re-read the section.**
 
 ---
 
