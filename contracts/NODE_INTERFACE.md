@@ -1545,6 +1545,7 @@ forms, so a mirror implementation derives the same ids:
 | `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
 | `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof, `3` = emission | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` |
 | `genesis-committee` | the committee member | raw | 32 | ⚠ **AHEAD OF CODE** — genesis seeding, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool. `MINT_REASON` tag **13** |
+| `pool-settle` | — | *(empty)* | 0 | ⚠ **AHEAD OF CODE** — block application, the `KarmaPoolBox` successor. **One per block**, so height alone separates instances within the reason and `enum8` separates it from every other. `MINT_REASON` tag **14** |
 | `emission-release` | — | *(empty)* | 0 | block application, the `EmissionBox` successor |
 | `treasury-accrue` | — | *(empty)* | 0 | block application, the `TreasuryBox` successor |
 | `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
@@ -1552,6 +1553,24 @@ forms, so a mirror implementation derives the same ids:
 | `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
 | `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
 
+> ⛔ **AHEAD OF CODE — THE POOL IS SETTLED ONCE PER BLOCK, NOT ONCE PER MINT.** Every mint and burn
+> in a block changes circulating karma; block application moves the **net delta** against the pool in
+> a single transition at the end of the apply phase, accumulated at the store's own choke point
+> (`insertBox` / `consumeBox`) rather than at each mint site.
+>
+> ⛔ **Per-site draws would be a discipline, and this repo has already ruled that class the wrong
+> answer.** A mint site added later that forgot to draw would **inflate the supply**, and a test would
+> only catch it if it happened to exercise that site. The choke point makes the contract's *"no rule
+> anywhere can inflate it"* literally true rather than conditional on every future author. Same shape
+> as `consumeBox` taking its liveness check into the primitive — **the property is the primitive's,
+> not its callers'**.
+>
+> ⚠ **The invariant is a POST-BLOCK-APPLICATION property.** `pool.value + circulating ==
+> BOX_VALUE_BOUND − 1` holds **at every height**, not within a block: between a like transaction
+> burning its deficit and the settlement returning it, it is deliberately unbalanced. `validateTx`
+> step 5 keeps its exceptions verbatim — **user transactions still do not balance on their own, and
+> no user transaction names the pool.**
+>
 > ⛔ **AHEAD OF CODE — THE `genesis` SUBJECT IS A SINGLE NUMBER, AND COMMITTEE SEEDING CANNOT USE
 > IT** (`docs/specs` design §3, unit B). `genesis` keys on `u32BE(k)`, one value per genesis box.
 > Seeding N committee members from `genesisCommitteeKeys` produces **N karma boxes**, and every one
