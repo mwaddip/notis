@@ -1955,6 +1955,39 @@ and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `r
 `readCoinbaseOutput` already live here beside these writers, and the tree round-trip exercises them.
 Nothing crosses a package boundary unpaired.
 
+### Re-pinning a frozen vector when a preimage changes
+
+⛔ **A CHANGE THAT MOVES A FROZEN ID DESTROYS THE EVIDENCE THAT USUALLY GUARDS IT, AND THE OBVIOUS
+SUBSTITUTE PROVES NOTHING.** When a field leaves an id preimage, every frozen id must move — so
+*"unchanged text"* stops being available, and the reflex is to regenerate the pin from the encoder.
+**A pin regenerated from the code it pins holds equally over a transposed layout.** That is the same
+failure this section already names one paragraph up: a consistent transposition round-trips
+perfectly, so nothing internal to the writer can see it.
+
+**The method that works, in order:**
+
+1. **Hand-assemble the preimage** from the layout table in this contract, using the corpus's frozen
+   byte **literals** — not values the encoder produces.
+2. ⛔ **VALIDATE THE MIRROR AGAINST THE OLD FROZEN VALUE FIRST.** Reproduce the *previous* id by
+   restoring the removed bytes. A hand-derivation that cannot reproduce the known-good output is
+   wrong, and this is the only step that can tell you so **before** you trust it.
+3. Only then take the new id from the validated mirror.
+4. ⛔ **Keep step 2 as a test.** A derivation described in a commit message is a claim; a derivation
+   in the tree is auditable. Without it the next reader cannot distinguish this method from the
+   regeneration it replaces — **the two produce identical-looking diffs.**
+
+> ✅ **Worked, 2026-08-17, removing `preimages` from `txIdBytes`.** `writeOpt` emits `writeU8(0)` for
+> an absent value — **one byte, never zero-width** — so every `TxId` moved with **zero survivors**,
+> and a surviving id would have meant the field was not in the preimage this contract says it is.
+> **The survivor count is itself a check** and costs nothing to state.
+
+⛔ **A VECTOR BUILDING AN ID FROM A LITERAL `txId` STAYS GREEN WHILE CLAIMING FALSE PROVENANCE.** The
+corpus constructs its frozen box ids from a **literal** `txId` string rather than a derived one, so
+they do **not** move when a transaction's id moves. Left alone they keep passing while asserting
+provenance from a transaction whose id has changed — internally consistent, externally false, and
+**invisible to every gate**. ⚠ **When a `TxId` moves, every literal copy of it moves with it**, and
+the occurrence count belongs in the diff.
+
 Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxContentBytes`,
 `boxRecordBytes`). `serializePruneEntry` keeps its pre-migration name; renaming it is not in scope.
 
