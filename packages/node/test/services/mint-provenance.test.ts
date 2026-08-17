@@ -18,6 +18,7 @@ import {
   bondSettleContext,
   bondReturnContext,
   emissionSuccessorContext,
+  poolSettleContext,
   treasurySuccessorContext,
   mintTxIdFor,
 } from '../../src/mint-provenance.js';
@@ -78,6 +79,10 @@ const ALL_CONTEXTS = {
   // self-delimiting (NODE_INTERFACE → The subject encoding rule).
   'emission-release': { ctx: emissionSuccessorContext(), bytes: 0 },
   'treasury-accrue': { ctx: treasurySuccessorContext(), bytes: 0 },
+  // The third of that family, and the reason the empty subject is safe is the
+  // same: one pool successor per height, so the height separates instances
+  // within the reason and the tag separates the reason from the other thirteen.
+  'pool-settle': { ctx: poolSettleContext(), bytes: 0 },
 } satisfies Record<MintReason, { ctx: MintContext; bytes: number }>;
 
 function allContexts(): Array<{ ctx: MintContext; bytes: number }> {

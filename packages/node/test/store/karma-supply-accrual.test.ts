@@ -11,14 +11,29 @@ import type { AnyBox } from '@dagsocial/types';
  * The karma supply accounting at the box mutation choke point.
  *
  * `insertBox` and `consumeBox` are the only writers of the live UTXO set, so
- * accounting the karma supply there is what makes it non-inflatable **by
- * construction** rather than by every producer remembering to draw
- * (TYPES_INTERFACE → KarmaPoolBox). These pin the two properties that rests on:
- * which box types count, and that the running total is the block's net.
+ * accounting the karma supply there sees every change to it, whatever produced
+ * one. These pin the two properties that rests on: which box types count, and
+ * that the running total is the net of everything the block has done so far.
  *
- * ⛔ **The delta's sign is circulation's, not the pool's.** A mint is positive
- * here and the pool owes that much; the settlement negates it. Reading it as the
- * pool's own movement inverts every case below.
+ * ⛔ **The delta measures CIRCULATION, and while nothing names the pool that is
+ * the same thing as compliance with the conservation axiom** (ARCHITECTURE → The
+ * conservation axiom). Every operation is a transfer, so karma leaving a box must
+ * enter another in the same operation; no box outside the supply set can receive
+ * it today, so any nonzero delta here is a unit called into being or ended.
+ *
+ * ⛔ **THE TWO STOP COINCIDING THE MOMENT THE POOL IS NAMEABLE, AND A READER WHO
+ * MISSES THAT WILL READ EVERY WITNESS BELOW BACKWARDS.** A like burn that moves
+ * its karma to the pool by name is a legitimate transfer and **still accrues
+ * `−LIKE_KARMA_COST` here**, because `karma_pool` is deliberately outside the
+ * supply set — measured, not reasoned. The axiom's own measure is the sum over
+ * circulating karma **and** the pool, which is a third question with a third
+ * answer: `karma_pool` is not karma that exists, and is exactly what the total
+ * that never changes is made of.
+ *
+ * ⛔ **A NONZERO DELTA IS THE DEFECT, NOT A FIGURE TO RECONCILE.** Removing value
+ * at one point and restoring it later — end of block, end of transaction,
+ * anywhere — leaves an instant at which the unit did not exist, which the axiom
+ * forbids in the same breath as the burn itself. Nothing here settles a net.
  */
 
 // ---------------------------------------------------------------------------
@@ -137,12 +152,22 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
   });
 
   // -------------------------------------------------------------------------
-  // The four transaction shapes the pool has to square. Each is the box
-  // arithmetic a real transaction performs, so the delta below is what block
-  // application owes the pool for it.
+  // Four transaction shapes, measured against the axiom. Each is the box
+  // arithmetic a real transaction performs.
+  //
+  // ⚠ **The three VIOLATION cases assert a defect, deliberately.** The axiom is
+  // `AHEAD OF CODE`, so these shapes are what the tree does and what it must
+  // stop doing; pinning the exact amount each one conjures or destroys is what
+  // makes the gap measurable instead of asserted.
+  //
+  // ⚠ **They witness the tree AS IT STANDS, where no box outside the supply set
+  // can receive karma.** Giving one of them a pool sink does NOT turn it green —
+  // the delta would be unchanged, because the pool sits outside this set on
+  // purpose. What retires a witness is the shape gaining a source and a sink
+  // *and* this file gaining the conservation total to measure them against.
   // -------------------------------------------------------------------------
 
-  it('a conserving karma move owes the pool nothing', async () => {
+  it('a conserving karma move satisfies the axiom: nothing appears, nothing vanishes', async () => {
     const s = await freshStore();
     const spent = boxOfType('karma', 40n);
     s.insertBox(spent);
@@ -154,7 +179,7 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
 
-  it('a like burn returns exactly LIKE_KARMA_COST to the pool', async () => {
+  it('⚠ VIOLATION: a like burn destroys LIKE_KARMA_COST and names no sink', async () => {
     const s = await freshStore();
     const spent = boxOfType('karma', 40n);
     s.insertBox(spent);
@@ -165,10 +190,11 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-LIKE_KARMA_COST);
   });
 
-  it('an invite claim draws exactly INVITE_KARMA_AMOUNT out of the pool', async () => {
+  it('⚠ VIOLATION: an invite claim creates INVITE_KARMA_AMOUNT and names no source', async () => {
     const s = await freshStore();
     // The claimed invite holds 0, so the whole karma output is a surplus — the
     // only karma a user transaction may create (NODE_INTERFACE → the claim row).
+    // Under the axiom the ticket has to carry what it hands over.
     const invite = boxOfType('invite', 0n);
     s.insertBox(invite);
 
@@ -178,21 +204,21 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(INVITE_KARMA_AMOUNT);
   });
 
-  it('an unvouch returns the stake to the pool, and the escrow holds no karma', async () => {
+  it('⚠ VIOLATION: an unvouch moves the stake to a sink no box names', async () => {
     const s = await freshStore();
     const vouch = boxOfType('vouch', VOUCH_KARMA_AMOUNT);
     s.insertBox(vouch);
 
-    // The zero-output spend: the stake leaves the UTXO set and `vouch_cooldowns`
-    // records a claim on the pool rather than a holding, which is what keeps the
-    // invariant free of an `+ escrowed` term over state the AVL root does not
-    // cover.
+    // The zero-output spend: the stake leaves the UTXO set entirely and
+    // `vouch_cooldowns` — a table, not a box — is the only record of it.
     s.beginBlockJournal(1);
     s.consumeBox(vouch.id!, 1);
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-VOUCH_KARMA_AMOUNT);
 
-    // …and the maturity leg draws the same amount back out, so the round trip
-    // costs the pool nothing.
+    // ⛔ **The maturity leg restoring it is exactly what the axiom refuses to
+    // accept as conservation.** The two legs net to zero, and between them there
+    // was a stretch of chain — blocks, not instants — in which the stake existed
+    // nowhere. A round trip is still a burn followed by a mint.
     s.insertBox(boxOfType('karma', VOUCH_KARMA_AMOUNT));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
@@ -204,8 +230,10 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
   it('is null with no journal open, which is not the same as zero', async () => {
     const s = await freshStore();
     expect(s.openBlockJournalKarmaSupplyDelta()).toBeNull();
-    // Genesis mints karma outside block application and accounts for it against
-    // the pool it seeds; the choke point must stay out of that.
+    // Genesis creates the supply and is the **only** operation permitted to
+    // (ARCHITECTURE → The conservation axiom). It runs outside block application
+    // and opens no journal, so it is the one nonzero delta that is not a defect
+    // — and the choke point stays out of it rather than exempting it by name.
     s.insertBox(boxOfType('karma', 500n));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBeNull();
   });

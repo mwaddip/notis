@@ -8,10 +8,12 @@ import type { AnyBox } from '@dagsocial/types';
  *
  * ⛔ **`karma_pool` is karma-bearing and is still not summed**, and it is out
  * for neither of those reasons: the pool holds the karma that is NOT in
- * circulation (TYPES_INTERFACE → KarmaPoolBox), so summing it reports every
- * network's supply as the type's ceiling. It is the first type belonging to
- * neither karma set, which is what makes the allow-list load-bearing rather
- * than a spelling of "everything but the other ledger".
+ * circulation (TYPES_INTERFACE → KarmaPoolBox), so `pool + circulating` is the
+ * invariant — **a constant**. Summing the pool here would make `getTotalKarma`
+ * return that constant at every height on every network, which is to say it
+ * would stop reporting anything. It is the first type belonging to neither karma
+ * set, which is what makes the allow-list load-bearing rather than a spelling of
+ * "everything but the other ledger".
  *
  * ⛔ **Not the set the engine's karma transition arm admits as outputs** — that
  * is `KARMA_TRANSITION_TYPES` in `services/utxo-engine.ts`, and neither set is

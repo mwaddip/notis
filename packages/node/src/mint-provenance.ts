@@ -155,24 +155,25 @@ export function genesisCommitteeContext(member: Uint8Array): MintContext {
   return { reason: 'genesis-committee', subject: Uint8Array.from(member) };
 }
 
-// The two block-application box successors. Both take an **empty** subject,
+// The three block-application box successors. All take an **empty** subject,
 // which is the honest encoding when there is nothing to discriminate:
 // `computeMintTxId` writes `lp(subject)`, so an empty one is a zero length
 // rather than an absence, and stays self-delimiting.
 //
-// Exactly one emission successor and one treasury successor exist per height,
-// so the height alone separates every instance within a reason and the reason's
-// `enum8` tag separates the two from each other and from every other row. That
-// satisfies "Discriminants are semantic, never positional" outright rather than
-// by argument (NODE_INTERFACE → Reason and subject table).
+// Exactly one of each exists per height, so the height alone separates every
+// instance within a reason and the reason's `enum8` tag separates the three from
+// each other and from every other row. That satisfies "Discriminants are
+// semantic, never positional" outright rather than by argument (NODE_INTERFACE →
+// Reason and subject table).
 //
-// ⛔ **Neither creates credits.** Both name a box block application spends and
-// recreates — the emission box's successor holds what the schedule has not yet
-// released, the treasury's what has accrued. Needing a synthetic txId is what
-// any created box needs for an identity; it is not a claim that value was
-// minted, the same standing `vouch-settle` and `bond-return` have.
+// ⛔ **None of them creates value.** Each names a box block application spends
+// and recreates — the emission box's successor holds what the schedule has not
+// yet released, the treasury's what has accrued, the pool's the karma that is
+// not in circulation. Needing a synthetic txId is what any created box needs for
+// an identity; it is not a claim that value was minted, the same standing
+// `vouch-settle` and `bond-return` have.
 //
-// ⚠ **Deriving either subject from a position in the block — the coinbase
+// ⚠ **Deriving any of these subjects from a position in the block — the coinbase
 // output count, say — would be collision-free and forbidden.** It is exactly
 // the position-derived identity that section rules out, and being safe is what
 // would make it tempting.
@@ -185,6 +186,19 @@ export function emissionSuccessorContext(): MintContext {
 /** `treasury-accrue` — no subject. The `TreasuryBox` successor. */
 export function treasurySuccessorContext(): MintContext {
   return { reason: 'treasury-accrue', subject: new Uint8Array(0) };
+}
+
+/**
+ * `pool-settle` — no subject. The `KarmaPoolBox` successor.
+ *
+ * ⛔ **Not a `genesisContext` selector**, and the pool box already holds one
+ * (`GENESIS_KARMA_POOL`) for the box genesis seeds. A selector says *which
+ * genesis box*, so reusing it here would give a box created at height 500 a
+ * provenance reading `genesis` — collision-free, since the height differs, and
+ * still a lie about why the box exists.
+ */
+export function poolSettleContext(): MintContext {
+  return { reason: 'pool-settle', subject: new Uint8Array(0) };
 }
 
 /**
