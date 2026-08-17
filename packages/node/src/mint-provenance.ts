@@ -31,6 +31,7 @@ export const GENESIS_SYSTEM_KARMA = 0;
 export const GENESIS_FAUCET_CREDITS = 1;
 export const GENESIS_PROOF = 2;
 export const GENESIS_EMISSION = 3;
+export const GENESIS_KARMA_POOL = 4;
 
 const utf8 = new TextEncoder();
 
@@ -127,9 +128,31 @@ export function decayContext(owner: Uint8Array): MintContext {
  * merely prefix-free — sufficient for this pair by accident, but not a property
  * the fixed-length-or-self-delimiting rule can check per encoding. Adding a
  * third genesis box then costs one integer rather than a re-examination.
+ *
+ * ⛔ **One selector names one box, so a set of boxes cannot share this reason.**
+ * N boxes under one `k` derive one synthetic txId, one `computeBoxId` preimage,
+ * and the second insert violates `UNIQUE(tx_id, output_index)` — which is why
+ * a per-member grant is keyed on the member instead (NODE_INTERFACE → Reason
+ * and subject table).
  */
 export function genesisContext(which: number): MintContext {
   return { reason: 'genesis', subject: u32BE(which) };
+}
+
+/**
+ * `genesis-committee` — 32 bytes: the member's raw public key.
+ *
+ * Its own reason rather than a `genesisContext` selector, because a selector
+ * names one box and committee seeding mints one per member. Keyed on the member
+ * for the reason `likePayoutContext` is keyed on the author: a key appears at
+ * most once in `genesisCommitteeKeys`, so `(height, reason, subject)` is
+ * distinct per member by construction, where a shared `k` would derive one
+ * synthetic txId for all of them.
+ *
+ * Copied rather than aliased, same as `decayContext`.
+ */
+export function genesisCommitteeContext(member: Uint8Array): MintContext {
+  return { reason: 'genesis-committee', subject: Uint8Array.from(member) };
 }
 
 // The two block-application box successors. Both take an **empty** subject,

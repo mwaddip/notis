@@ -12,6 +12,7 @@ import {
   postlockRemainderContext,
   decayContext,
   genesisContext,
+  genesisCommitteeContext,
   pruneRefundAuthorContext,
   inviteClaimContext,
   bondSettleContext,
@@ -64,6 +65,10 @@ const ALL_CONTEXTS = {
   'postlock-remainder': { ctx: postlockRemainderContext(POST_A), bytes: 64 },
   decay: { ctx: decayContext(OWNER), bytes: 32 },
   genesis: { ctx: genesisContext(GENESIS_SYSTEM_KARMA), bytes: 4 },
+  // The member's raw key, and the whole reason this is not a `genesis`
+  // selector: a selector names one box, and committee seeding mints one per
+  // member.
+  'genesis-committee': { ctx: genesisCommitteeContext(OWNER), bytes: 32 },
   'prune-refund-author': { ctx: pruneRefundAuthorContext(ROOT_A, OWNER), bytes: 96 },
   'invite-claim': { ctx: inviteClaimContext(INVITEE), bytes: 32 },
   'bond-settle': { ctx: bondSettleContext(INVITEE), bytes: 32 },

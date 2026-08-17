@@ -144,7 +144,7 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // (TYPES_INTERFACE → EmissionBox). The other two networks seed FIVE leaves —
   // those two boxes, these two, and the system identity record — which is why
   // this root's trailing height byte (`02`) differs from theirs (`03`).
-  genesisStateRoot: '93914ff4c85ec583169f5a81e21bb07c42a03bf9e2f27b23b09507d9d0ac938d02',
+  genesisStateRoot: 'a364ecd022e2f878259a6cf97fd0489c77a959478da04e6d07e3a3626dfe109d02',
 } satisfies NetworkProfile);
 
 // testnet: identical to mainnet except network identity and genesis — deliberate
@@ -165,7 +165,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: 'ddd15bd501ebc1a77644d2e925c7dbf2768168311ce9bd1712a1f61b81d5d1d103',
+  genesisStateRoot: 'c3b9b30eb6231ef325cd50189d80ac172a41c857c2e970a1ba3dd221cb11855803',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
@@ -225,7 +225,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // proof box's payload, and the emission box's value, which is derived from
   // `creditFixedRateBlocks` and `creditEpochBlocks` and so is smaller here than
   // on the two networks that share mainnet's schedule.
-  genesisStateRoot: '74a99448702a494afc572520ae6c6ef2596d9ab820e9f331d8ecde5823695b6f03',
+  genesisStateRoot: 'f8d6b25e464e568c37127cfe5d5048de4eeb299cc8e2cecb359a9e1bfa58a3ec03',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

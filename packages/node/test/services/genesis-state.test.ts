@@ -207,21 +207,27 @@ describe('seedGenesisState', () => {
     }
   });
 
-  it('mainnet seeds the proof and emission boxes; the faucet networks seed four', async () => {
+  it('mainnet seeds the proof, emission and pool boxes; the faucet networks seed five', async () => {
     // Not a restatement of `isFaucetNetwork` — it pins which boxes are OUTSIDE
     // that gate. Inside it, mainnet would have no genesis state at all and no
-    // network identity at height 0; and the emission box being outside it is
-    // what lets mainnet pay a coinbase, since emission is released from that
-    // box rather than minted (TYPES_INTERFACE → EmissionBox).
+    // network identity at height 0; the emission box being outside it is what
+    // lets mainnet pay a coinbase, since emission is released from that box
+    // rather than minted (TYPES_INTERFACE → EmissionBox); and the karma supply
+    // pool being outside it is what lets mainnet mint karma at all, since every
+    // mint draws from that box (TYPES_INTERFACE → KarmaPoolBox).
     //
     // ⛔ **No `treasury` row on any network.** It would hold 0, and a
     // zero-value successor is not created — the first block whose
-    // `split.treasury` is nonzero creates it.
-    expect((await underProfile('mainnet')).boxTypes).toEqual(['emission', 'genesis_proof']);
+    // `split.treasury` is nonzero creates it. ⚠ **`karma_pool` is on every row
+    // and would be created at 0 too**, which is the same-shaped fact with the
+    // opposite answer: emission terminates, the pool never does, because burns
+    // must always have somewhere to return.
+    expect((await underProfile('mainnet')).boxTypes)
+      .toEqual(['emission', 'genesis_proof', 'karma_pool']);
     expect((await underProfile('testnet')).boxTypes)
-      .toEqual(['credit', 'emission', 'genesis_proof', 'karma']);
+      .toEqual(['credit', 'emission', 'genesis_proof', 'karma', 'karma_pool']);
     expect((await underProfile('devnet')).boxTypes)
-      .toEqual(['credit', 'emission', 'genesis_proof', 'karma']);
+      .toEqual(['credit', 'emission', 'genesis_proof', 'karma', 'karma_pool']);
   });
 
   it('the three networks reach three distinct height-0 roots', async () => {
@@ -445,8 +451,8 @@ describe('seedGenesisState — a store that is not empty', () => {
       key: s.records.identityRecordKey(r.identityId),
       record: r.record,
     }));
-    // devnet (the pinned test profile): karma, credit, proof, emission.
-    expect(boxes.length).toBe(4);
+    // devnet (the pinned test profile): karma, credit, proof, emission, pool.
+    expect(boxes.length).toBe(5);
     expect(records.length).toBe(1);
 
     const mirrorDb = new Database(':memory:');

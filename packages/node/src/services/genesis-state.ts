@@ -4,6 +4,8 @@ import {
   ensureFaucetCreditBox,
   ensureGenesisProofBox,
   ensureEmissionBox,
+  ensureKarmaPoolBox,
+  seedGenesisCommittee,
 } from '../store/system.js';
 import { emissionTotal } from './block-creator.js';
 import { getAllIdentityRecords, identityRecordKey } from '../store/identity-records.js';
@@ -99,8 +101,9 @@ function markGenesisCommitted(): void {
  * note carries the measurement behind that.
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
- * **fixed, known set** — the proof box and the emission box on every network,
- * plus the system karma and faucet credit boxes on the faucet-bearing ones —
+ * **fixed, known set** — the proof box, the emission box and the karma supply
+ * pool on every network, plus the system karma and faucet credit boxes on the
+ * faucet-bearing ones —
  * and the order is
  * specified rather than whatever a set read produced. Every node on a network
  * performs the identical operation on an identical empty tree, so the resulting
@@ -253,6 +256,34 @@ export function seedGenesisState(systemPubKey: Uint8Array): void {
       // and `computeBlockReward` read the same two profile fields, so they
       // cannot disagree about where the schedule ends.
       ensureEmissionBox(emissionTotal(), GENESIS_HEIGHT);
+
+      // The committee, on every network — one karma box per profile key. All
+      // three profiles carry an empty array, so this grants nothing today and
+      // the pool below holds the supply entire.
+      //
+      // ⚠ **Before the pool, and the order is load-bearing**: the pool draws
+      // out what was granted, and what was granted is the sum of the boxes this
+      // returns. Seeding the pool first would leave it holding a total the
+      // committee then added to, putting supply above the ceiling.
+      const granted = seedGenesisCommittee(
+        config.profile.genesisCommitteeKeys,
+        config.profile.genesisKarmaPerMember,
+        GENESIS_HEIGHT,
+      );
+
+      // Every network too, and for the emission box's reason sharpened: every
+      // karma mint draws from this box, so a network seeded without it can mint
+      // no karma at all.
+      //
+      // ⛔ **The grants come OUT of the pool, never alongside it.** Minting them
+      // beside a full pool would put total supply above the ceiling at genesis,
+      // which the value encoder refuses outright — the invariant is not merely
+      // violated, the state is unencodable (TYPES_INTERFACE → KarmaPoolBox).
+      //
+      // ⛔ **The pool is created even at zero, unlike the emission box's
+      // successor.** Emission terminates; the pool does not, because burns must
+      // always have somewhere to return — the one place that rule inverts.
+      ensureKarmaPoolBox(granted, GENESIS_HEIGHT);
 
       // ⛔ **No treasury box.** It would hold `0`, and a zero-value box is not
       // created (TYPES_INTERFACE → EmissionBox's rule, which TreasuryBox
