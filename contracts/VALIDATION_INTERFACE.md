@@ -874,11 +874,17 @@ and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 > also close a measured remote fail-stop — see
 > `prompts/node-fail-stop-reachability-measure-REPORT.md`.
 
-> ## ⚠ AHEAD OF CODE — `coinbaseOutputs` LEAVES THE BODY, AND THE GAP ABOVE CLOSES BY CONSTRUCTION
+> ## ✅ RESOLVED — `coinbaseOutputs` HAS LEFT THE BODY, AND THE GAP ABOVE CLOSED BY CONSTRUCTION
 >
-> Coinbase outputs become outputs of the block's **settlement transaction**
-> (`TYPES_INTERFACE` → OrderingBlock, `NODE_INTERFACE` → the settlement transaction), so the body
-> carries three arrays and this paragraph loses its `coinbaseOutputs` clause entirely.
+> ✅ **Landed 2026-08-17/18**: C1 removed the field from `UtxoTxTree` and C2 removed the structural
+> checks here, so the body carries three arrays and this paragraph no longer has a
+> `coinbaseOutputs` clause. ⚠ **The settlement transaction that receives those outputs is still
+> ahead of code in `node`** — this package's obligation (`utxoTxIds.length >= 1`) is met; nothing
+> yet builds the transaction that makes the length meaningful.
+>
+> ⛔ **This block read `⚠ AHEAD OF CODE` after both halves had landed**, which is the second decay
+> trigger — implementation strands a **claim** while every name in it still resolves, so no
+> deletion-grep reaches it (`TYPES_INTERFACE` → How a dispatch decays this contract).
 >
 > ✅ **THE DEFECT THIS NOTE RECORDS STOPS BEING POSSIBLE.** The correction above exists because
 > *"no `u64` bound on a coinbase `value` existed anywhere in the repo"* — the field-type table covers
