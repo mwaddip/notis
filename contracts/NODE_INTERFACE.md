@@ -673,8 +673,17 @@ Full read-only validation. Performs all checks without modifying state:
    structure and field types are already pinned, and may dereference output
    fields freely. (Step position changed by the field-type pin — the check
    ran as step 7 until then; see the placement note in "Output shape".)
-5. Value conservation: `sum(input values) == sum(output values)` for **every** box
-   type, with **three stated exceptions and no others**:
+5. Value conservation: `sum(input values) == sum(output values)` **across the
+   transaction as a whole — one total per side, not per box type** — with
+   **three stated exceptions and no others**:
+
+   > ⛔ **PER-TYPE EQUALITY WOULD REJECT MOST KARMA TRANSACTIONS.** Value
+   > changes **form** inside the karma family: invite creation is
+   > `karma(K) → karma(K−25) + invite(0) + bond(25)`, which conserves as one
+   > total and fails per type. Posting and vouch casting have the same shape.
+   > Step 3 constrains the **inputs** to a single box type; the outputs
+   > deliberately span several, and `checkValueConservation` reduces each side
+   > to one `bigint` with no type predicate anywhere in it.
    - the **like deficit** — `likeTarget` present ⟺ the sums differ by exactly
      `LIKE_KARMA_COST`, a burn;
    - the **invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
