@@ -887,20 +887,38 @@ and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 > can rot out of step with the first**, which is the class of defect this file has now found three
 > times.
 >
-> ⚠ **Two of the four pins survive and two do not.** `value` in `[0, BOX_VALUE_BOUND)` and
-> `lockedUntilBlock` (`isU64Safe` **and** ≥ `block.height`) still bind — the second is a coinbase
-> rule with no box-level equivalent and **must be restated as a settlement rule, not dropped as
-> covered.** `owner` is covered by the box field table. `isTreasury` goes with the struct.
+> ⚠ **All four pins leave this package, and none is dropped.** `value`, `owner` and `isTreasury` go
+> as stated above. ⛔ **`lockedUntilBlock` GOES TOO — the claim that it had "no box-level
+> equivalent" was FALSE, refuted 2026-08-17.** It is covered at apply **twice, and more strictly
+> than the structural check ever was**:
 >
-> ⛔ **A new structural obligation replaces them: the body must carry EXACTLY ONE settlement
-> transaction, and it must be the LAST entry in `utxoTxIds`** (NODE_INTERFACE → the settlement
-> transaction). What the transaction *contains* is consensus and belongs to node.
+> | Cover | Where | Strength |
+> |---|---|---|
+> | non-negative safe integer, **never `-0`** | `NODE_INTERFACE` → `validateTx`'s field-type table, `credit.lockedUntilBlock` | ⬆ `isU64Safe` **plus** `-0` |
+> | `== height + CREDIT_MINER_REWARD_DELAY` | `MINING_INTERFACE` → coinbase invariants | ⬆ an equality, not `≥ block.height` |
 >
-> ✅ **Position is what makes this checkable here at all.** Identifying the settlement by what it
-> spends would need the UTXO set, and identifying it by a flag would let a producer set two.
-> `utxoTxIds` order is already committed, so **a body with no settlement, or with one that is not
-> last, is refused without reading a single box** — which is exactly the loose-structural half of
-> this package's split.
+> ⛔ **THE CHECK FOLLOWED ITS SUBJECT, WHICH IS WHY IT LEAVES.** It lived here because
+> `coinbaseOutputs` was a **structural body field**. It is not one any more, so a rule about it is a
+> rule about a transaction's contents — and that is apply's, by this package's own split.
+>
+> ⚠ **What is genuinely given up is PRE-RELAY coverage, and it is given up deliberately.** A block
+> whose coinbase lock height is wrong now relays one hop before apply refuses it. ⛔ **Buying it back
+> would cost a full `decodeStruct` of the last `utxoTxs` element on the relay path — read,
+> exhaustion, re-encode, byte-compare, per block** — and would retire the opaque-bytes premise that
+> makes `MAX_TX_BYTES` and the body bound cheap. **Refused** (2026-08-17): a block still needs valid
+> PoW to be relayed at all, so the surface is bounded by PoW rather than by this check, and `net` is
+> the one package with a measured performance defect on record.
+>
+> ⛔ **A new structural obligation replaces them, and it is SMALLER than first written:
+> `utxoTxIds.length >= 1`.** Every block carries at least one transaction, because the settlement is
+> one.
+>
+> ⚠ **"EXACTLY ONE, AND LAST" IS NOT A CHECK — IT IS A DEFINITION, and this text asserted otherwise.
+> Corrected 2026-08-17.** The settlement **is** the last entry (NODE_INTERFACE → the settlement
+> transaction), so there is no count to take and no *"settlement that is not last"* state to detect.
+> Recognising a settlement anywhere else would mean recognising **what it spends** — the pool — which
+> needs the UTXO set and is therefore node's, enforced by byte-identical reconstruction. ⛔ **A
+> definition dressed as a predicate reads like coverage and produces none.**
 >
 > ⚠ **A non-empty body is therefore the precondition, and it is new.** Every block must carry at
 > least one transaction now, because the settlement is one. A structural check that admitted an
