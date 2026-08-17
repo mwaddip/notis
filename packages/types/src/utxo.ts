@@ -493,6 +493,12 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * Neither creates credits: both name a box that block application spends and
  * recreates (NODE_INTERFACE → Reason and subject table).
  *
+ * `genesis-committee` keys on the **member** — the raw 32-byte public key, one
+ * karma box per `genesisCommitteeKeys` entry, drawn out of the karma pool. The
+ * `genesis` reason cannot carry it: that subject is `u32BE(k)`, one number per
+ * genesis box, so every member would share one synthetic txId (NODE_INTERFACE →
+ * Reason and subject table).
+ *
  * **Retired reasons — reserved, never reuse:** `'author-reward'`,
  * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
  * prune settlement refunds no liker). None of them holds a number in
@@ -512,7 +518,8 @@ export type MintReason =
   | 'bond-settle'
   | 'bond-return'
   | 'emission-release'
-  | 'treasury-accrue';
+  | 'treasury-accrue'
+  | 'genesis-committee';
 
 /**
  * The `MintReason` tag table.
@@ -552,6 +559,7 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
   'bond-return': 10,
   'emission-release': 11,
   'treasury-accrue': 12,
+  'genesis-committee': 13,
 });
 
 /**

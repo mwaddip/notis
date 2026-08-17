@@ -352,6 +352,7 @@ const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
   'bond-return':          '7b6ffca09e60c23b597e01b4e217846117744e64b444ca41523e05912f5705c1',
   'emission-release':     '4cb4b95c47aa83dc1330235f096c09348ba7735ad7871eb18f21160ff2f5f0a1',
   'treasury-accrue':      '83b6e7983c2c14be4bdc71da51278d43372a9123ef071a5cf06aefd80fedca65',
+  'genesis-committee':    '0cf15bc43dcc566062faad29d7e9569aa12f43e034ecd8babd19bffd85715d12',
 };
 
 const MINT_GOLDEN_HEIGHT = 1;
@@ -1305,31 +1306,41 @@ describe('computeMintTxId', () => {
     }
   });
 
-  it('cross-reason injectivity is STRUCTURAL now — the prefix-free rule is retired', () => {
-    // With `reason ‖ subject` appending bare ASCII and no length prefix,
-    // cross-reason injectivity would rest on "no reason is a prefix of
-    // another" — checkable and pinnable, but one careless addition to the set
-    // away from two ambiguous mint preimages.
-    //
-    // `enum8(reason)` is one byte from a closed table, so the question cannot
-    // be asked. Kept as an assertion rather than deleted, because the
-    // ONLY thing that could reopen it is someone changing the reason encoding
-    // back to text — and this is where that would be noticed.
+  it('cross-reason injectivity is STRUCTURAL — the names are not prefix-free, and it does not matter', () => {
+    // `enum8(reason)` is one byte from a closed table, so injectivity across
+    // reasons is a property of the ENCODING and never of the names. This is
+    // where a return to a text reason encoding would be noticed, and the set
+    // carries a witness that such an encoding would be ambiguous.
     const subject = new Uint8Array(8).fill(0x77);
-    const tags = ALL_MINT_REASONS.map((r) => {
-      // The reason contributes exactly one byte, between the height and the
-      // subject's length prefix: vlqU(1) ‖ enum8(reason) ‖ lp(subject).
-      const bytes = Buffer.from(computeMintTxId(1, r, subject), 'hex');
-      return bytes;
-    });
-    expect(new Set(tags.map((b) => b.toString('hex'))).size).toBe(ALL_MINT_REASONS.length);
-    // Prefix-freeness of the STRINGS is not load-bearing: a member could
-    // legally be named `decay-extra`. Asserted anyway, so that making the rule
-    // load-bearing again reads as a deliberate step backwards.
-    const namesArePrefixFree = ALL_MINT_REASONS.every((a) =>
-      ALL_MINT_REASONS.every((b) => a === b || !b.startsWith(a)),
+    // The reason contributes exactly one byte, between the height and the
+    // subject's length prefix: vlqU(1) ‖ enum8(reason) ‖ lp(subject).
+    const ids = ALL_MINT_REASONS.map((r) => computeMintTxId(1, r, subject));
+    expect(new Set(ids).size).toBe(ALL_MINT_REASONS.length);
+
+    // The names are not prefix-free, and the witness is pinned by name:
+    // `genesis` ⊏ `genesis-committee`. Both are the contract's
+    // (NODE_INTERFACE → Reason and subject table), so the pair is not something
+    // this set may rename its way out of.
+    const prefixPairs = ALL_MINT_REASONS.flatMap((a) =>
+      ALL_MINT_REASONS.filter((b) => b !== a && b.startsWith(a)).map((b) => `${a} ⊏ ${b}`),
     );
-    expect(namesArePrefixFree).toBe(true); // true, but not required
+    expect(prefixPairs).toContain('genesis ⊏ genesis-committee');
+
+    // What a text encoding does with that pair, demonstrated rather than
+    // argued: `reason ‖ subject` as bare ASCII gives `genesis` over
+    // `-committee ‖ X` and `genesis-committee` over `X` THE SAME BYTES. Two
+    // reasons, one preimage.
+    const utf8 = (s: string) => Buffer.from(s, 'utf8');
+    const x = Buffer.alloc(4, 0x5a);
+    const suffixed = Buffer.concat([utf8('-committee'), x]);
+    expect(Buffer.concat([utf8('genesis'), suffixed]).toString('hex'))
+      .toBe(Buffer.concat([utf8('genesis-committee'), x]).toString('hex'));
+
+    // Under the encoding the format actually uses, that same pair separates on
+    // the tag byte alone — the collision above has no counterpart here. This is
+    // the whole of "a one-byte tag makes it structural" (→ `MINT_REASON`).
+    expect(computeMintTxId(1, 'genesis', suffixed))
+      .not.toBe(computeMintTxId(1, 'genesis-committee', x));
   });
 
   it('the reason contributes exactly one byte, from a closed table', () => {
