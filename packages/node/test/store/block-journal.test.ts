@@ -159,6 +159,29 @@ describe('block journal (store choke-point recording)', () => {
     expect(j.mutations).toEqual([{ kind: 'box', op: 'remove', boxId: 'box-k2' }]);
   });
 
+  // `recordBoxRemove` sits downstream of `consumeBox`'s live-row check, so a
+  // refused consume journals nothing — the half that makes the guard worth
+  // having. A remove entry for a box that was never spent survives
+  // `proverFeedFromJournal` (it cancels insert+remove pairs, never repeated
+  // removes) and reaches the AVL+ tree, which refuses a `Remove` of a key it
+  // does not hold and stops the node.
+  it('a refused consume records nothing while open', async () => {
+    const s = await importAll();
+    s.initDb(':memory:');
+
+    s.insertBox(makeKarmaBox('box-k3'));
+
+    s.beginBlockJournal(3);
+    expect(() => s.consumeBox('never-inserted', 3)).toThrow();
+    // The already-spent arm, inside the same open journal: the first consume
+    // records, the second refuses and adds nothing.
+    s.consumeBox('box-k3', 3);
+    expect(() => s.consumeBox('box-k3', 3)).toThrow();
+    const j = s.finishBlockJournal();
+
+    expect(j.mutations).toEqual([{ kind: 'box', op: 'remove', boxId: 'box-k3' }]);
+  });
+
   it('insertVouchCooldown on a fresh pair records the side-record without replaced', async () => {
     const s = await importAll();
     s.initDb(':memory:');

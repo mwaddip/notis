@@ -891,12 +891,47 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
 }
 
 /**
- * Mark a box as spent at the given block height.
+ * A consume named a box this store does not hold live — absent, or already
+ * spent.
+ *
+ * ⚠ **Deliberately not a `CorruptChainStateError`.** The apply funnel's
+ * totality catch converts this into a block rejection, the shape the `Insert`
+ * arm's primary-key failure already takes: a caller naming a box the store does
+ * not hold live costs the block, never the node. A `CorruptChainStateError`
+ * subclass would reach `failStopIfCorruptChain` and end the process instead
+ * (NODE_INTERFACE → "What the funnel's totality catch is FOR").
+ *
+ * The id is a field rather than only a message, following the fail-stop family:
+ * the diagnostic should not be parsed back out of prose.
+ */
+export class BoxNotLiveError extends Error {
+  constructor(readonly boxId: string) {
+    super(`consumeBox: ${boxId} names no live box — absent, or already spent`);
+    this.name = 'BoxNotLiveError';
+  }
+}
+
+/**
+ * Mark a **live** box spent at the given block height.
+ *
+ * ⛔ **The `spent_at_block IS NULL` predicate and the row-count check are ONE
+ * guard.** The predicate alone leaves the `UPDATE` a no-op while
+ * `recordBoxRemove` still journals a remove, and `proverFeedFromJournal` does
+ * not dedupe repeated removes — so that entry reaches the AVL+ tree, which
+ * refuses a `Remove` of a key it does not hold and stops the node
+ * (`DivergedStateTreeError`, the `Remove` arm). Together they make a journalled
+ * remove follow a spend that happened rather than a caller's assumption.
+ *
+ * `recordBoxRemove` runs downstream of the check, so a refused consume journals
+ * nothing (NODE_INTERFACE → Store Interface, the `consumeBox` row).
  */
 export function consumeBox(boxId: string, consumedAtBlock: number): void {
-  getDb()
-    .prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?')
+  const result = getDb()
+    .prepare(
+      'UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL',
+    )
     .run(consumedAtBlock, boxId);
+  if (result.changes === 0) throw new BoxNotLiveError(boxId);
   recordBoxRemove(boxId);
 }
 

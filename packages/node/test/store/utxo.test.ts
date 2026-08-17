@@ -40,6 +40,7 @@ async function importUtxoFresh() {
     getBondBoxes: (inviterId: Uint8Array) => BondBox[];
     insertBox: (box: AnyBox, postLockTarget?: string) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
+    BoxNotLiveError: new (boxId: string) => Error & { readonly boxId: string };
   };
 }
 
@@ -449,6 +450,58 @@ describe('utxo store', () => {
       .get(box.id!) as { spent_at_block: number } | undefined;
     expect(row).toBeDefined();
     expect(row!.spent_at_block).toBe(99);
+  });
+
+  // --- consumeBox refuses a box the store does not hold live -----------------
+  //
+  // Both arms the guard covers — an absent id and an already-spent one
+  // (NODE_INTERFACE → Store Interface, the `consumeBox` row). A box this node
+  // holds no live row for costs the block, never the node, so the throw must
+  // NOT be a `CorruptChainStateError`: the apply funnel's totality catch turns
+  // it into a rejection, and a member of that family would exit the process.
+
+  it('consumeBox on an id no row holds throws BoxNotLiveError naming it', async () => {
+    const { initDb } = await importDbFresh();
+    const { consumeBox, BoxNotLiveError } = await importUtxoFresh();
+    const { CorruptChainStateError } = (await import(
+      '../../src/services/corrupt-state.js'
+    )) as { CorruptChainStateError: abstract new (...args: never[]) => Error };
+
+    initDb(':memory:');
+
+    expect(() => consumeBox('no-such-box', 7)).toThrow(BoxNotLiveError);
+    try {
+      consumeBox('no-such-box', 7);
+      expect.unreachable('consumeBox accepted an absent id');
+    } catch (err) {
+      expect((err as { boxId: string }).boxId).toBe('no-such-box');
+      expect(err).not.toBeInstanceOf(CorruptChainStateError);
+    }
+  });
+
+  it('a second consume throws and leaves the first spend height in place', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertBox, consumeBox, BoxNotLiveError } = await importUtxoFresh();
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+
+    const box = makeKarmaBox({ value: 50n });
+    Object.assign(box, fixtureProvenance(box, 1));
+    box.id = computeBoxId(box);
+    insertBox(box);
+
+    consumeBox(box.id!, 12);
+    expect(() => consumeBox(box.id!, 34)).toThrow(BoxNotLiveError);
+
+    // The height the FIRST spend wrote. A row-count check without the
+    // `spent_at_block IS NULL` predicate would match this row again and
+    // overwrite it with 34 rather than refusing — this is the assertion that
+    // tells the two halves apart.
+    const row = getDb()
+      .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+      .get(box.id!) as { spent_at_block: number } | undefined;
+    expect(row!.spent_at_block).toBe(12);
   });
 
   // --- getKarmaBoxes returns all unspent karma boxes sorted by value desc -----

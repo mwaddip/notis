@@ -38,6 +38,7 @@ export {
   consumeBox,
   unconsumeBox,
   deleteBox,
+  BoxNotLiveError,
 } from './utxo.js';
 
 export {

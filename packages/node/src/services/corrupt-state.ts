@@ -165,14 +165,16 @@ export class MissingStoredBlockError extends CorruptChainStateError {
  * means the tree holds a box the store does not.
  *
  * The **`Remove`** arm: consumed ids reach the feed only as `kind: 'box'`,
- * `op: 'remove'` journal entries, and the sole writer of those is `consumeBox`.
- * ⚠ **`consumeBox`'s `UPDATE` is unguarded — it checks no row count**, so the
- * property that every journaled remove spent a live row is kept by its *callers*,
- * not by the primitive. The peer-facing one is the gate that matters:
- * `applyTx` runs only after `validateTx` step 2 has resolved every input through
- * `getBox`, which filters `spent_at_block IS NULL`, in the same transaction
- * immediately before. A key in that list the tree does not hold means the tree
- * lacks a box the store had.
+ * `op: 'remove'` journal entries, and the sole writer of those is `consumeBox`
+ * — stated on `store/utxo.ts`'s `consumeBox`. Its `UPDATE` carries `AND
+ * spent_at_block IS NULL` and refuses a zero row count, so the property that
+ * every journalled remove spent a live row is kept by the **primitive**, not by
+ * its callers. A consume naming an absent or already-spent id throws
+ * `BoxNotLiveError` inside the applying transaction, which the funnel's
+ * totality catch converts to a block rejection — the shape this arm's `Insert`
+ * sibling already takes, and the reason a second remove of one id cannot be
+ * journalled at all. A key that does reach the feed and the tree does not hold
+ * means the tree lacks a box the store had.
  *
  * Neither arm is reachable from peer input, which is what puts the condition
  * outside the funnel's totality promise. And a drifted tree refuses the *next*
