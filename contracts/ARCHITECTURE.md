@@ -531,65 +531,63 @@ VouchBox {
 
 A vouch is a 1-karma endorsement from one identity to another. Casting a vouch
 consumes 1 karma from the voucher's KarmaBox and creates a VouchBox. The karma
-is escrowed — not burned, not transferred to the target. Unvouching (spending
-the VouchBox) triggers a cooldown: the karma is not immediately returned to the
-voucher but is held for `VOUCH_COOLDOWN_BLOCKS` before release.
+is escrowed — not burned, not transferred to the target.
+
+**Withdrawal is instant, and that is a requirement rather than a side effect.**
+A voucher who concludes their target is untrustworthy stops endorsing at once:
+the vouch stops counting the moment the `VouchBox` is spent. Only the stake's
+return waits — the unvouch outputs a `VouchEscrowBox`, and the voucher reclaims
+it by their own signed transaction at or after `releaseAtBlock`.
+
+**The cooldown runs from the cast.**
+`releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks`, an exact pin
+derived from the consumed box alone (NODE_INTERFACE → Vouch transition rules).
+The stake is committed for one cooldown from **casting**, so no withdrawal
+pattern returns it sooner and holding an endorsement longer costs no extra
+lockup. A vouch held past one cooldown yields an escrow born past its release
+height — immediately reclaimable, the commitment having been served during the
+endorsement.
+
+**The escrow is what rate-limits re-vouching.** A cast is invalid while any
+unspent escrow names the voucher, and the escrow cannot be reclaimed before
+`releaseAtBlock`, so the vouch/unvouch cycle is capped at one per cooldown
+window however briefly each vouch is held — the anti-spam property, priced
+identically for a rapid cycler and a long-term voucher.
 
 Each identity may vouch for at most one target at a time. The minimum karma
 balance to cast a vouch is `VOUCH_MIN_BALANCE` (11) — **a balance, summed across
-the voucher's karma boxes, not the value of any single one.**
+the voucher's karma boxes, not the value of any single one.** Both halves hold
+in the engine: the cast arm reads the summed `getKarmaValue` at apply, so the
+rule travels with the transaction, and the service gate reads the same
+function.
 
-> ⚠ **VIOLATED on both halves. The rule is right; the code is wrong. Verified 2026-08-14.**
-> - **It is not enforced at block application.** `VOUCH_MIN_BALANCE` has exactly one reader in
->   `packages/*/src` — `node/src/services/vouch.ts`, reached only from the HTTP route. The engine's
->   vouch arm re-checks the output shape, the pinned `VOUCH_KARMA_AMOUNT` and the cooldown at apply;
->   **the balance is the one vouch rule that does not travel with the transaction.** A vouch arriving
->   by gossip is admitted with any balance.
-> - **The service gate reads one arbitrary box, not a balance.** It calls `getKarmaBox(owner)`,
->   whose SQL is `… WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL LIMIT 1` with
->   **no `ORDER BY`**, then compares that one box against the threshold. A voucher holding 20 karma
->   across two 10-karma boxes is refused while the threshold is covered twice over.
->
-> ⚠ **Same root as the faucet defect PR #69 fixed** — `getKarmaBox`'s single-box selection, one
-> function with two symptoms. Fix this against what landed there, not from scratch.
+```
+VouchEscrowBox {
+  id: BoxId
+  value: bigint               // exactly what the VouchBox held — never the constant
+  owner: UserId               // the voucher; where the karma returns
+  releaseAtBlock: number      // vouch.createdAtBlock + vouchCooldownBlocks
+}
 
-> ## ⚠ VIOLATED — "HELD FOR `VOUCH_COOLDOWN_BLOCKS`" IS NOT WHAT THE CODE DOES. Verified 2026-08-17.
->
-> **The rule is right and the code is wrong.** Measured in `node/src/services/block-apply.ts`, the
-> vouch branch of the apply loop: **the unvouch transaction has zero outputs.** It consumes the
-> `VouchBox`, the karma is destroyed, and a `vouch_cooldowns` row remembers to re-mint it later.
-> Nothing "holds" it — for the length of the cooldown the karma exists nowhere, which is a burn and a
-> mint separated by **blocks, not instants**, and the plainest violation of §The conservation axiom in
-> the tree.
->
-> ⚠ **The row is node-local SQL and sits OUTSIDE the AVL root.** A node holding the committed state
-> could not tell from it that an obligation exists.
->
-> ### ⚠ AHEAD OF CODE — the escrow becomes a box, which is what the prose already claims
->
-> ```
-> VouchEscrowBox {
->   id: BoxId
->   value: bigint               // exactly what the VouchBox held — never the constant
->   owner: UserId               // the voucher; where the karma returns
->   releaseAtBlock: number      // unvouch height + VOUCH_COOLDOWN_BLOCKS
-> }
->
-> unvouch tx    VouchBox(V) → VouchEscrowBox(V, owner = voucherId, releaseAtBlock = h + cooldown)
-> settlement    VouchEscrowBox(V) → voucherKarma(+V)      at releaseAtBlock
-> ```
->
-> ✅ **The value never leaves a box**, so the pool is not involved on this path at all and no marker
-> is needed — the escrow is an ordinary output of the voucher's own transaction.
->
-> ✅ **The obligation moves into committed state.** An escrow box is in the UTXO set and therefore in
-> the `stateRoot`, so a node that synced without replaying every block holds the obligation itself
-> rather than a root it cannot interpret. **`vouch_cooldowns` is deleted, table and all.**
->
-> ⛔ **The value is the BOX'S, never `VOUCH_KARMA_AMOUNT`.** The existing escrow row already records
-> the actual staked value for this reason, and the box must keep that property: the round trip is
-> conservation-structural, not true by coincidence, and it must not depend on the cast's pin holding
-> for the box in hand.
+unvouch tx    VouchBox(V) → VouchEscrowBox(V, owner = voucherId,
+                                           releaseAtBlock = vouch.createdAtBlock + cooldown)
+reclaim tx    VouchEscrowBox(V) → KarmaBox(V, owner)    owner-signed, at or after
+                                                        releaseAtBlock (SPEND_TIMING)
+```
+
+✅ **The value never leaves a box**, so the pool is not involved on this path at
+all and no marker is needed — the escrow is an ordinary output of the voucher's
+own transaction, and the reclaim conserves the same way.
+
+✅ **The obligation is committed state.** An escrow box is in the UTXO set and
+therefore in the `stateRoot`, so a node that synced without replaying every
+block holds the obligation itself rather than a root it cannot interpret. No
+node-local table remembers anything, and no block-application step touches a
+standing escrow.
+
+⛔ **The value is the BOX'S, never `VOUCH_KARMA_AMOUNT`.** The round trip is
+conservation-structural, not true by coincidence, and it must not depend on the
+cast's pin holding for the box in hand.
 
 #### Box lifecycle
 
@@ -1485,8 +1483,9 @@ before multi-node operation rather than after it.
    (`like-payout` mints), post-lock vesting evaluated (§Likes)
 8. **Pruning:** Author signs prune intent → stump constructed with deterministic
    karma deltas → committed in ordering block → DAG compacted
-9. **Vouch cooldown:** Every block, matured vouch cooldowns release escrowed karma
-   back to the voucher via mintKarma
+9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; its owner
+   reclaims it by transaction once `releaseAtBlock` is reached — no per-block
+   step touches it
 10. **Net:** libp2p gossips sub-blocks, ordering blocks, and UTXO transactions.
    Stage 1 (stateless) validation via `@dagsocial/validation` runs before
    forwarding. Stage 2 (stateful) validation runs in the node after receipt.
@@ -2033,7 +2032,7 @@ forever. A node rejects objects with an unsupported protocol version.
   storage rent, coinbase splits) journal through the same log unchanged.
 - **Rollback replays inverses.** Reverting a block walks the log in reverse:
   `insert` → delete the box, `remove` → un-spend it. Non-box side effects
-  (post confirmations, like-records, vouch-cooldown rows,
+  (post confirmations, like-records,
   mempool re-insertion payloads) travel as typed side-records, each with an
   exact inverse. Apply-then-revert restores the identical UTXO set and AVL
   digest for every mutation class.
@@ -2156,11 +2155,14 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 > block in the document: of its ten bullets, six are false, three are unenforced or
 > qualified, and one is true.**
 >
-> **Check the premise before adopting anything else from Ergo.** One analogy is already
-> recorded as not having transferred: Ergo can leave `creationHeight` client-declared
-> because nothing consensus-critical reads it, whereas here `createdAtBlock` **was** the
-> decay clock, so the field had to leave the box protocol entirely and the clock moved into
-> committed state. An invariant that is correct for Ergo and wrong here, kept because the
+> **Check the premise before adopting anything else from Ergo.** One analogy failed on its
+> first form and transferred on its second: while `createdAtBlock` was the decay clock, a
+> client-declared height was untenable and the field left the box protocol, the clock moving
+> into committed state. It returned as creator-declared content once the decay clock stopped
+> reading it (TYPES_INTERFACE → BoxCandidate) — Ergo's shape, with the obligation stated
+> rather than assumed: **every rule that derives from the field owes its own exact check**,
+> and the vouch cast window (NODE_INTERFACE → Vouch transition rules) is the first.
+> An invariant that is correct for Ergo and wrong here, kept because the
 > analogy sounded right, is this section's characteristic failure. **The transliteration risk
 > is not hypothetical here**: this section's first bullet had to be restated because a rule
 > against *truncating* casts, correct in Rust, names nothing TypeScript does — and misses the
