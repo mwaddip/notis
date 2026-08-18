@@ -2302,9 +2302,16 @@ author caught it, because it was written once and copied. **Invented pointers pr
 copy-paste speed**, which the two decay classes do not.
 
 ✅ **This one is the cheapest of the three to check, and it is mechanical:** take every
-`FILE → prose name` a diff **adds**, and grep the cited text against that file's **headings**. A
-prefix of a real heading is fine — it still resolves — but a name that matches no heading is a
-dangling pointer regardless of how true the sentence is.
+`FILE → prose name` a diff **adds**, and grep the cited text **against the file**. A prefix of a real
+name is fine — it still resolves — but text that matches nothing is a dangling pointer regardless of
+how true the sentence is.
+
+⛔ **GREP THE FILE, NOT ITS `#` HEADINGS**, and this correction comes from the check producing a
+false positive on a correct citation. **These contracts name sections in two ways**: `#` headings,
+and **bolded passages inside a blockquote** — `> **What the funnel's totality catch is FOR**` is a
+real, unique, greppable section name with no `#` anywhere near it. ⚠ **A heading-only check reports
+it as invented and invites someone to "fix" a pointer that resolves.** The test is whether the cited
+text is **findable and unique in the file**, not what markup carries it.
 
 ⚠ **Re-check against `HEAD`, not against the contract as it stood when the citation was written.**
 A section's line range moves when anything above it grows, so a citation can stay correct while the
