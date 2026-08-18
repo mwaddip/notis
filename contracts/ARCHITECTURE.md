@@ -1108,7 +1108,7 @@ economics). Values are placeholders until the constants session pins them.
 `'like'` · the `likebox` and `epoch` Merkle leaf domains ·
 the free-like tier (`dag_likes` rows as likes) · unlike and every refund path · the epoch
 interval and `EPOCH_BLOCKS` · `LIKE_COST` · `LIKE_THRESHOLD` · `LIKE_MAX_AUTHOR_REWARD` ·
-`LIKE_FREE_THRESHOLD`.
+`LIKE_FREE_THRESHOLD` · `INVITE_KARMA_AMOUNT` · `INVITE_BOND_KARMA`.
 
 ---
 

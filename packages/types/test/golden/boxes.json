@@ -91,7 +91,7 @@
         "inviteePublicKey": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       },
       "bytes": "04195656565656565656565656565656565656565656565656565656565656565656cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "note": "Two adjacent b32 key fields under tag 04 - the same tail box/vouch carries under tag 06, so that pair is one layout with two tags and enum8(boxType) is field 1 for exactly that reason. 66 bytes. THE BOND IS THE REQUEST: the settlement emits INVITE_KARMA_AMOUNT to this invitee key, so the pairing is structural and no ticket box exists to name. A bond is byte-identical from creation to the block that consumes it, and no probation field is carried because the window is dated from IdentityRecord.invitedAtBlock."
+      "note": "Two adjacent b32 key fields under tag 04 - the same tail box/vouch carries under tag 06, so that pair is one layout with two tags and enum8(boxType) is field 1 for exactly that reason. 66 bytes. THE BOND IS THE REQUEST: the settlement emits this bond's own value to this invitee key, so the pairing is structural and no ticket box exists to name. A bond is byte-identical from creation to the block that consumes it, and no probation field is carried because the window is dated from IdentityRecord.invitedAtBlock."
     },
     {
       "name": "box/post-lock",

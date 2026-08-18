@@ -133,32 +133,39 @@ export const VOUCH_COOLDOWN_BLOCKS = 60;       // Blocks before karma returned �
 //
 // `MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **retired — names
 // reserved, never reuse** (TYPES_INTERFACE → Invites). The concurrent-invite cap
-// needs no successor: an inviter locks `INVITE_BOND_KARMA` out of their own karma
-// per invite, so `K / INVITE_BOND_KARMA` bounds them without a rule. The
-// threshold went with the early-unlock leg it served — a bond settles once, at
+// needs no successor: an inviter locks the whole bond out of their own karma per
+// invite, so `K / INVITE_BOND_MIN` bounds them without a rule. The threshold went
+// with the early-unlock leg it served — a bond settles once, at
 // `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and no karma balance
 // decides it.
 //
-// ⛔ **THE INVITE IS ONE TRANSACTION, and both constants below are dated from
-// it** (TYPES_INTERFACE → InviteBox; `ARCHITECTURE` → Invite System). There is no
-// claim and no cancel: the transaction creates a `BondBox`, the block's
-// settlement transaction spends `INVITE_KARMA_AMOUNT` out of the karma pool to
-// that bond's `inviteePublicKey`, and `IdentityRecord.invitedAtBlock` is the
-// invite's own height.
+// ⛔ **THE INVITE IS ONE TRANSACTION** (TYPES_INTERFACE → InviteBox;
+// `ARCHITECTURE` → Invite System). There is no claim and no cancel: the
+// transaction creates a `BondBox`, the block's settlement transaction spends that
+// bond's own value out of the karma pool to its `inviteePublicKey`, and
+// `IdentityRecord.invitedAtBlock` is the invite's own height.
 export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;
 /**
+ * The bond an inviter locks and — at 1:1 — the karma the invitee is granted out
+ * of the pool. The inviter picks any value in `[INVITE_BOND_MIN,
+ * INVITE_BOND_MAX]`, and both bounds are per-network.
+ *
  * ⛔ **SPENT FROM THE KARMA POOL, and at INVITE CREATION** — the settlement
- * transaction of the block carrying the invite emits it to the bond's
- * `inviteePublicKey`.
+ * transaction of the block carrying the invite emits the bond's own value to the
+ * bond's `inviteePublicKey`.
  *
  * ⚠ **"Minted" is a DIRECTION, not an event** (`ARCHITECTURE` → The conservation
  * axiom, the fixed vocabulary): it means *spent out of the supply pool*, and
  * nothing is created. Under that definition a mint has to name a source, which is
- * why this constant's amount comes out of a `KarmaPoolBox` rather than from
- * nowhere.
+ * why the grant comes out of a `KarmaPoolBox` rather than from nowhere.
+ *
+ * ⛔ **The grant EQUALS the bond, and that is what makes the bound unbreakable.**
+ * An inviter may name 32 bytes nobody holds, stranding the grant in an
+ * unspendable box; equality makes that cost exactly what it strands, with no
+ * second number free to drift below the first.
  */
-export const INVITE_KARMA_AMOUNT = 25n;
-export const INVITE_BOND_KARMA = 25n;          // Karma the inviter locks at creation
+export const INVITE_BOND_MIN = 25n;            // → profile: inviteBondMin
+export const INVITE_BOND_MAX = 250n;           // → profile: inviteBondMax
 /** Blocks from the invite's own creation height to bond settlement. */
 export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: inviteProbationBlocks
 /**
@@ -167,11 +174,18 @@ export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: in
  * value)` at the probation deadline and burns the rest (ARCHITECTURE → Bond
  * outcomes).
  *
- * Kept separate from `LIKES_PER_KARMA_PAYOUT` deliberately: the two share a
- * value and nothing else, so collapsing them would make a change to the like
- * dial silently move every bond's vesting.
+ * Kept separate from `LIKES_PER_KARMA_PAYOUT` deliberately: the two are
+ * independent dials, so collapsing them would make a change to the like dial
+ * silently move every bond's vesting.
+ *
+ * ⛔ **Read against `LIKES_PER_KARMA_PAYOUT` this is the SUPPLY DIAL.** Vesting a
+ * bond `B` takes `V·B` likes, and the like settlement returns `1/L` of every
+ * karma spent on likes to the pool, so a completed invite moves `B · (1 − V/L)`
+ * into circulation. At `V == L` that is exactly zero and the network cannot
+ * inflate at all. It is neutral between honest growth and a sybil circle, so it
+ * is a supply dial and never a sybil defence.
  */
-export const INVITE_BOND_VEST_PER_LIKES = 5;
+export const INVITE_BOND_VEST_PER_LIKES = 3;
 
 // Genesis
 export const GENESIS_COMMITTEE_KEYS: string[] = []; // → profile: genesisCommitteeKeys
