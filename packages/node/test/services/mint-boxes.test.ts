@@ -111,12 +111,11 @@ let insertBoxSync: (box: AnyBox) => void;
 /**
  * The one surviving karma producer that consolidates and stamps provenance.
  *
- * ⛔ **`mintKarma` is gone, and its replacement takes a SOURCE.** Every
- * assertion below that used to be made against a mint is made against
- * `transferKarma` instead — same consolidation, same provenance discipline, one
- * added obligation: the value has to come out of a box the call names
- * (ARCHITECTURE → The conservation axiom). The seeded `PostLockBox` is that
- * source, and it is the shape the live caller uses.
+ * ⛔ **IT TAKES A SOURCE, AND THAT IS ITS WHOLE OBLIGATION.** The value has to
+ * come out of a box the call names (ARCHITECTURE → The conservation axiom); the
+ * consolidation and the provenance discipline are the ledger's standing ones.
+ * The seeded `PostLockBox` is that source, and it is the shape the live caller
+ * uses.
  */
 async function transferOut(
   owner: Uint8Array,
@@ -220,10 +219,10 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
     insertBox(source);
     const ctx = postlockUnlockContext(POST_A);
 
-    // ⛔ **The class fix, asserted in both directions.** `mintKarma` could not
-    // fail: it took an amount and no source, so there was nothing to check
-    // against. Crediting more than the source holds is creation; leaving a
-    // surplus with nowhere named to hold it is destruction.
+    // ⛔ **Both directions, because a source is what makes either checkable.**
+    // Crediting more than the source holds is creation; leaving a surplus with
+    // nowhere named to hold it is destruction. A primitive taking an amount and
+    // no source can refuse neither.
     expect(() =>
       transferKarma([source], [{ owner, amount: 11n, ctx }], null, HEIGHT),
     ).toThrow(KarmaNotConservedError);
@@ -238,12 +237,10 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
     ).not.toThrow();
   });
 
-  // ⛔ **The credit half of this suite is DELETED WITH ITS SUBJECT.**
-  // `mintCredits` is gone: coinbase credits are outputs of the block's
-  // settlement transaction, so they carry that transaction's real
-  // `(txId, index)` rather than a synthetic mint id. There is no producer left
-  // to attach provenance, and `output-shape-id-integrity` already pins the
-  // derivation the settlement's outputs go through.
+  // ⛔ **NO CREDIT CASE, BECAUSE NO PRODUCER ATTACHES CREDIT PROVENANCE.**
+  // Coinbase credits are outputs of the block's settlement transaction and carry
+  // that transaction's real `(txId, index)`; `output-shape-id-integrity` pins the
+  // derivation every settlement output goes through.
 
   // deleted rather than adapted: `mintKarma`/`mintCredits` now take a required
   // `MintContext`, so the state it described is unreachable — and keeping it
@@ -411,16 +408,15 @@ describe('direct mint producers attach provenance (Spec G phase C2)', () => {
     karmaMinimum: 0n,
   };
 
-  // ⛔ **THE THREE DECAY-PROVENANCE CASES ARE DELETED WITH THEIR SUBJECT.**
-  // Decay produces no box any more: it derives a plan, and the block's
-  // settlement transaction emits the replacement karma as one of its outputs
-  // (NODE_INTERFACE → The settlement transaction). So a decay box carries that
-  // transaction's real `(txId, index)` and there is no synthetic `decay` mint id
-  // left to stamp. What survives of the property — that a decay box does not
-  // inherit the identity of the box it replaces — is structural now rather than
-  // asserted: the replacement is a fresh output of a different transaction.
+  // ⛔ **DECAY HAS NO PROVENANCE CASES, BECAUSE IT PRODUCES NO BOX.** It derives
+  // a plan, and the block's settlement transaction emits the replacement karma
+  // as one of its outputs (NODE_INTERFACE → The settlement transaction) — so the
+  // box carries that transaction's real `(txId, index)` and there is no
+  // synthetic `decay` mint id to stamp. ✅ **A decay box cannot inherit the
+  // identity of the box it charges**: it is a fresh output of a different
+  // transaction, which is structural rather than asserted.
   //
-  // ⚠ The `decayBurn` flag is still load-bearing and still tested, in
+  // ⚠ The `decayBurn` flag is load-bearing and is tested in
   // `conservation-axiom` and the decay suite: it is what keeps the settlement's
   // karma output from resetting the owner's activity clock.
 
@@ -477,14 +473,12 @@ describe("⛔ getKarmaBoxes returns a TOTAL order, ties included", () => {
   /**
    * Equal values, which is the whole shape under test.
    *
-   * ⛔ **`ORDER BY value DESC` ALONE IS A PARTIAL ORDER**, and it read as
-   * handled: which of an equal-valued pair lands first was physical row order.
-   * That was safe while the only consumer was a consolidating mint whose id did
-   * not depend on it — and it stopped being safe the moment the decay pass
-   * started listing these ids as the settlement's INPUTS, which the transaction
-   * id hashes in order (NODE_INTERFACE → A derived quantity has TWO kinds of
-   * input). Two nodes holding the same box set would derive two different
-   * transactions.
+   * ⛔ **`ORDER BY value DESC` ALONE IS A PARTIAL ORDER, and a partial order
+   * reads as handled.** Which of an equal-valued pair lands first would be
+   * physical row order — and the decay pass lists these ids as the settlement's
+   * INPUTS, which the transaction id hashes in order (NODE_INTERFACE → A derived
+   * quantity has TWO kinds of input). Two nodes holding the same box set would
+   * derive two different transactions.
    *
    * ⚠ **Equal values are ordinary, not exotic**: two faucet grants, or a payout
    * that happens to match a balance already held.
@@ -522,9 +516,7 @@ describe("⛔ getKarmaBoxes returns a TOTAL order, ties included", () => {
     const second = await seededOrder(['mint-1', 'faucet']);
 
     expect(first).toHaveLength(2);
-    // ⛔ The assertion the tie-break buys. Before it, this was `.reverse()` —
-    // the suite recorded the partial order as a known property and argued the
-    // one consumer of the day did not care.
+    // ⛔ The assertion the tie-break buys: one order, whatever the rows do.
     expect(second).toEqual(first);
     // Non-vacuity: the two runs really do hold different boxes in a different
     // physical order, so equality is the store's doing and not the fixture's.
@@ -537,10 +529,9 @@ describe("⛔ getKarmaBoxes returns a TOTAL order, ties included", () => {
     const { insertBox, getKarmaBoxes } = await import('../../src/store/utxo.js');
     initDb(':memory:');
 
-    // ⚠ **The preference survives the fix.** Appending `id` rather than
-    // replacing `value DESC` is what keeps coin selection taking the largest box
-    // first; replacing it would have traded a fork for a silent behaviour
-    // change.
+    // ⚠ **`value DESC` leads and `id` only breaks ties**, so coin selection
+    // still takes the largest box first — the ordering is total without the
+    // preference being a tie-break's side effect.
     for (const [tag, value] of [['small', 1n], ['big', 900n], ['mid', 500n]] as const) {
       insertBox(
         seedProvenance<KarmaBox>(

@@ -319,8 +319,9 @@ describe('the conservation axiom holds over a chain', () => {
       BigInt(LIKES_PER_KARMA_PAYOUT) - 1n,
     );
     // ⛔ **The pool is a SINK here and never a source** (ARCHITECTURE → Likes).
-    // Asserting the rise is what tells this apart from the retired shape, where
-    // the same `x − 1` reached the author and the remaining 1 was destroyed.
+    // ⚠ **The author's figure alone does not carry the claim** — `x − 1` reaches
+    // them whether the remaining 1 goes to the pool or nowhere, so the pool's
+    // rise is the half that distinguishes a transfer from a destruction.
     expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore + 1n);
     const carry = utxo.getLikeCarryBox(w.author.userId, new Set<string>());
     expect(carry, 'the remainder rides a carry box').not.toBeNull();
@@ -361,8 +362,9 @@ describe('the conservation axiom holds over a chain', () => {
       .find((b) => b.boxType === 'vouch') as VouchBox | undefined;
     expect(vouchBox, 'the cast created a VouchBox').toBeDefined();
 
-    // Unvouch: vouch → vouch_escrow. ⛔ **Not zero outputs.** The retired shape
-    // destroyed the stake and a node-local row remembered to re-mint it.
+    // Unvouch: vouch → vouch_escrow. ⛔ **The stake is HELD, not destroyed** —
+    // the escrow is an ordinary output of the voucher's own transaction, so both
+    // ends are named inside it (ARCHITECTURE → Vouch boxes).
     const unvouchTx: UtxoTransaction = {
       inputs: [vouchBox!.id!],
       outputs: [
@@ -446,10 +448,10 @@ describe('the conservation axiom holds over a chain', () => {
       );
     }
 
-    // ⛔ **The forfeit is a transfer, and the sink is named.** Under the retired
-    // shape the burn was the ABSENCE of a mint — no box, no call site, nothing to
-    // find. Asserting the pool ROSE by the bond is what distinguishes the two:
-    // the inviter's balance is unchanged either way.
+    // ⛔ **The forfeit is a transfer, and the sink is named.** ⚠ **Asserting
+    // that the POOL ROSE by the bond is what carries the claim** — the inviter's
+    // balance is unchanged whether the karma moved to the pool or ceased to
+    // exist, so a balance check alone would pass on either.
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'bond'),
       'the bond settled',

@@ -313,8 +313,9 @@ describe('deriveKarmaDecay', () => {
     const journal = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
-    // ⛔ **The plan NAMES both boxes; the settlement consumes them.** The old
-    // assertion read a side effect this derivation no longer has.
+    // ⛔ **The plan NAMES both boxes; the settlement consumes them.** The
+    // derivation is pure, so `consumed` stays empty and the plan is the only
+    // place the pair can be read.
     expect(journal[0]!.consumedBoxIds).toHaveLength(2);
     expect([...journal[0]!.consumedBoxIds].sort()).toEqual(['box-a', 'box-b']);
     expect(consumed).toHaveLength(0);

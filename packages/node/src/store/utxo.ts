@@ -709,10 +709,9 @@ export function getVouchEscrowsDueAt(height: number): VouchEscrowBox[] {
 /**
  * Every live escrow this voucher holds, ascending box id.
  *
- * ⚠ **It cannot report a target, because the box does not carry one**
- * (TYPES_INTERFACE → VouchEscrowBox). The retired `vouch_cooldowns` row held
- * `(voucher, target)` and the route reported the pair; an escrow reports the
- * value and the release height, which is what a voucher actually needs to know.
+ * ⚠ **It reports no target, because the box carries none**
+ * (TYPES_INTERFACE → VouchEscrowBox). What an escrow can report is the value and
+ * the release height, which is what a voucher needs to know.
  */
 export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
   const rows = getDb()
@@ -731,13 +730,11 @@ export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
 /**
  * Does this voucher hold an unreleased escrow?
  *
- * ⛔ **KEYED ON THE VOUCHER ALONE, BECAUSE THE BOX CARRIES NO TARGET.** The
- * retired `vouch_cooldowns` row held `(voucher, target)` and the rule read the
- * pair; `VouchEscrowBox` carries `owner` and `releaseAtBlock` and nothing else
- * (TYPES_INTERFACE → VouchEscrowBox), so the pair is not a question this state
- * can answer. The gate is therefore **strictly stronger** than the one it
- * replaces: a voucher cooling down may not recast at all, rather than may not
- * recast *at the same target*.
+ * ⛔ **KEYED ON THE VOUCHER ALONE, BECAUSE THE BOX CARRIES NO TARGET.**
+ * `VouchEscrowBox` carries `owner` and `releaseAtBlock` and nothing else
+ * (TYPES_INTERFACE → VouchEscrowBox), so a pair-scoped question is one this
+ * state cannot answer. **A voucher cooling down may not recast at all**, which
+ * is the stronger of the two readings and the only one the box supports.
  *
  * ⚠ **Stronger in the direction the design already leans.** The staked karma is
  * in the escrow rather than in the voucher's karma boxes, so

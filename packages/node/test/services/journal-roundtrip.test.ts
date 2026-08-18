@@ -184,11 +184,11 @@ async function importOrdering() {
 function dumpState(db: Database.Database) {
   return {
     boxes: db.prepare('SELECT * FROM utxo_boxes ORDER BY id').all(),
-    // ⛔ **The vouch escrow needs no row here, and that is the change.** It is a
-    // box, so it is already in `boxes` above — and a box round-trips through the
-    // journal's own `{kind:'box'}` inverses rather than through a hand-written
-    // side-record (ARCHITECTURE → Vouch boxes). The retired table was the one
-    // piece of block-application state that sat OUTSIDE the `stateRoot`.
+    // ⛔ **The vouch escrow needs no row here.** It is a box, so it is already
+    // in `boxes` above, and it round-trips through the journal's own
+    // `{kind:'box'}` inverses rather than through a hand-written side-record.
+    // ✅ **Every piece of block-application state this dumps is inside the
+    // `stateRoot`** (ARCHITECTURE → Vouch boxes).
     // P2-D N3b: prune settlement deletes the subtree's like-records, so "DB
     // identity after revert" has to cover the table (mirrors the
     // like-settlement suite's dumpState).
@@ -742,14 +742,12 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       const recordMutations = journalStore
         .getBlockJournal(4)!
         .mutations.filter((m) => m.kind === 'record');
-      // ⚠ **The ORDER swapped, and the reason is where decay's boxes now come
-      // from.** The activity bump rides `insertBox`, so it fires when the
-      // SETTLEMENT emits the decay-burn box — at §11a — while the decay CLOCK is
-      // committed after, at §12. Under the retired shape decay inserted its own
-      // box and advanced the clock in one step, so the clock write came first.
-      // What the case is about is unchanged: two record writes at one height
-      // collapse to one AVL leaf, and the journal must carry both to revert
-      // exactly.
+      // ⚠ **The activity bump comes FIRST, and the ordering follows from where
+      // the box is emitted.** The bump rides `insertBox`, so it fires when the
+      // settlement emits the decay-burn box at §11a, while the decay CLOCK is
+      // committed after it at §12. What the case is about: two record writes at
+      // one height collapse to one AVL leaf, and the journal must carry both to
+      // revert exactly.
       expect(recordMutations).toHaveLength(2);
       expect(recordMutations[0]).toMatchObject({ record: { lastActivityBlock: 4 } });
       expect(recordMutations[1]).toMatchObject({ record: { lastDecayBlock: 4 } });

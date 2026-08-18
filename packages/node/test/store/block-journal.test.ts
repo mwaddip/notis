@@ -85,11 +85,11 @@ describe('block journal (store choke-point recording)', () => {
     expect(j.appliedUtxoTxs).toEqual([]);
     expect(j.likeRecordInsertions).toEqual([]);
     expect(j.likeRecordDeletions).toEqual([]);
-    // ⛔ **The vouch side-records are GONE, and no replacement pair took their
-    // place.** An unvouched stake waits in a `VouchEscrowBox`, so its creation
-    // and its spend are journalled by `insertBox`/`consumeBox` as
-    // `{kind:'box'}` with the exact inverses those already carry — the H-7
-    // machinery was deleted rather than ported (ARCHITECTURE → Vouch boxes).
+    // ⛔ **The journal carries no vouch side-record, and the key set is the
+    // assertion.** An unvouched stake waits in a `VouchEscrowBox`, so its
+    // creation and its spend are journalled by `insertBox`/`consumeBox` as
+    // `{kind:'box'}` with the exact inverses those already carry
+    // (ARCHITECTURE → Vouch boxes).
     expect(Object.keys(j).sort()).toEqual([
       'appliedUtxoTxs',
       'blockHeight',
@@ -190,14 +190,11 @@ describe('block journal (store choke-point recording)', () => {
     expect(j.mutations).toEqual([{ kind: 'box', op: 'remove', boxId: 'box-k3' }]);
   });
 
-  // ⛔ **THREE CASES ARE DELETED WITH THEIR SUBJECT, AND THE MACHINERY WITH
-  // THEM.** They pinned `insertVouchCooldown`'s side-record, its `replaced`
-  // capture under `INSERT OR REPLACE`, and `deleteVouchCooldown`'s captured row
-  // — all three properties of a KEYED TABLE. Boxes are not keyed and a second
-  // escrow is a second box, so there is no overwrite to capture and no
-  // hand-written inverse to test. The escrow's create and spend are covered by
-  // the `insertBox`/`consumeBox` cases above, which is the whole point of the
-  // choke point.
+  // ⛔ **NO VOUCH-ESCROW CASES HERE, AND THAT IS THE CHOKE POINT WORKING.** An
+  // overwrite to capture and a hand-written inverse to test are properties of a
+  // KEYED TABLE; boxes are not keyed, so a second escrow is a second box. The
+  // escrow's create and its spend are covered by the `insertBox`/`consumeBox`
+  // cases above, like every other box in the ledger.
 
   it('a mixed mutation sequence lands in the journal in application order', async () => {
     const s = await importAll();

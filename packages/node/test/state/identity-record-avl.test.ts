@@ -315,19 +315,20 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
 // The always-present fields in the record's AVL value encoding
 // (NODE_INTERFACE → Layout — IdentityRecord).
 //
-// ## ⛔ THE LAYOUT LOST A FIELD, SO EVERY RECORD'S AVL VALUE CHANGED
+// ## ⛔ THE LAYOUT CARRIES NO LIKE-ACCRUAL FIELD, AND EVERY NETWORK'S ROOT
+// COMMITS TO THAT
 //
-// The outstanding like accrual is a `LikeAccrualBox` carry box now
-// (ARCHITECTURE → Likes), so the counter that used to sit between
-// `lastDecayBlock` and `invitedAtBlock` is gone from the record and from its
-// encoding. **That moves the `stateRoot` at every height on every network** —
-// the record's value bytes are an AVL leaf, and a leaf's bytes are its value.
+// The outstanding accrual is a `LikeAccrualBox` carry box (ARCHITECTURE →
+// Likes), so the record holds four fields and its AVL value encodes four. **A
+// record's value bytes are an AVL leaf and a leaf's bytes are its value**, so
+// the field set and the `stateRoot` are one fact.
 //
-// ⚠ **It is a DELETION, not a reordering, and the vectors below say so.** The
-// two heights keep their positions; the two survivors keep their relative order
-// and their codecs (`vlqU` then `vlqU64`) and simply move one byte earlier. No
-// field's encoding changed and no pair swapped — which is the difference between
-// a root that moved for a stated reason and one that moved for an unstated one.
+// ⚠ **The vectors below pin the layout as a DELETION from the five-field one,
+// not as a reordering.** The two heights hold their positions; `invitedAtBlock`
+// and `lifetimeLikesReceived` hold their relative order and their codecs
+// (`vlqU` then `vlqU64`). ⛔ **That distinction is what a genesis root cannot
+// state for itself** — a root that moved says nothing about which fields moved,
+// so the constant below is what makes the claim checkable.
 // ---------------------------------------------------------------------------
 
 describe('the always-present fields in the record encoding', () => {
@@ -371,30 +372,31 @@ describe('the always-present fields in the record encoding', () => {
   const GOLDEN_SHORT = '802a070b';
 
   /**
-   * The vector the retired six-field layout produced for `REC`.
+   * The five-field layout's vector for `REC` — `80 2a 07 | 00 | 00 00`, with a
+   * like-accrual `vlqU64` as its third value byte.
    *
-   * ⛔ **Kept as a hand-written CONSTANT, never re-encoded**, because nothing in
-   * the tree can produce it any more. It is what makes the next assertion a
-   * statement about the change rather than about the current writer alone.
+   * ⛔ **Hand-written and never re-encoded**, because nothing in the tree
+   * produces it. That is exactly what makes the next assertion a statement about
+   * the LAYOUT rather than about the writer agreeing with itself: a golden taken
+   * from the encoder holds just as firmly over a transposition.
    */
-  const RETIRED_SIX_FIELD_ZERO = '802a07000000';
+  const FIVE_FIELD_ZERO = '802a07000000';
 
   it('golden bytes: every counter present at zero, none omitted', () => {
     expect(Buffer.from(serializeIdentityRecord(REC)).toString('hex')).toBe(GOLDEN_ZERO);
   });
 
-  it('⛔ the change is a DELETION: one value byte left, and nothing else moved', () => {
-    // The retired layout wrote `80 2a 07 | 00 | 00 00` — tag, two heights, the
-    // accrual counter, then the two survivors. Removing the third value byte
-    // from it is exactly the vector the writer now produces, which is what
-    // "no other field's bytes shifted position as a side effect" means in bytes
-    // rather than in prose.
+  it('⛔ the layout is the five-field one MINUS its third value byte, exactly', () => {
+    // ⛔ **A DELETION, not a reordering**, said in bytes rather than in prose:
+    // strike the accrual counter out of `80 2a 07 | 00 | 00 00` and what is left
+    // is what the writer produces, byte for byte. Any field whose encoding or
+    // position had also moved would break this equality.
     const withoutThirdValueByte =
-      RETIRED_SIX_FIELD_ZERO.slice(0, 6) + RETIRED_SIX_FIELD_ZERO.slice(8);
+      FIVE_FIELD_ZERO.slice(0, 6) + FIVE_FIELD_ZERO.slice(8);
     expect(withoutThirdValueByte).toBe(GOLDEN_ZERO);
-    // And the prefix through `lastDecayBlock` is untouched, so the two heights
-    // are where they always were.
-    expect(GOLDEN_ZERO.slice(0, 6)).toBe(RETIRED_SIX_FIELD_ZERO.slice(0, 6));
+    // The prefix through `lastDecayBlock` is byte-identical, so the two heights
+    // hold their offsets.
+    expect(GOLDEN_ZERO.slice(0, 6)).toBe(FIVE_FIELD_ZERO.slice(0, 6));
   });
 
   it('golden bytes: an invited identity differs in the fourth byte alone', () => {

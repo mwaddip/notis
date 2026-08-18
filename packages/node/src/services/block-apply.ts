@@ -1168,14 +1168,12 @@ function applyMutationPhase(
         likeToRecord = { targetPostId, likerId, authorHex };
       }
 
-      // ⛔ **THE UNVOUCH NEEDS NO ARM HERE, AND THE ABSENCE IS THE CHANGE.** The
-      // stake moves into a `VouchEscrowBox` the voucher's own transaction
-      // outputs, so `applyTx` inserts it like any other output and the store's
-      // choke point journals it with an exact inverse. The escrow row this
-      // replaced was node-local SQL outside the `stateRoot`, remembering to
-      // re-mint karma that had been destroyed — a burn and a mint separated by
-      // blocks (ARCHITECTURE → Vouch boxes). The obligation is committed state
-      // now, so nothing has to remember it.
+      // ⛔ **THE UNVOUCH NEEDS NO ARM HERE.** The stake moves into a
+      // `VouchEscrowBox` the voucher's own transaction outputs, so `applyTx`
+      // inserts it like any other output and the store's choke point journals it
+      // with an exact inverse. ✅ **The obligation is committed state**, in the
+      // UTXO set and therefore in the `stateRoot`, so nothing has to remember it
+      // (ARCHITECTURE → Vouch boxes).
 
       // ⛔ **One invitee per block.** The bond IS the request, so a second bond
       // naming a key an earlier transaction in this block already named would
@@ -1341,10 +1339,10 @@ function applyMutationPhase(
 
   // 11b. The bookkeeping the settlement's boxes do not carry.
   //
-  // ⛔ **EVERY VALUE MOVEMENT IS ABOVE THIS LINE NOW.** The like payout, the
-  // carry, the escrow releases, the vested bonds, the decay charges and the
-  // prune refunds are all outputs of the settlement transaction, because each
-  // one either draws from or returns to the karma pool and the settlement is the
+  // ⛔ **EVERY VALUE MOVEMENT IS ABOVE THIS LINE.** The like payout, the carry,
+  // the escrow releases, the vested bonds, the decay charges and the prune
+  // refunds are all outputs of the settlement transaction, because each one
+  // either draws from or returns to the karma pool and the settlement is the
   // pool's only spender (NODE_INTERFACE → The settlement transaction). What is
   // left here is committed state that is not a box: the like counter and the
   // decay clock.

@@ -195,12 +195,11 @@ function checkTransitions(
   // someone other than the input's owner, which is precisely the shape
   // *"Karma cannot be transferred"* exists to refuse.
   //
-  // ⛔ **The check it replaces used to be free.** The like's cost was a
-  // **deficit**, and an imbalance is self-announcing — conservation fired on it
-  // unconditionally and the only escape was matching the like shape exactly. A
-  // marker **balances**, so nothing fires unless a rule says to look. Without
-  // this line `myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)`
-  // conserves, carries no `likeTarget`, and pays Bob at settlement.
+  // ⛔ **A MARKER BALANCES, so nothing else in the funnel fires on it.**
+  // `myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)` conserves, its
+  // output shape is legal, its signature is the owner's, and the same-owner rule
+  // pins only *karma* outputs — the marker is not one. Without this line that is
+  // an accepted transaction, and it pays Bob at settlement.
   //
   // Ahead of the switch rather than inside the karma arm, so it holds for every
   // input type and not only for the one that can legitimately emit a marker.
@@ -438,17 +437,15 @@ function checkTransitions(
         //
         // ⛔ **KEYED ON THE VOUCHER ALONE, BECAUSE THE ESCROW CARRIES NO
         // TARGET.** `VouchEscrowBox` holds `owner` and `releaseAtBlock` and
-        // nothing else (TYPES_INTERFACE → VouchEscrowBox), so the
-        // `(voucher, target)` pair the retired table keyed on is not a question
-        // this state can answer. The gate is strictly stronger than the one it
-        // replaces — a cooling voucher may not recast at all rather than may not
-        // recast at the same target.
+        // nothing else (TYPES_INTERFACE → VouchEscrowBox), so a pair-scoped
+        // question is one this state cannot answer. **A cooling voucher may not
+        // recast at all**, which is the stronger of the two readings and the
+        // only one the box supports.
         //
-        // ⚠ **The overwrite hazard it used to close is gone with the table.**
-        // A second escrow is a second box, so nothing can be destroyed by an
-        // `INSERT OR REPLACE`; what survives is the economic rule, which the
-        // escrow's own value already leans on by withholding the stake from
-        // `VOUCH_MIN_BALANCE`.
+        // ⚠ **The rule it carries is economic, not structural.** A second
+        // escrow is a second box, so nothing here is protecting an overwrite —
+        // and the escrow's own value already leans the same way by withholding
+        // the stake from `VOUCH_MIN_BALANCE`.
         if (deps.hasActiveVouchEscrow(vouchOut.voucherId)) {
           return {
             valid: false,
@@ -1407,11 +1404,10 @@ function checkValueConservation(
   // never run on outputs that have not passed `checkOutputShape`.
 
   // ⛔ **NO CARVE-OUTS. `sum(inputs) == sum(outputs)`, unconditionally**
-  // (ARCHITECTURE → The conservation axiom). Both exceptions this function
-  // carried are gone because the value they used to lose now lands in a box:
-  // the like's deficit is a `LikeAccrualBox` the transaction outputs, and the
-  // zero-output `VouchBox` spend is a `VouchEscrowBox`. **Neither was weakened
-  // — each was given somewhere to go.**
+  // (ARCHITECTURE → The conservation axiom). It holds for a like because the
+  // cost lands in a `LikeAccrualBox` the transaction outputs, and for an unvouch
+  // because the stake lands in a `VouchEscrowBox` — **every karma-side spend has
+  // somewhere for its value to go, so none needs an exception.**
   //
   // ⚠ **`likeTarget` is still a parameter and still load-bearing**, one rule
   // further out: an all-karma input set is what makes the marker exemption in

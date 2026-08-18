@@ -41,9 +41,9 @@ export interface PruneSettlement {
  * theirs (`ARCHITECTURE.md` → "Prune lifecycle"). ⛔ **The pruning author's own
  * locks — the root's and their own replies' downstream — are the burn, and the
  * burn is a TRANSFER TO THE POOL** (`ARCHITECTURE` → The conservation axiom
- * names it as one of the four). Under the retired shape the burn was the
- * *absence* of a mint, which is why no `mintKarma(` call site marked it and a
- * name-keyed search could not see it at all.
+ * names it as one of the four). ⚠ **A burn is a destination, so it is named at
+ * the site**: `toPool` below carries it, where a difference between two figures
+ * would carry nothing a search could find.
  *
  * `PostLockBox.owner` against the entry's `authorId` decides which, from
  * committed state alone — no `block_topology` read, so a node holding no DAG
@@ -60,15 +60,11 @@ export interface PruneSettlement {
  * - The refund set may be empty — a subtree carrying no lock owned by anyone
  *   but the pruner names no refund at all.
  *
- * ⛔ **THE REFUND NEEDS NO MINT PROVENANCE ANY MORE, AND THAT RETIRES A WHOLE
- * COLLISION HAZARD.** A refund is an output of the block's settlement
- * transaction, so it takes that transaction's real `(txId, index)` like every
- * other output. The synthetic `prune-refund-author` id it used to carry had to
- * separate two subtrees pruned at one height — one user whose replies sit in
- * both would otherwise derive the same `mintTxId` twice at `index` 0 and trip
- * `UNIQUE(tx_id, output_index)`. Two outputs of one transaction cannot collide,
- * so the argument has no subject left. **The reason tag stays reserved and
- * unused** (NODE_INTERFACE → Reason and subject table).
+ * ⛔ **A REFUND CARRIES NO MINT PROVENANCE.** It is an output of the block's
+ * settlement transaction, so it takes that transaction's real `(txId, index)`
+ * like every other output, and two outputs of one transaction cannot collide on
+ * `UNIQUE(tx_id, output_index)`. **The `prune-refund-author` reason stays
+ * reserved and unused** (NODE_INTERFACE → Reason and subject table).
  */
 export function planPruneSettlement(
   _rootPostHash: PostId,

@@ -752,11 +752,10 @@ describe('block-apply journal recording', () => {
 
       const unvouch: UtxoTransaction = {
         inputs: [vouchBox.id!],
-        // ⛔ **The escrow output, because the zero-output vehicle is retired.**
-        // An unvouch conserves now — its stake lands in a `VouchEscrowBox` — so a
-        // zero-output vouch spend is an ordinary whole-input deficit and is
-        // refused by conservation. The SUBJECT here is the fee accounting, and it
-        // needs a live karma-side spend to carry it.
+        // ⛔ **An unvouch conserves: its stake lands in a `VouchEscrowBox`**, so
+        // a zero-output vouch spend is an ordinary whole-input deficit and is
+        // refused. The SUBJECT here is the fee accounting, which needs a live
+        // karma-side spend to carry it.
         outputs: [
           {
             boxType: 'vouch_escrow' as const,
@@ -966,11 +965,10 @@ describe('block-apply journal recording', () => {
     expect(entries[0]!.newValue).toBe(1000n - owed);
 
     // ⛔ **NOTHING MOVED, and that is the assertion.** This case derives the
-    // plan directly and applies no block, so the owner's box is untouched: the
+    // plan directly and applies no block, so the owner's box is untouched — the
     // replacement karma is emitted by the block's settlement transaction, which
-    // has not run here. Under the retired shape `applyKarmaDecay` consumed and
-    // inserted on the spot, and the two store reads that used to sit here were
-    // reading that side effect.
+    // has not run here. ⚠ **A derivation is pure**, so a store read at this
+    // point measures the fixture's seed and nothing else.
     const karmaBox = utxo.getKarmaBox(identity.userId);
     expect(karmaBox).not.toBeNull();
     expect(karmaBox!.id).toBe(oldBox.id);
@@ -1011,11 +1009,10 @@ describe('block-apply journal recording', () => {
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
-    // ⛔ **H-7's INVERSE MACHINERY IS DELETED, NOT PORTED.** The escrow was a
-    // node-local row, so its create and its delete each needed a hand-written
-    // side-record and a hand-written inverse. A box needs neither:
-    // `insertBox`/`consumeBox` journal `{kind:'box'}` with exact inverses, so the
-    // release is a consume and an insert like every other mutation in the block.
+    // ⛔ **THE ESCROW NEEDS NO SIDE-RECORD AND NO INVERSE OF ITS OWN.** It is a
+    // box, so `insertBox`/`consumeBox` journal `{kind:'box'}` with exact
+    // inverses — the release is a consume and an insert like every other
+    // mutation in the block.
     const journal = await importJournalStore();
     const saved = journal.getBlockJournal(1)!;
     // ⚠ **The voucher's standing karma is NOT consumed.** The settlement emits a
@@ -1633,9 +1630,9 @@ describe('block-apply mint provenance', () => {
       const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
       // Matures at height 4 — the same block decay first fires in.
-      // ⛔ An escrow BOX due at height 4, not a cooldown row: the obligation is
-      // committed state now (ARCHITECTURE → Vouch boxes). `target` no longer
-      // reaches it — the box carries only the owner and the release height.
+      // ⛔ An escrow BOX due at height 4. The obligation is committed state
+      // (ARCHITECTURE → Vouch boxes), and the box carries only the owner and the
+      // release height — no target.
       utxo.insertBox(
         seedProvenance<VouchEscrowBox>(
           {
@@ -1674,20 +1671,18 @@ describe('block-apply mint provenance', () => {
       )!;
       const settled = mints.find((b) => b !== decayed)!;
 
-      // ⛔ **THE DISCRIMINANT IS THE OUTPUT INDEX, AND THE COLLISION IT GUARDED
-      // IS RETIRED.** Both legs used to be synthetic mints, so two karma boxes
-      // to one owner at one height were separated only by their mint REASON —
-      // `(height, 'decay', owner)` against
-      // `(height, 'vouch-settle', voucher‖target)` — and a shared reason would
-      // have tripped `UNIQUE(tx_id, output_index)`. Both are outputs of the
-      // block's one settlement transaction now, so they carry the SAME real
-      // `txId` and are told apart positionally, which cannot collide by
-      // construction (NODE_INTERFACE → The settlement transaction).
+      // ⛔ **THE DISCRIMINANT IS THE OUTPUT INDEX.** Two karma boxes reach one
+      // owner at one height — a decay charge and an escrow release — and both
+      // are outputs of the block's one settlement transaction, so they carry the
+      // SAME real `txId` and are told apart positionally. ✅ **Positions inside
+      // one transaction cannot collide by construction**, so
+      // `UNIQUE(tx_id, output_index)` holds without a rule of its own
+      // (NODE_INTERFACE → The settlement transaction).
       expect(decayed.txId).toBe(settled.txId);
       expect(decayed.index).not.toBe(settled.index);
 
-      // ⚠ Neither carries a synthetic id any more; both reasons are reserved
-      // and unused (NODE_INTERFACE → Reason and subject table).
+      // ⚠ Neither carries a synthetic mint id: `decay` and `vouch-settle` are
+      // reserved and unused (NODE_INTERFACE → Reason and subject table).
       for (const b of [decayed, settled]) {
         expect(b.txId).not.toBe(computeMintTxId(4, 'decay', decayContext(idle.userId).subject));
         expect(b.txId).not.toBe(
@@ -1751,9 +1746,9 @@ describe('block-apply mint provenance', () => {
       const idle = makeTestIdentity();
       const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
-      // ⛔ An escrow BOX due at height 4, not a cooldown row: the obligation is
-      // committed state now (ARCHITECTURE → Vouch boxes). `target` no longer
-      // reaches it — the box carries only the owner and the release height.
+      // ⛔ An escrow BOX due at height 4. The obligation is committed state
+      // (ARCHITECTURE → Vouch boxes), and the box carries only the owner and the
+      // release height — no target.
       utxo.insertBox(
         seedProvenance<VouchEscrowBox>(
           {

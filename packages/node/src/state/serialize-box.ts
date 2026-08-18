@@ -92,11 +92,10 @@ export function serializeBox(box: AnyBox): Uint8Array {
  * establishes the domain.
  *
  * ⛔ **The outstanding like accrual is NOT a field here, and its absence is the
- * point.** A counter existed to remember karma that did not yet exist; the
- * accrual now sits in a `LikeAccrualBox` carry box, so the box **is** the carry
- * (ARCHITECTURE → Likes). Keeping both would be two representations of one
- * quantity, free to disagree — and the carry is in the `stateRoot` either way,
- * because every box is.
+ * point.** The accrual sits in a `LikeAccrualBox` carry box, so **the box IS the
+ * carry** (ARCHITECTURE → Likes) — a field here as well would be two
+ * representations of one quantity, free to disagree. The carry reaches the
+ * `stateRoot` either way, because every box does.
  */
 const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
   name: 'identityRecord',

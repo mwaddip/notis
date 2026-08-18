@@ -262,11 +262,10 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
  * Heights stay numbers; the counter stays bigint end-to-end so no `Number()`
  * coercion can appear in a consensus path.
  *
- * ⛔ **The record's other bigint is GONE, and this suite is what is left of the
- * property rather than of the field.** The outstanding like accrual used to live
- * here and now lives in a `LikeAccrualBox` carry box (ARCHITECTURE → Likes), so
- * the counter a bond settles against is the record's only bigint and the only
- * field this boundary rule still has to hold for.
+ * ⛔ **`lifetimeLikesReceived` is the record's ONLY bigint**, so it is the only
+ * field this boundary rule has to hold for. The outstanding like accrual lives
+ * in a `LikeAccrualBox` carry box (ARCHITECTURE → Likes) and reaches no column
+ * here.
  */
 describe('lifetimeLikesReceived at the row boundary', () => {
   beforeEach(async () => { vi.resetModules(); });

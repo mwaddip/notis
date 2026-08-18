@@ -147,10 +147,11 @@ describe('db lifecycle', () => {
     expect(likeRecCols.every((c) => c.notnull === 1)).toBe(true);
 
     // ⛔ **`identity_records` carries NO like-accrual column, and the absence is
-    // the assertion.** The outstanding accrual is a `LikeAccrualBox` carry box
-    // now, so the counter that used to remember karma which did not yet exist has
-    // no subject (ARCHITECTURE → Likes). Asserting the whole column set rather
-    // than the one absence, so a column re-added under any name fails here.
+    // the assertion.** The outstanding accrual is a `LikeAccrualBox` carry box,
+    // so **the box IS the carry** (ARCHITECTURE → Likes) and a column here would
+    // be a second representation of one quantity. ⚠ **The whole column set is
+    // asserted, not the one absence** — a carry re-added under any name fails
+    // this, where a check for one name would not.
     const idRecCols = db.pragma('table_info(identity_records)') as Array<{
       name: string; notnull: number;
     }>;

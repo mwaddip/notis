@@ -272,9 +272,9 @@ export function revertBlock(height: number): PruneEntry[] {
   }
   // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
   // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
-  // `{kind:'box'}` with the exact inverses loop 1 above already replays. The
-  // `INSERT OR REPLACE` restore this replaced existed because a keyed table can
-  // overwrite a row; boxes are not keyed and a second escrow is a second box.
+  // `{kind:'box'}` with the exact inverses loop 1 above already replays — and
+  // boxes are not keyed, so a second escrow is a second box rather than an
+  // overwrite something has to restore.
 
   // 3. Roll back block_topology entries, delete block + journal + the
   // height's AVL version rows. The version rows are per-block derived state

@@ -499,19 +499,18 @@ describe('planPruneSettlement', () => {
 
     const plan = planPruneSettlement(rootPostId, pruner, [rootPostId]);
 
-    // ⛔ **THE BURN NAMES A SINK NOW, AND THAT IS THE WHOLE CHANGE.** It used to
-    // be the ABSENCE of a mint — the box was consumed and nothing was inserted —
-    // which is a destruction with no positive trace, and therefore invisible to
-    // any search keyed on a mint's name. `toPool` is the trace
+    // ⛔ **THE BURN NAMES A SINK, AND `toPool` IS THAT NAME**
     // (ARCHITECTURE → The conservation axiom: "burn" means *move back to the
-    // supply pool*).
+    // supply pool*). ⚠ **A consumed box with nothing inserted beside it is a
+    // destruction with no positive trace** — nothing for a search to find and
+    // nothing for a test to assert.
     expect(plan.lockBoxIds).toEqual([lockBox.box.id]);
     expect(plan.toPool).toBe(100n);
     expect(plan.refunds).toEqual([]);
 
-    // ⚠ **The old test would have stayed green on the old code**: "consumed and
-    // nothing inserted" is true either way. Asserting `toPool` is what separates
-    // a burn that returns to the pool from one that destroys.
+    // ⚠ **"Consumed, and nothing inserted" is true of a destruction too**, so
+    // asserting `toPool` is the only clause that separates a burn returning to
+    // the pool from one that ends the karma.
     const db = getDb();
     expect(boxIsSpent(db, lockBox.box.id!)).toBe(false);
     expect(boxIsSpent(db, oldKarma.id!)).toBe(false);
@@ -537,9 +536,9 @@ describe('planPruneSettlement', () => {
 
     const plan = planPruneSettlement(rootId, pruner, [rootId, replyId]);
 
-    // Both locks are named — the burn and the return differ only in where the
-    // value goes, which is what the two figures below say and the old
-    // consumed/not-consumed pair could not.
+    // Both locks are named. ⛔ **The burn and the return differ only in where the
+    // value goes**, so the two figures below are what tell them apart — a
+    // consumed/not-consumed pair cannot.
     expect(plan.lockBoxIds).toEqual([ownLock.box.id, otherLock.box.id]);
 
     // The reply author's 50 recirculates; the pruner's 100 leaves circulation
@@ -706,14 +705,11 @@ describe('planPruneSettlement — refund provenance', () => {
     utxo.insertBox(lockA.box, lockA.targetPostId);
     utxo.insertBox(lockB.box, lockB.targetPostId);
 
-    // ⛔ **THE COLLISION THIS CASE GUARDED IS RETIRED.** It existed because two
-    // subtrees pruned at one height would derive the same synthetic
-    // `prune-refund-author` mint id for one owner and trip
-    // `UNIQUE(tx_id, output_index)` — which is why `rootPostHash` was in the
-    // subject at all. A refund is an output of the block's settlement
-    // transaction now, so it takes that transaction's real `(txId, index)` and
-    // two outputs of one transaction cannot collide. The argument has no subject
-    // left; what survives is that each entry names its own refund.
+    // ⛔ **EACH ENTRY NAMES ITS OWN REFUND, and nothing has to keep them
+    // apart.** A refund is an output of the block's settlement transaction, so
+    // it takes that transaction's real `(txId, index)` and two outputs of one
+    // transaction cannot collide on `UNIQUE(tx_id, output_index)` — the same
+    // owner refunded twice at one height is two positions, by construction.
     const planA = planPruneSettlement(rootA, prunerA, [rootA]);
     const planB = planPruneSettlement(rootB, prunerB, [rootB]);
 
@@ -744,20 +740,19 @@ describe('planPruneSettlement — refund provenance', () => {
 
     const plan = planPruneSettlement(root, pruner, [root]);
 
-    // ⛔ **Exactly one refund: the author's.** There is no liker leg and never
-    // was one — a like moves its karma into a marker at cast and the settlement
-    // pays it to the author, so a prune has nothing to refund a liker. An
-    // exact-set assertion, so any stray second refund fails it regardless of
-    // what it would be derived from.
+    // ⛔ **Exactly one refund: the author's.** There is no liker leg — a like
+    // moves its karma into a marker at cast and the settlement pays it to the
+    // author, so a prune has nothing to refund a liker. An exact-set assertion,
+    // so any stray second refund fails it regardless of where it came from.
     expect(plan.refunds).toHaveLength(1);
     expect(plan.refunds[0]!.amount).toBe(100n);
     expect(Buffer.from(plan.refunds[0]!.owner).equals(Buffer.from(authorId))).toBe(true);
     expect(plan.toPool).toBe(0n);
-    // ⚠ **No synthetic mint id to assert, and that is the change.** The refund
-    // is an output of the block's settlement transaction, so its provenance is
-    // that transaction's `(txId, index)`; the `prune-refund-author` reason stays
-    // reserved and unused (NODE_INTERFACE → Reason and subject table). The
-    // planner writes nothing, so the ledger is untouched here.
+    // ⚠ **No synthetic mint id to assert.** A refund is an output of the block's
+    // settlement transaction, so its provenance is that transaction's
+    // `(txId, index)` and the `prune-refund-author` reason is reserved and
+    // unused (NODE_INTERFACE → Reason and subject table). The planner writes
+    // nothing, so the ledger is untouched here.
     expect(karmaRows(getDb())).toEqual([]);
   });
 });

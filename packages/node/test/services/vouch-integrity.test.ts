@@ -142,11 +142,11 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   }
 
   /**
-   * An unreleased `VouchEscrowBox` for `owner` — what the retired
-   * `vouch_cooldowns` row became (ARCHITECTURE → Vouch boxes).
+   * An unreleased `VouchEscrowBox` for `owner` — the state a cooling voucher is
+   * in (ARCHITECTURE → Vouch boxes).
    *
-   * ⚠ **It names no target**, so a fixture cannot express a pair-scoped
-   * cooldown any more; the rule the box can carry is voucher-scoped.
+   * ⚠ **It names no target**, so a pair-scoped cooldown is inexpressible: the
+   * rule the box can carry is voucher-scoped.
    */
   function seedEscrow(owner: Uint8Array, releaseAtBlock: number, nonce = 90): void {
     storeInsertBox(
@@ -301,14 +301,12 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     expect(result.error).toContain('unreleased escrow');
   });
 
-  // ⛔ **THE RULE THIS CASE USED TO ASSERT IS RETIRED, AND THE FIXTURE SAYS SO
-  // RATHER THAN GOING QUIET.** It read *"a cooldown for a DIFFERENT PAIR does
-  // not block the cast"* and passed. `VouchEscrowBox` carries `owner` and
-  // `releaseAtBlock` and no target (TYPES_INTERFACE → VouchEscrowBox), so the
-  // pair is not a question this state can answer and the gate is keyed on the
-  // voucher alone — strictly stronger than the row-keyed one it replaces. The
-  // actor that separates the two rules is a **second voucher**: their escrow
-  // must not block this one, which is the half that survives.
+  // ⛔ **THE GATE IS VOUCHER-SCOPED, SO THE NON-VACUITY ACTOR IS A SECOND
+  // VOUCHER.** `VouchEscrowBox` carries `owner` and `releaseAtBlock` and no
+  // target (TYPES_INTERFACE → VouchEscrowBox), so a pair-scoped question is one
+  // this state cannot answer — the rule is *this voucher may not recast*, and
+  // what has to stay legal is somebody else's cast while their own escrow
+  // cools.
   it('V3 non-vacuity: another voucher\'s escrow does not block this cast', () => {
     const otherVoucher = makeKeys();
     const karma = seedKarma(voucher.pub, 100n);

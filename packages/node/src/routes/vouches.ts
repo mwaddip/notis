@@ -106,10 +106,9 @@ export function createRouter(deps: VouchesDeps): Router {
     if (cooldownsParam !== undefined && voucher) {
       const voucherBytes = new Uint8Array(Buffer.from(voucher, 'hex'));
       // ⛔ **No `targetId`, because a `VouchEscrowBox` carries none**
-      // (TYPES_INTERFACE → VouchEscrowBox). The retired row was keyed on the
-      // pair; the box holds the voucher, the staked value and the release
-      // height, so the response reports what the committed state actually says
-      // rather than a field reconstructed from somewhere else.
+      // (TYPES_INTERFACE → VouchEscrowBox). It holds the voucher, the staked
+      // value and the release height, so the response reports what committed
+      // state says rather than a field reconstructed from somewhere else.
       const escrows = getVouchEscrowsFor(voucherBytes);
       res.status(200).json({
         cooldowns: escrows.map((e) => ({

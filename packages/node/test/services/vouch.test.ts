@@ -84,8 +84,8 @@ function createVouchBox(
 }
 
 /**
- * An unreleased `VouchEscrowBox` for a voucher — what the retired
- * `vouch_cooldowns` row became (ARCHITECTURE → Vouch boxes).
+ * An unreleased `VouchEscrowBox` for a voucher — the state a cooling voucher is
+ * in (ARCHITECTURE → Vouch boxes).
  *
  * ⚠ **It names no target.** The gate it feeds is keyed on the voucher alone,
  * because that is the only question the box can answer.

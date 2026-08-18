@@ -120,12 +120,12 @@ const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   // ⛔ Karma-bearing and still `false`. The pool holds what is NOT in
   // circulation, so counting it would have the supply account for itself.
   karma_pool: false,
-  // ⛔ **Both `true` now, and each was added on its own evidence.** A marker
-  // holds the liker's karma between the like and the settlement and a carry box
-  // holds an author's remainder across blocks; an escrow holds a voucher's stake
-  // for the length of its cooldown. All three are karma a holder is waiting on
-  // rather than karma that stopped existing — the standing of `bond`,
-  // `post_lock` and `vouch` (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  // ⛔ **Both `true`, each on its own evidence.** A marker holds the liker's
+  // karma between the like and the settlement, a carry box holds an author's
+  // remainder across blocks, and an escrow holds a voucher's stake for the length
+  // of its cooldown. All three are karma a holder is waiting on rather than karma
+  // that stopped existing — the standing of `bond`, `post_lock` and `vouch`
+  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
   like_accrual: true,
   vouch_escrow: true,
 };
@@ -138,11 +138,12 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     vi.resetModules();
   });
 
-  // ⛔ **NOTHING IS PARKED ON THE PREDICATE ANY MORE.** Both types are produced
-  // now — the like transaction emits a marker, the unvouch emits an escrow — so
-  // the store carries a row mapping for each and both are measured at the choke
-  // point like every other karma-bearing type
-  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  // ⛔ **EVERY TYPE IS MEASURED AT THE CHOKE POINT, none on the predicate
+  // alone.** The like transaction emits a marker and the unvouch emits an
+  // escrow, so the store carries a row mapping for each and both move the supply
+  // like any other karma-bearing type
+  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox). The set is empty and
+  // kept, so a type that becomes unproducible has somewhere to go.
   const UNPRODUCED: ReadonlySet<string> = new Set<string>();
 
   for (const [boxType, counts] of Object.entries(COUNTS_AS_CIRCULATING)) {

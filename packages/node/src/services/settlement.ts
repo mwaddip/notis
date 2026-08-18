@@ -233,9 +233,8 @@ function derive(
   // What the pool owes and what it is owed, accumulated across every leg below
   // and settled once. ⛔ **The pool box is spent by this transaction and by
   // nothing else** (NODE_INTERFACE → The settlement transaction), so a leg
-  // cannot reach it on its own — which is the whole reason decay, the bond
-  // forfeit, the like remainder and the pruner's own locks are derived here
-  // rather than where they used to run.
+  // cannot reach it on its own, which is why decay, the bond forfeit, the like
+  // remainder and the pruner's own locks are all derived here.
   let poolDraw = 0n;
   let poolSink = 0n;
 
@@ -363,9 +362,8 @@ function derive(
 
   // 3d. The bonds settling at this height (ARCHITECTURE → Bond outcomes). The
   // vested part returns to the inviter out of the `BondBox`; ⛔ **the unvested
-  // remainder's sink is the POOL**, which under the retired shape was the
-  // *absence* of a mint — a burn with no positive trace, and therefore invisible
-  // to any search keyed on a mint's name.
+  // remainder's sink is the POOL**, named here rather than left as the
+  // difference between two figures.
   const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
   const bonds = deps.getBondsSettlingAt(height);
   const bondSettlements: Array<{ inviter: Uint8Array; invitee: Uint8Array; vested: bigint }> = [];
@@ -443,8 +441,8 @@ function derive(
 
   // ---- 6. The karma this block pays out ----
   //
-  // ⛔ **NO CONSOLIDATION, and that is a change from `mintKarma`.** A recipient
-  // ends the block holding one more karma box rather than one merged box.
+  // ⛔ **NO CONSOLIDATION.** A recipient ends the block holding one more karma
+  // box rather than one merged box.
   // Consolidating would make this transaction's INPUT list depend on the
   // recipient's unrelated holdings instead of on the block's content — and two
   // legs crediting one owner would both want to consume the same boxes, which
