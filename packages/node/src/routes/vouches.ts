@@ -152,6 +152,7 @@ export function createRouter(deps: VouchesDeps): Router {
           // non-conserving one for any that it does not — which is exactly the
           // coincidence the rule exists to remove.
           value: v.value.toString(),
+          createdAtBlock: v.createdAtBlock,
           voucherId: Buffer.from(v.voucherId).toString('hex'),
           targetId: Buffer.from(v.targetId).toString('hex'),
         })),

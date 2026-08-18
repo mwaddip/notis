@@ -563,28 +563,7 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   return rows.map(rowToBox) as CreditBox[];
 }
 
-/**
- * Return all unspent credit boxes for the given owner whose lockedUntilBlock
- * has passed (or is unset), sorted by value descending. Excludes boxes that
- * are still locked at the given block height.
- */
-export function getUnlockedCreditBoxes(
-  owner: Uint8Array,
-  blockHeight: number,
-): CreditBox[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL
-         AND (json_extract(extra_data, '$.lockedUntilBlock') IS NULL
-              OR json_extract(extra_data, '$.lockedUntilBlock') <= ?)
-       ORDER BY value DESC`,
-    )
-    .safeIntegers()
-    .all(Buffer.from(owner), blockHeight) as UtxoRow[];
-  return rows.map(rowToBox) as CreditBox[];
-}
+
 
 /**
  * The bond naming this invitee, or null.
@@ -679,33 +658,6 @@ export function getLikersForPost(targetPostId: string): string[] {
     )
     .all(targetPostId) as { liker_id: Buffer }[];
   return rows.map((r) => r.liker_id.toString('hex'));
-}
-
-/**
- * Every live `VouchEscrowBox` whose cooldown has run out at `height`.
- *
- * `<=` and not `==`: an escrow whose release height fell inside a reorged-away
- * span would otherwise wait forever. The settlement consumes what is due, so
- * "due" has to mean *at or before*.
- *
- * ⛔ **`ORDER BY id` is a consensus obligation, not tidiness.** The settlement
- * emits one karma credit per escrow and its outputs are hashed in order, so two
- * nodes reading this in different orders derive two different transactions.
- * Ascending box id is one of the three orderings the block fixes
- * (NODE_INTERFACE → Determinism is this mechanism's whole risk).
- */
-export function getVouchEscrowsDueAt(height: number): VouchEscrowBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'vouch_escrow'
-         AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.releaseAtBlock') <= ?
-       ORDER BY id`,
-    )
-    .safeIntegers()
-    .all(height) as UtxoRow[];
-  return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
 
 /**

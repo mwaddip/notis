@@ -34,6 +34,7 @@ import type {
   CandidateOf,
   CreditBox,
   FeeBox,
+  VouchEscrowBox,
   UserId,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -957,13 +958,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 10,
         owner: ownerPubKey,
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 10,
         voucherId: ownerPubKey,
         targetId: targetPubRaw,
       };
@@ -1085,7 +1086,7 @@ describe('validateAndApplyTx', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 8,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
       };
@@ -1100,9 +1101,9 @@ describe('validateAndApplyTx', () => {
       const escrow = {
         boxType: 'vouch_escrow' as const,
         value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 10,
         owner: ownerPubKey,
-        releaseAtBlock: 10 + 2,
+        releaseAtBlock: 8 + 2,
       };
       const tx = buildSignedTx([vouchBoxId], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
       const result = validateAndApplyTx(deps, tx, 10);
@@ -1110,6 +1111,214 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
       expect(deps.getBox(vouchBoxId)).toBeNull();
+    });
+
+    it('unvouch escrow dates from the vouch cast, not the unvouch height', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const CAST_HEIGHT = 5;
+      const UNVOUCH_HEIGHT = 20;
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: CAST_HEIGHT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 1);
+      storeInsertBox(seeded);
+
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: UNVOUCH_HEIGHT,
+        owner: ownerPubKey,
+        releaseAtBlock: CAST_HEIGHT + 2,
+      };
+      const tx = buildSignedTx([seeded.id!], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, UNVOUCH_HEIGHT);
+      expect(result.valid).toBe(true);
+    });
+
+    it('refuses an escrow whose releaseAtBlock derives from the unvouch height', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const CAST_HEIGHT = 5;
+      const UNVOUCH_HEIGHT = 20;
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: CAST_HEIGHT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 1);
+      storeInsertBox(seeded);
+
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: UNVOUCH_HEIGHT,
+        owner: ownerPubKey,
+        releaseAtBlock: UNVOUCH_HEIGHT + 2,
+      };
+      const tx = buildSignedTx([seeded.id!], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, UNVOUCH_HEIGHT);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('releaseAtBlock must be');
+    });
+
+    it('VouchBox is spendable at any height — withdrawal is never timing-gated', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const CAST_HEIGHT = 100;
+      const SPEND_HEIGHT = 101;
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: CAST_HEIGHT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 1);
+      storeInsertBox(seeded);
+
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: SPEND_HEIGHT,
+        owner: ownerPubKey,
+        releaseAtBlock: CAST_HEIGHT + 2,
+      };
+      const tx = buildSignedTx([seeded.id!], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, SPEND_HEIGHT);
+      expect(result.valid).toBe(true);
+    });
+
+    it('refuses a vouch cast backdated by more than VOUCH_CAST_HEIGHT_WINDOW', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const HEIGHT = 20;
+      const vouchOut: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT - 6,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const karmaChange: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: 100n - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [karmaChange as AnyBox, vouchOut as AnyBox],
+        ownerPrivKey, ownerPubKey,
+      );
+      const result = validateAndApplyTx(deps, tx, HEIGHT);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('blocks behind height');
+    });
+
+    it('accepts a vouch cast backdated by exactly VOUCH_CAST_HEIGHT_WINDOW', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const HEIGHT = 20;
+      const vouchOut: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT - 5,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const karmaChange: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: 100n - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [karmaChange as AnyBox, vouchOut as AnyBox],
+        ownerPrivKey, ownerPubKey,
+      );
+      const result = validateAndApplyTx(deps, tx, HEIGHT);
+      expect(result.valid).toBe(true);
+    });
+
+    it('refuses an escrow spend before its releaseAtBlock (SPEND_TIMING)', () => {
+      const escrow = seedProvenance<VouchEscrowBox>(
+        {
+          boxType: 'vouch_escrow' as const,
+          value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
+          owner: ownerPubKey,
+          releaseAtBlock: 15,
+        },
+        1,
+      );
+      storeInsertBox(escrow);
+      const karmaOut: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx([escrow.id!], [karmaOut as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('locked until');
+    });
+
+    it('accepts an escrow spend at exactly releaseAtBlock, owner-signed', () => {
+      const escrow = seedProvenance<VouchEscrowBox>(
+        {
+          boxType: 'vouch_escrow' as const,
+          value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
+          owner: ownerPubKey,
+          releaseAtBlock: 10,
+        },
+        1,
+      );
+      storeInsertBox(escrow);
+      const karmaOut: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx([escrow.id!], [karmaOut as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+      expect(deps.getBox(escrow.id!)).toBeNull();
+    });
+
+    it('refuses a stranger-signed escrow spend even at the right height', () => {
+      const { publicKey: strangerPub, privateKey: strangerPriv } = generateKeyPairSync('ed25519');
+      const escrow = seedProvenance<VouchEscrowBox>(
+        {
+          boxType: 'vouch_escrow' as const,
+          value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
+          owner: ownerPubKey,
+          releaseAtBlock: 10,
+        },
+        1,
+      );
+      storeInsertBox(escrow);
+      const karmaOut: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [escrow.id!], [karmaOut as AnyBox],
+        strangerPriv, rawPublicKey(strangerPub),
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Missing or invalid owner signature');
     });
 
     it('does not extend the zero-output exception to karma or like inputs', () => {
@@ -1541,7 +1750,7 @@ describe('validateAndApplyTx', () => {
 
   // ---------------------------------------------------------------------------
   // 16. The fee box — a credit transaction conserves strictly, and a fee is a
-  // `FeeBox` output it names (NODE_INTERFACE → `validateTx` step 5; the three
+  // `FeeBox` output it names (NODE_INTERFACE → `validateTx` step 7; the three
   // stated exceptions all move karma).
   //
   // Every rejection below is the fall-through's, because there is no
@@ -1844,6 +2053,85 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toContain('CreditBox can only be spent to create CreditBox or FeeBox outputs');
       expect(result.error).not.toContain('non-conservation');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 17. Spend timing — the coinbase maturity lock (E-1).
+  //
+  // `lockedUntilBlock` was derived, validated on creation, encoded, stored and
+  // rendered — and no validation path read it on an input.
+  // ---------------------------------------------------------------------------
+  describe('spend timing — credit', () => {
+    function lockedCreditIn(
+      value: bigint,
+      seed: number,
+      lockedUntilBlock: number,
+      owner = ownerPubKey,
+    ): Stored<CreditBox> {
+      const box = seedProvenance<CreditBox>(
+        {
+          boxType: 'credit' as const,
+          value,
+          createdAtBlock: 0,
+          owner,
+          lockedUntilBlock,
+        },
+        seed,
+      );
+      storeInsertBox(box);
+      return box;
+    }
+
+    function unlockedCreditIn(value: bigint, seed: number, owner = ownerPubKey): Stored<CreditBox> {
+      const box = seedProvenance<CreditBox>(
+        {
+          boxType: 'credit' as const,
+          value,
+          createdAtBlock: 0,
+          owner,
+        },
+        seed,
+      );
+      storeInsertBox(box);
+      return box;
+    }
+
+    function creditOut(value: bigint, owner = ownerPubKey): CandidateOf<CreditBox> {
+      return { boxType: 'credit', value, createdAtBlock: 0, owner };
+    }
+
+    it('refuses a credit input before its lockedUntilBlock', () => {
+      const box = lockedCreditIn(500n, 200, 200);
+      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      const r = validateTx(deps, tx, 199);
+      expect(r.valid).toBe(false);
+      expect(r.error).toMatch(/locked until 200/);
+    });
+
+    it('accepts the same input at exactly lockedUntilBlock', () => {
+      const box = lockedCreditIn(500n, 201, 200);
+      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      expect(validateTx(deps, tx, 200).valid).toBe(true);
+    });
+
+    it('accepts a credit input carrying no lock', () => {
+      const box = unlockedCreditIn(500n, 202);
+      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      expect(validateTx(deps, tx, 1).valid).toBe(true);
+    });
+
+    it('refuses on timing before authorization, on an unsigned locked spend', () => {
+      const box = lockedCreditIn(500n, 203, 200);
+      const tx: UtxoTransaction = {
+        inputs: [box.id!],
+        outputs: [creditOut(500n)],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      const r = validateTx(deps, tx, 199);
+      expect(r.error).toMatch(/locked until/);
+      expect(r.error).not.toMatch(/signature/i);
     });
   });
 });

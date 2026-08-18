@@ -133,8 +133,8 @@ makes a title plain.
 - Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, …)` and a KeyObject
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
 - Wire format: positional binary, with CBOR survivals. HTTP API: JSON
-- **Value conservation** — user transactions conserve, with a closed set of stated exceptions;
-  `NODE_INTERFACE` → `validateTx` step 5 is the authoritative enumeration. All other mints and burns
+- **Value conservation** — every user transaction conserves, unconditionally: each cost lands in a
+  box the transaction itself outputs (`NODE_INTERFACE` → `validateTx` step 7). All mints and burns
   happen in block-application paths, never inside a user transaction
 - Secret keys never appear in API responses or in DTOs crossing component boundaries
 - Protocol version on every post and block (`PROTOCOL_VERSION = 1`)

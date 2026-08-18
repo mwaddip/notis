@@ -433,7 +433,7 @@ describe('field-type pin', () => {
         value: 1n,
         createdAtBlock: 0,
         owner: ownerPubKey,
-        releaseAtBlock: 1000,
+        releaseAtBlock: 0 + 2,
       };
       const r = validateTx(deps, signedTx([seeded.id!], [escrow as never]), 10);
       expect(r.valid, r.error).toBe(true);

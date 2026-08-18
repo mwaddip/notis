@@ -139,11 +139,10 @@ export function createRouter(deps: BlocksDeps): Router {
       // bigint server-side (`Config.inviteProbationBlocks`).
       inviteProbationBlocks: deps.inviteProbationBlocks,
       // ⛔ **Served because a client must REPRODUCE it.** An unvouch outputs a
-      // `VouchEscrowBox` whose `releaseAtBlock` the engine pins against
-      // `height + vouchCooldownBlocks` (NODE_INTERFACE → Vouch transition
-      // rules), so a client holding it as a constant agrees on mainnet and is
-      // refused on devnet — the failure `inviteProbationBlocks` above already
-      // had. Per-network values are served, never known.
+      // `VouchEscrowBox` whose `releaseAtBlock` the engine pins as
+      // `vouch.createdAtBlock + vouchCooldownBlocks`, so a client holding it as
+      // a constant agrees on mainnet and is refused on devnet. Per-network
+      // values are served, never known.
       vouchCooldownBlocks: deps.vouchCooldownBlocks,
     });
   });

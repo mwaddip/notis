@@ -1184,11 +1184,10 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
  * trip has to be conservation-**structural** rather than true by coincidence of
  * the cast pin holding for the box in hand (TYPES_INTERFACE → VouchEscrowBox).
  *
- * ⚠ **`releaseAtBlock` is pinned by a FLOOR, not an equality.** A transaction
- * cannot commit to the height of the block that will carry it, so the engine
- * requires only `>= height + vouchCooldownBlocks`
- * (NODE_INTERFACE → Vouch transition rules). Releasing late costs only the
- * voucher; releasing early is what the cooldown exists to prevent.
+ * ⛔ **`releaseAtBlock` is an EXACT PIN on the vouch's cast height.**
+ * `releaseAtBlock = vouch.createdAtBlock + vouchCooldownBlocks` — the cooldown
+ * runs from casting, not from withdrawal, so a long endorsement does not
+ * penalise the voucher.
  *
  * ⛔ **Every input is a PARAMETER, none a page global.** The caller resolves the
  * box id, the stake and the release height, so this function is a pure
@@ -1785,14 +1784,12 @@ document.getElementById('unvouchBtn').addEventListener('click', async () => {
     // The stake as the node reports it, never the constant — see
     // `buildUnvouchTx`. `BigInt` because the listing carries it as a decimal
     // string, like every other value on this API.
-    // ⛔ `+ 1` because this transaction is POOLED: it applies at the next height
-    // at the earliest, and the engine's floor is read at the height that carries
-    // it. Overshooting is legal — only the floor is a rule.
+    // The cooldown runs from the vouch's cast height, not from unvouch time.
     const tx = buildUnvouchTx(
       vouch.boxId,
       BigInt(vouch.value),
       pubKeyHex,
-      currentBlockHeight + 1 + vouchCooldownBlocks,
+      vouch.createdAtBlock + vouchCooldownBlocks,
     );
     const { signature } = await signTxId(tx);
     tx.signatures[pubKeyHex] = signature;

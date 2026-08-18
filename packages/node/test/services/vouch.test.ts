@@ -187,13 +187,13 @@ describe('vouch service', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 99n,
-      createdAtBlock: 0,
+      createdAtBlock: atBlock,
       owner,
     };
     const vouchBox: CandidateOf<VouchBox> = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
-      createdAtBlock: 0,
+      createdAtBlock: atBlock,
       voucherId: owner,
       targetId,
     };
@@ -614,7 +614,7 @@ describe('vouch service', () => {
             value: vouchBox.value,
             createdAtBlock: 0,
             owner: voucherPubKey,
-            releaseAtBlock: 1000,
+            releaseAtBlock: 0 + 2,
           },
         ],
         signatures: {},
@@ -647,7 +647,7 @@ describe('vouch service', () => {
             value: vouchBox.value,
             createdAtBlock: 0,
             owner: voucherPubKey,
-            releaseAtBlock: 1000,
+            releaseAtBlock: 0 + 2,
           },
         ],
         signatures: {},
@@ -662,15 +662,9 @@ describe('vouch service', () => {
       expect(result.txId).toBeDefined();
       expect(typeof result.txId).toBe('string');
       expect(result.expiresAtHeight).toBe(5 + MEMPOOL_EXPIRY_BLOCKS);
-      // ⛔ **Read off the escrow the transaction carries, never recomputed.**
-      // The client chose `releaseAtBlock` and the engine pinned only its floor
-      // (NODE_INTERFACE → Vouch transition rules), so a figure derived here from
-      // the current height would report a maturity the chain will not honour
-      // whenever the client overshot — as this fixture deliberately does.
-      expect(result.karmaReturnsAtBlock).toBe(1000);
-      expect(result.karmaReturnsAtBlock).toBeGreaterThanOrEqual(
-        5 + config.vouchCooldownBlocks,
-      );
+      // The escrow's `releaseAtBlock` is the exact pin:
+      // `vouch.createdAtBlock + cooldown = 0 + 2`.
+      expect(result.karmaReturnsAtBlock).toBe(2);
 
       // Verify mempool has the entry
       const entries = getPendingEntries(100);

@@ -491,7 +491,6 @@ function u32BEMirror(n: number): Uint8Array {
  */
 const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
   coinbase:               '32fe945568d48465eb9a2b74d506b0ec16395136fbb4357c8de21cef5a105c0a',
-  'vouch-settle':         '09a5a40e4424fd0f4897aff225d32500975941acb7ef4972bf30a71f2c6a62aa',
   'like-payout':          '53a7f0ab4f60e54e0b7bbc694c0082e777c6e4ebf910db321dcfb4c1d222f59a',
   'postlock-unlock':      '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f',
   'postlock-remainder':   '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d',

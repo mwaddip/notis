@@ -537,8 +537,8 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * pool is the only source and the only sink (→ `KarmaPoolBox`) — so what the
  * rows differ on is their net effect on **circulating** karma: `invite-claim`
  * **draws from the pool**, karma the invitee did not have, while `bond-settle`
- * and `bond-return` **recirculate** what a `BondBox` already held, in the sense
- * `vouch-settle` returns an escrow (NODE_INTERFACE → Reason and subject table).
+ * and `bond-return` **recirculate** what a `BondBox` already held
+ * (NODE_INTERFACE → Reason and subject table).
  *
  * `emission-release`, `treasury-accrue` and `pool-settle` take an **empty**
  * subject, and `lp(subject)` writes that as a zero length rather than as an
@@ -557,14 +557,16 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * Reason and subject table).
  *
  * **Retired reasons — reserved, never reuse:** `'author-reward'`,
- * `'liker-refund'` and `'prune-refund-liker'` (likes are one-way burns, so
- * prune settlement refunds no liker). None of them holds a number in
- * `MINT_REASON`, so there is no tag of theirs to burn — but see `MINT_REASON`
- * for the rule that applies to the next retirement.
+ * `'liker-refund'`, `'prune-refund-liker'` (likes are one-way burns, so
+ * prune settlement refunds no liker) and `'vouch-settle'` (an unvouched
+ * stake waits in a `VouchEscrowBox` and its owner reclaims it by
+ * transaction; no mint occurs in the vouch lifecycle). `'vouch-settle'`
+ * held tag 1, which stays reserved in `MINT_REASON` — a new reason wearing
+ * that tag would derive mint txIds that collide with historical
+ * vouch-settle mints.
  */
 export type MintReason =
   | 'coinbase'
-  | 'vouch-settle'
   | 'like-payout'
   | 'postlock-unlock'
   | 'postlock-remainder'
@@ -605,7 +607,9 @@ export type MintReason =
  */
 const MINT_REASON = enum8<MintReason>('mintReason', {
   coinbase: 0,
-  'vouch-settle': 1,
+  // tag 1 reserved: formerly 'vouch-settle' — reasons are enum8, so a new
+  // reason wearing tag 1 would derive mint txIds that collide with historical
+  // vouch-settle mints
   'like-payout': 2,
   'postlock-unlock': 3,
   'postlock-remainder': 4,

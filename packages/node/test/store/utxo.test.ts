@@ -32,7 +32,6 @@ async function importUtxoFresh() {
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
     getCreditBox: (owner: Uint8Array) => CreditBox | null;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
-    getUnlockedCreditBoxes: (owner: Uint8Array, blockHeight: number) => CreditBox[];
     getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
     getBondBoxes: (inviterId: Uint8Array) => BondBox[];
     insertBox: (box: AnyBox, postLockTarget?: string) => void;
@@ -526,72 +525,4 @@ describe('utxo store', () => {
     expect(results).toEqual([]);
   });
 
-  // --- getUnlockedCreditBoxes filters out locked boxes ------------------------
-
-  it('getUnlockedCreditBoxes excludes locked boxes', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, getUnlockedCreditBoxes } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const owner = bytes(32);
-    const currentHeight = 100;
-
-    const box1 = makeCreditBox({ value: 300n, owner });
-    Object.assign(box1, fixtureProvenance(box1, 1));
-    box1.id = computeBoxId(box1);
-    insertBox(box1);
-
-    const box2 = makeCreditBox({ value: 500n, owner });
-    box2.lockedUntilBlock = 150;
-    Object.assign(box2, fixtureProvenance(box2, 1));
-    box2.id = computeBoxId(box2);
-    insertBox(box2);
-
-    const box3 = makeCreditBox({ value: 200n, owner });
-    box3.lockedUntilBlock = 50;
-    Object.assign(box3, fixtureProvenance(box3, 1));
-    box3.id = computeBoxId(box3);
-    insertBox(box3);
-
-    const box4 = makeCreditBox({ value: 100n, owner });
-    Object.assign(box4, fixtureProvenance(box4, 1));
-    box4.id = computeBoxId(box4);
-    insertBox(box4);
-
-    const results = getUnlockedCreditBoxes(owner, currentHeight);
-    expect(results).toHaveLength(3);
-    expect(results[0]!.value).toBe(300n);
-    expect(results[1]!.value).toBe(200n);
-    expect(results[2]!.value).toBe(100n);
-  });
-
-  it('getUnlockedCreditBoxes returns empty array when all boxes are locked', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, getUnlockedCreditBoxes } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const owner = bytes(32);
-    const box = makeCreditBox({ value: 500n, owner });
-    box.lockedUntilBlock = 200;
-    Object.assign(box, fixtureProvenance(box, 1));
-    box.id = computeBoxId(box);
-    insertBox(box);
-
-    const results = getUnlockedCreditBoxes(owner, 100);
-    expect(results).toEqual([]);
-  });
-
-  it('getUnlockedCreditBoxes returns empty array for unknown owner', async () => {
-    const { initDb } = await importDbFresh();
-    const { getUnlockedCreditBoxes } = await importUtxoFresh();
-
-    initDb(':memory:');
-
-    const results = getUnlockedCreditBoxes(bytes(32), 100);
-    expect(results).toEqual([]);
-  });
 });

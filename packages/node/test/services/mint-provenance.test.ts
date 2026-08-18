@@ -6,7 +6,6 @@ import {
   GENESIS_SYSTEM_KARMA,
   GENESIS_FAUCET_CREDITS,
   coinbaseContext,
-  vouchSettleContext,
   likePayoutContext,
   postlockUnlockContext,
   postlockRemainderContext,
@@ -60,7 +59,6 @@ const HEIGHT = 4242;
  */
 const ALL_CONTEXTS = {
   coinbase: { ctx: coinbaseContext(0), bytes: 4 },
-  'vouch-settle': { ctx: vouchSettleContext(VOUCHER, TARGET), bytes: 64 },
   'like-payout': { ctx: likePayoutContext(OWNER), bytes: 32 },
   'postlock-unlock': { ctx: postlockUnlockContext(POST_A), bytes: 64 },
   'postlock-remainder': { ctx: postlockRemainderContext(POST_A), bytes: 64 },
@@ -125,8 +123,6 @@ describe('mint provenance — subject encodings', () => {
 
     expect(decayContext(OWNER).subject).toEqual(OWNER);
     expect(likePayoutContext(OWNER).subject).toEqual(OWNER);
-    expect(vouchSettleContext(VOUCHER, TARGET).subject.subarray(0, 32)).toEqual(VOUCHER);
-    expect(vouchSettleContext(VOUCHER, TARGET).subject.subarray(32)).toEqual(TARGET);
 
     // The prune leg: entry root as hex text, then the refunded key raw.
     const pruneAuthor = pruneRefundAuthorContext(ROOT_A, OWNER);
@@ -191,9 +187,6 @@ describe('mint provenance — txId uniqueness', () => {
     );
     expect(mintTxIdFor(pruneRefundAuthorContext(ROOT_A, OWNER), HEIGHT)).not.toBe(
       mintTxIdFor(pruneRefundAuthorContext(ROOT_A, pubkey(0x99)), HEIGHT),
-    );
-    expect(mintTxIdFor(vouchSettleContext(VOUCHER, TARGET), HEIGHT)).not.toBe(
-      mintTxIdFor(vouchSettleContext(TARGET, VOUCHER), HEIGHT),
     );
     expect(mintTxIdFor(coinbaseContext(0), HEIGHT)).not.toBe(
       mintTxIdFor(coinbaseContext(1), HEIGHT),

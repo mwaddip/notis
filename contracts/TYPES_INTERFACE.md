@@ -695,33 +695,31 @@ VouchBox extends BoxBase {
 
 ### VouchEscrowBox
 
-> ## ⚠ PARTIAL — the type and its layout exist; nothing produces or consumes one
->
-> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface, tag **12** and the wire layout below.
-> ⚠ **Still ahead of code in `node`** — the unvouch transition does not emit one and the settlement
-> does not consume one, so no escrow box is ever built.
->
-> It replaces the `vouch_cooldowns` table, which is **node-local SQL outside the AVL root**
-> (`ARCHITECTURE` → Vouch boxes, `⚠ VIOLATED`).
+Where an unvouched stake waits out its cooldown. The unvouch transaction
+outputs it; the voucher reclaims it by their own signed transaction at or after
+`releaseAtBlock` (NODE_INTERFACE → Vouch transition rules, §Spend timing).
 
 ```
 VouchEscrowBox extends BoxBase {
   boxType: "vouch_escrow"
   value: bigint                // Exactly what the consumed VouchBox held
   owner: Uint8Array            // 32 raw bytes — the voucher; where the karma returns
-  releaseAtBlock: number       // Unvouch height + VOUCH_COOLDOWN_BLOCKS
+  releaseAtBlock: number       // vouch.createdAtBlock + vouchCooldownBlocks — the
+                               // cooldown runs from the CAST, an exact pin
 }
 ```
 
 ⛔ **`value` IS THE CONSUMED BOX'S, NEVER `VOUCH_KARMA_AMOUNT`.** The round trip has to be
 conservation-**structural** rather than true by coincidence, so it must not depend on the cast's pin
-holding for the box in hand. The escrow row this replaces already records the actual staked value
-for exactly this reason and the box inherits the obligation.
+holding for the box in hand.
 
-⛔ **This is what makes an unvouch conserve.** The transaction it replaces has **zero outputs** — the
-stake is destroyed and a SQL row remembers to re-mint it — so for the length of the cooldown the
-karma exists nowhere. That is a burn and a mint separated by **blocks, not instants**, which
-`ARCHITECTURE → The conservation axiom` forbids by name.
+⛔ **This is what makes an unvouch conserve.** The stake moves from a box the voucher's own
+transaction consumes into one it creates, so both ends are named inside one transaction, the value
+is located at every instant, and the pool is uninvolved — `ARCHITECTURE → How a source and a sink
+get named`, first shape.
+
+⚠ **`releaseAtBlock` is committed state, and that is the point.** A node holding the `stateRoot`
+holds the obligation itself rather than a root it cannot interpret without replaying every block.
 
 ✅ **The pool is not involved, and no marker is needed.** The value moves from one box the voucher's
 own transaction consumes into another it creates, so both ends are named inside one transaction.

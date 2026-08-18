@@ -116,10 +116,9 @@ export function initiateUnvouch(
 
   const txId = computeTxId(tx);
   // ⛔ **Read off the escrow the transaction itself carries, never recomputed.**
-  // The client chose `releaseAtBlock` and the engine pinned only its floor
-  // (NODE_INTERFACE → Vouch transition rules), so a figure derived here from the
-  // current height would report a maturity the chain will not honour whenever
-  // the client overshot.
+  // The engine pins `releaseAtBlock` as an exact equality against
+  // `vouch.createdAtBlock + vouchCooldownBlocks`, so the value on the output
+  // is authoritative.
   const escrow = tx.outputs.find(
     (o): o is VouchEscrowBox => o.boxType === 'vouch_escrow',
   );

@@ -219,10 +219,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
 
   const decayEvents: DecayEventCapture[] = [];
 
-  // Group steps into blocks by height, preserving within-block order. Ordering
-  // inside a block is load-bearing: block application runs `applyKarmaDecay`
-  // before `processVouchCooldowns`, so a mint can land for an owner decay just
-  // fired for, at the same height.
+  // Group steps into blocks by height, preserving within-block order.
   const heights = [...new Set(scenario.steps.map((s) => s.at))].sort((a, b) => a - b);
 
   for (const height of heights) {
@@ -263,7 +260,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               [{
                 owner,
                 amount: step.amount,
-                ctx: m.provenance.vouchSettleContext(owner, owner),
+                ctx: m.provenance.likePayoutContext(owner),
               }],
               null,
               height,

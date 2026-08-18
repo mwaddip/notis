@@ -226,9 +226,8 @@ export function revertBlock(height: number): PruneEntry[] {
   // 1. Replay the primitive mutation log in reverse: box/insert → deleteBox,
   // box/remove → unconsumeBox, record → restore `replaced` or delete. This
   // restores the exact pre-block committed state for every mutation class —
-  // including the pre-existing boxes merge-consumed inside
-  // mintKarma/mintCredits, tallied like boxes, prune settlement, and identity
-  // records.
+  // including the pre-existing boxes merge-consumed inside settlement outputs,
+  // tallied like boxes, prune settlement, and identity records.
   //
   // Reverse order is what makes a record written **more than once in one block**
   // (activity bump then decay, at the same height) revert correctly: each

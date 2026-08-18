@@ -209,9 +209,8 @@ describe('P2-B phase 4 — input-shape pins', () => {
   /**
    * The `VouchEscrowBox` an unvouch outputs (ARCHITECTURE → Vouch boxes).
    *
-   * ⚠ `releaseAtBlock` clears the floor by a margin — only the floor is a rule,
-   * because a transaction cannot commit to the height of the block that will
-   * carry it.
+   * `releaseAtBlock` is the exact pin: `vouch.createdAtBlock + cooldown`.
+   * The vouch fixtures use `createdAtBlock: 0`, deps have `cooldown: 2`.
    */
   function escrowFor(owner: Uint8Array, value: bigint) {
     return {
@@ -219,7 +218,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
       value,
       createdAtBlock: 0,
       owner,
-      releaseAtBlock: 1000,
+      releaseAtBlock: 0 + 2,
     };
   }
 

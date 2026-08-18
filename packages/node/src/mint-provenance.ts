@@ -6,13 +6,13 @@ import type { MintReason, PostId, TxId } from '@dagsocial/types';
  * the caller knows (Spec G phase C; NODE_INTERFACE → "Box Identity and Mint
  * Provenance").
  *
- * `mintKarma`/`mintCredits` and the direct producers know the *height*; they do
- * not know whether they are settling a vouch, paying an author or unlocking a
- * post lock. Threading that in as a value, rather than as a txId the caller
- * derives itself, is what keeps derivation at one site: `computeMintTxId`
- * commits to height, and a caller that passed both a height and a pre-derived
- * txId could pass two different heights with nothing forcing a match — a box
- * whose id encodes a height it did not settle at.
+ * The settlement outputs and direct producers know the *height*; they do not
+ * know whether they are paying an author, unlocking a post lock, or settling
+ * a bond. Threading the reason in as a value, rather than as a txId the
+ * caller derives itself, is what keeps derivation at one site:
+ * `computeMintTxId` commits to height, and a caller that passed both a
+ * height and a pre-derived txId could pass two different heights with nothing
+ * forcing a match — a box whose id encodes a height it did not settle at.
  */
 export interface MintContext {
   readonly reason: MintReason;
@@ -80,11 +80,6 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 /** `coinbase` — 4 bytes. One event per coinbase output, not one N-output tx. */
 export function coinbaseContext(outputIndex: number): MintContext {
   return { reason: 'coinbase', subject: u32BE(outputIndex) };
-}
-
-/** `vouch-settle` — 64 bytes: two 32-byte pubkeys. */
-export function vouchSettleContext(voucherId: Uint8Array, targetId: Uint8Array): MintContext {
-  return { reason: 'vouch-settle', subject: concat(voucherId, targetId) };
 }
 
 /**
@@ -229,8 +224,7 @@ export function pruneRefundAuthorContext(rootPostHash: PostId, owner: Uint8Array
 // is claimed or cancelled, never both.
 //
 // ⛔ `invite-claim` is the only one that increases karma supply. `bond-settle`
-// and `bond-return` re-mint karma a `BondBox` already held, in the sense
-// `vouch-settle` re-mints an escrow.
+// and `bond-return` re-mint karma a `BondBox` already held.
 
 /** `invite-claim` — 32 bytes. Mints the invite's grant to the invitee. */
 export function inviteClaimContext(inviteePublicKey: Uint8Array): MintContext {
@@ -259,9 +253,9 @@ export function bondReturnContext(inviteePublicKey: Uint8Array): MintContext {
 /**
  * The single site where a mint's synthetic transaction id is derived.
  *
- * `mintKarma`, `mintCredits` and the direct producers (decay, the vesting
- * remainder post-lock, genesis) all route through here, so the height that
- * reaches `computeMintTxId` is always the height the box settles at.
+ * Every settlement output and direct producer routes through here, so the
+ * height that reaches `computeMintTxId` is always the height the box settles
+ * at.
  */
 export function mintTxIdFor(ctx: MintContext, blockHeight: number): TxId {
   return computeMintTxId(blockHeight, ctx.reason, ctx.subject);

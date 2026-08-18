@@ -122,11 +122,11 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // The intra-block adjacency is reachable: block application runs
-    // `applyKarmaDecay` before `processVouchCooldowns`, so a vouch settlement
-    // can mint karma for an owner decay has just fired for, **at the same
-    // height**. That mint writes `lastActivityBlock` to the very height decay
-    // wrote `lastDecayBlock`, and staleness has to restart from it.
+    // The harness fabricates a karma mint at the same height decay fires;
+    // production reaches the same adjacency via like settlement landing at a
+    // decay height. The two record writes (`lastActivityBlock` from the mint's
+    // `bumpActivityClock`, `lastDecayBlock` from `commitDecayClocks`) target
+    // one key and must collapse correctly.
     name: 'decay-then-mint-same-block',
     cfg: FAST,
     owners: ['alice'],

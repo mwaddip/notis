@@ -200,12 +200,10 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     utxo.insertBox(zeroVouch);
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
 
-    // ⚠ **`releaseAtBlock` clears the floor EXACTLY.** The engine pins only a
-    // lower bound, but this case mines to maturity, so an overshoot would leave
-    // the escrow unreleased and the assertion below would be measuring the
-    // fixture. Applied at height 1, the floor is `1 + cooldown`.
+    // The engine pins `releaseAtBlock` as an exact equality:
+    // `vouch.createdAtBlock + cooldown`. The vouch was cast at block 0.
     mempool.insertUtxoTx(
-      makeUnvouchTx(zeroVouch.id!, voucher, zeroVouch.value, 1 + config.vouchCooldownBlocks),
+      makeUnvouchTx(zeroVouch.id!, voucher, zeroVouch.value, 0 + config.vouchCooldownBlocks),
       100000,
     );
 
@@ -221,23 +219,20 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     const rows = escrows.getVouchEscrowsFor(voucher.userId);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.value).toBe(0n);
-    // ⚠ **Read off the box, not recomputed.** The engine pins only a FLOOR — a
-    // transaction cannot commit to the height of the block that will carry it —
-    // so what the chain honours is the producer's figure
-    // (NODE_INTERFACE → Vouch transition rules). This one sits exactly on the
-    // floor, which is what makes the maturity below reachable.
-    expect(rows[0]!.releaseAtBlock).toBe(1 + config.vouchCooldownBlocks);
+    // The escrow's `releaseAtBlock` is `vouch.createdAtBlock + cooldown`.
+    expect(rows[0]!.releaseAtBlock).toBe(config.vouchCooldownBlocks);
 
     // Mine to maturity.
-    for (let h = 2; h <= 1 + config.vouchCooldownBlocks; h++) {
+    for (let h = 2; h <= config.vouchCooldownBlocks; h++) {
       expect(await mineNextBlock(bc)).not.toBeNull();
     }
     const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(1 + config.vouchCooldownBlocks);
+    expect(ordering.getCurrentHeight()).toBe(config.vouchCooldownBlocks);
 
-    // Nothing minted, escrow settled: the supply is exactly what was locked.
+    // The escrow survives — the settlement no longer sweeps it. The owner
+    // reclaims it via a user transaction.
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
-    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
+    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
   });
 
   it('V2 consequence: a block embedding a foreign-voucherId cast is rejected whole', async () => {
