@@ -2344,6 +2344,33 @@ lasts at most until the decay lands.
 compiler signal. **Ascending owner, ascending box id, or the block's committed transaction order.
 Nothing else.**
 
+##### ⛔ "HAS AN `ORDER BY`" IS THE WRONG TEST. "IS THE ORDERING KEY UNIQUE" IS THE RIGHT ONE
+
+**A partial order passes every check anyone would run and forks anyway.** It reads as ordered, it
+greps as ordered, and it leaves ties resolved by whatever the engine returns.
+
+> ⚠ **Measured 2026-08-18.** `getKarmaBoxes` was `ORDER BY value DESC` — an order, and not a total
+> one. **Two karma boxes of equal value for one owner have no defined relative order**, and decay
+> lists exactly those ids as settlement inputs, which the `TxId` hashes **in order**. ⛔ **Equal
+> values are ordinary, not exotic**: two faucet grants, or a payout that happens to match an existing
+> balance.
+
+✅ **The fix appends a unique tiebreaker rather than replacing the semantic order** — `ORDER BY value
+DESC, id`. The coin-selection preference survives and the tie is decided. **Replacing a meaningful
+order with `id` alone would trade a fork for a behaviour change.**
+
+⚠ **A single-row read needs it too, and for a different reason.** `getPostLockBox` had neither
+`ORDER BY` nor `LIMIT`, and `.get()` took whatever came first — it feeds prune settlement and
+post-lock vesting. One lock per post is the invariant, so the order changes nothing **while the
+invariant holds**. ⛔ **Its job is to bound what happens when the invariant is violated upstream:
+with an order, a duplicate yields the same wrong box on every node — a defect. Without one, it yields
+different boxes on different nodes — a fork.** Ordering is what keeps someone else's bug from
+becoming a chain split.
+
+⚠ **A query that reaches no derivation needs none of this.** Boolean predicates, `COUNT`s, API
+listings and mempool reads are unaffected — **the obligation follows the consumer, not the query**,
+so this is checked per call site rather than by sweeping for missing `ORDER BY`.
+
 ⛔ **`vouch_cooldowns`-style node-local SQL is exactly what this forbids.** A block-application effect
 must be derivable from **block content**; an effect keyed on a local table is a fork, not a
 refactor. That is the load-bearing reason marker boxes exist rather than a tidiness argument.
