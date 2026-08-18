@@ -56,6 +56,7 @@ function createKarmaBox(
     {
       boxType: 'karma' as const,
       value,
+      createdAtBlock: 0,
       owner,
     },
     seed,
@@ -74,6 +75,7 @@ function createVouchBox(
     {
       boxType: 'vouch' as const,
       value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
       voucherId,
       targetId,
     },
@@ -96,6 +98,7 @@ function seedVouchEscrow(owner: Uint8Array, releaseAtBlock: number): void {
       {
         boxType: 'vouch_escrow' as const,
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         owner,
         releaseAtBlock,
       },
@@ -116,6 +119,7 @@ function vouchTxFor(
       {
         boxType: 'vouch' as const,
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId,
         targetId,
       },
@@ -183,11 +187,13 @@ describe('vouch service', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 99n,
+      createdAtBlock: 0,
       owner,
     };
     const vouchBox: CandidateOf<VouchBox> = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
       voucherId: owner,
       targetId,
     };
@@ -278,6 +284,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             voucherId: voucherPubKey,
             targetId: new Uint8Array(32), // all zeros
           },
@@ -298,6 +305,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             voucherId: voucherPubKey,
             targetId: voucherPubKey, // same as voucher
           },
@@ -319,6 +327,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             voucherId: voucherPubKey,
             targetId: targetPubKey,
           },
@@ -342,11 +351,13 @@ describe('vouch service', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: first.value - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         owner: voucherPubKey,
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: voucherPubKey,
         targetId: targetPubKey,
       };
@@ -374,6 +385,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             voucherId: voucherPubKey,
             targetId: targetPubKey,
           },
@@ -457,6 +469,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             voucherId: voucherPubKey,
             targetId: cooldownTarget,
           },
@@ -480,6 +493,7 @@ describe('vouch service', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 99n,
+        createdAtBlock: 0,
         owner: voucherPubKey,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
@@ -487,6 +501,7 @@ describe('vouch service', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: voucherPubKey,
         targetId: targetPubKey,
       };
@@ -529,6 +544,7 @@ describe('vouch service', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 99n,
+        createdAtBlock: 0,
         owner: voucherPubKey,
       };
       Object.assign(newKarma, fixtureProvenance(newKarma, 1));
@@ -536,6 +552,7 @@ describe('vouch service', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: voucherPubKey,
         targetId: targetPubKey,
       };
@@ -595,6 +612,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch_escrow' as const,
             value: vouchBox.value,
+            createdAtBlock: 0,
             owner: voucherPubKey,
             releaseAtBlock: 1000,
           },
@@ -627,6 +645,7 @@ describe('vouch service', () => {
           {
             boxType: 'vouch_escrow' as const,
             value: vouchBox.value,
+            createdAtBlock: 0,
             owner: voucherPubKey,
             releaseAtBlock: 1000,
           },

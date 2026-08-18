@@ -59,6 +59,7 @@ function createKarmaBox(
     {
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner,
     },
     seed,
@@ -149,11 +150,13 @@ describe('invites service', () => {
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaIn.value - bondValue,
+      createdAtBlock: 0,
       owner: inviterId,
     };
     const bondOut: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: bondValue,
+      createdAtBlock: 0,
       inviterId: overrides.bondInviterId ?? inviterId,
       inviteePublicKey: invitee,
     };
@@ -212,7 +215,7 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n, owner: inviterId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId,
           inviteePublicKey: inviteePubKey, 
@@ -326,7 +329,7 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n, owner: inviterId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'bond', value: config.inviteBondMax, inviterId,
           inviteePublicKey: inviteePubKey,
@@ -380,6 +383,7 @@ describe('invites service', () => {
         {
           boxType: 'karma',
           value: 100n + FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           owner: inviterId,
         } as CandidateOf<KarmaBox>,
       ],

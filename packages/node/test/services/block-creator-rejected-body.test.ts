@@ -161,11 +161,13 @@ function makeVouchCastTx(
       {
         boxType: 'karma',
         value: karmaIn.value - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         owner: voucher.userId,
       } as KarmaBox,
       {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: voucher.userId,
         targetId,
       } as VouchBox,

@@ -62,12 +62,13 @@ value path. Node-side obligations:
   `number` and loses precision above 2⁵³.
 - **DB reset.** Box ids and the AVL `stateRoot` changed in the types phase — fresh
   chain / coordinated cutover, no in-place migration.
-- **Demo UI (`public/index.html`).** Its hand-rolled CBOR encoder emits `value` as
-  `0x1b`+uint64 and the remaining `number` fields as minimal-int (folding in the L-5
-  `cborEncodeInt` cap fix — `createdAtBlock` crosses 65536), **byte-identical to
-  `@dagsocial/types`** so client-built box ids match the node; it parses API
-  `value`/`total` with `BigInt()`. A box-value mirror test (extending the M-1 post
-  mirror) pins the byte-identity.
+- **Demo UI (`public/index.html`).** Its hand-rolled box encoder is **positional**,
+  mirroring `canonicalBoxBytes` field for field — `enum8(boxType) ‖ vlqU64(value) ‖
+  vlqU(createdAtBlock)` then the per-type tail — and must be **byte-identical to
+  `@dagsocial/types`** so client-built box ids match the node. It parses API
+  `value`/`total` with `BigInt()`. A box-value mirror test pins the byte-identity.
+  ⛔ **A prefix field missing there breaks `computeTxId` for every box type at
+  once**, and the failure surfaces as a signature rejection that names no encoding.
 
 > ## ⛔ THE DEMO UI IS A SECOND IMPLEMENTATION OF CONSENSUS RULES, AND NO GATE REACHES IT
 >
@@ -2960,13 +2961,18 @@ endpoint's obligation (AVL+ State Root → "Two entity kinds") falls to phase D.
   `putIdentityRecord` at the end of the mutation phase, unconditionally for every
   author who received likes in the block. No other path may touch it.
 
-**The height comes from the open journal, not from the box.** `insertBox` takes
-no height, and `createdAtBlock` is the field Spec G is removing — reading it
-would reintroduce the dependency phase D exists to delete, and would break
-outright at phase G. The open journal already carries the block's height
-(`beginBlockJournal(height)`), and that *is* the settled height. A narrow
-accessor for it is the right seam; the record is only meaningful during block
-application anyway, which is exactly when a journal is open.
+**Two heights meet at `insertBox`, and they answer different questions.**
+
+⛔ **The `created_at_block` COLUMN takes the box's own `createdAtBlock`** — the height its creator
+declared and signed, which `canonicalBoxBytes` encodes and the box id covers. The column is a
+denormalisation of a committed field, not an independent observation.
+
+⛔ **The ACTIVITY CLOCK takes the open journal's height** — `beginBlockJournal(height)`, the height
+this block is settling at. It must not read the box: the clock records *when the chain saw activity*,
+and a creator-declared value is not that. **A backdated box would otherwise backdate its owner's
+decay clock**, which is the one place the loose creator-declared bound would become exploitable.
+
+The record is only meaningful during block application, which is exactly when a journal is open.
 
 With no journal open (bootstrap, non-block paths) `insertBox` records nothing,
 consistent with every other choke-point hook.

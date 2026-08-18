@@ -137,6 +137,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const candidate = {
       boxType: 'karma' as const,
       value,
+      createdAtBlock: 0,
       owner,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
@@ -157,6 +158,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
         {
           boxType: 'vouch_escrow' as const,
           value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           owner,
           releaseAtBlock,
         },
@@ -184,12 +186,14 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const vouchOut = {
       boxType: 'vouch' as const,
       value: stake,
+      createdAtBlock: 0,
       voucherId: opts.voucherIdInBox ?? signer.pub,
       targetId: opts.targetId ?? target.pub,
     } as unknown as VouchBox;
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - stake,
+      createdAtBlock: 0,
       owner: karmaBox.owner,
     };
     const tx: UtxoTransaction = {
@@ -374,11 +378,13 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - bondValue,
+      createdAtBlock: 0,
       owner: inviter.pub,
     };
     const bondOut = {
       boxType: 'bond' as const,
       value: bondValue,
+      createdAtBlock: 0,
       inviterId: inviter.pub,
       inviteePublicKey: invitee,
     } as BondBox;
@@ -465,7 +471,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       const reclaim: UtxoTransaction = {
         inputs: [bond.id!],
         outputs: [{
-          boxType: 'karma', value: bond.value, owner: signer.pub,
+          boxType: 'karma', value: bond.value, createdAtBlock: 0, owner: signer.pub,
         }],
         signatures: {},
         protocolVersion: 1,

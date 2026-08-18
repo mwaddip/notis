@@ -31,6 +31,18 @@ import {
 } from '../src/index.js';
 import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
 
+/**
+ * The height every fixture in this file is built at, and `ac 02` wherever a
+ * hand-assembled byte string carries it.
+ *
+ * ⚠ **300 rather than 0 or 1, and the width is the reason.** `vlqU64(value)` and
+ * `vlqU(createdAtBlock)` are now ADJACENT variable-width integers in the shared
+ * prefix, and a transposition of two same-width fields round-trips perfectly and
+ * shows up in no vector. 300 takes two groups where most fixtures' `value` takes
+ * one, so the pair differs in width and a swap is visible.
+ */
+const FIXTURE_HEIGHT = 300;
+
 const owner = new Uint8Array(32).fill(0xaa);
 // A UserId is 32 raw bytes; `inviterId` is one, so a display string like
 // 'user456' is not a valid fixture value.
@@ -52,6 +64,7 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
   return {
     boxType: 'karma',
     value: 100n,
+    createdAtBlock: FIXTURE_HEIGHT,
     owner,
     txId: FIXTURE_TX_ID,
     index: 0,
@@ -63,6 +76,7 @@ function makeCreditBox(): CreditBox {
   return {
     boxType: 'credit',
     value: 500n,
+    createdAtBlock: FIXTURE_HEIGHT,
     owner,
     txId: FIXTURE_TX_ID,
     index: 1,
@@ -73,6 +87,7 @@ function makeBondBox(): BondBox {
   return {
     boxType: 'bond',
     value: 20n,
+    createdAtBlock: FIXTURE_HEIGHT,
     inviterId: inviter,
     // What the settlement reads to address the grant: an address can be invited
     // once, so this field identifies exactly one bond (TYPES_INTERFACE →
@@ -87,6 +102,7 @@ function makeVouchBox(): VouchBox {
   return {
     boxType: 'vouch',
     value: 1n,
+    createdAtBlock: FIXTURE_HEIGHT,
     voucherId: inviter,
     targetId: new Uint8Array(32).fill(0xcc),
     txId: FIXTURE_TX_ID,
@@ -103,6 +119,7 @@ function makeLikeAccrualBox(): LikeAccrualBox {
   return {
     boxType: 'like_accrual',
     value: LIKE_KARMA_COST,
+    createdAtBlock: FIXTURE_HEIGHT,
     author: new Uint8Array(32).fill(0x7a),
     txId: FIXTURE_TX_ID,
     index: 5,
@@ -116,6 +133,7 @@ function makeVouchEscrowBox(): VouchEscrowBox {
     // carries a value the cast's pin does not, so a reader that substituted the
     // constant would still be wrong here.
     value: 3n,
+    createdAtBlock: FIXTURE_HEIGHT,
     owner: inviter,
     releaseAtBlock: 1_000 + VOUCH_COOLDOWN_BLOCKS,
     txId: FIXTURE_TX_ID,
@@ -215,6 +233,14 @@ describe('boxes', () => {
  * Frozen golden vectors — the cross-implementation anchor for the box identity
  * encoding.
  *
+ * ⛔ **THE IDS ARE NOT INDEPENDENTLY DERIVABLE AND THE BYTES ARE.** A blake2b
+ * digest cannot be worked out by hand, so a re-pinned id is always the encoder's
+ * own output. What earns it is the layer below: `GOLDEN_KARMA_BOX_BYTES` and
+ * `GOLDEN_CREDIT_BOX_BYTES` are hand-assembled from the layout table and asserted
+ * against `canonicalBoxBytes`, and `boxRecordBytes` appends only
+ * `b32(txId) ‖ vlqU(index)`. So an id here is a hash of bytes a human checked —
+ * **re-pin an id only after the byte vector above it passes, never the reverse.**
+ *
  * `value` is `vlqU`, and field order comes from the layout table rather than
  * from a key sort (TYPES_INTERFACE → Layout — Boxes). Do not "fix" a failure by
  * editing the hashes: the encoding is protocol-breaking and unversioned.
@@ -235,12 +261,14 @@ for (let i = 0; i < 32; i++) GOLDEN_OWNER[i] = i;
 const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   boxType: 'karma',
   value: 100n,
+  createdAtBlock: FIXTURE_HEIGHT,
   owner: GOLDEN_OWNER,
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   boxType: 'credit',
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — the range P0 exists for
+  createdAtBlock: FIXTURE_HEIGHT,
   owner: GOLDEN_OWNER,
 };
 
@@ -252,11 +280,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
+  '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
 const GOLDEN_CREDIT_BOX_ID =
-  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
+  '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
 const GOLDEN_TX_ID =
-  '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565';
+  'fdbacd785aee904a5e4d9f5935986ad10e4efaac7e17ad17578d0f1156a9ee57';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -268,21 +296,93 @@ const GOLDEN_CREDIT_BOX: CreditBox = { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_
  * for every box, so this is what the demo UI's hand-written mirror is checked
  * against.
  *
- *   karma  = 00 | 64 | b32(owner)             | 00
- *            ^tag ^vlqU(100)                    ^opt decayBurn absent
- *   credit = 01 | vlqU(12345678900000000) | b32(owner) | 00
- *                                                        ^opt lockedUntilBlock absent
+ *   karma  = 00 | 64 | ac02 | b32(owner)      | 00
+ *            ^tag ^vlqU64(100)                  ^opt decayBurn absent
+ *                      ^vlqU(300) createdAtBlock
+ *   credit = 01 | vlqU64(12345678900000000) | ac02 | b32(owner) | 00
+ *                                                                 ^opt lockedUntilBlock absent
  */
 const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
-  '64' +                                                               // vlqU(100)
+  '64' +                                                               // vlqU64(100)
+  'ac02' +                                                             // vlqU(300) createdAtBlock
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
   '00';                                                                // opt decayBurn absent
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
-  '80eae1eac58af715' +                                                 // vlqU(12345678900000000)
+  '80eae1eac58af715' +                                                 // vlqU64(12345678900000000)
+  'ac02' +                                                             // vlqU(300) createdAtBlock
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
   '00';                                                                // opt lockedUntilBlock absent
+
+/**
+ * ⛔ **THE HAND-DERIVED PREFIX GOLDEN, AND IT MUST NEVER BE REGENERATED FROM THE
+ * ENCODER.** Every box id and every genesis root moves when the shared prefix
+ * gains a field, so no root can witness that the encoding changed as designed —
+ * a re-pinned root is the seeder's own output and confirms nothing. This vector
+ * is the witness instead, and it is only a witness because a human derived it
+ * from the layout table rather than capturing what `canonicalBoxBytes` produced.
+ *
+ * **The derivation, field by field** (TYPES_INTERFACE → Layout — Boxes):
+ *
+ *   enum8(boxType)        karma = tag 0      → `00`      (`enum8.write` is `writeU8`)
+ *   vlqU64(value)         1n                 → `01`      (1 < 0x80, one group)
+ *   vlqU(createdAtBlock)  300                → `ac 02`   (see below)
+ *   b32(owner)            32 × 0x11          → `11`×32
+ *   opt(decayBurn)        absent             → `00`      (`writeOpt` writes `u8(0)`)
+ *
+ * **`vlqU(300)`**: base-128, low group first, continuation bit high.
+ * `300 = 0b100101100`. Low seven bits `0101100` = 44 = `0x2c`; a group remains,
+ * so bit 7 is set → `0xac`. `300 >> 7 = 2`, nothing remains → `0x02`.
+ *
+ * ⚠ **That method was checked against bytes frozen BEFORE this field existed** —
+ * it reproduces `GOLDEN_CREDIT_BOX_BYTES`' `80eae1eac58af715` for
+ * `vlqU64(12345678900000000)` and `VOUCH_ESCROW_BYTES`' `a408` for `vlqU(1060)`.
+ * So the method is pinned by the corpus that predates the change, and only the
+ * one new input is new.
+ *
+ * ⛔ **If this fails, read the bytes before touching the constant.** It is the
+ * only check in the package that can tell "the prefix grew as designed" from
+ * "the prefix grew".
+ */
+describe('the shared prefix carries the creation height', () => {
+  it('encodes boxType, value, createdAtBlock, then the per-type tail', () => {
+    const box: CandidateOf<KarmaBox> = {
+      boxType: 'karma',
+      value: 1n,
+      createdAtBlock: 300,
+      owner: new Uint8Array(32).fill(0x11),
+    };
+    const expected = Buffer.concat([
+      Buffer.from([0x00]),         // enum8 karma
+      Buffer.from([0x01]),         // vlqU64 1n
+      Buffer.from([0xac, 0x02]),   // vlqU 300
+      Buffer.alloc(32, 0x11),      // b32 owner
+      Buffer.from([0x00]),         // opt decayBurn absent
+    ]);
+    expect(Buffer.from(canonicalBoxBytes(box))).toEqual(expected);
+    // 37: the two-byte prefix the format had, plus two for a height that needs
+    // two groups. A one-group height makes it 36.
+    expect(canonicalBoxBytes(box).length).toBe(37);
+  });
+
+  it('the height sits between value and the tail, not after it', () => {
+    // The field order is the whole claim: a reader that walked the height AFTER
+    // the per-type tail would round-trip its own bytes perfectly and disagree
+    // with every other implementation. Two boxes differing only in the height
+    // must therefore differ at byte 2, before the owner key starts.
+    const at300: CandidateOf<KarmaBox> = {
+      boxType: 'karma', value: 1n, createdAtBlock: 300,
+      owner: new Uint8Array(32).fill(0x11),
+    };
+    const at301: CandidateOf<KarmaBox> = { ...at300, createdAtBlock: 301 };
+    const a = Buffer.from(canonicalBoxBytes(at300)).toString('hex');
+    const b = Buffer.from(canonicalBoxBytes(at301)).toString('hex');
+    expect(a.slice(0, 4)).toBe(b.slice(0, 4));            // tag and value agree
+    expect(a.slice(4, 8)).not.toBe(b.slice(4, 8));        // the height differs
+    expect(a.slice(8)).toBe(b.slice(8));                  // the tail agrees
+  });
+});
 
 describe('golden vectors (positional box encoding)', () => {
   it('golden vector: karma boxId is frozen', () => {
@@ -313,7 +413,7 @@ describe('golden vectors (positional box encoding)', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
     // 35 bytes: no map header, no key names, a one-byte `value`, and a one-byte
     // absent option.
-    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(35);
+    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(37);
   });
 
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
@@ -325,9 +425,12 @@ describe('golden vectors (positional box encoding)', () => {
     const bogus = { ...GOLDEN_KARMA_CANDIDATE, boxType: 'like' as never };
     const bytes = canonicalBoxBytes(bogus);
     expect(bytes[0]).toBe(0xff);
-    // No per-type fields follow an unknown tag, so the encoding is just
-    // `ff ‖ vlqU(value)` — total, and distinct from every valid box.
-    expect(bytes.length).toBe(2);
+    // No per-type fields follow an unknown tag, but the SHARED PREFIX is still
+    // written — the sentinel replaces the tag, not the encoding. So a malformed
+    // box is `ff ‖ vlqU64(value) ‖ vlqU(createdAtBlock)`: total, and distinct
+    // from every valid box because no valid tag is `0xff`.
+    expect(bytes.length).toBe(4);       // ff | 64 | ac 02
+    expect(Buffer.from(bytes).toString('hex')).toBe('ff64ac02');
   });
 
   it('a fixed-width box field outside its domain has no encoding', () => {
@@ -418,9 +521,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
+  '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
+  '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
 const GOLDEN_MINT_COINBASE_ID =
   'da905d0f72efd81bc5c1ed3074e28fae890d7d1140fcb7f17d155da4bc12ce18';
 const GOLDEN_MINT_DECAY_ID =
@@ -478,26 +581,27 @@ describe('canonicalBoxBytes', () => {
  * the file's idiom for a frozen byte string, and the only form that makes a
  * vector an independent check rather than a screenshot.
  *
- *   04 | 14 | b32(inviterId) | b32(inviteePublicKey)     — bond,  value 20
- *   06 | 01 | b32(voucherId) | b32(targetId)             — vouch, value 1
+ *   04 | 14 | ac02 | b32(inviterId) | b32(inviteePublicKey)  — bond,  value 20
+ *   06 | 01 | ac02 | b32(voucherId) | b32(targetId)          — vouch, value 1
  *   ^tag ^vlqU64(value)
+ *             ^vlqU(createdAtBlock) — 300, two groups
  */
 const INVITEE_KEY = new Uint8Array(32).fill(0xcc);
 const PAIR_TAIL = '56'.repeat(32) + 'cc'.repeat(32);
-const BOND_BYTES = '04' + '14' + PAIR_TAIL;
-const VOUCH_BYTES = '06' + '01' + PAIR_TAIL;
+const BOND_BYTES = '04' + '14' + 'ac02' + PAIR_TAIL;
+const VOUCH_BYTES = '06' + '01' + 'ac02' + PAIR_TAIL;
 
 describe('bond and vouch share a trailing layout, separated by the tag', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
   it('a bond encodes to tag, value and the two keys — 66 bytes', () => {
     expect(hexOf(canonicalBoxBytes(makeBondBox()))).toBe(BOND_BYTES);
-    expect(canonicalBoxBytes(makeBondBox()).length).toBe(66);
+    expect(canonicalBoxBytes(makeBondBox()).length).toBe(68);
   });
 
   it('a vouch encodes to the same tail under its own tag — 66 bytes', () => {
     expect(hexOf(canonicalBoxBytes(makeVouchBox()))).toBe(VOUCH_BYTES);
-    expect(canonicalBoxBytes(makeVouchBox()).length).toBe(66);
+    expect(canonicalBoxBytes(makeVouchBox()).length).toBe(68);
   });
 
   it('the tag alone separates them when value agrees', () => {
@@ -552,8 +656,8 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
     const inviteCreate: UtxoTransaction = {
       inputs: [IN_1],
       outputs: [
-        { boxType: 'bond', value: INVITE_BOND_MIN, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
-        { boxType: 'karma', value: 75n, owner: inviter },
+        { boxType: 'bond', value: INVITE_BOND_MIN, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+        { boxType: 'karma', value: 75n, createdAtBlock: FIXTURE_HEIGHT, owner: inviter },
       ],
       signatures: {},
       protocolVersion: 1,
@@ -597,9 +701,10 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
 /**
  * Tags 11 and 12 — TYPES_INTERFACE → Layout — Boxes, which carries both rows.
  *
- *   0b | 01 | b32(author)                        — like_accrual, value 1
- *   0c | 03 | b32(owner) | vlqU(releaseAtBlock)  — vouch_escrow, value 3
+ *   0b | 01 | ac02 | b32(author)                       — like_accrual, value 1
+ *   0c | 03 | ac02 | b32(owner) | vlqU(releaseAtBlock) — vouch_escrow, value 3
  *   ^tag ^vlqU64(value)
+ *             ^vlqU(createdAtBlock) — 300, two groups
  *
  * The bytes are hand-assembled from those rows rather than copied from the
  * encoder's output — the file's idiom, and the only form that makes a vector an
@@ -617,8 +722,8 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
  * option tag after it, so it is the one row where a reader that expected
  * something past the key would run past the box rather than into a short read.
  */
-const LIKE_ACCRUAL_BYTES = '0b' + '01' + '7a'.repeat(32);
-const VOUCH_ESCROW_BYTES = '0c' + '03' + '56'.repeat(32) + 'a408';
+const LIKE_ACCRUAL_BYTES = '0b' + '01' + 'ac02' + '7a'.repeat(32);
+const VOUCH_ESCROW_BYTES = '0c' + '03' + 'ac02' + '56'.repeat(32) + 'a408';
 
 describe('like_accrual and vouch_escrow', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
@@ -634,8 +739,8 @@ describe('like_accrual and vouch_escrow', () => {
     expect(hexOf(canonicalBoxBytes(makeLikeAccrualBox()))).toBe(LIKE_ACCRUAL_BYTES);
     // 34, where `karma` at the same value is 35: the karma arm's absent
     // `decayBurn` option costs a byte this arm has no field for.
-    expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(34);
-    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(35);
+    expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(36);
+    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(37);
   });
 
   it('a vouch escrow is tag, value, owner and the release height', () => {
@@ -643,7 +748,7 @@ describe('like_accrual and vouch_escrow', () => {
     // bytes, so the height's width is visible in the vector rather than hidden
     // inside a single byte.
     expect(hexOf(canonicalBoxBytes(makeVouchEscrowBox()))).toBe(VOUCH_ESCROW_BYTES);
-    expect(canonicalBoxBytes(makeVouchEscrowBox()).length).toBe(36);
+    expect(canonicalBoxBytes(makeVouchEscrowBox()).length).toBe(38);
   });
 
   it('a MARKER CARRIES ITS VALUE: the value is in the id preimage', () => {
@@ -706,7 +811,7 @@ describe('like_accrual and vouch_escrow', () => {
     // shape the same-owner karma rule forbids of a karma box — so the two must
     // not share an encoding. The tag and the missing option byte are both what
     // separates them.
-    const asKarma: CandidateOf<KarmaBox> = { boxType: 'karma', value: LIKE_KARMA_COST, owner: new Uint8Array(32).fill(0x7a) };
+    const asKarma: CandidateOf<KarmaBox> = { boxType: 'karma', value: LIKE_KARMA_COST, createdAtBlock: FIXTURE_HEIGHT, owner: new Uint8Array(32).fill(0x7a) };
     expect(hexOf(canonicalBoxBytes(asKarma))).not.toBe(LIKE_ACCRUAL_BYTES);
     expect(computeCandidateBoxId(asKarma, FIXTURE_TX_ID, 0))
       .not.toBe(computeCandidateBoxId(makeLikeAccrualBox(), FIXTURE_TX_ID, 0));
@@ -719,8 +824,8 @@ describe('like_accrual and vouch_escrow', () => {
     const like: UtxoTransaction = {
       inputs: [IN_1],
       outputs: [
-        { boxType: 'karma', value: 99n, owner },
-        { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: new Uint8Array(32).fill(0x7a) },
+        { boxType: 'karma', value: 99n, createdAtBlock: FIXTURE_HEIGHT, owner },
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: FIXTURE_HEIGHT, author: new Uint8Array(32).fill(0x7a) },
       ],
       signatures: {},
       protocolVersion: 1,
@@ -730,7 +835,7 @@ describe('like_accrual and vouch_escrow', () => {
       ...like,
       outputs: [
         like.outputs[0]!,
-        { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: new Uint8Array(32).fill(0x7b) },
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: FIXTURE_HEIGHT, author: new Uint8Array(32).fill(0x7b) },
       ],
     };
     expect(computeTxId(like)).toHaveLength(64);
@@ -769,20 +874,20 @@ const PROOF_PAYLOAD = new TextEncoder().encode('mock-headline');
  *   03 | 00 | 0d | 6d6f636b2d686561646c696e65
  *   ^tag ^vlqU64(0)  ^vlqU(13)   ^payload
  */
-const PROOF_BYTES = '03' + '00' + '0d' + '6d6f636b2d686561646c696e65';
+const PROOF_BYTES = '03' + '00' + 'ac02' + '0d' + '6d6f636b2d686561646c696e65';
 
 function makeProofCandidate(payload: Uint8Array): CandidateOf<GenesisProofBox> {
-  return { boxType: 'genesis_proof', value: 0n, payload };
+  return { boxType: 'genesis_proof', value: 0n, createdAtBlock: FIXTURE_HEIGHT, payload };
 }
 
 describe('genesis_proof', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-  it('takes tag 3, and encodes as enum8 ‖ vlqU64(value) ‖ lp(payload)', () => {
+  it('takes tag 3, and encodes as enum8 ‖ vlqU64(value) ‖ vlqU(createdAtBlock) ‖ lp(payload)', () => {
     const bytes = canonicalBoxBytes(makeProofCandidate(PROOF_PAYLOAD));
     expect(bytes[0]).toBe(3);
     expect(hexOf(bytes)).toBe(PROOF_BYTES);
-    expect(bytes.length).toBe(16);
+    expect(bytes.length).toBe(18);      // 16, plus the two-group height
   });
 
   it('an empty payload has an encoding, and the length prefix keeps it distinct', () => {
@@ -791,8 +896,8 @@ describe('genesis_proof', () => {
     // `00` would share its encoding with an empty one. Three bytes is the
     // smallest box that carries a tail; `emission` and `treasury` reach two by
     // carrying none.
-    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array(0))))).toBe('030000');
-    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('03000100');
+    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array(0))))).toBe('0300ac0200');
+    expect(hexOf(canonicalBoxBytes(makeProofCandidate(new Uint8Array([0]))))).toBe('0300ac020100');
   });
 
   it('round-trips through the box record', () => {
@@ -800,7 +905,10 @@ describe('genesis_proof', () => {
       boxRecordBytes(makeProofCandidate(PROOF_PAYLOAD), FIXTURE_TX_ID, 0),
     );
     expect(record).toEqual({
-      candidate: { boxType: 'genesis_proof', value: 0n, payload: PROOF_PAYLOAD },
+      candidate: {
+        boxType: 'genesis_proof', value: 0n, createdAtBlock: FIXTURE_HEIGHT,
+        payload: PROOF_PAYLOAD,
+      },
       txId: FIXTURE_TX_ID,
       index: 0,
     });
@@ -863,8 +971,9 @@ describe('genesis_proof', () => {
     // already relies on rather than a new class.
     const bytes = canonicalBoxBytes(makeProofCandidate(overBound));
     expect(bytes[0]).toBe(3);
-    // tag ‖ vlqU64(0) ‖ vlqU(513) ‖ 513 bytes — the count needs two bytes past 127.
-    expect(bytes.length).toBe(1 + 1 + 2 + overBound.length);
+    // tag ‖ vlqU64(0) ‖ vlqU(createdAtBlock) ‖ vlqU(513) ‖ 513 bytes — both the
+    // height and the length count need two groups here.
+    expect(bytes.length).toBe(1 + 1 + 2 + 2 + overBound.length);
   });
 
   it('binds this arm alone — another lp field reads a payload it would refuse', () => {
@@ -898,72 +1007,85 @@ describe('genesis_proof', () => {
  * the file's idiom for a frozen byte string, and the only form that makes a
  * vector an independent check rather than a screenshot.
  *
- *   07 | 64     — emission, value 100
- *   08 | 64     — treasury, value 100
- *   09 | 64     — fee, value 100
- *   0a | 64     — karma_pool, value 100
+ *   07 | 64 | ac02     — emission, value 100
+ *   08 | 64 | ac02     — treasury, value 100
+ *   09 | 64 | ac02     — fee, value 100
+ *   0a | 64 | ac02     — karma_pool, value 100
  *   ^tag ^vlqU64(value)
+ *          ^vlqU(createdAtBlock)
  */
 const EMISSION_CANDIDATE: CandidateOf<EmissionBox> = {
-  boxType: 'emission', value: 100n,
+  boxType: 'emission', value: 100n, createdAtBlock: FIXTURE_HEIGHT,
 };
 const TREASURY_CANDIDATE: CandidateOf<TreasuryBox> = {
-  boxType: 'treasury', value: 100n,
+  boxType: 'treasury', value: 100n, createdAtBlock: FIXTURE_HEIGHT,
 };
 const FEE_CANDIDATE: CandidateOf<FeeBox> = {
-  boxType: 'fee', value: 100n,
+  boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT,
 };
 const KARMA_POOL_CANDIDATE: CandidateOf<KarmaPoolBox> = {
-  boxType: 'karma_pool', value: 100n,
+  boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT,
 };
 
-/** The tailed arms, at their own floor — one candidate per type that has a tail. */
+/**
+ * The tailed arms, at their own floor — one candidate per type that has a tail.
+ *
+ * `createdAtBlock` is **0** here and not `FIXTURE_HEIGHT`: the list's job is the
+ * smallest each arm gets, and the height is a prefix field like `value`, so a
+ * two-group height would put every row above its own floor.
+ */
 const TAILED_CANDIDATES: AnyBoxCandidate[] = [
-  { boxType: 'karma', value: 0n, owner },
-  { boxType: 'credit', value: 0n, owner },
-  { boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(0) },
-  { boxType: 'bond', value: 0n, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
-  { boxType: 'post_lock', value: 0n, originalValue: 0n, owner },
-  { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
-  { boxType: 'vouch_escrow', value: 0n, owner, releaseAtBlock: 0 },
-  { boxType: 'like_accrual', value: 0n, author: inviter },
+  { boxType: 'karma', value: 0n, createdAtBlock: 0, owner },
+  { boxType: 'credit', value: 0n, createdAtBlock: 0, owner },
+  { boxType: 'genesis_proof', value: 0n, createdAtBlock: 0, payload: new Uint8Array(0) },
+  { boxType: 'bond', value: 0n, createdAtBlock: 0, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+  { boxType: 'post_lock', value: 0n, createdAtBlock: 0, originalValue: 0n, owner },
+  { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: owner, targetId: inviter },
+  { boxType: 'vouch_escrow', value: 0n, createdAtBlock: 0, owner, releaseAtBlock: 0 },
+  { boxType: 'like_accrual', value: 0n, createdAtBlock: 0, author: inviter },
 ];
 
 describe('emission, treasury, fee and karma_pool', () => {
   const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
   it('each encodes to its tag and value, and nothing else', () => {
-    expect(hexOf(canonicalBoxBytes(EMISSION_CANDIDATE))).toBe('0764');
-    expect(hexOf(canonicalBoxBytes(TREASURY_CANDIDATE))).toBe('0864');
-    expect(hexOf(canonicalBoxBytes(FEE_CANDIDATE))).toBe('0964');
-    expect(hexOf(canonicalBoxBytes(KARMA_POOL_CANDIDATE))).toBe('0a64');
+    expect(hexOf(canonicalBoxBytes(EMISSION_CANDIDATE))).toBe('0764ac02');
+    expect(hexOf(canonicalBoxBytes(TREASURY_CANDIDATE))).toBe('0864ac02');
+    expect(hexOf(canonicalBoxBytes(FEE_CANDIDATE))).toBe('0964ac02');
+    expect(hexOf(canonicalBoxBytes(KARMA_POOL_CANDIDATE))).toBe('0a64ac02');
     expect(canonicalBoxBytes(EMISSION_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.emission);
     expect(canonicalBoxBytes(TREASURY_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.treasury);
     expect(canonicalBoxBytes(FEE_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.fee);
     expect(canonicalBoxBytes(KARMA_POOL_CANDIDATE)[0]).toBe(BOX_TYPE_TAGS.karma_pool);
   });
 
-  it('two bytes is the smallest legal box of any type', () => {
-    // The prefix with nothing after it. The nearest type is `genesis_proof` at
-    // `03 00 00`, three bytes, because its empty payload still spends a length
-    // prefix. Pinned so the claim in TYPES_INTERFACE → Layout — Boxes has a
-    // test under it.
-    const emptyEmission: CandidateOf<EmissionBox> = { ...EMISSION_CANDIDATE, value: 0n };
-    const emptyTreasury: CandidateOf<TreasuryBox> = { ...TREASURY_CANDIDATE, value: 0n };
-    const emptyFee: CandidateOf<FeeBox> = { ...FEE_CANDIDATE, value: 0n };
-    const emptyPool: CandidateOf<KarmaPoolBox> = { ...KARMA_POOL_CANDIDATE, value: 0n };
+  it('three bytes is the smallest legal box of any type', () => {
+    // The prefix with nothing after it, and the prefix is three fields: a tag, a
+    // zero value and a zero height, one group each. The nearest type is
+    // `genesis_proof` at `03 00 00 00`, four bytes, because its empty payload
+    // still spends a length prefix. Pinned so the claim in TYPES_INTERFACE →
+    // Layout — Boxes has a test under it.
+    //
+    // ⚠ **`createdAtBlock: 0`, not `FIXTURE_HEIGHT`** — the height is a prefix
+    // field like `value`, so a floor case has to be at the floor of BOTH or it
+    // is measuring something else.
+    const atFloor = { value: 0n, createdAtBlock: 0 };
+    const emptyEmission: CandidateOf<EmissionBox> = { ...EMISSION_CANDIDATE, ...atFloor };
+    const emptyTreasury: CandidateOf<TreasuryBox> = { ...TREASURY_CANDIDATE, ...atFloor };
+    const emptyFee: CandidateOf<FeeBox> = { ...FEE_CANDIDATE, ...atFloor };
+    const emptyPool: CandidateOf<KarmaPoolBox> = { ...KARMA_POOL_CANDIDATE, ...atFloor };
     const smallest = canonicalBoxBytes(emptyEmission);
-    expect(hexOf(smallest)).toBe('0700');
-    expect(smallest.length).toBe(2);
-    expect(canonicalBoxBytes(emptyTreasury).length).toBe(2);
+    expect(hexOf(smallest)).toBe('070000');
+    expect(smallest.length).toBe(3);
+    expect(canonicalBoxBytes(emptyTreasury).length).toBe(3);
     // A zero-value fee box is not a box consensus creates (TYPES_INTERFACE →
     // FeeBox), and it still ENCODES: the no-zero rule is node's, and this
     // encoder's domain is the u64.
-    expect(hexOf(canonicalBoxBytes(emptyFee))).toBe('0900');
+    expect(hexOf(canonicalBoxBytes(emptyFee))).toBe('090000');
     // The pool's zero is the one the ledger holds. Emission terminates and
     // creates no zero successor; the pool never terminates, because a burn must
     // always have somewhere to return (TYPES_INTERFACE → KarmaPoolBox).
-    expect(hexOf(canonicalBoxBytes(emptyPool))).toBe('0a00');
+    expect(hexOf(canonicalBoxBytes(emptyPool))).toBe('0a0000');
     // Nothing else reaches two. Every other arm carries a tail, so this is the
     // floor for the whole format rather than for the empty-tail types.
     for (const candidate of TAILED_CANDIDATES) {
@@ -1001,7 +1123,9 @@ describe('emission, treasury, fee and karma_pool', () => {
     ]) {
       const record = boxRecordFromBytes(boxRecordBytes(candidate, FIXTURE_TX_ID, 0));
       expect(record).toEqual({
-        candidate: { boxType: candidate.boxType, value: 100n },
+        candidate: {
+          boxType: candidate.boxType, value: 100n, createdAtBlock: FIXTURE_HEIGHT,
+        },
         txId: FIXTURE_TX_ID,
         index: 0,
       });
@@ -1014,8 +1138,8 @@ describe('emission, treasury, fee and karma_pool', () => {
     // reader walked a phantom field the txId would decode from the wrong
     // offset and still be 32 well-formed bytes.
     const bytes = boxRecordBytes(EMISSION_CANDIDATE, FIXTURE_TX_ID, 0);
-    expect(hexOf(bytes)).toBe('0764' + FIXTURE_TX_ID + '00');
-    expect(bytes.length).toBe(2 + 32 + 1);
+    expect(hexOf(bytes)).toBe('0764ac02' + FIXTURE_TX_ID + '00');
+    expect(bytes.length).toBe(4 + 32 + 1);
   });
 
   it('a transaction carrying one hashes it like any other output', () => {
@@ -1056,8 +1180,8 @@ describe('emission, treasury, fee and karma_pool', () => {
     // `pool.value + circulating karma == BOX_VALUE_BOUND - 1` is what keeps it
     // there: a burn can only return what a mint drew, so nothing can hand this
     // writer a pool it would refuse.
-    const genesis: CandidateOf<KarmaPoolBox> = { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n };
-    expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffff7f');
+    const genesis: CandidateOf<KarmaPoolBox> = { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT };
+    expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffff7fac02');
     const record = boxRecordFromBytes(boxRecordBytes(genesis, FIXTURE_TX_ID, 0));
     expect(record.candidate).toEqual(genesis);
   });
@@ -1307,7 +1431,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565' + // b32 txId
+      'fdbacd785aee904a5e4d9f5935986ad10e4efaac7e17ad17578d0f1156a9ee57' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1363,21 +1487,28 @@ describe('boxRecordFromBytes', () => {
     // a reader that walked the vouch arm as a bond would round-trip fine on the
     // fields and fail only on the discriminant.
     ['bond', {
-      boxType: 'bond', value: 20n, inviterId: inviter,
+      boxType: 'bond', value: 20n, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
     }],
     ['post_lock', {
-      boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
+      boxType: 'post_lock', value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n, owner,
     }],
-    ['vouch', { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter }],
+    ['vouch', {
+      boxType: 'vouch', value: 1n, createdAtBlock: FIXTURE_HEIGHT,
+      voucherId: owner, targetId: inviter,
+    }],
     // The escrow the unvouch outputs, and the marker the like outputs. The
     // escrow is the only arm mixing a `b32` with a bare `vlqU`; the marker is
     // the only one whose tail is a single `b32`, so a reader expecting a field
     // after the key fails on it and on nothing else.
     ['vouch_escrow', {
-      boxType: 'vouch_escrow', value: 3n, owner, releaseAtBlock: 1_060,
+      boxType: 'vouch_escrow', value: 3n, createdAtBlock: FIXTURE_HEIGHT, owner,
+      releaseAtBlock: 1_060,
     }],
-    ['like_accrual', { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: inviter }],
+    ['like_accrual', {
+      boxType: 'like_accrual', value: LIKE_KARMA_COST,
+      createdAtBlock: FIXTURE_HEIGHT, author: inviter,
+    }],
     ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
     ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
     // The empty-tail rows. A reader that assumed at least one field followed
@@ -1390,7 +1521,7 @@ describe('boxRecordFromBytes', () => {
     // At its genesis value rather than at the shared 100: the pool's ordinary
     // state is `BOX_VALUE_BOUND - 1` (TYPES_INTERFACE → KarmaPoolBox), so the
     // row that round-trips is the one carrying the nine-byte value.
-    ['karma_pool', { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n }],
+    ['karma_pool', { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT }],
   ];
 
   for (const [label, candidate] of ALL_BOX_TYPES) {
@@ -1766,7 +1897,7 @@ describe('transactions', () => {
       // than in a commit message (TYPES_INTERFACE → "Re-pinning a frozen vector
       // when a preimage changes").
       const SIX_FIELD_TX_ID =
-        '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
+        '126e8fd72bf4382379171d0b156d00b0f7bd573ede0c2e4a6115684e58d1fed5';
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));
@@ -2191,27 +2322,37 @@ describe('selectBoxes', () => {
  */
 describe('the box-type tables', () => {
   const CANDIDATE_BY_TYPE: Record<BoxCandidate['boxType'], AnyBoxCandidate> = {
-    karma: { boxType: 'karma', value: 100n, owner },
-    credit: { boxType: 'credit', value: 500n, owner },
+    karma: { boxType: 'karma', value: 100n, createdAtBlock: FIXTURE_HEIGHT, owner },
+    credit: { boxType: 'credit', value: 500n, createdAtBlock: FIXTURE_HEIGHT, owner },
     genesis_proof: {
-      boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([1, 2, 3]),
+      boxType: 'genesis_proof', value: 0n, createdAtBlock: FIXTURE_HEIGHT,
+      payload: new Uint8Array([1, 2, 3]),
     },
     bond: {
-      boxType: 'bond', value: 20n, inviterId: inviter,
+      boxType: 'bond', value: 20n, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
     },
     post_lock: {
-      boxType: 'post_lock', value: 5n, originalValue: 10n, owner,
+      boxType: 'post_lock', value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n, owner,
     },
-    vouch: { boxType: 'vouch', value: 1n, voucherId: owner, targetId: inviter },
-    vouch_escrow: { boxType: 'vouch_escrow', value: 3n, owner, releaseAtBlock: 1_060 },
-    like_accrual: { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: inviter },
+    vouch: {
+      boxType: 'vouch', value: 1n, createdAtBlock: FIXTURE_HEIGHT,
+      voucherId: owner, targetId: inviter,
+    },
+    vouch_escrow: {
+      boxType: 'vouch_escrow', value: 3n, createdAtBlock: FIXTURE_HEIGHT, owner,
+      releaseAtBlock: 1_060,
+    },
+    like_accrual: {
+      boxType: 'like_accrual', value: LIKE_KARMA_COST,
+      createdAtBlock: FIXTURE_HEIGHT, author: inviter,
+    },
     // The arms with no trailing fields at all — the rows that make this map
     // exercise a box whose bytes stop after the shared prefix.
-    emission: { boxType: 'emission', value: 100n },
-    treasury: { boxType: 'treasury', value: 100n },
-    fee: { boxType: 'fee', value: 100n },
-    karma_pool: { boxType: 'karma_pool', value: 100n },
+    emission: { boxType: 'emission', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
+    treasury: { boxType: 'treasury', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
+    fee: { boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
+    karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of

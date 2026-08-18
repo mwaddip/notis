@@ -124,6 +124,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     const candidate = {
       boxType: 'karma' as const,
       value,
+      createdAtBlock: 0,
       owner,
     };
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
@@ -139,6 +140,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     const bondCandidate = {
       boxType: 'bond' as const,
       value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       inviterId: inviter.pub,
       inviteePublicKey: invitee.pub,
     };
@@ -149,7 +151,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
 
   /** A karma output owned by `owner`. */
   function karmaOut(owner: Uint8Array, value: bigint): KarmaBox {
-    return { boxType: 'karma', value, owner } as KarmaBox;
+    return { boxType: 'karma', value, createdAtBlock: 0, owner } as KarmaBox;
   }
 
   /** Every rejection here names the same rule; assert the reason, not just the verdict. */
@@ -228,6 +230,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
         {
           boxType: 'bond',
           value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           inviterId: inviter.pub,
           inviteePublicKey: invitee.pub,
         } as BondBox,
@@ -304,6 +307,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
       {
         boxType: 'vouch' as const,
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: voucher.pub,
         targetId: invitee.pub,
       },
@@ -319,6 +323,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
       outputs: [{
         boxType: 'vouch_escrow' as const,
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         owner: voucher.pub,
         releaseAtBlock: 1000,
       } as never],
@@ -347,6 +352,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
         {
           boxType: 'bond',
           value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           inviterId: inviter.pub,
           inviteePublicKey: invitee.pub,
         } as BondBox,

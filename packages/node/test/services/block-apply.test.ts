@@ -743,6 +743,7 @@ describe('block-apply journal recording', () => {
         {
           boxType: 'vouch' as const,
           value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           voucherId: voucher.userId,
           targetId: target.userId,
         },
@@ -760,6 +761,7 @@ describe('block-apply journal recording', () => {
           {
             boxType: 'vouch_escrow' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             owner: voucher.userId,
             releaseAtBlock: 1 + testConfig.vouchCooldownBlocks,
           },
@@ -853,7 +855,7 @@ describe('block-apply journal recording', () => {
           ...tx,
           outputs: [
             ...tx.outputs,
-            { boxType: 'karma', value: 5n, owner: stranger.userId } as never,
+            { boxType: 'karma', value: 5n,  createdAtBlock: 0,owner: stranger.userId } as never,
           ],
         }),
       });
@@ -997,6 +999,7 @@ describe('block-apply journal recording', () => {
         {
           boxType: 'vouch_escrow' as const,
           value: 7n,
+          createdAtBlock: 0,
           owner: voucher.userId,
           releaseAtBlock: 1,
         },
@@ -1129,11 +1132,13 @@ describe('block-apply embedded tx re-validation', () => {
         {
           boxType: 'karma',
           value: 100n,
+          createdAtBlock: 0,
           owner: attacker.userId,
         } as KarmaBox,
         {
           boxType: 'post_lock',
           value: 5n,
+          createdAtBlock: 0,
           originalValue: 5n,
           owner: attacker.userId,
           // `b32` in the box-id preimage — `'target_post'` has no encoding, and
@@ -1310,6 +1315,7 @@ describe('block-apply embedded tx re-validation', () => {
         {
           boxType: 'karma',
           value: karmaBox.value,
+          createdAtBlock: 0,
           owner: owner.userId,
         },
       ],
@@ -1340,6 +1346,7 @@ describe('block-apply embedded tx re-validation', () => {
       outputs: [{
         boxType: 'karma',
         value: box.value,
+        createdAtBlock: 0,
         owner: makeTestIdentity().userId,
       }],
     };
@@ -1428,11 +1435,13 @@ describe('block-apply embedded tx re-validation', () => {
         {
           boxType: 'karma',
           value: karmaIn.value - VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           owner: voucher.userId,
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           voucherId: voucher.userId,
           targetId,
         } as VouchBox,
@@ -1638,6 +1647,7 @@ describe('block-apply mint provenance', () => {
           {
             boxType: 'vouch_escrow' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             owner: idle.userId,
             releaseAtBlock: 4,
           },
@@ -1754,6 +1764,7 @@ describe('block-apply mint provenance', () => {
           {
             boxType: 'vouch_escrow' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             owner: idle.userId,
             releaseAtBlock: 4,
           },

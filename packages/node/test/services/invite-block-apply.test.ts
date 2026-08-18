@@ -101,11 +101,13 @@ function inviteTx(
       {
         boxType: 'karma',
         value: karmaIn.value - bondValue,
+        createdAtBlock: 0,
         owner: inviter.userId,
       } as KarmaBox,
       {
         boxType: 'bond',
         value: bondValue,
+        createdAtBlock: 0,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
       } as BondBox,
@@ -172,6 +174,7 @@ describe('the invite at block application', () => {
       {
         boxType: 'bond' as const,
         value: bondValue,
+        createdAtBlock: 0,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
       },

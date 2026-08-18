@@ -154,6 +154,7 @@ function applyDecayPlans(
     const box = {
       boxType: 'karma' as const,
       value: plan.newValue,
+      createdAtBlock: height,
       owner: plan.owner,
       decayBurn: true,
       txId: m.provenance.mintTxIdFor(m.provenance.decayContext(plan.owner), height),
@@ -239,6 +240,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
             const source = {
               boxType: 'post_lock' as const,
               value: step.amount,
+              createdAtBlock: height,
               originalValue: step.amount,
               owner,
               // ⛔ **A per-owner subject, because two `mint` steps at one

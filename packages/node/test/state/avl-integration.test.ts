@@ -44,6 +44,7 @@ function makeKarmaBox(id: string, value: bigint, block: number, seed: number): S
   const candidate = {
     boxType: 'karma' as const,
     value,
+    createdAtBlock: block,
     owner,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };
@@ -55,6 +56,7 @@ function makeCreditBox(id: string, value: bigint, block: number, seed: number): 
   const candidate = {
     boxType: 'credit' as const,
     value,
+    createdAtBlock: block,
     owner,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, block, seed) };

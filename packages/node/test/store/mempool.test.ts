@@ -89,6 +89,7 @@ function likeTx(targetPostId: string, likerHex: string) {
         // `bigint`, as the type declares: the positional writer has no `number`
         // branch for a u64, so a plain `99` here has no encoding at all.
         value: 99n,
+        createdAtBlock: 0,
         owner: bytes(likerHex),
       },
     ],
@@ -112,6 +113,7 @@ function inviteTx(inviterHex: string) {
       {
         boxType: 'bond',
         value: 25n,
+        createdAtBlock: 0,
         inviterId: bytes(inviterHex),
         inviteePublicKey: new Uint8Array(32).fill(0x11),
       },
@@ -128,6 +130,7 @@ function vouchTx(voucherHex: string, targetHex: string) {
       {
         boxType: 'vouch',
         value: 10n,
+        createdAtBlock: 0,
         voucherId: bytes(voucherHex),
         targetId: bytes(targetHex),
       },
@@ -178,7 +181,7 @@ function creditTxWithInput(label: string): unknown {
   return {
     inputs: [id],
     outputs: [
-      { boxType: 'credit', value: 1n, owner: new Uint8Array(32) },
+      { boxType: 'credit', value: 1n,  createdAtBlock: 0,owner: new Uint8Array(32) },
     ],
     signatures: {},
     protocolVersion: 1,
@@ -207,6 +210,7 @@ function seededCreditTx(
   const box = {
     boxType: 'credit' as const,
     value: inputValue,
+    createdAtBlock: 0,
     owner: new Uint8Array(owner),
     txId: createHash('blake2b512').update(`${label}_tx`).digest().subarray(0, 32).toString('hex'),
     index: 0,
@@ -216,13 +220,14 @@ function seededCreditTx(
   const outputs: unknown[] = Array.from({ length: padding }, (_, i) => ({
     boxType: 'credit' as const,
     value: i === 0 ? outputValue - share * BigInt(padding - 1) : share,
+    createdAtBlock: 0,
     owner: new Uint8Array(owner),
   }));
   const fee = inputValue - outputValue;
   // Zero fee means no box, so a zero-bidding entry carries none — which is
   // exactly the shape the flood cases above rely on.
   if (fee > 0n) {
-    outputs.push({ boxType: 'fee' as const, value: fee });
+    outputs.push({ boxType: 'fee' as const, value: fee,  createdAtBlock: 0,});
   }
   return {
     tx: { inputs: [id], outputs, signatures: {}, protocolVersion: 1 },
@@ -494,7 +499,7 @@ describe('mempool store', () => {
       const { insertUtxoTx, getDbRow } = await importMempoolWithRow();
       insertUtxoTx({
         inputs: [],
-        outputs: [{ boxType: 'karma', value: 2n, owner: bytes(LIKER_A) }],
+        outputs: [{ boxType: 'karma', value: 2n,  createdAtBlock: 0,owner: bytes(LIKER_A) }],
         signatures: {},
         protocolVersion: 1,
       } as any, 100);
@@ -602,6 +607,7 @@ describe('mempool store', () => {
     const karmaOut = (value: bigint) => ({
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner: bytes(OWNER),
     });
 
@@ -659,6 +665,7 @@ describe('mempool store', () => {
       const box = {
         boxType: 'karma' as const,
         value: 100n,
+        createdAtBlock: 0,
         owner: bytes(OWNER),
         txId: '53'.repeat(32),
         index: 0,

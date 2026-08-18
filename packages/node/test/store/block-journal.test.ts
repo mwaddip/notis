@@ -31,6 +31,7 @@ function makeKarmaBox(id: string, value = 100n): KarmaBox {
   const candidate = {
     boxType: 'karma' as const,
     value,
+    createdAtBlock: 0,
     owner: OWNER,
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, 1, hashSeed(id)) };
@@ -43,6 +44,7 @@ function makeVouchBox(id: string, voucher: string, target: string): VouchBox {
   const candidate = {
     boxType: 'vouch' as const,
     value: 1n as const,
+    createdAtBlock: 0,
     voucherId: uid(voucher),
     targetId: uid(target),
   };

@@ -231,6 +231,7 @@ describe('posts routes', () => {
     const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: userId,
     }, 1);
     const karmaBoxId = karmaBox.id;
@@ -245,6 +246,7 @@ describe('posts routes', () => {
     const newKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n - POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       owner: userId,
     }, 1);
     const newKarmaId = newKarma.id;
@@ -257,6 +259,7 @@ describe('posts routes', () => {
     const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: userId,
     };

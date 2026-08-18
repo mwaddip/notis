@@ -53,6 +53,7 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
   const candidate = {
     boxType: 'karma' as const,
     value: 100n,
+    createdAtBlock: 0,
     owner: OWNER,
   };
   return {

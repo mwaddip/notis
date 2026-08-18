@@ -19,6 +19,7 @@ export function buildCreditTransferTx(
   cfg: FaucetConfig,
   boxes: readonly BoxRef[],
   toHex: string,
+  height: number,
 ): BuiltTx {
   checkRecipient(cfg, toHex, 'recipient');
 
@@ -35,10 +36,10 @@ export function buildCreditTransferTx(
 
   const owner = Buffer.from(cfg.publicKeyHex, 'hex');
   const outputs: UtxoTransaction['outputs'] = [
-    { boxType: 'credit', value: cfg.creditAmount, owner: Buffer.from(toHex, 'hex') },
+    { boxType: 'credit', value: cfg.creditAmount, createdAtBlock: height, owner: Buffer.from(toHex, 'hex') },
   ];
   if (changeValue > 0n) {
-    outputs.push({ boxType: 'credit', value: changeValue, owner });
+    outputs.push({ boxType: 'credit', value: changeValue, createdAtBlock: height, owner });
   }
 
   const tx: UtxoTransaction = {

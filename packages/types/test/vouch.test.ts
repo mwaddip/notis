@@ -31,6 +31,7 @@ describe('VouchBox', () => {
     const box: Omit<VouchBox, 'id'> = {
       boxType: 'vouch',
       value: 1n,
+      createdAtBlock: 300,
       voucherId,
       targetId,
       txId: FIXTURE_TX_ID,
@@ -47,20 +48,21 @@ describe('VouchBox', () => {
     const voucherId = new Uint8Array(32).fill(1);
     const target1 = new Uint8Array(32).fill(2);
     const target2 = new Uint8Array(32).fill(3);
-    // Identical provenance on both, deliberately: the claim is that the
-    // voucher/target PAIR moves the id. Differing txId or index would make the
-    // test pass for the wrong reason.
+    // Identical provenance and identical `createdAtBlock` on both,
+    // deliberately: the claim is that the voucher/target PAIR moves the id. A
+    // differing txId, index or creation height would make the test pass for the
+    // wrong reason.
     // Typed as `Omit<VouchBox, 'id'>` rather than passed as bare literals:
     // `computeBoxId` takes the BASE `Omit<BoxBase, 'id'>`, so excess-property
     // checking rejects per-type fields (`voucherId`) written straight into a
     // call-site literal. Naming the real type is the accurate fix.
     const boxA: Omit<VouchBox, 'id'> = {
-      boxType: 'vouch', value: 1n,
+      boxType: 'vouch', value: 1n, createdAtBlock: 300,
       voucherId, targetId: target1,
       txId: FIXTURE_TX_ID, index: 0,
     };
     const boxB: Omit<VouchBox, 'id'> = {
-      boxType: 'vouch', value: 1n,
+      boxType: 'vouch', value: 1n, createdAtBlock: 300,
       voucherId, targetId: target2,
       txId: FIXTURE_TX_ID, index: 0,
     };

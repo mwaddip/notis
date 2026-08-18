@@ -47,6 +47,7 @@ function makeKarmaBox(id: string, overrides: Partial<KarmaBox> = {}): KarmaBox {
   const base = {
     boxType: 'karma' as const,
     value: 100n,
+    createdAtBlock: 0,
     owner: OWNER,
   };
   return {
@@ -173,12 +174,12 @@ describe('box provenance columns (Spec G phase B)', () => {
       makeKarmaBox('22'.repeat(32), { decayBurn: true }),
       {
         id: '33'.repeat(32), boxType: 'credit', value: 5000n,
-        owner: OWNER, 
+        createdAtBlock: 0, owner: OWNER,
         txId: '33'.repeat(32), index: 0,
       } satisfies CreditBox,
       {
         id: '44'.repeat(32), boxType: 'credit', value: 10n,
-        owner: OWNER, lockedUntilBlock: 900,
+        createdAtBlock: 0, owner: OWNER, lockedUntilBlock: 900,
         txId: '44'.repeat(32), index: 0,
       } satisfies CreditBox,
     ];

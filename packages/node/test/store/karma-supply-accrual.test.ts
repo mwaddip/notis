@@ -59,7 +59,7 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint, tag = ''): AnyBox 
   // provenance nonce as well as the id, because `(tx_id, output_index)` is
   // UNIQUE and identical candidates derive one synthetic txId.
   const nonce = tag ? [...tag].reduce((a, c) => a + c.charCodeAt(0), 0) : 0;
-  const base = { boxType, value } as Record<string, unknown>;
+  const base = { boxType, value, createdAtBlock: 0 } as Record<string, unknown>;
   switch (boxType) {
     case 'karma':
     case 'credit':

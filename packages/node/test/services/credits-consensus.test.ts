@@ -140,12 +140,14 @@ function buildSignedTransfer(
   const outputs: CandidateOf<CreditBox>[] = [{
     boxType: 'credit',
     value: amount,
+    createdAtBlock: 0,
     owner: to,
   }];
   if (change > 0n) {
     outputs.push({
       boxType: 'credit',
       value: change,
+      createdAtBlock: 0,
       owner: from,
     });
   }

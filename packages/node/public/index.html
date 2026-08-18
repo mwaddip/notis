@@ -670,7 +670,7 @@ const BOX_TYPE_TAGS = { karma: 0, credit: 1, genesis_proof: 3, bond: 4, post_loc
  * Byte-identical mirror of `canonicalBoxBytes` in @dagsocial/types
  * (src/utxo.ts) — TYPES_INTERFACE → Layout — Boxes.
  *
- *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
+ *   enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock) ‖ <per-type>
  *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
@@ -692,6 +692,7 @@ function canonicalBoxBytes(box) {
   return concatUint8Arrays([
     enum8Tag(BOX_TYPE_TAGS, box.boxType),
     vlqU64(box.value),
+    vlqU(box.createdAtBlock),
     boxTypeFields(box),
   ]);
 }
@@ -1004,12 +1005,14 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
   const karmaOutput = {
     boxType: 'karma',
     value: newKarmaValue,
+    createdAtBlock: currentBlockHeight,
     owner: pubKeyHex,
   };
 
   const postLockOutput = {
     boxType: 'post_lock',
     value: lockAmount,
+    createdAtBlock: currentBlockHeight,
     originalValue: lockAmount,
     owner: pubKeyHex,
   };
@@ -1058,12 +1061,14 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
   const karmaOutput = {
     boxType: 'karma',
     value: newKarmaValue,
+    createdAtBlock: currentBlockHeight,
     owner: pubKeyHex,
   };
 
   const accrualOutput = {
     boxType: 'like_accrual',
     value: LIKE_KARMA_COST,
+    createdAtBlock: currentBlockHeight,
     author: authorHex,
   };
 
@@ -1098,6 +1103,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
   const karmaOutput = {
     boxType: 'karma',
     value: selectedTotal - INVITE_BOND_DEFAULT,
+    createdAtBlock: currentBlockHeight,
     owner: pubKeyHex,
   };
 
@@ -1112,6 +1118,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
   const bondOutput = {
     boxType: 'bond',
     value: INVITE_BOND_DEFAULT,
+    createdAtBlock: currentBlockHeight,
     inviterId: pubKeyHex,
     inviteePublicKey: inviteePubKeyHex,
   };
@@ -1144,12 +1151,14 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
   const karmaOutput = {
     boxType: 'karma',
     value: selectedTotal - VOUCH_KARMA_AMOUNT,
+    createdAtBlock: currentBlockHeight,
     owner: pubKeyHex,
   };
 
   const vouchOutput = {
     boxType: 'vouch',
     value: VOUCH_KARMA_AMOUNT,
+    createdAtBlock: currentBlockHeight,
     voucherId: pubKeyHex,
     targetId: targetIdHex,
   };
@@ -1197,6 +1206,7 @@ function buildUnvouchTx(vouchBoxId, stakeValue, pubKeyHex, releaseAtBlock) {
     outputs: [{
       boxType: 'vouch_escrow',
       value: stakeValue,
+      createdAtBlock: currentBlockHeight,
       owner: pubKeyHex,
       releaseAtBlock,
     }],
@@ -2295,12 +2305,14 @@ function buildCreditTransferTx(creditBoxes, recipientHex, amount) {
   const outputs = [{
     boxType: 'credit',
     value: amount,
+    createdAtBlock: currentBlockHeight,
     owner: recipientHex,
   }];
   if (change > 0n) {
     outputs.push({
       boxType: 'credit',
       value: change,
+      createdAtBlock: currentBlockHeight,
       owner: buf2hex(pubKeyRaw),
     });
   }

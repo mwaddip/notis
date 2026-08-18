@@ -43,6 +43,7 @@ function creditCandidate(value: bigint, owner: Uint8Array): CandidateOf<CreditBo
   return {
     boxType: 'credit',
     value,
+    createdAtBlock: 0,
     owner,
   };
 }
@@ -117,6 +118,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
       txId: 'aa'.repeat(32),
       index: 99,
       value: 100n,
+      createdAtBlock: 0,
       owner: user(0xd1),
     } as unknown as CreditBox;
 
@@ -148,20 +150,20 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     // byte identity does not hold for it.
     const candidates: AnyBoxCandidate[] = [
       {
-        boxType: 'karma', value: 5n, owner: user(0xe1),
+        boxType: 'karma', value: 5n, createdAtBlock: 0, owner: user(0xe1),
       } satisfies CandidateOf<KarmaBox>,
       creditCandidate(7n, user(0xe2)),
       {
-        boxType: 'credit', value: 8n, owner: user(0xe3),
+        boxType: 'credit', value: 8n, createdAtBlock: 0, owner: user(0xe3),
         lockedUntilBlock: 900,
       } satisfies CandidateOf<CreditBox>,
       {
-        boxType: 'bond', value: 3n, inviterId: user(0xe7),
-        inviteePublicKey: user(0xe8), 
+        boxType: 'bond', value: 3n, createdAtBlock: 0, inviterId: user(0xe7),
+        inviteePublicKey: user(0xe8),
       },
       {
-        boxType: 'vouch', value: 1n, voucherId: user(0xe9),
-        targetId: user(0xea), 
+        boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: user(0xe9),
+        targetId: user(0xea),
       },
     ] as AnyBox[];
 
@@ -215,8 +217,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const restored = getBox(produced.id!)!;
     expect(restored.txId).toBe(TX_ID);
     expect(restored.index).toBe(0);
-    // The box carries no height at all — that is the point of the deletion.
-    expect('createdAtBlock' in restored).toBe(false);
+    expect('createdAtBlock' in restored).toBe(true);
     expect('lastTouchBlock' in restored).toBe(false);
     expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
       Buffer.from(serializeBox({ ...produced })).toString('hex'),

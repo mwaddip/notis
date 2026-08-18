@@ -156,6 +156,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
         {
           boxType: 'karma',
           value: total,
+          createdAtBlock: 0,
           owner,
         } as KarmaBox,
       ],
@@ -216,6 +217,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
     return {
       boxType: 'vouch_escrow' as const,
       value,
+      createdAtBlock: 0,
       owner,
       releaseAtBlock: 1000,
     };

@@ -77,6 +77,7 @@ function karmaBox(
   const candidate: CandidateOf<KarmaBox> = {
     boxType: 'karma',
     value,
+    createdAtBlock: 0,
     owner: o,
     // `seed` is a fixture discriminator, NOT a box field: `seedProvenance`
     // hashes it into the synthetic provenance, so distinct boxes keep distinct

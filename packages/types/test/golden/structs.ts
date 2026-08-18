@@ -100,34 +100,38 @@ const postFieldsCodec: ValueCodec<PostFields> = {
 /**
  * A box as its identity preimage sees it.
  *
+ * `boxType`, `value` and `createdAtBlock` are the shared prefix and are repeated
+ * on every member, so each row reads against the layout table whole rather than
+ * against a base type the arms would have to be merged with.
+ *
  * Provenance (`id`/`txId`/`index`) is absent, and that is structural rather than
  * an omission: it is not in the consensus bytes (TYPES_INTERFACE → Layout —
  * Boxes), so a corpus entry has no way to carry it and the decode direction
  * could not reconstruct it if it did.
  */
 export type BoxContent =
-  | { boxType: 'karma'; value: bigint; owner: Uint8Array; decayBurn: boolean | null }
-  | { boxType: 'credit'; value: bigint; owner: Uint8Array; lockedUntilBlock: number | null }
+  | { boxType: 'karma'; value: bigint; createdAtBlock: number; owner: Uint8Array; decayBurn: boolean | null }
+  | { boxType: 'credit'; value: bigint; createdAtBlock: number; owner: Uint8Array; lockedUntilBlock: number | null }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
-  | { boxType: 'genesis_proof'; value: bigint; payload: Uint8Array }
+  | { boxType: 'genesis_proof'; value: bigint; createdAtBlock: number; payload: Uint8Array }
   /** The same trailing fields as `vouch`; the tag is what separates the two. */
-  | { boxType: 'bond'; value: bigint; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
-  | { boxType: 'post_lock'; value: bigint; originalValue: bigint; owner: Uint8Array }
-  | { boxType: 'vouch'; value: bigint; voucherId: Uint8Array; targetId: Uint8Array }
+  | { boxType: 'bond'; value: bigint; createdAtBlock: number; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
+  | { boxType: 'post_lock'; value: bigint; createdAtBlock: number; originalValue: bigint; owner: Uint8Array }
+  | { boxType: 'vouch'; value: bigint; createdAtBlock: number; voucherId: Uint8Array; targetId: Uint8Array }
   /** A `b32` beside a bare `vlqU` — the only arm that mixes the two. */
-  | { boxType: 'vouch_escrow'; value: bigint; owner: Uint8Array; releaseAtBlock: number }
+  | { boxType: 'vouch_escrow'; value: bigint; createdAtBlock: number; owner: Uint8Array; releaseAtBlock: number }
   /** One `b32` and nothing after it — the only arm whose tail is a single field. */
-  | { boxType: 'like_accrual'; value: bigint; author: Uint8Array }
+  | { boxType: 'like_accrual'; value: bigint; createdAtBlock: number; author: Uint8Array }
   /**
    * No trailing fields on any of the four — the content encoding is the shared
    * prefix alone. Each member carries `boxType` and `value` and nothing else,
    * which is what a reader assuming at least one field after the prefix gets
    * wrong.
    */
-  | { boxType: 'emission'; value: bigint }
-  | { boxType: 'treasury'; value: bigint }
-  | { boxType: 'fee'; value: bigint }
-  | { boxType: 'karma_pool'; value: bigint };
+  | { boxType: 'emission'; value: bigint; createdAtBlock: number }
+  | { boxType: 'treasury'; value: bigint; createdAtBlock: number }
+  | { boxType: 'fee'; value: bigint; createdAtBlock: number }
+  | { boxType: 'karma_pool'; value: bigint; createdAtBlock: number };
 
 /**
  * The tag table, restated from the contract so a renumber fails here too.
@@ -156,11 +160,16 @@ const boxContentCodec: ValueCodec<BoxContent> = {
   parse(json: unknown): BoxContent {
     const j = json as Record<string, unknown>;
     const value = BigInt(j.value as string);
+    // Prefix, so it is parsed once for every arm — a JSON number like the other
+    // `number` fields in this corpus, never a decimal string (that form is the
+    // u64 values only).
+    const createdAtBlock = j.createdAtBlock as number;
     switch (j.boxType as BoxContent['boxType']) {
       case 'karma':
         return {
           boxType: 'karma',
           value,
+          createdAtBlock,
           owner: hex(j.owner as string),
           decayBurn: (j.decayBurn ?? null) as boolean | null,
         };
@@ -168,15 +177,17 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return {
           boxType: 'credit',
           value,
+          createdAtBlock,
           owner: hex(j.owner as string),
           lockedUntilBlock: (j.lockedUntilBlock ?? null) as number | null,
         };
       case 'genesis_proof':
-        return { boxType: 'genesis_proof', value, payload: hex(j.payload as string) };
+        return { boxType: 'genesis_proof', value, createdAtBlock, payload: hex(j.payload as string) };
       case 'bond':
         return {
           boxType: 'bond',
           value,
+          createdAtBlock,
           inviterId: hex(j.inviterId as string),
           inviteePublicKey: hex(j.inviteePublicKey as string),
         };
@@ -184,6 +195,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return {
           boxType: 'post_lock',
           value,
+          createdAtBlock,
           originalValue: BigInt(j.originalValue as string),
           owner: hex(j.owner as string),
         };
@@ -191,6 +203,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return {
           boxType: 'vouch',
           value,
+          createdAtBlock,
           voucherId: hex(j.voucherId as string),
           targetId: hex(j.targetId as string),
         };
@@ -198,19 +211,20 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return {
           boxType: 'vouch_escrow',
           value,
+          createdAtBlock,
           owner: hex(j.owner as string),
           releaseAtBlock: j.releaseAtBlock as number,
         };
       case 'like_accrual':
-        return { boxType: 'like_accrual', value, author: hex(j.author as string) };
+        return { boxType: 'like_accrual', value, createdAtBlock, author: hex(j.author as string) };
       case 'emission':
-        return { boxType: 'emission', value };
+        return { boxType: 'emission', value, createdAtBlock };
       case 'treasury':
-        return { boxType: 'treasury', value };
+        return { boxType: 'treasury', value, createdAtBlock };
       case 'fee':
-        return { boxType: 'fee', value };
+        return { boxType: 'fee', value, createdAtBlock };
       case 'karma_pool':
-        return { boxType: 'karma_pool', value };
+        return { boxType: 'karma_pool', value, createdAtBlock };
       default:
         throw new Error(`boxContent: unknown boxType ${String(j.boxType)}`);
     }
@@ -227,11 +241,18 @@ const boxContentCodec: ValueCodec<BoxContent> = {
     const boxType = BOX_TYPE_BY_TAG[tag];
     if (boxType === undefined) throw new Error(`boxContent: unknown boxType tag ${tag}`);
     const value = readVlqU64(r);
+    // The prefix's third field, read off the layout table's own row —
+    // `enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock)`. `vlqU` because the
+    // field is a `number`; reading it as the bigint writer's field would decode
+    // the same bytes and re-encode identically, so the row is written from the
+    // field's type rather than from any byte string.
+    const createdAtBlock = readVlqU(r);
     switch (boxType) {
       case 'karma':
         return {
           boxType,
           value,
+          createdAtBlock,
           owner: readBytesN(r, 32),
           decayBurn: readOpt(r, readBool),
         };
@@ -239,6 +260,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return {
           boxType,
           value,
+          createdAtBlock,
           owner: readBytesN(r, 32),
           lockedUntilBlock: readOpt(r, readVlqU),
         };
@@ -257,30 +279,40 @@ const boxContentCodec: ValueCodec<BoxContent> = {
             'invalid-tag',
           );
         }
-        return { boxType, value, payload };
+        return { boxType, value, createdAtBlock, payload };
       }
       case 'bond':
         // Byte-for-byte the `vouch` arm below, and reached only by the tag —
         // which is the property the two vectors in `boxes.json` exist to hold.
-        return { boxType, value, inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32) };
+        return {
+          boxType, value, createdAtBlock,
+          inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32),
+        };
       case 'post_lock':
         return {
           boxType,
           value,
+          createdAtBlock,
           originalValue: readVlqU64(r),
           owner: readBytesN(r, 32),
         };
       case 'vouch':
-        return { boxType, value, voucherId: readBytesN(r, 32), targetId: readBytesN(r, 32) };
+        return {
+          boxType, value, createdAtBlock,
+          voucherId: readBytesN(r, 32), targetId: readBytesN(r, 32),
+        };
       case 'vouch_escrow':
         // `vlqU` after the key, not `vlqU64`: the height is a `number`. Reading
         // it as the bigint writer's field would decode the same bytes and
         // re-encode identically, so the two are told apart by their domains
         // rather than by a vector — which is why the row is written here from the
         // field's type and not from the byte string.
-        return { boxType, value, owner: readBytesN(r, 32), releaseAtBlock: readVlqU(r) };
+        return {
+          boxType, value, createdAtBlock,
+          owner: readBytesN(r, 32), releaseAtBlock: readVlqU(r),
+        };
       case 'like_accrual':
-        return { boxType, value, author: readBytesN(r, 32) };
+        return { boxType, value, createdAtBlock, author: readBytesN(r, 32) };
       case 'emission':
       case 'treasury':
       case 'fee':
@@ -288,7 +320,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         // The box is complete at the prefix. An independent reader is where a
         // phantom trailing field would show up as a decode failure rather than
         // as agreement between a writer and a reader that share the mistake.
-        return { boxType, value };
+        return { boxType, value, createdAtBlock };
     }
   },
 };

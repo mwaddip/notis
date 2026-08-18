@@ -294,11 +294,24 @@ candidate bytes, then re-derive. So `stored.id === computeBoxId(stored)` holds b
 for every box in the UTXO set, and a light client, indexer, or AVL prover derives the same id
 the node did.
 
-**`createdAtBlock` is NOT a box field.** It was the only apply-mutated field, and its presence
-is what made the id dishonest. The node records the settled height in a store column;
-**consensus code must never read that column**, since it is not committed in the `stateRoot`
-and a node bootstrapping from an AVL snapshot cannot reconstruct it. The decay clock reads a
-committed per-identity record instead — see `NODE_INTERFACE.md`.
+**`createdAtBlock` is a box field, and it is CREATOR-DECLARED.** It sits in the shared prefix
+beside `boxType` and `value`, so it is candidate content: it rides the transaction,
+`canonicalBoxBytes` encodes it, and `computeTxId` covers the creator's signature over it.
+
+⛔ **What made the id dishonest was APPLY-MUTATION, not the field.** The field was once written
+by block application after its box existed, so a stored box stopped matching its own id — audit
+M-11. A value the creator declares and signs is fixed before the id is computed, so the
+invariant above holds unchanged. **The objection was to the writer, never to the field.**
+
+⚠ **The node's `created_at_block` store column holds the same number**, written from the box's
+own field at insert. It is a denormalisation for querying, **not a second source**: consensus
+reads the box, and a rule that consulted the column instead would be reading something the
+`stateRoot` does not commit. The decay clock reads a committed per-identity record — see
+`NODE_INTERFACE.md`.
+
+⚠ **A box may not claim a height ahead of the chain**, and backdating is bounded only by the
+rules that read the value. **Every rule deriving from `createdAtBlock` owes its own exact
+check**; the general bound is one-directional on purpose.
 
 #### Mint identity
 
@@ -461,12 +474,12 @@ constraint and must not be described as one.
   (measured: number `5` → `05`; bigint `5n` → `1b0000000000000005`). Hard,
   unversioned format break ⇒ **fresh chain / DB reset, coordinated all-node
   cutover.** No in-place migration.
-- The demo-UI CBOR encoder MUST emit the identical `0x1b`+uint64 form for
-  `value` and minimal-int for the remaining `number` fields. Spec G removes
-  `createdAtBlock` from the box, so box encoding no longer carries a block
-  height — but L-5's `cborEncodeInt` cap (integers to 65535, string/byte
-  lengths to 255) still binds every other height-bearing structure the UI
-  builds, and remains Spec F P1's to fix.
+- **The demo UI encodes a box positionally**, mirroring `canonicalBoxBytes` field
+  for field — shared prefix `enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock)`
+  and then the per-type tail. ⛔ **The mirror must produce bytes identical to the
+  node's**: it feeds `computeTxId`, so a prefix field missing or differently
+  encoded breaks the signature on **every box type at once**, and no gate in this
+  repo reaches that file.
 
 ### KarmaBox
 
@@ -1759,8 +1772,10 @@ their ids differ from one another and across heights through the provenance `com
 decode as text is a client's question, and a UTF-8 writer would put a validity rule inside an encoder
 that does not own one. The length prefix is the whole of the field's injectivity — appended raw, an
 empty payload would be indistinguishable from the end of the box. It is the only arm whose entire
-tail is one field; at `enum8(3) ‖ vlqU64(0) ‖ u8(0)` it is three bytes, and the **smallest legal box
-of any type is `emission`, `treasury` or `fee` at two** — the shared prefix with nothing after it.
+tail is one field; at `enum8(3) ‖ vlqU64(0) ‖ vlqU(0) ‖ u8(0)` it is four bytes, and the **smallest
+legal box of any type is `emission`, `treasury` or `fee` at three** — the shared prefix with nothing
+after it. ⚠ **Both counts are measured, not derived**: `fee` at zero encodes `090000` and an empty
+`genesis_proof` encodes `03000000`.
 
 ⚠ **`genesis_proof.payload` carries the one per-type domain rule in this table**: the reader refuses
 a payload over `MAX_GENESIS_PROOF_PAYLOAD_BYTES` (§GenesisProofBox, §Content limits). It binds this

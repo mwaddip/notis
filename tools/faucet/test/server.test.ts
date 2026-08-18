@@ -14,6 +14,7 @@ let client: NodeClient;
 beforeEach(() => {
   submitted = [];
   client = {
+    currentHeight: async () => 100,
     karmaBoxes: async () => [{ boxId: K1, value: 1000n }],
     creditBoxes: async () => [{ boxId: C1, value: 1000n }],
     submitInvite: async (tx) => { submitted.push(tx); },
@@ -122,7 +123,7 @@ describe('POST /faucet/credits', () => {
     expect(res.status).toBe(202);
     expect(submitted).toHaveLength(1);
     const outputs = submitted[0]!.outputs as Record<string, unknown>[];
-    expect(outputs[0]).toEqual({ boxType: 'credit', value: '100', owner: recipient });
+    expect(outputs[0]).toEqual({ boxType: 'credit', value: '100', createdAtBlock: 100, owner: recipient });
   });
 
   // Separate limits: spending a credit allowance must not consume the invite one.

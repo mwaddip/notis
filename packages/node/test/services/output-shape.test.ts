@@ -78,18 +78,21 @@ function honestCandidate(
       return {
         boxType: 'karma',
         value: 10n,
+        createdAtBlock: 0,
         owner,
       };
     case 'credit':
       return {
         boxType: 'credit',
         value: 10n,
+        createdAtBlock: 0,
         owner,
       };
     case 'bond':
       return {
         boxType: 'bond',
         value: 10n,
+        createdAtBlock: 0,
         inviterId: owner,
         inviteePublicKey: new Uint8Array(32).fill(0xaa),
       };
@@ -97,6 +100,7 @@ function honestCandidate(
       return {
         boxType: 'post_lock',
         value: 10n,
+        createdAtBlock: 0,
         originalValue: 10n,
         owner,
       };
@@ -104,6 +108,7 @@ function honestCandidate(
       return {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: owner,
         targetId: new Uint8Array(32).fill(0xcc),
       };
@@ -113,17 +118,20 @@ function honestCandidate(
       return {
         boxType: 'fee',
         value: 10n,
+        createdAtBlock: 0,
       };
     case 'like_accrual':
       return {
         boxType: 'like_accrual',
         value: 10n,
+        createdAtBlock: 0,
         author: new Uint8Array(32).fill(0xdd),
       };
     case 'vouch_escrow':
       return {
         boxType: 'vouch_escrow',
         value: 10n,
+        createdAtBlock: 0,
         owner,
         releaseAtBlock: 40,
       };
@@ -203,7 +211,7 @@ describe('checkOutputShape (direct)', () => {
   });
 
   it('rejects an unknown boxType with a clean UtxoResult error', () => {
-    const r = shapeOf([{ boxType: 'wat', value: 10n }]);
+    const r = shapeOf([{ boxType: 'wat', value: 10n,  createdAtBlock: 0,}]);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unknown boxType/);
   });
@@ -339,6 +347,7 @@ describe('validateTx output shape (integration)', () => {
       {
         boxType: 'karma',
         value,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       },
       1,
@@ -352,6 +361,7 @@ describe('validateTx output shape (integration)', () => {
       {
         boxType: 'credit',
         value,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       },
       1,
@@ -383,6 +393,7 @@ describe('validateTx output shape (integration)', () => {
     return {
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
   }
@@ -411,7 +422,7 @@ describe('validateTx output shape (integration)', () => {
       deps,
       signedTx(
         [c1.id!],
-        [{ boxType: 'credit', value: 40n, owner: ownerPubKey }],
+        [{ boxType: 'credit', value: 40n, createdAtBlock: 0, owner: ownerPubKey }],
       ),
       10,
     );
@@ -425,6 +436,7 @@ describe('validateTx output shape (integration)', () => {
           {
             boxType: 'credit',
             value: 40n,
+            createdAtBlock: 0,
             owner: ownerPubKey,
             lockedUntilBlock: 500,
           },
@@ -440,6 +452,7 @@ describe('validateTx output shape (integration)', () => {
     const lock = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
     };
@@ -460,6 +473,7 @@ describe('validateTx output shape (integration)', () => {
     const vouch = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
     };
@@ -477,6 +491,7 @@ describe('validateTx output shape (integration)', () => {
     const bond = {
       boxType: 'bond',
       value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       inviterId: ownerPubKey,
       inviteePublicKey: invitee,
     };
@@ -505,6 +520,7 @@ describe('validateTx output shape (integration)', () => {
     const strayLock = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
       note: 'x',
@@ -523,6 +539,7 @@ describe('validateTx output shape (integration)', () => {
     const lock: Record<string, unknown> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
     };
@@ -566,7 +583,7 @@ describe('validateTx output shape (integration)', () => {
   // check back behind the arms resurfaces the arm's wording and fails here.
   it('rejects an unknown output boxType at the shape gate (the transition arm backstops it)', () => {
     const karma = seedKarma(100n);
-    const alien = { boxType: 'wat', value: 10n };
+    const alien = { boxType: 'wat', value: 10n,  createdAtBlock: 0,};
     const r = validateTx(deps, signedTx([karma.id!], [{ ...karmaChange(90n) }, alien]), 10);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unknown boxType wat/);
@@ -585,7 +602,7 @@ describe('checkSettlementOutputShape', () => {
       // ⛔ The shared prefix and nothing else: each names no owner, because the
       // settlement is its only spender and its only producer (TYPES_INTERFACE →
       // EmissionBox / TreasuryBox / KarmaPoolBox).
-      const r = checkSettlementOutputShape([{ boxType: t, value: 7n }] as AnyBoxCandidate[]);
+      const r = checkSettlementOutputShape([{ boxType: t, value: 7n,  createdAtBlock: 0,}] as AnyBoxCandidate[]);
       expect(r.valid, t).toBe(true);
     }
   });
@@ -594,7 +611,7 @@ describe('checkSettlementOutputShape', () => {
     // The two gates differ on exactly this set, which is what makes the split
     // load-bearing rather than cosmetic.
     for (const t of PROTOCOL) {
-      const r = shapeOf([{ boxType: t, value: 7n }]);
+      const r = shapeOf([{ boxType: t, value: 7n,  createdAtBlock: 0,}]);
       expect(r.valid, t).toBe(false);
       expect(r.error, t).toMatch(new RegExp(`a ${t} box may not be a transaction output`));
     }
@@ -603,7 +620,7 @@ describe('checkSettlementOutputShape', () => {
   it('refuses a genesis_proof output on BOTH gates', () => {
     // ⛔ The absolute one: no transaction of any kind creates a genesis proof,
     // so widening the settlement's set does not reach it.
-    const candidate = [{ boxType: 'genesis_proof', value: 0n, payload: new Uint8Array(1) }];
+    const candidate = [{ boxType: 'genesis_proof', value: 0n,  createdAtBlock: 0,payload: new Uint8Array(1) }];
     for (const [name, check] of [
       ['user', shapeOf],
       ['settlement', (o: unknown[]) => checkSettlementOutputShape(o as AnyBoxCandidate[])],
@@ -616,13 +633,13 @@ describe('checkSettlementOutputShape', () => {
 
   it('still closes the key set and the field types over the wider type set', () => {
     const stray = checkSettlementOutputShape(
-      [{ boxType: 'karma_pool', value: 7n, owner: new Uint8Array(32) }] as unknown as AnyBoxCandidate[],
+      [{ boxType: 'karma_pool', value: 7n,  createdAtBlock: 0,owner: new Uint8Array(32) }] as unknown as AnyBoxCandidate[],
     );
     expect(stray.valid).toBe(false);
     expect(stray.error).toMatch(/unexpected key 'owner'/);
 
     const mistyped = checkSettlementOutputShape(
-      [{ boxType: 'emission', value: 7 }] as unknown as AnyBoxCandidate[],
+      [{ boxType: 'emission', value: 7,  createdAtBlock: 0,}] as unknown as AnyBoxCandidate[],
     );
     expect(mistyped.valid).toBe(false);
     expect(mistyped.error).toMatch(/field 'value'/);

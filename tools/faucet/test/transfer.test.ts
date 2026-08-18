@@ -5,7 +5,7 @@ import { C1, baseCfg as cfg, outputsOf, pubHex, recipient, verifies } from './fi
 
 describe('buildCreditTransferTx', () => {
   it('pays the recipient and returns the change to the faucet', () => {
-    const { tx } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient);
+    const { tx } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient, 512);
     const outputs = outputsOf(tx);
     expect(outputs).toHaveLength(2);
     expect(outputs.every((o) => o.boxType === 'credit')).toBe(true);
@@ -18,18 +18,18 @@ describe('buildCreditTransferTx', () => {
   // conservation. A credit transition needs no output back to the input's
   // owner, so an exact spend emits one box rather than a zero-value second.
   it('omits the change output when the spend is exact', () => {
-    const { tx, changeValue } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient);
+    const { tx, changeValue } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient, 512);
     expect(changeValue).toBe(0n);
     expect(outputsOf(tx)).toHaveLength(1);
   });
 
   it('signs the txId @dagsocial/types computes, verifiably', () => {
-    const { tx, txId } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient);
+    const { tx, txId } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient, 512);
     const expected = computeTxId({
       inputs: [C1],
       outputs: [
-        { boxType: 'credit', value: 1n, owner: Buffer.from(recipient, 'hex') },
-        { boxType: 'credit', value: 499n, owner: Buffer.from(pubHex, 'hex') },
+        { boxType: 'credit', value: 1n, createdAtBlock: 512, owner: Buffer.from(recipient, 'hex') },
+        { boxType: 'credit', value: 499n, createdAtBlock: 512, owner: Buffer.from(pubHex, 'hex') },
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -39,25 +39,25 @@ describe('buildCreditTransferTx', () => {
   });
 
   it('renders the wire body the node\'s JSON edge accepts', () => {
-    const { tx } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient);
+    const { tx } = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient, 512);
     expect(() => JSON.stringify(tx)).not.toThrow();
-    expect(outputsOf(tx)[0]).toEqual({ boxType: 'credit', value: '1', owner: recipient });
+    expect(outputsOf(tx)[0]).toEqual({ boxType: 'credit', value: '1', createdAtBlock: 512, owner: recipient });
     expect((tx.signatures as Record<string, string>)[pubHex]).toMatch(/^[0-9a-f]{128}$/);
   });
 
   it('refuses when the boxes cannot cover the amount', () => {
     expect(() => buildCreditTransferTx(
-      { ...cfg, creditAmount: 900n }, [{ boxId: C1, value: 5n }], recipient,
+      { ...cfg, creditAmount: 900n }, [{ boxId: C1, value: 5n }], recipient, 512,
     )).toThrow(/insufficient/i);
   });
 
   it('refuses a malformed recipient key', () => {
-    expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], 'nope'))
+    expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], 'nope', 512))
       .toThrow(/64 lowercase hex/);
   });
 
   it('refuses a recipient that is the faucet itself', () => {
-    expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], pubHex))
+    expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], pubHex, 512))
       .toThrow(/itself/i);
   });
 });

@@ -155,7 +155,7 @@ describe('Two-node integration', () => {
     };
     const tx: UtxoTransaction = {
       inputs: ['aa'.repeat(32)],
-      outputs: [{ boxType: 'karma', value: 10n, owner: kp.publicKey } as never],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: kp.publicKey } as never],
       signatures: {},
       protocolVersion: 1,
       post,
@@ -245,7 +245,7 @@ describe('Two-node integration', () => {
 
     const invalidTx = {
       inputs: ['ba'.repeat(32)],
-      outputs: [{ boxType: 'karma', value: 10n, owner: author }],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: author }],
       signatures: {},
       protocolVersion: 1,
       post: {

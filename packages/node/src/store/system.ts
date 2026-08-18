@@ -77,6 +77,7 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   const box: KarmaBox = {
     boxType: 'karma',
     value: SYSTEM_KARMA_INITIAL,
+    createdAtBlock: genesisHeight,
     owner: systemPubKey,
     txId: mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), genesisHeight),
     index: MINT_OUTPUT_INDEX,
@@ -147,6 +148,7 @@ export function ensureFaucetCreditBox(
   const box: CreditBox = {
     boxType: 'credit',
     value: FAUCET_CREDITS_INITIAL,
+    createdAtBlock: genesisHeight,
     owner: systemPubKey,
     txId: mintTxIdFor(genesisContext(GENESIS_FAUCET_CREDITS), genesisHeight),
     index: MINT_OUTPUT_INDEX,
@@ -189,6 +191,7 @@ export function ensureGenesisProofBox(
   const box: GenesisProofBox = {
     boxType: 'genesis_proof',
     value: 0n,
+    createdAtBlock: genesisHeight,
     payload,
     txId: mintTxIdFor(genesisContext(GENESIS_PROOF), genesisHeight),
     index: MINT_OUTPUT_INDEX,
@@ -234,6 +237,7 @@ export function ensureEmissionBox(total: bigint, currentHeight: number): Emissio
   const box: EmissionBox = {
     boxType: 'emission',
     value: total,
+    createdAtBlock: genesisHeight,
     txId: mintTxIdFor(genesisContext(GENESIS_EMISSION), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
@@ -294,6 +298,7 @@ export function seedGenesisCommittee(
     const box: KarmaBox = {
       boxType: 'karma',
       value: karmaPerMember,
+      createdAtBlock: genesisHeight,
       owner: member,
       txId: mintTxIdFor(genesisCommitteeContext(member), genesisHeight),
       index: MINT_OUTPUT_INDEX,
@@ -381,6 +386,7 @@ export function ensureKarmaPoolBox(granted: bigint, currentHeight: number): Karm
   const box: KarmaPoolBox = {
     boxType: 'karma_pool',
     value: KARMA_SUPPLY_TOTAL - granted,
+    createdAtBlock: genesisHeight,
     txId: mintTxIdFor(genesisContext(GENESIS_KARMA_POOL), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };

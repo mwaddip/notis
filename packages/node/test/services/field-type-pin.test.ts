@@ -135,6 +135,7 @@ describe('field-type pin', () => {
       {
         boxType: 'karma',
         value,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       },
       1,
@@ -161,6 +162,7 @@ describe('field-type pin', () => {
     return {
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
   }
@@ -180,11 +182,11 @@ describe('field-type pin', () => {
     const karmaOwner32 = bytes32(0x11);
     const CORPUS: Array<[string, unknown]> = [
       // -- missing fields (the class-1 validate-time-throw sites) --
-      ['karma missing owner', { boxType: 'karma', value: 10n }],
-      ['karma missing value', { boxType: 'karma', owner: karmaOwner32 }],
-      ['vouch missing voucherId', { boxType: 'vouch', value: 1n, targetId: karmaOwner32 }],
-      ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32 }],
-      ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, owner: karmaOwner32 }],
+      ['karma missing owner', { boxType: 'karma', value: 10n, createdAtBlock: 0 }],
+      ['karma missing value', { boxType: 'karma', createdAtBlock: 0, owner: karmaOwner32 }],
+      ['vouch missing voucherId', { boxType: 'vouch', value: 1n, createdAtBlock: 0, targetId: karmaOwner32 }],
+      ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, createdAtBlock: 0, inviterId: karmaOwner32 }],
+      ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, createdAtBlock: 0, owner: karmaOwner32 }],
       // -- wrong-typed fields, one per FieldType --
       ['karma value as number', { ...honest('karma'), value: 10 }],
       ['karma value negative bigint', { ...honest('karma'), value: -1n }],
@@ -220,25 +222,25 @@ describe('field-type pin', () => {
       ['boolean entry', true],
       ['array entry', []],
       // -- unknown and prototype-colliding boxTypes --
-      ["boxType 'constructor'", { boxType: 'constructor', value: 10n }],
-      ["boxType 'toString'", { boxType: 'toString', value: 10n }],
-      ["boxType 'like' (retired)", { boxType: 'like', value: 10n }],
-      ['boxType as number', { boxType: 7, value: 10n }],
-      ['boxType missing', { value: 10n }],
+      ["boxType 'constructor'", { boxType: 'constructor', value: 10n, createdAtBlock: 0 }],
+      ["boxType 'toString'", { boxType: 'toString', value: 10n, createdAtBlock: 0 }],
+      ["boxType 'like' (retired)", { boxType: 'like', value: 10n, createdAtBlock: 0 }],
+      ['boxType as number', { boxType: 7, value: 10n, createdAtBlock: 0 }],
+      ['boxType missing', { value: 10n, createdAtBlock: 0 }],
     ];
 
     function honest(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, owner: karmaOwner32 };
+          return { boxType, value: 10n, createdAtBlock: 0, owner: karmaOwner32 };
         case 'credit':
-          return { boxType, value: 10n, owner: karmaOwner32 };
+          return { boxType, value: 10n, createdAtBlock: 0, owner: karmaOwner32 };
         case 'bond':
-          return { boxType, value: 10n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
+          return { boxType, value: 10n, createdAtBlock: 0, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
         case 'post_lock':
-          return { boxType, value: 10n, originalValue: 10n, owner: karmaOwner32 };
+          return { boxType, value: 10n, createdAtBlock: 0, originalValue: 10n, owner: karmaOwner32 };
         case 'vouch':
-          return { boxType, value: 1n, voucherId: karmaOwner32, targetId: bytes32(0xcc) };
+          return { boxType, value: 1n, createdAtBlock: 0, voucherId: karmaOwner32, targetId: bytes32(0xcc) };
         default:
           throw new Error(boxType);
       }
@@ -285,15 +287,15 @@ describe('field-type pin', () => {
     function honestCandidate(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, owner: bytes32(1), decayBurn: false };
+          return { boxType, value: 10n, createdAtBlock: 0, owner: bytes32(1), decayBurn: false };
         case 'credit':
-          return { boxType, value: 10n, owner: bytes32(1), lockedUntilBlock: 5 };
+          return { boxType, value: 10n, createdAtBlock: 0, owner: bytes32(1), lockedUntilBlock: 5 };
         case 'bond':
-          return { boxType, value: 10n, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
+          return { boxType, value: 10n, createdAtBlock: 0, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
         case 'post_lock':
-          return { boxType, value: 10n, originalValue: 10n, owner: bytes32(1) };
+          return { boxType, value: 10n, createdAtBlock: 0, originalValue: 10n, owner: bytes32(1) };
         case 'vouch':
-          return { boxType, value: 1n, voucherId: bytes32(1), targetId: bytes32(0xcc) };
+          return { boxType, value: 1n, createdAtBlock: 0, voucherId: bytes32(1), targetId: bytes32(0xcc) };
         default:
           throw new Error(boxType);
       }
@@ -390,10 +392,11 @@ describe('field-type pin', () => {
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { boxType: 'karma', value: 10n, owner: inviter.userId },
+          { boxType: 'karma', value: 10n,  createdAtBlock: 0,owner: inviter.userId },
           {
             boxType: 'bond',
             value: FIXTURE_BOND_KARMA,
+            createdAtBlock: 0,
             inviterId: inviter.userId,
             inviteePublicKey: invitee.userId,
           },
@@ -414,6 +417,7 @@ describe('field-type pin', () => {
       const vouch = {
         boxType: 'vouch' as const,
         value: 1n,
+        createdAtBlock: 0,
         voucherId: ownerPubKey,
         targetId: bytes32(0xcc),
       };
@@ -427,6 +431,7 @@ describe('field-type pin', () => {
       const escrow = {
         boxType: 'vouch_escrow' as const,
         value: 1n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
         releaseAtBlock: 1000,
       };
@@ -465,6 +470,7 @@ describe('field-type pin', () => {
         const lock: Record<string, unknown> = {
           boxType: 'post_lock',
           value: POST_LOCK_THREAD_COST,
+          createdAtBlock: 0,
           originalValue: POST_LOCK_THREAD_COST,
           owner: ownerPubKey,
         };
@@ -474,6 +480,7 @@ describe('field-type pin', () => {
             {
               boxType: 'karma',
               value: 100n - POST_LOCK_THREAD_COST,
+              createdAtBlock: 0,
               owner: ownerPubKey,
             },
             lock,
@@ -528,12 +535,14 @@ describe('field-type pin', () => {
           {
             boxType: 'karma',
             value: 100n - POST_LOCK_THREAD_COST,
+            createdAtBlock: 0,
             owner: attacker.userId,
             note: 'x', // not in the layout: never encoded, never hashed
           },
           {
             boxType: 'post_lock',
             value: POST_LOCK_THREAD_COST,
+            createdAtBlock: 0,
             originalValue: POST_LOCK_THREAD_COST,
             owner: attacker.userId,
           },
@@ -583,6 +592,7 @@ describe('field-type pin', () => {
           {
             boxType: 'post_lock',
             value: POST_LOCK_THREAD_COST,
+            createdAtBlock: 0,
             originalValue: String(POST_LOCK_THREAD_COST),
             owner: attacker.userId,
           },
@@ -610,11 +620,13 @@ describe('field-type pin', () => {
           {
             boxType: 'karma',
             value: 100n - POST_LOCK_THREAD_COST,
+            createdAtBlock: 0,
             owner: author.userId,
           },
           {
             boxType: 'post_lock',
             value: POST_LOCK_THREAD_COST,
+            createdAtBlock: 0,
             originalValue: POST_LOCK_THREAD_COST,
             owner: author.userId,
           },

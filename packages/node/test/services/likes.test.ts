@@ -163,11 +163,13 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
         {
           boxType: 'karma',
           value: karma.value - deficit,
+          createdAtBlock: 0,
           owner: likerPubKey,
         } as KarmaBox,
         {
           boxType: 'like_accrual',
           value: deficit,
+          createdAtBlock: 0,
           author: POST_AUTHOR,
         } as LikeAccrualBox,
       ],
@@ -321,11 +323,13 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
         {
           boxType: 'karma',
           value: otherKarma.value - LIKE_KARMA_COST,
+          createdAtBlock: 0,
           owner: otherPub,
         } as KarmaBox,
         {
           boxType: 'like_accrual',
           value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
           author: POST_AUTHOR,
         } as LikeAccrualBox,
       ],

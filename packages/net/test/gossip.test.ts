@@ -283,7 +283,7 @@ describe('tx topic validator — the post membership gate', () => {
 
   const txWith = (post?: Post): UtxoTransaction => ({
     inputs: ['aa'.repeat(32)],
-    outputs: [{ boxType: 'karma', value: 10n, owner: new Uint8Array(32).fill(1) } as never],
+    outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
     signatures: {},
     protocolVersion: 1,
     ...(post ? { post } : {}),

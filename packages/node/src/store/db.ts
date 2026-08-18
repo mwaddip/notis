@@ -43,11 +43,10 @@ const MIGRATIONS = [
 
   // UTXO boxes
   //
-  // created_at_block is a STORE column, never a consensus input (Spec G D3):
-  // it is not committed in the stateRoot, so a node bootstrapping from an AVL
-  // snapshot cannot reconstruct it. Legitimate readers are getUnspentBoxes
-  // ordering and display only. See NODE_INTERFACE "created_at_block is a store
-  // column, never a consensus input".
+  // created_at_block carries the box's own `createdAtBlock` field — what the
+  // creator declared and `canonicalBoxBytes` encodes. The column is NOT
+  // committed in the stateRoot, so a node bootstrapping from an AVL snapshot
+  // cannot reconstruct it.
   //
   // tx_id/output_index are the box's creating-transaction provenance
   // (NODE_INTERFACE → "Box provenance columns").

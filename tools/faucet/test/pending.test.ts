@@ -19,7 +19,7 @@ describe('PendingChain', () => {
   // the faucet serves one person per block.
   it('replaces the view with the change box after a submission', () => {
     const chain = new PendingChain();
-    chain.advance(buildInviteTx(cfg, confirmed, recipient));
+    chain.advance(buildInviteTx(cfg, confirmed, recipient, 0));
     const view = chain.view(confirmed);
     expect(view).toHaveLength(1);
     expect(view[0]!.value).toBe(750n);
@@ -29,12 +29,12 @@ describe('PendingChain', () => {
   // The id must be the one block application will materialize, or the next
   // transaction names an input that never exists.
   it('holds the id block application derives for the karma change', () => {
-    const built = buildInviteTx(cfg, confirmed, recipient);
+    const built = buildInviteTx(cfg, confirmed, recipient, 0);
     // Typed rather than inline: `computeCandidateBoxId` takes the shared
     // `BoxCandidate` base, so an object literal carrying `owner` is an excess
     // property at the call site.
     const change: CandidateOf<KarmaBox> = {
-      boxType: 'karma', value: 750n, owner: Buffer.from(pubHex, 'hex'),
+      boxType: 'karma', value: 750n, createdAtBlock: 0, owner: Buffer.from(pubHex, 'hex'),
     };
     expect(built.change?.boxId).toBe(computeCandidateBoxId(change, built.txId, 0));
   });
@@ -43,17 +43,17 @@ describe('PendingChain', () => {
   // the first transaction's change output.
   it('chains a second invite onto the first one\'s change', () => {
     const chain = new PendingChain();
-    const first = buildInviteTx(cfg, confirmed, recipient);
+    const first = buildInviteTx(cfg, confirmed, recipient, 0);
     chain.advance(first);
-    const next = buildInviteTx(cfg, chain.view(confirmed), second);
+    const next = buildInviteTx(cfg, chain.view(confirmed), second, 0);
     expect(next.tx.inputs).toEqual([first.change!.boxId]);
     expect(next.changeValue).toBe(500n);
   });
 
   it('chains a third time from its own tip', () => {
     const chain = new PendingChain();
-    chain.advance(buildInviteTx(cfg, confirmed, recipient));
-    const secondTx = buildInviteTx(cfg, chain.view(confirmed), second);
+    chain.advance(buildInviteTx(cfg, confirmed, recipient, 0));
+    const secondTx = buildInviteTx(cfg, chain.view(confirmed), second, 0);
     chain.advance(secondTx);
     const view = chain.view(confirmed);
     expect(view[0]!.value).toBe(500n);
@@ -62,7 +62,7 @@ describe('PendingChain', () => {
 
   it('falls back to the confirmed view after a reset', () => {
     const chain = new PendingChain();
-    chain.advance(buildInviteTx(cfg, confirmed, recipient));
+    chain.advance(buildInviteTx(cfg, confirmed, recipient, 0));
     chain.reset();
     expect(chain.view(confirmed)).toEqual(confirmed);
   });
@@ -71,7 +71,7 @@ describe('PendingChain', () => {
   // and the next request reads the confirmed set.
   it('holds no tip when the transaction emits no change', () => {
     const chain = new PendingChain();
-    chain.advance(buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient));
+    chain.advance(buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient, 0));
     expect(chain.view(confirmed)).toEqual(confirmed);
   });
 });
