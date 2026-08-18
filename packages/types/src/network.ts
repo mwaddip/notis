@@ -215,7 +215,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: '0f1ce7df51f6c3b1093795a6759a5a894d3f7411bcd98e38cbf50cad595da5bf03',
+  genesisStateRoot: '31f7887675ce204e7af3ff0b0d1ed35131189ce4ccffd3ec0eaaad45f11f308f03',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
@@ -280,11 +280,13 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
-  // The proof box's payload separates this root from both the others, and the
-  // emission box's value separates it from testnet's as well — derived from
-  // `creditFixedRateBlocks` and `creditEpochBlocks`, so smaller here than on the
-  // two networks that share mainnet's schedule.
-  genesisStateRoot: '1fbf99d5dc21c8d09e736af952892d3c2f1f3d390a3b70cb8c11b8477a90cb5603',
+  // Three things separate this root from testnet's, not one: the proof box's
+  // payload, the emission box's value — derived from `creditFixedRateBlocks`
+  // and `creditEpochBlocks`, so smaller here than on the two networks that
+  // share mainnet's schedule — and the faucet identity, since the two profiles
+  // name DIFFERENT `faucetPublicKey`s and therefore seed differently-owned
+  // karma and credit boxes.
+  genesisStateRoot: 'c4fb19c120607c91b98c16446cdf2b01e5e7aeab90dc58fff89756d68df8a82303',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({
