@@ -87,6 +87,16 @@ export interface NetworkProfile {
    * ⚠ **Re-pin when anything a genesis box's id derives from moves.** These are
    * digests over box ids, so a change to the box encoding moves them without
    * anything here changing.
+   *
+   * ⛔ **Nothing here can derive one, so a re-pin is taken on measurement.** This
+   * package holds neither the box serializer nor the AVL prover, and a digest over
+   * a genesis box set is not hand-assembled. **Mainnet is what makes a measured
+   * value checkable:** it seeds no identity record and no faucet box, so a change
+   * confined to either leaves its root byte-identical while the other two move. A
+   * re-pin that moves mainnet's as well is not confined — a box encoding, a codec
+   * or the feed order moved with it, and the delta is wider than the change
+   * claims (`TYPES_INTERFACE` → A regenerated pin's INPUT is unchecked, so state
+   * it).
    */
   readonly genesisStateRoot: string;
 }
@@ -137,13 +147,14 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // no-premine evidence later is a value change on a network that has not
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Over TWO leaves — the proof box and the emission box. The system karma and
-  // faucet credit boxes sit behind `isFaucetNetwork`, and a faucet on mainnet
-  // would be a defect rather than a shortfall; the emission box is outside that
-  // gate on purpose, because it is what every block's coinbase is released from
-  // (TYPES_INTERFACE → EmissionBox). The other two networks seed FIVE leaves —
-  // those two boxes, these two, and the system identity record — which is why
-  // this root's trailing height byte (`02`) differs from theirs (`03`).
+  // Over THREE leaves — the proof box, the emission box and the karma pool box.
+  // The system karma and faucet credit boxes sit behind `isFaucetNetwork`, and a
+  // faucet on mainnet would be a defect rather than a shortfall; the emission and
+  // pool boxes are outside that gate on purpose, because every block's coinbase is
+  // released from the one and every karma mint draws from the other
+  // (TYPES_INTERFACE → EmissionBox, KarmaPoolBox). The other two networks seed SIX
+  // leaves — those two boxes, these three, and the system identity record — which
+  // is why this root's trailing height byte (`02`) differs from theirs (`03`).
   genesisStateRoot: 'a364ecd022e2f878259a6cf97fd0489c77a959478da04e6d07e3a3626dfe109d02',
 } satisfies NetworkProfile);
 
@@ -165,7 +176,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: 'c3b9b30eb6231ef325cd50189d80ac172a41c857c2e970a1ba3dd221cb11855803',
+  genesisStateRoot: '0f1ce7df51f6c3b1093795a6759a5a894d3f7411bcd98e38cbf50cad595da5bf03',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
@@ -225,7 +236,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // proof box's payload, and the emission box's value, which is derived from
   // `creditFixedRateBlocks` and `creditEpochBlocks` and so is smaller here than
   // on the two networks that share mainnet's schedule.
-  genesisStateRoot: 'f8d6b25e464e568c37127cfe5d5048de4eeb299cc8e2cecb359a9e1bfa58a3ec03',
+  genesisStateRoot: '1fbf99d5dc21c8d09e736af952892d3c2f1f3d390a3b70cb8c11b8477a90cb5603',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({
