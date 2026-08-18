@@ -1196,7 +1196,7 @@ open costs Alice her own capacity and no rule has to bound it.
 > settlement   pool(S) → pool(S−G) + bobKarma(G)
 > ```
 >
-> ⛔ **THE BOND IS THE REQUEST.** The settlement emits `INVITE_KARMA_AMOUNT` to the
+> ⛔ **THE BOND IS THE REQUEST.** The settlement emits **the bond's own value** to the
 > `inviteePublicKey` of every `BondBox` the block creates. Pairing is **structural** — one bond, one
 > grant — so no rule compares two lists and no box is invented to carry the pairing. This is why the
 > invite needs no marker box while a like does: the bond is already a box the transaction creates and
@@ -1292,18 +1292,21 @@ is byte-identical from creation to the block that consumes it.
 | Parameter | Description |
 |-----------|-------------|
 | `INVITE_MIN_KARMA` | Minimum karma an account must hold to invite (= `KARMA_POSTING_MINIMUM`) |
-| `INVITE_KARMA_AMOUNT` | Karma minted to the invitee at claim (`G`) |
-| `INVITE_BOND_KARMA` | Karma the inviter locks at creation (`B`) |
-| `INVITE_PROBATION_BLOCKS` | Blocks from the claim to bond settlement |
+| `inviteBondMin` / `inviteBondMax` | The inclusive range the inviter's bond may take (`B`), **per network** |
+| `INVITE_BOND_VEST_PER_LIKES` | Likes the invitee must receive per karma of bond returned (`V`) |
+| `INVITE_PROBATION_BLOCKS` | Blocks from invite creation to bond settlement |
 
-> ⚠ **AHEAD OF CODE — two of these rows change wording with the invite collapse.**
-> `INVITE_KARMA_AMOUNT` is karma **spent from the pool to the invitee at invite creation** — there is
-> no claim — and `INVITE_PROBATION_BLOCKS` runs **from invite creation** to bond settlement, not from
-> a claim. ⛔ **`INVITE_KARMA_AMOUNT`'s own comment in `constants.ts` says "MINTED … at claim" and is
-> false on both counts.**
+> ⛔ **`B = G` — THE GRANT IS THE BOND, so the bound cannot drift.** The inviter chooses `B` inside the
+> network's range and the settlement grants exactly that out of the pool. A grant to a key nobody
+> holds costs precisely what it strands, and there is no longer a second number free to fall below the
+> first. The caps vary per network; the equality does not.
 >
-> ⛔ **`B ≥ G` is a bound, not a coincidence.** Both are 25 today. The bound is what makes a grant to
-> a key nobody holds arbitrage-free, and it must survive any re-tuning.
+> ⛔ **`V` IS A SUPPLY DIAL, NEVER A SYBIL DEFENCE.** With `L = LIKES_PER_KARMA_PAYOUT`, vesting a bond
+> `B` needs `V·B` likes and each like leaks `1/L` to the pool, so a completed invite moves
+> **`B · (1 − V/L)`** into circulation — `+0.4·B` at `V = 3`, `L = 5`, and **exactly zero at `V = L`**,
+> where the network cannot inflate at all. **A sybil circle nets the same figure honest growth does**,
+> so tuning `V` favours neither. What bounds a sock-master is the `V·B` of their own liquid karma the
+> likes cost, and that what lands on the sock is non-transferable and can never return.
 
 ---
 
@@ -2298,11 +2301,11 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **No dependencies above the package's abstraction level** — the storage
   layer depends only on DB bindings and hashing. It MUST NOT import post
   content types, networking code, or UI code.
-  > ⚠ **FALSE in the positive clause; the prohibition holds. Verified 2026-08-11.** `store/`
-  > value-imports serializers — `decodeTx` (`store/faucet-grants.ts:1`), `encodeTx`
-  > (`store/mempool.ts:9`), `encodeStump` (`store/stumps.ts:2`) — and `store/mempool.ts:2`
+  > ⚠ **FALSE in the positive clause; the prohibition holds. Verified 2026-08-18.** `store/`
+  > value-imports serializers — `decodeTx` (`store/mempool.ts:17`), `encodeTx`
+  > (`store/mempool.ts:16`), `encodeStump` (`store/stumps.ts:2`) — and `store/mempool.ts:3`
   > imports `../config.js`: **the application layer, imported by the storage layer, and
-  > load-bearing** (it carries the mempool cap into the capacity check at `:65`). The
+  > load-bearing** (it carries the mempool cap into the capacity check at `:217`). The
   > *prohibitions* are respected: post content types are `import type` only, and there is no
   > networking or UI import.
   >
