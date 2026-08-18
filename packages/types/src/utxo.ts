@@ -711,10 +711,15 @@ export interface BoxCandidate {
    * and that is safe only while nothing reads the value: **every rule that later
    * derives from this field owes its own exact check.**
    *
-   * ⚠ **Not the node's `created_at_block` STORE column, which holds the same
-   * number for a different reason.** The column is the settled height the node
-   * observed and is not committed in the `stateRoot`; this field is what the
-   * creator declared and signed. They are not interchangeable.
+   * ⚠ **The node's `created_at_block` STORE column is written from this field**,
+   * so the two hold one number. The column is a denormalisation for querying and
+   * is **not committed in the `stateRoot`** — a rule reading it instead of the box
+   * would be reading something no light client can verify.
+   *
+   * ⛔ **The activity clock is the number that is NOT this one.** It takes the open
+   * journal's height, because it records when the chain saw activity rather than
+   * what a creator declared — reading this field there would let a backdated box
+   * backdate its owner's decay clock.
    */
   createdAtBlock: number;
 }
