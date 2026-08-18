@@ -551,13 +551,15 @@ cancels it, and their bond stays locked for exactly as long. Their `K /
 INVITE_BOND_KARMA` capacity absorbs the cost, which is what makes the rate limit
 self-enforcing without a rule.
 
-> ## ⚠ PARTIAL — the type is gone from `types`; the transitions it served are still in `node`
+> ## ⛔ RETIRED — the type, its transitions and its constants are all gone
 >
-> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface is deleted and tag **2** is unassigned.
-> ⚠ **Still ahead of code in `node`** — the claim and cancel transitions, their HTTP endpoints and
-> the settlement that replaces them are unbuilt, so the section above still describes the running
-> tree there. **Nothing new may be built against it** (user, 2026-08-17; `ARCHITECTURE` → Invite
-> System).
+> ✅ **Fully landed.** The interface is deleted and tag **2** is unassigned; the claim and cancel
+> transitions and their two HTTP endpoints are deleted from `node`; the settlement that replaces
+> them ships. `INVITE_KARMA_AMOUNT` and `INVITE_BOND_KARMA`, named in the prose above, are deleted
+> too — **the section describes a retired shape, and every symbol in it is historical.**
+>
+> ⚠ **The prose above is kept as the retired shape's record, not as a description of the tree.**
+> Nothing may be built against it.
 >
 > ⛔ **The whole type exists to hold a right to mint, and there is no mint.** Under
 > `ARCHITECTURE → The conservation axiom` the invitee's karma is **spent from the pool** by the
@@ -570,7 +572,7 @@ self-enforcing without a rule.
 > ```
 >
 > ⛔ **`BondBox` IS THE REQUEST — that is what removes the need for a marker here.** The settlement
-> emits `INVITE_KARMA_AMOUNT` to the `inviteePublicKey` of every `BondBox` the block creates, so the
+> emits **the bond's own value** to the `inviteePublicKey` of every `BondBox` the block creates, so the
 > pairing is structural: one bond, one grant. A like needs a marker because its value goes to a party
 > holding no box in the transaction; an invite already creates one.
 >
@@ -2567,7 +2569,7 @@ threshold / percentage / bits** constants stay `number`.
 - **Karma amounts → `bigint` literals, NOT rescaled** (karma is indivisible):
   `KARMA_POSTING_MINIMUM`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
   `POST_LOCK_THREAD_COST`, `POST_LOCK_REPLY_COST`, `LIKE_KARMA_COST`,
-  `INVITE_MIN_KARMA`, `INVITE_KARMA_AMOUNT`, `INVITE_BOND_KARMA`,
+  `INVITE_MIN_KARMA`, `INVITE_BOND_MIN`, `INVITE_BOND_MAX`,
   `VOUCH_KARMA_AMOUNT`, `VOUCH_MIN_BALANCE`,
   `GENESIS_KARMA_PER_MEMBER`.
 - **Stay `number`:** all `*_BLOCKS`, `*_TARGET_BITS`/`*_FLOOR`,
@@ -2730,26 +2732,34 @@ reserved; the deletion-proof grep for the old mechanics depends on them never re
 
 ```typescript
 export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;  // consensus
-export const INVITE_KARMA_AMOUNT = 25n;            // consensus — karma MINTED to the invitee
-export const INVITE_BOND_KARMA = 25n;              // consensus — bond locked by the inviter
+export const INVITE_BOND_MIN = 25n;                // consensus → profile: inviteBondMin
+export const INVITE_BOND_MAX = 250n;               // consensus → profile: inviteBondMax
 export const INVITE_PROBATION_BLOCKS = 43200;      // consensus — 30 days at 60s → profile: inviteProbationBlocks
-export const INVITE_BOND_VEST_PER_LIKES = 5;       // consensus — likes the invitee must receive per 1 karma vested
+export const INVITE_BOND_VEST_PER_LIKES = 3;       // consensus — likes the invitee must receive per 1 karma vested
 ```
 
+⛔ **THE GRANT IS THE BOND, so there is no separate grant constant.** The inviter picks a
+bond inside `[INVITE_BOND_MIN, INVITE_BOND_MAX]` — both **per-network caps** — and the
+settlement grants exactly that value out of the pool. `INVITE_KARMA_AMOUNT` and
+`INVITE_BOND_KARMA` are **deleted, names reserved**: the bound `B ≥ G` used to be a
+relationship between two numbers that could drift, and equality removes the second number
+rather than restating the rule.
+
 ⛔ **`INVITE_BOND_VEST_PER_LIKES` is not `LIKES_PER_KARMA_PAYOUT`, and the two must
-not be collapsed** because they are equal. They answer different questions —
-*how many likes vest one karma of an inviter's stake* versus *how many likes an
-author is paid for before one is burned* — and each can move without the other.
-A single constant serving both would make an economic change to one silently
-re-price the other.
+not be collapsed.** They answer different questions — *how many likes vest one karma of an
+inviter's stake* versus *how many likes an author is paid for before one is burned* — and
+each moves without the other. **Their ratio is the supply dial**: a completed invite moves
+`B · (1 − V/L)` into circulation, so `V = L` would mean the network cannot inflate at all.
+They are 3 and 5; a single constant serving both would re-price one silently.
 
 `MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **deleted. Names reserved**,
 on the same argument as the retired like constants: a deletion-proof grep only
 works while the old name stays gone.
 
 The pending-invite cap needs no successor because the balance is one. An inviter
-locks `INVITE_BOND_KARMA` per invite out of their own karma, so `K /
-INVITE_BOND_KARMA` bounds their concurrent invites without a rule. The threshold
+locks their chosen bond per invite out of their own karma, so `K /
+INVITE_BOND_MIN` bounds their concurrent invites without a rule — the floor, since
+that is the cheapest invite they can build. The threshold
 goes with the early-unlock leg it served: a bond settles **once**, at
 `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and nothing reads a
 karma balance to decide it.

@@ -342,13 +342,14 @@ responses is the **mempool** entry's expiry, never the invite's.
 >
 > **Create flow, revised:**
 >
-> 1. Verify the inviter holds ≥ `INVITE_BOND_KARMA` available karma. ⛔ **The bond is still the whole
->    cost** — `INVITE_KARMA_AMOUNT` comes from the pool, so the inviter never pays it. The
->    step-1 note *"minted at claim, not paid here"* keeps its conclusion and loses its reason.
+> 1. Verify the inviter holds ≥ **this transaction's own bond value** in available karma. ⛔ **Against
+>    the bond named, never against a constant** — the inviter picks it, so a fixed threshold passes
+>    someone who cannot afford the invite they built, and the rejection then arrives from
+>    conservation, which is the message this layer exists to replace. The bond is still the whole
+>    cost: the grant comes from the pool, so the inviter never pays it.
 > 2. Verify the named `inviteePublicKey` has **no `IdentityRecord` at all** — unchanged, and
 >    `ARCHITECTURE → Invite creation` still argues why the weaker test prints karma
-> 3. Build the transaction: karma box → karma box (`balance − INVITE_BOND_KARMA`) + **`BondBox`
->    only**
+> 3. Build the transaction: karma box → karma box (`balance − bond`) + **`BondBox` only**
 > 4. `insertUtxoTx(tx, null, expiresAtHeight)`; return the one box id
 >
 > ⛔ **THE SERVICE-LAYER CHECK IN STEP 2 IS NOW INSUFFICIENT ON ITS OWN, AND IT WAS SUFFICIENT
@@ -1278,16 +1279,15 @@ signature by the key at `box.owner`, or by a key the box names (`inviteePublicKe
 makes a privileged key representable, and `ARCHITECTURE` → Treasury requires the opposite property of
 the treasury.
 
-> ⛔ **ONE RULE VIOLATES THIS TODAY, AND IT IS NOT THE TREASURY.** The same-owner karma rule carries a
-> faucet exemption gated on `deps.isSystemBox`, which resolves a box id against a **configured system
-> keypair**. It is wired into block application, so it is a consensus rule and not service-layer
-> policy. The rule above is therefore **AHEAD OF CODE**: it states the property the model requires,
-> and the tree has exactly one counter-example.
+> ✅ **NO RULE VIOLATES THIS, AND THE LAST COUNTER-EXAMPLE IS GONE.** The same-owner karma rule
+> carried a faucet exemption gated on `deps.isSystemBox`, which resolved a box id against a
+> **configured system keypair** — a consensus rule naming a key from configuration. The faucet is now
+> an ordinary account whose secret lives outside the node, so the exemption has nothing left to name:
+> `isSystemBox`, the keypair and the exemption are all deleted. **No key reaches consensus from
+> outside state, and no second one may be added.**
 >
-> **What removes it:** the karma supply box, which deletes the system keypair outright — a pool
-> authorized by rule needs no configured owner, so the exemption has nothing left to name. Until then,
-> `isSystemBox` is the one place a key reaches consensus from outside state, and **no second one may
-> be added**.
+> The like accrual marker is now the **only** exemption from the same-owner karma rule, and
+> §Karma transition rules states what pins it.
 
 | Consumed | Created | Condition |
 |----------|---------|-----------|
@@ -1316,7 +1316,7 @@ own karma boxes stays legal; that is the legitimate multi-input case.
 > | Consumed | Created | Condition |
 > |----------|---------|-----------|
 > | KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. Exactly one karma output, same owner as all inputs; target live; `(liker, target)` not recorded. **Value conserved** |
-> | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `bond.value == INVITE_BOND_KARMA`; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
+> | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
 > | VouchBox | VouchEscrowBox | **Unvouch**: exactly one `VouchBox` input, voucher-signed; exactly one escrow output with `value ==` the consumed box's value, `owner == voucherId`, `releaseAtBlock == height + VOUCH_COOLDOWN_BLOCKS`. **Value conserved** |
 > | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
 > | VouchEscrowBox | KarmaBox | **Settlement only**, at `releaseAtBlock` |
@@ -1334,9 +1334,8 @@ own karma boxes stays legal; that is the legitimate multi-input case.
 > record-existence test alone cannot see a sibling transaction in the same block, so the
 > within-block clause is owed on top of it.
 >
-> ✅ **`isSystemBox` and the exemption above it go with the pool**, as the note already states. The
-> like accrual marker is then the **only** exemption from the same-owner karma rule, and §Karma
-> transition rules states what pins it.
+> ✅ **`isSystemBox` and the exemption above it are gone.** The like accrual marker is the **only**
+> exemption from the same-owner karma rule, and §Karma transition rules states what pins it.
 
 There is **no other legal bond or invite shape**. In particular:
 
@@ -1423,13 +1422,13 @@ There is **no other legal bond or invite shape**. In particular:
   the claim, so a second inviter's bond is never locked against an invite
   that could not have been claimed.
 
-  **The weaker "never invited" reading prints karma.** An established
+  **The weaker "never invited" reading drains the pool.** An established
   account that simply had not been invited — every genesis committee
-  member, every faucet recipient — could be named: the claim mints it
-  `INVITE_KARMA_AMOUNT` from nothing, and the bond then vests in full
-  against likes that key had *already* earned, so the whole stake returns
-  to the inviter at the deadline. The inviter's cost is a
-  probation-length lock and nothing else.
+  member — could be named: the settlement grants it the bond's value out
+  of the pool, and the bond then vests in full against likes that key had
+  *already* earned, so the whole stake returns to the inviter at the
+  deadline. The inviter's cost is a probation-length lock and nothing
+  else, and the pool is down a grant that bought no new account.
 
   Record existence is the right test because **every karma receipt writes
   one**, through `insertBox`'s choke point. A key with no record has
@@ -3963,7 +3962,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 
 | Variable | Class | Default | Description |
 |----------|-------|---------|-------------|
-| `NETWORK_TYPE` | `network-identity` | `testnet` | **The profile selector — `mainnet` \| `testnet` \| `devnet`.** The only environment variable that may change a consensus parameter, and it changes every one of them together. Also gates debug endpoints (faucet: testnet and devnet only, via the shared `isFaucetNetwork` allow-list). An unrecognised value **throws at startup** rather than defaulting |
+| `NETWORK_TYPE` | `network-identity` | `testnet` | **The profile selector — `mainnet` \| `testnet` \| `devnet`.** The only environment variable that may change a consensus parameter, and it changes every one of them together. An unrecognised value **throws at startup** rather than defaulting. ⚠ **It no longer gates a faucet** — whether a network seeds a faucet identity is `faucetPublicKey`'s presence in the profile, which reaches `genesisStateRoot`; `isFaucetNetwork` is deleted |
 | ~~`AVL_KEY_LENGTH`~~ | **removed** | ~~`32`~~ | AVL tree key length — **sets the shape of every `stateRoot`** (`avl-prover.ts`). Env read deleted by P2-A; now a `@dagsocial/types` export (TYPES_INTERFACE → State format) that `config.ts` imports and plumbs through `Config.avlKeyLength` |
 | ~~`KARMA_DECAY_AMOUNT`~~ | **removed** | ~~`5`~~ | → universal constant `KARMA_DECAY_AMOUNT` (`@dagsocial/types`). Devnet decays *often*, not *harder* |
 | ~~`KARMA_DECAY_INTERVAL_BLOCKS`~~ | **removed** | ~~`720`~~ | → profile field `karmaDecayIntervalBlocks`. Value corrected to `1440` by P2-A (60s blocks) |
