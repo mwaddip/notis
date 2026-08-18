@@ -102,12 +102,25 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
   protocolVersion: 1,
 };
 
+// ⛔ **EVERY ID BELOW MOVED WITH C1'S TRANSACTION PREIMAGE, AND THE BOX BYTES
+// DID NOT.** `txIdBytes` lost its `preimages` field (TYPES_INTERFACE → Layout —
+// UtxoTransaction: the name is reserved), so every `TxId` moved and, through
+// `computeCandidateBoxId(candidate, txId, index)`, every box id derived from
+// one. The two frozen byte vectors further down are **unchanged** — measured,
+// not assumed — which is what localises the move to the transaction preimage
+// rather than to the box layout.
+//
+// ⚠ **These were re-pinned to `@dagsocial/types`, which is the normative
+// encoder; the page mirrors it and not the reverse.** While the page still
+// writes the retired field it will disagree with them, and that disagreement is
+// the point: a constant left matching a stale page would be a fixture and a
+// subject drifted together, which is the one shape a mirror cannot see past.
 const GOLDEN_KARMA_BOX_ID =
-  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
+  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CREDIT_BOX_ID =
-  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
+  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_UTXO_TX_ID =
-  '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
+  '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -147,13 +160,18 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
+  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
+  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  '4bddba401e9efed7ee9e846bcc662a621f6a0528b8a4d79de12d888ccf805817';
+  'c837393c51d82567145c3cbed9f9c9cd837b9085bad1594ce9567d315375d8a4';
+// ⚠ Derived from a genuinely malformed index (`NaN`), NOT from `2**32` — that
+// one is inside `vlqU`'s domain and encodes faithfully, so it is a valid index
+// and pinning it here would make the case below assert nothing. The test's own
+// comment states the distinction; regenerating this constant from the wrong
+// input is the exact trap a regenerated pin carries.
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '69e4e8f0d241b3db914458db37187dc4c4a377c8fbd6bd867b6678a4a8c54bcb';
+  '1563d15fe2d81bce59c59c294f7e21e1f5d62c3476315bf2ea0406427875fa74';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -1113,7 +1131,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    '8532737906b87b98c27d43a1c441c757abbaf50da441439360d741d397163e60';
+    '129c319acce167afb58cafa8fbe9314e575319b000897cf3173460c36f6121ea';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,
