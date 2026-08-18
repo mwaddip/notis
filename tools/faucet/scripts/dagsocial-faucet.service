@@ -1,0 +1,19 @@
+[Unit]
+Description=Notis faucet
+# A faucet pointed at a node whose chain was just wiped fails every request
+# until genesis is seeded, so it starts after the node rather than with it.
+After=network-online.target dagsocial-node.service
+Wants=network-online.target dagsocial-node.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dagsocial/faucet.env
+WorkingDirectory=/opt/dagsocial
+ExecStart=/usr/bin/node /opt/dagsocial/tools/faucet/dist/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
