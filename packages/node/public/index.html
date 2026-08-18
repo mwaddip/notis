@@ -237,6 +237,16 @@ hr{border:none;border-top:1px solid var(--border);margin:6px 0}
     <div><span>Karma:</span> <strong id="identityKarma">—</strong></div>
     <div><span>Credits:</span> <strong id="identityCredits">—</strong></div>
   </div>
+  <!-- The faucet is another member, not a privileged service: it holds an
+       ordinary owner key and signs the same transactions anyone else can. Karma
+       arrives as an INVITE, which consensus allows once per identity; credits
+       are an ordinary transfer and repeat. -->
+  <div class="row" style="margin-top:8px">
+    <button id="faucetKarmaBtn" class="small">Request karma</button>
+    <button id="faucetCreditsBtn" class="small">Request credits</button>
+  </div>
+  <div style="font-size:11px;color:var(--inkMute)">Karma once per identity, credits any time.</div>
+  <div id="faucetResult"></div>
 
   <h2>Compose</h2>
   <textarea id="content" placeholder="What's on your mind?"></textarea>
@@ -1552,6 +1562,78 @@ document.getElementById('importFileInput').addEventListener('change', (e) => {
     importIdentityFile(file);
     e.target.value = '';
   }
+});
+
+// ===========================================================================
+// Faucet
+// ===========================================================================
+
+/**
+ * Ask the faucet service to act on the ACTIVE identity.
+ *
+ * ⛔ **This builds and signs nothing.** The faucet holds its own owner key and
+ * signs its own transaction, so the page hands over a public key and no more —
+ * which is why there is no input field and no signature here.
+ *
+ * The two paths differ because the transactions do: karma arrives as an invite,
+ * and consensus refuses one naming a key that already holds an identity record,
+ * so it lands once per identity. Credits are an ordinary transfer and repeat.
+ *
+ * ⚠ **429 and 503 are the SERVICE's state, not this request's fault** — rate
+ * limited, and drained — so they are named as such rather than reading as a
+ * rejection of what was asked.
+ */
+async function requestFromFaucet(path, label, btn) {
+  const result = document.getElementById('faucetResult');
+  if (!userId) {
+    result.innerHTML = '<span class="result-msg err">Select an identity first</span>';
+    return;
+  }
+
+  btn.disabled = true;
+  result.innerHTML = `<span class="result-msg">Requesting ${esc(label.toLowerCase())}...</span>`;
+
+  try {
+    const res = await fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pubkey: userId }),
+    });
+    // A proxy answering instead of the faucet may not send JSON at all.
+    const data = await res.json().catch(() => ({}));
+
+    if (res.status === 202) {
+      result.innerHTML = `
+        <span class="result-msg ok">${esc(label)} requested</span>
+        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Transaction ID — pending until mined:</div>
+        <pre>${esc(String(data.txId || ''))}</pre>
+      `;
+      // The balance above cannot have moved yet; refreshed to keep it current
+      // with anything else that has settled since.
+      loadIdentityStatus();
+      return;
+    }
+
+    const stated = esc(String(data.error || `the faucet answered ${res.status}`));
+    const prefix = res.status === 429
+      ? 'Rate limited. '
+      : res.status === 503
+        ? 'The faucet is out of funds. '
+        : '';
+    result.innerHTML = `<span class="result-msg err">${prefix}${stated}</span>`;
+  } catch (e) {
+    result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('faucetKarmaBtn').addEventListener('click', (e) => {
+  requestFromFaucet('/faucet/karma', 'Karma', e.currentTarget);
+});
+
+document.getElementById('faucetCreditsBtn').addEventListener('click', (e) => {
+  requestFromFaucet('/faucet/credits', 'Credits', e.currentTarget);
 });
 
 // ===========================================================================
