@@ -1629,12 +1629,13 @@ not be independently readable.
 
 ### What varies per network, and what must not
 
-**Per-network — the timescale, difficulty and genesis axes:**
+**Per-network — the timescale, difficulty, genesis and cap axes:**
 `ORDERING_BLOCK_POW_TARGET_BITS` · `POST_POW_TARGET_BITS` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `BOOTSTRAP_PERIOD_BLOCKS` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`GENESIS_CREDITS_PER_MEMBER` · `genesisProofPayload` · `genesisStateRoot`
+`GENESIS_CREDITS_PER_MEMBER` · `genesisProofPayload` · `genesisStateRoot` ·
+`inviteBondMin` · `inviteBondMax` · `faucetPublicKey`
 
 The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
 other name in the list is either a `constants.ts` export or a retired environment variable, and these
@@ -1646,15 +1647,32 @@ a fourth.
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_LOCK_*`,
-`VOUCH_KARMA_AMOUNT`, `INVITE_*`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
+`VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
 `COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
 `CREDIT_INITIAL_REWARD`).
 
-**The split is normative: compress time, never economics.** Every per-network parameter is a
-place where devnet and mainnet behave differently, which is precisely where a defect hides
-from the test written to catch it. A test chain needs a 3-block decay interval; it does not
-need cheaper likes. **Adding a parameter to the per-network set weakens every test that runs
-on devnet** — the burden is on the addition, not on keeping the set small.
+**The split is normative: mechanics are universal, caps may vary.** A defect lives in a formula,
+a ratio or a mechanism — never in the size of a limit. A network running a larger `inviteBondMax`
+catches every bug a smaller one would; a network running a different vesting formula catches none
+of them. **Every per-network parameter states which of the two it is**, and a mechanic still carries
+the old burden: adding one is a place where devnet and mainnet behave differently, which is precisely
+where a defect hides from the test written to catch it. A test chain needs a 3-block decay interval;
+it does not need cheaper likes.
+
+⚠ **`INVITE_BOND_VEST_PER_LIKES` is the boundary case, and it sits on the universal side.** It is a
+**ratio** — with `LIKES_PER_KARMA_PAYOUT` it fixes how much of a grant survives as circulating supply
+(§Invite System) — so a network that moved it would run different economics rather than looser ones.
+The bond *bounds* around it are caps and vary freely.
+
+### What each network is
+
+- **devnet — debug mode.** Tests, fast blocks, shortened timers, and relaxed constraints where a
+  specific test asks for one. **It carries no obligation to mirror mainnet.**
+- **testnet — the public playground.** Mainnet's **mechanics**, **relaxed caps**. It is where humans
+  exercise the platform, not where invite or vesting mechanics are verified — devnet is that.
+- **mainnet — not yet launched.** Its weights are placeholders that hold the shape until testnet
+  produces the evidence to set them from, and it may appear as **pre-mainnet** before making the jump.
+  ⚠ **A mainnet number in this repo is not a decision**; treat it as unset unless it says otherwise.
 
 ### How the network is committed
 
