@@ -100,15 +100,12 @@ export interface UtxoEngineDeps {
    */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
   /**
-   * True while a cooldown row exists for `(voucherId, targetId)`.
+   * True while an unspent `VouchEscrowBox` exists for this voucher.
    *
    * Consensus input (NODE_INTERFACE → "Vouch transition rules"): a vouch cast
-   * is invalid while the pair is cooling down. Without the gate a
-   * block-embedded vouch→unvouch pair for a pair with a live cooldown reaches
-   * `insertVouchCooldown`'s INSERT OR REPLACE and destroys the first escrow's
-   * pending re-mint on the forward path. Backed by the store's `hasActiveVouchCooldown` at every production
-   * site — row existence IS activity, since matured rows are deleted by
-   * `processVouchCooldowns` in the same block application that mints them.
+   * is invalid while the voucher holds an unreleased escrow. The escrow
+   * persists until the owner reclaims it via a signed transaction, so the
+   * vouch cycle is capped at one per cooldown window by construction.
    */
   hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
   /**
@@ -1402,42 +1399,27 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  * `validateTx` step 7).
  *
  * Karma and credits are minted or burned only in block-application paths (like
- * settlement, decay, bond settlement), never inside a user transaction, so no
- * box type gets a blanket exemption. **Two stated exceptions and no others**
+ * settlement, decay, bond settlement), never inside a user transaction. The
+ * body enforces strict equality with **one stated exception and no others**
  * (NODE_INTERFACE → `validateTx` step 7):
  *
  * - **The like burn** — `likeTarget` present ⟺ the transaction burns
  *   exactly `LIKE_KARMA_COST` from karma inputs. This is the biconditional's
  *   value half: `likeTarget` absent ⇒ zero deficit as always (strict equality
  *   below), present ⇒ exactly that deficit — never more, never less, never a
- *   surplus. The only karma-burning user transaction. Checked before the vouch
- *   exemption so a zero-output unvouch with a bolted-on `likeTarget` cannot
- *   shelter under it.
+ *   surplus. The only value-destroying user transaction.
  *
- * - **The zero-output spend** of a `VouchBox` (unvouch — the staked karma is
- *   escrowed in `vouch_cooldowns` and re-minted to the voucher at maturity by
- *   `processVouchCooldowns`, an escrow round-trip rather than a burn). The
- *   escrow living outside the UTXO set, and therefore outside the AVL+ state
- *   root, is a known wart — modelling it as a maturing box is tracked
- *   separately.
+ * Every other karma-side spend conserves structurally: an unvouch produces a
+ * `VouchEscrowBox` carrying the consumed vouch's value, an invite produces a
+ * `BondBox`, and a post produces a `PostLockBox`. The fee on a credit
+ * transfer is a `FeeBox` output the transaction names, so the miner's share
+ * is inside the output sum rather than a gap between two sums.
  *
  * ⛔ **The invite carries NO surplus.** An invite is `karma → karma + bond` and
  * conserves like any other karma transaction; the invitee's grant — the bond's
  * own value — is spent from the pool by the block's settlement transaction,
  * which this gate does not govern (NODE_INTERFACE → the settlement
  * transaction). **No user transaction creates karma.**
- *
- * Both remaining exceptions move karma. **A credit transaction conserves
- * strictly**: its fee is a `FeeBox` output it names (TYPES_INTERFACE → FeeBox),
- * so what the miner takes is inside the output sum rather than a gap between two
- * sums, and a credit-side deficit is refused by the strict equality below like
- * any other. That leaves the like burn as the only deficit in the system, which
- * is what lets `likeTarget` ⟺ a deficit stay exact with no ledger argument
- * behind it.
- *
- * The BondBox has **no** exemption and needs none: a bond is destroyed by the
- * probation-deadline settlement, which is block application, and this gate
- * governs transactions (NODE_INTERFACE → "Bond transition rules").
  */
 function checkValueConservation(
   inputBoxes: AnyBox[],

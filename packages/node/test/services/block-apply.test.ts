@@ -1573,15 +1573,9 @@ describe('block-apply mint provenance', () => {
   });
 
   it('a decay charge fires while a matured escrow survives in the same block', async () => {
-    // The real same-block adjacency between decay and a karma mint. Ordering is
-    // what makes it reachable: `deriveKarmaDecay` runs *before*
-    // `processVouchCooldowns` in the mutation phase, so decay creates a box and
-    // the vouch settlement immediately merge-consumes it and mints a
-    // replacement — two karma boxes for one owner, at one height.
-    //
-    // They do not collide, but only because the *reasons* differ. Equal txIds
-    // would be a `UNIQUE(tx_id, output_index)` violation and the block would be
-    // rejected outright.
+    // Decay fires at a height where a matured escrow exists. The escrow
+    // survives — the settlement no longer sweeps it — so only the decay
+    // charge lands as a karma mutation for this owner.
     //
     // Thresholds are shrunk through a test-local mock of the config module so
     // a 4-block chain crosses the staleness window. The env overrides this

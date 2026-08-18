@@ -669,13 +669,10 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     // collapse-duplicates-to-last-write rule. Without a second write to one
     // key, deleting that rule outright kills nothing.
     //
-    // Two puts in one block need decay and a karma mint for the same owner at
-    // one height, which the mutation phase's ordering makes reachable:
-    // `applyKarmaDecay` (§12) writes `lastDecayBlock`, then
-    // `processVouchCooldowns` (§12b) mints and `insertBox` writes
-    // `lastActivityBlock`. Journal order carries which came last; a sort by key
-    // cannot, which is why the collapse lives in the feed and not in
-    // `applyBlockMutations`.
+    // With the escrow settlement removed, the only record write at this height
+    // is decay's `lastDecayBlock` (§12). The collapse rule is still exercised
+    // by any block that writes a record key more than once (e.g. an invite
+    // grant followed by decay for the same identity).
     // Thresholds shrunk through a test-local config mock — see the section
     // comment above for why this replaced the env overrides.
     try {

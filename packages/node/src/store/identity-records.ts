@@ -174,9 +174,8 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
  * unbounded-but-simple is the deliberate choice at this stage.
  *
  * While a block journal is open this captures the row it replaces **before**
- * writing and records the mutation — the same discipline `insertVouchCooldown`
- * applies to its own INSERT OR REPLACE, and the record-once choke point that
- * keeps the AVL feed and the rollback inverse derived from one log.
+ * writing and records the mutation — the record-once choke point that keeps
+ * the AVL feed and the rollback inverse derived from one log.
  */
 export function putIdentityRecord(identityId: UserId, record: IdentityRecord): void {
   const replaced = isBlockJournalOpen()
