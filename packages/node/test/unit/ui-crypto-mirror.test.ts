@@ -28,6 +28,7 @@ import { fixturePostId } from '../helpers.js';
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { BINARY_BOX_FIELDS } from '../../src/routes/json-to-tx.js';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
@@ -40,8 +41,8 @@ import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
-  Post, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
-  EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox,
+  Post, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
+  EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, LikeAccrualBox, VouchEscrowBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
 
@@ -102,12 +103,30 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
   protocolVersion: 1,
 };
 
+// ⛔ **EVERY ID BELOW MOVED WITH C1'S TRANSACTION PREIMAGE, AND THE BOX BYTES
+// DID NOT.** `txIdBytes` lost its `preimages` field (TYPES_INTERFACE → Layout —
+// UtxoTransaction: the name is reserved), so every `TxId` moved and, through
+// `computeCandidateBoxId(candidate, txId, index)`, every box id derived from
+// one. The two frozen byte vectors further down are **unchanged** — measured,
+// not assumed — which is what localises the move to the transaction preimage
+// rather than to the box layout.
+//
+// ⚠ **Re-pinned to `@dagsocial/types`** (TYPES_INTERFACE → A mirror test's
+// golden must be pinned to the AUTHORITY, never to the mirror). While the page
+// still writes the retired field it will disagree with them, and that
+// disagreement is the point.
+//
+// ⚠ **The INPUT each was regenerated from** (TYPES_INTERFACE → A regenerated
+// pin's INPUT is unchecked, so state it): `computeTxId` / `computeCandidateBoxId`
+// over `GOLDEN_UTXO_TX` at the output's own index — 0 for karma, 1 for credit,
+// `0x12345678` for the wide-index case. The sentinel's input is stated at its
+// own declaration, because it is the one that is not a neighbour of these.
 const GOLDEN_KARMA_BOX_ID =
-  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
+  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CREDIT_BOX_ID =
-  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
+  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_UTXO_TX_ID =
-  '0d72f28245bf0c9dcb1b458641dae9b08e711da5fc45a8dd78e8562de9ae0291';
+  '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -147,13 +166,19 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '7c78d4e40b2134e51485a992e270385644932b77d2a360d63ea2f4402b1553dd';
+  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  '1da30d341964fb09146f4cf1c371a4d56c01021e44aee8e95deb0df9cc3f57dd';
+  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  '4bddba401e9efed7ee9e846bcc662a621f6a0528b8a4d79de12d888ccf805817';
+  'c837393c51d82567145c3cbed9f9c9cd837b9085bad1594ce9567d315375d8a4';
+// ⚠ **Input: a genuinely malformed index (`NaN`), NOT `2**32`** (TYPES_INTERFACE
+// → A regenerated pin's INPUT is unchecked, so state it). `2**32` is inside
+// `vlqU`'s domain and encodes faithfully, so it is a valid index and pinning it
+// here would make the M-5 case below assert nothing — a byte-perfect constant
+// from the wrong input, which no mirror check can see because the mirror is
+// fine.
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '69e4e8f0d241b3db914458db37187dc4c4a377c8fbd6bd867b6678a4a8c54bcb';
+  '1563d15fe2d81bce59c59c294f7e21e1f5d62c3476315bf2ea0406427875fa74';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -185,12 +210,6 @@ const COVERAGE_TX_ID = 'de'.repeat(32);
 
 const BYTES_INVITEE = new Uint8Array(32).fill(0xb2);
 const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
-
-const GOLDEN_INVITE_BOX: InviteBox = {
-  boxType: 'invite', value: 0n,
-  inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE,
-  txId: COVERAGE_TX_ID, index: 0,
-};
 
 const GOLDEN_BOND_BOX: BondBox = {
   boxType: 'bond', value: 5n,
@@ -236,6 +255,23 @@ const GOLDEN_KARMA_POOL_BOX: KarmaPoolBox = {
   txId: COVERAGE_TX_ID, index: 7,
 };
 
+// ⚠ **Neither type has a producer yet** — the like transition does not emit a
+// marker and the unvouch does not emit an escrow (TYPES_INTERFACE →
+// LikeAccrualBox / VouchEscrowBox). They are covered here because coverage is
+// keyed on the box-type UNION rather than on what a transition happens to build:
+// a type the demo UI cannot encode is exactly what this file exists to catch.
+const GOLDEN_LIKE_ACCRUAL_BOX: LikeAccrualBox = {
+  boxType: 'like_accrual', value: 1n,
+  author: BYTES_TARGET,
+  txId: COVERAGE_TX_ID, index: 8,
+};
+
+const GOLDEN_VOUCH_ESCROW_BOX: VouchEscrowBox = {
+  boxType: 'vouch_escrow', value: 1n,
+  owner: GOLDEN_AUTHOR, releaseAtBlock: 40,
+  txId: COVERAGE_TX_ID, index: 9,
+};
+
 /**
  * The box types the mirror covers, **keyed so coverage is a compile error.**
  *
@@ -259,7 +295,6 @@ type MirroredBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
 const BOX_TYPE_FIXTURES = {
   karma: GOLDEN_KARMA_BOX,
   credit: GOLDEN_CREDIT_BOX,
-  invite: GOLDEN_INVITE_BOX,
   bond: GOLDEN_BOND_BOX,
   post_lock: GOLDEN_POST_LOCK_BOX,
   vouch: GOLDEN_VOUCH_BOX,
@@ -267,6 +302,8 @@ const BOX_TYPE_FIXTURES = {
   treasury: GOLDEN_TREASURY_BOX,
   fee: GOLDEN_FEE_BOX,
   karma_pool: GOLDEN_KARMA_POOL_BOX,
+  like_accrual: GOLDEN_LIKE_ACCRUAL_BOX,
+  vouch_escrow: GOLDEN_VOUCH_ESCROW_BOX,
 } satisfies Record<MirroredBoxType, AnyBox>;
 
 const ALL_BOX_TYPES: ReadonlyArray<{ name: string; box: AnyBox }> =
@@ -342,7 +379,7 @@ const MIRRORED_OTHER = [
 const MIRRORED_BUILDERS = [
   'selectBoxes', 'buildVouchTx', 'buildUnvouchTx',
   'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
-  'buildCreateInviteTx', 'buildClaimInviteTx', 'buildCancelInviteTx',
+  'buildCreateInviteTx',
   'recordPendingKarmaChange', 'applyPendingKarmaChange',
 ] as const;
 
@@ -367,7 +404,7 @@ const RETURNED = [
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
   'jsonBigint', 'buildVouchTx', 'buildUnvouchTx',
   'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
-  'buildCreateInviteTx', 'buildClaimInviteTx', 'buildCancelInviteTx',
+  'buildCreateInviteTx',
   'recordPendingKarmaChange', 'applyPendingKarmaChange', 'pendingKarmaChange',
   'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'INVITE_KARMA_AMOUNT', 'INVITE_BOND_KARMA',
@@ -406,17 +443,17 @@ interface UiCrypto {
     targetIdHex: string,
     pubKeyHex: string,
   ) => Record<string, unknown>;
-  buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+  buildUnvouchTx: (
+    vouchBoxId: string,
+    stakeValue: bigint,
+    pubKeyHex: string,
+    releaseAtBlock: number,
+  ) => Record<string, unknown>;
   buildCreateInviteTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     pubKeyHex: string,
     inviteePubKeyHex: string,
   ) => Record<string, unknown>;
-  buildClaimInviteTx: (
-    inviteBoxId: string,
-    inviteePubKeyHex: string,
-  ) => Record<string, unknown>;
-  buildCancelInviteTx: (inviteBoxId: string) => Record<string, unknown>;
   buildPostTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     lockAmount: bigint,
@@ -427,6 +464,7 @@ interface UiCrypto {
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     targetPostId: string,
     pubKeyHex: string,
+    authorHex: string,
   ) => UtxoTransaction;
   predictOutputBoxId: (tx: Record<string, unknown>, index: number) => string;
   recordPendingKarmaChange: (tx: Record<string, unknown>) => void;
@@ -736,17 +774,19 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     }
   });
 
-  it('invite and bond differ only by the tag, on both sides', () => {
-    // The pair is one trailing layout under two tags (TYPES_INTERFACE → Layout
-    // — Boxes), so `enum8Tag` is the whole of what keeps their leaves apart.
-    // Asserted on the UI side as well: an encoder that dropped the tag would
-    // give an invite and a bond with the same parties one id.
-    const sameValueInvite = { ...GOLDEN_INVITE_BOX, value: GOLDEN_BOND_BOX.value };
-    const a = hexOf(canonicalBoxBytes(sameValueInvite));
+  it('the tag is what separates a bond from any other box, on both sides', () => {
+    // ⛔ **Tag 2 is unassigned and reserved, never to be reused**
+    // (TYPES_INTERFACE → InviteBox), so this compares a bond against a box type
+    // rather than against its neighbour. `enum8Tag` is the whole of what keeps
+    // two leaves apart, and asserting it on the UI side is what stops an encoder
+    // that dropped the tag from giving two boxes with the same parties one id.
     const b = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX));
-    expect(a.slice(2)).toBe(b.slice(2));
-    expect(a).not.toBe(b);
-    expect(hexOf(ui.canonicalBoxBytes(sameValueInvite as unknown as Record<string, unknown>))).toBe(a);
+    const tagless = b.slice(2);
+    for (const other of [GOLDEN_KARMA_BOX, GOLDEN_VOUCH_BOX, GOLDEN_POST_LOCK_BOX]) {
+      expect(hexOf(canonicalBoxBytes(other))).not.toBe(b);
+    }
+    expect(b.slice(0, 2)).not.toBe('02');
+    expect(tagless.length).toBeGreaterThan(0);
     expect(hexOf(ui.canonicalBoxBytes(GOLDEN_BOND_BOX as unknown as Record<string, unknown>))).toBe(b);
     // The tx-builder form carries keys as hex and must reach the same bytes —
     // otherwise a client-built invite derives ids the node never agrees with.
@@ -817,22 +857,19 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     expect(ui.computeTxId(two as unknown as Record<string, unknown>)).toBe(computeTxId(two));
   });
 
-  it('the preimages map agrees, and absence differs from empty (no malleability)', () => {
-    const withPreimages: UtxoTransaction = {
-      ...GOLDEN_UTXO_TX,
-      preimages: {
-        [GOLDEN_KARMA_BOX_ID]: new Uint8Array([1, 2, 3]),
-        [GOLDEN_CREDIT_BOX_ID]: new Uint8Array([4, 5]),
-      },
-    };
-    const empty: UtxoTransaction = { ...GOLDEN_UTXO_TX, preimages: {} };
-    expect(ui.computeTxId(withPreimages as unknown as Record<string, unknown>))
-      .toBe(computeTxId(withPreimages));
-    expect(ui.computeTxId(empty as unknown as Record<string, unknown>)).toBe(computeTxId(empty));
-    // `opt()` tags presence, so `{}` is `01 00` and absence is `00` — an empty
-    // map and a missing one are distinguishable rather than both appending
-    // nothing, which is what closes the malleability.
-    expect(computeTxId(empty)).not.toBe(GOLDEN_UTXO_TX_ID);
+  it('a `preimages` key is not a field, and the page must not build one', () => {
+    // ⛔ **THE NAME IS RESERVED AND NEVER TO BE REUSED** (TYPES_INTERFACE →
+    // Layout — UtxoTransaction). It is outside the `TxId` preimage, so a builder
+    // that emitted one would produce two byte strings carrying one id — the
+    // malleability the closed envelope key set refuses.
+    const withStray = { ...GOLDEN_UTXO_TX, preimages: { ab: 'cd' } } as Record<string, unknown>;
+    // The node ignores it, because there is no such field to hash …
+    expect(computeTxId(GOLDEN_UTXO_TX)).toBe(GOLDEN_UTXO_TX_ID);
+    // … and the page must agree, on the transaction WITHOUT it.
+    expect(ui.computeTxId(GOLDEN_UTXO_TX as unknown as Record<string, unknown>))
+      .toBe(GOLDEN_UTXO_TX_ID);
+    // A page hashing the stray key would disagree with the node here.
+    expect(ui.computeTxId(withStray)).toBe(GOLDEN_UTXO_TX_ID);
   });
 });
 
@@ -922,7 +959,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const targetPostId = '11'.repeat(32);
 
     for (const tx of [
-      ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex),
+      ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex, LIKE_AUTHOR_HEX),
       ui.buildPostTx(karmaBox, 5n, GOLDEN_POST_HEX_AUTHOR, pubKeyHex),
     ]) {
       const asTx = tx as unknown as Record<string, unknown>;
@@ -959,7 +996,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     expect(view.boxes.map(b => b.boxId)).toEqual([changeId]);
     expect(view.total).toBe(95n);
 
-    const like = ui.buildLikeTx(view, '22'.repeat(32), pubKeyHex);
+    const like = ui.buildLikeTx(view, '22'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX);
     expect(like.inputs).toEqual([changeId]);
     expect(like.inputs).not.toContain(confirmed.boxId);
   });
@@ -971,7 +1008,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     let view: KarmaView = { total: 100n, boxes: [{ ...confirmed }] };
 
     for (let i = 0; i < 3; i++) {
-      const tx = ui.buildLikeTx(view, '33'.repeat(32), pubKeyHex);
+      const tx = ui.buildLikeTx(view, '33'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX);
       ui.recordPendingKarmaChange(tx as unknown as Record<string, unknown>);
       view = ui.applyPendingKarmaChange({ total: 100n, boxes: [{ ...confirmed }] });
     }
@@ -986,7 +1023,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const pubKeyHex = '02'.repeat(32);
     const confirmed = { boxId: 'c1'.repeat(32), value: 100n };
 
-    const tx = ui.buildLikeTx({ total: 100n, boxes: [{ ...confirmed }] }, '44'.repeat(32), pubKeyHex);
+    const tx = ui.buildLikeTx({ total: 100n, boxes: [{ ...confirmed }] }, '44'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX);
     ui.recordPendingKarmaChange(tx as unknown as Record<string, unknown>);
     const changeId = ui.predictOutputBoxId(tx as unknown as Record<string, unknown>, 0);
 
@@ -1015,11 +1052,11 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const pubKeyHex = '02'.repeat(32);
     const a = ui.buildLikeTx(
       { total: 100n, boxes: [{ boxId: 'a1'.repeat(32), value: 100n }] },
-      '11'.repeat(32), pubKeyHex,
+      '11'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX,
     ) as unknown as Record<string, unknown>;
     const b = ui.buildLikeTx(
       { total: 100n, boxes: [{ boxId: 'a2'.repeat(32), value: 100n }] },
-      '11'.repeat(32), pubKeyHex,
+      '11'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX,
     ) as unknown as Record<string, unknown>;
 
     expect(ui.predictOutputBoxId(a, 0)).not.toBe(ui.predictOutputBoxId(b, 0));
@@ -1107,7 +1144,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    '8532737906b87b98c27d43a1c441c757abbaf50da441439360d741d397163e60';
+    '129c319acce167afb58cafa8fbe9314e575319b000897cf3173460c36f6121ea';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,
@@ -1153,6 +1190,27 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
 // is no post PoW. What the id derivation needs from the page instead is `u32BE`,
 // and it is total on both sides for the same M-5 reason the nonce tail was.
 // ---------------------------------------------------------------------------
+
+/**
+ * The consensus author a like's marker names, and the voucher an escrow returns
+ * to — both plain 32-byte hex, which is what the page carries and what
+ * `b32Either` widens for.
+ *
+ * ⛔ **`LIKE_AUTHOR_HEX` is the TARGET POST'S author, never the liker's.** The
+ * engine pins it against `block_topology` (NODE_INTERFACE → Karma transition
+ * rules); a fixture reusing `pubKeyHex` here would be asserting a shape the node
+ * refuses.
+ */
+const LIKE_AUTHOR_HEX = '7a'.repeat(32);
+const VOUCHER_HEX = '02'.repeat(32);
+/**
+ * A release height clearing the engine's floor.
+ *
+ * ⚠ **Only the FLOOR is a rule** — a transaction cannot commit to the height of
+ * the block that will carry it, so the page overshoots and the node accepts it
+ * (NODE_INTERFACE → Vouch transition rules).
+ */
+const ESCROW_RELEASE = 1000;
 
 describe('demo UI ↔ @dagsocial/types u32BE', () => {
   // Including the out-of-domain sentinel, because the writer is total on both
@@ -1298,6 +1356,30 @@ function constInitScopes(masked: string): Scope[] {
   return scopes;
 }
 
+/**
+ * Every field name the page hands to `b32Either` inside `boxTypeFields`.
+ *
+ * ⛔ **Read out of the source rather than listed here.** A hand-kept list is a
+ * third copy of the same fact and would go stale in the same way the two it
+ * checks can — the point of this gate is that nobody has to remember to update
+ * it when a box type lands.
+ *
+ * Scoped to `boxTypeFields` deliberately: `postFieldBytes` also calls
+ * `b32Either`, but a post's `author` is decoded by `jsonToPost` rather than by
+ * the box-field set, so including it would make this compare two things that
+ * are not the same rule.
+ */
+function extractUiBinaryFields(): Set<string> {
+  const src = readFileSync(INDEX_HTML, 'utf8');
+  const start = src.indexOf('function boxTypeFields(box) {');
+  if (start === -1) throw new Error('extractUiBinaryFields: boxTypeFields not found');
+  const end = src.indexOf('\n}', start);
+  const body = src.slice(start, end);
+  const fields = new Set<string>();
+  for (const m of body.matchAll(/b32Either\(\s*box\.(\w+)/g)) fields.add(m[1]!);
+  return fields;
+}
+
 function auditByteConstruction(): { findings: Finding[]; unattributed: Finding[] } {
   const src = readFileSync(INDEX_HTML, 'utf8');
   const masked = maskSource(src);
@@ -1363,7 +1445,7 @@ describe('demo UI vouch builders ↔ the id the node derives', () => {
   });
 
   it('an unvouch the page builds hashes to the same txId the node derives', () => {
-    const tx = ui.buildUnvouchTx('ab'.repeat(32));
+    const tx = ui.buildUnvouchTx('ab'.repeat(32), VOUCH_KARMA_AMOUNT, VOUCHER_HEX, ESCROW_RELEASE);
     expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
   });
 
@@ -1392,26 +1474,41 @@ describe('demo UI vouch builders ↔ the id the node derives', () => {
     expect(change.value + vouch.value).toBe(7n);
   });
 
-  it('the unvouch spends one named box and produces nothing', () => {
-    // Zero outputs is the shape: the stake is escrowed and re-minted at cooldown
-    // maturity, so a change output here would be the same karma twice.
-    const decoded = overTheWire(ui.buildUnvouchTx('ab'.repeat(32)));
+  it('the unvouch spends one named box and escrows exactly what it held', () => {
+    // ⛔ **One escrow output, carrying the CONSUMED BOX'S value.** The stake is
+    // held rather than destroyed, so the transaction conserves — and the value
+    // is the box's, never `VOUCH_KARMA_AMOUNT`, which is what makes the round
+    // trip conservation-structural rather than true by coincidence of the cast
+    // pin (TYPES_INTERFACE → VouchEscrowBox).
+    const decoded = overTheWire(
+      ui.buildUnvouchTx('ab'.repeat(32), VOUCH_KARMA_AMOUNT, VOUCHER_HEX, ESCROW_RELEASE),
+    );
     expect(decoded.inputs).toEqual(['ab'.repeat(32)]);
-    expect(decoded.outputs).toEqual([]);
+    expect(decoded.outputs).toHaveLength(1);
+    const escrow = decoded.outputs[0] as VouchEscrowBox;
+    expect(escrow.boxType).toBe('vouch_escrow');
+    expect(escrow.value).toBe(VOUCH_KARMA_AMOUNT);
+    expect(Buffer.from(escrow.owner).toString('hex')).toBe(VOUCHER_HEX);
+    expect(escrow.releaseAtBlock).toBe(ESCROW_RELEASE);
+
+    // ⚠ **It CONSERVES**, which the zero-output shape did not — the sum is what
+    // `validateTx` step 5 checks unconditionally now.
+    expect(escrow.value).toBe(VOUCH_KARMA_AMOUNT);
   });
 });
 
-describe('demo UI invite builders ↔ the id the node derives', () => {
-  // The page is the only producer of these three shapes, and each is rejected
-  // outright if it carries a field the box schema does not declare or a value
-  // the transition arm does not admit. The txId assertions pin the same hex-vs-
-  // byte boundary the vouch group pins, one level up from `canonicalBoxBytes`;
-  // the shape assertions pin what `checkTransitions` and the conservation carve
-  // require of each shape.
+describe('demo UI invite builder ↔ the id the node derives', () => {
+  // ⛔ **ONE builder, because there is one transaction** — `buildClaimInviteTx`
+  // and `buildCancelInviteTx` go with the transitions they built
+  // (ARCHITECTURE → Invite System). The page is its only producer, and it is
+  // rejected outright if it carries a field the box schema does not declare or
+  // a value the transition arm does not admit. The txId assertion pins the same
+  // hex-vs-byte boundary the vouch group pins, one level up from
+  // `canonicalBoxBytes`; the shape assertions pin what `checkTransitions`
+  // requires.
 
   const INVITER_HEX = Buffer.from(GOLDEN_AUTHOR).toString('hex');
   const INVITEE_HEX = 'd4'.repeat(32);
-  const INVITE_BOX_ID = 'e5'.repeat(32);
 
   /** What `fetchKarmaBox()` hands a builder. */
   const karmaState = (values: bigint[]) => ({
@@ -1424,8 +1521,9 @@ describe('demo UI invite builders ↔ the id the node derives', () => {
     jsonToTx(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
 
   it('the page mirrors the two invite amounts by hand, so nothing but this compares them', () => {
-    // A drifted bond builds a create `checkTransitions` rejects; a drifted mint
-    // builds a claim the conservation carve rejects.
+    // A drifted bond builds an invite `checkTransitions` rejects. The grant
+    // amount is the settlement's and the page never builds it — it is mirrored
+    // so the page can show what an invitee will receive.
     expect(ui.INVITE_BOND_KARMA).toBe(INVITE_BOND_KARMA);
     expect(ui.INVITE_KARMA_AMOUNT).toBe(INVITE_KARMA_AMOUNT);
   });
@@ -1437,91 +1535,90 @@ describe('demo UI invite builders ↔ the id the node derives', () => {
     expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
   });
 
-  it('a claim the page builds hashes to the same txId the node derives', () => {
-    const tx = ui.buildClaimInviteTx(INVITE_BOX_ID, INVITEE_HEX);
-    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
-  });
-
-  it('a cancel the page builds hashes to the same txId the node derives', () => {
-    const tx = ui.buildCancelInviteTx(INVITE_BOX_ID);
-    expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
-  });
-
-  it('the create deducts the bond and only the bond', () => {
-    // `INVITE_KARMA_AMOUNT` is minted at the claim, so it never leaves the
-    // inviter's balance (ARCHITECTURE → Invite creation). Selecting exactly
-    // bond + mint is what makes the difference visible: paying both would leave
-    // no change at all.
+  it('the invite deducts the bond and only the bond', () => {
+    // ⛔ **`INVITE_KARMA_AMOUNT` comes out of the POOL at settlement**, so it
+    // never leaves the inviter's balance (ARCHITECTURE → Invite System).
+    // Selecting exactly bond + grant is what makes the difference visible:
+    // paying both would leave no change at all.
     const funded = INVITE_BOND_KARMA + INVITE_KARMA_AMOUNT;
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([funded]), INVITER_HEX, INVITEE_HEX),
     );
-    const [change, invite, bond] = decoded.outputs as [KarmaBox, InviteBox, BondBox];
+    const [change, bond] = decoded.outputs as [KarmaBox, BondBox];
 
     expect(change.value).toBe(funded - INVITE_BOND_KARMA);
     expect(change.value).not.toBe(0n);
-    // Creation conserves like any other transaction — the invite holds nothing.
-    expect(change.value + invite.value + bond.value).toBe(funded);
+    // The invite conserves like any other transaction.
+    expect(change.value + bond.value).toBe(funded);
   });
 
-  it('the create carries the shape consensus pins', () => {
-    // NODE_INTERFACE → the transition table's invite-create row: one karma +
-    // one invite + one bond, the invite holding 0, the bond holding exactly
-    // `INVITE_BOND_KARMA`, both new boxes carrying the karma input's owner as
-    // `inviterId` and one and the same `inviteePublicKey`.
+  it('the invite carries the shape consensus pins', () => {
+    // NODE_INTERFACE → the transition table's invite row: one karma + one bond,
+    // the bond holding exactly `INVITE_BOND_KARMA` and carrying the karma
+    // input's owner as `inviterId`.
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([40n, 30n]), INVITER_HEX, INVITEE_HEX),
     );
-    const [change, invite, bond] = decoded.outputs as [KarmaBox, InviteBox, BondBox];
+    const [change, bond] = decoded.outputs as [KarmaBox, BondBox];
 
-    expect(decoded.outputs).toHaveLength(3);
-    expect(invite.value).toBe(0n);
+    expect(decoded.outputs).toHaveLength(2);
     expect(bond.value).toBe(INVITE_BOND_KARMA);
     expect(Buffer.from(change.owner).toString('hex')).toBe(INVITER_HEX);
-    expect(Buffer.from(invite.inviterId).toString('hex')).toBe(INVITER_HEX);
     expect(Buffer.from(bond.inviterId).toString('hex')).toBe(INVITER_HEX);
-    expect(Buffer.from(invite.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);
     expect(Buffer.from(bond.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);
     expect(decoded.protocolVersion).toBe(PROTOCOL_VERSION);
 
     // The first box covers the bond on its own, so the second is not selected
     // and its value is not in the sum.
     expect(decoded.inputs).toEqual([karmaState([40n, 30n]).boxes[0]!.boxId]);
-    expect(change.value + invite.value + bond.value).toBe(40n);
+    expect(change.value + bond.value).toBe(40n);
 
     // The per-boxType output shape is CLOSED — a key it does not declare is a
-    // rejection, not a spare field. `invite` and `bond` declare exactly
-    // `boxType`, `value`, `inviterId` and `inviteePublicKey`.
-    for (const box of [invite, bond] as unknown as Array<Record<string, unknown>>) {
-      for (const dead of [
-        'secretHash', 'inviteOutputIndex', 'probationStartBlock', 'probationEndBlock',
-      ]) {
-        expect(box[dead], dead).toBeUndefined();
-      }
+    // rejection, not a spare field. `bond` declares exactly `boxType`, `value`,
+    // `inviterId` and `inviteePublicKey`.
+    for (const dead of [
+      'secretHash', 'inviteOutputIndex', 'probationStartBlock', 'probationEndBlock',
+    ]) {
+      expect((bond as unknown as Record<string, unknown>)[dead], dead).toBeUndefined();
     }
-    expect(decoded.preimages).toBeUndefined();
   });
 
-  it('the claim mints the whole output and names no bond', () => {
-    // The InviteBox holds 0, so the entire karma output is a **surplus** — the
-    // only karma any transaction may create, and it is admitted in this shape
-    // alone. A change output or a bond input would break it.
-    const decoded = overTheWire(ui.buildClaimInviteTx(INVITE_BOX_ID, INVITEE_HEX));
-    const [minted] = decoded.outputs as [KarmaBox];
+});
 
-    expect(decoded.inputs).toEqual([INVITE_BOX_ID]);
-    expect(decoded.outputs).toHaveLength(1);
-    expect(minted.boxType).toBe('karma');
-    expect(minted.value).toBe(INVITE_KARMA_AMOUNT);
-    expect(Buffer.from(minted.owner).toString('hex')).toBe(INVITEE_HEX);
+describe('demo UI binary fields ↔ the HTTP edge that decodes them', () => {
+  /**
+   * ⛔ **THE ONE MIRROR THAT FAILS SILENTLY, AND THIS IS ITS ONLY GATE.**
+   *
+   * The page writes a box's key fields through `b32Either`, which takes hex or
+   * bytes, and sends them as HEX over the JSON API. `json-to-tx.ts` decodes them
+   * back by FIELD NAME. A field the page writes that `BINARY_BOX_FIELDS` does
+   * not name arrives as a string, dies at `validateTx`'s step-4 schema, and the
+   * box is unbuildable over HTTP — while every service-level test stays green,
+   * because those pass raw `Uint8Array` objects and never cross that edge.
+   *
+   * ⚠ **Every OTHER mirror in this file fails loudly**: a wrong tag or a missing
+   * field arm gives a wrong id, and a wrong id is a refused transaction with a
+   * reason. This one gives bytes that merely disagree.
+   *
+   * ⛔ **And the field name is what makes it invisible to a search.**
+   * `BINARY_BOX_FIELDS` is keyed on the field, not the box type, so
+   * `grep like_accrual` reaches every site that matters except this one.
+   */
+  const UI_BINARY_FIELDS = extractUiBinaryFields();
+
+  it('every binary field the page writes is one the HTTP edge decodes', () => {
+    const undecoded = [...UI_BINARY_FIELDS].filter((f) => !BINARY_BOX_FIELDS.has(f));
+    expect(undecoded).toEqual([]);
   });
 
-  it('the cancel spends one invite and produces nothing', () => {
-    // Zero outputs is the shape: the bond returns through block application, so
-    // a karma output here would be the inviter's stake returned twice.
-    const decoded = overTheWire(ui.buildCancelInviteTx(INVITE_BOX_ID));
-    expect(decoded.inputs).toEqual([INVITE_BOX_ID]);
-    expect(decoded.outputs).toEqual([]);
+  it('finds fields at all — an extractor that matches nothing proves nothing', () => {
+    // Non-vacuity. The assertion above is trivially true over an empty set, and
+    // an extractor silently stopping at a refactor is exactly how this gate
+    // would go quiet.
+    expect(UI_BINARY_FIELDS.size).toBeGreaterThan(5);
+    for (const known of ['owner', 'voucherId', 'targetId', 'author']) {
+      expect([...UI_BINARY_FIELDS]).toContain(known);
+    }
   });
 });
 

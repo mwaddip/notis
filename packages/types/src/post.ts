@@ -1,7 +1,12 @@
 import { createHash } from 'crypto';
-import { ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   u32BE,
+  readArr,
+  readBytesN,
+  readHexN,
+  readLpUtf8,
+  readVlqU,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
@@ -114,6 +119,32 @@ export function postFieldBytes(post: Post): Uint8Array {
   writeVlqU(w, post.protocolVersion);
   writeVlqU(w, post.timestamp);
   return w.toBytes();
+}
+
+/**
+ * The inverse of `postFieldBytes` — read a post's fields back out of a stream.
+ *
+ * **Deliberately adjacent to the writer**, and that placement is the point: field
+ * order is normative and a reader that walks it differently is a consensus
+ * divergence with no compiler signal, so the two sit where a reviewer reads them
+ * as one table. This is the same pairing rule `boxRecordBytes` /
+ * `boxRecordFromBytes` follow (TYPES_INTERFACE → Layout — Boxes).
+ *
+ * **It takes a reader rather than a byte array, because it is read INLINE.** A
+ * post's fields are the tail of `txIdBytes`' `post` option and the whole of
+ * `encodePost`, so the same reader serves both and neither has to hold a second
+ * statement of the layout. The boundary check belongs to whichever `decodeStruct`
+ * encloses it — `decodePost` at the top level, `decodeTx` when the post rides a
+ * transaction.
+ */
+export function readPostFields(r: ByteReader): Post {
+  return {
+    content: readLpUtf8(r),
+    author: readBytesN(r, 32),
+    parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
+    protocolVersion: readVlqU(r),
+    timestamp: readVlqU(r),
+  };
 }
 
 /**

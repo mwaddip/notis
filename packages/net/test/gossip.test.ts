@@ -11,13 +11,16 @@ import {
 import {
   generateKeyPair,
   encodeTx,
+  decodeTx,
   ReaderError,
   encodeOrderingBlock,
   decodeOrderingBlock,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
-import type { Post, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
+import type {
+  Post, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree,
+} from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import { subscribeTopics, TOPICS } from '../src/gossip.js';
 import type { Libp2pGossip } from '../src/gossip.js';
@@ -87,6 +90,23 @@ function newPeer(peerMgr: PeerManager): { id: string; toString(): string } {
   return { id, toString: () => id };
 }
 
+// Every block carries at least one transaction, because the settlement is one
+// (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+// NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). A body with none is
+// refused at Stage 1, so an empty-body fixture cannot stand in for a block a
+// peer relayed.
+//
+// Stage 1 never decodes an element: `utxoTxs` is `arr(utxoTxs, lp)`, opaque
+// length-prefixed bytes weighed as they arrived, so the payload here is a
+// plausible size and nothing more. The id is what `utxoTxRoot` would commit.
+function settlementBody(): UtxoTxTree {
+  return {
+    utxoTxIds: ['5e'.repeat(32)],
+    utxoTxs: [new Uint8Array(96).fill(0x5e)],
+    pruneEntries: [],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Ordering-block topic validator — relay PoW gate (audit M-9, M-6)
 // ---------------------------------------------------------------------------
@@ -107,7 +127,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
   function makeBlock(header: BlockHeader): OrderingBlock {
     return {
       header,
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      utxoTxTree: settlementBody(),
       // 64-byte dummy — Stage 1 does not verify the validator signature.
       validatorSignature: new Uint8Array(64),
     };
@@ -376,13 +396,27 @@ describe('tx topic validator — the post membership gate', () => {
     );
   });
 
-  it('rejects a post with a malformed author before hex-encoding it', () => {
-    // A 31-byte author would be `Buffer.from(...).toString('hex')`-able but is
-    // out of domain, and `verifyTxStructure` refuses it first — which is what
-    // keeps the gate from inventing a set key for a post that has no valid one.
+  it('a 31-byte author has no encoding, so the gate is never handed one', () => {
+    // ⛔ The gate hex-encodes `tx.post.author` to key the membership set, and
+    // what keeps that safe is the CODEC, not the structural check.
+    //
+    // `author` is `b32`, whose wire domain *is* its encodable domain, so the
+    // writer throws rather than padding or truncating — padding a 31-byte author
+    // to 32 would map it onto a well-formed post's encoding (TYPES_INTERFACE →
+    // Totality). A value that cannot be written cannot be read: no byte string
+    // decodes to a post whose author is not exactly 32 bytes.
+    //
+    // Both of net's paths are therefore closed before the gate. Inbound, the tx
+    // topic validator's only input is `decodeTx(msg.data)`; outbound,
+    // `broadcastTx` encodes and never validates. The validator is never called
+    // on an object net did not decode.
     const tx = txWith(basePost(new Uint8Array(31).fill(4)));
-    const { result } = validateTx(tx, new Set([authorHex]));
-    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(() => encodeTx(tx)).toThrow(/32 bytes/);
+
+    // The other half, asserted rather than assumed: what the decoder does hand
+    // the gate is always 32 bytes, which is the precondition the hex-encode
+    // rests on.
+    expect(decodeTx(encodeTx(postTx)).post!.author.length).toBe(32);
   });
 
   it('rejects an unsupported protocol version', () => {
@@ -489,7 +523,7 @@ describe('gossip dispatch listener', () => {
   };
   const dispatchBlock: OrderingBlock = {
     header: dispatchHeader,
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+    utxoTxTree: settlementBody(),
     validatorSignature: new Uint8Array(64),
   };
 

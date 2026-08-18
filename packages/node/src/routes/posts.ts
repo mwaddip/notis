@@ -14,7 +14,16 @@ import { respondError } from './respond-error.js';
 // Dependency types
 // ---------------------------------------------------------------------------
 
-export interface PostsDeps extends PostServiceDeps, FeedServiceDeps {}
+export interface PostsDeps extends PostServiceDeps, FeedServiceDeps {
+  /**
+   * The consensus-recorded author of a confirmed post, hex, or null.
+   *
+   * ⛔ Reads `block_topology` and never `dag_posts.author` — the same source the
+   * engine pins a like's marker against (NODE_INTERFACE → Karma transition
+   * rules), so a client and the node cannot disagree about who a like pays.
+   */
+  getTopologyAuthor(postId: string): string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,12 +114,25 @@ export function createRouter(deps: PostsDeps): Router {
 
   // GET /posts/:id — retrieve a specific post
   router.get('/:id', (req, res) => {
-    const result = feedService.getPost(req.params['id']!);
+    const id = req.params['id']!;
+    const result = feedService.getPost(id);
     if (!result) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
     }
-    res.json(result);
+    // ⛔ **`confirmedAuthor` IS THE ONLY KEY A LIKE MAY EARMARK KARMA TO**, and
+    // it is a distinct field from `author` on purpose. `author` is the DAG's —
+    // content a node may hold, may have pruned, or may never have received —
+    // while this comes from `block_topology`, which is derived from block data
+    // alone and is identical on every node (ARCHITECTURE → Likes).
+    //
+    // ⚠ **They are the same value for a well-formed post and differ exactly
+    // where it matters**: a placeholder row carries a zeroed `author`, so a
+    // client building a like marker from the DAG field would earmark the
+    // liker's karma to the zero key while every check it can run passes.
+    // `null` until a block confirms the post, which is also when a like on it
+    // becomes buildable at all.
+    res.json({ ...result, confirmedAuthor: deps.getTopologyAuthor(id) });
   });
 
   // GET /posts — query posts with pagination

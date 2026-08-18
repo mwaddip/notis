@@ -48,7 +48,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 
@@ -89,7 +89,9 @@ describe('P2-B phase 4 — input-shape pins', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -200,6 +202,22 @@ describe('P2-B phase 4 — input-shape pins', () => {
   // K2 — a multi-VouchBox unvouch destroys all but one stake.
   // -------------------------------------------------------------------------
 
+  /**
+   * The `VouchEscrowBox` an unvouch outputs (ARCHITECTURE → Vouch boxes).
+   *
+   * ⚠ `releaseAtBlock` clears the floor by a margin — only the floor is a rule,
+   * because a transaction cannot commit to the height of the block that will
+   * carry it.
+   */
+  function escrowFor(owner: Uint8Array, value: bigint) {
+    return {
+      boxType: 'vouch_escrow' as const,
+      value,
+      owner,
+      releaseAtBlock: 1000,
+    };
+  }
+
   it('K2: rejects a two-VouchBox unvouch', () => {
     // Accepted on HEAD — two VouchBoxes in, zero outputs, one voucher
     // signature: the transition arm asked only for zero outputs, and
@@ -212,9 +230,14 @@ describe('P2-B phase 4 — input-shape pins', () => {
     const v1 = seedVouch(voucher.pub, target1.pub);
     const v2 = seedVouch(voucher.pub, target2.pub);
 
+    // ⛔ **Escrowing ONE stake while consuming TWO is the shape under test**, and
+    // it is the shape the input bound exists to refuse. It no longer conserves
+    // either — the second stake would be destroyed — so the bound and
+    // conservation both fire; the bound is asserted because it is the one that
+    // names WHY.
     const tx: UtxoTransaction = {
       inputs: [v1.id!, v2.id!],
-      outputs: [],
+      outputs: [escrowFor(voucher.pub, VOUCH_KARMA_AMOUNT * 2n)],
       signatures: {},
       protocolVersion: 1,
     };
@@ -232,7 +255,7 @@ describe('P2-B phase 4 — input-shape pins', () => {
 
     const tx: UtxoTransaction = {
       inputs: [v.id!],
-      outputs: [],
+      outputs: [escrowFor(voucher.pub, VOUCH_KARMA_AMOUNT)],
       signatures: {},
       protocolVersion: 1,
     };

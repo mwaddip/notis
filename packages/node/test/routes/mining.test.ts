@@ -13,6 +13,7 @@ import { createApp } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
 import type { OrderingBlock } from '@dagsocial/types';
 import { profileFor } from '@dagsocial/types';
+import { seedEmissionBox } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -38,17 +39,12 @@ function makeTemplate(): OrderingBlock {
       createdAt: 1_700_000_000_000,
     },
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      // The coinbase is an output of the settlement, which is the body's last
+      // entry — so a template carries it in `utxoTxs` and reports no
+      // `coinbaseOutputs` (TYPES_INTERFACE → OrderingBlock).
+      utxoTxIds: ['55'.repeat(32)],
+      utxoTxs: [new Uint8Array(96).fill(0x55)],
       pruneEntries: [],
-      coinbaseOutputs: [
-        {
-          owner: new Uint8Array(32).fill(0x55),
-          value: 90n,
-          lockedUntilBlock: 727,
-          isTreasury: false,
-        },
-      ],
     },
     validatorSignature: new Uint8Array(64),
   };
@@ -477,6 +473,10 @@ describe('mining routes — mount policy', () => {
 
     it('withholds a template that exists while readiness says no', async () => {
       const bc = await import('../../src/services/block-creator.js');
+      // ⛔ **A miner below the terminus cannot build a template without an
+      // emission box**: the settlement SPENDS the emission for its coinbase, so
+      // a store with nothing to spend from yields no template at all.
+      await seedEmissionBox();
       const cfg = makeConfig({ miningSecret: SECRET });
       bc.startBlockCreator(cfg);
       bc.createOrderingBlock();
@@ -495,6 +495,7 @@ describe('mining routes — mount policy', () => {
 
     it('control: the same app serves that template once readiness says yes', async () => {
       const bc = await import('../../src/services/block-creator.js');
+      await seedEmissionBox();
       const cfg = makeConfig({ miningSecret: SECRET });
       bc.startBlockCreator(cfg);
       bc.createOrderingBlock();

@@ -55,9 +55,33 @@ import {
   insertBox,
   consumeBox,
   getIdentityRecord,
-  hasActiveVouchCooldown,
+  hasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
+
+/** The cooldown this fixture's engine deps declare; the escrow's floor reads it. */
+const COOLDOWN = 2;
+
+/**
+ * The `VouchEscrowBox` an unvouch outputs.
+ *
+ * ⚠ **`releaseAtBlock` is the producer's, constrained only by a FLOOR** — a
+ * transaction cannot commit to the height of the block that will carry it, so an
+ * exact pin would make every unvouch valid in exactly one block (NODE_INTERFACE →
+ * Vouch transition rules). These fixtures validate at height 0, so the floor is
+ * `COOLDOWN`.
+ */
+function unvouchEscrow(value: bigint, owner: Uint8Array) {
+  return {
+    boxType: 'vouch_escrow' as const,
+    value,
+    owner,
+    // The route validates at `HEIGHT`, so the floor is `HEIGHT + COOLDOWN`.
+    // Clearing it by a margin is legal because only the floor is a rule —
+    // releasing late costs the voucher and nobody else.
+    releaseAtBlock: HEIGHT + COOLDOWN,
+  };
+}
 import { materializeOutput } from '../../src/services/utxo-engine.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { createRouter } from '../../src/routes/vouches.js';
@@ -74,7 +98,12 @@ interface UiBuilders {
     targetIdHex: string,
     pubKeyHex: string,
   ) => Record<string, unknown>;
-  buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+  buildUnvouchTx: (
+    vouchBoxId: string,
+    stakeValue: bigint,
+    pubKeyHex: string,
+    releaseAtBlock: number,
+  ) => Record<string, unknown>;
 }
 
 /**
@@ -130,7 +159,14 @@ describe('vouch routes — the JSON edge', () => {
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       getIdentityRecord,
-      hasActiveVouchCooldown,
+      // ⛔ The real predicate, not a stub. The cast gate reads escrow BOXES now
+      // (NODE_INTERFACE → Vouch transition rules), so a route test that stubbed
+      // it would assert the router while leaving the rule it fronts untested.
+      hasActiveVouchEscrow,
+      vouchCooldownBlocks: COOLDOWN,
+      // No like reaches this router, so the marker's author pin has nothing to
+      // resolve — stated rather than stubbed silently.
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -331,7 +367,10 @@ describe('vouch routes — the JSON edge', () => {
     const vouchBox = seedVouchBox(voucher.pub, target.pub);
     const tx: UtxoTransaction = {
       inputs: [vouchBox.id!],
-      outputs: [],
+      // ⛔ **An escrow output, not zero outputs.** The unvouch conserves now: the
+      // stake moves into a `VouchEscrowBox` rather than being destroyed with a
+      // node-local row remembering to re-mint it (ARCHITECTURE → Vouch boxes).
+      outputs: [unvouchEscrow(vouchBox.value, voucher.pub)],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
@@ -358,6 +397,11 @@ describe('vouch routes — the JSON edge', () => {
     expect(body.count).toBe(1);
     expect(body.vouches[0]).toEqual({
       boxId: vouchBox.id,
+      // ⛔ **The stake, because an unvouch's escrow must carry the CONSUMED
+      // BOX'S value and never `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE →
+      // VouchEscrowBox). Without it the client has to reach for the constant,
+      // which is right only by coincidence of the cast pin.
+      value: vouchBox.value.toString(),
       voucherId: voucher.hex,
       targetId: target.hex,
     });
@@ -378,7 +422,7 @@ describe('vouch routes — the JSON edge', () => {
 
     const tx: UtxoTransaction = {
       inputs: [listed],
-      outputs: [],
+      outputs: [unvouchEscrow(VOUCH_KARMA_AMOUNT, voucher.pub)],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
     };
@@ -426,17 +470,27 @@ describe('vouch routes — the JSON edge', () => {
 
     it('DELETE /vouches/:targetId accepts what the unvouch button sends', async () => {
       const vouchBox = seedVouchBox(voucher.pub, target.pub);
-      // Read the id the way the button reads it: off the `?voucher=` listing,
-      // the only surface that names the box an unvouch has to spend.
+      // Read the id AND the stake the way the button reads them: off the
+      // `?voucher=` listing, the only surface that names either. ⛔ **The stake
+      // matters as much as the id** — the escrow must carry the consumed box's
+      // value, so a client that had only the id would have to reach for
+      // `VOUCH_KARMA_AMOUNT` (TYPES_INTERFACE → VouchEscrowBox).
       const listed = (
         (await request(`/?voucher=${voucher.hex}`, 'GET')).data as {
-          vouches: Array<{ boxId: string }>;
+          vouches: Array<{ boxId: string; value: string }>;
         }
-      ).vouches[0]!.boxId;
-      expect(listed).toBe(vouchBox.id);
+      ).vouches[0]!;
+      expect(listed.boxId).toBe(vouchBox.id);
 
       const res = await request(`/${target.hex}`, 'DELETE', {
-        tx: signedBody(ui.buildUnvouchTx(listed)),
+        tx: signedBody(
+          ui.buildUnvouchTx(
+            listed.boxId,
+            BigInt(listed.value),
+            voucher.hex,
+            HEIGHT + COOLDOWN,
+          ),
+        ),
       });
       expect(res.status, JSON.stringify(res.data)).toBe(200);
       expect((res.data as Record<string, unknown>)['status']).toBe('pending');

@@ -18,6 +18,7 @@ import {
 import type {
   CandidateOf,
   CreditBox,
+  VouchEscrowBox,
   KarmaBox,
   OrderingBlock,
   Post,
@@ -57,7 +58,8 @@ import {
 // hand-built fixture. Reverts go through the real reorg path. Three
 // assertions per class:
 //
-//   1. DB identity — utxo_boxes plus the side tables (vouch_cooldowns)
+//   1. DB identity — utxo_boxes plus the side tables (like_records,
+//      identity_records)
 //      equal their pre-block rows exactly.
 //   2. Digest identity — with the ACTIVE prover singleton (the instance
 //      tryGetAvlProver() hands to block-apply §13), the digest after revert
@@ -152,22 +154,19 @@ async function importUtxo() {
     insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => { id?: string; value: bigint } | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
+    getKarmaValue: (owner: Uint8Array) => bigint;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
+    getEmissionBox: () => { id?: string; value: bigint } | null;
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };
 }
 
+/** The escrow store, which is now the box store (ARCHITECTURE → Vouch boxes). */
 async function importVouch() {
-  return (await import('../../src/store/vouch-cooldowns.js')) as {
-    insertVouchCooldown: (
+  return (await import('../../src/store/utxo.js')) as unknown as {
+    getVouchEscrowsFor: (
       voucherId: Uint8Array,
-      targetId: Uint8Array,
-      releaseAtBlock: number,
-      karmaAmount: bigint,
-    ) => void;
-    getVouchCooldowns: (
-      voucherId: Uint8Array,
-    ) => Array<{ targetId: Uint8Array; releaseAtBlock: number; karmaAmount: bigint }>;
+    ) => Array<{ value: bigint; owner: Uint8Array; releaseAtBlock: number }>;
   };
 }
 
@@ -185,9 +184,11 @@ async function importOrdering() {
 function dumpState(db: Database.Database) {
   return {
     boxes: db.prepare('SELECT * FROM utxo_boxes ORDER BY id').all(),
-    vouches: db
-      .prepare('SELECT * FROM vouch_cooldowns ORDER BY voucher_id, target_id')
-      .all(),
+    // ⛔ **The vouch escrow needs no row here.** It is a box, so it is already
+    // in `boxes` above, and it round-trips through the journal's own
+    // `{kind:'box'}` inverses rather than through a hand-written side-record.
+    // ✅ **Every piece of block-application state this dumps is inside the
+    // `stateRoot`** (ARCHITECTURE → Vouch boxes).
     // P2-D N3b: prune settlement deletes the subtree's like-records, so "DB
     // identity after revert" has to cover the table (mirrors the
     // like-settlement suite's dumpState).
@@ -327,11 +328,18 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Coinbase — the mint merges the owner's pre-existing credit box; revert
-  // must restore the merged-in original (the merge-consume value-loss fix).
+  // Coinbase — an OUTPUT of the block's settlement transaction, so revert must
+  // undo the credit box it created and restore the emission box it spent.
+  //
+  // ⛔ **There is no merge, and that is the change.** `mintCredits` consumed
+  // the owner's pre-existing credit boxes and wrote one merged successor; a
+  // settlement output is a new box beside whatever the owner already held
+  // (MINING_INTERFACE → Coinbase Application: the credits are spent from the
+  // `EmissionBox` by the transaction that emits them). What revert has to
+  // restore is therefore an emission predecessor, not a merged-in original.
   // -----------------------------------------------------------------------
 
-  it('coinbase: merge-consumed credit originals restored', async () => {
+  it('coinbase: the settlement\'s credit output and the emission it spent are both reverted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -350,16 +358,20 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     // Baseline block 1 pays a fresh miner — minerB's box is untouched.
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
     const pre = takeSnapshot(db, handle, 1);
+    const emissionBefore = utxo.getEmissionBox()!;
 
-    // Class block: coinbase paying minerB — mintCredits consumes the seeded
-    // box and creates one merged box.
+    // Class block: the settlement pays minerB.
     const classBlock = await makeApplicableBlock({ height: 2, miner: minerB });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    expect(utxo.getBox(seeded.id!)).toBeNull(); // merged in (spent)
-    const merged = utxo.getCreditBoxes(minerB.userId);
-    expect(merged).toHaveLength(1);
-    expect(merged[0]!.value).toBeGreaterThan(100n);
+    // The seeded box is untouched — a settlement output merges nothing.
+    expect(utxo.getBox(seeded.id!)).not.toBeNull();
+    const boxes = utxo.getCreditBoxes(minerB.userId);
+    expect(boxes).toHaveLength(2);
+    expect(boxes.reduce((sum, b) => sum + b.value, 0n)).toBeGreaterThan(100n);
+
+    // And the emission box moved to a successor, which the revert must undo.
+    expect(utxo.getEmissionBox()!.id).not.toBe(emissionBefore.id);
 
     await assertRoundTrip(db, handle, pre, classBlock);
   });
@@ -490,16 +502,17 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // Settled: both locks consumed. The replier's change box is merge-consumed
-    // into a 1 + POST_LOCK_REPLY_COST refund; the pruning author's lock burned
-    // with its consume, leaving their 1 karma of change untouched. The liker got
-    // nothing (the burn is unrecoverable); the like-record died with the post.
+    // Settled: both locks consumed by the settlement. The replier is refunded
+    // their lock; the pruning author's own lock goes to the POOL, leaving their
+    // 1 karma of change untouched. ⚠ **No merge** — the settlement emits a fresh
+    // karma output rather than consolidating, so the replier's change box stands
+    // and the BALANCE carries the claim.
     expect(utxo.getBox(lockBox.id!)).toBeNull();
     expect(utxo.getBox(replyLockBox.id!)).toBeNull();
-    expect(utxo.getBox(replierChange.id!)).toBeNull();
-    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(1n + POST_LOCK_REPLY_COST);
+    expect(utxo.getBox(replierChange.id!)).not.toBeNull();
+    expect(utxo.getKarmaValue(replier.userId)).toBe(1n + POST_LOCK_REPLY_COST);
     expect(utxo.getBox(authorChange.id!)).not.toBeNull();
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(1n);
+    expect(utxo.getKarmaValue(author.userId)).toBe(1n);
     expect(utxo.getKarmaBox(liker.userId)).toBeNull();
     expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
     // Every consumption and the record deletion are in the journal the revert
@@ -512,29 +525,34 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       saved.mutations
         .filter((m) => m.kind === 'box' && m.op === 'remove')
         .map((m) => (m as { boxId: string }).boxId),
-    ).toEqual(expect.arrayContaining([lockBox.id, replyLockBox.id, replierChange.id]));
+    // ⚠ **The replier's change box is NOT among them.** Nothing consolidates it
+    // any more, so the settlement consumes the two locks and nothing else.
+    ).toEqual(expect.arrayContaining([lockBox.id, replyLockBox.id]));
     expect(saved.likeRecordDeletions).toEqual([
       { targetPostId: postId, likerId: liker.userId, appliedAtBlock: 1 },
     ]);
 
     await assertRoundTrip(db, handle, pre, classBlock);
 
-    // The re-applied block leaves the same settled state again.
-    expect(utxo.getKarmaBox(replier.userId)!.value).toBe(1n + POST_LOCK_REPLY_COST);
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(1n);
+    // The re-applied block leaves the same settled state again. Balances, not
+    // boxes — the settlement emits rather than consolidates.
+    expect(utxo.getKarmaValue(replier.userId)).toBe(1n + POST_LOCK_REPLY_COST);
+    expect(utxo.getKarmaValue(author.userId)).toBe(1n);
     expect(utxo.getBox(lockBox.id!)).toBeNull();
     expect(utxo.getBox(replyLockBox.id!)).toBeNull();
     expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
   });
 
   // -----------------------------------------------------------------------
-  // Vouch-cooldown mint (H-7) — the matured escrow row is deleted and its
-  // karma merge-minted; revert restores the escrow row and the original box.
+  // The escrow release — the matured `VouchEscrowBox` is consumed and its karma
+  // emitted by the settlement; revert restores the box. ⛔ H-7's hand-written
+  // side-record and inverse are deleted rather than ported: a box journals
+  // through `insertBox`/`consumeBox` with exact inverses already.
   // (Extends the Phase B fork-resolution revert test with the reorg path,
   // digest identity, and re-apply identity.)
   // -----------------------------------------------------------------------
 
-  it('vouch-cooldown mint: escrow row and merged karma originals restored', async () => {
+  it('the escrow release: the escrow box and the karma original are both restored', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -545,31 +563,45 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     const oldKarma = makeKarmaBox(50n, voucher.userId, 0);
     utxo.insertBox(oldKarma);
-    // Matures at height 2 — block 1 leaves it untouched.
-    vouch.insertVouchCooldown(voucher.userId, target.userId, 2, 7n);
+    // ⛔ An escrow BOX maturing at height 2 — block 1 leaves it untouched. The
+    // obligation is in the UTXO set and therefore in the `stateRoot`, which is
+    // what makes this round trip a property of the journal's box inverses rather
+    // than of hand-written side-records (ARCHITECTURE → Vouch boxes).
+    utxo.insertBox(
+      seedProvenance<VouchEscrowBox>(
+        {
+          boxType: 'vouch_escrow' as const,
+          value: 7n,
+          owner: voucher.userId,
+          releaseAtBlock: 2,
+        },
+        1,
+        86,
+      ),
+    );
 
     const handle = await activateProver();
     const blockApply = await importBlockApply();
 
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
-    expect(vouch.getVouchCooldowns(voucher.userId)).toHaveLength(1); // not yet matured
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1); // not yet matured
     const pre = takeSnapshot(db, handle, 1);
 
     const classBlock = await makeApplicableBlock({ height: 2 });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // Mint happened: old box spent, merged 57n box, escrow row gone.
-    expect(utxo.getBox(oldKarma.id!)).toBeNull();
-    const merged = utxo.getKarmaBox(voucher.userId);
-    expect(merged).not.toBeNull();
-    expect(merged!.value).toBe(57n);
-    expect(vouch.getVouchCooldowns(voucher.userId)).toHaveLength(0);
+    // The release happened: the escrow is spent and its value is the voucher's.
+    // ⚠ **No merge** — the settlement emits a fresh karma box rather than
+    // consolidating the owner's holdings, so the two sit side by side and the
+    // BALANCE is what carries the claim.
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(57n);
 
     await assertRoundTrip(db, handle, pre, classBlock);
 
     // The re-applied block leaves the same applied state again.
-    expect(utxo.getKarmaBox(voucher.userId)!.value).toBe(57n);
-    expect(vouch.getVouchCooldowns(voucher.userId)).toHaveLength(0);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(57n);
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
   });
 
   // -----------------------------------------------------------------------
@@ -668,15 +700,28 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       db.initDb(':memory:');
 
       const idle = makeTestIdentity();
-      const target = makeTestIdentity();
       const utxo = await importUtxo();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
 
-      const vouchStore = await import('../../src/store/vouch-cooldowns.js');
       const recordStore = await import('../../src/store/identity-records.js');
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
-      // Matures at height 4 — the same block decay first fires in.
-      vouchStore.insertVouchCooldown(idle.userId, target.userId, 4, VOUCH_KARMA_AMOUNT);
+      // ⛔ An escrow BOX maturing at height 4 — the same block decay first fires
+      // in. The obligation is committed state now, so the fixture seeds a box
+      // rather than a node-local row (ARCHITECTURE → Vouch boxes). `target` no
+      // longer reaches it: the box carries only the owner and the release
+      // height.
+      utxo.insertBox(
+        seedProvenance<VouchEscrowBox>(
+          {
+            boxType: 'vouch_escrow' as const,
+            value: VOUCH_KARMA_AMOUNT,
+            owner: idle.userId,
+            releaseAtBlock: 4,
+          },
+          1,
+          87,
+        ),
+      );
 
       const handle = await activateProver();
       const bc = await importBlockCreator();
@@ -697,11 +742,15 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       const recordMutations = journalStore
         .getBlockJournal(4)!
         .mutations.filter((m) => m.kind === 'record');
+      // ⚠ **The activity bump comes FIRST, and the ordering follows from where
+      // the box is emitted.** The bump rides `insertBox`, so it fires when the
+      // settlement emits the decay-burn box at §11a, while the decay CLOCK is
+      // committed after it at §12. What the case is about: two record writes at
+      // one height collapse to one AVL leaf, and the journal must carry both to
+      // revert exactly.
       expect(recordMutations).toHaveLength(2);
-      expect(recordMutations[0]).toMatchObject({ record: { lastDecayBlock: 4, likeCarry: 0n } });
-      expect(recordMutations[1]).toMatchObject({
-        record: { lastActivityBlock: 4, lastDecayBlock: 4, likeCarry: 0n },
-      });
+      expect(recordMutations[0]).toMatchObject({ record: { lastActivityBlock: 4 } });
+      expect(recordMutations[1]).toMatchObject({ record: { lastDecayBlock: 4 } });
 
       // The TREE holds the last write, not the first. Read it back through the
       // prover, which is the only place the collapse can be observed.
@@ -715,7 +764,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 4,
-        likeCarry: 0n,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });
@@ -733,7 +781,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       expect(recordStore.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 4,
-        likeCarry: 0n,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });

@@ -126,13 +126,42 @@ async function loadModules() {
   const utxo = await import('../../src/store/utxo.js');
   const journal = await import('../../src/store/journal.js');
   const records = await import('../../src/store/identity-records.js');
-  const karma = await import('../../src/services/karma.js');
+  const transfer = await import('../../src/services/karma-transfer.js');
   const decay = await import('../../src/services/decay.js');
   const provenance = await import('../../src/mint-provenance.js');
-  return { db, utxo, journal, records, karma, decay, provenance };
+  return { db, utxo, journal, records, transfer, decay, provenance };
 }
 
 type Modules = Awaited<ReturnType<typeof loadModules>>;
+
+/**
+ * Emit the boxes a decay plan describes, the way the settlement does.
+ *
+ * ⛔ **A stand-in for the settlement, and named as one.** The plan's karma is a
+ * transfer whose surplus goes to the karma pool, so the whole operation belongs
+ * to the block's one pool spend; this harness has no block, so it moves the
+ * owner's half and leaves the pool alone. That is why it lives here and not in
+ * `src` — a production path shaped like this would destroy the burn.
+ */
+function applyDecayPlans(
+  m: Modules,
+  plans: Array<{ owner: Uint8Array; consumedBoxIds: string[]; newValue: bigint }>,
+  height: number,
+): void {
+  for (const plan of plans) {
+    for (const id of plan.consumedBoxIds) m.utxo.consumeBox(id, height);
+    if (plan.newValue <= 0n) continue;
+    const box = {
+      boxType: 'karma' as const,
+      value: plan.newValue,
+      owner: plan.owner,
+      decayBurn: true,
+      txId: m.provenance.mintTxIdFor(m.provenance.decayContext(plan.owner), height),
+      index: m.provenance.MINT_OUTPUT_INDEX,
+    };
+    m.utxo.insertBox({ ...box, id: computeBoxId(box) });
+  }
+}
 
 /**
  * The production decay dependencies, mirroring `block-apply.ts`'s construction
@@ -145,11 +174,9 @@ type Modules = Awaited<ReturnType<typeof loadModules>>;
  * stand-ins. A harness-local record map would be a reimplementation of the half
  * `insertBox` owns, and the fixtures would then be checking a mirror.
  */
-function decayDeps(m: Modules): Parameters<Modules['decay']['applyKarmaDecay']>[0] {
+function decayDeps(m: Modules): Parameters<Modules['decay']['deriveKarmaDecay']>[0] {
   return {
     getKarmaBoxes: (owner: Uint8Array) => m.utxo.getKarmaBoxes(owner),
-    consumeBox: m.utxo.consumeBox,
-    insertBox: m.utxo.insertBox,
     getIdentityRecord: m.records.getIdentityRecord,
     putIdentityRecord: m.records.putIdentityRecord,
     getKarmaOwners: () => {
@@ -204,11 +231,40 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
         switch (step.op) {
           case 'mint': {
             const owner = ownerBytes(step.owner);
-            m.karma.mintKarma(
+            // ⛔ **A transfer, not a mint**, and the harness has to name a
+            // source like every production caller does: a `PostLockBox` holding
+            // exactly the step's amount, consumed in the same operation
+            // (ARCHITECTURE → The conservation axiom). The scenario's intent —
+            // "this identity now holds N karma at this height" — is unchanged.
+            const source = {
+              boxType: 'post_lock' as const,
+              value: step.amount,
+              originalValue: step.amount,
               owner,
-              step.amount,
+              // ⛔ **A per-owner subject, because two `mint` steps at one
+              // height would otherwise derive one synthetic txId and trip
+              // `UNIQUE(tx_id, output_index)`.** The subject is a post id by
+              // type, so the owner's own bytes stand in — this is fixture
+              // provenance for a box nothing else reads.
+              txId: m.provenance.mintTxIdFor(
+                m.provenance.postlockRemainderContext(
+                  Buffer.from(owner).toString('hex'),
+                ),
+                height,
+              ),
+              index: m.provenance.MINT_OUTPUT_INDEX,
+            };
+            const seeded = { ...source, id: computeBoxId(source) };
+            m.utxo.insertBox(seeded);
+            m.transfer.transferKarma(
+              [seeded],
+              [{
+                owner,
+                amount: step.amount,
+                ctx: m.provenance.vouchSettleContext(owner, owner),
+              }],
+              null,
               height,
-              m.provenance.vouchSettleContext(owner, owner),
             );
             break;
           }
@@ -229,7 +285,14 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
             break;
           }
           case 'decay': {
-            const entries = m.decay.applyKarmaDecay(decayDeps(m), height, scenario.cfg);
+            // ⛔ **Decay derives a plan; the block's settlement transaction
+            // emits its boxes** (NODE_INTERFACE → The settlement transaction).
+            // The harness stands in for that emission so the timeline keeps
+            // testing the decay ARITHMETIC — the staleness predicate, the
+            // interval count, the karma floor — which this unit did not touch.
+            const entries = m.decay.deriveKarmaDecay(decayDeps(m), height, scenario.cfg);
+            applyDecayPlans(m, entries, height);
+            m.decay.commitDecayClocks(decayDeps(m), entries, height);
             for (const entry of entries) {
               const ownerHex = Buffer.from(entry.owner).toString('hex');
               decayEvents.push({

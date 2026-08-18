@@ -31,12 +31,19 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
  * Domain tag prefixed to every internal Merkle node (L-9).
  *
  * `leafHash` prefixes its input with `utf8(domain + "\0")`, so every leaf
- * preimage begins with the first byte of a domain string. All in-tree domains
- * are printable ASCII ('stump', 'subblock', 'prune', 'utxotx', 'coinbase'),
- * so NUL can never start a leaf preimage — which makes 0x00 a safe reserved
- * tag for internal nodes. Any future leaf domain must likewise be a non-empty
- * printable string. Retired domains — strings reserved, never reuse:
- * 'likebox', 'epoch'.
+ * preimage begins with the first byte of a domain string. The **three** live
+ * domains are printable ASCII — 'stump', 'prune', 'utxotx' — so NUL can never
+ * start a leaf preimage, which makes 0x00 a safe reserved tag for internal nodes.
+ * Any future leaf domain must likewise be a non-empty printable string.
+ *
+ * ⛔ **Four are retired and every one of their strings stays reserved**:
+ * 'likebox', 'epoch', 'subblock' and 'coinbase'. A future domain reusing one
+ * would collide with historical leaf meanings.
+ *
+ * ⚠ **There is ONE list and it is TYPES_INTERFACE → Merkle primitives.** This
+ * comment mirrors it and must be re-derived against it rather than edited from
+ * memory — a live/retired list restated in two places is the drift class the
+ * contract names, and it has already had one instance.
  *
  * Without the tag, `nodeHash(left, right)` is a bare hash of 64 concatenated
  * bytes, so a 64-byte leaf preimage could be re-presented as an internal node

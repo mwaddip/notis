@@ -2,9 +2,22 @@ import type { AnyBox } from '@dagsocial/types';
 
 /**
  * The box types whose value counts as karma that exists — what `getTotalKarma`
- * sums. Karma is spendable in a `karma` box and escrowed in the other four, and
+ * sums. Karma is spendable in a `karma` box and escrowed in the other three, and
  * escrowed karma is held rather than destroyed. `credit`, `emission`, `treasury`
  * and `fee` are the other ledger, and `genesis_proof` holds 0.
+ *
+ * ⚠ **`like_accrual` and `vouch_escrow` are IN, and each was added on its own
+ * evidence.** A marker holds the liker's karma between the like transaction and
+ * the block's settlement, and a carry box holds an author's remainder across
+ * blocks; an escrow holds a voucher's stake for the length of its cooldown.
+ * ⛔ **All three are karma a holder is waiting on rather than karma that stopped
+ * existing** (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox), which is the
+ * same standing `bond`, `post_lock` and `vouch` already have here.
+ *
+ * ⚠ **`like_accrual` answers the three questions differently and is the second
+ * type to do so.** Transition **yes** — the like transaction is a karma spend
+ * that creates one. Supply **yes**. Conservation **yes**. `vouch_escrow` is
+ * transition **no**: it is created by spending a `VouchBox`, never a karma box.
  *
  * ⛔ **`karma_pool` is karma-bearing and is still not summed**, and it is out
  * for neither of those reasons: the pool holds the karma that is NOT in
@@ -38,7 +51,14 @@ import type { AnyBox } from '@dagsocial/types';
  * the two-set rule exists to prevent — the store asks the **supply** question,
  * not the transition one.
  */
-export const KARMA_SUPPLY_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+export const KARMA_SUPPLY_TYPES = [
+  'karma',
+  'bond',
+  'post_lock',
+  'vouch',
+  'like_accrual',
+  'vouch_escrow',
+] as const;
 
 /**
  * Does a box of this type hold karma that is in circulation?

@@ -62,7 +62,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx, checkOutputShape } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -118,7 +118,9 @@ describe('field-type pin', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -181,7 +183,6 @@ describe('field-type pin', () => {
       ['karma missing value', { boxType: 'karma', owner: karmaOwner32 }],
       ['vouch missing voucherId', { boxType: 'vouch', value: 1n, targetId: karmaOwner32 }],
       ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, inviterId: karmaOwner32 }],
-      ['invite missing inviteePublicKey', { boxType: 'invite', value: 0n, inviterId: karmaOwner32 }],
       ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, owner: karmaOwner32 }],
       // -- wrong-typed fields, one per FieldType --
       ['karma value as number', { ...honest('karma'), value: 10 }],
@@ -209,9 +210,6 @@ describe('field-type pin', () => {
       ['bond inviteePublicKey 31 bytes', { ...honest('bond'), inviteePublicKey: new Uint8Array(31) }],
       ['bond inviteePublicKey 33 bytes', { ...honest('bond'), inviteePublicKey: new Uint8Array(33) }],
       ['bond inviteePublicKey as hex string', { ...honest('bond'), inviteePublicKey: 'aa'.repeat(32) }],
-      ['invite inviteePublicKey empty', { ...honest('invite'), inviteePublicKey: new Uint8Array(0) }],
-      ['invite inviteePublicKey 31 bytes', { ...honest('invite'), inviteePublicKey: new Uint8Array(31) }],
-      ['invite inviterId as string', { ...honest('invite'), inviterId: 'aa'.repeat(32) }],
       ['vouch voucherId 31 bytes', { ...honest('vouch'), voucherId: new Uint8Array(31) }],
       ['vouch targetId as string', { ...honest('vouch'), targetId: 'cc'.repeat(32) }],
       // -- entries that are not objects at all --
@@ -234,8 +232,6 @@ describe('field-type pin', () => {
           return { boxType, value: 10n, owner: karmaOwner32 };
         case 'credit':
           return { boxType, value: 10n, owner: karmaOwner32 };
-        case 'invite':
-          return { boxType, value: 0n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
         case 'bond':
           return { boxType, value: 10n, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
         case 'post_lock':
@@ -291,8 +287,6 @@ describe('field-type pin', () => {
           return { boxType, value: 10n, owner: bytes32(1), decayBurn: false };
         case 'credit':
           return { boxType, value: 10n, owner: bytes32(1), lockedUntilBlock: 5 };
-        case 'invite':
-          return { boxType, value: 0n, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
         case 'bond':
           return { boxType, value: 10n, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
         case 'post_lock':
@@ -309,9 +303,8 @@ describe('field-type pin', () => {
     const WRONG: Record<string, Record<string, unknown>> = {
       karma: { value: 10, owner: new Uint8Array(31), decayBurn: 1 },
       credit: { value: -1n, owner: 'aa'.repeat(32), lockedUntilBlock: -1 },
-      invite: { value: BOX_VALUE_BOUND, inviterId: 7, inviteePublicKey: new Uint8Array(33) },
       bond: {
-        value: Number.NaN,
+        value: BOX_VALUE_BOUND,
         inviterId: new Uint8Array(0),
         inviteePublicKey: new Uint8Array(16),
       },
@@ -387,52 +380,36 @@ describe('field-type pin', () => {
   // -------------------------------------------------------------------------
 
   describe('accept controls (honest typed outputs through validateTx)', () => {
-    /** The pair as invite creation emits it: one tx, one invitee key on both. */
-    function seedInviteBondPair(inviter: TestIdentity, invitee: TestIdentity) {
-      const invite = {
-        boxType: 'invite' as const,
-        value: 0n,
-        inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId,
-      };
-      const bond = {
-        boxType: 'bond' as const,
-        value: INVITE_BOND_KARMA,
-        inviterId: inviter.userId,
-        inviteePublicKey: invitee.userId,
-      };
-      const [seededInvite, seededBond] = seedAsOneTx([invite, bond]);
-      storeInsertBox(seededInvite!);
-      storeInsertBox(seededBond!);
-      return { seededInvite: seededInvite!, seededBond: seededBond! };
-    }
-
-    it('honest invite claim (typed 32-byte key, minted karma) validates', () => {
+    it('honest invite (typed 32-byte key, conserving) validates', () => {
       const inviter = makeTestIdentity();
       const invitee = makeTestIdentity();
-      const { seededInvite } = seedInviteBondPair(inviter, invitee);
+      const karma = makeKarmaBox(INVITE_BOND_KARMA + 10n, inviter.userId, 0, 61);
+      storeInsertBox(karma);
 
-      const karmaOut = {
-        boxType: 'karma',
-        value: INVITE_KARMA_AMOUNT,
-        owner: invitee.userId,
-      };
       const tx: UtxoTransaction = {
-        inputs: [seededInvite.id!],
-        outputs: [karmaOut] as unknown as UtxoTransaction['outputs'],
+        inputs: [karma.id!],
+        outputs: [
+          { boxType: 'karma', value: 10n, owner: inviter.userId },
+          {
+            boxType: 'bond',
+            value: INVITE_BOND_KARMA,
+            inviterId: inviter.userId,
+            inviteePublicKey: invitee.userId,
+          },
+        ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
         protocolVersion: 1,
       };
       const hash = Buffer.from(computeTxId(tx), 'hex');
-      tx.signatures[Buffer.from(invitee.userId).toString('hex')] = new Uint8Array(
-        cryptoSign(null, hash, invitee.privateKey),
+      tx.signatures[Buffer.from(inviter.userId).toString('hex')] = new Uint8Array(
+        cryptoSign(null, hash, inviter.privateKey),
       );
 
       const r = validateTx(deps, tx, 100);
       expect(r.valid, r.error).toBe(true);
     });
 
-    it('honest unvouch (vouch → zero outputs) validates', () => {
+    it('honest unvouch (vouch → vouch_escrow) validates', () => {
       const vouch = {
         boxType: 'vouch' as const,
         value: 1n,
@@ -442,7 +419,17 @@ describe('field-type pin', () => {
       const seeded = { ...vouch, ...fixtureProvenance(vouch, 1) } as AnyBox;
       seeded.id = computeBoxId(seeded);
       storeInsertBox(seeded);
-      const r = validateTx(deps, signedTx([seeded.id!], []), 10);
+      // ⛔ **An escrow output, because the unvouch conserves now.** The stake
+      // moves into a box the voucher's own transaction creates
+      // (ARCHITECTURE → Vouch boxes); a zero-output spend is an ordinary
+      // whole-input deficit and is refused.
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: 1n,
+        owner: ownerPubKey,
+        releaseAtBlock: 1000,
+      };
+      const r = validateTx(deps, signedTx([seeded.id!], [escrow as never]), 10);
       expect(r.valid, r.error).toBe(true);
     });
   });
@@ -507,28 +494,30 @@ describe('field-type pin', () => {
   // CBOR ingress: the block funnel inherits the gate from validateTx
   // -------------------------------------------------------------------------
 
-  describe('CBOR ingress (block funnel)', () => {
+  describe('wire ingress (block funnel)', () => {
     /**
-     * ⚠ **Why the poison is a stray key and not `originalValue`.**
+     * ⛔ **THE OUTPUT-DOMAIN CHECK IS UNREACHABLE FROM THE BLOCK PATH, AND THAT
+     * IS THE FINDING** (VALIDATION_INTERFACE → What a decoder subsumes).
      *
-     * A string `originalValue` on the post_lock cannot serve: `originalValue`
-     * is `vlqU64`, which **throws** on a non-bigint, so the block is
-     * unbuildable at the producer and, if the bytes were spliced in afterwards,
-     * `computeTxId` would throw into the funnel's *totality catch* — the exact
-     * path this test exists to prove is not taken.
+     * An embedded transaction arrives as bytes and crosses `decodeTx`, which is
+     * positional: it writes the layout's fields and reads them back, so it can
+     * hand the funnel neither a stray key nor an out-of-domain value. The two
+     * poison classes below are therefore closed by the codec at *different*
+     * ends, and neither reaches `checkOutputShape` —
      *
-     * So the poison has to be one the encoder can carry, or the funnel never
-     * reaches the gate under test. A key the layout does not declare is total by
-     * construction: `canonicalBoxBytes` writes the layout's fields positionally
-     * and never reads this one, so the transaction hashes and signs normally and
-     * `checkOutputShape` (validateTx step 4) rejects it as an unexpected key.
+     *  - a key the layout does not declare is never encoded, so it does not
+     *    survive the round trip and is not in the id the block committed to;
+     *  - a value outside a writer's domain has **no encoding at all**, so the
+     *    transaction cannot be put on the wire by anyone.
      *
-     * Class-3 — a poison whose writer THROWS — is the case below this one. It
-     * needs its own fixture rather than a variant of this one: an unhashable
-     * transaction cannot be committed by any producer, so it can only reach the
-     * funnel as spliced bytes.
+     * ⚠ **The gate is not thereby redundant.** `validateTx` step 4 is what the
+     * HTTP edge crosses, where `jsonToTx` builds the object and no decoder
+     * bounds it — which is why the direct `checkOutputShape` cases above are the
+     * substantive coverage and these two pin the *reason* they are not reachable
+     * here. Node has both a store and an HTTP edge, so a check a decoder
+     * subsumes on one path stays live on the other.
      */
-    it('a block embedding a poison tx is REJECTED cleanly — nothing lands, no totality catch', async () => {
+    it('a stray output key does not survive the codec, so the block applies without it', async () => {
       const attacker = makeTestIdentity();
       const karma = makeKarmaBox(100n, attacker.userId, 0);
       storeInsertBox(karma);
@@ -539,7 +528,7 @@ describe('field-type pin', () => {
             boxType: 'karma',
             value: 100n - POST_LOCK_THREAD_COST,
             owner: attacker.userId,
-            note: 'x', // not in the layout: never encoded, so the tx still hashes
+            note: 'x', // not in the layout: never encoded, never hashed
           },
           {
             boxType: 'post_lock',
@@ -550,9 +539,6 @@ describe('field-type pin', () => {
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
         protocolVersion: 1,
-        // The lock's payload, so the stray key is the transaction's ONLY defect
-        // — without it the engine's post biconditional rejects first and this
-        // measures that instead.
         post: makePost(attacker.userId, 'poison carrier'),
       };
       const hash = Buffer.from(computeTxId(tx), 'hex');
@@ -560,120 +546,57 @@ describe('field-type pin', () => {
         cryptoSign(null, hash, attacker.privateKey),
       );
 
-      // The embedded tx rides the block as encodeTx() CBOR; apply decodes it
-      // and re-validates with validateTx — the single gate the funnel
-      // inherits. On the pre-pin tree this block APPLIED (before-leg P2b).
+      // The key is outside every committed byte: it changes no id …
+      const stripped = decodeTx(encodeTx(tx));
+      expect(Object.hasOwn(stripped.outputs[0]!, 'note')).toBe(false);
+      expect(computeTxId(stripped)).toBe(computeTxId(tx));
+
+      // … so the block is honest and applies, and what lands carries no `note`.
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
         const block = await makeApplicableBlock({ utxoTxs: [tx] });
-        expect(applyOrderingBlock(block)).toBe(false);
-        // The clean rejection path, not the totality catch converting a throw.
-        const unexpected = errSpy.mock.calls.filter((c) =>
-          String(c[0]).includes('unexpected failure during apply'),
-        );
-        expect(unexpected).toHaveLength(0);
-        // Attributed to the poison. The block carries a post-bearing tx now, so
-        // "rejected" alone no longer says which gate answered.
-        expect(
-          warnSpy.mock.calls
-            .map((c) => String(c[0]))
-            .filter((w) => w.includes('out-of-domain output') && w.includes("unexpected key 'note'")),
-        ).toHaveLength(1);
+        expect(applyOrderingBlock(block)).toBe(true);
+        expect(errSpy.mock.calls).toHaveLength(0);
       } finally {
-        warnSpy.mockRestore();
         errSpy.mockRestore();
       }
 
-      // Nothing landed: the input is unspent, no post_lock row exists.
-      expect(storeGetBox(karma.id!)).not.toBeNull();
-      const locks = db
-        .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
-        .get() as { n: number | bigint };
-      expect(Number(locks.n)).toBe(0);
+      const rows = db
+        .prepare("SELECT extra_data FROM utxo_boxes WHERE box_type = 'karma'")
+        .all() as Array<{ extra_data: string | null }>;
+      for (const row of rows) {
+        expect(String(row.extra_data ?? '')).not.toContain('note');
+      }
     });
 
-    /**
-     * Class-3: a poison whose writer THROWS. `originalValue` is `vlqU64`, so a
-     * string there refuses to encode — which is exactly why it cannot arrive
-     * the way the class-2 poison above does. No producer can commit an
-     * unhashable transaction, so the only route in is bytes spliced beside an
-     * honest id, and `utxoTxRoot` commits `utxoTxIds` rather than `utxoTxs`, so
-     * the splice needs no re-mine and no re-sign.
-     *
-     * What the funnel's output-domain check buys is the *class* of the answer,
-     * not the answer: without it `computeTxId` throws into the totality catch
-     * and the block dies as an "unexpected failure", a rejection the node
-     * cannot name (NODE_INTERFACE → "The output domain check").
-     */
-    it('class-3: a throwing-writer poison is rejected by name, not by the totality catch', async () => {
+    it('an out-of-domain output VALUE has no encoding, so no producer can carry it', async () => {
+      // ⛔ **The stronger half.** `originalValue` is `vlqU64`, and its writer
+      // throws rather than sentinelling — so a transaction carrying a string
+      // there cannot be hashed, cannot be signed and cannot be encoded. It is
+      // inexpressible on the wire rather than refused at a gate
+      // (TYPES_INTERFACE → Totality).
       const attacker = makeTestIdentity();
-      const karma = makeKarmaBox(100n, attacker.userId, 0);
-      storeInsertBox(karma);
-
-      // The honest transaction whose id the block will commit to.
-      const honest: UtxoTransaction = {
-        inputs: [karma.id!],
-        outputs: [
-          {
-            boxType: 'karma',
-            value: 100n,
-            owner: attacker.userId,
-          },
-        ] as unknown as UtxoTransaction['outputs'],
-        signatures: {},
-        protocolVersion: 1,
-      };
-      honest.signatures[Buffer.from(attacker.userId).toString('hex')] = new Uint8Array(
-        cryptoSign(null, Buffer.from(computeTxId(honest), 'hex'), attacker.privateKey),
-      );
-
       const poison: UtxoTransaction = {
-        inputs: [karma.id!],
+        inputs: ['ab'.repeat(32)],
         outputs: [
           {
             boxType: 'post_lock',
             value: POST_LOCK_THREAD_COST,
-            originalValue: String(POST_LOCK_THREAD_COST), // vlqU64 THROWS on a string
+            originalValue: String(POST_LOCK_THREAD_COST),
             owner: attacker.userId,
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
         protocolVersion: 1,
       };
-      // Unhashable — the property that forces the splice, asserted rather than
-      // assumed, since the whole case rests on it.
       expect(() => computeTxId(poison)).toThrow();
+      expect(() => encodeTx(poison)).toThrow();
 
-      const block = await makeApplicableBlock({ utxoTxs: [honest] });
-      block.utxoTxTree.utxoTxs[0] = encodeTx(poison);
-
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      try {
-        expect(applyOrderingBlock(block)).toBe(false);
-        expect(
-          errSpy.mock.calls.filter((c) =>
-            String(c[0]).includes('unexpected failure during apply'),
-          ),
-        ).toHaveLength(0);
-        expect(
-          warnSpy.mock.calls
-            .map((c) => String(c[0]))
-            .filter(
-              (w) => w.includes('has an out-of-domain output') && w.includes('originalValue'),
-            ),
-        ).toHaveLength(1);
-      } finally {
-        warnSpy.mockRestore();
-        errSpy.mockRestore();
-      }
-
-      expect(storeGetBox(karma.id!)).not.toBeNull();
-      const class3Locks = db
-        .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
-        .get() as { n: number | bigint };
-      expect(Number(class3Locks.n)).toBe(0);
+      // And the HTTP edge, where no decoder bounds it, still answers with the
+      // stated rejection rather than a throw.
+      expect(checkOutputShape(poison.outputs).valid).toBe(false);
+      expect(checkOutputShape(poison.outputs).error)
+        .toMatch(/index 0 \(post_lock\): field 'originalValue'/);
     });
 
     it('control: the same block shape with an honest typed lock APPLIES (and pins what decodeTx yields)', async () => {

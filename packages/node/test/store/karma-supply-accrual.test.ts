@@ -3,6 +3,7 @@ import { fixtureProvenance, uid } from '../helpers.js';
 import {
   INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
+  LIKES_PER_KARMA_PAYOUT,
   VOUCH_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
@@ -52,14 +53,17 @@ const OWNER = uid('supply-owner');
 const OTHER = uid('supply-other');
 
 /** A box of every type, each carrying a value the assertions can tell apart. */
-function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
+function boxOfType(boxType: AnyBox['boxType'], value: bigint, tag = ''): AnyBox {
+  // ⚠ `tag` separates two boxes of one type and value. It reaches the
+  // provenance nonce as well as the id, because `(tx_id, output_index)` is
+  // UNIQUE and identical candidates derive one synthetic txId.
+  const nonce = tag ? [...tag].reduce((a, c) => a + c.charCodeAt(0), 0) : 0;
   const base = { boxType, value } as Record<string, unknown>;
   switch (boxType) {
     case 'karma':
     case 'credit':
       base['owner'] = OWNER;
       break;
-    case 'invite':
     case 'bond':
       base['inviterId'] = OWNER;
       base['inviteePublicKey'] = OTHER;
@@ -75,13 +79,22 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
     case 'genesis_proof':
       base['payload'] = new Uint8Array([1, 2, 3]);
       break;
+    case 'like_accrual':
+      // ⛔ `author` is attribution, not authorization, and it is not the `owner`
+      // column (TYPES_INTERFACE → LikeAccrualBox).
+      base['author'] = OWNER;
+      break;
+    case 'vouch_escrow':
+      base['owner'] = OWNER;
+      base['releaseAtBlock'] = 100;
+      break;
     // `emission`, `treasury`, `fee` and `karma_pool` have no owner and no
     // per-type fields — the shared prefix is the whole box.
     default:
       break;
   }
-  const box = { ...base, ...fixtureProvenance(base, 1) } as unknown as AnyBox;
-  box.id = `${boxType}-${value}`;
+  const box = { ...base, ...fixtureProvenance(base, 1, nonce) } as unknown as AnyBox;
+  box.id = tag ? `${boxType}-${value}-${tag}` : `${boxType}-${value}`;
   return box;
 }
 
@@ -101,7 +114,6 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
  */
 const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   karma: true,
-  invite: true,
   bond: true,
   post_lock: true,
   vouch: true,
@@ -113,6 +125,14 @@ const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   // ⛔ Karma-bearing and still `false`. The pool holds what is NOT in
   // circulation, so counting it would have the supply account for itself.
   karma_pool: false,
+  // ⛔ **Both `true`, each on its own evidence.** A marker holds the liker's
+  // karma between the like and the settlement, a carry box holds an author's
+  // remainder across blocks, and an escrow holds a voucher's stake for the length
+  // of its cooldown. All three are karma a holder is waiting on rather than karma
+  // that stopped existing — the standing of `bond`, `post_lock` and `vouch`
+  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  like_accrual: true,
+  vouch_escrow: true,
 };
 
 describe('the karma supply is accounted at the box mutation choke point', () => {
@@ -123,7 +143,23 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     vi.resetModules();
   });
 
+  // ⛔ **EVERY TYPE IS MEASURED AT THE CHOKE POINT, none on the predicate
+  // alone.** The like transaction emits a marker and the unvouch emits an
+  // escrow, so the store carries a row mapping for each and both move the supply
+  // like any other karma-bearing type
+  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox). The set is empty and
+  // kept, so a type that becomes unproducible has somewhere to go.
+  const UNPRODUCED: ReadonlySet<string> = new Set<string>();
+
   for (const [boxType, counts] of Object.entries(COUNTS_AS_CIRCULATING)) {
+    if (UNPRODUCED.has(boxType)) {
+      it(`'${boxType}': the supply set ${counts ? 'admits' : 'excludes'} it`, async () => {
+        const { countsAsCirculatingKarma } = await import('../../src/karma-supply.js');
+        expect(countsAsCirculatingKarma(boxType as AnyBox['boxType'])).toBe(counts);
+      });
+      continue;
+    }
+
     it(`'${boxType}': inserting one ${counts ? 'raises' : 'leaves'} circulating karma`, async () => {
       const s = await freshStore();
       s.beginBlockJournal(1);
@@ -159,16 +195,17 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
   // Four transaction shapes, measured against the axiom. Each is the box
   // arithmetic a real transaction performs.
   //
-  // ⚠ **The three VIOLATION cases assert a defect, deliberately.** The axiom is
-  // `AHEAD OF CODE`, so these shapes are what the tree does and what it must
-  // stop doing; pinning the exact amount each one conjures or destroys is what
-  // makes the gap measurable instead of asserted.
+  // ⛔ **EVERY SHAPE HERE NAMES A SOURCE AND A SINK**, so each case pins a
+  // CIRCULATION change rather than a unit called into being or ended
+  // (ARCHITECTURE → The conservation axiom).
   //
-  // ⚠ **They witness the tree AS IT STANDS, where no box outside the supply set
-  // can receive karma.** Giving one of them a pool sink does NOT turn it green —
-  // the delta would be unchanged, because the pool sits outside this set on
-  // purpose. What retires a witness is the shape gaining a source and a sink
-  // *and* this file gaining the conservation total to measure them against.
+  // ⚠ **A non-zero delta is not a violation, and reading it as one is the error
+  // this header exists to prevent.** `karma_pool` sits OUTSIDE the supply set on
+  // purpose, so karma moving to or from the pool moves this figure by design —
+  // the pool holds what is not in circulation. The conservation total is
+  // `circulating + pool`, a different sum over a different set, and
+  // `conservation-axiom.test.ts` is where it is asserted
+  // (NODE_INTERFACE → Three karma sets, and none derives from another).
   // -------------------------------------------------------------------------
 
   it('a conserving karma move satisfies the axiom: nothing appears, nothing vanishes', async () => {
@@ -183,7 +220,11 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
 
-  it('⚠ VIOLATION: a like burn destroys LIKE_KARMA_COST and names no sink', async () => {
+  it('a like moves LIKE_KARMA_COST into a marker, and circulation is unchanged', async () => {
+    // ⛔ **The cost lands in a `LikeAccrualBox`**, which is karma-bearing and in
+    // the supply set — so the like is a transfer between two boxes and this
+    // figure does not move at all (ARCHITECTURE → The conservation axiom, third
+    // shape: a marker must carry its value).
     const s = await freshStore();
     const spent = boxOfType('karma', 40n);
     s.insertBox(spent);
@@ -191,39 +232,92 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     s.beginBlockJournal(1);
     s.consumeBox(spent.id!, 1);
     s.insertBox(boxOfType('karma', 40n - LIKE_KARMA_COST));
+    s.insertBox(boxOfType('like_accrual', LIKE_KARMA_COST));
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
+  });
+
+  it('the like PAYOUT sends the remainder to the pool, so circulation falls by it', async () => {
+    // ⛔ **The settlement's leg, and the one place this figure SHOULD move.**
+    // `markers×x → authorKarma(x−1) + pool(1)`: the author's share stays in
+    // circulation and the remainder leaves it for the pool, which is outside
+    // this set. ⚠ **A `-1` here is the deflation dial working**, not a defect —
+    // `conservation-axiom.test.ts` is what proves nothing was destroyed.
+    const s = await freshStore();
+    const X = BigInt(LIKES_PER_KARMA_PAYOUT);
+    const markers = Array.from({ length: LIKES_PER_KARMA_PAYOUT }, (_, i) =>
+      boxOfType('like_accrual', LIKE_KARMA_COST, `marker-${i}`),
+    );
+    for (const m of markers) s.insertBox(m);
+
+    s.beginBlockJournal(1);
+    for (const m of markers) s.consumeBox(m.id!, 1);
+    s.insertBox(boxOfType('karma', (X - 1n) * LIKE_KARMA_COST));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-LIKE_KARMA_COST);
   });
 
-  it('⚠ VIOLATION: an invite claim creates INVITE_KARMA_AMOUNT and names no source', async () => {
+  it('an invite grant draws INVITE_KARMA_AMOUNT from the pool and names it', async () => {
+    // ⛔ **THE CASE THIS FILE'S HEADER PREDICTED, AND IT IS NOW LIVE.** The
+    // settlement spends the pool to the invitee, so the delta below is a
+    // CIRCULATION change with a named source, not a unit called into being
+    // (ARCHITECTURE → The conservation axiom). `karma_pool` sits outside the
+    // supply set deliberately, which is why a legitimate transfer still moves
+    // this number — a reader who takes a nonzero delta here as the defect will
+    // read it backwards.
     const s = await freshStore();
-    // The claimed invite holds 0, so the whole karma output is a surplus — the
-    // only karma a user transaction may create (NODE_INTERFACE → the claim row).
-    // Under the axiom the ticket has to carry what it hands over.
-    const invite = boxOfType('invite', 0n);
-    s.insertBox(invite);
+    const pool = boxOfType('karma_pool', 1000n);
+    s.insertBox(pool);
 
     s.beginBlockJournal(1);
-    s.consumeBox(invite.id!, 1);
+    s.consumeBox(pool.id!, 1);
+    s.insertBox(boxOfType('karma_pool', 1000n - INVITE_KARMA_AMOUNT));
     s.insertBox(boxOfType('karma', INVITE_KARMA_AMOUNT));
+
+    // Circulation grew by the grant …
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(INVITE_KARMA_AMOUNT);
+    // … and the pool fell by exactly the same amount, which is the half the
+    // supply delta cannot see and the half the axiom is about.
+    const poolAfter = s.getKarmaPoolBox();
+    expect(poolAfter!.value).toBe(1000n - INVITE_KARMA_AMOUNT);
   });
 
-  it('⚠ VIOLATION: an unvouch moves the stake to a sink no box names', async () => {
+  it('a bond forfeit sends the unvested remainder to the pool', async () => {
+    // ⛔ **The forfeit is a TRANSFER and the settlement names its sink**
+    // (ARCHITECTURE → Bond outcomes). The vested part returns to the inviter and
+    // stays in circulation; the remainder goes to the pool, which is outside
+    // this set — so the figure falls by exactly the forfeit and by nothing else.
+    const s = await freshStore();
+    const bond = boxOfType('bond', 40n);
+    s.insertBox(bond);
+
+    s.beginBlockJournal(1);
+    s.consumeBox(bond.id!, 1);
+    s.insertBox(boxOfType('karma', 10n));
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-30n);
+  });
+
+  it('an unvouch escrows the stake, and circulation never moves', async () => {
+    // ⛔ **`VouchEscrowBox` IS IN THE SUPPLY SET**, so the stake stays in
+    // circulation for the whole cooldown — the unvouch is a transfer between two
+    // karma-bearing boxes and this figure does not move (ARCHITECTURE → Vouch
+    // boxes).
     const s = await freshStore();
     const vouch = boxOfType('vouch', VOUCH_KARMA_AMOUNT);
     s.insertBox(vouch);
 
-    // The zero-output spend: the stake leaves the UTXO set entirely and
-    // `vouch_cooldowns` — a table, not a box — is the only record of it.
     s.beginBlockJournal(1);
     s.consumeBox(vouch.id!, 1);
-    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-VOUCH_KARMA_AMOUNT);
+    s.insertBox(boxOfType('vouch_escrow', VOUCH_KARMA_AMOUNT));
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
 
-    // ⛔ **The maturity leg restoring it is exactly what the axiom refuses to
-    // accept as conservation.** The two legs net to zero, and between them there
-    // was a stretch of chain — blocks, not instants — in which the stake existed
-    // nowhere. A round trip is still a burn followed by a mint.
-    s.insertBox(boxOfType('karma', VOUCH_KARMA_AMOUNT));
+    // ⛔ **And the release moves it no further.** The escrow becomes karma; both
+    // types are in the set, so there is no stretch of chain in which the stake
+    // is anywhere but a box — which is what *"not even as an intermediary
+    // step"* asks for and a net-zero round trip does not give.
+    s.consumeBox(
+      s.getUnspentBoxes().find((b) => b.boxType === 'vouch_escrow')!.id!,
+      2,
+    );
+    s.insertBox(boxOfType('karma', VOUCH_KARMA_AMOUNT, 'released'));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
 

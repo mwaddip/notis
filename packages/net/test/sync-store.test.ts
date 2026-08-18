@@ -4,7 +4,6 @@ import { fileURLToPath } from 'url';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   PROTOCOL_VERSION,
-  CREDIT_MINER_REWARD_DELAY,
   encodeOrderingBlock,
 } from '@dagsocial/types';
 import {
@@ -56,18 +55,14 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeBlock(header: BlockHeader): OrderingBlock {
   return {
     header,
+    // Every block carries at least one transaction, because the settlement is
+    // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
+    // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). These blocks are
+    // served through `encodeServableOrderingBlock`, which gates on structure.
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      utxoTxIds: [header.height.toString(16).padStart(64, '0')],
+      utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
       pruneEntries: [],
-      coinbaseOutputs: [
-        {
-          value: 100n,
-          owner: new Uint8Array(32),
-          lockedUntilBlock: header.height + CREDIT_MINER_REWARD_DELAY,
-          isTreasury: false,
-        },
-      ],
     },
     validatorSignature: new Uint8Array(64),
   };

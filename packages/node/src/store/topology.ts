@@ -34,6 +34,19 @@ export function getTopologyAuthor(postId: string): string | null {
 }
 
 /**
+ * The consensus-recorded author as raw 32 bytes, or null when unconfirmed.
+ *
+ * ⛔ **One decoder, because three consensus paths read this.** The like
+ * marker's author pin runs at relay, at mempool admission and at block
+ * application (NODE_INTERFACE → Karma transition rules); a hex-to-bytes
+ * conversion written at each would be three implementations of one rule.
+ */
+export function getTopologyAuthorBytes(postId: string): Uint8Array | null {
+  const hex = getTopologyAuthor(postId);
+  return hex === null ? null : new Uint8Array(Buffer.from(hex, 'hex'));
+}
+
+/**
  * Walk the DAG downward from rootPostId using the block_topology table.
  * Returns the set of all post IDs in the subtree rooted at rootPostId
  * (including rootPostId itself).

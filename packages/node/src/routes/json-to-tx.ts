@@ -5,11 +5,23 @@ import { ClientError } from '../services/client-error.js';
 /**
  * Fields in box types whose runtime value is Uint8Array but arrive as hex
  * strings over the JSON HTTP API.  We convert them back during deserialisation.
+ *
+ * ⛔ **EXPORTED SO THE DEMO UI's MIRROR CAN BE CHECKED AGAINST IT.** The page
+ * writes these same fields through `b32Either`, and a field it names that this
+ * set does not — or the reverse — produces bytes the node disagrees with rather
+ * than an error either side reports (NODE_INTERFACE → the demo UI is a second
+ * implementation of consensus rules). `ui-crypto-mirror.test.ts` is the only
+ * gate that reaches that file.
  */
-const BINARY_BOX_FIELDS = new Set([
-  'owner',            // KarmaBox, CreditBox, PostLockBox
-  'inviterId',        // InviteBox, BondBox
-  'inviteePublicKey', // InviteBox, BondBox
+export const BINARY_BOX_FIELDS = new Set([
+  'owner',            // KarmaBox, CreditBox, PostLockBox, VouchEscrowBox
+  // ⚠ **`BondBox` alone.** These read `InviteBox, BondBox` until the invite
+  // collapsed into one transaction and the type was deleted; a list of holders
+  // has to be re-read every time one goes, so this names the survivor rather
+  // than carrying the set (TYPES_INTERFACE → a prose restatement decays while
+  // the assertion beside it stays green).
+  'inviterId',        // BondBox
+  'inviteePublicKey', // BondBox
   // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over
   // HTTP JSON — the value arrives as a hex string and dies at `validateTx`'s
   // step-4 schema, which wants `bytes32`. Service-level tests cannot see it:
@@ -17,12 +29,27 @@ const BINARY_BOX_FIELDS = new Set([
   // the demo UI's `canonicalBoxBytes` mirror must name the same fields.
   'voucherId',        // VouchBox
   'targetId',         // VouchBox
+  // ⛔ **`LikeAccrualBox`, and it is the field the warning above predicted.**
+  // Every like a client builds crosses this edge, so without it the whole like
+  // path is unreachable over HTTP while every service-level test stays green —
+  // exactly the blind spot named two lines up.
+  //
+  // ⚠ **Not the same `author` as a post's.** `Post.author` is decoded by
+  // `jsonToPost` below, which validates its length; this entry governs box
+  // outputs only, and the two never see each other's objects.
+  'author',           // LikeAccrualBox
 ]);
 
 /**
  * Convert a JSON tx object (as received over the HTTP API) into a
- * {@link UtxoTransaction}.  Hex-encoded Uint8Array fields in signatures,
- * preimages, and box outputs are decoded to raw `Uint8Array`.
+ * {@link UtxoTransaction}.  Hex-encoded Uint8Array fields in signatures and box
+ * outputs are decoded to raw `Uint8Array`.
+ *
+ * ⛔ **A `preimages` key is not read and not carried through**, so
+ * `checkTxEnvelope`'s closed key set never sees one: the name is reserved and
+ * never to be reused (TYPES_INTERFACE → Layout — UtxoTransaction). Dropping it
+ * silently is right here and only here — this edge builds the transaction, so a
+ * key it does not build is a key that never existed.
  */
 export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // ---- signatures ----
@@ -33,16 +60,6 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
       throw new ClientError(`signature for ${key} must be a hex string`);
     }
     signatures[key] = hexToBytes(val);
-  }
-
-  // ---- preimages ----
-  const rawPreimages = (raw.preimages ?? {}) as Record<string, string>;
-  const preimages: Record<string, Uint8Array> = {};
-  for (const [key, val] of Object.entries(rawPreimages)) {
-    if (typeof val !== 'string') {
-      throw new ClientError(`preimage for ${key} must be a hex string`);
-    }
-    preimages[key] = hexToBytes(val);
   }
 
   // ---- outputs ----
@@ -78,13 +95,6 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     inputs: (raw.inputs ?? []) as string[],
     outputs,
     signatures,
-    // A conditional SPREAD, not `: undefined` — the same idiom `likeTarget`
-    // uses one line below, and for the same reason. `preimages: undefined`
-    // leaves a present key holding `undefined`, which `computeTxId` hashes as
-    // absent (falsy) but `checkTxEnvelope` rejects as the CBOR-reachable
-    // ambiguity it is. "Normalizes {} to absent" has to hold in structure, not
-    // merely in effect: a present key holding `undefined` is not an absent key.
-    ...(Object.keys(preimages).length > 0 ? { preimages } : {}),
     protocolVersion,
     ...(likeTarget !== undefined ? { likeTarget } : {}),
     ...(post !== undefined ? { post } : {}),

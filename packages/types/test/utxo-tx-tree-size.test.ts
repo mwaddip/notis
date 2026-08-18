@@ -37,7 +37,7 @@ import {
   vlqUByteLength,
 } from '../src/codec.js';
 import { encodeUtxoTxTree, utxoTxTreeByteLength } from '../src/serialization.js';
-import type { CoinbaseOutput, UtxoTxTree } from '../src/block.js';
+import type { UtxoTxTree } from '../src/block.js';
 import type { PruneEntry } from '../src/stump.js';
 
 /** The all-ones u64, ten bytes — what every sentinelled field costs. */
@@ -71,21 +71,10 @@ function makePruneEntry(subtreeCount = 3): PruneEntry {
   };
 }
 
-function makeCoinbaseOutput(over: Partial<CoinbaseOutput> = {}): CoinbaseOutput {
-  return {
-    owner: new Uint8Array(32).fill(0x44),
-    value: 5_000_000_00000000n,
-    lockedUntilBlock: 720,
-    isTreasury: false,
-    ...over,
-  };
-}
-
 const EMPTY_TREE: UtxoTxTree = {
   utxoTxIds: [],
   utxoTxs: [],
   pruneEntries: [],
-  coinbaseOutputs: [],
 };
 
 function makeTree(over: Partial<UtxoTxTree> = {}): UtxoTxTree {
@@ -165,29 +154,29 @@ describe('VLQ width mirrors', () => {
 // ---------------------------------------------------------------------------
 
 describe('utxoTxTreeByteLength', () => {
-  // Four `vlqU(0)` counts and nothing else. Pinned as a number as well as an
+  // Three `vlqU(0)` counts and nothing else. Pinned as a number as well as an
   // equivalence: it is the one tree whose size is short enough to read.
-  it('sizes the empty tree at four count prefixes', () => {
-    expect(expectSizeMatchesEncoder(EMPTY_TREE)).toBe(4);
+  //
+  // ⛔ **`utxoTxTreeByteLength` computes this number a SECOND WAY**, so its terms
+  // and the codec's sections move together or the two diverge with no compiler
+  // signal. A section present in one and not the other shows up here as a
+  // one-byte gap on every tree, which is why the count is pinned as a literal and
+  // not only as an equivalence.
+  it('sizes the empty tree at three count prefixes', () => {
+    expect(expectSizeMatchesEncoder(EMPTY_TREE)).toBe(3);
   });
 
-  it('sizes a tree carrying prune entries and several coinbase outputs', () => {
+  it('sizes a tree carrying several prune entries', () => {
     expectSizeMatchesEncoder(makeTree({
       pruneEntries: [makePruneEntry(1), makePruneEntry(4), makePruneEntry(0)],
-      coinbaseOutputs: [
-        makeCoinbaseOutput(),
-        makeCoinbaseOutput({ value: 1n, lockedUntilBlock: 1, isTreasury: true }),
-        makeCoinbaseOutput({ value: 2n ** 63n, lockedUntilBlock: 0 }),
-      ],
     }));
   });
 
-  it('sizes a full body — ids, transactions, prunes and coinbases together', () => {
+  it('sizes a full body — ids, transactions and prunes together', () => {
     expectSizeMatchesEncoder(makeTree({
       utxoTxIds: ids(300),
       utxoTxs: txs(300, 953),
       pruneEntries: [makePruneEntry(2), makePruneEntry(200)],
-      coinbaseOutputs: [makeCoinbaseOutput(), makeCoinbaseOutput({ isTreasury: true })],
     }));
   });
 });
@@ -210,8 +199,9 @@ describe('VLQ width boundaries', () => {
     });
   }
 
-  // Prune entries and coinbase outputs are the two element writers whose own
-  // widths vary, so their counts AND their variable fields both straddle.
+  // ⛔ **The prune entry is the ONE element writer whose width varies**, so its
+  // count AND its one variable field both straddle here. An element writer added
+  // to the body owes the same pair of loops.
   for (const n of [0, 1, 127, 128]) {
     CASES.push({
       label: `${n} prune entries`,
@@ -221,25 +211,17 @@ describe('VLQ width boundaries', () => {
       label: `a prune entry naming ${n} subtree post ids`,
       tree: () => makeTree({ pruneEntries: [makePruneEntry(n)] }),
     });
-    CASES.push({
-      label: `${n} coinbase outputs`,
-      tree: () => makeTree({
-        coinbaseOutputs: Array.from({ length: n }, (_, i) =>
-          makeCoinbaseOutput({ value: BigInt(i), lockedUntilBlock: i })),
-      }),
-    });
   }
 
-  // A coinbase output's size follows its VALUES, not its shape — `value` spans
-  // the full u64 and `lockedUntilBlock` a safe integer, so one output is between
-  // 35 and 51 bytes.
-  for (const value of [0n, 127n, 128n, 16_383n, 16_384n, 2n ** 49n, VLQ_SENTINEL]) {
-    for (const lockedUntilBlock of [0, 127, 128, 16_384, Number.MAX_SAFE_INTEGER]) {
-      CASES.push({
-        label: `a coinbase output of value ${value} locked until ${lockedUntilBlock}`,
-        tree: () => makeTree({ coinbaseOutputs: [makeCoinbaseOutput({ value, lockedUntilBlock })] }),
-      });
-    }
+  // An entry's size follows the LENGTH of its one array and nothing else, since
+  // every other field is fixed-width: 161 bytes plus a count prefix plus 32 per
+  // id. These two straddle the prefix's second width step, where a sizer
+  // assuming a one-byte count drifts by a byte per entry rather than per block.
+  for (const n of [16_383, 16_384]) {
+    CASES.push({
+      label: `a prune entry naming ${n} subtree post ids`,
+      tree: () => makeTree({ pruneEntries: [makePruneEntry(n)] }),
+    });
   }
 
   for (const { label, tree } of CASES) {
@@ -261,7 +243,7 @@ describe('VLQ width boundaries', () => {
  * writer moved rather than only that a total disagreed.
  */
 describe('sentinel branches', () => {
-  const EMPTY_SIZE = 4;
+  const EMPTY_SIZE = 3;
 
   it('costs a non-array section its sentinel count and no elements', () => {
     const tree = makeTree({ utxoTxIds: undefined as unknown as string[] });
@@ -288,32 +270,21 @@ describe('sentinel branches', () => {
     expect(utxoTxTreeByteLength(tree) - EMPTY_SIZE).toBe(161 + SENTINEL_WIDTH);
   });
 
-  it('costs an unencodable lockedUntilBlock its sentinel', () => {
-    const tree = makeTree({
-      coinbaseOutputs: [makeCoinbaseOutput({ lockedUntilBlock: -1, value: 0n })],
-    });
-    expectSizeMatchesEncoder(tree);
-    // owner(32) + value(1) + sentinel + isTreasury(1).
-    expect(utxoTxTreeByteLength(tree) - EMPTY_SIZE).toBe(34 + SENTINEL_WIDTH);
-  });
+  // ⛔ **NO FIELD IN THE BODY IS A BARE `vlqU` BELOW THE SECTION PREFIXES**, so
+  // an unencodable value inside an element has nowhere to sit and this section
+  // does not cover that shape. `vlqU`'s sentinel IS covered where it scales with
+  // the body — through a **count** and a **length** prefix, the two cases above —
+  // which is where an under-report costs a block. A `vlqU` field added to an
+  // element owes a case of its own.
 
-  // `enum8` and `writeBool` are total at BYTE width — an out-of-table trigger
-  // and a non-boolean flag both still cost exactly one byte, so a sizer that
-  // treated either as variable would over-report.
-  it('costs an out-of-table trigger and a non-boolean flag one byte each', () => {
+  // `enum8` is total at BYTE width — an out-of-table trigger still costs exactly
+  // one byte, so a sizer that treated it as variable would over-report.
+  it('costs an out-of-table trigger one byte', () => {
     const withTrigger = makeTree({
       pruneEntries: [{ ...makePruneEntry(0), trigger: 'nonsense' as PruneEntry['trigger'] }],
     });
     expectSizeMatchesEncoder(withTrigger);
     expect(utxoTxTreeByteLength(withTrigger) - EMPTY_SIZE).toBe(162);
-
-    const withFlag = makeTree({
-      coinbaseOutputs: [
-        makeCoinbaseOutput({ value: 0n, lockedUntilBlock: 0, isTreasury: 'yes' as unknown as boolean }),
-      ],
-    });
-    expectSizeMatchesEncoder(withFlag);
-    expect(utxoTxTreeByteLength(withFlag) - EMPTY_SIZE).toBe(35);
   });
 });
 
@@ -338,19 +309,21 @@ describe('trees the encoder rejects', () => {
       tree: makeTree({ utxoTxIds: ['ab'] }),
     },
     {
-      label: 'a coinbase value past the u64',
-      tree: makeTree({ coinbaseOutputs: [makeCoinbaseOutput({ value: 2n ** 64n })] }),
-    },
-    {
-      label: 'a coinbase value that is not a bigint',
-      tree: makeTree({
-        coinbaseOutputs: [makeCoinbaseOutput({ value: 5 as unknown as bigint })],
-      }),
-    },
-    {
       label: 'a prune entry whose authorId is not 32 bytes',
       tree: makeTree({
         pruneEntries: [{ ...makePruneEntry(0), authorId: new Uint8Array(31) }],
+      }),
+    },
+    {
+      label: 'a prune entry whose rootPostHash is not lowercase hex',
+      tree: makeTree({
+        pruneEntries: [{ ...makePruneEntry(0), rootPostHash: 'AB'.repeat(32) }],
+      }),
+    },
+    {
+      label: 'a prune entry whose signature is the wrong width',
+      tree: makeTree({
+        pruneEntries: [{ ...makePruneEntry(0), authorSignature: new Uint8Array(63) }],
       }),
     },
   ];

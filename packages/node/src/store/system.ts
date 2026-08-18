@@ -154,7 +154,6 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   putIdentityRecord(box.owner, {
     lastActivityBlock: genesisHeight,
     lastDecayBlock: 0,
-    likeCarry: 0n,
     // The system identity was never invited, and genesis is the one event that
     // could not have been a claim — a claim is a user transaction and the first
     // block is height 1. It has received no likes either: genesis mints boxes,
@@ -353,8 +352,7 @@ export function seedGenesisCommittee(
     putIdentityRecord(member, {
       lastActivityBlock: genesisHeight,
       lastDecayBlock: 0,
-      likeCarry: 0n,
-      invitedAtBlock: 0,
+        invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
     });
   }

@@ -7,6 +7,7 @@ import {
   decodeStruct,
   encodeStruct,
   enum8,
+  readArr,
   readBool,
   readBytesN,
   readHexN,
@@ -24,7 +25,7 @@ import {
   writeVlqU64OrThrow,
 } from './codec.js';
 import type { UserId } from './identity.js';
-import { postFieldBytes, type Post, type PostId } from './post.js';
+import { postFieldBytes, readPostFields, type Post, type PostId } from './post.js';
 
 // ---------------------------------------------------------------------------
 // Box identity
@@ -63,6 +64,12 @@ export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
  * its own conditions, which TYPES_INTERFACE → Primitives states. A retired
  * **string** is reserved regardless; see `BoxCandidate.boxType`.
  *
+ * ⛔ **Tag 2 is reserved and left out of the table**, so the numbering has a hole
+ * in it rather than a renumber closing the gap, and an unassigned tag has no
+ * decoding at all — the same standing every number above the table has.
+ * **TYPES_INTERFACE → Layout — Boxes governs the NUMBER** ("Tag 2 is reserved,
+ * not free"); §InviteBox governs the retired **string**. Two rules, two sections.
+ *
  * Exported because a second numbering of one thing is exactly what the
  * never-renumber rule cannot survive. **The demo UI's `BOX_TYPE_TAGS` is the one
  * copy that cannot import this** — it is browser JS served to a page with no
@@ -76,7 +83,6 @@ export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
 export const BOX_TYPE_TAGS = Object.freeze({
   karma: 0,
   credit: 1,
-  invite: 2,
   genesis_proof: 3,
   bond: 4,
   post_lock: 5,
@@ -85,6 +91,8 @@ export const BOX_TYPE_TAGS = Object.freeze({
   treasury: 8,
   fee: 9,
   karma_pool: 10,
+  like_accrual: 11,
+  vouch_escrow: 12,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -105,7 +113,6 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  *   | karma         | b32(owner) ‖ opt(decayBurn)                                |
  *   | credit        | b32(owner) ‖ opt(lockedUntilBlock)                         |
- *   | invite        | b32(inviterId) ‖ b32(inviteePublicKey)                     |
  *   | genesis_proof | lp(payload)                                               |
  *   | bond          | b32(inviterId) ‖ b32(inviteePublicKey)                     |
  *   | post_lock     | vlqU64(originalValue) ‖ b32(owner)                         |
@@ -114,6 +121,8 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | treasury      | (none)                                                    |
  *   | fee           | (none)                                                    |
  *   | karma_pool    | (none)                                                    |
+ *   | like_accrual  | b32(author)                                               |
+ *   | vouch_escrow  | b32(owner) ‖ vlqU(releaseAtBlock)                          |
  *
  * **`emission`, `treasury`, `fee` and `karma_pool` stop after the prefix**, and
  * an empty cell above is a layout rather than an omission (TYPES_INTERFACE →
@@ -151,14 +160,14 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * domain is `checkOutputShape`'s (node, `validateTx` step 4); see the note on
  * `computeTxId` for the one call site where that gate has not run yet.
  *
- * **`invite` and `bond` carry identical trailing fields** (TYPES_INTERFACE →
- * Layout — Boxes). `enum8(boxType)` is field 1, so the tag is what makes the
- * encoding injective across the two; `value` happens to differ as well — an
- * invite is always `0` — but nothing may rely on that. It is the standing
- * `karma` and `credit` already have. **`emission`, `treasury`, `fee` and
- * `karma_pool` stand in the same relation with no fields at all**, so at equal
- * `value` the tag is the whole of the difference and their ids part on the
- * provenance `computeBoxId` appends.
+ * **`bond` and `vouch` carry identical trailing fields** — two adjacent `b32`
+ * key fields each (TYPES_INTERFACE → Layout — Boxes). `enum8(boxType)` is field
+ * 1, so the tag is what makes the encoding injective across the two, and nothing
+ * may rest on their values differing. It is the standing `karma` and `credit`
+ * already have. **`emission`, `treasury`, `fee` and `karma_pool` stand in the
+ * same relation with no fields at all**, so at equal `value` the tag is the
+ * whole of the difference and their ids part on the provenance `computeBoxId`
+ * appends.
  *
  * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
  * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
@@ -187,10 +196,6 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       writeBytesNOrThrow(w, box.owner, 32);
       writeOpt(w, box.lockedUntilBlock, writeVlqU);
       return;
-    case 'invite':
-      writeBytesNOrThrow(w, box.inviterId, 32);
-      writeBytesNOrThrow(w, box.inviteePublicKey, 32);
-      return;
     case 'genesis_proof':
       // `lp`, not `lpUtf8`: the payload is opaque to consensus. Whether it
       // decodes as text is a client's question, and a UTF-8 writer would put a
@@ -214,6 +219,21 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'vouch':
       writeBytesNOrThrow(w, box.voucherId, 32);
       writeBytesNOrThrow(w, box.targetId, 32);
+      return;
+    case 'like_accrual':
+      // `author` is attribution, not authorization — no signature by it unlocks
+      // the box (see `LikeAccrualBox`). The encoder makes no distinction: it is
+      // a `b32` field like `vouch.targetId`, which names a party that cannot
+      // spend either.
+      writeBytesNOrThrow(w, box.author, 32);
+      return;
+    case 'vouch_escrow':
+      writeBytesNOrThrow(w, box.owner, 32);
+      // `vlqU`, total by sentinel, which is the standing every height in this
+      // format has (TYPES_INTERFACE → Totality). Required rather than optional,
+      // so there is no `opt` tag: an escrow always names the height it releases
+      // at, and absence is not a state it has.
+      writeVlqU(w, box.releaseAtBlock);
       return;
     case 'emission':
     case 'treasury':
@@ -274,19 +294,12 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         owner: readBytesN(r, 32),
         lockedUntilBlock: readOpt(r, readVlqU) ?? undefined,
       };
-    case 'invite':
-      return {
-        boxType,
-        value,
-        inviterId: readBytesN(r, 32),
-        inviteePublicKey: readBytesN(r, 32),
-      };
     case 'genesis_proof': {
       const payload = readLp(r);
       // The payload bound, and this arm is the whole of it — `readLp` is the
       // shared primitive behind every `lp` field in the format, so a bound
-      // there would bind `tx.preimages`, `utxoTxs` and the block's three
-      // sections along with this one.
+      // there would bind `utxoTxs` and the block's other sections along with
+      // this one.
       //
       // One-way, like the unknown-tag sentinel above: `writeLp` stays total, so
       // an over-bound payload still *encodes* and `computeBoxId` still answers
@@ -327,6 +340,19 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         value: value as 1n,
         voucherId: readBytesN(r, 32),
         targetId: readBytesN(r, 32),
+      };
+    case 'like_accrual':
+      return {
+        boxType,
+        value,
+        author: readBytesN(r, 32),
+      };
+    case 'vouch_escrow':
+      return {
+        boxType,
+        value,
+        owner: readBytesN(r, 32),
+        releaseAtBlock: readVlqU(r),
       };
     case 'emission':
     case 'treasury':
@@ -483,7 +509,7 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  *
  * The three invite reasons all take the invitee's public key as subject, and a
  * key is invited **at most once** — an invite may not name an existing account
- * and a claim makes the invitee one (NODE_INTERFACE → Bond transition rules) —
+ * and the grant makes the invitee one (NODE_INTERFACE → Bond transition rules) —
  * so each `(reason, subject)` pair occurs at most once in the whole history,
  * without reading the height at all. **No reason increases total karma** — the
  * pool is the only source and the only sink (→ `KarmaPoolBox`) — so what the
@@ -633,11 +659,13 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
  * hashes. No `id`, no provenance.
  */
 export interface BoxCandidate {
-  // `'like'` is a retired box type — string reserved, never reuse. A new box
-  // type wearing the name would make old-vs-new greps and historical debugging
-  // ambiguous forever.
-  boxType: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
-    | 'emission' | 'treasury' | 'fee' | 'karma_pool';
+  // `'like'` and `'invite'` are retired box types — strings reserved, never
+  // reuse (TYPES_INTERFACE → ~~LikeBox~~, → InviteBox). A new box type wearing
+  // either name would make old-vs-new greps and historical debugging ambiguous
+  // forever. **The retired NUMBER is a separate rule in a separate section** —
+  // §Layout — Boxes reserves tag 2, and `BOX_TYPE_TAGS` leaves it out.
+  boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
+    | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
   // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
@@ -698,30 +726,6 @@ export interface CreditBox extends BoxBase {
   lockedUntilBlock?: number;  // Block height before which credits cannot be spent
 }
 
-// --- Invite ---
-
-/**
- * A named right to mint — TYPES_INTERFACE → InviteBox.
- *
- * **The box carries no value because the karma does not exist yet.** It is held
- * open until one of the two keys it names acts: the invitee spends it into a
- * `KarmaBox` of `INVITE_KARMA_AMOUNT`, which is where the mint happens, or the
- * inviter spends it to nothing and takes their bond back through block
- * application.
- *
- * **An invite never expires.** With no deadline there is no sweep and no
- * `expiryBlock` field; it stays claimable until the inviter cancels, and their
- * bond stays locked for exactly that long. `K / INVITE_BOND_KARMA` bounds an
- * account's concurrent invites, which is what makes the rate limit self-enforcing
- * without a rule.
- */
-export interface InviteBox extends BoxBase {
-  boxType: 'invite';
-  value: bigint;                   // Always 0 — a claim ticket, not a container
-  inviterId: UserId;               // May cancel
-  inviteePublicKey: Uint8Array;    // 32 raw bytes — may claim; the key INVITE_KARMA_AMOUNT mints to
-}
-
 // --- Genesis proof ---
 
 /**
@@ -751,12 +755,18 @@ export interface GenesisProofBox extends BoxBase {
 /**
  * The inviter's stake — TYPES_INTERFACE → BondBox.
  *
+ * ⛔ **THE BOND IS THE REQUEST**, and `inviteePublicKey` is what the block's
+ * settlement transaction reads to address the invitee's grant: one bond, one
+ * grant, with the pairing structural rather than compared between two lists
+ * (TYPES_INTERFACE → InviteBox, `ARCHITECTURE → Invite System`).
+ *
  * **A `BondBox` is byte-identical from creation to the block that consumes it**,
  * and the field list is what makes that true. An address can be invited only
- * once, so `inviteePublicKey` names the paired invite by itself: no box id, no
- * output index, no provenance walk. It carries no probation fields either — the
- * window runs from the **claim**, and that height is already committed as
- * `IdentityRecord.invitedAtBlock` (NODE_INTERFACE → Identity Records).
+ * once, so `inviteePublicKey` identifies exactly one bond: no box id, no output
+ * index, no provenance walk. It carries no probation fields either — the window
+ * runs from the bond's own creation height, which is already committed as
+ * `IdentityRecord.invitedAtBlock` (NODE_INTERFACE → Identity Records), so
+ * carrying it here would be a second copy of committed state.
  *
  * **There is no `originalValue`,** and the contrast with `PostLockBox` is the
  * reason: a post lock vests per block, so its current and initial values differ.
@@ -765,15 +775,15 @@ export interface GenesisProofBox extends BoxBase {
  * one evaluation is arithmetically identical to accumulated instalments and no
  * partial state exists to record.
  *
- * **Nothing spends a bond.** Creation, claim, cancellation and settlement all
- * move it through block application, so no transition admits it into a user
- * transaction — the same standing `PostLockBox` has.
+ * **Nothing spends a bond.** Creation and settlement both move it through block
+ * application, so no transition admits it into a user transaction — the same
+ * standing `PostLockBox` has.
  */
 export interface BondBox extends BoxBase {
   boxType: 'bond';
   value: bigint;                   // B karma deposited by the inviter
   inviterId: UserId;               // Owner — the inviter
-  inviteePublicKey: Uint8Array;    // 32 raw bytes — set at creation, the key the paired invite names
+  inviteePublicKey: Uint8Array;    // 32 raw bytes — set at creation, the key the grant is addressed to
 }
 
 // --- Post Lock ---
@@ -813,6 +823,79 @@ export interface VouchBox extends BoxBase {
   value: 1n;                         // always 1 karma
   voucherId: UserId;                 // who staked the karma
   targetId: UserId;                  // who is being vouched for
+}
+
+// --- Vouch escrow ---
+
+/**
+ * Where an unvouched stake waits out its cooldown — TYPES_INTERFACE →
+ * VouchEscrowBox.
+ *
+ * ⛔ **`value` IS THE CONSUMED `VouchBox`'S, never `VOUCH_KARMA_AMOUNT`.** The
+ * round trip has to be conservation-**structural** rather than true by
+ * coincidence, so it must not depend on the cast's pin holding for the box in
+ * hand.
+ *
+ * ⛔ **This is what makes an unvouch conserve.** The value moves from a box the
+ * voucher's own transaction consumes into one it creates, so both ends are named
+ * inside one transaction and the pool is uninvolved — `ARCHITECTURE → How a
+ * source and a sink get named`, first shape. No marker is needed here.
+ *
+ * ⚠ **`releaseAtBlock` is committed state, and that is the point.** A node
+ * holding the `stateRoot` holds the obligation itself rather than a root it
+ * cannot interpret without replaying every block.
+ *
+ * **`owner` is where the karma returns, and nothing else.** Block application is
+ * the only spender, so no signature by it unlocks the box — the standing
+ * `BondBox.inviterId` and `PostLockBox.owner` already have.
+ */
+export interface VouchEscrowBox extends BoxBase {
+  boxType: 'vouch_escrow';
+  value: bigint;              // Exactly what the consumed VouchBox held
+  owner: Uint8Array;          // 32 raw bytes — the voucher; where the karma returns
+  releaseAtBlock: number;     // Unvouch height + VOUCH_COOLDOWN_BLOCKS
+}
+
+// --- Like accrual ---
+
+/**
+ * The one marker box in the design — TYPES_INTERFACE → LikeAccrualBox,
+ * `ARCHITECTURE → How a source and a sink get named`, third shape.
+ *
+ * ⛔ **ONE TYPE, TWO LIFETIMES, AND THEY MUST NOT BE CONFLATED.** The settlement
+ * consumes both in the same step, which is why they share a type rather than
+ * being told apart by a field:
+ *
+ *   | marker     | the like transaction's output; consumed by the same block's
+ *   |            | settlement; one per like, holding `LIKE_KARMA_COST`
+ *   | carry box  | the settlement's output; persists across blocks until a payout
+ *   |            | consumes it; one per author, holding `value <
+ *   |            | LIKES_PER_KARMA_PAYOUT`
+ *
+ * ⛔ **`author` IS ATTRIBUTION, NOT AUTHORIZATION** — the same distinction
+ * `BondBox.inviterId` and `PostLockBox.owner` carry. **No signature by `author`
+ * unlocks this box.** Only the settlement transaction consumes it, so no user
+ * transition admits one as an input.
+ *
+ * ⛔ **A MARKER CARRIES ITS VALUE.** A zero-value marker would mean the units it
+ * stands for ceased to exist between the transaction and the settlement, which is
+ * what `ARCHITECTURE → The conservation axiom`'s "not even as an intermediary
+ * step" forbids by name.
+ *
+ * ⛔ **A LIKE MUST NOT NAME A SHARED BOX.** Two likers of the same author in one
+ * block would name the same carry-box id and the second would be **permanently
+ * invalid, not deferred** — a popular author becomes unlikeable. Hence a fresh
+ * marker per like, and a carry box only the settlement touches.
+ *
+ * The shape rule that keeps a marker from being an ordinary karma transfer —
+ * `likeTarget` present ⟺ exactly one marker of `LIKE_KARMA_COST` naming that
+ * target's author — is consensus validation and lives in node's UTXO engine, as
+ * the like biconditional already does.
+ */
+export interface LikeAccrualBox extends BoxBase {
+  boxType: 'like_accrual';
+  value: bigint;              // LIKE_KARMA_COST on a marker; the running carry on a carry box
+  author: Uint8Array;         // 32 raw bytes — the key the accrual is earmarked for
 }
 
 // --- Emission ---
@@ -964,11 +1047,12 @@ export interface KarmaPoolBox extends BoxBase {
 export type AnyBox =
   | KarmaBox
   | CreditBox
-  | InviteBox
   | GenesisProofBox
   | BondBox
   | PostLockBox
   | VouchBox
+  | VouchEscrowBox
+  | LikeAccrualBox
   | EmissionBox
   | TreasuryBox
   | FeeBox
@@ -978,11 +1062,12 @@ export type AnyBox =
 export type AnyBoxCandidate =
   | CandidateOf<KarmaBox>
   | CandidateOf<CreditBox>
-  | CandidateOf<InviteBox>
   | CandidateOf<GenesisProofBox>
   | CandidateOf<BondBox>
   | CandidateOf<PostLockBox>
   | CandidateOf<VouchBox>
+  | CandidateOf<VouchEscrowBox>
+  | CandidateOf<LikeAccrualBox>
   | CandidateOf<EmissionBox>
   | CandidateOf<TreasuryBox>
   | CandidateOf<FeeBox>
@@ -1003,15 +1088,16 @@ export interface UtxoTransaction {
   outputs: AnyBoxCandidate[];
   signatures: Record<string, Uint8Array>;  // publicKey (hex) → Ed25519 sig (64 bytes) over txId
   /**
-   * ⛔ **No consumer.** No transition requires knowledge of a secret, so nothing
-   * reads this map — but it stays field 3 of the encoding, sorted by key and
-   * hashed into every `TxId`, so it is a consensus surface that carries no
-   * meaning. Removing it changes every transaction id, which is why it goes with
-   * the transaction-representation work (TYPES_INTERFACE → Layout —
-   * UtxoTransaction). Until then it is encoded, validated for envelope shape, and
-   * never consulted.
+   * ⛔ **THE NAME `preimages` IS RESERVED — never reuse it** (TYPES_INTERFACE →
+   * Layout — UtxoTransaction). No transition requires knowledge of a secret.
+   *
+   * ⛔ **Do not add a secret-carrying field here.** One would have to state what
+   * reads it, or it is a consensus surface carrying no meaning — and a field in
+   * this list is inside every `TxId`, so adding one moves every transaction id and
+   * every box id derived from one. **A field that belongs on the wire alone goes in
+   * the wire codec, not in this list**: that costs the wire and no committed hash,
+   * which is a different kind of change from this one.
    */
-  preimages?: Record<string, Uint8Array>;  // boxId → hash preimage
   protocolVersion: number;
   /**
    * Present ⟺ this transaction is a like on the named post (ARCHITECTURE →
@@ -1049,10 +1135,17 @@ export interface UtxoTransaction {
  *
  *   | 1 | inputs          | arr(ids, b32)                                |
  *   | 2 | outputs         | arr(candidates, canonicalBoxBytes)           |
- *   | 3 | preimages       | opt(arr(sorted, b32(boxId) ‖ lp(preimage)))  |
- *   | 4 | protocolVersion | vlqU                                         |
- *   | 5 | likeTarget      | opt(b32)                                     |
- *   | 6 | post            | opt(postFieldBytes)                          |
+ *   | 3 | protocolVersion | vlqU                                         |
+ *   | 4 | likeTarget      | opt(b32)                                     |
+ *   | 5 | post            | opt(postFieldBytes)                          |
+ *
+ * ⛔ **FIVE FIELDS, and dropping one RENUMBERS every field after it unless it is
+ * last.** This is a positional layout with no keys, so a reader that skips a field
+ * but keeps the old offsets reads `protocolVersion` out of `likeTarget`'s tag and
+ * every later field one slot early — a silently wrong `TxId`, not a decode error.
+ * **The count and the numbering move together in this table, in the
+ * `UtxoTransaction` declaration above, and in both halves of the codec** — the
+ * same hazard §Layout — Block states for the header, one struct over.
  *
  * **Every field is counted, tagged or length-prefixed, and each one is
  * load-bearing for injectivity:**
@@ -1071,32 +1164,61 @@ export interface UtxoTransaction {
  *   to be ambiguous against. Its own injectivity is `postFieldBytes`'
  *   (`post.ts`), which is why that property is required there even though the
  *   post id no longer reads those bytes.
- * - `preimages` is sorted by key, per the normative map sort. Keys are
- *   lowercase hex, so sorting the strings and sorting the decoded bytes give
- *   the same order.
- *
  * ⚠ **`likeTarget` and `post` are mutually exclusive in practice** — a
  * transaction is a like or a post, never both — but the encoding does not rest on
  * it: each carries its own presence tag, so the tail stays unambiguous however
  * the fields combine.
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
+ *
+ * ⛔ **THIS IS THE ONLY STATEMENT OF THESE SIX FIELDS, and `encodeTx` reaches it
+ * rather than repeating it.** The wire codec is exactly these bytes plus
+ * `arr(signatures sorted, b32(pubkey) ‖ b64(sig))` (TYPES_INTERFACE → Layout —
+ * UtxoTransaction, the wire-codec row), so the id preimage and the wire form
+ * share one writer and cannot drift — the same delegation `boxRecordBytes` makes
+ * to `canonicalBoxBytes`. A second statement of a layout in a second function is
+ * the drift class this format exists to close, and it round-trips perfectly under
+ * a consistent transposition, so no round-trip test could see it.
  */
-function txIdBytes(tx: UtxoTransaction): Uint8Array {
-  const w = new ByteWriter();
+export function writeTxIdFields(w: ByteWriter, tx: UtxoTransaction): void {
   writeArr(w, tx.inputs, (ww, id) => writeHexNOrThrow(ww, id, 32));
   writeArr(w, tx.outputs, (ww, out) => ww.writeBytes(canonicalBoxBytes(out)));
-  // `undefined` and `null` both take the absent branch — `writeOpt`'s job.
-  writeOpt(w, tx.preimages, (ww, preimages) => {
-    const sortedKeys = Object.keys(preimages).sort();
-    writeArr(ww, sortedKeys, (www, boxId) => {
-      writeHexNOrThrow(www, boxId, 32);
-      writeLp(www, preimages[boxId]!);
-    });
-  });
   writeVlqU(w, tx.protocolVersion);
+  // `undefined` and `null` both take the absent branch — `writeOpt`'s job.
   writeOpt(w, tx.likeTarget, (ww, target) => writeHexNOrThrow(ww, target, 32));
   writeOpt(w, tx.post, (ww, post) => ww.writeBytes(postFieldBytes(post)));
+}
+
+/**
+ * The inverse of `writeTxIdFields` — the six preimage fields, read back.
+ *
+ * **Adjacent to the writer for the reason every pair in this format is**: field
+ * order is normative and a reader that walks it differently is a consensus
+ * divergence with no compiler signal (TYPES_INTERFACE → Primitives).
+ *
+ * It takes a reader rather than bytes because it is read **inline**: these fields
+ * are the head of `encodeTx`, which appends the signature array after them, so
+ * the wire codec holds the signature tail and nothing else. The boundary check
+ * belongs to the enclosing `decodeStruct`.
+ *
+ * `readOpt` answers `null` for an absent option and the fields are optional, so
+ * `undefined` is the type-correct spelling of absent and it is what re-encodes to
+ * the same `u8(0)` — the mapping `readBoxContentFields` already makes for
+ * `decayBurn`, and what keeps the re-encode compare closable.
+ */
+export function readTxIdFields(r: ByteReader): Omit<UtxoTransaction, 'signatures'> {
+  return {
+    inputs: readArr(r, (rr) => readHexN(rr, 32)),
+    outputs: readArr(r, readBoxContentFields),
+    protocolVersion: readVlqU(r),
+    likeTarget: readOpt(r, (rr) => readHexN(rr, 32)) ?? undefined,
+    post: readOpt(r, readPostFields) ?? undefined,
+  };
+}
+
+function txIdBytes(tx: UtxoTransaction): Uint8Array {
+  const w = new ByteWriter();
+  writeTxIdFields(w, tx);
   return w.toBytes();
 }
 
@@ -1119,8 +1241,8 @@ function txIdBytes(tx: UtxoTransaction): Uint8Array {
  * tagged one.
  *
  * ⚠ **This function throws on an out-of-domain transaction.** `checkTxEnvelope`
- * establishes the domain of `inputs`, the `preimages` keys and `likeTarget`
- * (all pinned at 64 lowercase hex) — but it deliberately does **not** type the
+ * establishes the domain of `inputs` and `likeTarget` (both pinned at 64
+ * lowercase hex) — but it deliberately does **not** type the
  * output entries, and `checkOutputShape` runs later, at `validateTx` step 4.
  * At `block-apply.ts`'s embedded-tx path only the envelope has run, so an
  * output carrying a `value` outside the u64 or a 31-byte `owner` reaches a

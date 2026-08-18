@@ -15,7 +15,7 @@ import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services
 import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
-import { createInvite, claimInvite, cancelInvite } from './services/invites.js';
+import { createInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
 import { encodePost } from '@dagsocial/types';
@@ -180,8 +180,10 @@ export function createApp(config: Config): express.Express {
     getKarmaBox: store.getKarmaBox,
     getKarmaBoxes: store.getKarmaBoxes,
     getKarmaValue: store.getKarmaValue,
-      getIdentityRecord: store.getIdentityRecord,
-    hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+    getIdentityRecord: store.getIdentityRecord,
+    hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+    vouchCooldownBlocks: config.vouchCooldownBlocks,
+    getTopologyAuthor: store.getTopologyAuthorBytes,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     isSystemBox: (boxId: string) => {
       const sysKey = getSystemKeypair();
@@ -218,6 +220,7 @@ export function createApp(config: Config): express.Express {
       getLikersForPost: store.getLikersForPost,
       getAncestors: store.getAncestors,
       getSubtree: store.getSubtree,
+      getTopologyAuthor: store.getTopologyAuthor,
       admitTx,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
@@ -237,7 +240,9 @@ export function createApp(config: Config): express.Express {
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
       getIdentityRecord: store.getIdentityRecord,
-      hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
@@ -255,7 +260,9 @@ export function createApp(config: Config): express.Express {
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
       getIdentityRecord: store.getIdentityRecord,
-      hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
@@ -265,8 +272,6 @@ export function createApp(config: Config): express.Express {
     '/invites',
     inviteRoutes({
       createInvite,
-      claimInvite,
-      cancelInvite,
       getCurrentHeight: store.getCurrentHeight,
       getBox: store.getBoxWithPending,
       insertBox: store.insertBox,
@@ -274,7 +279,9 @@ export function createApp(config: Config): express.Express {
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
       getIdentityRecord: store.getIdentityRecord,
-      hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
@@ -288,8 +295,10 @@ export function createApp(config: Config): express.Express {
       faucetRoutes({
         getKarmaBox: store.getKarmaBox,
         getKarmaValue: store.getKarmaValue,
-      getIdentityRecord: store.getIdentityRecord,
-        hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+        getIdentityRecord: store.getIdentityRecord,
+        hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+        vouchCooldownBlocks: config.vouchCooldownBlocks,
+        getTopologyAuthor: store.getTopologyAuthorBytes,
         getCurrentHeight: store.getCurrentHeight,
         getBox: store.getBoxWithPending,
         insertBox: store.insertBox,
@@ -321,7 +330,6 @@ export function createApp(config: Config): express.Express {
       getKarmaBoxes: store.getKarmaBoxes,
       getCreditBox: store.getCreditBox,
       getCreditBoxes: store.getCreditBoxes,
-      getOpenInvites: store.getOpenInvites,
       getBondBoxes: store.getBondBoxes,
       getCurrentHeight: store.getCurrentHeight,
       getUtxoEngineDeps: () => utxoEngineDeps,
@@ -421,6 +429,7 @@ export function createApp(config: Config): express.Express {
       },
       networkType: config.networkType,
       inviteProbationBlocks: config.inviteProbationBlocks,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
     }),
   );
 

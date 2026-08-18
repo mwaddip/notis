@@ -30,7 +30,6 @@ import type { IdentityRecord } from '../../src/store/identity-records.js';
 const REC: IdentityRecord = {
   lastActivityBlock: 42,
   lastDecayBlock: 7,
-  likeCarry: 0n,
   invitedAtBlock: 0,
   lifetimeLikesReceived: 0n,
 };

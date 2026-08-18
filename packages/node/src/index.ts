@@ -27,7 +27,8 @@ import {
   getKarmaBox,
   getKarmaBoxes,
   getKarmaValue,
-  hasActiveVouchCooldown,
+  hasActiveVouchEscrow,
+  getTopologyAuthorBytes,
   getIdentityRecord,
   getPost,
   insertPost,
@@ -185,7 +186,12 @@ net.onTx((tx) => {
     getKarmaValue,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same rule.
-    hasActiveVouchCooldown,
+    hasActiveVouchEscrow,
+    vouchCooldownBlocks: config.vouchCooldownBlocks,
+    // The like marker's author pin (NODE_INTERFACE → Karma transition rules) —
+    // same rule again: a relayed like whose marker names the wrong author must
+    // be refused here as well as at the block path.
+    getTopologyAuthor: getTopologyAuthorBytes,
     // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
     // transition rules") — same rule again: a relayed invite naming an existing
     // account must be refused here as well as at the block path.

@@ -84,15 +84,11 @@ const MIGRATIONS = [
   // blake2b512(IDENTITY_KEY_DOMAIN ‖ identityId)[0:32], never the raw bytes —
   // both are total functions of the identity, so the two cannot drift.
   //
-  // like_carry: outstanding like accrual < LIKES_PER_KARMA_PAYOUT,
-  // written only by per-block like settlement. Committed state — it enters the
-  // record's AVL value encoding as an always-present field.
-  //
   // invited_at_block: the height an invite claim applied, 0 = never invited.
   // Written only by block application when a claim applies, and read by the
   // bond's probation deadline (NODE_INTERFACE → Identity Records). It is NOT the
-  // invite bar — that is the existence of the row. Committed state,
-  // always-present in the AVL value encoding for the same reason like_carry is.
+  // invite bar — that is the existence of the row. Committed state, and an
+  // always-present field of the record's AVL value encoding.
   //
   // lifetime_likes_received: likes this identity has received, ever. Incremented
   // by per-block like settlement and decremented by nothing — prune deletes
@@ -103,7 +99,6 @@ const MIGRATIONS = [
     identity_id BLOB PRIMARY KEY,
     last_activity_block INTEGER NOT NULL,
     last_decay_block INTEGER NOT NULL,
-    like_carry INTEGER NOT NULL DEFAULT 0,
     invited_at_block INTEGER NOT NULL DEFAULT 0,
     lifetime_likes_received INTEGER NOT NULL DEFAULT 0
   )`,
@@ -304,23 +299,6 @@ function migrateVerifiablePrune(database: Database.Database): void {
   `);
 }
 
-function migrateVouchCooldowns(database: Database.Database): void {
-  const tables = database
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='vouch_cooldowns'")
-    .all() as Array<{ name: string }>;
-  if (tables.length > 0) return;
-
-  database.exec(`
-    CREATE TABLE vouch_cooldowns (
-      voucher_id BLOB NOT NULL,
-      target_id BLOB NOT NULL,
-      release_at_block INTEGER NOT NULL,
-      karma_amount INTEGER NOT NULL,
-      PRIMARY KEY (voucher_id, target_id)
-    );
-  `);
-}
-
 /**
  * The columns a pooled transaction's own fields are lifted into at insert —
  * `tx_inputs`, the box ids it spends; `tx_output_ids`, the ids of the boxes it
@@ -473,7 +451,6 @@ export function initDb(path: string): void {
   migrateAvlTree(db);
   migrateBlockTopology(db);
   migrateVerifiablePrune(db);
-  migrateVouchCooldowns(db);
   migrateMempoolTxColumns(db);
   migrateDropValidationCounters(db);
   createMempoolGateIndexes(db);

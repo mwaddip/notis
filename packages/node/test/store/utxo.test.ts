@@ -8,7 +8,6 @@ import type {
   AnyBox,
   KarmaBox,
   CreditBox,
-  InviteBox,
   BondBox,
 } from '@dagsocial/types';
 
@@ -34,8 +33,6 @@ async function importUtxoFresh() {
     getCreditBox: (owner: Uint8Array) => CreditBox | null;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
     getUnlockedCreditBoxes: (owner: Uint8Array, blockHeight: number) => CreditBox[];
-    getOpenInvites: (inviterId: Uint8Array) => InviteBox[];
-    getInviteFor: (inviteePublicKey: Uint8Array) => InviteBox | null;
     getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
     getBondBoxes: (inviterId: Uint8Array) => BondBox[];
     insertBox: (box: AnyBox, postLockTarget?: string) => void;
@@ -77,17 +74,6 @@ function makeCreditBox(overrides: Partial<CreditBox> = {}): CreditBox {
     boxType: 'credit' as const,
     value: 1000n,
     owner: OWNER_A,
-    ...overrides,
-  };
-  return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
-}
-
-function makeInviteBox(overrides: Partial<InviteBox> = {}): InviteBox {
-  const candidate = {
-    boxType: 'invite' as const,
-    value: 0n,
-    inviterId: uid('alice-inviter'),
-    inviteePublicKey: bytes(32),
     ...overrides,
   };
   return { id: '', ...candidate, ...fixtureProvenance(candidate, 1) };
@@ -196,27 +182,6 @@ describe('utxo store', () => {
     expect(() => insertBox(relic as never)).toThrow(/Unknown box type/);
   });
 
-  it('insertBox + getBox round-trip for InviteBox', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, getBox } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const invitee = bytes(32);
-    const box = makeInviteBox({ inviteePublicKey: invitee, inviterId: uid('inviter-alice') });
-    Object.assign(box, fixtureProvenance(box, 1));
-    box.id = computeBoxId(box);
-    insertBox(box);
-
-    const result = getBox(box.id!) as InviteBox;
-    expect(result).not.toBeNull();
-    expect(result.boxType).toBe('invite');
-    expect(result.value).toBe(0n);
-    expect(result.inviterId).toEqual(uid('inviter-alice'));
-    expect(result.inviteePublicKey).toEqual(invitee);
-  });
-
   it('insertBox + getBox round-trip for BondBox', async () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
@@ -305,52 +270,15 @@ describe('utxo store', () => {
     expect(none).toBeNull();
   });
 
-  // --- getOpenInvites returns the inviter's live invites ---------------------
 
-  it('getOpenInvites returns unspent invite boxes for an inviter', async () => {
-    // An invite has no expiry, so unspent IS open — there is no third state to
-    // filter on (NODE_INTERFACE → Store).
+  // --- getBondFor resolves a bond by the invitee key ------------------------
+
+  it('getBondFor resolves the bond naming a key', async () => {
+    // ⛔ **The invitee key IS the pairing, and the bond is the only box in
+    // it** — an address is invited once ever, so it names exactly one live bond
+    // and no box id or output index is needed (ARCHITECTURE → Invite System).
     const { initDb } = await importDbFresh();
-    const { insertBox, getOpenInvites, consumeBox } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const inv1 = makeInviteBox({ inviterId: uid('alice'), inviteePublicKey: uid('inv-1') });
-    Object.assign(inv1, fixtureProvenance(inv1, 1));
-    inv1.id = computeBoxId(inv1);
-    insertBox(inv1);
-
-    const inv2 = makeInviteBox({ inviterId: uid('alice'), inviteePublicKey: uid('inv-2') });
-    Object.assign(inv2, fixtureProvenance(inv2, 1));
-    inv2.id = computeBoxId(inv2);
-    insertBox(inv2);
-
-    const inv3 = makeInviteBox({ inviterId: uid('bob'), inviteePublicKey: uid('inv-3') });
-    Object.assign(inv3, fixtureProvenance(inv3, 1));
-    inv3.id = computeBoxId(inv3);
-    insertBox(inv3);
-
-    // inv1 claimed or cancelled — either way the box is spent and the invite
-    // is no longer open.
-    consumeBox(inv1.id!, 7);
-
-    const aliceInvites = getOpenInvites(uid('alice'));
-    expect(aliceInvites).toHaveLength(1);
-    expect(aliceInvites[0]!.inviteePublicKey).toEqual(uid('inv-2'));
-
-    const bobInvites = getOpenInvites(uid('bob'));
-    expect(bobInvites).toHaveLength(1);
-    expect(bobInvites[0]!.inviteePublicKey).toEqual(uid('inv-3'));
-  });
-
-  // --- getInviteFor / getBondFor resolve a pair by the invitee key -----------
-
-  it('getInviteFor and getBondFor resolve the pair naming a key', async () => {
-    // The invitee key IS the pairing: an address is invited once ever, so it
-    // names exactly one live pair, and no box id or output index is needed.
-    const { initDb } = await importDbFresh();
-    const { insertBox, getInviteFor, getBondFor, consumeBox } = await importUtxoFresh();
+    const { insertBox, getBondFor, consumeBox } = await importUtxoFresh();
     const { computeBoxId } = await importTypes();
 
     initDb(':memory:');
@@ -358,29 +286,20 @@ describe('utxo store', () => {
     const invitee = uid('the-invitee');
     const other = uid('someone-else');
 
-    const invite = makeInviteBox({ inviterId: uid('alice'), inviteePublicKey: invitee });
-    Object.assign(invite, fixtureProvenance(invite, 1));
-    invite.id = computeBoxId(invite);
-    insertBox(invite);
-
     const bond = makeBondBox({ inviterId: uid('alice'), inviteePublicKey: invitee });
     Object.assign(bond, fixtureProvenance(bond, 1));
     bond.id = computeBoxId(bond);
     insertBox(bond);
 
-    expect(getInviteFor(invitee)!.id).toBe(invite.id);
     expect(getBondFor(invitee)!.id).toBe(bond.id);
 
-    // A key with no pair resolves to nothing rather than to someone else's.
-    expect(getInviteFor(other)).toBeNull();
+    // A key with no bond resolves to nothing rather than to someone else's.
     expect(getBondFor(other)).toBeNull();
 
-    // Both reads are unspent-only: the claim consumes the invite and leaves the
-    // bond live until its deadline, which is exactly the state the settlement
-    // sweep runs against.
-    consumeBox(invite.id!, 7);
-    expect(getInviteFor(invitee)).toBeNull();
-    expect(getBondFor(invitee)!.id).toBe(bond.id);
+    // Unspent-only: the probation-deadline settlement consumes the bond, and
+    // from that point the key names none.
+    consumeBox(bond.id!, 7);
+    expect(getBondFor(invitee)).toBeNull();
   });
 
   // --- getBondBoxes returns active bonds ------------------------------------

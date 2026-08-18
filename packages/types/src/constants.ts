@@ -37,8 +37,8 @@ export const MAX_PARENT_REFS = 1;
  * `readBoxContentFields` (`utxo.ts`) refuses a longer payload, so such bytes
  * have no decoding at all, the standing an unassigned box tag has. It is
  * per-type: `readLp` is shared by every length-prefixed field in the format
- * (`tx.preimages`, `utxoTxs`, the block's three sections) and a bound there
- * would bind all of them.
+ * (`utxoTxs`, the block's nested sections) and a bound there would bind all of
+ * them.
  *
  * It is a **domain** rule and not a memory-safety one. `ByteReader.readBytes`
  * refuses `remaining < n` and throws before allocating, so no length prefix can
@@ -138,9 +138,28 @@ export const VOUCH_COOLDOWN_BLOCKS = 60;       // Blocks before karma returned �
 // threshold went with the early-unlock leg it served — a bond settles once, at
 // `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and no karma balance
 // decides it.
+//
+// ⛔ **THE INVITE IS ONE TRANSACTION, and both constants below are dated from
+// it** (TYPES_INTERFACE → InviteBox; `ARCHITECTURE` → Invite System). There is no
+// claim and no cancel: the transaction creates a `BondBox`, the block's
+// settlement transaction spends `INVITE_KARMA_AMOUNT` out of the karma pool to
+// that bond's `inviteePublicKey`, and `IdentityRecord.invitedAtBlock` is the
+// invite's own height.
 export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;
-export const INVITE_KARMA_AMOUNT = 25n;       // Karma MINTED to the invitee at claim
+/**
+ * ⛔ **SPENT FROM THE KARMA POOL, and at INVITE CREATION** — the settlement
+ * transaction of the block carrying the invite emits it to the bond's
+ * `inviteePublicKey`.
+ *
+ * ⚠ **"Minted" is a DIRECTION, not an event** (`ARCHITECTURE` → The conservation
+ * axiom, the fixed vocabulary): it means *spent out of the supply pool*, and
+ * nothing is created. Under that definition a mint has to name a source, which is
+ * why this constant's amount comes out of a `KarmaPoolBox` rather than from
+ * nowhere.
+ */
+export const INVITE_KARMA_AMOUNT = 25n;
 export const INVITE_BOND_KARMA = 25n;          // Karma the inviter locks at creation
+/** Blocks from the invite's own creation height to bond settlement. */
 export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: inviteProbationBlocks
 /**
  * Likes the invitee must receive per karma of bond returned — the bond vests
@@ -176,7 +195,8 @@ export const MEMPOOL_EXPIRY_BLOCKS = 720;               // Blocks before mempool
  *
  * They sum to 100, and nothing in the type system says so: four independent
  * `number`s carry no arithmetic relationship a compiler can check, while
- * `sum(coinbaseOutputs) === income` is exact at apply. The suite asserts the
+ * the sum of the settlement transaction's coinbase outputs must equal income
+ * exactly at apply. The suite asserts the
  * sum, so a retune that moves one and forgets another fails there rather than
  * at the first height no coinbase can satisfy.
  *

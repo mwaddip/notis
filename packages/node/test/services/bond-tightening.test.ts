@@ -31,7 +31,6 @@ import {
 import type {
   AnyBox,
   KarmaBox,
-  InviteBox,
   BondBox,
   VouchBox,
   UtxoTransaction,
@@ -49,7 +48,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import { computeTxId } from '@dagsocial/types';
@@ -93,7 +92,9 @@ describe('bond transitions (audit F-consensus-1)', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -127,26 +128,19 @@ describe('bond transitions (audit F-consensus-1)', () => {
   }
 
   /**
-   * Seed an invite and its bond as outputs 0 and 1 of one transaction — the
-   * shape invite creation emits, both boxes naming the same invitee.
+   * Seed the bond an invite emits — the whole of what an invite leaves behind
+   * (ARCHITECTURE → Invite System). There is no second box.
    */
-  function seedPair(): { invite: InviteBox; bond: BondBox } {
-    const inviteCandidate = {
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId: inviter.pub,
-      inviteePublicKey: invitee.pub,
-    };
+  function seedPair(): { bond: BondBox } {
     const bondCandidate = {
       boxType: 'bond' as const,
       value: INVITE_BOND_KARMA,
       inviterId: inviter.pub,
       inviteePublicKey: invitee.pub,
     };
-    const [invite, bond] = seedAsOneTx([inviteCandidate, bondCandidate]);
-    storeInsertBox(invite!);
+    const [bond] = seedAsOneTx([bondCandidate]);
     storeInsertBox(bond!);
-    return { invite: invite as InviteBox, bond: bond as BondBox };
+    return { bond: bond as BondBox };
   }
 
   /** A karma output owned by `owner`. */
@@ -196,16 +190,15 @@ describe('bond transitions (audit F-consensus-1)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. cancel-absorb — a cancel that also consumes the bond, sweeping invite +
-  //    bond into one karma box. The cancel transaction names only the invite
-  //    invite, and adding the bond to it is refused by authorization.
+  // 2. bond-absorb — a karma spend that also consumes the bond, sweeping the
+  //    inviter's own stake back into their balance ahead of the deadline.
   // -------------------------------------------------------------------------
 
-  it('cancel-absorb: a cancel may not name the bond alongside the invite', () => {
-    const { invite, bond } = seedPair();
+  it('bond-absorb: a karma spend may not name the bond alongside its karma', () => {
+    const { bond } = seedPair();
     const karma = seedKarma(inviter.pub, 50n);
     const tx: UtxoTransaction = {
-      inputs: [karma.id!, invite.id!, bond.id!],
+      inputs: [karma.id!, bond.id!],
       outputs: [karmaOut(inviter.pub, 50n + INVITE_BOND_KARMA)],
       signatures: {},
       protocolVersion: 1,
@@ -218,11 +211,23 @@ describe('bond transitions (audit F-consensus-1)', () => {
     expect(result.error).toMatch(/Mixed input types|block application/);
   });
 
-  it('cancel non-vacuity: the invite alone, inviter-signed, is accepted', () => {
-    const { invite } = seedPair();
+  it('non-vacuity: the invite that CREATES a bond is accepted', () => {
+    // The live shape, and the control this file needs: without it every
+    // rejection above could be the gate refusing anything a bond is named in.
+    // ⛔ The transaction conserves — the invitee's karma comes from the pool at
+    // settlement, not from the inviter (NODE_INTERFACE → validateTx step 5).
+    const karma = seedKarma(inviter.pub, 50n + INVITE_BOND_KARMA);
     const tx: UtxoTransaction = {
-      inputs: [invite.id!],
-      outputs: [],
+      inputs: [karma.id!],
+      outputs: [
+        karmaOut(inviter.pub, 50n),
+        {
+          boxType: 'bond',
+          value: INVITE_BOND_KARMA,
+          inviterId: inviter.pub,
+          inviteePublicKey: invitee.pub,
+        } as BondBox,
+      ],
       signatures: {},
       protocolVersion: 1,
     };
@@ -286,7 +291,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     expectRefusedAsBlockApplyOnly(tx, 10);
   });
 
-  it('bond-burn non-vacuity: the unvouch zero-output spend keeps its exemption', () => {
+  it('bond-burn non-vacuity: the unvouch is the spend that DOES apply, escrowing its stake', () => {
     // The conservation exemption for a zero-output spend is vouch-only, and it
     // is still live: without this control the burn rejections above could be
     // conservation refusing every zero-output shape.
@@ -303,7 +308,16 @@ describe('bond transitions (audit F-consensus-1)', () => {
     storeInsertBox(vouch);
     const tx: UtxoTransaction = {
       inputs: [vouch.id!],
-      outputs: [],
+      // ⛔ **The escrow output, because the exemption is retired.** The unvouch
+      // is still the one karma-side spend that produces no karma box — it
+      // produces an ESCROW box — and that is what separates it from the bond
+      // burn above, which produces nothing at all and is refused.
+      outputs: [{
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        owner: voucher.pub,
+        releaseAtBlock: 1000,
+      } as never],
       signatures: {},
       protocolVersion: 1,
     };

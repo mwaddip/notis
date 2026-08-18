@@ -89,7 +89,12 @@ async function importUtxo() {
     insertBox: (box: unknown, postLockTarget?: string) => void;
     getBox: (boxId: string) => { id?: string; value: bigint } | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
+    getKarmaValue: (owner: Uint8Array) => bigint;
     getPostLockBox: (targetPostId: string) => PostLockBox | null;
+    getLikeCarryBox: (
+      author: Uint8Array,
+      exclude: Set<string>,
+    ) => { value: bigint; author: Uint8Array; id?: string } | null;
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
   };
 }
@@ -113,7 +118,7 @@ async function importRecords() {
   return (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (
       id: Uint8Array,
-    ) => { lastActivityBlock: number; lastDecayBlock: number; likeCarry: bigint } | null;
+    ) => { lastActivityBlock: number; lastDecayBlock: number } | null;
   };
 }
 
@@ -244,6 +249,24 @@ const POST_CHANGE = 1n;
 // (`POST_LOCK_THREAD_COST` for a thread, `POST_LOCK_REPLY_COST` for a reply),
 // which is what a fixture picks between when it needs a particular one.
 
+
+/**
+ * The author's outstanding accrual, read off the ledger.
+ *
+ * ⛔ **`IdentityRecord.likeCarry` IS DELETED, AND THE BOX IS THE CARRY.** A
+ * counter existed to remember karma that did not yet exist; once the karma sits
+ * in a `LikeAccrualBox` the box *is* the carry, and keeping both would be two
+ * representations of one quantity free to disagree (ARCHITECTURE → Likes).
+ *
+ * ⚠ **Read AFTER the block applies**, when this block's markers are spent — a
+ * marker and a carry box share a type and are told apart only by lifetime, so
+ * the exclusion set may be empty only once the markers are gone.
+ */
+async function carryOf(author: Uint8Array): Promise<bigint> {
+  const utxo = await importUtxo();
+  return utxo.getLikeCarryBox(author, new Set<string>())?.value ?? 0n;
+}
+
 describe('per-block like settlement (P2-D N2b)', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -274,7 +297,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const likers = await seedLikers(5);
     const fourLikes = likers
       .slice(0, 4)
-      .map((l) => makeLikeTx(l.id, l.box, postId));
+      .map((l) => makeLikeTx(l.id, l.box, postId, author.userId));
     expect(
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({ height: 2, utxoTxs: fourLikes }),
@@ -283,21 +306,27 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     // paid 0 — nothing minted to the author, so the post transaction's change
     // box stands untouched; carry 4 written unconditionally.
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(POST_CHANGE);
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 4n });
+    expect(utxo.getKarmaValue(author.userId)).toBe(POST_CHANGE);
+    expect(await carryOf(author.userId)).toBe(4n);
 
-    const fifth = makeLikeTx(likers[4]!.id, likers[4]!.box, postId);
+    const fifth = makeLikeTx(likers[4]!.id, likers[4]!.box, postId, author.userId);
     expect(
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({ height: 3, utxoTxs: [fifth] }),
       ),
     ).toBe(true);
 
-    // total 5 → paid (5/5)·4 = 4, merged into the change box, carry 0.
-    const paidBox = utxo.getKarmaBox(author.userId);
-    expect(paidBox).not.toBeNull();
-    expect(paidBox!.value).toBe(4n + POST_CHANGE);
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 0n });
+    // total 5 → paid (5/5)·4 = 4, carry 0.
+    //
+    // ⚠ **A BALANCE, not a box.** The settlement emits a fresh karma output
+    // rather than consolidating the author's holdings, so the payout sits beside
+    // the post's change box instead of merging into it — consolidating would
+    // make the transaction's INPUT list depend on the recipient's unrelated
+    // holdings rather than on the block's content.
+    expect(utxo.getKarmaValue(author.userId)).toBe(4n + POST_CHANGE);
+    // ⛔ **The carry box is CONSUMED at a clean payout, not left holding 0.**
+    // `[]` and `[{value: 0}]` are two encodings of one state.
+    expect(await carryOf(author.userId)).toBe(0n);
   });
 
   it('grouping independence (§1.3.1): the same 13 likes split any way pay the same total', async () => {
@@ -324,7 +353,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
         const likers = await seedLikers(n, nonce);
         nonce += n;
         height += 1;
-        const likeTxs = likers.map((l) => makeLikeTx(l.id, l.box, postId));
+        const likeTxs = likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId));
         expect(
           blockApply.applyOrderingBlock(
             await makeApplicableBlock({ height, utxoTxs: likeTxs }),
@@ -333,8 +362,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
       }
 
       outcomes.push({
-        paid: utxo.getKarmaBox(author.userId)?.value ?? 0n,
-        carry: records.getIdentityRecord(author.userId)?.likeCarry ?? -1n,
+        paid: utxo.getKarmaValue(author.userId),
+        carry: await carryOf(author.userId),
       });
     }
 
@@ -380,8 +409,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const likersA = await seedLikers(LIKES_PER_KARMA_PAYOUT, 0);
     const likersB = await seedLikers(LIKES_PER_KARMA_PAYOUT, 100);
     const likeTxs = [
-      ...likersA.map((l) => makeLikeTx(l.id, l.box, postAId)),
-      ...likersB.map((l) => makeLikeTx(l.id, l.box, postBId)),
+      ...likersA.map((l) => makeLikeTx(l.id, l.box, postAId, authorA.userId)),
+      ...likersB.map((l) => makeLikeTx(l.id, l.box, postBId, authorB.userId)),
     ];
     expect(
       blockApply.applyOrderingBlock(
@@ -389,14 +418,27 @@ describe('per-block like settlement (P2-D N2b)', () => {
       ),
     ).toBe(true);
 
-    // Each author: one 4n mint whose synthetic txId is
-    // (height, 'like-payout', raw author bytes) — the pinned identity.
-    const boxA = utxo.getKarmaBox(authorA.userId);
-    const boxB = utxo.getKarmaBox(authorB.userId);
-    expect(boxA!.value).toBe(X - 1n + POST_CHANGE);
-    expect(boxB!.value).toBe(X - 1n + POST_CHANGE);
-    expect(boxA!.txId).toBe(computeMintTxId(2, 'like-payout', authorA.userId));
-    expect(boxB!.txId).toBe(computeMintTxId(2, 'like-payout', authorB.userId));
+    // Each author is paid `x − 1`, once, in the one settlement.
+    expect(utxo.getKarmaValue(authorA.userId)).toBe(X - 1n + POST_CHANGE);
+    expect(utxo.getKarmaValue(authorB.userId)).toBe(X - 1n + POST_CHANGE);
+
+    // ⛔ **THE SYNTHETIC MINT ID IS RETIRED, AND SO IS THE COLLISION ARGUMENT
+    // BEHIND IT.** A payout is an output of the block's settlement transaction,
+    // so it carries that transaction's real `(txId, index)`; `like-payout` is a
+    // reason nothing derives any more (NODE_INTERFACE → Reason and subject
+    // table). ⚠ **What the pin bought is now structural**: two payouts in one
+    // block are two outputs of one transaction and cannot collide, where two
+    // synthetic mints under one `(height, reason, subject)` could.
+    const payouts = utxo
+      .getUnspentBoxes()
+      .filter((b) => b.boxType === 'karma' && b.value === X - 1n);
+    expect(payouts).toHaveLength(2);
+    // Both are outputs of the SAME transaction — the block's one settlement.
+    expect(new Set(payouts.map((b) => b.txId)).size).toBe(1);
+    for (const b of payouts) {
+      expect(b.txId).not.toBe(computeMintTxId(2, 'like-payout', authorA.userId));
+      expect(b.txId).not.toBe(computeMintTxId(2, 'like-payout', authorB.userId));
+    }
   });
 
   it('likes on two posts of one author in one block consolidate into ONE mint', async () => {
@@ -422,8 +464,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const likers = await seedLikers(LIKES_PER_KARMA_PAYOUT);
     const likeTxs = [
-      ...likers.slice(0, 3).map((l) => makeLikeTx(l.id, l.box, post1Id)),
-      ...likers.slice(3).map((l) => makeLikeTx(l.id, l.box, post2Id)),
+      ...likers.slice(0, 3).map((l) => makeLikeTx(l.id, l.box, post1Id, author.userId)),
+      ...likers.slice(3).map((l) => makeLikeTx(l.id, l.box, post2Id, author.userId)),
     ];
     expect(
       blockApply.applyOrderingBlock(
@@ -432,23 +474,24 @@ describe('per-block like settlement (P2-D N2b)', () => {
     ).toBe(true);
 
     // 3 + 2 likes accrue per AUTHOR (NODE_INTERFACE → "Per-block like
-    // settlement") → one 4n mint. A
-    // per-post settlement would have derived the same (height, reason,
-    // subject) twice and tripped UNIQUE(tx_id, output_index), rejecting the
-    // block — so applying at all is itself part of the property.
-    const journal = await importJournalStore();
-    const payoutTxId = computeMintTxId(2, 'like-payout', author.userId);
-    const payoutInserts = journal
-      .getBlockJournal(2)!
-      .mutations.filter(
-        (m) =>
-          m.kind === 'box' &&
-          m.op === 'insert' &&
-          (m.box as KarmaBox).txId === payoutTxId,
+    // settlement") → one payout of `x − 1`, not two.
+    //
+    // ⚠ **The old case rested on a collision that is gone.** A per-post
+    // settlement would have derived the same `(height, reason, subject)` twice
+    // and tripped `UNIQUE(tx_id, output_index)`, so applying at all was part of
+    // the property. Two outputs of one transaction cannot collide, so the
+    // per-author grouping has to be asserted directly: exactly one payout box.
+    const payouts = utxo
+      .getUnspentBoxes()
+      .filter(
+        (b) =>
+          b.boxType === 'karma' &&
+          Buffer.from((b as KarmaBox).owner).equals(Buffer.from(author.userId)) &&
+          b.value === X - 1n,
       );
-    expect(payoutInserts).toHaveLength(1);
-    // Two posts, so two lots of change to merge with the one payout.
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(X - 1n + 2n * POST_CHANGE);
+    expect(payouts).toHaveLength(1);
+    // Two posts, so two lots of change alongside the one payout.
+    expect(utxo.getKarmaValue(author.userId)).toBe(X - 1n + 2n * POST_CHANGE);
   });
 
   // -------------------------------------------------------------------------
@@ -475,8 +518,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     utxo.insertBox(box1);
     utxo.insertBox(box2);
 
-    const tx1 = makeLikeTx(liker, box1, postId);
-    const tx2 = makeLikeTx(liker, box2, postId);
+    const tx1 = makeLikeTx(liker, box1, postId, author.userId);
+    const tx2 = makeLikeTx(liker, box2, postId, author.userId);
     expect(
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({ height: 2, utxoTxs: [tx1, tx2] }),
@@ -513,20 +556,20 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 2, utxoTxs: [makeLikeTx(liker, box1, postId)] }),
+        await makeApplicableBlock({ height: 2, utxoTxs: [makeLikeTx(liker, box1, postId, author.userId)] }),
       ),
     ).toBe(true);
     expect(likeRecords.hasLikeRecord(postId, liker.userId)).toBe(true);
 
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box2, postId)] }),
+        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box2, postId, author.userId)] }),
       ),
     ).toBe(false);
 
     expect(ordering.getCurrentHeight()).toBe(2);
     expect(utxo.getBox(box2.id!)).not.toBeNull();
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 1n });
+    expect(await carryOf(author.userId)).toBe(1n);
   });
 
   // -------------------------------------------------------------------------
@@ -569,7 +612,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     utxo.insertBox(box);
     expect(
       blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box, postId)] }),
+        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box, postId, author.userId)] }),
       ),
     ).toBe(false);
     expect(ordering.getCurrentHeight()).toBe(2);
@@ -616,6 +659,13 @@ describe('per-block like settlement (P2-D N2b)', () => {
           value: 1n,
           owner: liker.userId,
         },
+        // The marker, so the transaction conserves — the shape is the engine's
+        // and this case's subject is the SIGNATURE map, not the shape.
+        {
+          boxType: 'like_accrual',
+          value: 1n,
+          author: author.userId,
+        },
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -661,7 +711,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const block = await makeApplicableBlock({
       height: 2,
       pruneEntries: [makePruneEntry(postId, [postId], author)],
-      utxoTxs: [makeLikeTx(liker, box, postId)],
+      utxoTxs: [makeLikeTx(liker, box, postId, author.userId)],
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(false);
     // Deterministic: the same block rejects again, not just once.
@@ -701,7 +751,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({
           height: 2,
-          utxoTxs: nine.map((l) => makeLikeTx(l.id, l.box, postId)),
+          utxoTxs: nine.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
         }),
       ),
     ).toBe(true);
@@ -713,7 +763,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({
           height: 3,
-          utxoTxs: [makeLikeTx(tenth!.id, tenth!.box, postId)],
+          utxoTxs: [makeLikeTx(tenth!.id, tenth!.box, postId, author.userId)],
         }),
       ),
     ).toBe(true);
@@ -761,7 +811,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({
           height: 2,
-          utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId)),
+          utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
         }),
       ),
     ).toBe(true);
@@ -771,7 +821,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(utxo.getPostLockBox(postId)).toBeNull();
     // 30 likes → payout (30/5)·4 = 24, then the unlock 3 merges in.
     const payout = (BigInt(LIKES) / X) * (X - 1n);
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(
+    expect(utxo.getKarmaValue(author.userId)).toBe(
       POST_CHANGE + payout + POST_LOCK_REPLY_COST,
     );
   });
@@ -796,7 +846,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({
           height: 2,
-          utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId)),
+          utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
         }),
       ),
     ).toBe(true);
@@ -845,14 +895,14 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // Non-vacuity: the record exists (the post transaction bumped the author's
     // activity) and its carry is still zero, so the 4n below is this block's
     // write and not a value the fixture arrived with.
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 0n });
+    expect(await carryOf(author.userId)).toBe(0n);
 
     const classBlock = await makeApplicableBlock({
       height: 2,
-      utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId)),
+      utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 4n });
+    expect(await carryOf(author.userId)).toBe(4n);
     expect(
       (dumpState(db.getDb()).likeRecords as Array<unknown>).length,
     ).toBe(4);
@@ -860,7 +910,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     await assertRoundTrip(db, handle, pre, classBlock);
     // Re-applied state holds the records and carry again, with the likers'
     // seed boxes spent by the burns once more.
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 4n });
+    expect(await carryOf(author.userId)).toBe(4n);
     for (const l of likers) {
       expect(utxo.getBox(l.box.id!)).toBeNull();
     }
@@ -889,27 +939,37 @@ describe('per-block like settlement (P2-D N2b)', () => {
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({
           height: 2,
-          utxoTxs: likers.slice(0, 4).map((l) => makeLikeTx(l.id, l.box, postId)),
+          utxoTxs: likers.slice(0, 4).map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
         }),
       ),
     ).toBe(true);
     const pre = takeSnapshot(db, handle, 2);
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 4n });
+    expect(await carryOf(author.userId)).toBe(4n);
 
     // Block 3: the 5th like → paid 4, merging the author's 100n box.
     const classBlock = await makeApplicableBlock({
       height: 3,
-      utxoTxs: [makeLikeTx(likers[4]!.id, likers[4]!.box, postId)],
+      utxoTxs: [makeLikeTx(likers[4]!.id, likers[4]!.box, postId, author.userId)],
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
-    expect(utxo.getBox(authorKarma.id!)).toBeNull(); // merged in
-    const merged = utxo.getKarmaBox(author.userId);
-    expect(merged!.value).toBe(100n + POST_CHANGE + 4n);
-    expect(merged!.txId).toBe(computeMintTxId(3, 'like-payout', author.userId));
-    expect(records.getIdentityRecord(author.userId)).toMatchObject({ likeCarry: 0n });
+    // ⚠ **No merge, so nothing pre-existing is consumed.** The settlement emits
+    // a fresh karma output rather than consolidating the author's holdings, so
+    // the seeded box stands and the BALANCE carries the claim. The round trip
+    // below is therefore over a plain insert rather than over a
+    // consume-and-replace pair — a strictly simpler inverse, and the one the
+    // journal's box primitives already own.
+    expect(utxo.getBox(authorKarma.id!)).not.toBeNull();
+    expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n);
+    // ⛔ The payout carries the settlement's real `(txId, index)`; the
+    // `like-payout` reason derives nothing any more.
+    const payout = utxo
+      .getUnspentBoxes()
+      .find((b) => b.boxType === 'karma' && b.value === 4n)!;
+    expect(payout.txId).not.toBe(computeMintTxId(3, 'like-payout', author.userId));
+    expect(await carryOf(author.userId)).toBe(0n);
 
     await assertRoundTrip(db, handle, pre, classBlock);
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(100n + POST_CHANGE + 4n); // re-applied
+    expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n); // re-applied
   });
 
   it('round-trip: the vesting swap (consume + unlock mint + remainder re-mint) reverts exactly', async () => {
@@ -934,7 +994,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const classBlock = await makeApplicableBlock({
       height: 2,
-      utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId)),
+      utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
     });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
@@ -942,7 +1002,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // cost, author at change + payout 8 + unlock 1.
     expect(utxo.getBox(lockBox.id!)).toBeNull();
     expect(utxo.getPostLockBox(postId)!.value).toBe(POST_LOCK_THREAD_COST - 1n);
-    expect(utxo.getKarmaBox(author.userId)!.value).toBe(POST_CHANGE + 8n + 1n);
+    expect(utxo.getKarmaValue(author.userId)).toBe(POST_CHANGE + 8n + 1n);
 
     await assertRoundTrip(db, handle, pre, classBlock);
     // Reverted-then-reapplied state again shows the swap.
@@ -979,8 +1039,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
         { targetPostId: prunedPost, likerId: likerA.userId, appliedAtBlock: 3 },
         { targetPostId: prunedPost, likerId: likerB.userId, appliedAtBlock: 5 },
       ],
-      vouchCooldownInsertions: [],
-      vouchCooldownDeletions: [],
     });
 
     forkResolution.revertBlock(7);

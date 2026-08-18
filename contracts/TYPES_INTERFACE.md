@@ -215,10 +215,17 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 
 > **Forward constraint — this is a consensus rule with no test behind it.** The scheme is
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
-> leaf preimage can ever begin with `0x00`. The five live domains are `stump`, `subblock`,
-> `prune`, `utxotx`, `coinbase` — all printable, none a prefix of another, so the NUL
-> delimiter suffices. (`likebox` and `epoch` were retired by P2-D; both strings stay
-> **reserved** — a future domain reusing them would collide with historical leaf meanings.)
+> leaf preimage can ever begin with `0x00`. The **three** live domains are `stump`, `prune`,
+> `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
+> **Four are retired and every one of their strings stays reserved**, because a future domain
+> reusing one would collide with historical leaf meanings: `likebox` and `epoch` (P2-D),
+> `subblock` (a post is a transaction, so it rides `utxotx`), and `coinbase` (⚠ **AHEAD OF
+> CODE** — coinbase outputs become outputs of the settlement transaction).
+>
+> ⛔ **This sentence said "five live domains" and named `subblock` among them while
+> §OrderingBlock already reserved it as retired — a contradiction inside one contract, corrected
+> 2026-08-17.** A live/retired list restated in two places is the drift class this file names
+> everywhere else; **there is one list and it is here.**
 > **Adding a leaf domain that begins with a non-printable byte silently reopens
 > leaf/internal-node confusion.** No test enforces
 > this; it is a contract and review rule, recorded here because it previously existed only
@@ -544,6 +551,33 @@ cancels it, and their bond stays locked for exactly as long. Their `K /
 INVITE_BOND_KARMA` capacity absorbs the cost, which is what makes the rate limit
 self-enforcing without a rule.
 
+> ## ⚠ PARTIAL — the type is gone from `types`; the transitions it served are still in `node`
+>
+> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface is deleted and tag **2** is unassigned.
+> ⚠ **Still ahead of code in `node`** — the claim and cancel transitions, their HTTP endpoints and
+> the settlement that replaces them are unbuilt, so the section above still describes the running
+> tree there. **Nothing new may be built against it** (user, 2026-08-17; `ARCHITECTURE` → Invite
+> System).
+>
+> ⛔ **The whole type exists to hold a right to mint, and there is no mint.** Under
+> `ARCHITECTURE → The conservation axiom` the invitee's karma is **spent from the pool** by the
+> block's settlement transaction, so there is nothing for a ticket to represent and no second
+> transaction for it to be spent by.
+>
+> ```
+> invite tx    aliceKarma(K) → BondBox(B, inviterId=Alice, inviteePublicKey=Bob) + aliceKarma(K−B)
+> settlement   pool(S) → pool(S−G) + bobKarma(G)
+> ```
+>
+> ⛔ **`BondBox` IS THE REQUEST — that is what removes the need for a marker here.** The settlement
+> emits `INVITE_KARMA_AMOUNT` to the `inviteePublicKey` of every `BondBox` the block creates, so the
+> pairing is structural: one bond, one grant. A like needs a marker because its value goes to a party
+> holding no box in the transaction; an invite already creates one.
+>
+> ⛔ **The boxType string `'invite'` is reserved, never to be reused** — the same rule `~~LikeBox~~`
+> states above, for the same reason. ⚠ **`KARMA_BOX_TYPES` loses `'invite'` and gains the vouch
+> escrow**; anything quoting that list must re-derive it rather than editing a remembered copy.
+
 ### BondBox
 
 ```
@@ -574,6 +608,20 @@ record.
 **Nothing spends a bond.** Creation, claim, cancellation and settlement all move
 it through block application, so no transition admits it into a user transaction —
 the same standing `PostLockBox` has.
+
+> ⚠ **AHEAD OF CODE — the field list survives; two of its justifications do not.**
+> ✅ **`BondBox`'s SHAPE is unchanged** by the invite collapse, and `inviteePublicKey` gains a second
+> job: it is what the settlement reads to address the grant.
+>
+> ⛔ **"The window runs from the claim, not the creation" is false once there is no claim.**
+> `IdentityRecord.invitedAtBlock` becomes the **invite's own height**, so the probation window and
+> the bond's creation now start together. ✅ **The conclusion still holds for a different reason** —
+> the height is still recorded on the identity record, so carrying it here would still be a second
+> copy of committed state. **Do not read the conclusion's survival as the argument's.**
+>
+> ⛔ **"Creation, claim, cancellation and settlement" enumerates two transitions that stop existing.**
+> The list becomes **creation and settlement**. ✅ **"Nothing spends a bond" is untouched** and is the
+> half that matters.
 
 ### PostLockBox
 
@@ -629,6 +677,86 @@ VouchBox extends BoxBase {
   targetId: UserId             // 32 raw bytes — who is being vouched for
 }
 ```
+
+### VouchEscrowBox
+
+> ## ⚠ PARTIAL — the type and its layout exist; nothing produces or consumes one
+>
+> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface, tag **12** and the wire layout below.
+> ⚠ **Still ahead of code in `node`** — the unvouch transition does not emit one and the settlement
+> does not consume one, so no escrow box is ever built.
+>
+> It replaces the `vouch_cooldowns` table, which is **node-local SQL outside the AVL root**
+> (`ARCHITECTURE` → Vouch boxes, `⚠ VIOLATED`).
+
+```
+VouchEscrowBox extends BoxBase {
+  boxType: "vouch_escrow"
+  value: bigint                // Exactly what the consumed VouchBox held
+  owner: Uint8Array            // 32 raw bytes — the voucher; where the karma returns
+  releaseAtBlock: number       // Unvouch height + VOUCH_COOLDOWN_BLOCKS
+}
+```
+
+⛔ **`value` IS THE CONSUMED BOX'S, NEVER `VOUCH_KARMA_AMOUNT`.** The round trip has to be
+conservation-**structural** rather than true by coincidence, so it must not depend on the cast's pin
+holding for the box in hand. The escrow row this replaces already records the actual staked value
+for exactly this reason and the box inherits the obligation.
+
+⛔ **This is what makes an unvouch conserve.** The transaction it replaces has **zero outputs** — the
+stake is destroyed and a SQL row remembers to re-mint it — so for the length of the cooldown the
+karma exists nowhere. That is a burn and a mint separated by **blocks, not instants**, which
+`ARCHITECTURE → The conservation axiom` forbids by name.
+
+✅ **The pool is not involved, and no marker is needed.** The value moves from one box the voucher's
+own transaction consumes into another it creates, so both ends are named inside one transaction.
+
+⚠ **`releaseAtBlock` is committed state, and that is the point.** A node holding the `stateRoot`
+holds the obligation, rather than a root it cannot interpret without replaying every block.
+
+### LikeAccrualBox
+
+> ## ⚠ PARTIAL — the type and its layout exist; nothing produces or consumes one
+>
+> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface, tag **11** and the wire layout below.
+> ⚠ **Still ahead of code in `node`** — the like transition does not emit a marker, the settlement
+> does not consume one, and `IdentityRecord.likeCarry` is still the carry.
+>
+> It is **the only marker box in the design** (`ARCHITECTURE` → The conservation axiom, "the three
+> shapes"), and it replaces `IdentityRecord.likeCarry`.
+
+```
+LikeAccrualBox extends BoxBase {
+  boxType: "like_accrual"
+  value: bigint                // LIKE_KARMA_COST on a marker; the running carry on a carry box
+  author: Uint8Array           // 32 raw bytes — the key the accrual is earmarked for
+}
+```
+
+⛔ **ONE TYPE, TWO LIFETIMES, AND THEY MUST NOT BE CONFLATED.** The settlement consumes both in the
+same step, which is why they share a type rather than being told apart by one:
+
+| Role | Created by | Lives | Count |
+|---|---|---|---|
+| **marker** | the like transaction, as an output | consumed by the same block's settlement | one per like |
+| **carry box** | the settlement | across blocks, until a payout consumes it | one per author, `value < LIKES_PER_KARMA_PAYOUT` |
+
+⛔ **`author` IS ATTRIBUTION, NOT AUTHORIZATION** — the same distinction `BondBox.inviterId` and
+`PostLockBox.owner` carry. **No signature by `author` unlocks this box.** Only the settlement
+transaction consumes it, so no user transition admits one as an input.
+
+⛔ **A LIKE MUST NOT NAME A SHARED BOX.** Two likers of the same author in one block would name the
+same carry-box id and **the second would be permanently invalid, not deferred** — a popular author
+becomes unlikeable. Hence a fresh marker per like, and a carry box only the settlement touches.
+
+⛔ **THE MARKER MUST BE PINNED BY SHAPE AS TIGHTLY AS THE DEFICIT IT REPLACES.** A marker is a
+karma-bearing output earmarked for **someone else**, which is the exact shape the same-owner karma
+rule forbids (`NODE_INTERFACE` → Karma transition rules). Unpinned,
+`myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)` is a **balanced** transaction that
+transfers karma, and karma is non-tradeable. **The biconditional therefore runs both ways**:
+`likeTarget` present ⟺ exactly one marker of `LIKE_KARMA_COST` naming that target's author.
+⚠ **The reverse direction has no predecessor** — the old rule was triggered by arithmetic the
+validator could not be talked out of; this one is triggered by shape it must be told to look for.
 
 ### GenesisProofBox
 
@@ -776,7 +904,15 @@ rejected by the karma transition arm rather than by a rule of its own
 
 ### KarmaPoolBox
 
-> ⚠ **AHEAD OF CODE** (`docs/specs` design §3, unit B). The type does not exist yet.
+> ⚠ **PARTIAL — the type exists; nothing spends it.** ✅ Landed by unit B (**#87**): the interface,
+> tag **10**, the wire layout, and a genesis pool seeded from it. ⚠ **No transition spends the pool
+> yet** — the settlement transaction that draws from it and returns to it is `node`'s and unbuilt, so
+> every mint and burn path is still a defect against `ARCHITECTURE` → The conservation axiom.
+>
+> ⛔ **This block read `AHEAD OF CODE — the type does not exist yet` from before #87 until
+> 2026-08-17**, and it also cited `docs/specs`, which `.gitignore` excludes wholesale — **a tracked
+> contract pointing at a path that resolves for nobody with a clone.** Both corrected together
+> because they were found by the same read.
 
 ```
 KarmaPoolBox extends BoxBase {
@@ -1085,6 +1221,41 @@ carry. `pruneEntries` moves here rather than keeping a section of its own —
 `utxoTxRoot` commits both, and the leaf domains (`leafHash`'s first argument) are what
 keep a prune leaf from colliding with a transaction leaf.
 
+> ## ✅ RESOLVED in `types` (C1, 2026-08-17) — `coinbaseOutputs` IS GONE AND `utxoTxRoot` LOST A LEAF CLASS
+>
+> ⚠ **The settlement transaction that replaces it is still ahead of code in `node`**, so the body
+> is three arrays and nothing yet fills the role the fourth played.
+>
+> Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any other
+> (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction). ⛔ **Coinbase
+> outputs become its outputs**, so `CoinbaseOutput` stops being a block-body concept and the struct
+> becomes three fields:
+>
+> ```
+> UtxoTxTree {
+>   utxoTxIds: TxId[]
+>   utxoTxs: Uint8Array[]
+>   pruneEntries: PruneEntry[]
+> }
+> ```
+>
+> ⛔ **THE `'coinbase'` LEAF DOMAIN IS RESERVED, NEVER TO BE REUSED** — the rule `'like'` and
+> `'subblock'` already carry. A later leaf class wearing it would make historical roots ambiguous
+> against new ones, and a root is the one thing that cannot be re-derived to settle the question.
+>
+> ⚠ **This is the same renumbering hazard §Layout — Block states, one level down.** The body layout
+> is positional (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖
+> `arr(coinbaseOutputs)`), so dropping the last array is a deletion **in place** here and does not
+> shift the three before it — but `utxoTxTreeByteLength` computes the same number a second way and
+> **must lose the term in the same change**, or two ways of computing one length diverge with no
+> compiler signal.
+>
+> ⚠ **The producer's byte budget has to absorb a body-dependent tail.** `MAX_BLOCK_BODY_BYTES` is
+> consensus and the settlement's size grows with what the fill selected, so the reservation that
+> currently seeds the budget with the largest possible coinbase no longer bounds it. ✅ **The existing
+> trim loop generalises** — trimming a transaction shrinks the settlement too, monotonically, so the
+> loop converges — **provided the settlement is rebuilt on each iteration** rather than measured once.
+
 **`SubBlockEntry` is deleted, and its H-3 property survives strictly stronger.** That
 struct existed to carry `{postId, parentRefs, author}` in the block so a node syncing
 from ordering blocks alone — never seeing content — could still record an identical
@@ -1132,6 +1303,19 @@ CoinbaseOutput {
 height.** The treasury's slice accrues to a `TreasuryBox` and is never a coinbase output. Node
 rejects a block carrying an output with `isTreasury: true` (MINING_INTERFACE → Coinbase
 Application).
+
+> ## ✅ RESOLVED in `types` (C1, 2026-08-17) — THE WHOLE STRUCT HAS LEFT THE BLOCK BODY
+>
+> Coinbase outputs become outputs of the block's **settlement transaction** (§OrderingBlock's marker
+> above; `NODE_INTERFACE` → the settlement transaction), so `CoinbaseOutput` stops being a
+> block-body concept, `coinbaseOutputBytes` stops being a Merkle leaf preimage, and the `'coinbase'`
+> leaf domain is retired and reserved.
+>
+> ⛔ **`isTreasury`'S SEPARATE DELETION IS THEREFORE MOOT, AND THAT CLOSES THE SEQUENCING QUESTION.**
+> Whether that field's removal should ride the settlement work or land ahead of it was the wrong
+> question — the struct it lives on stops existing, so there is nothing to schedule. ⚠ **A deletion
+> pass aimed at the field alone would touch 24 files across four packages and then be redone**, which
+> is the failure this note exists to prevent.
 
 > **AHEAD OF CODE — the field is scheduled for deletion.** It carries no information once no
 > output can be the treasury's, and it survives only because removing it is a wire-format change
@@ -1246,6 +1430,29 @@ callers must remember to invoke is the shape that produced this defect class in 
      type wearing it makes old-vs-new greps and historical debugging ambiguous forever.
 
   Fail any one of them and the number stays reserved — left out of the table, never reused.
+
+  > ## ⛔ AND WHEN ALL THREE HOLD, REUSE IS NOT OPTIONAL (user, 2026-08-17)
+  >
+  > **A new type takes the lowest free tag that satisfies the three conditions above. It does not
+  > take the next number above the table.** This turns the clause from a permission into a rule, and
+  > the permission alone is what produces a sparse table: every retirement leaves a hole nobody is
+  > obliged to fill, so the range grows with the *history* of types rather than with their count.
+  >
+  > ⚠ **This is a live defect, not a hypothetical.** Tag 2 was free and admissible when
+  > `like_accrual` and `vouch_escrow` were assigned **11** and **12** — the reservation prose said
+  > "never to be reused" and the executor followed it. ⛔ **The hole stands** (user, 2026-08-17): the
+  > rule governs types created from here on, and re-cutting a landed assignment buys density in a
+  > table nothing reads by number.
+  >
+  > ✅ **The cleanup is forced rather than remembered.** A number cannot be claimed without editing
+  > the text that reserved it, so the remnants of the retired type surface at exactly the moment
+  > someone is already in that table. **Report them; do not sweep them silently** — what else still
+  > references the retired type is the user's call, not the claimer's.
+  >
+  > ⚠ **Condition 2 binds harder than a fresh chain requires, and that is deliberate.** Under a wipe
+  > no id exists to move, so *renumbering survivors* would also be safe — but "every other tag keeps
+  > its number" is what makes "no existing id moves" checkable by inspection instead of argued from
+  > the deploy gate holding. **Filling holes needs no such argument; compaction does.**
 - **Maps encode as arrays sorted by raw key bytes ascending.** A positional format has no maps, and
   without a normative sort one transaction has two encodings — reopening the malleability being closed.
 - **Encoders are total** (sentinel discipline, per audits M-5/M-6), with one stated exception: see
@@ -1444,6 +1651,37 @@ from this table — a use that reads every cell as an instruction rather than as
 | 8 | `treasury` |
 | 9 | `fee` |
 | 10 | `karma_pool` |
+| 11 | `like_accrual` |
+| 12 | `vouch_escrow` |
+| **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
+
+> ## ⛔ TAG 2 IS RESERVED, NOT FREE
+>
+> `invite` is deleted (§InviteBox) and **its number is never reused.** The never-renumber rule
+> governs the string; this row governs the number. A hole **inside** the assigned range is a distinct
+> decode case from a tag past the end, and both need a reject vector.
+>
+> ## ⛔ A REJECT VECTOR MUST NOT BE PINNED TO "THE NEXT FREE TAG"
+>
+> **255 exists so that an unassigned-tag probe never has to move.** A vector pinned at the first
+> unassigned number is invalidated by the **next** box type added, silently — it stops testing what
+> it was written to test the moment its number is assigned, and the failure surfaces as a golden
+> vector that mysteriously needs re-pinning.
+>
+> ⚠ **This already bit.** A golden reject vector was pinned at literal **11**, and the like accrual
+> marker took 11. Re-pinning it to 13 reproduces the defect one addition later.
+>
+> ✅ **`enum8` is a table lookup over `u8`, so 255 and "first unassigned" exercise the same path.**
+> Nothing is lost by choosing the stable one. ⛔ **Verified 2026-08-17, not assumed**: `enum8.read`
+> is `reverse.get(tag)` over a `Map` with **no range comparison**. Had it been a range check, an
+> unassigned tag *below* the maximum and one *above* it would be different paths and folding the two
+> probes into one would have been wrong — **which is why this was checked rather than reasoned.**
+>
+> ⚠ **The corpus must still not import `BOX_TYPE_TAGS`.** Deriving the probe from the writer's own
+> table would make the reader circular, which §Layout — Boxes forbids by construction. **255 is a
+> literal that stays independent AND stays stable** — that is the whole reason to reserve one rather
+> than to derive. ✅ **Node's AVL tag tests deriving the first unassigned tag is a different case and
+> stays right**: they are not the independent reader.
 
 | Type | Trailing fields |
 |---|---|
@@ -1458,6 +1696,49 @@ from this table — a use that reads every cell as an instruction rather than as
 | `treasury` | *(none)* |
 | `fee` | *(none)* |
 | `karma_pool` | *(none)* |
+| `like_accrual` | `b32(author)` |
+| `vouch_escrow` | `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
+
+> ## ⛔ WHAT A NEW BOX TYPE COSTS, AND WHY A GREP FOR THE TYPE MISSES THE WORST SITE
+>
+> A box type is enumerated in hand-kept places across three packages and **the compiler links none
+> of them.** Measured 2026-08-18 for `like_accrual` and `vouch_escrow`:
+>
+> | | |
+> |---|---|
+> | `types/src/utxo.ts` | the interface, `BOX_TYPE_TAGS`, the codec arm |
+> | `types/test/golden/structs.ts` | the corpus's **deliberately independent** reverse table |
+> | `node/src/services/utxo-engine.ts` | the output shape schema and the transition sets |
+> | `node/src/store/utxo.ts` | the row mapping |
+> | `node/src/karma-supply.ts` | ⚠ **three karma sets, and none derives from another** |
+> | `node/public/index.html` | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file** |
+>
+> ⛔ **AND ONE MORE THAT A SEARCH FOR THE TYPE CANNOT FIND.** `node/src/routes/json-to-tx.ts`'s
+> `BINARY_BOX_FIELDS` is keyed on the **field name**, not the box type — so `grep like_accrual`
+> returns the six sites above and **not** the one that decides whether the box can be expressed over
+> HTTP at all.
+>
+> ⚠ **It failed exactly that way.** `author` was missing, so a `LikeAccrualBox` arriving as JSON kept
+> its hex string and died at `validateTx`'s step-4 schema — **the whole like path was unreachable
+> over HTTP while every service-level test stayed green**, because those tests pass raw `Uint8Array`
+> objects and never cross that edge. ⛔ **The file's own comment predicted this defect in the
+> abstract, two lines above the list it was missing from.** A hazard documented at the site does not
+> fire; only a test at the right layer does.
+>
+> ✅ **So the check is a ROUTE-level test for any box type with a binary field**, and the enumeration
+> to run is **by field name as well as by type**.
+
+> ⚠ **`releaseAtBlock` is `vlqU`, NOT `vlqU64`, and NOT `opt`.** It is a block height, so it takes
+> the same writer as `credit.lockedUntilBlock` — and unlike that field it is **always present**, since
+> an escrow with no release height is not a state the type admits. ⛔ **Read the `vlqU` / `vlqU64`
+> correction above before copying either cell**: the distinction is a **domain**, not a width. `vlqU`
+> is total by sentinel and collapses anything past `MAX_SAFE_INTEGER`; `vlqU64` throws outside
+> `[0, 2⁶⁴)`. Heights take `vlqU`; `bigint` values take `vlqU64`.
+>
+> ⚠ **`like_accrual` carries no `owner`, deliberately.** `author` is **attribution, not
+> authorization** (§LikeAccrualBox) — no signature by it unlocks the box, and only the settlement
+> transaction consumes one. Naming the field `owner` would invite exactly the reading the type exists
+> to refuse.
 
 ⚠ **`emission`, `treasury`, `fee` and `karma_pool` have an empty tail, and an empty cell in this
 table is a layout, not an omission.** Their content encoding is the shared prefix alone —
@@ -1546,9 +1827,24 @@ and both were found by someone searching from a direction the previous searcher 
 
 **Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
 
-`TX_ID_DOMAIN` ‖ `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖
-`opt(arr(preimages sorted, b32(boxId) ‖ lp(preimage)))` ‖ `vlqU(protocolVersion)` ‖
+`arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖ `vlqU(protocolVersion)` ‖
 `opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)`
+
+> ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`. Corrected 2026-08-17.** This line listed it first while
+> §UtxoTransaction's formula applies it outside — `TxId = blake2b512(TX_ID_DOMAIN ‖ txIdBytes)[0:32]`
+> — so one contract stated the preimage two ways. **The code has always applied it outside**, and the
+> wire codec row below depends on which is meant: `encodeTx` is `txIdBytes ‖ arr(signatures)`, and a
+> 17-byte domain tag riding the wire would be a different format from the one measured at 236 bytes
+> per like.
+>
+> ⚠ **A domain tag belongs to the HASH, not to the bytes.** It exists so two different structs
+> cannot collide in one hash function; putting it inside the serialized form would also ship it to
+> every peer, which is the opposite of what it is for.
+>
+> ⚠ **`preimages` is gone from this line** (2026-08-17) — it was `opt(arr(preimages sorted,
+> b32(boxId) ‖ lp(preimage)))` between the outputs and `protocolVersion`. ⛔ **Removing it moved
+> every `TxId` in existence**, because `opt` spends a one-byte absence marker even on a transaction
+> that never carried one. See "Re-pinning a frozen vector when a preimage changes".
 
 `post` needs no length prefix inside its `opt`: `postFieldBytes` is self-delimiting (every
 field is fixed-width, length-prefixed or a VLQ) and it is last, so nothing follows it to be
@@ -1560,6 +1856,50 @@ no counts or length prefixes. `preimages` already sorted by key, so the normativ
 existing behaviour there; for `signatures` it is new, because they were never hashed.
 
 **Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
+
+> ## ✅ RESOLVED — the layout is implemented. Closed 2026-08-17.
+>
+> **`encodeTx` is positional and reaches `writeTxIdFields`**, so the wire form and the `TxId`
+> preimage share one writer rather than agreeing by inspection. This banner read `⚠ UNENFORCED`
+> against a `cbor-x` implementation; the gap `serialization.ts` recorded in its own words is closed
+> on the `encodeTx` half and **still open on `Stump`**.
+>
+> **What the gap cost, measured against `packages/types/dist` on 2026-08-17** — a like transaction
+> with one karma input, one karma output, one signature and a `likeTarget`:
+>
+> | | Bytes | |
+> |---|---|---|
+> | ids and keys as **hex strings** | **124** | `BoxId`, `PostId` and the signature-map key are 64 ASCII characters each to carry 32 bytes |
+> | CBOR **field names** | **81** | respelled in full in every transaction |
+> | `boxType` as the string `'karma'` | **5** | this layout already defines a 1-byte tag |
+> | payload | 192 | |
+> | **`encodeTx` today** | **402** | + 32 for the `utxoTxIds` entry + 2 for the length prefix = **436 per like** |
+>
+> ✅ **MEASURED AGAINST THE IMPLEMENTATION, 2026-08-17:** the layout above costs **236 bytes per
+> like** including the `utxoTxIds` entry and the length prefix, against **436** for `cbor-x` — an
+> **85%** gain, or **8,474 likes per 2 MB body** against 4,587.
+>
+> ⚠ **A hand-derivation from this table said 226 and 93%, and it was optimistic by 4%.** The estimate
+> is superseded, not merely refined; quote the measured figure. ⛔ **The direction of the error is the
+> lesson**: a layout read off a table omits what an implementation cannot — so treat any
+> hand-derived encoding size as a **lower bound on cost**, never as a budget.
+>
+> ### ⛔ TWO CHANGES RIDE HERE AND THEY BREAK DIFFERENT THINGS — DO NOT CONFLATE THEM
+>
+> | Change | Breaks |
+> |---|---|
+> | `encodeTx` cbor-x → the layout above | **The wire only.** `computeTxId` is already positional and `computeUtxoTxRoot`'s leaves are **ids**, so every box id, transaction id, `utxoTxRoot` and `stateRoot` is byte-identical across it |
+> | dropping `preimages` from `txIdBytes` | **Consensus.** It is inside the id preimage, so **every `TxId` in existence changes** |
+>
+> ⚠ **The first is reversible against history and the second is not.** They land in one dispatch
+> because they touch one file, **not because they are one kind of change.**
+>
+> ✅ **`preimages` has no consumer** — no transition requires knowledge of a secret, so nothing reads
+> the map. It is encoded, validated for envelope shape, and never consulted.
+>
+> ✅ **New box types need no change here.** `arr(outputs, boxContentBytes)` reaches them through
+> `boxContentBytes`, so the like accrual marker and the vouch escrow cost this layout one tag each
+> and nothing else.
 
 ### Layout — Block
 
@@ -1653,7 +1993,11 @@ Layout — Boxes.
 **SubBlockTree:** `arr(subBlockEntries)` ‖ `arr(pruneEntries)` — **`subBlockRefs` is deleted**; it was
 uncommitted, redundant with `subBlockEntries`, and drove state mutation (see NODE_INTERFACE)
 **CoinbaseOutput:** `b32(owner)` ‖ **`vlqU64(value)`** ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`
-**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(coinbaseOutputs)`
+**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`
+
+> ⚠ **This line said `arr(coinbaseOutputs)` and omitted `pruneEntries` — wrong in both directions,
+> corrected 2026-08-18.** The normative statement is §OrderingBlock; **this is a restatement, and a
+> restatement is what decays while the thing it restates stays right.**
 **SubBlock:** `b32(subBlockId)` ‖ `postBytes` ‖ `b32(producerId)` ‖ `vlqU(protocolVersion)`
 **OrderingBlock:** `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`
 
@@ -1669,20 +2013,30 @@ divergence of exactly the class the queued audit exists to find.
 
 ### Layout — Merkle leaf preimages are the struct's own wire bytes
 
-**Decided 2026-08-10, ahead of Phase 4.** `subBlockRoot` and `utxoTxRoot` commit leaves whose
-preimages are exactly the two structs above: node's `computeSubBlockRoot` hashes
-`{postId, parentRefs, author}` and its `computeUtxoTxRoot` hashes
-`{owner, value, lockedUntilBlock, isTreasury}` — the **full** field set of `SubBlockEntry` and
-`CoinbaseOutput`, in the **same** order. They are therefore the same bytes, and this package is the
-one place that says what those bytes are.
+**Decided 2026-08-10, ahead of Phase 4.** `utxoTxRoot` commits leaves whose preimages are exactly
+the committed struct's own wire bytes, and this package is the one place that says what those bytes
+are.
 
 | Export | Signature | Bytes |
 |---|---|---|
-| `subBlockEntryBytes` | `(SubBlockEntry) => Uint8Array` | `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)` |
-| `coinbaseOutputBytes` | `(CoinbaseOutput) => Uint8Array` | `b32(owner)` ‖ `vlqU64(value)` ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)` |
+| `serializePruneEntry` | `(PruneEntry) => Uint8Array` | see Layout — Stump / PruneEntry |
 
-`writeSubBlockEntry` and `writeCoinbaseOutput` **delegate** to these rather than restating the
-layout, so the tree codec and the Merkle leaf cannot drift apart.
+`writePruneEntry` **delegates** to it rather than restating the layout, so the tree codec and the
+Merkle leaf cannot drift apart.
+
+> ⛔ **THIS TABLE HELD TWO MORE ROWS AND BOTH SYMBOLS ARE GONE. Corrected 2026-08-17.**
+> `subBlockEntryBytes` and `coinbaseOutputBytes` were listed with full byte layouts, against
+> `SubBlockEntry` and `CoinbaseOutput` — neither type exists, and neither function has a definition
+> anywhere in `src`. The prose above them named `computeSubBlockRoot`, which does not exist either,
+> and `subBlockRoot`, which is not a header field.
+>
+> ⚠ **A stale EXPORT row is worse than stale prose**, and this is the section that proves it: a
+> reader following `src/index.ts`'s pointer here found a table naming two functions they could not
+> import, with byte layouts for structs they could not construct. **Prose invites judgement; a
+> signature invites a call.**
+>
+> ⛔ **THE DECAY CAME FROM A DISPATCH THAT COULD NOT FIX IT** — see §How a dispatch decays this
+> contract, below.
 
 > ⚠ **`parentRefs` carries 0–`MAX_PARENT_REFS` (currently 1) entries at validation; the writer is
 > uncapped by design.** The domain sits upstream of the encoder (spec §2.5), never inside it —
@@ -1715,6 +2069,88 @@ and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `r
 `readCoinbaseOutput` already live here beside these writers, and the tree round-trip exercises them.
 Nothing crosses a package boundary unpaired.
 
+### Re-pinning a frozen vector when a preimage changes
+
+⛔ **A CHANGE THAT MOVES A FROZEN ID DESTROYS THE EVIDENCE THAT USUALLY GUARDS IT, AND THE OBVIOUS
+SUBSTITUTE PROVES NOTHING.** When a field leaves an id preimage, every frozen id must move — so
+*"unchanged text"* stops being available, and the reflex is to regenerate the pin from the encoder.
+**A pin regenerated from the code it pins holds equally over a transposed layout.** That is the same
+failure this section already names one paragraph up: a consistent transposition round-trips
+perfectly, so nothing internal to the writer can see it.
+
+**The method that works, in order:**
+
+1. **Hand-assemble the preimage** from the layout table in this contract, using the corpus's frozen
+   byte **literals** — not values the encoder produces.
+2. ⛔ **VALIDATE THE MIRROR AGAINST THE OLD FROZEN VALUE FIRST.** Reproduce the *previous* id by
+   restoring the removed bytes. A hand-derivation that cannot reproduce the known-good output is
+   wrong, and this is the only step that can tell you so **before** you trust it.
+3. Only then take the new id from the validated mirror.
+4. ⛔ **Keep step 2 as a test.** A derivation described in a commit message is a claim; a derivation
+   in the tree is auditable. Without it the next reader cannot distinguish this method from the
+   regeneration it replaces — **the two produce identical-looking diffs.**
+
+> ✅ **Worked, 2026-08-17, removing `preimages` from `txIdBytes`.** `writeOpt` emits `writeU8(0)` for
+> an absent value — **one byte, never zero-width** — so every `TxId` moved with **zero survivors**,
+> and a surviving id would have meant the field was not in the preimage this contract says it is.
+> **The survivor count is itself a check** and costs nothing to state.
+
+⛔ **A VECTOR BUILDING AN ID FROM A LITERAL `txId` STAYS GREEN WHILE CLAIMING FALSE PROVENANCE.** The
+corpus constructs its frozen box ids from a **literal** `txId` string rather than a derived one, so
+they do **not** move when a transaction's id moves. Left alone they keep passing while asserting
+provenance from a transaction whose id has changed — internally consistent, externally false, and
+**invisible to every gate**. ⚠ **When a `TxId` moves, every literal copy of it moves with it**, and
+the occurrence count belongs in the diff.
+
+#### ⛔ A MIRROR TEST'S GOLDEN MUST BE PINNED TO THE AUTHORITY, NEVER TO THE MIRROR
+
+**A mirror test asserts that a second implementation agrees with this package.** If its frozen
+constant is taken from the **mirror**, the test asserts the mirror agrees with itself, and **both
+sides drift together while it stays green.**
+
+> ⚠ **Measured 2026-08-18.** `node`'s UI-mirror golden held `0d72f282…` — the value the demo UI's
+> `computeTxId` produces, which still carries the retired `preimages` clause — while
+> `@dagsocial/types` had moved to `14cea374…`. **The fixture and its subject were stale in the same
+> direction**, so the constant could not see the divergence it existed to catch.
+>
+> ⛔ **TWO TEST STYLES IN ONE FILE HAD OPPOSITE VISIBILITY.** The **live-comparison** cases — run
+> both implementations, compare outputs — saw the drift immediately. The **frozen-constant** cases
+> could not see it at all. ⚠ **The frozen constant is the one that reads as authoritative**, which is
+> why the file's own note could say no test caught it while a test in that same file did.
+
+**The rule: a mirror's golden is derived from the package under contract, and the mirror is never
+consulted to produce it.** A mirror that disagrees is the finding; a mirror that agrees with a
+constant taken from itself is not evidence of anything.
+
+#### ⛔ A RETIRED SHAPE THAT IS AN ASSERTION'S SUBJECT IS NOT NARRATION
+
+**"Never narrate replaced code" forbids describing a retired shape as CONTEXT. It does not forbid
+using one as an OPERAND**, and read literally it would delete the strongest kind of fixture this
+format has.
+
+✅ **The test is one question: delete the sentence, and does an ASSERTION lose an input, or does a
+paragraph lose a sentence?** A hand-written vector for a retired layout is the input that makes a
+delta claim checkable — the assertion says *this change moves exactly these bytes and no others*,
+and the retired vector is the only thing the current encoder **cannot** produce. Removing its
+explanation leaves a magic constant nobody can re-derive.
+
+⚠ **A retired shape mentioned to explain how things used to work is narration and goes.** The same
+words can be either, and the difference is whether an assertion consumes them.
+
+#### ⚠ A regenerated pin's INPUT is unchecked, so state it
+
+Step 2 above validates the **derivation**. It does not validate what was fed into it. ⛔ **A pin
+regenerated from the correct code and the wrong input is byte-perfect and wrong**, and the mirror
+check passes because the mirror is fine.
+
+> ⚠ **Measured in the same pass.** A sentinel id was regenerated from index `2**32` — a value the
+> test's own prose names as **valid**, not as the sentinel. Nothing mechanical caught it; **the
+> surviving comment beside the constant did.**
+
+**So a regenerated pin says what produced it** — which input, and why that input and not a
+neighbouring one. A constant with no stated input cannot be re-checked without redoing the analysis
+that produced it, which is the analysis nobody repeats.
+
 Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxContentBytes`,
 `boxRecordBytes`). `serializePruneEntry` keeps its pre-migration name; renaming it is not in scope.
 
@@ -1731,7 +2167,7 @@ structure and allocating nothing. It is the measure `MAX_BLOCK_BODY_BYTES` is ch
 allocating the body is the wrong cost.** `verifyOrderingBlockStructure` runs on the gossip relay path
 and would allocate a whole body per arriving block; node's block creator needs a per-entry delta while
 filling, and re-encoding the candidate after each addition is quadratic. The terms are all knowable:
-the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖ `arr(coinbaseOutputs)`,
+the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`,
 and `utxoTxs` are opaque byte arrays, so nothing here depends on the transaction codec.
 
 ⛔ **The equivalence is the contract, not an implementation detail** — a test pins
@@ -1761,9 +2197,15 @@ discriminate are the VLQ width boundaries and the sentinel branches above.
 > four-step boundary check on every `decodeX`.
 >
 > ⚠ **The rows below were "left describing CBOR" and that wording is now the hazard.** Any row
-> still describing a CBOR encode is describing the old format, **except** the `Tx` and `Stump`
-> rows, where CBOR is still correct (carried register #6). Read a CBOR mention here as stale
-> unless it names one of those two.
+> still describing a CBOR encode is describing the old format, **except** the `Stump` rows,
+> where CBOR is still correct (carried register #6). Read a CBOR mention here as stale unless
+> it names `Stump`.
+>
+> ⛔ **The exception used to name `Tx` as well, and it stopped being true when `encodeTx` went
+> positional (2026-08-17).** `encodeTx` / `decodeTx` are `txIdBytes ‖ arr(signatures)` — see
+> Layout — UtxoTransaction — and the rows below still say "CBOR encode"/"CBOR decode".
+> ⚠ **An exception list is the worst place for a stale entry**: every other stale CBOR mention
+> is caught by the disclaimer, and the ones it exempts are caught by nothing.
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in
@@ -1784,17 +2226,135 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeSubBlock(bytes)` | `(Uint8Array) => SubBlock` | CBOR decode |
 | `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | CBOR encode — the input to `blockHash` / `computePowHash` |
 | `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | CBOR decode |
-| `encodeSubBlockTree(t)` | `(SubBlockTree) => Uint8Array` | CBOR encode (body section) |
-| `decodeSubBlockTree(bytes)` | `(Uint8Array) => SubBlockTree` | CBOR decode |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
-| `subBlockEntryBytes(e)` | `(SubBlockEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'subblock'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
-| `coinbaseOutputBytes(o)` | `(CoinbaseOutput) => Uint8Array` | One output's positional bytes. Both the tree codec's element writer and the `'coinbase'` Merkle leaf preimage |
+| `serializePruneEntry(e)` | `(PruneEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'prune'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Length-prefixed wire framing: `u32BE(len)‖headerCbor ‖ … ‖ validatorSignature(64)` |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
-| `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | CBOR encode |
-| `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | CBOR decode |
+| `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
+| `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
+
+> ⛔ **FOUR ROWS DELETED HERE, all naming symbols with no definition in `src`. Corrected
+> 2026-08-17:** `encodeSubBlockTree`, `decodeSubBlockTree`, `subBlockEntryBytes`,
+> `coinbaseOutputBytes`. ⚠ **`encodeTx` / `decodeTx` still said "CBOR encode" / "CBOR decode"**
+> after the codec went positional — the disclaimer above this table was corrected first and the rows
+> were not, which left the table technically readable and practically wrong.
+
+### How a dispatch decays this contract, and why nothing catches it
+
+⛔ **DECAY RUNS IN BOTH DIRECTIONS AND ONLY ONE OF THEM HAS AN OWNER.**
+
+| Direction | Who caused it | Who can fix it |
+|---|---|---|
+| A contract edit falsifies a **comment** a dispatch wrote | the contract author | ✅ the executor — same package, same session |
+| A dispatch deletes a symbol and falsifies a **contract row** | the executor | ⛔ **nobody in that session.** `contracts/` is outside their boundary |
+
+**The second is structurally orphaned.** An executor may not edit `contracts/`, so the most they can
+do is report it — and a report is read once, by one person, who is not editing this file at the time.
+✅ **Both instances of this pair happened in one dispatch on 2026-08-17**, which is what makes the
+asymmetry a measurement rather than a worry.
+
+⛔ **THE TRIGGER IS DELETION OF AN EXPORTED SYMBOL, AND IT IS CHECKABLE.** After any dispatch that
+removes one, grep `contracts/` for **every removed name** — not for the feature, not for the concept.
+A name-keyed search is the wrong instrument for finding behaviour and the **right** one here, because
+what rots is the name itself, spelled exactly.
+
+⚠ **Reading the contract does not find these.** Four dead rows sat in two tables through a session
+that edited this file five times, because a table row is read as inventory rather than as a claim.
+**Grep the symbol; do not re-read the section.**
+
+⛔ **THERE IS A SECOND TRIGGER AND DELETION-GREP CANNOT SEE IT: A DISPATCH THAT *IMPLEMENTS* WHAT A
+MARKER DISCLAIMS.** Nothing is removed, so no name goes stale — the marker itself becomes the false
+claim. `Layout — UtxoTransaction` carried `⚠ UNENFORCED — the code does not implement it` **dated the
+same day the code implemented it**, and a comment in another package cited that section, so a reader
+following the pointer landed on a banner contradicting the sentence that sent them.
+
+✅ **This one IS greppable, and by an easier search than the first.** The marker vocabulary is closed
+and stated at the top of `ARCHITECTURE.md` — `NOT IMPLEMENTED`, `PARTIAL`, `UNENFORCED`, `VIOLATED`,
+`AHEAD OF CODE`. **After any dispatch, re-read every marker whose subject that dispatch touched.**
+
+⚠ **The two triggers have opposite shapes and both are needed:** deletion strands a **name** while
+the claim around it still reads true; implementation strands a **claim** while every name in it
+still resolves. ⛔ **A marker is the one contract element whose whole purpose is to be falsified**,
+and nothing in this repo watches for the moment it happens.
+
+### A fifth, and the only one that is a PASSING ASSERTION: a defect WITNESS survives its own fix
+
+⛔ **A test written to document a known defect asserts that the defect EXISTS. When the defect is
+closed the test becomes false — and it stays GREEN**, because a witness usually drives the
+primitives directly to demonstrate the raw behaviour, so the fix lands at a layer the test does not
+reach.
+
+> ⚠ **Measured 2026-08-18.** Three cases titled *"VIOLATION: a like burn destroys `LIKE_KARMA_COST`
+> and names no sink"*, *"a bond forfeit ends karma and names no sink"*, *"an unvouch moves the stake
+> to a sink no box names"*. **All three defects were closed; all three still passed**, because they
+> call `insertBox`/`consumeBox` with no engine and no settlement between them. One even named the
+> unit that would close it — *"until then this witness stands"* — and named a function that had been
+> deleted.
+
+⛔ **The titles are PRESENT TENSE and assert a live violation**, so no tense-word sweep reaches them
+except by accident. **It is the inverse of every other rot in this file: it goes stale when the code
+gets BETTER, and nothing about it looks wrong.**
+
+✅ **Naming the closing unit is necessary and is not sufficient** — one of these did, and nothing
+connected the unit landing to the witness. **So closing a unit includes grepping the test tree for
+its own name.** A witness is a claim with an expiry, and it is the only kind whose expiry is an
+improvement.
+
+### A fourth: a PROSE RESTATEMENT decays while the assertion beside it stays green
+
+⛔ **A fact with a test asserting it can still be wrong everywhere it is described.** The assertion
+holds, the suite is green, and every prose copy rots independently — so **nothing ever fails**, and
+the green suite is what supplies the false assurance.
+
+> ⚠ **Measured 2026-08-18.** The genesis box set is asserted once —
+> `['emission', 'genesis_proof', 'karma_pool']`, three boxes — and restated in prose **three** times,
+> **each wrong, and each wrong differently**: *"the proof box alone"* (one), *"over TWO leaves"*
+> (two), and *"seed FIVE leaves"* (five, for a set of six). ⛔ **They disagree with the assertion and
+> with each other**, because each was written at a different time as the set grew, and none was
+> re-read when it grew again.
+
+⚠ **The count of wrong copies grows with the number of times the fact changed**, not with the number
+of files — a fact that moved three times leaves three differently-stale restatements wherever it is
+described.
+
+✅ **The check is cheap and it is not a grep for staleness.** When a fact has an assertion, find the
+prose that restates it and **compare each restatement to the assertion**. The assertion is the
+authority; a restatement is a claim that has to earn agreement.
+
+⛔ **AND A STALE COUNT RARELY TRAVELS ALONE.** One of these was reported to main, propagated into a
+dispatch brief verbatim, and its **neighbour in the same sentence** was still wrong — because the
+change that invalidated one invalidated the other. **When a comment is found stale in one number,
+re-read every number in it.**
+
+### A third failure is born wrong rather than decaying: an INVENTED prose name
+
+⛔ **A citation of the form `FILE → prose name` can point at a heading that does not exist, while
+every symbol in it resolves and the sentence around it is true.** Nothing decayed; the pointer was
+never good. ⚠ **A plausible prose name reads exactly like a real one**, and no search over the
+*claim* distinguishes them — the sentence is correct, so re-reading it finds nothing.
+
+⚠ **Measured 2026-08-18:** one invented name reached **six files** in a single dispatch before its
+author caught it, because it was written once and copied. **Invented pointers propagate at
+copy-paste speed**, which the two decay classes do not.
+
+✅ **This one is the cheapest of the three to check, and it is mechanical:** take every
+`FILE → prose name` a diff **adds**, and grep the cited text **against the file**. A prefix of a real
+name is fine — it still resolves — but text that matches nothing is a dangling pointer regardless of
+how true the sentence is.
+
+⛔ **GREP THE FILE, NOT ITS `#` HEADINGS**, and this correction comes from the check producing a
+false positive on a correct citation. **These contracts name sections in two ways**: `#` headings,
+and **bolded passages inside a blockquote** — `> **What the funnel's totality catch is FOR**` is a
+real, unique, greppable section name with no `#` anywhere near it. ⚠ **A heading-only check reports
+it as invented and invites someone to "fix" a pointer that resolves.** The test is whether the cited
+text is **findable and unique in the file**, not what markup carries it.
+
+⚠ **Re-check against `HEAD`, not against the contract as it stood when the citation was written.**
+A section's line range moves when anything above it grows, so a citation can stay correct while the
+rule it points at leaves the section — confirm the cited section still **contains** the claim, not
+merely that the heading still exists.
 
 ---
 

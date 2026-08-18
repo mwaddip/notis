@@ -19,8 +19,8 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, BOX_VALUE_BOUND, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, coinbaseOutputBytes } from '@dagsocial/types';
-import type { Post, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, CoinbaseOutput, AnyBoxCandidate } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_CONTENT_BYTES, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
+import type { Post, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -260,7 +260,7 @@ describe('verifyContentCharacters', () => {
   });
 
   it('rejects null byte', () => {
-    expect(verifyContentCharacters('hello world').valid).toBe(false);
+    expect(verifyContentCharacters('hello\u0000world').valid).toBe(false);
   });
 
   it('rejects backspace', () => {
@@ -370,10 +370,20 @@ describe('verifyParentRefsCount', () => {
 // ---------------------------------------------------------------------------
 
 describe('verifyTxStructure', () => {
+  // ⛔ Box ids are `b32` — 64 lowercase hex, always — so a stand-in like
+  // `'input1'` is not merely unrealistic: `writeHexNOrThrow` refuses it and the
+  // weight bound's `encodeTx` turns every fixture carrying one into
+  // `Transaction is not encodable`. Each rejection below therefore names its own
+  // error, so a fixture that drifts out of the codec's domain fails loudly
+  // instead of being credited to the rule it was written for.
+  const ID_A = 'aa'.repeat(32);
+  const ID_B = 'bb'.repeat(32);
+  const karmaOut = { boxType: 'karma', value: 5n, owner: new Uint8Array(32) } as const;
+
   it('accepts a valid transaction', () => {
     const tx: UtxoTransaction = {
-      inputs: ['input1'],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }],
+      inputs: [ID_A],
+      outputs: [{ ...karmaOut }],
       signatures: {},
       protocolVersion: 1,
     };
@@ -383,40 +393,54 @@ describe('verifyTxStructure', () => {
   it('rejects transaction with no inputs', () => {
     const tx: UtxoTransaction = {
       inputs: [],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }],
+      outputs: [{ ...karmaOut }],
       signatures: {},
       protocolVersion: 1,
     };
-    expect(verifyTxStructure(tx).valid).toBe(false);
+    expect(verifyTxStructure(tx)).toEqual({
+      valid: false,
+      error: 'Transaction must have at least one input',
+    });
   });
 
   it('rejects transaction with no outputs', () => {
     const tx: UtxoTransaction = {
-      inputs: ['input1'],
+      inputs: [ID_A],
       outputs: [],
       signatures: {},
       protocolVersion: 1,
     };
-    expect(verifyTxStructure(tx).valid).toBe(false);
+    expect(verifyTxStructure(tx)).toEqual({
+      valid: false,
+      error: 'Transaction must have at least one output',
+    });
   });
 
   it('rejects transaction with duplicate inputs', () => {
     const tx: UtxoTransaction = {
-      inputs: ['input1', 'input1'],
-      outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }],
+      inputs: [ID_A, ID_A],
+      outputs: [{ ...karmaOut }],
       signatures: {},
       protocolVersion: 1,
     };
-    expect(verifyTxStructure(tx).valid).toBe(false);
+    expect(verifyTxStructure(tx)).toEqual({
+      valid: false,
+      error: 'Duplicate input in transaction',
+    });
+    // Two distinct ids are the control: the rule is duplication, not arity.
+    expect(verifyTxStructure({ ...tx, inputs: [ID_A, ID_B] })).toEqual({ valid: true });
   });
 
   it('rejects transaction missing protocolVersion', () => {
     const tx = {
-      inputs: ['input1'],
-      outputs: [{ boxType: 'karma', value: 5n }],
+      inputs: [ID_A],
+      outputs: [{ ...karmaOut }],
       signatures: {},
     } as unknown as UtxoTransaction;
-    expect(verifyTxStructure(tx).valid).toBe(false);
+    expect(verifyTxStructure(tx)).toEqual({
+      valid: false,
+      error: 'Transaction missing protocolVersion',
+    });
   });
 });
 
@@ -438,7 +462,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   });
 
   const txWith = (outputs: AnyBoxCandidate[]): UtxoTransaction => ({
-    inputs: ['input1'],
+    inputs: ['aa'.repeat(32)],
     outputs,
     signatures: {},
     protocolVersion: 1,
@@ -456,10 +480,11 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
     ['karma', karmaOut],
     ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32) }],
-    ['invite', { boxType: 'invite', value: 0n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
     ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
     ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32) }],
     ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) }],
+    ['like_accrual', { boxType: 'like_accrual', value: 1n, author: new Uint8Array(32) }],
+    ['vouch_escrow', { boxType: 'vouch_escrow', value: 1n, owner: new Uint8Array(32), releaseAtBlock: 42 }],
   ];
 
   it('rejects a transaction that outputs a genesis_proof box', () => {
@@ -492,7 +517,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   // without the scan reading a field that is not there.
   it('rejects a genesis_proof output with no other field set', () => {
     const tx = {
-      inputs: ['input1'],
+      inputs: ['aa'.repeat(32)],
       outputs: [{ boxType: 'genesis_proof' }],
       signatures: {},
       protocolVersion: 1,
@@ -505,28 +530,57 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   });
 
   // Totality (M-5). The scan reads `boxType` off a peer-supplied object, so a
-  // non-object output yields a verdict rather than a TypeError. The verdict is
-  // unchanged: "an output is an object" is not a rule this package states.
+  // non-object output yields a verdict rather than a TypeError.
+  //
+  // ⛔ The verdict is a REJECTION, and it is the encoder's, not this scan's.
+  // "An output is an object" is still not a rule this package states — but a
+  // non-object has no box arm, so `canonicalBoxBytes` reaches a throwing writer
+  // and the weight bound's `encodeTx` catch turns that into the stated
+  // rejection (VALIDATION_INTERFACE → verifyTxStructure). What the scan
+  // guarantees is the *shape* of the answer: a verdict, never a TypeError.
   it.each([
     ['null', null],
     ['undefined', undefined],
     ['a number', 42],
     ['a string', 'genesis_proof'],
     ['an array', []],
-  ])('does not panic on %s in outputs', (_label, out) => {
+  ])('answers a verdict, never a throw, on %s in outputs', (_label, out) => {
     const tx = {
-      inputs: ['input1'],
+      inputs: ['aa'.repeat(32)],
       outputs: [out],
       signatures: {},
       protocolVersion: 1,
     } as unknown as UtxoTransaction;
-    expect(verifyTxStructure(tx)).toEqual({ valid: true });
+    expect(() => verifyTxStructure(tx)).not.toThrow();
+    expect(verifyTxStructure(tx)).toEqual({
+      valid: false,
+      error: 'Transaction is not encodable',
+    });
+  });
+
+  it('and the genesis_proof scan is not what refuses them', () => {
+    // The control: a well-formed karma output in the same position is accepted,
+    // so the rejections above are about the outputs being unencodable and not
+    // about the scan having grown a rule.
+    expect(verifyTxStructure(txWith([karmaOut]))).toEqual({ valid: true });
   });
 });
 
 // ---------------------------------------------------------------------------
 // verifyOrderingBlockStructure
 // ---------------------------------------------------------------------------
+
+/**
+ * The settlement transaction as *this* layer sees it — an id and opaque bytes.
+ *
+ * Position is the whole of its identity (NODE_INTERFACE → It is the LAST entry
+ * in `utxoTxIds`), so nothing here decodes it and no fixture needs it to be
+ * well-formed inside. Every valid-block fixture below carries one because a body
+ * without one is refused, and a fixture that did not would be measuring the
+ * settlement rule instead of whatever it names.
+ */
+const SETTLEMENT_ID = 'ee'.repeat(32);
+const SETTLEMENT_BYTES = new Uint8Array([1]);
 
 describe('verifyOrderingBlockStructure', () => {
   const makeValidBlock = (): OrderingBlock => ({
@@ -542,9 +596,9 @@ describe('verifyOrderingBlockStructure', () => {
       createdAt: Date.now(),
     },
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
-      pruneEntries: [], coinbaseOutputs: [],
+      utxoTxIds: [SETTLEMENT_ID],
+      utxoTxs: [SETTLEMENT_BYTES],
+      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   });
@@ -630,117 +684,97 @@ describe('verifyOrderingBlockStructure', () => {
       utxoTxTree: {
         utxoTxs: [],
         likeBoxIds: [],
-        pruneEntries: [], coinbaseOutputs: [],
+        pruneEntries: [],
       },
     } as unknown as OrderingBlock;
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
   });
 
-  it('accepts coinbase outputs with non-negative bigint values', () => {
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { owner: new Uint8Array(32).fill(2), value: 5n, lockedUntilBlock: 1, isTreasury: false },
-      { owner: new Uint8Array(32).fill(3), value: 0n, lockedUntilBlock: 1, isTreasury: true },
-    ];
-    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
-  });
-
-  it('rejects a coinbase output with a number value (bigint required)', () => {
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { owner: new Uint8Array(32).fill(2), value: 5, lockedUntilBlock: 1, isTreasury: false } as unknown as CoinbaseOutput,
-    ];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid value');
-  });
-
-  it('rejects a coinbase output with a negative bigint value', () => {
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { owner: new Uint8Array(32).fill(2), value: -1n, lockedUntilBlock: 1, isTreasury: false },
-    ];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('invalid value');
-  });
-
   // -------------------------------------------------------------------------
-  // The four store-write domain pins
+  // The settlement transaction — position is the whole of the rule here
   //
-  // Two of these close a chain measured end to end on `672f5a5`: a peer-chosen
-  // value that our own encoder writes as a sentinel the paired reader refuses,
-  // stored in `ordering_blocks` and read back as `UnreadableStoredBlockError`
-  // → `failStopIfCorruptChain` → `process.exit(1)`. The trigger is automatic —
-  // `extendsOurTip` reads the stored tip on every arriving gossip block — and
-  // the row is on disk, so it survives restart. The other two close the two
-  // remaining ways an out-of-domain field escapes the encoder: a reachable
-  // writer throw, and a second sentinel collision (TYPES_INTERFACE → Totality).
-  //
-  // Each pin is exercised on the value that was MEASURED rather than a
-  // convenient one, and each is separately shown NOT to reject what an honest
-  // producer emits — the failure a truthiness or too-tight test would cause.
+  // Every block carries one and it is the LAST entry in `utxoTxIds`
+  // (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). Identity being
+  // positional is what lets this package say anything at all: recognising a
+  // settlement by what it spends needs the karma pool's id, and that needs the
+  // UTXO set. So the one refusable state is an empty body, and these cases pin
+  // that it is refused for *that* reason and not by the alignment check or the
+  // body bound standing in for it.
   // -------------------------------------------------------------------------
 
-  /** A coinbase output well-formed in every field, against `makeValidBlock`'s height 1. */
-  const goodCoinbase = (): CoinbaseOutput => ({
-    owner: new Uint8Array(32).fill(2),
-    value: 5n,
-    lockedUntilBlock: 1,
-    isTreasury: false,
-  });
-
-  const hexOf = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
-
-  it('rejects a coinbase output whose isTreasury is not a boolean', () => {
+  /** The valid block with its body emptied, and `utxoTxs` emptied with it. */
+  const emptyBodied = (): OrderingBlock => {
     const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { ...goodCoinbase(), isTreasury: 'yes' } as unknown as CoinbaseOutput,
-    ];
-    expect(verifyOrderingBlockStructure(block)).toEqual({
+    block.utxoTxTree.utxoTxIds = [];
+    block.utxoTxTree.utxoTxs = [];
+    return block;
+  };
+
+  it('rejects a body carrying no transactions — every block carries a settlement', () => {
+    expect(verifyOrderingBlockStructure(emptyBodied())).toEqual({
       valid: false,
-      error: 'Coinbase output invalid isTreasury',
+      error: 'Ordering block body carries no settlement transaction',
     });
   });
 
-  it('isTreasury: every non-boolean collided on the 0xff byte readBool refuses', () => {
-    // `writeBool` is `value === true ? 1 : value === false ? 0 : 0xff`, so the
-    // entire non-boolean domain maps onto one encoding — a root collision — and
-    // onto a byte `readBool` rejects, which is what makes it a stored-row poison
-    // rather than a cosmetic defect. No consensus path reads the field:
-    // `block-apply`'s coinbase loop never passes it to `mintCredits`.
-    const nonBooleans = ['yes', 0, 1, {}, null];
-    const encodings = nonBooleans.map((v) =>
-      hexOf(coinbaseOutputBytes({ ...goodCoinbase(), isTreasury: v } as unknown as CoinbaseOutput)),
-    );
-    expect(new Set(encodings).size).toBe(1);
-    expect(encodings[0]!.endsWith('ff')).toBe(true);
-    expect(encodings[0]).not.toBe(hexOf(coinbaseOutputBytes(goodCoinbase())));
-    // And every one of them is now refused before it can reach that writer.
-    for (const v of nonBooleans) {
-      const block = makeValidBlock();
-      block.utxoTxTree.coinbaseOutputs = [
-        { ...goodCoinbase(), isTreasury: v } as unknown as CoinbaseOutput,
-      ];
-      expect(verifyOrderingBlockStructure(block)).toEqual({
-        valid: false,
-        error: 'Coinbase output invalid isTreasury',
-      });
-    }
+  it('one transaction is the difference between the two verdicts', () => {
+    // The two fixtures differ in exactly one entry, so nothing else in the
+    // function can be credited with either verdict — the shape the weight-bound
+    // pair below uses, applied to a count.
+    expect(verifyOrderingBlockStructure(emptyBodied()).valid).toBe(false);
+    expect(verifyOrderingBlockStructure(makeValidBlock())).toEqual({ valid: true });
   });
 
-  it('accepts isTreasury: false — the value a truthiness test would eat', () => {
-    // The honest producer emits `false` on every single-output block —
-    // `block-creator`'s `buildCoinbaseOutputs` sets `isTreasury: true` only on
-    // the treasury output — so a `!out.isTreasury` style check would reject the
-    // overwhelmingly common case. The pin is on the type, not the value.
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { ...goodCoinbase(), isTreasury: false },
-      { ...goodCoinbase(), isTreasury: true },
+  it('the alignment check is not what refuses an empty body', () => {
+    // `utxoTxs` is emptied alongside `utxoTxIds`, so the two arrays agree at
+    // length 0 and the alignment rule passes. A block that fails only because
+    // its arrays disagree names the alignment instead, which is what separates
+    // the two rules.
+    const empty = emptyBodied();
+    expect(empty.utxoTxTree.utxoTxs).toHaveLength(empty.utxoTxTree.utxoTxIds.length);
+    expect(verifyOrderingBlockStructure(empty).error).toBe(
+      'Ordering block body carries no settlement transaction',
+    );
+
+    const misaligned = makeValidBlock();
+    misaligned.utxoTxTree.utxoTxs = [];
+    expect(verifyOrderingBlockStructure(misaligned).error).toBe(
+      'Ordering block utxoTxs must align with utxoTxIds',
+    );
+  });
+
+  it('refuses the empty body before reading a prune entry or weighing anything', () => {
+    // ⛔ The way to measure which rule fires is to give one block *two* defects
+    // and check which one it names. This block has an empty body and a prune
+    // entry whose `subtreeMerkleRoot` is a 32-char string; both are refusable,
+    // and the prune loop runs first, so that is the name that comes back.
+    const block = emptyBodied();
+    block.utxoTxTree.pruneEntries = [
+      { ...makeValidPruneEntry(), subtreeMerkleRoot: 'a'.repeat(32) } as unknown as PruneEntry,
     ];
+    // Prune entries are typed ahead of the count, so that defect is named first
+    // — which is what makes the ordering observable rather than assumed.
+    expect(verifyOrderingBlockStructure(block).error).toContain('invalid subtreeMerkleRoot');
+
+    // With the prune entry sound, the count is what is left.
+    block.utxoTxTree.pruneEntries = [makeValidPruneEntry()];
+    expect(verifyOrderingBlockStructure(block).error).toBe(
+      'Ordering block body carries no settlement transaction',
+    );
+  });
+
+  it('states nothing about what the settlement contains', () => {
+    // The bytes are never decoded here, so a body whose one transaction is a
+    // single junk byte is accepted — what the settlement holds is consensus and
+    // belongs to node (NODE_INTERFACE → the settlement transaction). A check
+    // that rejected this would be reading a box, which is the thing positional
+    // identity exists to avoid.
+    const block = makeValidBlock();
+    block.utxoTxTree.utxoTxs = [new Uint8Array([0xff])];
     expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
   });
+
+  const hexOf = (bytes: Uint8Array): string => Buffer.from(bytes).toString('hex');
 
   it('rejects a utxoTxs element that is not a byte view', () => {
     const block = makeValidBlock();
@@ -790,96 +824,6 @@ describe('verifyOrderingBlockStructure', () => {
     block.utxoTxTree.utxoTxIds = ['bb'.repeat(32), 'cc'.repeat(32)];
     // `Buffer` extends `Uint8Array`, and node's `encodeTx` output must pass.
     block.utxoTxTree.utxoTxs = [new Uint8Array(0), Buffer.from([1, 2, 3])];
-    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
-  });
-
-  it('rejects a coinbase output value at BOX_VALUE_BOUND and above', () => {
-    // The accepted domain is `[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → Box
-    // value domain), so rejection begins at the bound itself — well below the
-    // codec's ceiling, which `2n ** 64n` names.
-    for (const bad of [BOX_VALUE_BOUND, BOX_VALUE_BOUND + 1n, 2n ** 64n]) {
-      const block = makeValidBlock();
-      block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), value: bad }];
-      expect(verifyOrderingBlockStructure(block)).toEqual({
-        valid: false,
-        error: 'Coinbase output invalid value',
-      });
-    }
-  });
-
-  it('value at 2^64 is the writer throw this pin makes unreachable', () => {
-    // `writeVlqU64OrThrow` is the codec's one throwing writer, and node reaches
-    // it at `computeUtxoTxRoot` — apply-funnel step 4, ahead of the coinbase sum
-    // at step 5 — so without this pin a malformed block becomes an "unexpected
-    // failure" logged by the funnel's totality catch rather than a stated
-    // rejection (NODE_INTERFACE → Ordering block apply-time authorization). The
-    // domain belongs upstream of the encoder.
-    expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n })).toThrow();
-    expect(() => coinbaseOutputBytes({ ...goodCoinbase(), value: 2n ** 64n - 1n })).not.toThrow();
-  });
-
-  it('accepts both ends of the accepted value domain', () => {
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { ...goodCoinbase(), value: 0n },
-      { ...goodCoinbase(), value: BOX_VALUE_BOUND - 1n },
-    ];
-    expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
-  });
-
-  it('rejects a value the codec encodes faithfully but the ledger cannot store', () => {
-    // The accepted domain is strictly narrower than the encodable one, and this
-    // value sits in the gap: SQLite's `INTEGER` is signed, so it encodes, hashes
-    // and derives a box id, and no row can hold it (TYPES_INTERFACE → Box value
-    // domain).
-    const stranded = 2n ** 64n - 1n;
-
-    // The rejection is this check's, not an encoder failure standing in for it:
-    // the writer takes the value without throwing and gives it its own bytes,
-    // so neither a throw nor a sentinel collision is what refuses the block.
-    const encoded = hexOf(coinbaseOutputBytes({ ...goodCoinbase(), value: stranded }));
-    expect(encoded).not.toBe(
-      hexOf(coinbaseOutputBytes({ ...goodCoinbase(), value: BOX_VALUE_BOUND - 1n })),
-    );
-
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), value: stranded }];
-    expect(verifyOrderingBlockStructure(block)).toEqual({
-      valid: false,
-      error: 'Coinbase output invalid value',
-    });
-  });
-
-  it('rejects a coinbase lockedUntilBlock outside the vlqU domain', () => {
-    for (const bad of [2 ** 60, Infinity, 1e300]) {
-      const block = makeValidBlock();
-      block.utxoTxTree.coinbaseOutputs = [{ ...goodCoinbase(), lockedUntilBlock: bad }];
-      expect(verifyOrderingBlockStructure(block)).toEqual({
-        valid: false,
-        error: 'Coinbase output invalid lockedUntilBlock',
-      });
-    }
-  });
-
-  it('lockedUntilBlock: 2^60, Infinity and 1e300 all collided on one encoding', () => {
-    // All three clear the `>= header.height` floor, which is why a lower bound
-    // alone cannot see them, and `writeVlqU` is total by sentinel — so they do
-    // not throw, they collide: three distinct blocks, one `utxoTxRoot`.
-    // `HEADER_DOMAIN`'s `createdAt` rule is the same pin one struct over.
-    const encodings = [2 ** 60, Infinity, 1e300].map((v) =>
-      hexOf(coinbaseOutputBytes({ ...goodCoinbase(), lockedUntilBlock: v })),
-    );
-    expect(new Set(encodings).size).toBe(1);
-    expect(encodings[0]).not.toBe(hexOf(coinbaseOutputBytes(goodCoinbase())));
-  });
-
-  it('accepts the lockedUntilBlock values an honest producer emits', () => {
-    const block = makeValidBlock();
-    block.utxoTxTree.coinbaseOutputs = [
-      { ...goodCoinbase(), lockedUntilBlock: block.header.height },
-      { ...goodCoinbase(), lockedUntilBlock: block.header.height + 720 },
-      { ...goodCoinbase(), lockedUntilBlock: Number.MAX_SAFE_INTEGER },
-    ];
     expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
   });
 
@@ -958,7 +902,7 @@ describe('verifyOrderingBlockStructure', () => {
     { name: 'subtreePostIds holds an uppercase-hex id', over: { subtreePostIds: ['AA'.repeat(32)] }, error: 'subtreePostId must be 64 lowercase hex' },
     { name: 'rootPostHash is 64 chars of non-hex', over: { rootPostHash: 'zz'.repeat(32) }, error: 'invalid rootPostHash' },
     { name: 'rootPostHash is uppercase hex', over: { rootPostHash: 'AA'.repeat(32) }, error: 'invalid rootPostHash' },
-    // The kill shot: a CBOR integer where 32 bytes belong. `Buffer.from(42)`
+    // The kill shot: an integer where 32 bytes belong. `Buffer.from(42)`
     // throws, and block apply reaches it with nothing in between.
     { name: 'subtreeMerkleRoot is a number', over: { subtreeMerkleRoot: 42 }, error: 'invalid subtreeMerkleRoot' },
     // Length-bearing impostors — what a `.length`-only check would wave through.
@@ -1092,7 +1036,10 @@ describe('ordering-block hex domains — the pin has teeth', () => {
      */
     postSolve: Partial<BlockHeader> = {},
   ): OrderingBlock => {
-    const { utxoTxIds = [], ...tree } = body;
+    // The settlement is the default body, not an empty one: a fixture with no
+    // transactions is refused by the count rule and would measure that instead
+    // of the poison it names (VALIDATION_INTERFACE → `utxoTxIds.length >= 1`).
+    const { utxoTxIds = [SETTLEMENT_ID], ...tree } = body;
     const solved = solve({
       protocolVersion: 1,
       height: 42,
@@ -1115,7 +1062,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
         utxoTxIds,
         utxoTxs: utxoTxIds.map(() => new Uint8Array(1)),
         pruneEntries: tree.pruneEntries ?? [],
-        coinbaseOutputs: tree.coinbaseOutputs ?? [],
       },
       validatorSignature,
     };
@@ -1199,6 +1145,44 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     });
     expect(verifyOrderingBlockStructure(control)).toEqual({ valid: true });
     expect(everythingElsePasses(control)).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // The settlement count, on a block that is real in every other respect
+  //
+  // Mined and signed like the poison fixtures above, and differing from the
+  // control in exactly one thing: it carries no transactions. So the claim "the
+  // count rule is what rejects it" is measured the same way the alphabet claims
+  // are — every other Stage-1 check is exercised on this exact object and
+  // passes.
+  // -------------------------------------------------------------------------
+
+  describe('a body with no settlement', () => {
+    const empty = (): OrderingBlock => makeBlock({ pruneEntries: [prune()], utxoTxIds: [] });
+
+    it('still clears version, height, PoW and the validator signature', () => {
+      const block = empty();
+      expect(verifyProtocolVersion(block.header.protocolVersion)).toBe(true);
+      expect(Number.isSafeInteger(block.header.height)).toBe(true);
+      expect(verifyOrderingBlockPoW(block.header)).toBe(true);
+      expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(true);
+      expect(everythingElsePasses(block)).toBe(true);
+    });
+
+    it('and the count rule is what rejects it', () => {
+      expect(verifyOrderingBlockStructure(empty())).toEqual({
+        valid: false,
+        error: 'Ordering block body carries no settlement transaction',
+      });
+    });
+
+    it('one transaction, and the same block is accepted', () => {
+      // The control differs from the fixture above in the body alone, so the
+      // prune entry, the header and the signature are all held fixed across the
+      // two verdicts.
+      const control = makeBlock({ pruneEntries: [prune()], utxoTxIds: [GOOD] });
+      expect(verifyOrderingBlockStructure(control)).toEqual({ valid: true });
+    });
   });
 
   for (const c of CASES) {
@@ -1347,15 +1331,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
         expect(result.error).toContain('invalid validatorId');
       });
 
-      it(`rejects a coinbase owner that is ${label(bad)}`, () => {
-        const block = makeBlock();
-        block.utxoTxTree.coinbaseOutputs = [
-          { owner: bad as Uint8Array, value: 1n, lockedUntilBlock: 42, isTreasury: false },
-        ];
-        const result = verifyOrderingBlockStructure(block);
-        expect(result.valid).toBe(false);
-        expect(result.error).toContain('invalid owner');
-      });
     }
 
     for (const bad of IMPOSTORS(64)) {
@@ -1438,7 +1413,10 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     const put = (over: Partial<OrderingBlock>, headerOver: Partial<BlockHeader> = {}): OrderingBlock => ({
       ...template,
       header: { ...template.header, ...headerOver },
-      utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+      // The settlement rides every fixture in the sweep: with an empty body the
+      // count rule refuses each one outright and `conforms` would be false for
+      // reasons that have nothing to do with the field being poisoned.
+      utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
       ...over,
     });
 
@@ -1461,35 +1439,36 @@ describe('ordering-block hex domains — the pin has teeth', () => {
           { block: put({ validatorSignature: bad as Uint8Array }), conforms: isBytesOf(bad, 64) },
           {
             block: put({
-              utxoTxTree: { utxoTxIds: [bad as string], utxoTxs: [new Uint8Array(1)], pruneEntries: [], coinbaseOutputs: [] },
+              utxoTxTree: { utxoTxIds: [bad as string], utxoTxs: [new Uint8Array(1)], pruneEntries: [] },
             }),
             conforms: isHex(bad, 64),
           },
           {
             block: put({
               utxoTxTree: {
-                utxoTxIds: [],
-                utxoTxs: [],
+                utxoTxIds: [SETTLEMENT_ID],
+                utxoTxs: [SETTLEMENT_BYTES],
                 pruneEntries: [
                   { ...prune(), rootPostHash: bad, subtreePostIds: [bad] } as unknown as PruneEntry,
                 ],
-                coinbaseOutputs: [],
               },
             }),
             conforms: isHex(bad, 64),
           },
+          // The body's own count, swept for the same property. `conforms` is
+          // flat `false` and that is a measurement, not a shortcut: the corpus
+          // holds five arrays — `[]`, `[null]`, `[undefined]`, `[Symbol]`,
+          // `[123]` — and the empty one is refused by the count while the other
+          // four are refused by the element pin, so no entry can conform.
           {
             block: put({
               utxoTxTree: {
-                utxoTxIds: [],
-                utxoTxs: [],
+                utxoTxIds: bad as unknown as string[],
+                utxoTxs: bad as unknown as Uint8Array[],
                 pruneEntries: [],
-                coinbaseOutputs: [
-                  { owner: bad, value: 1n, lockedUntilBlock: 42, isTreasury: false } as unknown as CoinbaseOutput,
-                ],
               },
             }),
-            conforms: isBytesOf(bad, 32),
+            conforms: false,
           },
         ];
 
@@ -1527,9 +1506,9 @@ describe('verifyBlockChainLink', () => {
       createdAt: Date.now(),
     },
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
-      pruneEntries: [], coinbaseOutputs: [],
+      utxoTxIds: [SETTLEMENT_ID],
+      utxoTxs: [SETTLEMENT_BYTES],
+      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   });
@@ -1877,7 +1856,7 @@ describe('no-panic on malformed input (M-5)', () => {
   const goodInput = Buffer.from('pow input');
   const goodBlock: OrderingBlock = {
     header: makeHeader(),
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
     validatorSignature: new Uint8Array(64),
   };
 
@@ -1931,8 +1910,11 @@ describe('no-panic on malformed input (M-5)', () => {
       // used to carry. `post: null` is the sharpest of these: it is the one
       // value where a property read before `isObject` would throw, which is why
       // `verifyPostFieldDomains` runs first inside the clause.
+      // The output is a whole karma box so the sweep reaches the post clause on
+      // its own terms: with an unencodable output every iteration would end at
+      // the weight bound's `encodeTx` catch instead.
       const withPost = (post: unknown) =>
-        ({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma' }], signatures: {}, protocolVersion: 1, post });
+        ({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post });
       expect(() => verifyTxStructure(withPost(bad) as any)).not.toThrow();
       expect(() => verifyTxStructure(withPost(null) as any)).not.toThrow();
       expect(() => verifyTxStructure(withPost({ ...goodPost, content: bad }) as any)).not.toThrow();
@@ -1971,19 +1953,22 @@ describe('no-panic on malformed input (M-5)', () => {
           },
         } as any),
       ).not.toThrow();
+      // The transaction list itself, which the count rule reads: `.length` off
+      // a non-array is `undefined`, and the `Array.isArray` gate above it is
+      // what keeps the comparison from being a silent `undefined === 0`.
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          utxoTxTree: { utxoTxIds: [], utxoTxs: [], likeBoxIds: [], pruneEntries: [], coinbaseOutputs: [bad] },
+          utxoTxTree: { utxoTxIds: bad, utxoTxs: bad, pruneEntries: [] },
         } as any),
       ).not.toThrow();
-      // The id is aligned deliberately: with an empty `utxoTxIds` the length
-      // check rejects first and the element pin is never reached, so the sweep
-      // would pass over the check it is meant to cover.
+      // The id is aligned deliberately: with an empty `utxoTxIds` the count and
+      // length checks reject first and the element pin is never reached, so the
+      // sweep would pass over the check it is meant to cover.
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad], pruneEntries: [], coinbaseOutputs: [] },
+          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad], pruneEntries: [] },
         } as any),
       ).not.toThrow();
     }
@@ -2033,14 +2018,27 @@ describe('no-panic on malformed input (M-5)', () => {
     // The successor to "would throw inside signingHash": the encoder a malformed
     // post reaches is now `postFieldBytes`, via `computeTxId`, and
     // `verifyTxStructure` is the gate in front of it.
+    //
+    // ⛔ The output is a WHOLE karma box, and that is what makes the test
+    // measure anything: a bare `{ boxType: 'karma' }` is unencodable, so the
+    // weight bound's `encodeTx` catch would reject every case below and each
+    // assertion would hold with the post clause deleted. The control at the end
+    // is the other half — it fails if the clause stops running.
     const tx = (post: unknown) =>
-      ({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma' }], signatures: {}, protocolVersion: 1, post });
+      ({
+        inputs: ['aa'.repeat(32)],
+        outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) }],
+        signatures: {},
+        protocolVersion: 1,
+        post,
+      });
     expect(verifyTxStructure(tx({ ...goodPost, parentRefs: 'nope' }) as any).valid).toBe(false);
     expect(verifyTxStructure(tx({ ...goodPost, parentRefs: [Symbol('x')] }) as any).valid).toBe(false);
     expect(verifyTxStructure(tx({ ...goodPost, author: undefined }) as any).valid).toBe(false);
     expect(verifyTxStructure(tx({ ...goodPost, author: 42 }) as any).valid).toBe(false);
     expect(verifyTxStructure(tx({ ...goodPost, content: 42 }) as any).valid).toBe(false);
     expect(verifyTxStructure(tx(null) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx(goodPost) as any)).toEqual({ valid: true });
   });
 
   it('rejects non-string content instead of throwing in Buffer.byteLength', () => {
@@ -2058,7 +2056,7 @@ describe('no-panic on malformed input (M-5)', () => {
     expect(verifyParentRefsCount({ length: 99 } as any).valid).toBe(false);
   });
 
-  it('rejects a malformed ordering block header instead of throwing in CBOR', () => {
+  it('rejects a malformed ordering block header instead of throwing in the encoder', () => {
     expect(verifyOrderingBlockPoW(null as any)).toBe(false);
     expect(verifyOrderingBlockPoW(makeHeader({ prevBlockHash: Symbol('s') as any }))).toBe(false);
     expect(verifyOrderingBlockPoW(makeHeader({ validatorId: undefined as any }))).toBe(false);
@@ -2076,7 +2074,11 @@ describe('no-panic on malformed input (M-5)', () => {
   // --- the happy path is unchanged ---
 
   it('leaves the happy path intact', () => {
-    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma' } as never], signatures: {}, protocolVersion: 1, post: goodPost })).toEqual({ valid: true });
+    // ⛔ A whole karma box, not a bare `{ boxType }`: outputs reach
+    // `canonicalBoxBytes` inside the weight bound's `encodeTx`, so a box missing
+    // `value` or `owner` is `Transaction is not encodable` and would make this
+    // "happy path" assert the opposite of its name.
+    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post: goodPost })).toEqual({ valid: true });
     expect(verifyContentLimits('hello')).toEqual({ valid: true });
     expect(verifyContentCharacters('hello')).toEqual({ valid: true });
     expect(verifyParentRefsCount([])).toEqual({ valid: true });
@@ -2632,7 +2634,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
   const blockOf = (h: BlockHeader, sig: Uint8Array): OrderingBlock => ({
     header: h,
-    utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [], coinbaseOutputs: [] },
+    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
     validatorSignature: sig,
   });
 
@@ -2894,9 +2896,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
     it('and the structure gate objects to nothing else about it', () => {
       // `createdAt` is the sole objection: the block fails with that message and
-      // no other. Every other check in that function — the entries, prune
-      // entries, utxoTx alignment, coinbase outputs, validatorSignature, the
-      // height and target floors — still passes on this exact object.
+      // no other. Every other check in that function — the prune entries, the
+      // settlement count, utxoTx alignment, validatorSignature, the height and
+      // target floors — still passes on this exact object.
       const result = verifyOrderingBlockStructure(block);
       expect(result.valid).toBe(false);
       expect(result.error).toBe('Ordering block header missing or invalid createdAt');
@@ -3085,39 +3087,51 @@ describe('verifyTxStructure — the transaction weight bound', () => {
     boxType: 'karma', value: 5n, owner: new Uint8Array(32),
   };
 
-  /** What a cbor-x text string of `k` characters costs: its header plus itself. */
-  const stringCost = (k: number): number => k + (k < 24 ? 1 : k < 256 ? 2 : 3);
+  /** What `lpUtf8` costs for `k` ASCII characters: its `vlqU` length prefix plus itself. */
+  const contentCost = (k: number): number => k + (k < 128 ? 1 : 2);
 
   /**
-   * A transaction encoding to exactly `target` bytes, grown through `inputs` —
-   * the only field that scales. A 64-hex box id costs 66 bytes, so the count
-   * alone cannot land on an arbitrary number: the last input carries whatever
-   * remains, and its own length is solved for rather than searched. Dropping one
-   * whole id widens the remainder by 66 when no single tail closes the gap
-   * (nothing costs exactly 25).
+   * A transaction encoding to exactly `target` bytes.
+   *
+   * ⛔ **No count can land on an arbitrary number.** Every input is `b32` — a
+   * fixed 32 bytes, whatever the id — and every signature is 96, so the counts
+   * move the size in steps and never between them (TYPES_INTERFACE → Layout —
+   * UtxoTransaction). The byte-granular field is the post's `lpUtf8(content)`,
+   * bounded at `MAX_CONTENT_BYTES`: the inputs carry the bulk and the content
+   * closes the last ≤ 300 bytes. Its own length prefix widens inside that range,
+   * so the length is solved against the measured base rather than derived, and
+   * dropping one whole input widens the remainder by 32 when no content length
+   * closes the gap.
    */
   const txOfEncodedSize = (target: number): UtxoTransaction => {
-    const build = (n: number, tail: string): UtxoTransaction => ({
-      inputs: [...Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, '0')), tail],
+    const build = (n: number, k: number): UtxoTransaction => ({
+      inputs: Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, '0')),
       outputs: [karmaOut],
       signatures: {},
       protocolVersion: 1,
+      post: {
+        content: 'a'.repeat(k),
+        author: new Uint8Array(32).fill(7),
+        parentRefs: [],
+        protocolVersion: 1,
+        timestamp: 1_700_000_000_000,
+      },
     });
-    for (let n = Math.ceil(target / 66); n >= 0; n--) {
-      const withoutTail = encodeTx(build(n, '')).length - stringCost(0);
-      const gap = target - withoutTail;
-      for (const k of [gap - 1, gap - 2, gap - 3]) {
-        if (k >= 0 && stringCost(k) === gap) return build(n, 'f'.repeat(k));
+    for (let n = Math.ceil(target / 32); n >= 0; n--) {
+      const withoutContent = encodeTx(build(n, 1)).length - contentCost(1);
+      const gap = target - withoutContent;
+      for (const k of [gap - 1, gap - 2]) {
+        if (k >= 1 && k <= MAX_CONTENT_BYTES && contentCost(k) === gap) return build(n, k);
       }
     }
     throw new Error(`no transaction fixture of exactly ${target} bytes`);
   };
 
   const atLimit = txOfEncodedSize(MAX_TX_BYTES);
-  /** The same transaction, one character longer in its tail input. */
+  /** The same transaction, one character longer in its post content. */
   const overLimit: UtxoTransaction = {
     ...atLimit,
-    inputs: [...atLimit.inputs.slice(0, -1), `${atLimit.inputs[atLimit.inputs.length - 1]!}f`],
+    post: { ...atLimit.post!, content: `${atLimit.post!.content}a` },
   };
 
   it('accepts a transaction encoding to exactly MAX_TX_BYTES', () => {
@@ -3147,21 +3161,30 @@ describe('verifyTxStructure — the transaction weight bound', () => {
         protocolVersion: 1,
       }) as unknown as UtxoTransaction;
 
-    // `cbor-x` refuses these outright. They clear every check above — the
-    // genesis_proof scan reads `boxType` and nothing else, and no rule here types
-    // an output's fields.
+    // `writeVlqU64OrThrow` refuses every one of these: a `bigint` spans the
+    // whole u64 and has no unreachable sentinel to collapse onto, so the writer
+    // throws rather than colliding (TYPES_INTERFACE → Totality). They clear
+    // every check above — the genesis_proof scan reads `boxType` and nothing
+    // else, and no rule here types an output's fields.
+    //
+    // ⛔ A nested array is on this list, and its verdict is the same as a
+    // number's. The encoder walks a **fixed** field list per box arm, so depth
+    // is not a property it can be defeated with: an array reaches `vlqU64` as a
+    // non-`bigint` and dies at the first throwing writer it meets.
     it.each([
       ['a symbol', Symbol('x')],
       ['a function', () => 1],
+      ['a number where a bigint belongs', 5],
+      ['a nested array', [[[0]]]],
     ])('rejects an output holding %s', (_label, value) => {
-      expect(verifyTxStructure(withOutput({ boxType: 'karma', value }))).toEqual({
+      expect(verifyTxStructure(withOutput({ boxType: 'karma', value, owner: new Uint8Array(32) }))).toEqual({
         valid: false,
         error: NOT_ENCODABLE,
       });
     });
 
     it('rejects an output whose getter throws inside the encoder', () => {
-      const out = { boxType: 'karma' };
+      const out = { boxType: 'karma', owner: new Uint8Array(32) };
       Object.defineProperty(out, 'value', {
         get() { throw new Error('boom'); },
         enumerable: true,
@@ -3169,18 +3192,43 @@ describe('verifyTxStructure — the transaction weight bound', () => {
       expect(verifyTxStructure(withOutput(out))).toEqual({ valid: false, error: NOT_ENCODABLE });
     });
 
-    // ⛔ The reachable one. Net's `tx` topic validator hands this function
-    // `decodeTx(raw)`, and nesting decodes a level cheaper than it re-encodes: a
-    // ~2 KB payload of nested arrays decodes at a depth whose re-encode overflows
-    // the stack (measured against cbor-x 1.6.4, 2026-08-15). The fixture is built
-    // directly and far deeper, so it does not ride on where that margin sits
-    // under a test runner's own stack. The verdict is asserted rather than the
-    // input, so a failure prints the result and not 100,000 nested arrays.
-    it('rejects nesting the encoder cannot walk', () => {
-      let deep: unknown = 0;
-      for (let i = 0; i < 100_000; i++) deep = [deep];
-      const verdict = verifyTxStructure(withOutput({ boxType: 'karma', value: deep }));
-      expect(verdict).toEqual({ valid: false, error: NOT_ENCODABLE });
+    // ⛔ The two throwing writers the transaction layout reaches outside a box,
+    // exercised on the fields that feed them. Both are `OrThrow` for the same
+    // reason: a fixed-width field has no spare encoding to sentinel into, so a
+    // value outside the width has no bytes at all rather than bytes it shares
+    // with a well-formed one.
+    it('rejects an input that is not 64 lowercase hex', () => {
+      // `writeHexNOrThrow(id, 32)`. Today's one production caller — net's `tx`
+      // topic validator — hands this function `decodeTx(raw)`, whose inputs are
+      // 64-hex by construction, so no *named* path arrives here with one of
+      // these. The pin is on the function's own postcondition rather than on a
+      // path: the no-panic rule is what an exported predicate owes every caller
+      // (VALIDATION_INTERFACE → Postconditions), and a rule justified by a path
+      // instead would be the shape that file warns about.
+      for (const bad of ['input1', '', 'aa'.repeat(31), 'AA'.repeat(32), `${'aa'.repeat(32)}f`]) {
+        expect(verifyTxStructure({
+          inputs: [bad],
+          outputs: [karmaOut],
+          signatures: {},
+          protocolVersion: 1,
+        })).toEqual({ valid: false, error: NOT_ENCODABLE });
+      }
+    });
+
+    it('rejects a signature that is not exactly 64 bytes, and a key that is not a 32-byte id', () => {
+      // `writeBytesNOrThrow(sig, 64)` and `writeHexNOrThrow(pubkey, 32)` — the
+      // signature map's two halves. Its domain is node's `checkTxEnvelope`, so
+      // this is the encoder's floor under that rule and not a second statement
+      // of it.
+      const signed = (key: string, sig: Uint8Array): UtxoTransaction => ({
+        inputs: ['aa'.repeat(32)],
+        outputs: [karmaOut],
+        signatures: { [key]: sig },
+        protocolVersion: 1,
+      });
+      expect(verifyTxStructure(signed('bb'.repeat(32), new Uint8Array(64)))).toEqual({ valid: true });
+      expect(verifyTxStructure(signed('bb'.repeat(32), new Uint8Array(63)))).toEqual({ valid: false, error: NOT_ENCODABLE });
+      expect(verifyTxStructure(signed('not-a-key', new Uint8Array(64)))).toEqual({ valid: false, error: NOT_ENCODABLE });
     });
   });
 });
@@ -3191,8 +3239,10 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
 
   /**
    * A block that passes every structural check, carrying the transactions given.
-   * `pruneEntries` and `coinbaseOutputs` stay empty so the body's weight is the
-   * transactions and their framing alone.
+   * `pruneEntries` stays empty so the body's weight is the transactions and
+   * their framing alone. The last of them is the settlement, which costs the
+   * body nothing extra — it rides `utxoTxIds` / `utxoTxs` like any other
+   * transaction (TYPES_INTERFACE → OrderingBlock).
    */
   const makeBlock = (utxoTxs: Uint8Array[]): OrderingBlock => ({
     header: {
@@ -3210,7 +3260,6 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
       utxoTxIds: utxoTxs.map((_, i) => i.toString(16).padStart(64, '0')),
       utxoTxs,
       pruneEntries: [],
-      coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
   });

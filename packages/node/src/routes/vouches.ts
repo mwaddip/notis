@@ -7,7 +7,7 @@ import { respondError } from './respond-error.js';
 import {
   getVouchesForTarget,
   getVouchesByVoucher,
-  getVouchCooldowns,
+  getVouchEscrowsFor,
 } from '../store/index.js';
 
 export interface VouchesDeps extends UtxoEngineDeps {
@@ -105,11 +105,15 @@ export function createRouter(deps: VouchesDeps): Router {
 
     if (cooldownsParam !== undefined && voucher) {
       const voucherBytes = new Uint8Array(Buffer.from(voucher, 'hex'));
-      const cooldowns = getVouchCooldowns(voucherBytes);
+      // ⛔ **No `targetId`, because a `VouchEscrowBox` carries none**
+      // (TYPES_INTERFACE → VouchEscrowBox). It holds the voucher, the staked
+      // value and the release height, so the response reports what committed
+      // state says rather than a field reconstructed from somewhere else.
+      const escrows = getVouchEscrowsFor(voucherBytes);
       res.status(200).json({
-        cooldowns: cooldowns.map((c) => ({
-          targetId: Buffer.from(c.targetId).toString('hex'),
-          releaseAtBlock: c.releaseAtBlock,
+        cooldowns: escrows.map((e) => ({
+          value: e.value.toString(),
+          releaseAtBlock: e.releaseAtBlock,
         })),
       });
       return;
@@ -141,6 +145,13 @@ export function createRouter(deps: VouchesDeps): Router {
           // (the "every stored box has an id" invariant), so the assertion is
           // on the store's guarantee, not on hope.
           boxId: v.id!,
+          // ⛔ **The stake, because the escrow must carry the CONSUMED BOX'S
+          // value and never `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE →
+          // VouchEscrowBox). A client that used the constant would build a
+          // conserving transaction for every box the cast pin holds for and a
+          // non-conserving one for any that it does not — which is exactly the
+          // coincidence the rule exists to remove.
+          value: v.value.toString(),
           voucherId: Buffer.from(v.voucherId).toString('hex'),
           targetId: Buffer.from(v.targetId).toString('hex'),
         })),

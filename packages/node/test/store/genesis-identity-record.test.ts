@@ -82,7 +82,6 @@ describe('genesis identity record (Spec G phase D)', () => {
     expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
       lastActivityBlock: 1,
       lastDecayBlock: 0,
-      likeCarry: 0n,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
     });
@@ -99,7 +98,6 @@ describe('genesis identity record (Spec G phase D)', () => {
     expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
       lastActivityBlock: 500,
       lastDecayBlock: 0,
-      likeCarry: 0n,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
     });
@@ -118,7 +116,6 @@ describe('genesis identity record (Spec G phase D)', () => {
     expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
       lastActivityBlock: 1,
       lastDecayBlock: 0,
-      likeCarry: 0n,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
     });
@@ -137,7 +134,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     //   never-active  (0) : floor((12 − 0) / 3) = 4 periods → burn 20
     //
     // 15 is what the box-height clock produced, `createdAtBlock` being 1.
-    const entries = s.decay.applyKarmaDecay(decayDeps(s), 12, {
+    const entries = s.decay.deriveKarmaDecay(decayDeps(s), 12, {
       staleThresholdBlocks: 11,
       decayIntervalBlocks: 3,
       decayAmount: 5n,
@@ -162,7 +159,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     };
     const before = (s.utxo.getKarmaBoxes(keypair.publicKey)[0] as KarmaBox).value;
 
-    expect(s.decay.applyKarmaDecay(decayDeps(s), 11, cfg)).toHaveLength(0);
+    expect(s.decay.deriveKarmaDecay(decayDeps(s), 11, cfg)).toHaveLength(0);
     expect((s.utxo.getKarmaBoxes(keypair.publicKey)[0] as KarmaBox).value).toBe(before);
   });
 

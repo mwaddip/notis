@@ -13,7 +13,13 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { KarmaBox, Post, Stump, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type { KarmaBox, LikeAccrualBox, Post, Stump, UtxoTransaction, AnyBox } from '@dagsocial/types';
+
+/**
+ * The author every post in this suite belongs to — the key the like's marker
+ * names, and the one `getTopologyAuthor` resolves.
+ */
+const POST_AUTHOR = new Uint8Array(32).fill(0x7a);
 import Database from 'better-sqlite3';
 
 import {
@@ -28,7 +34,7 @@ import {
   insertStump,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   hasPendingLike, insertUtxoTx } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -106,7 +112,11 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      // ⛔ The like marker's author pin: every post this fixture builds is the
+      // same author's (NODE_INTERFACE → Karma transition rules).
+      getTopologyAuthor: () => POST_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -137,6 +147,12 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     postId: string,
     opts: { deficit?: bigint } = {},
   ): UtxoTransaction {
+    // ⛔ **`deficit` is the MARKER'S VALUE now, not a hole in the ledger.** The
+    // like conserves: its cost moves into a `LikeAccrualBox` earmarked for the
+    // author (ARCHITECTURE → The conservation axiom, third shape). The
+    // parameter's name and every caller's intent survive — an "off" figure still
+    // makes an invalid like, just against the marker's pin rather than against
+    // conservation.
     const deficit = opts.deficit ?? LIKE_KARMA_COST;
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
@@ -146,6 +162,11 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
           value: karma.value - deficit,
           owner: likerPubKey,
         } as KarmaBox,
+        {
+          boxType: 'like_accrual',
+          value: deficit,
+          author: POST_AUTHOR,
+        } as LikeAccrualBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -299,6 +320,11 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
           value: otherKarma.value - LIKE_KARMA_COST,
           owner: otherPub,
         } as KarmaBox,
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          author: POST_AUTHOR,
+        } as LikeAccrualBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,

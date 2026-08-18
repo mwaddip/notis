@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { computeBoxId, computeMintTxId } from '@dagsocial/types';
-import type { AnyBox, KarmaBox } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, PostLockBox } from '@dagsocial/types';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import { labelNonce, seedProvenance } from '../helpers.js';
 
@@ -85,7 +85,69 @@ const user = (fill: number): Uint8Array => new Uint8Array(32).fill(fill);
 const POST_A = 'a1'.repeat(32);
 const HEIGHT = 700;
 
-describe('mint producers attach provenance (Spec G phase C1)', () => {
+
+
+/**
+ * A `PostLockBox` holding exactly `amount`, inserted and returned — the source
+ * a `transferKarma` call names.
+ *
+ * ⛔ **Every transfer needs one, and that IS the change.** A test that wants to
+ * put karma somewhere must now say where it came from, which is the discipline
+ * `mintKarma` had no place to express.
+ */
+function sourceFor(owner: Uint8Array, amount: bigint, nonce: number): PostLockBox[] {
+  const box = seedProvenance<PostLockBox>(
+    { boxType: 'post_lock' as const, value: amount, originalValue: amount, owner },
+    1,
+    nonce,
+  );
+  insertBoxSync(box);
+  return [box];
+}
+
+/** Bound in `beforeEach` so the fixtures above can stay synchronous. */
+let insertBoxSync: (box: AnyBox) => void;
+
+/**
+ * The one surviving karma producer that consolidates and stamps provenance.
+ *
+ * ⛔ **IT TAKES A SOURCE, AND THAT IS ITS WHOLE OBLIGATION.** The value has to
+ * come out of a box the call names (ARCHITECTURE → The conservation axiom); the
+ * consolidation and the provenance discipline are the ledger's standing ones.
+ * The seeded `PostLockBox` is that source, and it is the shape the live caller
+ * uses.
+ */
+async function transferOut(
+  owner: Uint8Array,
+  amount: bigint,
+  height: number,
+  ctx: { reason: string; subject: Uint8Array },
+  nonce = 1,
+): Promise<string> {
+  const { insertBox } = await import('../../src/store/utxo.js');
+  const { transferKarma } = await import('../../src/services/karma-transfer.js');
+  insertBoxSync = (await import('../../src/store/utxo.js')).insertBox;
+  const source = seedProvenance<PostLockBox>(
+    {
+      boxType: 'post_lock' as const,
+      value: amount,
+      originalValue: amount,
+      owner,
+    },
+    1,
+    nonce,
+  );
+  insertBox(source);
+  const [id] = transferKarma(
+    [source],
+    [{ owner, amount, ctx: ctx as never }],
+    null,
+    height,
+  );
+  return id!;
+}
+
+describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
 
@@ -97,14 +159,13 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
   // box instead — strip `id`/`txId`/`index` and re-derive — which asserts the
   // same equality against the **shipped** producer rather than against a
   // second, differently-configured call.
-  it('the minted id BINDS its provenance — stripping it changes the id', async () => {
+  it('the produced id BINDS its provenance — stripping it changes the id', async () => {
     const { initDb } = await importDbFresh();
     const { getBox } = await importUtxoFresh();
-    const { mintKarma } = await import('../../src/services/karma.js');
     const { postlockUnlockContext } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
-    const minted = mintKarma(user(0x01), 40n, HEIGHT, postlockUnlockContext(POST_A));
+    const minted = await transferOut(user(0x01), 40n, HEIGHT, postlockUnlockContext(POST_A));
     const stored = getBox(minted)!;
 
     // Inverted by phase G3b. This asserted the opposite — that stripping
@@ -126,38 +187,61 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
 
   // --- the provenance itself ------------------------------------------------
 
-  it('mintKarma stamps the txId its context derives, at index 0', async () => {
+  it('transferKarma stamps the txId its context derives, at index 0', async () => {
     const { initDb } = await importDbFresh();
     const { getBox } = await importUtxoFresh();
-    const { mintKarma } = await import('../../src/services/karma.js');
     const { postlockUnlockContext } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
     const ctx = postlockUnlockContext(POST_A);
-    const boxId = mintKarma(user(0x02), 10n, HEIGHT, ctx);
+    const boxId = await transferOut(user(0x02), 10n, HEIGHT, ctx);
 
     const stored = getBox(boxId)!;
     expect(stored.txId).toBe(computeMintTxId(HEIGHT, 'postlock-unlock', ctx.subject));
     expect(stored.index).toBe(0);
   });
 
-  it('mintCredits stamps provenance, and does so on the locked branch too', async () => {
+  it('⛔ it refuses to create karma, and refuses to lose it', async () => {
     const { initDb } = await importDbFresh();
-    const { getBox } = await importUtxoFresh();
-    const { mintCredits } = await import('../../src/services/credits.js');
-    const { coinbaseContext } = await import('../../src/mint-provenance.js');
+    const { insertBox } = await import('../../src/store/utxo.js');
+    const { transferKarma, KarmaNotConservedError } = await import(
+      '../../src/services/karma-transfer.js'
+    );
+    const { postlockUnlockContext } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
-    const ctx = coinbaseContext(1);
-    const boxId = mintCredits(user(0x03), 500n, HEIGHT, ctx, HEIGHT + 90);
+    const owner = user(0x0f);
+    const source = seedProvenance<PostLockBox>(
+      { boxType: 'post_lock' as const, value: 10n, originalValue: 10n, owner },
+      1,
+      77,
+    );
+    insertBox(source);
+    const ctx = postlockUnlockContext(POST_A);
 
-    const stored = getBox(boxId)!;
-    expect(stored.txId).toBe(computeMintTxId(HEIGHT, 'coinbase', ctx.subject));
-    expect(stored.index).toBe(0);
-    expect((stored as { lockedUntilBlock?: number }).lockedUntilBlock).toBe(HEIGHT + 90);
+    // ⛔ **Both directions, because a source is what makes either checkable.**
+    // Crediting more than the source holds is creation; leaving a surplus with
+    // nowhere named to hold it is destruction. A primitive taking an amount and
+    // no source can refuse neither.
+    expect(() =>
+      transferKarma([source], [{ owner, amount: 11n, ctx }], null, HEIGHT),
+    ).toThrow(KarmaNotConservedError);
+    expect(() =>
+      transferKarma([source], [{ owner, amount: 9n, ctx }], null, HEIGHT),
+    ).toThrow(KarmaNotConservedError);
+
+    // Non-vacuity: the exact amount is accepted, so the two above fail on the
+    // arithmetic rather than on the fixture.
+    expect(() =>
+      transferKarma([source], [{ owner, amount: 10n, ctx }], null, HEIGHT),
+    ).not.toThrow();
   });
 
-  // A test pinning the `null`-context shape lived here until phase G2b. It was
+  // ⛔ **NO CREDIT CASE, BECAUSE NO PRODUCER ATTACHES CREDIT PROVENANCE.**
+  // Coinbase credits are outputs of the block's settlement transaction and carry
+  // that transaction's real `(txId, index)`; `output-shape-id-integrity` pins the
+  // derivation every settlement output goes through.
+
   // deleted rather than adapted: `mintKarma`/`mintCredits` now take a required
   // `MintContext`, so the state it described is unreachable — and keeping it
   // would have forced `| null` to stay alive purely to satisfy it, inverting
@@ -171,23 +255,29 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
     const { initDb } = await importDbFresh();
     const { getBox } = await importUtxoFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
-    const { mintKarma } = await import('../../src/services/karma.js');
-    const { mintCredits } = await import('../../src/services/credits.js');
+    const { transferKarma } = await import('../../src/services/karma-transfer.js');
+  insertBoxSync = (await import('../../src/store/utxo.js')).insertBox;
     const {
       postlockUnlockContext,
-      coinbaseContext,
+      postlockRemainderContext,
       decayContext,
     } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
-    // Distinct owners, so no mint merge-consumes another's box.
+    // ⛔ **The sources are seeded OUTSIDE the journal**, because they are
+    // pre-block state — every transfer names a box that already existed. Seeded
+    // inside, each would be journalled as an insert and the count below would be
+    // measuring the fixture rather than the producers.
+    const s1 = sourceFor(user(0x11), 10n, 11);
+    const s2 = sourceFor(user(0x12), 20n, 12);
+    const s3 = sourceFor(user(0x13), 30n, 13);
+    // Distinct owners, so no consolidation reaches another's box.
     const produced = await producedBoxes(HEIGHT, () => {
-      mintKarma(user(0x11), 10n, HEIGHT, postlockUnlockContext(POST_A));
-      mintKarma(user(0x12), 20n, HEIGHT, decayContext(user(0x12)));
-      mintCredits(user(0x13), 30n, HEIGHT, coinbaseContext(0));
-      mintCredits(user(0x14), 40n, HEIGHT, coinbaseContext(1), HEIGHT + 5);
+      transferKarma(s1, [{ owner: user(0x11), amount: 10n, ctx: postlockUnlockContext(POST_A) }], null, HEIGHT);
+      transferKarma(s2, [{ owner: user(0x12), amount: 20n, ctx: postlockRemainderContext(POST_A) }], null, HEIGHT);
+      transferKarma(s3, [{ owner: user(0x13), amount: 30n, ctx: decayContext(user(0x13)) }], null, HEIGHT);
     });
-    expect(produced.length).toBe(4);
+    expect(produced.length).toBe(3);
 
     for (const box of produced) {
       // Provenance must be the last two keys the producer set — anything else
@@ -208,20 +298,23 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
     const { createAvlProver, bootstrapAvlProver } = await import(
       '../../src/state/avl-prover.js'
     );
-    const { mintKarma } = await import('../../src/services/karma.js');
-    const { mintCredits } = await import('../../src/services/credits.js');
+    const { transferKarma } = await import('../../src/services/karma-transfer.js');
+  insertBoxSync = (await import('../../src/store/utxo.js')).insertBox;
     const {
       postlockUnlockContext,
-      coinbaseContext,
+      postlockRemainderContext,
       decayContext,
     } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
+    // Sources outside the journal — pre-block state, as above.
+    const t1 = sourceFor(user(0x21), 10n, 21);
+    const t2 = sourceFor(user(0x22), 20n, 22);
+    const t3 = sourceFor(user(0x23), 30n, 23);
     const produced = await producedBoxes(HEIGHT, () => {
-      mintKarma(user(0x21), 10n, HEIGHT, postlockUnlockContext(POST_A));
-      mintKarma(user(0x22), 20n, HEIGHT, decayContext(user(0x22)));
-      mintCredits(user(0x23), 30n, HEIGHT, coinbaseContext(0));
-      mintCredits(user(0x24), 40n, HEIGHT, coinbaseContext(1), HEIGHT + 5);
+      transferKarma(t1, [{ owner: user(0x21), amount: 10n, ctx: postlockUnlockContext(POST_A) }], null, HEIGHT);
+      transferKarma(t2, [{ owner: user(0x22), amount: 20n, ctx: postlockRemainderContext(POST_A) }], null, HEIGHT);
+      transferKarma(t3, [{ owner: user(0x23), amount: 30n, ctx: decayContext(user(0x23)) }], null, HEIGHT);
     });
 
     // "Stayed up": the prover holds the producer-built objects.
@@ -244,7 +337,8 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
 
   it('postlock-unlock and postlock-remainder to one author, one post, one height differ', async () => {
     const { initDb } = await importDbFresh();
-    const { mintKarma } = await import('../../src/services/karma.js');
+    const { transferKarma } = await import('../../src/services/karma-transfer.js');
+  insertBoxSync = (await import('../../src/store/utxo.js')).insertBox;
     const { postlockUnlockContext, postlockRemainderContext } = await import(
       '../../src/mint-provenance.js'
     );
@@ -254,9 +348,12 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
     // Both legs: same author, same post, same height. The second
     // merge-consumes the first, so both boxes are visible only through the
     // journal.
+    // Sources outside the journal — pre-block state, as above.
+    const a1 = sourceFor(author, 3n, 31);
+    const a2 = sourceFor(author, 5n, 32);
     const produced = await producedBoxes(HEIGHT, () => {
-      mintKarma(author, 3n, HEIGHT, postlockUnlockContext(POST_A));
-      mintKarma(author, 5n, HEIGHT, postlockRemainderContext(POST_A));
+      transferKarma(a1, [{ owner: author, amount: 3n, ctx: postlockUnlockContext(POST_A) }], null, HEIGHT);
+      transferKarma(a2, [{ owner: author, amount: 5n, ctx: postlockRemainderContext(POST_A) }], null, HEIGHT);
     });
 
     expect(produced.length).toBe(2);
@@ -272,7 +369,7 @@ describe('mint producers attach provenance (Spec G phase C1)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// C2 — the producers that build boxes directly rather than through mintKarma
+// C2 — the producers that build boxes directly rather than through transferKarma
 // ---------------------------------------------------------------------------
 
 describe('direct mint producers attach provenance (Spec G phase C2)', () => {
@@ -311,96 +408,17 @@ describe('direct mint producers attach provenance (Spec G phase C2)', () => {
     karmaMinimum: 0n,
   };
 
-  it('applyKarmaDecay stamps the decay txId over the raw owner, at index 0', async () => {
-    const { initDb } = await importDbFresh();
-    const { getBox } = await importUtxoFresh();
-    const { mintKarma } = await import('../../src/services/karma.js');
-    const { applyKarmaDecay } = await import('../../src/services/decay.js');
-    const { postlockUnlockContext, decayContext } = await import(
-      '../../src/mint-provenance.js'
-    );
-    initDb(':memory:');
-
-    const owner = user(0x41);
-    mintKarma(owner, 50n, 1, postlockUnlockContext(POST_A));
-
-    const entries = applyKarmaDecay(await decayDeps(), HEIGHT, DECAY_CFG);
-    expect(entries.length).toBe(1);
-
-    const decayed = getBox(entries[0]!.newBoxId)!;
-    expect(decayed.txId).toBe(
-      computeMintTxId(HEIGHT, 'decay', decayContext(owner).subject),
-    );
-    expect(decayed.index).toBe(0);
-    expect((decayed as { decayBurn?: boolean }).decayBurn).toBe(true);
-  });
-
-  it('a decay box does not inherit the identity of the box it replaces', async () => {
-    const { initDb } = await importDbFresh();
-    const { getBox } = await importUtxoFresh();
-    const { mintKarma } = await import('../../src/services/karma.js');
-    const { applyKarmaDecay } = await import('../../src/services/decay.js');
-    const { postlockUnlockContext } = await import('../../src/mint-provenance.js');
-    initDb(':memory:');
-
-    // The across-heights adjacency: a decay box replacing an earlier mint's box
-    // must take a different identity, or the two would share an outpoint.
-    //
-    // (The *same-block* adjacency is reachable too, via vouch settlement —
-    // `processVouchCooldowns` runs after `applyKarmaDecay` in the mutation
-    // phase. That case is covered separately below.)
-    const owner = user(0x42);
-    const mintedId = mintKarma(owner, 50n, 1, postlockUnlockContext(POST_A));
-    const minted = getBox(mintedId)!;
-
-    const deps = await decayDeps();
-    const decayed = await producedBoxes(HEIGHT, () => {
-      applyKarmaDecay(deps, HEIGHT, DECAY_CFG);
-    });
-    expect(decayed.length).toBe(1);
-    expect(minted.txId).toBeDefined();
-    expect(decayed[0]!.txId).toBeDefined();
-    expect(decayed[0]!.txId).not.toBe(minted.txId);
-    expect(decayed[0]!.id).not.toBe(minted.id);
-  });
-
-  it('a decayed box round-trips byte-identically and keeps the digest', async () => {
-    const { initDb } = await importDbFresh();
-    const { getUnspentBoxes, getBox } = await importUtxoFresh();
-    const { serializeBox } = await import('../../src/state/serialize-box.js');
-    const { createAvlProver, bootstrapAvlProver } = await import(
-      '../../src/state/avl-prover.js'
-    );
-    const { mintKarma } = await import('../../src/services/karma.js');
-    const { applyKarmaDecay } = await import('../../src/services/decay.js');
-    const { postlockUnlockContext } = await import('../../src/mint-provenance.js');
-    initDb(':memory:');
-
-    mintKarma(user(0x43), 50n, 1, postlockUnlockContext(POST_A));
-    const deps = await decayDeps();
-    const produced = await producedBoxes(HEIGHT, () => {
-      applyKarmaDecay(deps, HEIGHT, DECAY_CFG);
-    });
-    expect(produced.length).toBe(1);
-
-    // `decayBurn` is the producer's last candidate field, so provenance must
-    // follow it — this is the ordering `rowToBox` reconstructs.
-    const keys = Object.keys(produced[0]!).filter((k) => k !== 'id');
-    expect(keys.slice(-2)).toEqual(['txId', 'index']);
-
-    const restored = getBox(produced[0]!.id!)!;
-    expect(Buffer.from(serializeBox(restored)).toString('hex')).toBe(
-      Buffer.from(serializeBox(produced[0]!)).toString('hex'),
-    );
-
-    const live = createAvlProver(makeAvlDb());
-    bootstrapAvlProver(live, produced, 0, []);
-    const restarted = createAvlProver(makeAvlDb());
-    bootstrapAvlProver(restarted, getUnspentBoxes(), 0, []);
-    expect(Buffer.from(restarted.prover.digest()!).toString('hex')).toBe(
-      Buffer.from(live.prover.digest()!).toString('hex'),
-    );
-  });
+  // ⛔ **DECAY HAS NO PROVENANCE CASES, BECAUSE IT PRODUCES NO BOX.** It derives
+  // a plan, and the block's settlement transaction emits the replacement karma
+  // as one of its outputs (NODE_INTERFACE → The settlement transaction) — so the
+  // box carries that transaction's real `(txId, index)` and there is no
+  // synthetic `decay` mint id to stamp. ✅ **A decay box cannot inherit the
+  // identity of the box it charges**: it is a fresh output of a different
+  // transaction, which is structural rather than asserted.
+  //
+  // ⚠ The `decayBurn` flag is load-bearing and is tested in
+  // `conservation-axiom` and the decay suite: it is what keeps the settlement's
+  // karma output from resetting the owner's activity clock.
 
   it('the two genesis boxes get distinct provenance under one selector each', async () => {
     const { initDb } = await importDbFresh();
@@ -446,76 +464,83 @@ describe('direct mint producers attach provenance (Spec G phase C2)', () => {
 // Consolidation order does not reach the minted identity
 // ---------------------------------------------------------------------------
 
-describe('mintKarma consolidates order-independently', () => {
+describe("⛔ getKarmaBoxes returns a TOTAL order, ties included", () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
 
   const OWNER = user(0x61);
-  const B5_HEIGHT = 900;
+
   /**
-   * Equal values, which is the whole shape under test: `getKarmaBoxes` is
-   * `ORDER BY value DESC` with **no tie-break**, so which of an equal-valued
-   * pair lands at `existingBoxes[0]` is physical row order. Two nodes holding
-   * the same box set can order it differently, and anything of that first box
-   * that reaches the minted id is a chain split rather than a preference.
+   * Equal values, which is the whole shape under test.
+   *
+   * ⛔ **`ORDER BY value DESC` ALONE IS A PARTIAL ORDER, and a partial order
+   * reads as handled.** Which of an equal-valued pair lands first would be
+   * physical row order — and the decay pass lists these ids as the settlement's
+   * INPUTS, which the transaction id hashes in order (NODE_INTERFACE → A derived
+   * quantity has TWO kinds of input). Two nodes holding the same box set would
+   * derive two different transactions.
+   *
+   * ⚠ **Equal values are ordinary, not exotic**: two faucet grants, or a payout
+   * that happens to match a balance already held.
    */
   const EQUAL_VALUE = 500n;
 
   /**
-   * Seed the pair in `tags` order, consolidate, and report the minted id
-   * alongside the order `getKarmaBoxes` actually handed `mintKarma`.
+   * Seed the pair in `tags` order and report the ids `getKarmaBoxes` hands back.
    *
    * The two boxes are identical but for their tag, so their provenance nonces
    * are what separate them — `canonicalBoxBytes` no longer distinguishes them
    * and they would otherwise derive one txId and trip
    * `UNIQUE(tx_id, output_index)`.
    */
-  async function consolidate(tags: [string, string]) {
+  async function seededOrder(tags: [string, string]): Promise<string[]> {
     vi.resetModules();
     const { initDb } = await importDbFresh();
-    const { insertBox } = await import('../../src/store/utxo.js');
-    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
-    const { mintKarma } = await import('../../src/services/karma.js');
-    const { coinbaseContext } = await import('../../src/mint-provenance.js');
+    const { insertBox, getKarmaBoxes } = await import('../../src/store/utxo.js');
     initDb(':memory:');
 
     for (const tag of tags) {
       insertBox(
         seedProvenance<KarmaBox>(
-          {
-            boxType: 'karma' as const,
-            value: EQUAL_VALUE,
-            owner: OWNER,
-          },
+          { boxType: 'karma' as const, value: EQUAL_VALUE, owner: OWNER },
           1,
           labelNonce(tag),
         ),
       );
     }
-
-    beginBlockJournal(B5_HEIGHT);
-    const id = mintKarma(OWNER, 100n, B5_HEIGHT, coinbaseContext(0));
-    const consumed = finishBlockJournal()
-      .mutations.filter((m): m is BoxMutation => m.kind === 'box' && m.op === 'remove')
-      .map((m) => m.boxId);
-    return { id, consumed };
+    return getKarmaBoxes(OWNER).map((b) => b.id!);
   }
 
-  it('an equal-valued pair reaches one id whichever row order the store returns', async () => {
-    const first = await consolidate(['faucet', 'mint-1']);
-    const second = await consolidate(['mint-1', 'faucet']);
+  it('an equal-valued pair comes back in ONE order whichever way it was inserted', async () => {
+    const first = await seededOrder(['faucet', 'mint-1']);
+    const second = await seededOrder(['mint-1', 'faucet']);
 
-    // The premise, asserted rather than assumed. `mintKarma` consumes in
-    // `existingBoxes` order, so the journal's remove sequence IS the order the
-    // store returned. If the two runs saw the same order, the equality below
-    // would hold for a store that ignored row order entirely and this test
-    // would pin nothing.
-    expect(first.consumed).toHaveLength(2);
-    expect(second.consumed).toEqual([...first.consumed].reverse());
+    expect(first).toHaveLength(2);
+    // ⛔ The assertion the tie-break buys: one order, whatever the rows do.
+    expect(second).toEqual(first);
+    // Non-vacuity: the two runs really do hold different boxes in a different
+    // physical order, so equality is the store's doing and not the fixture's.
+    expect(new Set(first).size).toBe(2);
+  });
 
-    // The two tags differ, so under a preimage carrying one the two runs would
-    // mint different ids from the same box set — different AVL keys, different
-    // `stateRoot`, a fork between nodes that agree on every transaction.
-    expect(first.id).toBe(second.id);
+  it('the tie-break is ascending id, and value DESC still leads', async () => {
+    vi.resetModules();
+    const { initDb } = await importDbFresh();
+    const { insertBox, getKarmaBoxes } = await import('../../src/store/utxo.js');
+    initDb(':memory:');
+
+    // ⚠ **`value DESC` leads and `id` only breaks ties**, so coin selection
+    // still takes the largest box first — the ordering is total without the
+    // preference being a tie-break's side effect.
+    for (const [tag, value] of [['small', 1n], ['big', 900n], ['mid', 500n]] as const) {
+      insertBox(
+        seedProvenance<KarmaBox>(
+          { boxType: 'karma' as const, value, owner: OWNER },
+          1,
+          labelNonce(tag),
+        ),
+      );
+    }
+    expect(getKarmaBoxes(OWNER).map((b) => b.value)).toEqual([900n, 500n, 1n]);
   });
 });

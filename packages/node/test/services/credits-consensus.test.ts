@@ -108,10 +108,6 @@ async function importJournalStore() {
   return await import('../../src/store/journal.js');
 }
 
-async function importVouchCooldowns() {
-  return await import('../../src/store/vouch-cooldowns.js');
-}
-
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -195,7 +191,6 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const utxo = await importUtxo();
     const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
-    const cooldowns = await importVouchCooldowns();
     const mempool = await importMempool();
     const posts = await importPosts();
     const bc = await importBlockCreator();
@@ -213,7 +208,9 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       consumeBox: utxo.consumeBox,
       getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
-      hasActiveVouchCooldown: cooldowns.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     };
 
@@ -285,7 +282,6 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     let utxo = await importUtxo();
     const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
-    const cooldowns = await importVouchCooldowns();
     const mempool = await importMempool();
     const posts = await importPosts();
     const bc = await importBlockCreator();
@@ -319,7 +315,9 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       consumeBox: utxo.consumeBox,
       getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
-      hasActiveVouchCooldown: cooldowns.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     };
     const tx = buildSignedTransfer(

@@ -142,7 +142,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     insertBox(karmaBox(alice, 42, 100n));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('the height is the journal height, not the box createdAtBlock', async () => {
@@ -160,7 +160,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     insertBox(karmaBox(alice, 7, 100n));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 90, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 90, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('a decay-burn karma box does NOT bump the activity clock', async () => {
@@ -195,7 +195,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     insertBox(karmaBox(alice, 50, 100n, false));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 50, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 50, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('a decay-burn insert leaves an existing record untouched', async () => {
@@ -214,7 +214,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     insertBox(karmaBox(alice, 80, 70n, true));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 10, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 10, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('a non-karma box creates no record', async () => {
@@ -256,13 +256,13 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     // The two halves of the record have different writers. An activity bump
     // that reset the decay clock would hand the owner a free interval.
     const alice = owner('alice');
-    putIdentityRecord(alice, { lastActivityBlock: 5, lastDecayBlock: 33, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(alice, { lastActivityBlock: 5, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
 
     beginBlockJournal(77);
     insertBox(karmaBox(alice, 77, 100n));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 77, lastDecayBlock: 33, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 77, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('each identity gets its own clock', async () => {
@@ -281,8 +281,8 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     insertBox(karmaBox(bob, 9, 100n));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 3, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    expect(getIdentityRecord(bob)).toEqual({ lastActivityBlock: 9, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 3, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(bob)).toEqual({ lastActivityBlock: 9, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('the bump is journaled, after the box insert it followed', async () => {
@@ -306,7 +306,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
         kind: 'record',
         key: identityRecordKey(alice),
         identityId: alice,
-        record: { lastActivityBlock: 4, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+        record: { lastActivityBlock: 4, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
       },
     ]);
   });
@@ -319,7 +319,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     initDb(':memory:');
 
     const alice = owner('alice');
-    putIdentityRecord(alice, { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(alice, { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
 
     beginBlockJournal(6);
     insertBox(karmaBox(alice, 6, 10n));
@@ -328,8 +328,8 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const records = journal.mutations.filter((m) => m.kind === 'record');
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
-      record: { lastActivityBlock: 6, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
-      replaced: { lastActivityBlock: 2, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+      record: { lastActivityBlock: 6, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+      replaced: { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
     });
   });
 
@@ -362,6 +362,6 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     insertBox(karmaBox(alice, 0, 100n));
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 });

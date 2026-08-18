@@ -5,7 +5,6 @@ import {
   MAX_PARENT_REFS,
   MAX_TX_BYTES,
   MAX_BLOCK_BODY_BYTES,
-  BOX_VALUE_BOUND,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
@@ -56,8 +55,9 @@ export function ed25519PublicKeyToKeyObject(rawKey: Uint8Array): ReturnType<type
 // its arguments may be wrongly typed or out of range. The guards below stand in
 // front of the operations that throw on such input — `Buffer.byteLength`,
 // `Buffer.from`, `createPublicKey`, `crypto.verify`, `BigInt` /
-// `writeBigUInt64LE`, CBOR encoding, and plain `.length` reads — so a malformed
-// object yields a clean `false` / `{ valid: false }`, never an exception.
+// `writeBigUInt64LE`, the codec's throwing writers, and plain `.length` reads —
+// so a malformed object yields a clean `false` / `{ valid: false }`, never an
+// exception.
 //
 // Each guard checks exactly the declared type of the field it protects, so a
 // well-formed object from any conforming encoder passes unchanged and the happy
@@ -301,10 +301,10 @@ function firstHeaderDomainFailure(h: unknown): HeaderDomainRule | null {
  * `blockHash` and `computePowHash`, and the single source of the header's
  * encodable domain.
  *
- * Only declared fields are checked. A header carrying an *extra* property that
- * holds a symbol, function, or reference cycle would still throw inside
- * `cbor-x`, but such a header cannot arrive over the wire (CBOR encodes none of
- * those); it can only be built in-process, which is trusted.
+ * Only declared fields are checked, and that is the whole domain: `encodeHeader`
+ * writes the nine declared fields positionally and reads nothing else, so an
+ * *extra* property on a header — a symbol, a function, a reference cycle —
+ * reaches no writer and has no bytes.
  *
  * Returns a **reason**, not a boolean, because a rejection's diagnosis is not
  * subsumed by the rejection: `verifyOrderingBlockStructure` re-labels the
@@ -628,16 +628,16 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   // an *embedded* transaction as it arrived, and that asymmetry is deliberate —
   // each measures the bytes its own object costs.
   //
-  // ⛔ `encodeTx` is `cbor-x` over a peer-supplied object and it throws on
-  // values every check above admits: a `symbol` or `function` anywhere in the
-  // tree (`Unknown type`), a getter or `Proxy` trap that throws, and nesting
-  // past a depth near 2000 (`RangeError`). The last is reachable from the one
-  // production caller — net's `tx` topic validator hands this function
-  // `decodeTx(raw)`, and a ~2 KB payload of nested arrays decodes at a depth the
-  // re-encode overflows on (measured against cbor-x 1.6.4, 2026-08-15). The
-  // no-panic rule (Postconditions — No-panic M-5) decides the shape: a
-  // transaction that cannot be encoded cannot be stored, mined or relayed, so
-  // the throw is a rejection and not an escape.
+  // ⛔ `encodeTx` is the positional codec over a peer-supplied object, and its
+  // throwing writers reach values every check above admits: an `inputs` element
+  // or a `likeTarget` outside 64 lowercase hex (`writeHexNOrThrow`), an output
+  // box whose `owner` is not exactly 32 bytes or whose `value` leaves
+  // `[0, 2^64)` (`canonicalBoxBytes`), and a `signatures` key or 64-byte value
+  // of the same shape (TYPES_INTERFACE → Totality). None of them has an
+  // unreachable sentinel to collapse onto, which is why the writer throws
+  // instead. The no-panic rule (Postconditions — No-panic M-5) decides the
+  // shape: a transaction that cannot be encoded cannot be stored, mined or
+  // relayed, so the throw is a rejection and not an escape.
   let encoded: Uint8Array;
   try {
     encoded = encodeTx(tx);
@@ -685,9 +685,10 @@ export function verifyOrderingBlockStructure(
     return { valid: false, error: BLOCK_HEADER_FIELD_ERROR[headerFailure.field] };
   }
   // Prune entries. Every byte field is checked with `isBytes`, not a `.length`
-  // read: a CBOR payload puts any type in any field, and a 32-char string or a
-  // `{length: 32}` object satisfies a length check while throwing in the
-  // `Buffer.from` / `createHash().update()` these fields reach at block apply.
+  // read: a stored row put back through a bare `value as T` carries any type in
+  // any field, and a 32-char string or a `{length: 32}` object satisfies a
+  // length check while throwing in the `Buffer.from` /
+  // `createHash().update()` these fields reach at block apply.
   // Type is the only property that makes those calls safe.
   // The `?.` is load-bearing — it makes a block with no `utxoTxTree` at all a
   // stated rejection here rather than a TypeError in the loop below.
@@ -726,8 +727,8 @@ export function verifyOrderingBlockStructure(
     }
   }
   // `isBytes`, not a bare `.length` — the same rule the prune-entry block above
-  // states, and it governs the three byte fields outside that block too
-  // (`validatorSignature` here, `validatorId`, `coinbaseOutput.owner`). They are
+  // states, and it governs the two byte fields outside that block too
+  // (`validatorSignature` here, `validatorId` in the header domain). They are
   // `b64`/`b32` *from a `Uint8Array`*, so the codec reaches
   // `writeBytesNOrThrow`, which throws on anything that is not a byte view of
   // that exact width; a 64-character string, `{length: 64}` and a 64-element
@@ -747,6 +748,24 @@ export function verifyOrderingBlockStructure(
   }
   if (!Array.isArray(block.utxoTxTree?.utxoTxIds)) {
     return { valid: false, error: 'Ordering block missing utxoTxTree.utxoTxIds' };
+  }
+  // ⛔ The settlement transaction is the LAST entry, and that is the whole of
+  // how it is identified (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+  // Every block carries one, so an empty body is a block that cannot have paid
+  // its own coinbase and is refused here, before a single box is read.
+  //
+  // ⚠ **Non-emptiness is the whole of what this package can state about the
+  // rule**, and the reason is the identification itself: with position deciding
+  // identity, "exactly one" is a consequence of there being one last entry
+  // rather than a count this function could take. Recognising a settlement in
+  // any *other* position means recognising what it spends — the karma pool,
+  // whose id needs the UTXO set, and that read is the one positional identity
+  // exists to avoid. The other half is node's: every node derives a
+  // byte-identical settlement from the same body (NODE_INTERFACE → Determinism
+  // is this mechanism's whole risk), and the verifier checks the producer's
+  // against its own derivation (MINING_INTERFACE → the receipt checks survive).
+  if (block.utxoTxTree.utxoTxIds.length === 0) {
+    return { valid: false, error: 'Ordering block body carries no settlement transaction' };
   }
   // Without this check an element could be a number, an object or `null`, and
   // those reach `hexToBuf(id)` inside `computeUtxoTxRoot`'s Merkle build, which
@@ -777,9 +796,9 @@ export function verifyOrderingBlockStructure(
   // the next gossip block's `extendsOurTip` (measured on `672f5a5`).
   //
   // No commitment makes that unreachable: `utxoTxRoot` commits `utxoTxIds` and
-  // `coinbaseOutputs` and **never `utxoTxs`**, and the validator signature
-  // covers the header only — so a *relaying* node can swap the payload on an
-  // honest block with no re-mine and no re-sign. All three peer paths decode
+  // **never `utxoTxs`**, and the validator signature covers the header only —
+  // so a *relaying* node can swap the payload on an honest block with no
+  // re-mine and no re-sign. All three peer paths decode
   // through the positional codec (`decodeOrderingBlock` on gossip,
   // `decodeBlocks` under `requestBlocks`, `decodeOrderingBlock` again under
   // `appendBlocks`), so a swap is refused there; this pin is what keeps the
@@ -808,80 +827,15 @@ export function verifyOrderingBlockStructure(
       return { valid: false, error: `Ordering block utxoTx too large (max ${MAX_TX_BYTES} bytes)` };
     }
   }
-  if (!Array.isArray(block.utxoTxTree?.coinbaseOutputs)) {
-    return { valid: false, error: 'Ordering block missing utxoTxTree.coinbaseOutputs' };
-  }
-  for (const out of block.utxoTxTree.coinbaseOutputs) {
-    if (!isObject(out)) {
-      return { valid: false, error: 'Coinbase output is not an object' };
-    }
-    if (!isBytes(out.owner) || out.owner.length !== 32) {
-      return { valid: false, error: 'Coinbase output missing or invalid owner' };
-    }
-    // `value` is `bigint`, and the domain admitted here is the **accepted**
-    // one, `[0, BOX_VALUE_BOUND)` — strictly narrower than what the codec
-    // encodes (TYPES_INTERFACE → Box value domain), with the obligation to
-    // check it assigned to this function (VALIDATION_INTERFACE →
-    // verifyOrderingBlockStructure). A value above the bound but still inside
-    // the codec's domain encodes cleanly and derives a box id, and SQLite's
-    // signed `INTEGER` cannot store it, so admitting one crashes block
-    // application instead of rejecting it.
-    //
-    // Sitting below the codec's own ceiling, the bound also keeps
-    // `writeVlqU64OrThrow` out of reach — the one **throwing** writer in the
-    // codec, because a `bigint` spans the whole u64 and has no unreachable
-    // sentinel to fall back on (TYPES_INTERFACE → Totality). That throw is
-    // reachable otherwise: node's apply funnel computes `computeUtxoTxRoot` at
-    // **step 4**, ahead of the coinbase sum at step 5, so the block would die
-    // inside root computation and the funnel's totality catch would log an
-    // "unexpected failure" instead of a stated rejection (NODE_INTERFACE →
-    // Ordering block apply-time authorization).
-    if (typeof out.value !== 'bigint' || out.value < 0n || out.value >= BOX_VALUE_BOUND) {
-      return { valid: false, error: 'Coinbase output invalid value' };
-    }
-    // `isU64Safe`, not a bare `typeof === 'number'`: the writer is `vlqU` over a
-    // `number`, which is total *by sentinel*, so an out-of-domain height does
-    // not throw — it **collides**. `2^60`, `Infinity` and `1e300` all clear the
-    // `>= h.height` floor and all three encode to `VLQ_SENTINEL`, giving
-    // distinct blocks one `utxoTxRoot`. `HEADER_DOMAIN`'s `createdAt` rule is
-    // the same pin one struct over.
-    //
-    // Nothing here relies on the funnel: `lockedUntilBlock` is saved today only
-    // by step 5b's exact-equality check, which is incidental protection — loosen
-    // that to a range for a maturity-schedule change and the row reopens with no
-    // compiler signal. The `>= 0` half of `isU64Safe` is implied by
-    // `>= h.height >= 1`; it is kept because the predicate names the writer's
-    // domain, not this call site's.
-    if (!isU64Safe(out.lockedUntilBlock) || out.lockedUntilBlock < h.height) {
-      return { valid: false, error: 'Coinbase output invalid lockedUntilBlock' };
-    }
-    // Nothing else in the repo checks this field — not this function's callers,
-    // not apply. `block-apply`'s coinbase loop passes `owner`, `value` and
-    // `lockedUntilBlock` to `mintCredits` and never reads `isTreasury`, so it
-    // enters no box, no journal entry and no AVL value; outside the store round
-    // trip the only readers are node's `blocks` and `mining` routes, copying it
-    // into a JSON response. `writeBool` emits `0xff` for any non-boolean and
-    // `readBool` refuses it, so the same fail-stop chain as `utxoTxs` above — at
-    // the cost of one block's PoW, since `utxoTxRoot` *does* commit the
-    // coinbase leaf and the malformed block honestly commits to its own byte.
-    //
-    // Truthiness would not do: the honest producer emits `false` on every
-    // single-output block, so the test is the type, not the value.
-    if (typeof out.isTreasury !== 'boolean') {
-      return { valid: false, error: 'Coinbase output invalid isTreasury' };
-    }
-  }
   // The body weight bound, refused here rather than at apply because this is
   // what net runs before relay (VALIDATION_INTERFACE → The body size bound).
   //
   // ⛔ It runs after every check above and that position is the only safe one.
   // `utxoTxTreeByteLength` is total on a section of any type — a non-array
   // sections its own count, a non-byte-view element sentinels its length prefix
-  // — but its per-element sizers read a **property** off each entry, so
-  // `pruneEntries: [null]` and `coinbaseOutputs: [null]` are TypeErrors rather
-  // than lengths. The prune loop types the first and the coinbase loop directly
-  // above types the second, which puts the earliest total position at the end of
-  // that loop.
+  // — but `pruneEntryByteLength` reads a **property** off each entry, so
+  // `pruneEntries: [null]` is a TypeError rather than a length. The prune loop
+  // types it, which puts the earliest total position after that loop.
   //
   // The bound holds a relation and not a number — `MAX_BLOCK_BODY_BYTES` <
   // `MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES` (`TYPES_INTERFACE` → Size caps).
@@ -990,8 +944,8 @@ export function verifyBlockChainLink(
 ): boolean {
   if (!isObject(block) || !isObject(prevBlock)) return false;
   if (!isObject(block.header)) return false;
-  // `prevBlock.header` is CBOR-encoded by the hash; `block.header` is only read
-  // from, so it needs no encodability guard.
+  // `prevBlock.header` reaches `encodeHeader` through the hash; `block.header`
+  // is only read from, so it needs no encodability guard.
   const prevHash = blockHash(prevBlock.header);
   if (prevHash === null) return false;
   return (

@@ -9,7 +9,6 @@ import {
   getKarmaBoxes,
   getCreditBox,
   getCreditBoxes,
-  getOpenInvites,
   getBondBoxes,
   insertBox,
   getBox,
@@ -17,7 +16,7 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
@@ -35,7 +34,6 @@ import type {
   BondBox,
   CandidateOf,
   CreditBox,
-  InviteBox,
   KarmaBox,
   NetworkType,
   UtxoTransaction,
@@ -63,8 +61,7 @@ async function request(
       getKarmaBoxes,
       getCreditBox,
       getCreditBoxes,
-      getOpenInvites,
-      getBondBoxes,
+          getBondBoxes,
       getCurrentHeight: () => 100,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
@@ -74,7 +71,9 @@ async function request(
         consumeBox,
         getKarmaBox,
         getKarmaValue,
-        hasActiveVouchCooldown,
+        hasActiveVouchEscrow: () => false,
+        vouchCooldownBlocks: 2,
+        getTopologyAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
@@ -160,20 +159,12 @@ describe('UTXO routes', () => {
     }, 1);
     insertBox(creditBox);
 
-    // User with invites and bonds
+    // An inviter with a live bond — the whole of what an invite leaves behind
+    // (ARCHITECTURE → Invite System).
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
-    // Both boxes name the same invitee, which is the whole of the pairing
-    // (NODE_INTERFACE → Legal box transitions).
     const inviteePublicKey = new Uint8Array(32).fill(0xbb);
-    const inviteBox = seedProvenance<InviteBox>({
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId: inviteUserId,
-      inviteePublicKey,
-    }, 1);
-    insertBox(inviteBox);
     const bondBox = seedProvenance<BondBox>({
       boxType: 'bond' as const,
       value: 5n,
@@ -220,18 +211,18 @@ describe('UTXO routes', () => {
     expect(b0.value).toBe('99');
   });
 
-  it('GET /invites/:userId returns open and bonds arrays', async () => {
+  it('GET /invites/:userId returns bonds, and no `open` array at all', async () => {
     const res = await request(`/invites/${inviteUserIdHex}`);
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
-    expect(Array.isArray(body.open)).toBe(true);
+    // ⛔ **The `open` key is gone, not empty.** A bond IS the open invite, so a
+    // second list would be the same rows under another name — and a
+    // permanently-empty array is a field that says nothing.
+    expect(body.open).toBeUndefined();
     expect(Array.isArray(body.bonds)).toBe(true);
-    expect((body.open as unknown[]).length).toBeGreaterThanOrEqual(1);
-    expect((body.bonds as unknown[]).length).toBeGreaterThanOrEqual(1);
-    // The invitee key is on both, and it is what pairs them.
-    const invite = (body.open as Record<string, unknown>[])[0]!;
     const bond = (body.bonds as Record<string, unknown>[])[0]!;
-    expect(invite.inviteePublicKey).toBe(bond.inviteePublicKey);
+    expect(bond.inviterId).toBe(inviteUserIdHex);
+    expect(bond.inviteePublicKey).toBe('bb'.repeat(32));
   });
 
   // ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx, checkOutputShape } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -97,7 +97,9 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };
     proof = seedProvenance<GenesisProofBox>({

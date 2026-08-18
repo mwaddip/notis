@@ -6,7 +6,7 @@ import { materializeOutput } from '../services/utxo-engine.js';
 import type {
   UtxoTransaction,
   PruneEntry,
-  InviteBox,
+  BondBox,
   VouchBox,
   AnyBox,
 } from '@dagsocial/types';
@@ -20,6 +20,7 @@ import {
   utxoTxTreeByteLength,
 } from '@dagsocial/types';
 import { isCreditSideTx } from '../services/coinbase-split.js';
+import { settlementMarginalBytes } from '../services/settlement.js';
 import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
@@ -61,12 +62,18 @@ export class MempoolFullError extends Error {
 // which is the reason that export exists at all.
 // ---------------------------------------------------------------------------
 
-/** An empty body: four count prefixes and nothing else. */
+/**
+ * An empty body: three count prefixes and nothing else.
+ *
+ * ⛔ **A SIZING PROBE, NOT A BLOCK.** It constructs no block, reaches no
+ * validation, and the rule that every body carries a settlement transaction
+ * does not govern it — the whole point is to have a zero to take a delta
+ * against.
+ */
 const EMPTY_BODY_BYTES = utxoTxTreeByteLength({
   utxoTxIds: [],
   utxoTxs: [],
   pruneEntries: [],
-  coinbaseOutputs: [],
 });
 
 /** A well-formed stand-in, so the probe below measures a real `b32` entry. */
@@ -74,10 +81,18 @@ const PROBE_TX_ID = '0'.repeat(64);
 
 /**
  * What one transaction costs **inside a block body** — its fixed-width
- * `utxoTxIds` entry and the length-prefixed body beside it.
+ * `utxoTxIds` entry, the length-prefixed body beside it, and what it adds to the
+ * block's settlement transaction.
  *
  * The difference between a one-entry body and an empty one is exactly that
- * entry's contribution, because every other term of the sum is unchanged.
+ * entry's own contribution, because every other term of the sum is unchanged.
+ *
+ * ⛔ **The settlement term is not optional** (MEMPOOL_INTERFACE → the settlement
+ * transaction replaces `coinbaseOutputs` here). It rides in the same body and
+ * grows with what the fill selected — a fee box adds one input to it, a bond one
+ * output — so an entry priced by its own encoding alone leaves the accumulator
+ * blind to a structure that grows with the very thing it is measuring, and
+ * *"the trim loop runs at most once"* stops holding.
  *
  * This, not the bare encoded length, is what a fee is divided by: the block
  * budget is what 3a made scarce, and a transaction should be ranked by the
@@ -90,8 +105,7 @@ export function entryByteCost(cbor: Uint8Array): number {
       utxoTxIds: [PROBE_TX_ID],
       utxoTxs: [cbor],
       pruneEntries: [],
-      coinbaseOutputs: [],
-    }) - EMPTY_BODY_BYTES
+    }) - EMPTY_BODY_BYTES + settlementMarginalBytes(decodeTx(cbor))
   );
 }
 
@@ -343,8 +357,11 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
   }
 
   for (const output of tx.outputs ?? []) {
-    if (output.boxType === 'invite' && meta.inviteInviter === null) {
-      meta.inviteInviter = Buffer.from((output as InviteBox).inviterId).toString('hex');
+    // ⛔ **The BOND is what names an inviter now**, because the bond is the
+    // invite (ARCHITECTURE → Invite System). The column's subject is unchanged —
+    // an inviter with a pending invite — and only the box carrying it moved.
+    if (output.boxType === 'bond' && meta.inviteInviter === null) {
+      meta.inviteInviter = Buffer.from((output as BondBox).inviterId).toString('hex');
     } else if (output.boxType === 'vouch' && meta.vouchVoucher === null) {
       meta.vouchVoucher = Buffer.from((output as VouchBox).voucherId).toString('hex');
     }

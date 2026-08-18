@@ -129,7 +129,8 @@ describe('MAX_REORG_DEPTH', () => {
  * relationships between them are asserted here or nowhere.
  */
 describe('coinbase slices', () => {
-  // The load-bearing one. `sum(coinbaseOutputs) === income` is exact at apply,
+  // The load-bearing one. The sum of the settlement transaction's coinbase
+  // outputs must equal income exactly at apply,
   // and four independent percentages of one income are not required by any type
   // to add up to it — a retune that moves one and forgets another produces a
   // coinbase no height can satisfy.

@@ -28,7 +28,6 @@ import {
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
-import { deleteVouchCooldown, insertVouchCooldown } from '../store/vouch-cooldowns.js';
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { GENESIS_HEIGHT } from './genesis-state.js';
@@ -238,9 +237,9 @@ export function revertBlock(height: number): PruneEntry[] {
   // last `replaced` would restore an intra-block intermediate instead.
   //
   // `putIdentityRecord` is itself a recording primitive, exactly like the
-  // `insertVouchCooldown` restore two loops below. That is safe only because
-  // this function refuses to run while a journal is open (the guard at the top);
-  // the guard is the mechanism, not a non-recording variant.
+  // like-record restores two loops below. That is safe only because this
+  // function refuses to run while a journal is open (the guard at the top); the
+  // guard is the mechanism, not a non-recording variant.
   for (let i = journal.mutations.length - 1; i >= 0; i--) {
     const m = journal.mutations[i]!;
     if (m.kind === 'record') {
@@ -271,22 +270,11 @@ export function revertBlock(height: number): PruneEntry[] {
   for (const del of journal.likeRecordDeletions) {
     restoreLikeRecord(del.targetPostId, del.likerId, del.appliedAtBlock);
   }
-  for (const ins of journal.vouchCooldownInsertions) {
-    deleteVouchCooldown(ins.voucherId, ins.targetId);
-    // insertVouchCooldown is INSERT OR REPLACE — restore the row it overwrote
-    if (ins.replaced) {
-      insertVouchCooldown(
-        ins.voucherId,
-        ins.targetId,
-        ins.replaced.releaseAtBlock,
-        ins.replaced.karmaAmount,
-      );
-    }
-  }
-  // Restore escrow rows the block's cooldown mints deleted (H-7)
-  for (const del of journal.vouchCooldownDeletions) {
-    insertVouchCooldown(del.voucherId, del.targetId, del.releaseAtBlock, del.karmaAmount);
-  }
+  // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
+  // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
+  // `{kind:'box'}` with the exact inverses loop 1 above already replays — and
+  // boxes are not keyed, so a second escrow is a second box rather than an
+  // overwrite something has to restore.
 
   // 3. Roll back block_topology entries, delete block + journal + the
   // height's AVL version rows. The version rows are per-block derived state

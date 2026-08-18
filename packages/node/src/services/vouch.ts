@@ -3,11 +3,9 @@ import {
   VOUCH_MIN_BALANCE,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
-import { config } from '../config.js';
-import type { VouchBox, UtxoTransaction } from '@dagsocial/types';
+import type { VouchBox, VouchEscrowBox, UtxoTransaction } from '@dagsocial/types';
 import {
   hasAnyActiveVouch,
-  hasActiveVouchCooldown,
   hasPendingVouch,
 } from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
@@ -55,7 +53,11 @@ export function castVouch(
   if (hasPendingVouch(Buffer.from(voucherId).toString('hex'))) {
     throw new ClientError('Vouch already pending — wait for it to confirm');
   }
-  if (hasActiveVouchCooldown(voucherId, targetId)) {
+  // ⛔ Keyed on the voucher, because the escrow carries no target
+  // (TYPES_INTERFACE → VouchEscrowBox). `checkTransitions` holds the same
+  // predicate at apply, so this is the named early refusal rather than the
+  // rule's only statement.
+  if (deps.hasActiveVouchEscrow(voucherId)) {
     throw new ClientError('Vouch cooldown active — cannot re-vouch yet');
   }
 
@@ -113,9 +115,19 @@ export function initiateUnvouch(
   admitTx(tx, expiresAtHeight);
 
   const txId = computeTxId(tx);
-  // Advisory only — the cooldown row is written at apply time from the same
-  // field, so this must read it rather than the constant or the API reports a
-  // maturity height the chain will not honour.
-  const karmaReturnsAtBlock = currentBlockHeight + config.vouchCooldownBlocks;
-  return { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock, tx };
+  // ⛔ **Read off the escrow the transaction itself carries, never recomputed.**
+  // The client chose `releaseAtBlock` and the engine pinned only its floor
+  // (NODE_INTERFACE → Vouch transition rules), so a figure derived here from the
+  // current height would report a maturity the chain will not honour whenever
+  // the client overshot.
+  const escrow = tx.outputs.find(
+    (o): o is VouchEscrowBox => o.boxType === 'vouch_escrow',
+  );
+  return {
+    status: 'pending',
+    txId,
+    expiresAtHeight,
+    karmaReturnsAtBlock: escrow!.releaseAtBlock,
+    tx,
+  };
 }

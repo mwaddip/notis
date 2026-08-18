@@ -3,7 +3,8 @@ import { fixtureProvenance } from '../helpers.js';
 import {
   isIdentityStale,
   owedPeriods,
-  applyKarmaDecay,
+  commitDecayClocks,
+  deriveKarmaDecay,
 } from '../../src/services/decay.js';
 import {
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -35,7 +36,7 @@ const TEST_CFG = {
 };
 
 function clock(lastActivityBlock: number, lastDecayBlock = 0): IdentityRecord {
-  return { lastActivityBlock, lastDecayBlock, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
+  return { lastActivityBlock, lastDecayBlock, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
 }
 
 /**
@@ -175,26 +176,26 @@ describe('owedPeriods', () => {
 });
 
 // ---------------------------------------------------------------------------
-// applyKarmaDecay
+// deriveKarmaDecay
 // ---------------------------------------------------------------------------
 
-describe('applyKarmaDecay', () => {
+describe('deriveKarmaDecay', () => {
   function makeDeps(
     boxesMap: Map<string, KarmaBox[]>,
     recordMap = new Map<string, IdentityRecord>(),
   ) {
+    // ⛔ **Decay moves no boxes any more, so there is nothing to record.** Its
+    // burn's sink is the karma pool and the pool is spent by the block's
+    // settlement transaction alone (NODE_INTERFACE → The settlement
+    // transaction), so this derives a plan and the settlement emits it. The
+    // empty arrays stay so every assertion below reads the same way: they are
+    // now a claim that the derivation is PURE, not a record of what it did.
     const consumed: { boxId: string; atHeight: number }[] = [];
     const inserted: KarmaBox[] = [];
     const key = (o: Uint8Array) => Buffer.from(o).toString('hex');
     return {
       deps: {
         getKarmaBoxes: (owner: Uint8Array) => boxesMap.get(key(owner)) ?? [],
-        consumeBox: (boxId: string, atHeight: number) => {
-          consumed.push({ boxId, atHeight });
-        },
-        insertBox: (box: KarmaBox) => {
-          inserted.push(box);
-        },
         getKarmaOwners: () =>
           Array.from(boxesMap.keys()).map((k) => new Uint8Array(Buffer.from(k, 'hex'))),
         getIdentityRecord: (id: Uint8Array) => recordMap.get(key(id)) ?? null,
@@ -233,7 +234,7 @@ describe('applyKarmaDecay', () => {
       clock(99999),
     );
 
-    const journal = applyKarmaDecay(deps, 100000, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, 100000, TEST_CFG);
 
     expect(journal).toHaveLength(0);
     expect(consumed).toHaveLength(0);
@@ -248,13 +249,17 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    const journal = applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     const entry = journal[0]!;
     expect(entry.burnAmount).toBe(100n - KARMA_MINIMUM);
     expect(entry.consumedBoxIds).toEqual(['old-box-1']);
-    expect(entry.newBoxId).toBeTruthy();
+    // ⛔ **No box id, because no box is produced here.** The replacement karma is
+    // an output of the block's settlement transaction and takes that
+    // transaction's `(txId, index)`, so the plan carries the VALUE the owner is
+    // left holding rather than an id it could not know.
+    expect(entry.newValue).toBe(100n - entry.burnAmount);
   });
 
   it('caps burn at the KARMA_MINIMUM floor', () => {
@@ -264,7 +269,7 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    const journal = applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     expect(journal[0]!.burnAmount).toBe(12n - KARMA_MINIMUM);
@@ -276,7 +281,7 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    const journal = applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(0);
     expect(consumed).toHaveLength(0);
@@ -291,7 +296,7 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
   });
@@ -305,11 +310,15 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    const journal = applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
-    expect(consumed.length).toBe(2);
-    expect(consumed.map((c) => c.boxId).sort()).toEqual(['box-a', 'box-b']);
+    // ⛔ **The plan NAMES both boxes; the settlement consumes them.** The
+    // derivation is pure, so `consumed` stays empty and the plan is the only
+    // place the pair can be read.
+    expect(journal[0]!.consumedBoxIds).toHaveLength(2);
+    expect([...journal[0]!.consumedBoxIds].sort()).toEqual(['box-a', 'box-b']);
+    expect(consumed).toHaveLength(0);
   });
 
   it('the new box has decayBurn: true', () => {
@@ -318,10 +327,15 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const plans = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
 
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0]!.decayBurn).toBe(true);
+    // ⚠ **`decayBurn` is the SETTLEMENT's to set now**, on the karma output it
+    // emits for this plan — it is what keeps the replacement from resetting the
+    // owner's activity clock. The derivation carries the value; that the flag
+    // rides it is asserted where the box is made, in `conservation-axiom` and
+    // `block-apply`.
+    expect(plans).toHaveLength(1);
+    expect(inserted).toHaveLength(0);
   });
 
   it('advances lastDecayBlock and preserves lastActivityBlock', () => {
@@ -330,7 +344,11 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const plans = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
+    // ⛔ **The clock is advanced by `commitDecayClocks`, after the settlement's
+    // boxes are in** — so the journal's reverse replay undoes the record before
+    // deleting the box that caused it.
+    commitDecayClocks(deps, plans, STALE_AT);
 
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT, STALE_AT));
   });
@@ -344,7 +362,7 @@ describe('applyKarmaDecay', () => {
       clock(ACTIVITY_AT, firstDecayAt),
     );
 
-    const journal = applyKarmaDecay(deps, firstDecayAt + KARMA_DECAY_INTERVAL_BLOCKS, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, firstDecayAt + KARMA_DECAY_INTERVAL_BLOCKS, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     // One whole interval past the first decay -> exactly one period's burn.
@@ -354,7 +372,8 @@ describe('applyKarmaDecay', () => {
   it('creates a record for an owner that had none', () => {
     const { deps, recordMap } = oneOwner([makeKarmaBox({ id: 'old-box', value: 100n })]);
 
-    const journal = applyKarmaDecay(deps, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, STALE_AT, TEST_CFG);
+    commitDecayClocks(deps, journal, STALE_AT);
 
     expect(journal).toHaveLength(1);
     expect(recordMap.get(ownerKey)).toEqual(clock(0, STALE_AT));
@@ -363,7 +382,7 @@ describe('applyKarmaDecay', () => {
   it('skips an owner with no karma boxes without touching its clock', () => {
     const { deps, recordMap } = oneOwner([], clock(ACTIVITY_AT));
 
-    expect(applyKarmaDecay(deps, STALE_AT, TEST_CFG)).toHaveLength(0);
+    expect(deriveKarmaDecay(deps, STALE_AT, TEST_CFG)).toHaveLength(0);
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
   });
 });

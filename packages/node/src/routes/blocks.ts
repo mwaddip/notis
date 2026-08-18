@@ -36,6 +36,8 @@ export interface BlocksDeps {
    * `config.inviteProbationBlocks` exactly.
    */
   inviteProbationBlocks: number;
+  /** `NetworkProfile.vouchCooldownBlocks` — the escrow floor a client reproduces. */
+  vouchCooldownBlocks: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,13 +69,11 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       pruneEntries: block.utxoTxTree.pruneEntries,
       // CBOR fields omitted from JSON — UTXO tx CBOR has no meaningful
       // textual representation.
+      //
+      // ⛔ **There is no `coinbaseOutputs` field.** The coinbase is an output of
+      // the block's settlement transaction, which is the last `utxoTxIds` entry
+      // (TYPES_INTERFACE → OrderingBlock).
       utxoTxs: [],
-      coinbaseOutputs: block.utxoTxTree.coinbaseOutputs.map((o) => ({
-        owner: Buffer.from(o.owner).toString('hex'),
-        value: o.value.toString(),
-        lockedUntilBlock: o.lockedUntilBlock,
-        isTreasury: o.isTreasury,
-      })),
     },
     validatorSignature: Buffer.from(block.validatorSignature).toString('hex'),
   };
@@ -138,6 +138,13 @@ export function createRouter(deps: BlocksDeps): Router {
       // A plain number, unlike the two decimal strings above — it is not a
       // bigint server-side (`Config.inviteProbationBlocks`).
       inviteProbationBlocks: deps.inviteProbationBlocks,
+      // ⛔ **Served because a client must REPRODUCE it.** An unvouch outputs a
+      // `VouchEscrowBox` whose `releaseAtBlock` the engine pins against
+      // `height + vouchCooldownBlocks` (NODE_INTERFACE → Vouch transition
+      // rules), so a client holding it as a constant agrees on mainnet and is
+      // refused on devnet — the failure `inviteProbationBlocks` above already
+      // had. Per-network values are served, never known.
+      vouchCooldownBlocks: deps.vouchCooldownBlocks,
     });
   });
 

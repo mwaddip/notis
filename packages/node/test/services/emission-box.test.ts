@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { computeTxId } from '@dagsocial/types';
 import { makeTestIdentity, makeApplicableBlock } from '../helpers.js';
 
 /**
@@ -46,7 +47,61 @@ async function importFresh() {
   const creator = await import('../../src/services/block-creator.js');
   const apply = await import('../../src/services/block-apply.js');
   const split = await import('../../src/services/coinbase-split.js');
-  return { db, system, utxo, genesis, prover, creator, apply, split };
+  const settlement = await import('../../src/services/settlement.js');
+  const engine = await import('../../src/services/utxo-engine.js');
+  const config = await import('../../src/config.js');
+  return { db, system, utxo, genesis, prover, creator, apply, split, settlement, engine, config };
+}
+
+/**
+ * Build the settlement a body of this shape requires and apply it — the seam
+ * both box transitions now live behind.
+ *
+ * ⛔ **`treasury` IS NOT A PARAMETER, and it cannot be one.** Emission and the
+ * treasury slice come from opposite directions but out of ONE `splitCoinbase`
+ * over `(emission, fees, actors)` (MINING_INTERFACE → Coinbase Application), so
+ * a caller naming the treasury independently would be naming a seam the
+ * settlement does not have. Every case below states the income and reads the
+ * slice back off `splitCoinbase`.
+ *
+ * Returns `false` for a chain that cannot back the release.
+ */
+function settle(
+  s: Awaited<ReturnType<typeof importFresh>>,
+  height: number,
+  emission: bigint,
+  opts: { fees?: bigint; actors?: number } = {},
+): boolean {
+  const built = s.settlement.buildSettlement(
+    {
+      getEmissionBox: s.utxo.getEmissionBox,
+      getTreasuryBox: s.utxo.getTreasuryBox,
+      getKarmaPoolBox: s.utxo.getKarmaPoolBox,
+      getBox: s.utxo.getBox,
+      // ⛔ The karma legs are empty by construction here: this suite's subject
+      // is the EMISSION box, and a body with no markers, no bonds and no stale
+      // identity derives no karma leg at all. Stated as empty rather than wired
+      // to the store, so a karma effect appearing in this fixture is a failure
+      // rather than a silent extra output.
+      getLikeCarryBox: () => null,
+      getVouchEscrowsDueAt: () => [],
+      getBondsSettlingAt: () => [],
+      getLifetimeLikes: () => 0n,
+      getDecayPlans: () => [],
+    },
+    height,
+    emission,
+    s.config.config.creditMinerRewardDelay,
+    { fees: opts.fees ?? 0n, actors: opts.actors ?? 0, feeBoxIds: [], invitees: [], markers: [], prunes: [] },
+    makeTestIdentity().userId,
+  );
+  if ('error' in built) return false;
+  const txId = computeTxId(built.tx);
+  for (const id of built.tx.inputs) s.utxo.consumeBox(id, height);
+  built.tx.outputs.forEach((out, i) => {
+    s.utxo.insertBox(s.engine.materializeOutput(out, txId, i));
+  });
+  return true;
 }
 
 /** Seed a full genesis state under `network` and hand back its modules. */
@@ -135,7 +190,7 @@ describe('the emission box', () => {
     // Releases every height up to and including 5,899, driving the box down the
     // real transition rather than by arithmetic on its value.
     for (let h = 1; h < DEVNET_LAST_PAYING_HEIGHT; h++) {
-      expect(s.apply.settleEmissionAndTreasury(h, s.creator.computeBlockReward(h), 0n)).toBe(true);
+      expect(settle(s, h, s.creator.computeBlockReward(h))).toBe(true);
     }
 
     // ⚠ **2 × 10⁸ is also what the deleted `CREDIT_TAIL_REWARD` held, and here
@@ -148,9 +203,7 @@ describe('the emission box', () => {
     expect(beforeLast!.value).toBe(DEVNET_LAST_REWARD);
 
     // The last paying block takes exactly what is left and creates no successor.
-    expect(
-      s.apply.settleEmissionAndTreasury(DEVNET_LAST_PAYING_HEIGHT, DEVNET_LAST_REWARD, 0n),
-    ).toBe(true);
+    expect(settle(s, DEVNET_LAST_PAYING_HEIGHT, DEVNET_LAST_REWARD)).toBe(true);
     expect(s.utxo.getEmissionBox()).toBeNull();
   });
 
@@ -163,7 +216,7 @@ describe('the emission box', () => {
     // there is not a fault.
     expect(s.creator.computeBlockReward(DEVNET_LAST_PAYING_HEIGHT + 1)).toBe(0n);
     const above = DEVNET_LAST_PAYING_HEIGHT + 1;
-    expect(s.apply.settleEmissionAndTreasury(above, 0n, 0n)).toBe(true);
+    expect(settle(s, above, 0n)).toBe(true);
     // Untouched — still the genesis box, not a successor.
     expect(s.utxo.getEmissionBox()!.value).toBe(DEVNET_TOTAL);
   });
@@ -175,7 +228,7 @@ describe('the emission box', () => {
     // Unreachable while `emissionTotal` and `computeBlockReward` share the
     // profile — this is the loud failure for the case where they stop agreeing,
     // whose alternative is a negative successor value.
-    expect(s.apply.settleEmissionAndTreasury(1, DEVNET_TOTAL + 1n, 0n)).toBe(false);
+    expect(settle(s, 1, DEVNET_TOTAL + 1n)).toBe(false);
     // And nothing was spent on the way to refusing.
     expect(s.utxo.getEmissionBox()!.value).toBe(DEVNET_TOTAL);
   });
@@ -216,7 +269,7 @@ describe('the treasury box', () => {
     // the case has to be one where something actually accrues.
     expect(expected).toBeGreaterThan(0n);
 
-    expect(s.apply.settleEmissionAndTreasury(1, emission, expected)).toBe(true);
+    expect(settle(s, 1, emission)).toBe(true);
     const box = s.utxo.getTreasuryBox();
     expect(box).not.toBeNull();
     expect(box!.value).toBe(expected);
@@ -227,12 +280,14 @@ describe('the treasury box', () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    const first = 700n;
-    const second = 1_300n;
-    expect(s.apply.settleEmissionAndTreasury(1, s.creator.computeBlockReward(1), first)).toBe(true);
+    // Two blocks with DIFFERENT fee income, so the two slices differ and a
+    // successor that overwrote rather than accrued would be visible.
+    const first = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0).treasury;
+    const second = s.split.splitCoinbase(s.creator.computeBlockReward(2), 0n, 0).treasury;
+    expect(settle(s, 1, s.creator.computeBlockReward(1))).toBe(true);
     const predecessor = s.utxo.getTreasuryBox()!;
 
-    expect(s.apply.settleEmissionAndTreasury(2, s.creator.computeBlockReward(2), second)).toBe(true);
+    expect(settle(s, 2, s.creator.computeBlockReward(2))).toBe(true);
     const successor = s.utxo.getTreasuryBox()!;
 
     expect(successor.value).toBe(first + second);
@@ -250,9 +305,13 @@ describe('the treasury box', () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    expect(s.apply.settleEmissionAndTreasury(1, s.creator.computeBlockReward(1), 500n)).toBe(true);
+    expect(settle(s, 1, s.creator.computeBlockReward(1))).toBe(true);
     const before = s.utxo.getTreasuryBox()!;
-    expect(s.apply.settleEmissionAndTreasury(2, s.creator.computeBlockReward(2), 0n)).toBe(true);
+    // Above the terminus with no fees the income is zero, so the slice is too —
+    // the one shape whose treasury rounds to nothing.
+    const above = DEVNET_LAST_PAYING_HEIGHT + 1;
+    expect(s.split.splitCoinbase(0n, 0n, 0).treasury).toBe(0n);
+    expect(settle(s, above, 0n)).toBe(true);
     // Same box, same id — not a successor of equal value, which would churn a
     // leaf through the AVL tree on every block for no state change.
     expect(s.utxo.getTreasuryBox()!.id).toBe(before.id);

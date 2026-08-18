@@ -43,10 +43,11 @@ function makeBlock(height: number, hash: string): OrderingBlock {
       createdAt: Date.now(),
     },
     utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
+      // Every body carries a settlement as its last entry, and this one carries
+      // nothing else (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+      utxoTxIds: ['5e'.repeat(32)],
+      utxoTxs: [new Uint8Array(96).fill(0x5e)],
       pruneEntries: [],
-      coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
   };
@@ -115,6 +116,7 @@ async function request(
       },
       networkType: 'testnet',
       inviteProbationBlocks: 43200,
+      vouchCooldownBlocks: 60,
     };
 
     const app = express();
@@ -234,6 +236,10 @@ describe('blocks routes', () => {
     // this one is not (NODE_INTERFACE → Status).
     expect(body.inviteProbationBlocks).toBe(43200);
     expect(typeof body.inviteProbationBlocks).toBe('number');
+    // ⛔ Served for the same reason: the escrow floor a client must reproduce is
+    // per-network (NODE_INTERFACE → Vouch transition rules). A plain number too.
+    expect(body.vouchCooldownBlocks).toBe(60);
+    expect(typeof body.vouchCooldownBlocks).toBe('number');
   });
 
   // -------------------------------------------------------------------------
@@ -257,12 +263,20 @@ describe('blocks routes', () => {
          (id, box_type, value, created_at_block, spent_at_block, owner, tx_id, output_index)
        VALUES (?, ?, ?, 1, ?, NULL, ?, 0)`,
     );
+    // ⛔ **One row per member of the supply set, and the assertion below pins
+    // that they ARE the set.** A karma-bearing type added to the set and not
+    // here would make `totalKarma` short by that box and leave this green
+    // without the pin.
     const seeded: Array<[string, bigint]> = [
       ['karma', 7n],
-      ['invite', 11n],
       ['bond', 13n],
       ['post_lock', 5n],
       ['vouch', 1n],
+      // The two this unit made reachable: a marker or carry box holds karma
+      // between a like and its payout, an escrow holds an unvouched stake
+      // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+      ['like_accrual', 3n],
+      ['vouch_escrow', 2n],
     ];
     for (const [boxType, value] of seeded) {
       insert.run(`box-${boxType}`, boxType, value, null, `tx-${boxType}`);

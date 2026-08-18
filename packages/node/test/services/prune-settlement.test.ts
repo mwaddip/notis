@@ -60,6 +60,7 @@ async function importLikes() {
   const mod = await import('../../src/store/likes.js');
   return mod as {
     insertLikeRecord: (targetPostId: string, likerId: Uint8Array, blockHeight: number) => void;
+    deleteLikeRecordsForPosts: (postIds: string[]) => void;
     hasLikeRecord: (targetPostId: string, likerId: Uint8Array) => boolean;
   };
 }
@@ -71,12 +72,15 @@ async function importSettlePruneUtxo() {
   // with TS2352 before any test runs. Change the source signature, change this
   // too.
   return mod as {
-    settlePruneUtxo: (
+    planPruneSettlement: (
       rootPostHash: string,
       authorId: Uint8Array,
       postIds: string[],
-      blockHeight: number,
-    ) => void;
+    ) => {
+      lockBoxIds: string[];
+      refunds: Array<{ owner: Uint8Array; amount: bigint }>;
+      toPool: bigint;
+    };
   };
 }
 
@@ -307,10 +311,10 @@ describe('block_topology', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: settlePruneUtxo
+// Tests: planPruneSettlement
 // ---------------------------------------------------------------------------
 
-describe('settlePruneUtxo', () => {
+describe('planPruneSettlement', () => {
   beforeEach(async () => {
     vi.resetModules();
     const db = await importDb();
@@ -324,7 +328,7 @@ describe('settlePruneUtxo', () => {
   it("consumes a reply author's PostLockBox and merge-mints their refund", async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootPostId = 'a'.repeat(64);
     const replyPostId = 'b'.repeat(64);
@@ -339,43 +343,47 @@ describe('settlePruneUtxo', () => {
     const oldKarma = makeKarmaBox(40n, replier, 1);
     utxo.insertBox(oldKarma);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootPostId, pruner, [rootPostId, replyPostId], 10),
-    );
+    // ⛔ **A PURE READ.** The planner names boxes and amounts and moves nothing:
+    // the pruner's own locks leave circulation and their sink is the karma pool,
+    // which only the settlement transaction spends, so consuming them here and
+    // crediting the pool at §11a would leave that karma nowhere in between
+    // (ARCHITECTURE → The conservation axiom, "not even as an intermediary
+    // step"). The settlement consumes every lock and pays every leg at once.
+    const journal = await journaled(10, () => {
+      const p = planPruneSettlement(rootPostId, pruner, [rootPostId, replyPostId]);
+      // The lock is NAMED, not consumed.
+      expect(p.lockBoxIds).toEqual([lockBox.box.id]);
+      // ⚠ **No merge.** The settlement emits a fresh karma box rather than
+      // consolidating the recipient's holdings, so the pre-existing 40 is
+      // untouched and the refund is the lock's own 100.
+      expect(p.refunds).toHaveLength(1);
+      expect(p.refunds[0]!.amount).toBe(100n);
+      expect(Buffer.from(p.refunds[0]!.owner).equals(Buffer.from(replier))).toBe(true);
+      // Nothing of the reply author's leaves circulation.
+      expect(p.toPool).toBe(0n);
+    });
 
-    // PostLockBox consumed
-    expect(removedIds(journal)).toContain(lockBox.box.id);
-
-    // The pre-existing karma box the mint merged in is journaled too — the
-    // merge-consume the old hand-maintained journal lost (value-loss on reorg)
-    expect(removedIds(journal)).toContain(oldKarma.id);
-
-    // PostLockBox marked spent in DB
+    // The planner mutates nothing at all, so the journal is empty and both boxes
+    // are still live.
+    expect(journal.mutations).toEqual([]);
     const db = getDb();
-    expect(boxIsSpent(db, lockBox.box.id!)).toBe(true);
-
-    // Merged karma refund box created with old + refund value, its bytes in
-    // the journal payload
-    const mintedKarma = journal.mutations.find(
-      (m) => m.kind === 'box' && m.op === 'insert' && (m.box as KarmaBox).boxType === 'karma',
-    ) as BoxMutation | undefined;
-    expect(mintedKarma).toBeDefined();
-    expect((mintedKarma!.box as KarmaBox).value).toBe(140n);
+    expect(boxIsSpent(db, lockBox.box.id!)).toBe(false);
+    expect(boxIsSpent(db, oldKarma.id!)).toBe(false);
   });
 
   it('handles empty postId list', async () => {
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
-    const journal = await journaled(5, () =>
-      settlePruneUtxo('0'.repeat(64), makeUserId('pruner-empty'), [], 5),
-    );
-    expect(journal.mutations.length).toBe(0);
+    const plan = planPruneSettlement('0'.repeat(64), makeUserId('pruner-empty'), []);
+    expect(plan.lockBoxIds).toEqual([]);
+    expect(plan.refunds).toEqual([]);
+    expect(plan.toPool).toBe(0n);
   });
 
   it('skips already-spent boxes', async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootPostId = 'c'.repeat(64);
     const replier = makeUserId('replier2');
@@ -385,19 +393,19 @@ describe('settlePruneUtxo', () => {
     utxo.insertBox(lockBox.box, lockBox.targetPostId);
     utxo.consumeBox(lockBox.box.id!, 5); // Already spent at block 5
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootPostId, makeUserId('pruner2'), [rootPostId], 10),
-    );
+    const plan = planPruneSettlement(rootPostId, makeUserId('pruner2'), [rootPostId]);
 
-    // Already-spent box should not be re-consumed, and no refund karma minted
-    // (getPostLockBox returns only unspent boxes, so it returns null)
-    expect(journal.mutations.length).toBe(0);
+    // A spent box is not named at all — `getPostLockBox` returns only unspent
+    // boxes, so it returns null and the entry contributes nothing.
+    expect(plan.lockBoxIds).toEqual([]);
+    expect(plan.refunds).toEqual([]);
+    expect(plan.toPool).toBe(0n);
   });
 
   it('aggregates refunds per author across multiple posts', async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     // Right length, wrong alphabet: `'p'.repeat(64)` looked like a post id and
     // is not one. `b32` has no encoding for it — a placeholder has to be hex.
@@ -413,38 +421,38 @@ describe('settlePruneUtxo', () => {
     utxo.insertBox(lb1.box, lb1.targetPostId);
     utxo.insertBox(lb2.box, lb2.targetPostId);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(postId1, pruner, [postId1, postId2], 10),
-    );
+    const plan = planPruneSettlement(postId1, pruner, [postId1, postId2]);
 
-    // Both lock boxes consumed
-    expect(removedIds(journal)).toContain(lb1.box.id);
-    expect(removedIds(journal)).toContain(lb2.box.id);
+    // Both locks named, in `postIds` order — block content fixes it, so the
+    // list is not a fourth ordering source.
+    expect(plan.lockBoxIds).toEqual([lb1.box.id, lb2.box.id]);
 
-    // One refund box for the author, values aggregated: 100 + 50 = 150
-    expect(insertedIds(journal).length).toBe(1);
-    const db = getDb();
-    const row = db
-      .prepare("SELECT value, owner FROM utxo_boxes WHERE id = ? AND box_type = 'karma'")
-      .get(insertedIds(journal)[0]!) as { value: number; owner: Buffer };
-    expect(row.value).toBe(150);
-    expect(Buffer.from(row.owner).equals(Buffer.from(authorId))).toBe(true);
+    // One refund for the author, values aggregated: 100 + 50 = 150.
+    expect(plan.refunds).toHaveLength(1);
+    expect(plan.refunds[0]!.amount).toBe(150n);
+    expect(Buffer.from(plan.refunds[0]!.owner).equals(Buffer.from(authorId))).toBe(true);
+    expect(plan.toPool).toBe(0n);
   });
 
   it('handles posts with no PostLockBox', async () => {
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const postId = 'e'.repeat(64);
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(postId, makeUserId('pruner4'), [postId], 10),
-    );
+    const likesStore = await importLikes();
+    const journal = await journaled(10, () => {
+        // ⛔ The planner is a pure read; block application deletes the
+        // subtree's like-records at §5, right after it. Both steps run here so
+        // the journalling seam stays under test at the seam that owns it.
+        planPruneSettlement(postId, makeUserId('pruner4'), [postId]);
+        likesStore.deleteLikeRecordsForPosts([postId]);
+    });
     expect(journal.mutations.length).toBe(0);
   });
 
   it('PostLockBox with zero value is not consumed', async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootPostId = 'f'.repeat(64);
     // Not the pruner's, so a lost `value > 0n` guard would show as BOTH a
@@ -455,9 +463,14 @@ describe('settlePruneUtxo', () => {
     const lockBox = makePostLockBox(0n, authorId, rootPostId, 1);
     utxo.insertBox(lockBox.box, lockBox.targetPostId);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootPostId, makeUserId('pruner5'), [rootPostId], 10),
-    );
+    const likesStore = await importLikes();
+    const journal = await journaled(10, () => {
+        // ⛔ The planner is a pure read; block application deletes the
+        // subtree's like-records at §5, right after it. Both steps run here so
+        // the journalling seam stays under test at the seam that owns it.
+        planPruneSettlement(rootPostId, makeUserId('pruner5'), [rootPostId]);
+        likesStore.deleteLikeRecordsForPosts([rootPostId]);
+    });
 
     // Zero-value box is skipped (lockBox.box.value > 0 check)
     expect(removedIds(journal)).not.toContain(lockBox.box.id);
@@ -472,7 +485,7 @@ describe('settlePruneUtxo', () => {
   it("consumes the pruning author's own lock and mints nothing — the burn", async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootPostId = 'a1'.repeat(32);
     const pruner = makeUserId('self-pruner');
@@ -484,18 +497,22 @@ describe('settlePruneUtxo', () => {
     const oldKarma = makeKarmaBox(40n, pruner, 1);
     utxo.insertBox(oldKarma);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootPostId, pruner, [rootPostId], 10),
-    );
+    const plan = planPruneSettlement(rootPostId, pruner, [rootPostId]);
 
-    // The lock is gone — consumed, journalled, and spent in the table.
-    expect(removedIds(journal)).toContain(lockBox.box.id);
+    // ⛔ **THE BURN NAMES A SINK, AND `toPool` IS THAT NAME**
+    // (ARCHITECTURE → The conservation axiom: "burn" means *move back to the
+    // supply pool*). ⚠ **A consumed box with nothing inserted beside it is a
+    // destruction with no positive trace** — nothing for a search to find and
+    // nothing for a test to assert.
+    expect(plan.lockBoxIds).toEqual([lockBox.box.id]);
+    expect(plan.toPool).toBe(100n);
+    expect(plan.refunds).toEqual([]);
+
+    // ⚠ **"Consumed, and nothing inserted" is true of a destruction too**, so
+    // asserting `toPool` is the only clause that separates a burn returning to
+    // the pool from one that ends the karma.
     const db = getDb();
-    expect(boxIsSpent(db, lockBox.box.id!)).toBe(true);
-
-    // Nothing was created, and the standing karma box was never merged.
-    expect(insertedIds(journal)).toEqual([]);
-    expect(removedIds(journal)).not.toContain(oldKarma.id);
+    expect(boxIsSpent(db, lockBox.box.id!)).toBe(false);
     expect(boxIsSpent(db, oldKarma.id!)).toBe(false);
     expect(karmaRows(db).map((r) => r.value)).toEqual([40]);
   });
@@ -505,7 +522,7 @@ describe('settlePruneUtxo', () => {
   it("a mixed subtree burns the pruner's lock and returns only the other author's", async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootId = 'a2'.repeat(32);
     const replyId = 'b2'.repeat(32);
@@ -517,27 +534,19 @@ describe('settlePruneUtxo', () => {
     utxo.insertBox(ownLock.box, ownLock.targetPostId);
     utxo.insertBox(otherLock.box, otherLock.targetPostId);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootId, pruner, [rootId, replyId], 10),
-    );
+    const plan = planPruneSettlement(rootId, pruner, [rootId, replyId]);
 
-    // Both locks are consumed — the burn and the return differ only in the mint.
-    expect(removedIds(journal)).toEqual(
-      expect.arrayContaining([ownLock.box.id, otherLock.box.id]),
-    );
-    const db = getDb();
-    expect(boxIsSpent(db, ownLock.box.id!)).toBe(true);
-    expect(boxIsSpent(db, otherLock.box.id!)).toBe(true);
+    // Both locks are named. ⛔ **The burn and the return differ only in where the
+    // value goes**, so the two figures below are what tell them apart — a
+    // consumed/not-consumed pair cannot.
+    expect(plan.lockBoxIds).toEqual([ownLock.box.id, otherLock.box.id]);
 
-    // Exactly one karma box exists, holding the reply author's 50 and owned by
-    // them. The pruner's 100 left supply.
-    expect(insertedIds(journal).length).toBe(1);
-    const row = db
-      .prepare("SELECT value, owner FROM utxo_boxes WHERE id = ? AND box_type = 'karma'")
-      .get(insertedIds(journal)[0]!) as { value: number; owner: Buffer };
-    expect(row.value).toBe(50);
-    expect(Buffer.from(row.owner).equals(Buffer.from(replier))).toBe(true);
-    expect(karmaRows(db).map((r) => r.value)).toEqual([50]);
+    // The reply author's 50 recirculates; the pruner's 100 leaves circulation
+    // for the pool. ⛔ **Neither is destroyed.**
+    expect(plan.refunds).toHaveLength(1);
+    expect(plan.refunds[0]!.amount).toBe(50n);
+    expect(Buffer.from(plan.refunds[0]!.owner).equals(Buffer.from(replier))).toBe(true);
+    expect(plan.toPool).toBe(100n);
   });
 
   // "…on the root and on their own replies downstream" — the burn is keyed on
@@ -545,7 +554,7 @@ describe('settlePruneUtxo', () => {
   it("burns the pruning author's own reply lock, not just the root's", async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootId = 'a3'.repeat(32);
     const ownReplyId = 'b3'.repeat(32);
@@ -556,18 +565,13 @@ describe('settlePruneUtxo', () => {
     utxo.insertBox(rootLock.box, rootLock.targetPostId);
     utxo.insertBox(replyLock.box, replyLock.targetPostId);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootId, pruner, [rootId, ownReplyId], 10),
-    );
+    const plan = planPruneSettlement(rootId, pruner, [rootId, ownReplyId]);
 
-    expect(removedIds(journal)).toEqual(
-      expect.arrayContaining([rootLock.box.id, replyLock.box.id]),
-    );
-    const db = getDb();
-    expect(boxIsSpent(db, rootLock.box.id!)).toBe(true);
-    expect(boxIsSpent(db, replyLock.box.id!)).toBe(true);
-    expect(insertedIds(journal)).toEqual([]);
-    expect(karmaRows(db)).toEqual([]);
+    expect(plan.lockBoxIds).toEqual([rootLock.box.id, replyLock.box.id]);
+    // Both of the pruner's own locks go to the pool — the root's AND the reply's,
+    // which is the half a rule reading only the root would miss.
+    expect(plan.toPool).toBe(100n);
+    expect(plan.refunds).toEqual([]);
   });
 
   // N3b: the subtree's like-records die with the prune, and every doomed row
@@ -575,7 +579,7 @@ describe('settlePruneUtxo', () => {
   // restores them exactly.
   it("deletes the subtree's like-records and journals every deleted row", async () => {
     const likes = await importLikes();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootId = 'a'.repeat(64);
     const replyId = 'b'.repeat(64);
@@ -588,9 +592,14 @@ describe('settlePruneUtxo', () => {
     likes.insertLikeRecord(rootId, likerB, 5);
     likes.insertLikeRecord(replyId, likerA, 7);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootId, makeUserId('pruner-likes'), [rootId, replyId], 10),
-    );
+    const likesStore = await importLikes();
+    const journal = await journaled(10, () => {
+        // ⛔ The planner is a pure read; block application deletes the
+        // subtree's like-records at §5, right after it. Both steps run here so
+        // the journalling seam stays under test at the seam that owns it.
+        planPruneSettlement(rootId, makeUserId('pruner-likes'), [rootId, replyId]);
+        likesStore.deleteLikeRecordsForPosts([rootId, replyId]);
+    });
 
     // Records died with the prune
     expect(likes.hasLikeRecord(rootId, likerA)).toBe(false);
@@ -608,7 +617,7 @@ describe('settlePruneUtxo', () => {
 
   it('leaves like-records outside the subtree alone and journals exactly the subtree rows', async () => {
     const likes = await importLikes();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const prunedId = 'a'.repeat(64);
     const otherId = 'f'.repeat(64);
@@ -617,9 +626,14 @@ describe('settlePruneUtxo', () => {
     likes.insertLikeRecord(prunedId, liker, 2);
     likes.insertLikeRecord(otherId, liker, 4);
 
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(prunedId, makeUserId('pruner-likes2'), [prunedId], 10),
-    );
+    const likesStore = await importLikes();
+    const journal = await journaled(10, () => {
+        // ⛔ The planner is a pure read; block application deletes the
+        // subtree's like-records at §5, right after it. Both steps run here so
+        // the journalling seam stays under test at the seam that owns it.
+        planPruneSettlement(prunedId, makeUserId('pruner-likes2'), [prunedId]);
+        likesStore.deleteLikeRecordsForPosts([prunedId]);
+    });
 
     // The unrelated post's record survives, unjournalled; the subtree row is
     // the exact deletion set.
@@ -658,7 +672,7 @@ function karmaRows(db: Database.Database): Array<{
     .all() as Array<{ tx_id: string | null; output_index: number | null; value: number }>;
 }
 
-describe('settlePruneUtxo — refund provenance', () => {
+describe('planPruneSettlement — refund provenance', () => {
   beforeEach(async () => {
     vi.resetModules();
     const db = await importDb();
@@ -676,54 +690,44 @@ describe('settlePruneUtxo — refund provenance', () => {
   // Refunded by both, on a subject of just the owner they would derive the same
   // mintTxId twice at index 0 — tripping UNIQUE(tx_id, output_index) and
   // rejecting a legitimate block.
-  it('two prune entries at one height refunding the same author both apply', async () => {
-    const { getDb } = await importDb();
+  it('two prune entries at one height name one refund each, for one author', async () => {
     const utxo = await importUtxo();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
-    const rootA = 'a'.repeat(64);
-    const rootB = 'b'.repeat(64);
-    const prunerA = makeUserId('pruner-of-subtree-A');
-    const prunerB = makeUserId('pruner-of-subtree-B');
-    const authorId = makeUserId('author-in-both-subtrees');
+    const rootA = 'a4'.repeat(32);
+    const rootB = 'b4'.repeat(32);
+    const authorId = makeUserId('two-entry-author');
+    const prunerA = makeUserId('two-entry-prunerA');
+    const prunerB = makeUserId('two-entry-prunerB');
 
     const lockA = makePostLockBox(100n, authorId, rootA, 1);
     const lockB = makePostLockBox(50n, authorId, rootB, 1);
     utxo.insertBox(lockA.box, lockA.targetPostId);
     utxo.insertBox(lockB.box, lockB.targetPostId);
 
-    // One journal, one height, two entries — exactly the loop in block-apply.
-    const journal = await journaled(10, () => {
-      settlePruneUtxo(rootA, prunerA, [rootA], 10);
-      settlePruneUtxo(rootB, prunerB, [rootB], 10);
-    });
+    // ⛔ **EACH ENTRY NAMES ITS OWN REFUND, and nothing has to keep them
+    // apart.** A refund is an output of the block's settlement transaction, so
+    // it takes that transaction's real `(txId, index)` and two outputs of one
+    // transaction cannot collide on `UNIQUE(tx_id, output_index)` — the same
+    // owner refunded twice at one height is two positions, by construction.
+    const planA = planPruneSettlement(rootA, prunerA, [rootA]);
+    const planB = planPruneSettlement(rootB, prunerB, [rootB]);
 
-    // Second mint merges the first, so the survivor holds 100 + 50.
-    const rows = karmaRows(getDb());
-    expect(rows.map((r) => r.value)).toEqual([100, 150]);
-
-    // Both rows persist — the merge marks the first spent, it does not delete
-    // the row — so the two mints must occupy distinct provenance keys.
-    expect(rows.map((r) => r.tx_id)).toEqual([
-      computeMintTxId(10, 'prune-refund-author', expectedSubject(rootA, authorId)),
-      computeMintTxId(10, 'prune-refund-author', expectedSubject(rootB, authorId)),
-    ]);
-    expect(rows.map((r) => r.output_index)).toEqual([0, 0]);
-    expect(insertedIds(journal).length).toBe(2);
+    expect(planA.refunds).toHaveLength(1);
+    expect(planB.refunds).toHaveLength(1);
+    expect(planA.refunds[0]!.amount).toBe(100n);
+    expect(planB.refunds[0]!.amount).toBe(50n);
+    for (const p of [planA, planB]) {
+      expect(Buffer.from(p.refunds[0]!.owner).equals(Buffer.from(authorId))).toBe(true);
+      expect(p.toPool).toBe(0n);
+    }
   });
 
-  // N3b/T2b: the liker leg is gone — a like's karma was burned at cast and is
-  // deliberately unrecoverable, so a prune refunds no liker. The subtree's
-  // post WAS liked (like-record seeded), so a stray liker mint — whatever it
-  // were derived from — would land in this table and fail the exact-set
-  // assertion below. (The named-id tripwire that stood here until T2b died
-  // with the retired reason: its mint id is no longer derivable. The
-  // exact-set assertion subsumes it.)
   it('a liked subtree settles to exactly the author mint — no liker leg', async () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
     const likes = await importLikes();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const root = 'c'.repeat(64);
     const pruner = makeUserId('pruner-liked');
@@ -734,14 +738,22 @@ describe('settlePruneUtxo — refund provenance', () => {
     utxo.insertBox(lock.box, lock.targetPostId);
     likes.insertLikeRecord(root, likerId, 3);
 
-    await journaled(10, () => settlePruneUtxo(root, pruner, [root], 10));
+    const plan = planPruneSettlement(root, pruner, [root]);
 
-    // Exactly one mint: the author's — an exact-set assertion, so any stray
-    // second mint fails it regardless of what it would be derived from.
-    const rows = karmaRows(getDb());
-    expect(rows.map((r) => r.tx_id)).toEqual([
-      computeMintTxId(10, 'prune-refund-author', expectedSubject(root, authorId)),
-    ]);
+    // ⛔ **Exactly one refund: the author's.** There is no liker leg — a like
+    // moves its karma into a marker at cast and the settlement pays it to the
+    // author, so a prune has nothing to refund a liker. An exact-set assertion,
+    // so any stray second refund fails it regardless of where it came from.
+    expect(plan.refunds).toHaveLength(1);
+    expect(plan.refunds[0]!.amount).toBe(100n);
+    expect(Buffer.from(plan.refunds[0]!.owner).equals(Buffer.from(authorId))).toBe(true);
+    expect(plan.toPool).toBe(0n);
+    // ⚠ **No synthetic mint id to assert.** A refund is an output of the block's
+    // settlement transaction, so its provenance is that transaction's
+    // `(txId, index)` and the `prune-refund-author` reason is reserved and
+    // unused (NODE_INTERFACE → Reason and subject table). The planner writes
+    // nothing, so the ledger is untouched here.
+    expect(karmaRows(getDb())).toEqual([]);
   });
 });
 
@@ -764,7 +776,7 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     const { getDb } = await importDb();
     const utxo = await importUtxo();
     const topology = await importTopology();
-    const { settlePruneUtxo } = await importSettlePruneUtxo();
+    const { planPruneSettlement } = await importSettlePruneUtxo();
 
     const rootId = 'a'.repeat(64);
     const replyId = 'b'.repeat(64);
@@ -788,44 +800,30 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
     utxo.insertBox(lb2.box, lb2.targetPostId);
 
     // 4. Apply settlement, pruned by the root's author
-    const journal = await journaled(10, () =>
-      settlePruneUtxo(rootId, authorId, [rootId, replyId], 10),
-    );
+    const likesStore = await importLikes();
+    const journal = await journaled(10, () => {
+        // ⛔ The planner is a pure read; block application deletes the
+        // subtree's like-records at §5, right after it. Both steps run here so
+        // the journalling seam stays under test at the seam that owns it.
+        planPruneSettlement(rootId, authorId, [rootId, replyId]);
+        likesStore.deleteLikeRecordsForPosts([rootId, replyId]);
+    });
 
-    // 5. Verify PostLockBoxes consumed
-    expect(removedIds(journal)).toContain(lb1.box.id);
-    expect(removedIds(journal)).toContain(lb2.box.id);
+    // 5. The planner NAMES both locks; the settlement consumes them.
+    const plan = planPruneSettlement(rootId, authorId, [rootId, replyId]);
+    expect(plan.lockBoxIds).toEqual([lb1.box.id, lb2.box.id]);
 
-    // 6. Verify karma: the reply author gets their 50 back, the pruning author
-    //    gets nothing — their own 50 burned with the consume
-    const db = getDb();
-    const createdBoxes = insertedIds(journal).map(
-      (boxId) =>
-        db
-          .prepare('SELECT * FROM utxo_boxes WHERE id = ?')
-          .get(boxId) as {
-          value: number;
-          owner: Buffer;
-          box_type: string;
-        } | undefined,
-    ).filter(Boolean);
+    // 6. The reply author's 50 recirculates; the pruning author's own 50 goes to
+    //    the pool. ⛔ Both ends named — neither is destroyed.
+    expect(plan.refunds).toHaveLength(1);
+    expect(plan.refunds[0]!.amount).toBe(50n);
+    expect(Buffer.from(plan.refunds[0]!.owner).equals(Buffer.from(replier))).toBe(true);
+    expect(plan.toPool).toBe(50n);
 
-    const replierBox = createdBoxes.find(
-      (b) => b && Buffer.from(b.owner).equals(Buffer.from(replier)),
-    );
-    expect(replierBox).toBeDefined();
-    expect(replierBox!.value).toBe(50);
-    expect(
-      createdBoxes.find((b) => b && Buffer.from(b.owner).equals(Buffer.from(authorId))),
-    ).toBeUndefined();
-
-    // 7. Verify all original boxes are marked spent
-    expect(boxIsSpent(db, lb1.box.id!)).toBe(true);
-    expect(boxIsSpent(db, lb2.box.id!)).toBe(true);
-
-    // 8. Verify getPostLockBox returns null (box now spent)
-    expect(utxo.getPostLockBox(rootId)).toBeNull();
-    expect(utxo.getPostLockBox(replyId)).toBeNull();
+    // 7. ⛔ **No box moved.** The like-record deletion is the only mutation this
+    //    step still makes — this subtree carries none, so the journal's box
+    //    mutations are empty, which is the property under test either way.
+    expect(journal.mutations.filter((m) => m.kind === 'box')).toEqual([]);
   });
 });
 
@@ -991,7 +989,7 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
 
   // N2b pinned the likeRecordDeletions inverse against a hand-built journal;
   // this closes the loop end-to-end: the journal is produced by the REAL
-  // prune path (applyOrderingBlock → settlePruneUtxo →
+  // prune path (applyOrderingBlock → planPruneSettlement →
   // deleteLikeRecordsForPosts), then revertBlock replays it and the exact
   // rows return.
   it("a reverted prune block restores the subtree's like-records exactly (all three columns)", async () => {

@@ -31,10 +31,10 @@ import type {
   AnyBox,
   BondBox,
   CandidateOf,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
   VouchBox,
+  VouchEscrowBox,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
@@ -54,8 +54,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  insertVouchCooldown,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getBondFor,
 } from '../../src/store/index.js';
 import { applyTx, materializeOutput, validateTx } from '../../src/services/utxo-engine.js';
@@ -104,7 +103,12 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       // Present from the before-leg on so both halves run the same fixture
       // code: HEAD ignores it, the tightened engine requires it. Backed by the
       // store's real predicate — the one implementation every path shares.
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      // ⛔ The real predicate over escrow BOXES. This suite's whole subject is
+      // the consensus gates, and a stubbed one would leave V3 asserting the
+      // stub (NODE_INTERFACE → Vouch transition rules).
+      hasActiveVouchEscrow: storeHasActiveVouchEscrow,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -135,6 +139,28 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const box = seedProvenance<KarmaBox>(candidate, 1, nonce);
     storeInsertBox(box);
     return box;
+  }
+
+  /**
+   * An unreleased `VouchEscrowBox` for `owner` — the state a cooling voucher is
+   * in (ARCHITECTURE → Vouch boxes).
+   *
+   * ⚠ **It names no target**, so a pair-scoped cooldown is inexpressible: the
+   * rule the box can carry is voucher-scoped.
+   */
+  function seedEscrow(owner: Uint8Array, releaseAtBlock: number, nonce = 90): void {
+    storeInsertBox(
+      seedProvenance<VouchEscrowBox>(
+        {
+          boxType: 'vouch_escrow' as const,
+          value: VOUCH_KARMA_AMOUNT,
+          owner,
+          releaseAtBlock,
+        },
+        1,
+        nonce,
+      ),
+    );
   }
 
   /**
@@ -259,28 +285,32 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   // -------------------------------------------------------------------------
   // V3 — no apply-time cooldown gate (B6, decided 2026-08-04, never built).
-  // `hasActiveVouchCooldown` was mempool-only, so a block-embedded cast for a
+  // `hasActiveVouchEscrow` was mempool-only, so a block-embedded cast for a
   // pair with a live cooldown row reaches `insertVouchCooldown`'s INSERT OR
   // REPLACE on the next unvouch and destroys the first escrow's pending
   // re-mint on the forward path.
   // -------------------------------------------------------------------------
 
-  it('V3: rejects a cast while an active cooldown exists for the pair', () => {
-    // Accepted on HEAD — the predicate was mempool-only, so a block-embedded
-    // cast reached the escrow overwrite.
+  it('V3: rejects a cast while the voucher holds an unreleased escrow', () => {
     const karma = seedKarma(voucher.pub, 100n);
-    insertVouchCooldown(voucher.pub, target.pub, 999, VOUCH_KARMA_AMOUNT);
+    seedEscrow(voucher.pub, 999);
 
     const tx = buildVouchCast(karma, voucher, {});
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain('active cooldown');
+    expect(result.error).toContain('unreleased escrow');
   });
 
-  it('V3 non-vacuity: a cooldown for a different pair does not block the cast', () => {
-    const otherTarget = makeKeys();
+  // ⛔ **THE GATE IS VOUCHER-SCOPED, SO THE NON-VACUITY ACTOR IS A SECOND
+  // VOUCHER.** `VouchEscrowBox` carries `owner` and `releaseAtBlock` and no
+  // target (TYPES_INTERFACE → VouchEscrowBox), so a pair-scoped question is one
+  // this state cannot answer — the rule is *this voucher may not recast*, and
+  // what has to stay legal is somebody else's cast while their own escrow
+  // cools.
+  it('V3 non-vacuity: another voucher\'s escrow does not block this cast', () => {
+    const otherVoucher = makeKeys();
     const karma = seedKarma(voucher.pub, 100n);
-    insertVouchCooldown(voucher.pub, otherTarget.pub, 999, VOUCH_KARMA_AMOUNT);
+    seedEscrow(otherVoucher.pub, 999);
 
     const tx = buildVouchCast(karma, voucher, {});
     const result = validateTx(deps, tx, 10);
@@ -343,12 +373,6 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       value: karmaBox.value - bondValue,
       owner: inviter.pub,
     };
-    const inviteOut = {
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId: inviter.pub,
-      inviteePublicKey: invitee,
-    } as InviteBox;
     const bondOut = {
       boxType: 'bond' as const,
       value: bondValue,
@@ -357,7 +381,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     } as BondBox;
     const tx: UtxoTransaction = {
       inputs: [karmaBox.id!],
-      outputs: [karmaOut, inviteOut, bondOut],
+      outputs: [karmaOut, bondOut],
       signatures: {},
       protocolVersion: 1,
     };
@@ -365,10 +389,11 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     return tx;
   }
 
-  it('V4: rejects an invite create whose bond holds nothing', () => {
+  it('V4: rejects an invite whose bond holds nothing', () => {
     // Conservation alone permits a 0-value bond: the karma output simply keeps
-    // the difference. Without the value pin the inviter gets a live, claimable
-    // InviteBox for no stake at all.
+    // the difference. Without the value pin the settlement grants the invitee
+    // `INVITE_KARMA_AMOUNT` out of the pool for no stake at all — and `B >= G`
+    // is what makes the grant arbitrage-free (ARCHITECTURE → Invite System).
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 0n);

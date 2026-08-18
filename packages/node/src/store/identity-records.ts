@@ -40,17 +40,6 @@ export interface IdentityRecord {
   /** u32 — bumped when decay fires. */
   lastDecayBlock: number;
   /**
-   * Outstanding like accrual, `< LIKES_PER_KARMA_PAYOUT` — written ONLY by
-   * per-block like settlement. No other path may touch it; every other
-   * writer of this record carries the stored value through unchanged.
-   *
-   * `bigint` although the value is tiny: it is karma-denominated committed
-   * state, and the row boundary (`safeIntegers`) hands back bigint — keeping
-   * the type end-to-end means no `Number()` coercion can silently appear in a
-   * consensus path.
-   */
-  likeCarry: bigint;
-  /**
    * u32 — the height an invite claim applied for this identity. `0` = never
    * invited.
    *
@@ -84,7 +73,7 @@ export interface IdentityRecord {
    * own stake, never someone else's"), which is also why prune returns other
    * authors' post bonds.
    *
-   * `bigint` for the same two reasons `likeCarry` is: the value is consensus
+   * `bigint` for the same two reasons the counter is: the value is consensus
    * input to bigint arithmetic, and the row boundary (`safeIntegers`) hands back
    * bigint — so no `Number()` coercion can appear in a settlement path. It takes
    * `vlqU64`, which throws outside `[0, 2⁶⁴)` rather than colliding on a
@@ -116,7 +105,7 @@ export function identityRecordKey(identityId: UserId): string {
 export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
   const row = getDb()
     .prepare(
-      `SELECT last_activity_block, last_decay_block, like_carry, invited_at_block,
+      `SELECT last_activity_block, last_decay_block, invited_at_block,
               lifetime_likes_received
        FROM identity_records WHERE identity_id = ?`,
     )
@@ -124,7 +113,7 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
     .get(Buffer.from(identityId)) as
       {
         last_activity_block: bigint; last_decay_block: bigint;
-        like_carry: bigint; invited_at_block: bigint;
+        invited_at_block: bigint;
         lifetime_likes_received: bigint;
       }
       | undefined;
@@ -132,7 +121,6 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
   return {
     lastActivityBlock: Number(row.last_activity_block),
     lastDecayBlock: Number(row.last_decay_block),
-    likeCarry: row.like_carry,
     invitedAtBlock: Number(row.invited_at_block),
     lifetimeLikesReceived: row.lifetime_likes_received,
   };
@@ -154,7 +142,7 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
 export function getAllIdentityRecords(): Array<{ identityId: UserId; record: IdentityRecord }> {
   const rows = getDb()
     .prepare(
-      `SELECT identity_id, last_activity_block, last_decay_block, like_carry,
+      `SELECT identity_id, last_activity_block, last_decay_block,
               invited_at_block, lifetime_likes_received
        FROM identity_records ORDER BY identity_id`,
     )
@@ -163,7 +151,6 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       identity_id: Buffer;
       last_activity_block: bigint;
       last_decay_block: bigint;
-      like_carry: bigint;
       invited_at_block: bigint;
       lifetime_likes_received: bigint;
     }>;
@@ -172,7 +159,6 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
     record: {
       lastActivityBlock: Number(row.last_activity_block),
       lastDecayBlock: Number(row.last_decay_block),
-      likeCarry: row.like_carry,
       invitedAtBlock: Number(row.invited_at_block),
       lifetimeLikesReceived: row.lifetime_likes_received,
     },
@@ -199,15 +185,14 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
   getDb()
     .prepare(
       `INSERT OR REPLACE INTO identity_records
-         (identity_id, last_activity_block, last_decay_block, like_carry,
+         (identity_id, last_activity_block, last_decay_block,
           invited_at_block, lifetime_likes_received)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?)`,
     )
     .run(
       Buffer.from(identityId),
       record.lastActivityBlock,
       record.lastDecayBlock,
-      record.likeCarry,
       record.invitedAtBlock,
       record.lifetimeLikesReceived,
     );

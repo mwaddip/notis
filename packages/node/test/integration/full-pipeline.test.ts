@@ -12,7 +12,7 @@ import {
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  signTransaction, fixturePostId, seedPostTx } from '../helpers.js';
+  signTransaction, fixturePostId, seedPostTx, seedKarmaPoolBox } from '../helpers.js';
 import {
   describe,
   it,
@@ -40,7 +40,6 @@ import {
 import type {
   Post,
   KarmaBox,
-  InviteBox,
   BondBox,
   UtxoTransaction,
   AnyBox,
@@ -210,6 +209,9 @@ interface EngineDeps {
   getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   getKarmaValue: (owner: Uint8Array) => bigint;
   getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
+  hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
+  vouchCooldownBlocks: number;
+  getTopologyAuthor: (postId: string) => Uint8Array | null;
   runInTransaction: (fn: () => void) => void;
 }
 
@@ -237,6 +239,18 @@ function makeEngineDeps(
     // The invite-create once-ever bar reads it (NODE_INTERFACE → "Bond
     // transition rules"), and this suite runs the real engine.
     getIdentityRecord: (id: Uint8Array) => recordsModule.getIdentityRecord(id),
+    hasActiveVouchEscrow: (voucherId: Uint8Array) =>
+      utxoModule.hasActiveVouchEscrow(voucherId),
+    vouchCooldownBlocks: 2,
+    // ⛔ The like marker's author pin, read from `block_topology` and never
+    // `dag_posts.author` (ARCHITECTURE → Likes). This suite runs the real
+    // engine end to end, so it resolves the real row.
+    getTopologyAuthor: (postId: string) => {
+      const row = db
+        .prepare('SELECT author FROM block_topology WHERE post_id = ?')
+        .get(postId) as { author: string } | undefined;
+      return row ? new Uint8Array(Buffer.from(row.author, 'hex')) : null;
+    },
     runInTransaction: (fn: () => void) => {
       (db.transaction(fn) as () => void)();
     },
@@ -288,6 +302,19 @@ describe('full-pipeline', () => {
     const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'full-pipeline like test');
     const posts = await importPosts();
     posts.insertPost(postId, post, encodePost(post));
+    // ⛔ **The target must be CONFIRMED before a like can be built, and that is
+    // new.** The like's marker names the post's author, and the author is
+    // knowable only from `block_topology` — which an applied block writes
+    // (NODE_INTERFACE → Karma transition rules). A like on an unconfirmed post
+    // is unbuildable, so the row a confirming block would write is seeded here
+    // rather than the flow being reordered around it.
+    const topology = await import('../../src/store/topology.js');
+    topology.insertBlockTopology(
+      postId,
+      post.parentRefs ?? [],
+      Buffer.from(author.userId).toString('hex'),
+      1,
+    );
 
     // ---- Step 0: Confirm the target first. A like on an unconfirmed post is
     // invalid at apply, so the canonical flow likes an already-confirmed post;
@@ -310,6 +337,14 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: liker.userId,
         } as KarmaBox,
+        // ⛔ **The marker carries the cost.** The like conserves: its karma moves
+        // into a `LikeAccrualBox` earmarked for the author rather than leaving
+        // the ledger (ARCHITECTURE → The conservation axiom, third shape).
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          author: author.userId,
+        } as unknown as KarmaBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -380,6 +415,16 @@ describe('full-pipeline', () => {
     const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'multi-op test');
     const posts = await importPosts();
     posts.insertPost(postId, post, encodePost(post));
+    // ⛔ The target must be confirmed before a like can be built — the marker
+    // names its author, and `block_topology` is the only source for that
+    // (NODE_INTERFACE → Karma transition rules).
+    const topology = await import('../../src/store/topology.js');
+    topology.insertBlockTopology(
+      postId,
+      post.parentRefs ?? [],
+      Buffer.from(author.userId).toString('hex'),
+      1,
+    );
 
     // Insert sub-block into mempool
     const mempool = await importMempool();
@@ -395,6 +440,14 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: liker.userId,
         } as KarmaBox,
+        // ⛔ **The marker carries the cost.** The like conserves: its karma moves
+        // into a `LikeAccrualBox` earmarked for the author rather than leaving
+        // the ledger (ARCHITECTURE → The conservation axiom, third shape).
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          author: author.userId,
+        } as unknown as KarmaBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -448,16 +501,15 @@ describe('full-pipeline', () => {
     const inviter = makeTestIdentity();
 
     const utxo = await importUtxo();
+    // ⛔ The settlement spends the pool to grant the invitee, so a chain without
+    // one cannot produce the block at all.
+    await seedKarmaPoolBox();
     const karmaBox = makeKarmaBox(100n, inviter.userId, 0);
     utxo.insertBox(karmaBox);
 
-    // Build invite tx with 3 outputs: karma change + invite + bond. Only the
-    // bond is paid — INVITE_KARMA_AMOUNT is minted at the claim.
-    //
-    // ⚠ The output-shape pin rejects a lying invite fixture, and this one has
-    // to stay honest: one invitee key on both boxes (NODE_INTERFACE → Legal box
-    // transitions). It is box CONTENT, so a fixture that gets it wrong stores
-    // boxes that disagree with every reconstruction of them.
+    // Build the invite tx: karma change + bond. Only the bond is paid —
+    // INVITE_KARMA_AMOUNT comes out of the pool at settlement, so the
+    // transaction conserves.
     const invitee = makeTestIdentity().userId;
     const changeVal = 100n - INVITE_BOND_KARMA;
     const inviteTx: UtxoTransaction = {
@@ -468,12 +520,6 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: inviter.userId,
         } as KarmaBox,
-        {
-          boxType: 'invite',
-          value: 0n,
-          inviterId: inviter.userId,
-          inviteePublicKey: invitee,
-        } as InviteBox,
         {
           boxType: 'bond',
           value: INVITE_BOND_KARMA,
@@ -506,14 +552,6 @@ describe('full-pipeline', () => {
     // Old karma consumed (check via deps, which filters by spent_at_block)
     expect(deps.getBox(karmaBox.id!)).toBeNull();
 
-    // Invite box created
-    const inviteRows = db
-      .prepare(
-        "SELECT id FROM utxo_boxes WHERE box_type = 'invite' AND spent_at_block IS NULL",
-      )
-      .all() as Array<{ id: string }>;
-    expect(inviteRows.length).toBe(1);
-
     // Bond box created
     const bondRows = db
       .prepare(
@@ -528,16 +566,15 @@ describe('full-pipeline', () => {
     expect(newKarma!.value).toBe(changeVal);
   });
   // -------------------------------------------------------------------------
-  // 4. The invite pairing through a real block funnel
+  // 4. The invite through a real block funnel
   //
-  // The pairing is `inviteePublicKey`, carried by both boxes and pinned equal at
-  // creation. No id and no output index is involved, so the property to prove is
-  // that a pair naming two different invitees is REJECTED AT CREATE — which is
-  // what makes a mispaired bond inexpressible rather than a dangling reference
-  // discovered at settlement.
+  // ⛔ **The bond IS the request** (ARCHITECTURE → Invite System). One bond, one
+  // grant, and the pairing is structural — so what has to be proved is that the
+  // bond names its own inviter, and that the block's settlement pays the
+  // invitee out of the pool in the same block.
   // -------------------------------------------------------------------------
 
-  it('invite: a bond naming a different invitee is rejected at create — and the matching one still applies', async () => {
+  it('invite: the bond applies and the settlement grants the invitee out of the pool', async () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
@@ -546,12 +583,13 @@ describe('full-pipeline', () => {
     const utxo = await importUtxo();
     const invitesSvc = await importInvitesService();
     const deps = makeEngineDeps(db, utxo, await importIdentityRecords());
+    await seedKarmaPoolBox();
 
     const invitee = makeTestIdentity().userId;
     const stranger = makeTestIdentity().userId;
 
-    // outputs are [karma, invite, bond]
-    const buildInviteTx = (bondInvitee: Uint8Array, karmaIn: KarmaBox): UtxoTransaction => {
+    // outputs are [karma, bond] — the whole invite (ARCHITECTURE → Invite System)
+    const buildInviteTx = (bondInviterId: Uint8Array, karmaIn: KarmaBox): UtxoTransaction => {
       const tx: UtxoTransaction = {
         inputs: [karmaIn.id!],
         outputs: [
@@ -560,12 +598,8 @@ describe('full-pipeline', () => {
             owner: inviter.userId,
           },
           {
-            boxType: 'invite', value: 0n, inviterId: inviter.userId,
+            boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: bondInviterId,
             inviteePublicKey: invitee,
-          },
-          {
-            boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: inviter.userId,
-            inviteePublicKey: bondInvitee,
           },
         ],
         signatures: {},
@@ -575,40 +609,47 @@ describe('full-pipeline', () => {
       return tx;
     };
 
-    // ---- The property: a mispaired bond cannot be created ----
+    // ---- The property: a bond naming a stranger as inviter cannot be created ----
     //
-    // A bond naming someone else would settle against a stranger's likes, and
-    // the claim would start a probation clock no bond is dated by.
+    // It would hand the probation-deadline settlement to someone who staked
+    // nothing.
     const karmaA = makeKarmaBox(100n, inviter.userId, 0);
     utxo.insertBox(karmaA);
     expect(() => invitesSvc.createInvite(deps, buildInviteTx(stranger, karmaA), 0))
-      .toThrow(/same inviteePublicKey/);
+      .toThrow(/inviterId must be the karma input's owner/);
 
-    // ---- Non-vacuity control: the MATCHING pair still applies cleanly ----
+    // ---- Non-vacuity control: the correct bond still applies cleanly ----
     //
     // Without this the rejection above would pass just as well against an
     // implementation that rejected every invite. Same fixture, same funnel,
     // differing only in the field under test.
-    const correct = buildInviteTx(invitee, karmaA);
+    const correct = buildInviteTx(inviter.userId, karmaA);
     expect(invitesSvc.createInvite(deps, correct, 0).status).toBe('pending');
+
+    const poolBefore = utxo.getKarmaPoolBox()!.value;
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     expect(await mineNextBlock(bc)).not.toBeNull();
 
-    // Applied: the karma is consumed and both boxes exist.
+    // Applied: the karma is consumed and the bond exists.
     expect(deps.getBox(karmaA.id!)).toBeNull();
     const storedBond = db
       .prepare("SELECT id FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL")
       .get() as { id: string };
     expect(storedBond).toBeDefined();
 
-    // And the pairing RESOLVES the way block application resolves it: the
-    // invitee key names exactly one live pair, with no provenance walk.
+    // The pairing RESOLVES the way block application resolves it: the invitee
+    // key names exactly one live bond, with no provenance walk.
     const bondBox = deps.getBox(storedBond.id) as BondBox;
     expect(Buffer.from(bondBox.inviteePublicKey).toString('hex'))
       .toBe(Buffer.from(invitee).toString('hex'));
     expect(utxo.getBondFor(invitee)!.id).toBe(storedBond.id);
-    expect(utxo.getInviteFor(invitee)!.inviterId).toEqual(inviter.userId);
+
+    // ⛔ **And the settlement paid the invitee out of the POOL**, in the same
+    // block — one bond, one grant, with a named source and a named sink
+    // (ARCHITECTURE → The conservation axiom).
+    expect(utxo.getKarmaValue(invitee)).toBe(INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - INVITE_KARMA_AMOUNT);
   });
 });

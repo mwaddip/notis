@@ -141,13 +141,11 @@ export function createRouter(deps: MiningDeps): Router {
       // post-bearing transactions.
       postIds: postIdsOf(tpl),
       pruneEntries: tpl.utxoTxTree.pruneEntries,
+      // ⛔ **The coinbase is an output of the settlement transaction**, the last
+      // `utxoTxIds` entry, so the template reports no `coinbaseOutputs`
+      // (TYPES_INTERFACE → OrderingBlock). A miner hashes `powPreimage` and
+      // never reads the body.
       utxoTxIds: tpl.utxoTxTree.utxoTxIds,
-      coinbaseOutputs: tpl.utxoTxTree.coinbaseOutputs.map((o) => ({
-        owner: Buffer.from(o.owner).toString('hex'),
-        value: o.value.toString(),
-        lockedUntilBlock: o.lockedUntilBlock,
-        isTreasury: o.isTreasury,
-      })),
       powPreimage: powPreimage.toString('hex'),
     });
   });

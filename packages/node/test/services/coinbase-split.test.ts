@@ -13,11 +13,11 @@ import {
   COINBASE_TREASURY_PCT,
   COINBASE_BONUS_PCT,
   INCLUSION_BONUS_K,
+  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   CreditBox,
-  InviteBox,
   KarmaBox,
   UtxoTransaction,
   VouchBox,
@@ -42,12 +42,6 @@ function vouchBox(voucherId: Uint8Array, targetId: Uint8Array): VouchBox {
   return {
     boxType: 'vouch', value: 1n, voucherId, targetId, 
   } as VouchBox;
-}
-
-function inviteBox(inviterId: Uint8Array, inviteePublicKey: Uint8Array): InviteBox {
-  return {
-    boxType: 'invite', value: 0n, inviterId, inviteePublicKey, 
-  } as InviteBox;
 }
 
 /** A transaction shell — only `outputs` and `signatures` matter to the count. */
@@ -223,17 +217,22 @@ describe('countKarmaActors', () => {
     expect(countKarmaActors([entry(t, [vouchBox(ALICE, BOB)])], VALIDATOR)).toBe(1);
   });
 
-  // The two invite shapes have different actors, and the discriminant is the
-  // output list: a cancel spends to nothing and belongs to the inviter, a claim
-  // mints to the key the box names and belongs to the invitee.
-  it('counts the inviter for a cancel and the invitee for a claim', () => {
-    const cancel = entry(tx([]), [inviteBox(ALICE, BOB)]);
-    expect(countKarmaActors([cancel], VALIDATOR)).toBe(1);
+  // ⛔ **An invite's actor is the INVITER, and the invitee is not one.** The
+  // invite is a karma spend that emits a bond, so the karma box it consumes
+  // names the actor — the invitee holds no box in the transaction and spent
+  // nothing, so counting them would pay the inclusion bonus for a party that
+  // bore no cost (MINING_INTERFACE → The slices).
+  it('counts the inviter for an invite, and never the invitee', () => {
+    const bond = {
+      boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: ALICE, inviteePublicKey: BOB,
+    };
+    const invite = entry(tx([karmaBox(9n, ALICE), bond]), [karmaBox(34n, ALICE)]);
+    expect(countKarmaActors([invite], VALIDATOR)).toBe(1);
 
-    const claim = entry(tx([karmaBox(25n, BOB)]), [inviteBox(ALICE, BOB)]);
-    // Same box, different shape — so if the discriminant were ignored, these
-    // two would collapse to one actor instead of naming two different people.
-    expect(countKarmaActors([cancel, claim], VALIDATOR)).toBe(2);
+    // Alice inviting Bob and Alice posting are one actor, not two — the count is
+    // over distinct owners of the karma spent, and both spend Alice's.
+    const post = entry(tx([karmaBox(9n, ALICE)]), [karmaBox(10n, ALICE)]);
+    expect(countKarmaActors([invite, post], VALIDATOR)).toBe(1);
   });
 
   it('counts nothing for a transaction with no inputs resolved', () => {

@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { serializeBox, deserializeBox, deserializeBoxWithId } from '../../src/state/serialize-box.js';
 import { seedProvenance } from '../helpers.js';
 import { BOX_ID_DOMAIN, BOX_TYPE_TAGS, CodecError, ReaderError, computeBoxId } from '@dagsocial/types';
-import type { AnyBox, KarmaBox, CreditBox, InviteBox, GenesisProofBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
 
 /**
  * Every fixture below is a GENUINE box: `seedProvenance` gives it real
@@ -84,18 +84,6 @@ describe('serializeBox', () => {
     expect((thrown as ReaderError).code).toBe('invalid-tag');
   });
 
-  // The two b32 fields are filled differently on purpose: they are adjacent
-  // same-width fields, so equal values would make a transposition invisible.
-  it('roundtrips an InviteBox', () => {
-    const box = seedProvenance<InviteBox>({
-      boxType: 'invite' as const,
-      value: 0n,
-      inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x22),
-    });
-    expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
-  });
-
   // Two arms, because `payload` is `lp` and the length prefix is the whole of
   // the field's injectivity: appended raw, an empty payload would be
   // indistinguishable from the end of the box. The empty case is also the
@@ -126,11 +114,9 @@ describe('serializeBox', () => {
     expect(Buffer.from(serializeBox(box)).equals(Buffer.from(serializeBox(oneByte)))).toBe(false);
   });
 
-  // Byte-for-byte the invite arm's trailing fields, under the other tag — the
-  // pair is one layout with two tags (TYPES_INTERFACE → Layout — Boxes), so a
-  // reader that walked one arm as the other would round-trip the fields and
-  // fail only on the discriminant. Both b32 fields differ for the same reason
-  // as the invite above.
+  // The two b32 fields are filled differently on purpose: they are adjacent
+  // same-width fields, so equal values would make a transposition invisible
+  // (TYPES_INTERFACE → Layout — Boxes).
   it('roundtrips a BondBox', () => {
     const box = seedProvenance<BondBox>({
       boxType: 'bond' as const,
@@ -270,24 +256,10 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
     );
   });
 
-  it('invite', () => {
-    const box: InviteBox = {
-      boxType: 'invite', value: 0n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x22),
-      txId: TXID, index: INDEX,
-    };
-    expect(hexOf(serializeBox(box))).toBe(
-      '02' +            // enum8(invite) = 2
-      '00' +            // vlqU64(0) — an invite always holds 0
-      '33'.repeat(32) + // b32(inviterId)
-      '22'.repeat(32) + // b32(inviteePublicKey)  ← differs from inviterId on purpose
-      PROV,
-    );
-  });
-
-  // The bond's tail is byte-for-byte the invite's, so the two vectors sit
-  // adjacent: the tag byte and the value are the whole of the difference, and a
-  // reader that lost the tag would read one as the other.
+  // ⛔ **Tag 2 is unassigned and reserved, never to be reused** — `invite` held
+  // it and the type is gone (TYPES_INTERFACE → InviteBox). The bond's vector
+  // below is what pins that the tag byte alone separates two same-tailed
+  // layouts: a reader that lost it would read one box as another.
   it('bond', () => {
     const box: BondBox = {
       boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),
@@ -361,10 +333,6 @@ describe('boxId is a total function of the AVL value', () => {
     ['credit', seedProvenance<CreditBox>({
       boxType: 'credit', value: 50n, owner: new Uint8Array(32).fill(0xbb),
       lockedUntilBlock: 20,
-    })],
-    ['invite', seedProvenance<InviteBox>({
-      boxType: 'invite', value: 0n, inviterId: new Uint8Array(32).fill(0x33),
-      inviteePublicKey: new Uint8Array(32).fill(0x22),
     })],
     ['bond', seedProvenance<BondBox>({
       boxType: 'bond', value: 5n, inviterId: new Uint8Array(32).fill(0x33),

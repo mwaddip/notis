@@ -4,7 +4,7 @@ import { deserializeAvlValue } from './serialize-box.js';
 
 /**
  * JSON-safe view of an entity's fields: bigint fields (box `value` /
- * `originalValue`, record `likeCarry`) become decimal strings —
+ * `originalValue`, record `lifetimeLikesReceived`) become decimal strings —
  * JSON.stringify throws on bigint.
  */
 function jsonSafeFields(fields: Record<string, unknown>): Record<string, unknown> {

@@ -4,7 +4,6 @@ import {
   computeBoxId,
   computeTxId,
   INVITE_BOND_KARMA,
-  INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
@@ -12,7 +11,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, InviteBox, VouchBox, PostLockBox, Post } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, Post } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -49,7 +48,13 @@ import type { IdentityRecord } from '../store/identity-records.js';
  * conservation yes — which is what makes the separation load-bearing rather
  * than tidy.
  */
-export const KARMA_TRANSITION_TYPES = ['karma', 'invite', 'bond', 'post_lock', 'vouch'] as const;
+export const KARMA_TRANSITION_TYPES = [
+  'karma',
+  'bond',
+  'post_lock',
+  'vouch',
+  'like_accrual',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -75,12 +80,18 @@ export interface UtxoEngineDeps {
   /**
    * The committed per-identity record, or null when the identity has none.
    *
-   * Consensus input: invite creation rejects an `inviteePublicKey` that already
-   * has one, which is where "an invite may only name a key that is not already
-   * an account" is enforced. **Existence is the whole test** — the record's
-   * contents decide nothing here. Checked at creation rather than at claim so a
-   * second inviter's bond is never locked against an invite that could not have
-   * been claimed.
+   * Consensus input: an invite rejects an `inviteePublicKey` that already has
+   * one, which is where "an invite may only name a key that is not already an
+   * account" is enforced. **Existence is the whole test** — the record's
+   * contents decide nothing here (NODE_INTERFACE → Legal box transitions;
+   * ARCHITECTURE → Invite creation argues why the weaker "never invited before"
+   * test prints karma).
+   *
+   * ⚠ **This gate cannot see a sibling transaction in the same block.** The
+   * settlement grants from the pool after every embedded transaction has
+   * applied, so a second invite naming the same key in the same block still
+   * finds no record here. The within-block half of the rule is block
+   * application's — `block-apply` §11's duplicate-invitee refusal.
    */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
   /**
@@ -94,7 +105,32 @@ export interface UtxoEngineDeps {
    * site — row existence IS activity, since matured rows are deleted by
    * `processVouchCooldowns` in the same block application that mints them.
    */
-  hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) => boolean;
+  hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
+  /**
+   * `NetworkProfile.vouchCooldownBlocks` — how long an unvouched stake waits.
+   *
+   * Injected rather than imported, like every other consensus input here: it is
+   * per-network (`compress time, never economics`), so a second reader holding
+   * the constant would agree with the profile on mainnet and disagree on
+   * devnet — the failure `inviteProbationBlocks` already had.
+   */
+  vouchCooldownBlocks: number;
+  /**
+   * The consensus-recorded author of a confirmed post, raw 32 bytes, or null
+   * when no applied block has confirmed it.
+   *
+   * ⛔ **Consensus input, and the source is the whole of its correctness.** It
+   * reads `block_topology` and never `dag_posts.author` (ARCHITECTURE → Likes):
+   * a placeholder row carries a zeroed author, so a marker built from the wrong
+   * source earmarks the liker's karma to the zero key.
+   *
+   * ⚠ **A like on an UNCONFIRMED post is now unbuildable, and that is a
+   * consequence rather than a decision.** The marker has to name the author, and
+   * the author is knowable only once a block has confirmed the post — so the
+   * confirmation the apply rule already demanded at apply height is demanded at
+   * build time too.
+   */
+  getTopologyAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
   runInTransaction: (fn: () => void) => void;
   /** Return true if the box is the system karma box (faucet source). */
@@ -151,7 +187,28 @@ function checkTransitions(
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
   post: Post | undefined,
+  currentBlockHeight: number,
 ): { valid: boolean; error?: string } {
+  // ⛔ **THE MARKER'S CONVERSE, AND IT HAS NO PREDECESSOR** (NODE_INTERFACE →
+  // Karma transition rules — the like accrual marker is an exemption from the
+  // rule above). A `LikeAccrualBox` is a karma-bearing output earmarked for
+  // someone other than the input's owner, which is precisely the shape
+  // *"Karma cannot be transferred"* exists to refuse.
+  //
+  // ⛔ **A MARKER BALANCES, so nothing else in the funnel fires on it.**
+  // `myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)` conserves, its
+  // output shape is legal, its signature is the owner's, and the same-owner rule
+  // pins only *karma* outputs — the marker is not one. Without this line that is
+  // an accepted transaction, and it pays Bob at settlement.
+  //
+  // Ahead of the switch rather than inside the karma arm, so it holds for every
+  // input type and not only for the one that can legitimately emit a marker.
+  if (likeTarget === undefined && outputs.some((o) => o.boxType === 'like_accrual')) {
+    return {
+      valid: false,
+      error: `a LikeAccrualBox output is only legal on a like transaction`,
+    };
+  }
   // A like transaction (`likeTarget` present) has exactly one legal shape — the
   // liker's karma boxes in, one karma box out (the arm in the karma case below).
   // Gated here as well as in the conservation carve, which independently
@@ -169,18 +226,18 @@ function checkTransitions(
     // ------------------------------------------------------------------
     // KarmaBox → KarmaBox (same owner, balance change; the like burn
     //                      when `likeTarget` is present)
-    // KarmaBox → KarmaBox + InviteBox + BondBox (invite creation)
+    // KarmaBox → KarmaBox + BondBox (the invite)
     // ------------------------------------------------------------------
     case 'karma': {
       const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
-      const inviteOutputs = outputs.filter((o) => o.boxType === 'invite');
       const bondOutputs = outputs.filter((o) => o.boxType === 'bond');
       const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
+      const accrualOutputs = outputs.filter((o) => o.boxType === 'like_accrual');
 
       // A karma spend produces the transition set's types and nothing else. A
-      // 'like'-type output is an illegal transition in particular: a like is a
-      // burn transaction named by `likeTarget`, never a box.
+      // 'like'-type output is an illegal transition in particular: a like moves
+      // its cost into a marker named by `likeTarget`, never into a `LikeBox`.
       const allowedOutputTypes: readonly string[] = KARMA_TRANSITION_TYPES;
       if (outputs.some((o) => !allowedOutputTypes.includes(o.boxType))) {
         return {
@@ -248,29 +305,55 @@ function checkTransitions(
       }
 
       if (likeTarget !== undefined) {
-        // Like arm: `likeTarget` present ⇒ this exact shape and nothing
-        // else. All inputs are karma boxes sharing one owner (pinned above),
-        // the single output is a karma box with that same owner (pinned
-        // above), and the transaction burns exactly LIKE_KARMA_COST. The
-        // conservation carve enforces the deficit independently — two layers,
-        // the same pattern as the bond-burn rejection.
-        if (outputs.length !== 1 || karmaOutputs.length !== 1) {
+        // ⛔ **The forward half of the biconditional** (NODE_INTERFACE → Karma
+        // transition rules). `likeTarget` present ⇒ this exact shape and nothing
+        // else: all inputs are karma boxes sharing one owner (pinned above), one
+        // karma output carries the liker's change with that same owner (pinned
+        // above), and one `LikeAccrualBox` carries the cost to the author.
+        //
+        // ⛔ **The transaction CONSERVES — there is no deficit any more.** The
+        // cost lands in a box rather than leaving the ledger (ARCHITECTURE →
+        // The conservation axiom: a marker must carry its value), so step 5's
+        // unconditional sum is what pins the total and this arm pins the shape.
+        if (outputs.length !== 2 || karmaOutputs.length !== 1 || accrualOutputs.length !== 1) {
           return {
             valid: false,
-            error: `Invalid like transition: exactly one karma output and no other outputs expected`,
+            error:
+              `Invalid like transition: exactly one karma output and one ` +
+              `like_accrual marker expected`,
           };
         }
-        const totalIn = inputs.reduce((sum, b) => sum + b.value, 0n);
-        const deficit = totalIn - (karmaOutputs[0] as KarmaBox).value;
-        if (deficit !== LIKE_KARMA_COST) {
+        const marker = accrualOutputs[0] as LikeAccrualBox;
+        if (marker.value !== LIKE_KARMA_COST) {
           return {
             valid: false,
-            error: `Like must burn exactly ${LIKE_KARMA_COST} karma, got a deficit of ${deficit}`,
+            error:
+              `Like marker must carry exactly ${LIKE_KARMA_COST} karma, got ` +
+              `${marker.value}`,
+          };
+        }
+        // ⛔ **Resolved from `block_topology`, never `dag_posts.author`** — a
+        // placeholder row carries a zeroed author, so a marker built from the
+        // wrong source earmarks the liker's karma to the zero key.
+        const author = deps.getTopologyAuthor(likeTarget);
+        if (author === null) {
+          return {
+            valid: false,
+            error: `Like target ${likeTarget} is not confirmed, so it names no author`,
+          };
+        }
+        if (Buffer.from(marker.author).toString('hex') !==
+            Buffer.from(author).toString('hex')) {
+          return {
+            valid: false,
+            error:
+              `Like marker names ${Buffer.from(marker.author).toString('hex')}, ` +
+              `but ${likeTarget}'s author is ${Buffer.from(author).toString('hex')}`,
           };
         }
       } else if (postLockOutputs.length > 0) {
         // karma → karma + post_lock (post creation lock)
-        if (postLockOutputs.length !== 1 || inviteOutputs.length > 0 || bondOutputs.length > 0 || vouchOutputs.length > 0) {
+        if (postLockOutputs.length !== 1 || bondOutputs.length > 0 || vouchOutputs.length > 0) {
           return {
             valid: false,
             error: `Invalid post-lock transition: exactly 1 karma + 1 post_lock output expected`,
@@ -314,7 +397,7 @@ function checkTransitions(
         };
       } else if (vouchOutputs.length > 0) {
         // karma → karma + vouch
-        if (vouchOutputs.length !== 1 || inviteOutputs.length > 0 ||
+        if (vouchOutputs.length !== 1 ||
             bondOutputs.length > 0 ||
             postLockOutputs.length > 0) {
           return {
@@ -349,16 +432,24 @@ function checkTransitions(
             error: `Vouch voucherId must be the karma input's owner`,
           };
         }
-        // No re-vouch while the pair's escrow is cooling down (B6, promoted
-        // from mempool policy to a consensus rule). The overwrite this blocks
-        // is `insertVouchCooldown`'s INSERT OR REPLACE destroying a live
-        // escrow's pending re-mint.
-        if (deps.hasActiveVouchCooldown(vouchOut.voucherId, vouchOut.targetId)) {
+        // No re-vouch while the voucher's escrow is cooling down
+        // (NODE_INTERFACE → Vouch transition rules).
+        //
+        // ⛔ **KEYED ON THE VOUCHER ALONE, BECAUSE THE ESCROW CARRIES NO
+        // TARGET.** `VouchEscrowBox` holds `owner` and `releaseAtBlock` and
+        // nothing else (TYPES_INTERFACE → VouchEscrowBox), so a pair-scoped
+        // question is one this state cannot answer. **A cooling voucher may not
+        // recast at all**, which is the stronger of the two readings and the
+        // only one the box supports.
+        //
+        // ⚠ **The rule it carries is economic, not structural.** A second
+        // escrow is a second box, so nothing here is protecting an overwrite —
+        // and the escrow's own value already leans the same way by withholding
+        // the stake from `VOUCH_MIN_BALANCE`.
+        if (deps.hasActiveVouchEscrow(vouchOut.voucherId)) {
           return {
             valid: false,
-            error:
-              `Vouch cast is locked: an active cooldown exists for this ` +
-              `voucher/target pair`,
+            error: `Vouch cast is locked: this voucher holds an unreleased escrow`,
           };
         }
         // The voucher's balance clears VOUCH_MIN_BALANCE (ARCHITECTURE →
@@ -380,28 +471,27 @@ function checkTransitions(
               `${VOUCH_MIN_BALANCE}, voucher holds ${voucherBalance}`,
           };
         }
-      } else if (inviteOutputs.length > 0 || bondOutputs.length > 0) {
-        // karma → karma + invite + bond (NODE_INTERFACE → the transition table)
-        if (inviteOutputs.length !== 1 || bondOutputs.length !== 1 || vouchOutputs.length > 0) {
+      } else if (bondOutputs.length > 0) {
+        // karma → karma + bond — the whole invite (NODE_INTERFACE → the
+        // transition table). ⛔ **The bond IS the request**: the block's
+        // settlement transaction emits `INVITE_KARMA_AMOUNT` to the
+        // `inviteePublicKey` of every bond the block creates, so the pairing is
+        // structural — one bond, one grant — and no second box carries it.
+        if (bondOutputs.length !== 1 || vouchOutputs.length > 0) {
           return {
             valid: false,
-            error: `Invite creation requires exactly 1 invite + 1 bond output`,
+            error: `An invite requires exactly 1 bond output`,
           };
         }
-        const inviteOut = inviteOutputs[0] as InviteBox;
         const bondOut = bondOutputs[0] as BondBox;
-        // An invite holds nothing: the karma it names does not exist until the
-        // claim mints it. Unpinned, an inviter could park value in a box no
-        // conservation rule ever reads out again.
-        if (inviteOut.value !== 0n) {
-          return {
-            valid: false,
-            error: `InviteBox must hold 0 karma, got ${inviteOut.value}`,
-          };
-        }
         // The bond is the whole cost of an invite, and it is the network's only
         // sybil price. Conservation alone permits 0n here, which would make that
         // price free.
+        //
+        // ⛔ **`INVITE_BOND_KARMA >= INVITE_KARMA_AMOUNT` is load-bearing**
+        // (ARCHITECTURE → Invite System). An inviter may name 32 bytes nobody
+        // holds, stranding the grant in an unspendable box; the bound is what
+        // makes that cost at least what it strands.
         if (bondOut.value !== INVITE_BOND_KARMA) {
           return {
             valid: false,
@@ -410,46 +500,34 @@ function checkTransitions(
               `got ${bondOut.value}`,
           };
         }
-        // Both boxes carry the karma input's owner as `inviterId`. Without this
-        // the creator could emit a pair naming someone else as inviter: the
-        // cancel path pays that stranger, and the settlement path mints to them.
-        if (Buffer.from(inviteOut.inviterId).toString('hex') !== inputOwnerHex ||
-            Buffer.from(bondOut.inviterId).toString('hex') !== inputOwnerHex) {
+        // The bond carries the karma input's owner as `inviterId`. Without this
+        // the creator could emit a bond naming someone else as inviter, and the
+        // probation-deadline settlement pays that stranger.
+        if (Buffer.from(bondOut.inviterId).toString('hex') !== inputOwnerHex) {
           return {
             valid: false,
-            error: `Invite and bond inviterId must be the karma input's owner`,
-          };
-        }
-        // One key, both boxes — this is the entire pairing. An invite and a bond
-        // naming different invitees are two unpaired boxes: the claim would
-        // start a probation clock no bond is dated by, and the bond would settle
-        // against a stranger's likes.
-        const inviteeHex = Buffer.from(inviteOut.inviteePublicKey).toString('hex');
-        if (Buffer.from(bondOut.inviteePublicKey).toString('hex') !== inviteeHex) {
-          return {
-            valid: false,
-            error: `Invite and bond must name the same inviteePublicKey`,
+            error: `Bond inviterId must be the karma input's owner`,
           };
         }
         // **An invite may only name a key that is not already an account**, and
         // "is an account" is *holds an identity record* — not "was invited
-        // before". Enforced here rather than at claim so a second inviter's bond
-        // is never locked against an invite that could not have been claimed.
+        // before".
         //
         // ⚠ The weaker "never invited" reading PRINTS KARMA. An established
         // account that simply had not been invited — every genesis committee
-        // member, every faucet recipient — could be named: the claim mints it
-        // `INVITE_KARMA_AMOUNT` from nothing, and the bond then vests in full
-        // against likes that key had *already* earned, so the whole stake
+        // member, every faucet recipient — could be named: the settlement grants
+        // it `INVITE_KARMA_AMOUNT` out of the pool, and the bond then vests in
+        // full against likes that key had *already* earned, so the whole stake
         // returns to the inviter at the deadline. The inviter's cost is a
         // probation-length lock and nothing else.
         //
         // Record existence is the right test because every karma receipt writes
         // one through `insertBox`'s choke point. A key with no record has never
         // held karma, so it has never posted and never been liked — which is
-        // also what makes the claim the record-CREATING event for every legal
+        // also what makes the grant the record-CREATING event for every legal
         // invitee.
-        const inviteeRecord = deps.getIdentityRecord(inviteOut.inviteePublicKey);
+        const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
+        const inviteeRecord = deps.getIdentityRecord(bondOut.inviteePublicKey);
         if (inviteeRecord !== null) {
           return {
             valid: false,
@@ -461,60 +539,6 @@ function checkTransitions(
       }
       // else: karma → karma only, which is always valid
 
-      return { valid: true };
-    }
-
-    // ------------------------------------------------------------------
-    // InviteBox → KarmaBox (claim, invitee-signed)
-    // InviteBox → ∅        (cancel, inviter-signed)
-    //
-    // Those are the two exits, and neither takes a second input: the claim
-    // needs no bond alongside it, because the karma it produces is MINTED
-    // rather than moved (NODE_INTERFACE → the transition table).
-    // ------------------------------------------------------------------
-    case 'invite': {
-      // One invite per transaction. With several, only `inputs[0]` would be
-      // read and the rest would ride along — the same bound the unvouch and
-      // the old settlement shape carry, for the same reason.
-      if (inputs.length !== 1) {
-        return { valid: false, error: `An invite transaction must consume exactly one InviteBox` };
-      }
-      const inviteIn = inputs[0] as InviteBox;
-
-      // Cancel. The box holds 0, so this conserves arithmetically; the paired
-      // bond returns to the inviter through block application, which this
-      // transaction neither names nor could spend.
-      if (outputs.length === 0) return { valid: true };
-
-      // Claim.
-      const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
-      if (karmaOutputs.length !== 1 || outputs.length !== 1) {
-        return {
-          valid: false,
-          error: `An InviteBox is spent to exactly 1 KarmaBox (claim) or to nothing (cancel)`,
-        };
-      }
-      const karmaOut = karmaOutputs[0] as KarmaBox;
-      // The mint lands on the key the box names and on no other. Unpinned, the
-      // inviter's own signature would authorize a claim paying themselves —
-      // karma created from nothing, into the wrong hands.
-      if (Buffer.from(karmaOut.owner).toString('hex') !==
-          Buffer.from(inviteIn.inviteePublicKey).toString('hex')) {
-        return {
-          valid: false,
-          error: `Claim karma output must be owned by the invite's inviteePublicKey`,
-        };
-      }
-      // The amount, pinned independently of the conservation carve — two
-      // layers, the same pattern the like burn set.
-      if (karmaOut.value !== INVITE_KARMA_AMOUNT) {
-        return {
-          valid: false,
-          error:
-            `Claim must mint exactly ${INVITE_KARMA_AMOUNT} karma, ` +
-            `got ${karmaOut.value}`,
-        };
-      }
       return { valid: true };
     }
 
@@ -580,28 +604,66 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // VouchBox → (none) — unvouch, karma returned via cooldown
+    // VouchBox → VouchEscrowBox — unvouch, the stake held in a box
     // ------------------------------------------------------------------
     case 'vouch': {
-      if (outputs.length !== 0) {
-        return {
-          valid: false,
-          error: `VouchBox can only be spent to produce no outputs (unvouch)`,
-        };
-      }
       // An unvouch consumes exactly one VouchBox (NODE_INTERFACE → "Vouch
-      // transition rules"). Block application walks the inputs for a VouchBox,
-      // writes ONE escrow row, and stops — while conservation exempts
-      // zero-output vouch spends wholesale, however many inputs. Without this
-      // bound a two-VouchBox unvouch consumes both stakes and escrows one,
-      // destroying the other. Burning
-      // several stakes in one transaction has no meaning in the design, so
-      // the shape is inexpressible rather than handled — the same reasoning
-      // as the bond settlement's single-input bound.
+      // transition rules"). Burning several stakes in one transaction has no
+      // meaning in the design, so the shape is inexpressible rather than
+      // handled — the same reasoning as the bond settlement's single-input
+      // bound.
       if (inputs.length !== 1) {
         return {
           valid: false,
           error: `Unvouch must consume exactly one VouchBox`,
+        };
+      }
+      const escrowOutputs = outputs.filter((o) => o.boxType === 'vouch_escrow');
+      if (outputs.length !== 1 || escrowOutputs.length !== 1) {
+        return {
+          valid: false,
+          error: `VouchBox can only be spent to produce exactly one vouch_escrow output`,
+        };
+      }
+      const staked = inputs[0] as VouchBox;
+      const escrow = escrowOutputs[0] as VouchEscrowBox;
+      // ⛔ **The escrow's value is the CONSUMED BOX'S, never
+      // `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE → VouchEscrowBox). Step 5's
+      // unconditional conservation already pins the total; this names which
+      // box it came out of, so the round trip is conservation-structural rather
+      // than true by coincidence of the cast pin.
+      if (escrow.value !== staked.value) {
+        return {
+          valid: false,
+          error:
+            `Unvouch escrow holds ${escrow.value}, the consumed VouchBox held ` +
+            `${staked.value}`,
+        };
+      }
+      // Where the karma returns. A foreign `owner` is the `voucherId` defect in
+      // a new box: A stakes, A unvouches, and the escrow matures to B.
+      if (Buffer.from(escrow.owner).toString('hex') !==
+          Buffer.from(staked.voucherId).toString('hex')) {
+        return {
+          valid: false,
+          error: `Unvouch escrow owner must be the consumed VouchBox's voucherId`,
+        };
+      }
+      // ⛔ **A LOWER BOUND, DELIBERATELY, AND IT IS THE ONE DIRECTION THAT
+      // MATTERS.** A transaction's output cannot commit to the height of the
+      // block that will carry it — the pool does not know which block that is —
+      // so an exact pin would make every unvouch valid in exactly one block and
+      // stale everywhere else. Releasing LATE costs only the voucher; releasing
+      // early is what the cooldown exists to prevent, so only the floor is a
+      // rule. The settlement releases at `releaseAtBlock`, so a voucher who
+      // overshoots waits longer and gains nothing.
+      const floor = currentBlockHeight + deps.vouchCooldownBlocks;
+      if (escrow.releaseAtBlock < floor) {
+        return {
+          valid: false,
+          error:
+            `Unvouch escrow releases at ${escrow.releaseAtBlock}, before the ` +
+            `earliest legal height ${floor}`,
         };
       }
       return { valid: true };
@@ -734,10 +796,18 @@ const HEX64 = /^[0-9a-f]{64}$/;
 
 const ENVELOPE_REQUIRED = ['inputs', 'outputs', 'signatures', 'protocolVersion'] as const;
 
-/** Closed: `computeTxId` hashes only these, so any other key is free malleability. */
+/**
+ * Closed: `computeTxId` hashes only these, so any other key is free
+ * malleability.
+ *
+ * ⛔ **`preimages` IS NOT ONE OF THEM, AND THE NAME IS RESERVED** (TYPES_INTERFACE
+ * → Layout — UtxoTransaction). No transition requires knowledge of a secret, so
+ * the field carries no meaning — and it is outside the `TxId` preimage, which
+ * makes admitting it exactly the malleability this set exists to refuse: two
+ * distinct byte strings carrying one id.
+ */
 const ENVELOPE_ALLOWED: ReadonlySet<string> = new Set<string>([
   ...ENVELOPE_REQUIRED,
-  'preimages',
   'likeTarget',
   'post',
 ]);
@@ -747,7 +817,7 @@ const ENVELOPE_ALLOWED: ReadonlySet<string> = new Set<string>([
  * `Object.prototype` or null.
  *
  * The prototype clause is load-bearing, not decoration. Every downstream read
- * is `tx.likeTarget` / `tx.signatures[hexKey]` / `tx.preimages?.[id]` — plain
+ * is `tx.likeTarget` / `tx.signatures[hexKey]` — plain
  * property reads that walk the prototype chain — while this gate decides
  * presence with `Object.hasOwn`. Pinning the prototype is what makes those two
  * agree: without it an object carrying the four required keys but inheriting a
@@ -769,14 +839,15 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Shared shape for the two hex-keyed byte maps: `signatures` (values exactly
- * 64 bytes — a raw Ed25519 signature) and `preimages` (values any length —
- * the bytes are already in memory post-decode and secret length was never a
- * consensus rule).
+ * The shape of a hex-keyed byte map. `signatures` is the only one — its values
+ * are exactly 64 bytes, a raw Ed25519 signature.
+ *
+ * `byteLength` stays a parameter rather than a constant: the length is a
+ * property of what the map carries, and a second map would state its own.
  */
 function checkHexKeyedByteMap(
   map: Record<string, unknown>,
-  field: 'signatures' | 'preimages',
+  field: 'signatures',
   byteLength: number | null,
 ): UtxoResult {
   for (const key of Object.keys(map)) {
@@ -818,10 +889,9 @@ function checkHexKeyedByteMap(
  * bind inside `getBox`, `outputs: null` inside `checkOutputShape` itself, a
  * non-array `outputs` OBJECT slips that loop (`length` undefined) and throws at
  * conservation's `.reduce`, a missing or `null` `signatures` throws at
- * `tx.signatures[hexKey]`, and `likeTarget: null` plus non-`Uint8Array`
- * `preimages` values throw inside `computeTxId` — which `checkAuthorization`
- * calls on its first line, so the whole envelope reaches the hasher. Each one
- * is an HTTP
+ * `tx.signatures[hexKey]`, and `likeTarget: null` throws inside `computeTxId` —
+ * which `checkAuthorization` calls on its first line, so the whole envelope
+ * reaches the hasher. Each one is an HTTP
  * 500 or, through the block funnel, a whole-block rejection logged as an
  * unexpected failure.
  *
@@ -830,13 +900,13 @@ function checkHexKeyedByteMap(
  * `String(v)` — which would invoke a caller-controlled `toString`.
  *
  * The key set is **closed**. `computeTxId` hashes only the known fields, so an
- * extra envelope key is free malleability: two distinct CBOR byte strings
- * carrying one txId. Measured without this gate: `{…, bogusKey: 'free'}` and
- * the clean tx hash identically, and the junk rides through validation into the
- * store. A key present with the value `undefined` rejects for the twin reason:
- * CBOR encodes `undefined`, `computeTxId`'s presence test is `!== undefined`,
- * so a present-`undefined` `likeTarget` hashes as absent (also measured) — the
- * gate refuses the ambiguity rather than picking a side.
+ * extra envelope key is free malleability: two distinct byte strings carrying
+ * one txId. Measured without this gate: `{…, bogusKey: 'free'}` and the clean tx
+ * hash identically, and the junk rides through validation into the store. A
+ * REQUIRED key present with the value `undefined` rejects too — that is not a
+ * transaction. ⛔ **The two optional fields do not**, and clause 2 states why:
+ * `opt()` gives absence one encoding, so present-`undefined` and absent are the
+ * same byte string rather than an ambiguity between two.
  *
  * Presence is decided with `Object.hasOwn`, never truthiness or `in` — see
  * `isPlainObject` for what that buys and what it does not.
@@ -857,11 +927,26 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   }
 
   // ---- 2. Closed key set; a present-undefined key rejects ----
+  //
+  // ⛔ **The two OPTIONAL fields are exempt, and the reason is the codec.**
+  // `likeTarget` and `post` each take `opt()`'s presence tag, which writes a
+  // single `0` for absence — so an absent field and a present-`undefined` one
+  // are ONE byte string, not two, and `computeTxId`'s `!== undefined` test reads
+  // that byte string the way the encoder wrote it (TYPES_INTERFACE → Layout —
+  // UtxoTransaction). There is no ambiguity here for a rule to refuse.
+  //
+  // ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes both
+  // keys unconditionally, holding `undefined` where the tag said absent. A gate
+  // refusing it refuses every non-like, non-post transaction arriving inside a
+  // block — which is the whole of the embedded path.
+  //
+  // Every other key keeps the refusal: a required field holding `undefined` is
+  // not a transaction, and an unknown one is refused by the closed set above it.
   for (const key of Object.keys(tx)) {
     if (!ENVELOPE_ALLOWED.has(key)) {
       return { valid: false, error: `Invalid tx envelope: unexpected key '${key}'` };
     }
-    if (tx[key] === undefined) {
+    if (tx[key] === undefined && key !== 'likeTarget' && key !== 'post') {
       return {
         valid: false,
         error: `Invalid tx envelope: key '${key}' is present with value undefined`,
@@ -907,8 +992,9 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   }
 
   // ---- 5. signatures: a hex-keyed map of 64-byte signatures ----
-  // An EMPTY map is legal: the uncommitted-bond cancel path is authorized by
-  // preimage alone. Extra well-formed keys are shape-legal too —
+  // An EMPTY map is shape-legal: `checkAuthorization` decides which key must
+  // have signed, and a transaction whose transition requires one is refused
+  // there rather than here. Extra well-formed keys are shape-legal too —
   // `checkAuthorization` only looks keys up, nothing iterates, and the like
   // path's exactly-one-signature rule is `castLike` policy, not envelope shape.
   const signatures = tx.signatures;
@@ -921,29 +1007,9 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   const sigCheck = checkHexKeyedByteMap(signatures, 'signatures', 64);
   if (!sigCheck.valid) return sigCheck;
 
-  // ---- 6. preimages: absent, or a NON-EMPTY hex-keyed map of byte strings ----
-  // Present-but-empty rejects: `computeTxId` guards on truthiness then
-  // iterates, so `{}` contributes nothing to the hash — measured pre-gate,
-  // `preimages: {}` and absence produce the identical txId, the same
-  // malleability clause 2 exists to kill. `jsonToTx` already normalizes `{}`
-  // to absent on the HTTP edge, so this closes the CBOR paths behind it.
-  if (Object.hasOwn(tx, 'preimages')) {
-    const preimages = tx.preimages;
-    if (!isPlainObject(preimages)) {
-      return {
-        valid: false,
-        error: `Invalid tx envelope: preimages must be a plain object, got ${describeValue(preimages)}`,
-      };
-    }
-    if (Object.keys(preimages).length === 0) {
-      return {
-        valid: false,
-        error: 'Invalid tx envelope: preimages is present but empty (omit it instead)',
-      };
-    }
-    const preimageCheck = checkHexKeyedByteMap(preimages, 'preimages', null);
-    if (!preimageCheck.valid) return preimageCheck;
-  }
+  // ---- 6. `preimages` is refused by clause 2's closed key set ----
+  // It has no clause of its own because it is not a field: the name is reserved
+  // and never to be reused (TYPES_INTERFACE → Layout — UtxoTransaction).
 
   // ---- 7. protocolVersion: strictly PROTOCOL_VERSION ----
   // The same strict-equality posture as posts and block headers. No
@@ -961,7 +1027,10 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   }
 
   // ---- 8. likeTarget: absent, or a post id ----
-  if (Object.hasOwn(tx, 'likeTarget')) {
+  //
+  // Presence is `!== undefined`, the same test `computeTxId` applies — see
+  // clause 2 for why an own key holding `undefined` IS absence here.
+  if (tx.likeTarget !== undefined) {
     const likeTarget = tx.likeTarget;
     if (typeof likeTarget !== 'string' || !HEX64.test(likeTarget)) {
       return {
@@ -989,7 +1058,7 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   // a second spelling of one rule, which is the fork surface this engine rejects
   // everywhere else. Whether the payload is *permitted* (the post biconditional,
   // author owns the karma) is the transition arms' business, not the envelope's.
-  if (Object.hasOwn(tx, 'post')) {
+  if (tx.post !== undefined) {
     const domains = verifyPostFieldDomains(tx.post as Post);
     if (!domains.valid) {
       return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
@@ -1000,33 +1069,38 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
 }
 
 /**
- * The box types a transaction may create.
+ * The box types that can appear as an output at all.
  *
- * Four are excluded **in the type**, not by an omitted entry. `genesis_proof`
- * is written by genesis seeding alone; `emission`, `treasury` and `karma_pool`
- * are created and spent by block application alone (NODE_INTERFACE → "Genesis
- * proof boxes are never in a transaction": all four are barred from both
- * transaction positions). This is the node-side twin of the rule `validation`
- * enforces at the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not
- * create a genesis_proof box"); node owns the input half of the same rule, in
+ * `genesis_proof` is excluded **in the type**, not by an omitted entry: it is
+ * written by genesis seeding alone and appears in no transaction, user or
+ * settlement (NODE_INTERFACE → "Genesis proof boxes are never in a
+ * transaction"). This is the node-side twin of the rule `validation` enforces at
+ * the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not create a
+ * genesis_proof box"); node owns the input half of the same rule, in
  * `AUTHORIZATION`.
- *
- * ⚠ **All four are barred from the input position by the same mechanism —
- * no transition admitting them — and their entries differ only in which absence
- * they state.** `emission`, `treasury` and `karma_pool` share
- * `BLOCK_APPLICATION_ONLY` with `bond`, `post_lock` and `fee`; `genesis_proof`
- * states the empty set of transitions. A *new* barred type is covered by
- * whichever of the two it is, and the table's `Record` over every `boxType` is
- * what makes stating it unavoidable.
  *
  * Written as an `Exclude` so the exclusion is deliberate and a *new* box type
  * still fails to compile until it is given a shape — an omitted key would be
  * indistinguishable from a forgotten one.
  */
-type OutputBoxType = Exclude<
-  AnyBox['boxType'],
-  'genesis_proof' | 'emission' | 'treasury' | 'karma_pool'
->;
+type OutputBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
+
+/**
+ * The three a **user** transaction may not create, refused under their own
+ * names by `checkOutputShape`.
+ *
+ * They are the settlement transaction's alone at both ends — it is the only
+ * spender of the pool and the emission box, and the only producer of all three
+ * successors (NODE_INTERFACE → the settlement transaction). ⚠ The `Exclude`
+ * above is compile-time; this set is what an attacker-supplied string reaches,
+ * so a type in one and not the other is diagnosed as unknown rather than as
+ * barred.
+ */
+const PROTOCOL_OUTPUT_TYPES: ReadonlySet<string> = new Set<string>([
+  'emission',
+  'treasury',
+  'karma_pool',
+]);
 
 /**
  * Closed key set and per-field runtime types per boxType, in candidate form —
@@ -1069,15 +1143,6 @@ const OUTPUT_SHAPE: Record<
       { boxType: null, value: 'u64', owner: 'bytes32' },
       { lockedUntilBlock: 'uint' },
     ),
-    // Two rows, one field list — the boxTypes differ and nothing else does.
-    // Which *values* each may carry (an invite always 0, a bond exactly
-    // INVITE_BOND_KARMA) stays in the transition arm, per this table's rule.
-    invite: shape({
-      boxType: null,
-      value: 'u64',
-      inviterId: 'bytes32',
-      inviteePublicKey: 'bytes32',
-    }),
     bond: shape({
       boxType: null,
       value: 'u64',
@@ -1108,6 +1173,28 @@ const OUTPUT_SHAPE: Record<
     // box is consumed only by block application is the shape `bond` and
     // `post_lock` already have (NODE_INTERFACE → Output shape).
     fee: shape({ boxType: null, value: 'u64' }),
+    // ⚠ **A row here says the field types are pinned, never that a transition
+    // creates one.** No transition arm admits either type as an output today:
+    // `KARMA_TRANSITION_TYPES` is an allowlist that excludes both and the credit
+    // arm admits only `credit` and `fee`, so a transaction naming one is refused
+    // at step 7 with the shape already checked. The settlement transaction
+    // creates both and it does not pass through this table
+    // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+    like_accrual: shape({ boxType: null, value: 'u64', author: 'bytes32' }),
+    vouch_escrow: shape({
+      boxType: null,
+      value: 'u64',
+      owner: 'bytes32',
+      releaseAtBlock: 'uint',
+    }),
+    // The three protocol boxes. Each names no owner and carries no per-type
+    // trailing field — block application is their only spender and their only
+    // producer, so there is no key for a field to name (TYPES_INTERFACE →
+    // EmissionBox / TreasuryBox / KarmaPoolBox). They are reachable only through
+    // `checkSettlementOutputShape`; `checkOutputShape` refuses all three by name.
+    emission: shape({ boxType: null, value: 'u64' }),
+    treasury: shape({ boxType: null, value: 'u64' }),
+    karma_pool: shape({ boxType: null, value: 'u64' }),
   };
 })();
 
@@ -1134,21 +1221,30 @@ const OUTPUT_SHAPE: Record<
  *   lookup (`Object.hasOwn`): `boxType: 'constructor'` lands in this reject
  *   instead of retrieving `Object.prototype.constructor` and throwing;
  * - `genesis_proof`, `emission`, `treasury` and `karma_pool` are rejects under
- *   their own names, ahead of that lookup. The `OutputBoxType` exclusion
- *   already makes all four unrepresentable in the table, so the verdict would
- *   be the same either way — the named arm is what keeps the *diagnosis* true,
- *   since an assigned tag refused by protocol rule is not an unknown one. ⚠ The
- *   `Exclude` is compile-time; this arm is what an attacker-supplied string
- *   reaches, so a type named in one and not the other is diagnosed as unknown.
+ *   their own names, ahead of that lookup. ⛔ **The four are refused for two
+ *   different reasons and only one of them is absolute**: `genesis_proof` is in
+ *   no transaction of any kind, where the other three are the settlement
+ *   transaction's own outputs and are admitted by
+ *   `checkSettlementOutputShape`. The named arm is what keeps the *diagnosis*
+ *   true, since an assigned tag refused by protocol rule is not an unknown one.
+ *   ⚠ `OutputBoxType`'s `Exclude` is compile-time and covers `genesis_proof`
+ *   alone; `PROTOCOL_OUTPUT_TYPES` is what an attacker-supplied string reaches,
+ *   so a type in one and not the other is diagnosed as unknown.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
  * they are structurally outside every committed byte (no layout declares them;
  * `materializeOutput` strips them before appending the real provenance), so the
  * schema is compared in candidate form.
  *
- * A key present with the value `undefined` is a reject rather than treated as
- * absent: presence means "own enumerable key with a defined value", so no
- * reader downstream has to decide which of the two an ambiguous shape meant.
+ * ⛔ **A key present with the value `undefined` IS absence, and every reader
+ * agrees.** `canonicalBoxBytes` writes one byte string for an absent optional
+ * field — measured: a karma candidate with `decayBurn: undefined` and one
+ * without encode identically — so the two are not two shapes for a rule to tell
+ * apart. ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes
+ * every optional box field as an own key, holding `undefined` where the tag said
+ * absent, so a gate refusing it refuses every ordinary karma output arriving
+ * inside a block. A REQUIRED key holding `undefined` still rejects, in the
+ * required-key loop below — that is a missing field, not an absent optional.
  *
  * Exported for direct testing. Through `validateTx` this check runs at step 4
  * — the first consumer of `tx.outputs` — so it is the PRIMARY gate for every
@@ -1159,6 +1255,30 @@ const OUTPUT_SHAPE: Record<
  * it: they fire only if this gate regresses.
  */
 export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
+  return checkShapeAgainst(outputs, false);
+}
+
+/**
+ * The same closed schema for the block's **settlement** transaction, which
+ * creates the three protocol boxes a user transaction may not
+ * (NODE_INTERFACE → the settlement transaction).
+ *
+ * ⛔ **`genesis_proof` stays refused here too**, and that is the difference
+ * between the two absences: no transaction of any kind creates one, where the
+ * other three are refused of user transactions specifically.
+ *
+ * The settlement does not pass through `validateTx` — no signer authorizes it
+ * and no transition row admits its inputs — so this is called from the block
+ * funnel directly, ahead of `computeTxId`, for the same reason
+ * `checkOutputShape` is: an out-of-domain output field would otherwise become an
+ * exception absorbed by the funnel's totality handler instead of a stated
+ * rejection.
+ */
+export function checkSettlementOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
+  return checkShapeAgainst(outputs, true);
+}
+
+function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): UtxoResult {
   for (let i = 0; i < outputs.length; i++) {
     const raw: unknown = outputs[i];
     // A null/non-object entry rejects through the unknown-boxType arm below
@@ -1167,14 +1287,13 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
     const boxTypeValue = box.boxType;
     if (
       boxTypeValue === 'genesis_proof' ||
-      boxTypeValue === 'emission' ||
-      boxTypeValue === 'treasury' ||
-      boxTypeValue === 'karma_pool'
+      (!settlement && typeof boxTypeValue === 'string' &&
+        PROTOCOL_OUTPUT_TYPES.has(boxTypeValue))
     ) {
       return {
         valid: false,
         error:
-          `Invalid output shape at index ${i}: a ${boxTypeValue} box may not be a ` +
+          `Invalid output shape at index ${i}: a ${String(boxTypeValue)} box may not be a ` +
           `transaction output`,
       };
     }
@@ -1194,14 +1313,6 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
         return {
           valid: false,
           error: `Invalid output shape at index ${i} (${boxType}): unexpected key '${key}'`,
-        };
-      }
-      if (box[key] === undefined) {
-        return {
-          valid: false,
-          error:
-            `Invalid output shape at index ${i} (${boxType}): key '${key}' ` +
-            `is present with value undefined`,
         };
       }
     }
@@ -1246,9 +1357,9 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  * `validateTx` step 5).
  *
  * Karma and credits are minted or burned only in block-application paths (like
- * settlement, decay, coinbase, bond settlement), never inside a user
- * transaction, so no box type gets a blanket exemption. **Three stated
- * exceptions and no others** (NODE_INTERFACE → `validateTx` step 5):
+ * settlement, decay, bond settlement), never inside a user transaction, so no
+ * box type gets a blanket exemption. **Two stated exceptions and no others**
+ * (NODE_INTERFACE → `validateTx` step 5):
  *
  * - **The like burn** — `likeTarget` present ⟺ the transaction burns
  *   exactly `LIKE_KARMA_COST` from karma inputs. This is the biconditional's
@@ -1258,29 +1369,26 @@ export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
  *   exemption so a zero-output unvouch with a bolted-on `likeTarget` cannot
  *   shelter under it.
  *
- * - **The invite-claim surplus** — the claim shape ⟺ the sums differ by exactly
- *   `INVITE_KARMA_AMOUNT` in the *output's* favour. This is the one place a user
- *   transaction may create karma, and it is a biconditional in both directions:
- *   a surplus in any other shape falls to the strict equality below, and a claim
- *   carrying any other surplus is rejected here. The shape is named loosely on
- *   purpose — one InviteBox in, one karma box out — because `checkTransitions`
- *   independently pins the output's owner and value; two layers, as the like
- *   carve set.
- *
  * - **The zero-output spend** of a `VouchBox` (unvouch — the staked karma is
  *   escrowed in `vouch_cooldowns` and re-minted to the voucher at maturity by
  *   `processVouchCooldowns`, an escrow round-trip rather than a burn). The
  *   escrow living outside the UTXO set, and therefore outside the AVL+ state
  *   root, is a known wart — modelling it as a maturing box is tracked
- *   separately. A cancelled invite is *also* a zero-output spend but needs no
- *   exemption: the box holds `0`, so it conserves arithmetically.
+ *   separately.
  *
- * All three move karma. **A credit transaction conserves strictly**: its fee is
- * a `FeeBox` output it names (TYPES_INTERFACE → FeeBox), so what the miner takes
- * is inside the output sum rather than a gap between two sums, and a credit-side
- * deficit is refused by the strict equality below like any other. That leaves
- * the like burn as the only deficit in the system, which is what lets
- * `likeTarget` ⟺ a deficit stay exact with no ledger argument behind it.
+ * ⛔ **The invite carries NO surplus.** An invite is `karma → karma + bond` and
+ * conserves like any other karma transaction; the invitee's
+ * `INVITE_KARMA_AMOUNT` is spent from the pool by the block's settlement
+ * transaction, which this gate does not govern (NODE_INTERFACE → the settlement
+ * transaction). **No user transaction creates karma.**
+ *
+ * Both remaining exceptions move karma. **A credit transaction conserves
+ * strictly**: its fee is a `FeeBox` output it names (TYPES_INTERFACE → FeeBox),
+ * so what the miner takes is inside the output sum rather than a gap between two
+ * sums, and a credit-side deficit is refused by the strict equality below like
+ * any other. That leaves the like burn as the only deficit in the system, which
+ * is what lets `likeTarget` ⟺ a deficit stay exact with no ledger argument
+ * behind it.
  *
  * The BondBox has **no** exemption and needs none: a bond is destroyed by the
  * probation-deadline settlement, which is block application, and this gate
@@ -1295,51 +1403,25 @@ function checkValueConservation(
   // (field-type pin), so the bigint sums below are total — this function must
   // never run on outputs that have not passed `checkOutputShape`.
 
-  // Like carve. `likeTarget` names a like, and a like burns exactly
-  // LIKE_KARMA_COST from the liker's karma — any other deficit, a surplus, a
-  // conserving transaction, or non-karma inputs under this field are invalid.
-  if (likeTarget !== undefined) {
-    if (!inputBoxes.every((b) => b.boxType === 'karma')) {
-      return {
-        valid: false,
-        error: `likeTarget is only legal on an all-karma burn transaction`,
-      };
-    }
-    const totalIn = inputBoxes.reduce((sum, b) => sum + b.value, 0n);
-    const totalOut = outputs.reduce((sum, b) => sum + b.value, 0n);
-    if (totalIn - totalOut !== LIKE_KARMA_COST) {
-      return {
-        valid: false,
-        error:
-          `Like non-conservation: a like must burn exactly ${LIKE_KARMA_COST} ` +
-          `karma (inputs=${totalIn}, outputs=${totalOut})`,
-      };
-    }
-    return { valid: true };
-  }
-
-  const inputType = inputBoxes[0]!.boxType;
-  if (outputs.length === 0 && inputType === 'vouch') {
-    return { valid: true };
+  // ⛔ **NO CARVE-OUTS. `sum(inputs) == sum(outputs)`, unconditionally**
+  // (ARCHITECTURE → The conservation axiom). It holds for a like because the
+  // cost lands in a `LikeAccrualBox` the transaction outputs, and for an unvouch
+  // because the stake lands in a `VouchEscrowBox` — **every karma-side spend has
+  // somewhere for its value to go, so none needs an exception.**
+  //
+  // ⚠ **`likeTarget` is still a parameter and still load-bearing**, one rule
+  // further out: an all-karma input set is what makes the marker exemption in
+  // `checkTransitions` reachable only from a like, and a `likeTarget` bolted
+  // onto a credit or vouch spend is refused here before any arm reads it.
+  if (likeTarget !== undefined && !inputBoxes.every((b) => b.boxType === 'karma')) {
+    return {
+      valid: false,
+      error: `likeTarget is only legal on an all-karma burn transaction`,
+    };
   }
 
   const totalInputValue = inputBoxes.reduce((sum, b) => sum + b.value, 0n);
   const totalOutputValue = outputs.reduce((sum, b) => sum + b.value, 0n);
-
-  // Invite-claim carve. The input holds 0, so the whole output is a surplus —
-  // the only karma any transaction may create (ARCHITECTURE → Invite claim).
-  if (inputBoxes.length === 1 && inputType === 'invite' &&
-      outputs.length === 1 && outputs[0]!.boxType === 'karma') {
-    if (totalOutputValue - totalInputValue !== INVITE_KARMA_AMOUNT) {
-      return {
-        valid: false,
-        error:
-          `Claim non-conservation: a claim must mint exactly ${INVITE_KARMA_AMOUNT} ` +
-          `karma (inputs=${totalInputValue}, outputs=${totalOutputValue})`,
-      };
-    }
-    return { valid: true };
-  }
 
   if (totalInputValue !== totalOutputValue) {
     return {
@@ -1368,9 +1450,9 @@ function checkValueConservation(
  * table.
  *
  * This decides only who must have signed, which is what lets it run ahead of
- * `checkTransitions`: a transition is identifiable from the input's type and,
- * for the two invite exits, from whether the transaction produces outputs at
- * all. The rest of each shape is pinned a step later.
+ * `checkTransitions`: ⛔ **the verdict is a function of the input's TYPE alone**
+ * — `checkAuthorization` reads `inputBoxes` and the signature map and nothing
+ * else. The rest of each shape is pinned a step later.
  */
 type Authorization =
   | {
@@ -1441,35 +1523,21 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
     unsigned: missingOwnerSignature,
   },
 
-  // An InviteBox has exactly two exits, and they are two transitions with
-  // different requirements — *invitee-signed* for the claim, *inviter-signed*
-  // for the cancel — with `outputs.length === 0` the whole discriminant between
-  // them. Accepting either key over either shape is not equivalent: an inviter
-  // signing a claim would mint the invitee's karma without them, bar their key
-  // from any further invite and start a probation clock they never asked for;
-  // an invitee signing a cancel would destroy an invite that is not theirs to
-  // withdraw. `checkTransitions` pins the rest of both shapes at step 7 — a
-  // claim is exactly one karma output owned by the invitee, and nothing else
-  // has zero outputs on an invite input.
-  invite: {
-    signer: (box, tx) =>
-      tx.outputs.length === 0
-        ? (box as InviteBox).inviterId
-        : (box as InviteBox).inviteePublicKey,
-    unsigned: (box, tx) =>
-      tx.outputs.length === 0
-        ? `Invite cancel must be signed by the inviter named on box ${box.id}`
-        : `Invite claim must be signed by the invitee named on box ${box.id}`,
-  },
-
   bond: BLOCK_APPLICATION_ONLY,
   post_lock: BLOCK_APPLICATION_ONLY,
   fee: BLOCK_APPLICATION_ONLY,
   emission: BLOCK_APPLICATION_ONLY,
   treasury: BLOCK_APPLICATION_ONLY,
 
-  // The karma supply pool: mints draw it down and burns return to it, both
-  // block application's, so no user transaction may name it in either position
+  // Both are the settlement transaction's alone — a marker it consumes, an
+  // escrow it releases (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  // `LikeAccrualBox.author` is attribution, not authorization: no signature by
+  // that key unlocks the box.
+  like_accrual: BLOCK_APPLICATION_ONLY,
+  vouch_escrow: BLOCK_APPLICATION_ONLY,
+
+  // The karma supply pool: grants draw it down and burns return to it, both the
+  // settlement's, so no user transaction may name it in either position
   // (TYPES_INTERFACE → KarmaPoolBox).
   karma_pool: BLOCK_APPLICATION_ONLY,
 
@@ -1531,8 +1599,8 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
  *
  * Performs 8 validation steps:
  * 0. Transaction envelope shape — `tx` is a plain object with the closed key
- *    set, hex input ids, array outputs, a hex-keyed 64-byte signature map, a
- *    non-empty preimage map if present, and `protocolVersion` strictly equal
+ *    set, hex input ids, array outputs, a hex-keyed 64-byte signature map, and
+ *    `protocolVersion` strictly equal
  *    to `PROTOCOL_VERSION` (NODE_INTERFACE → "Transaction envelope shape").
  *    Ahead of every other read of `tx`, so steps 1–7 dereference envelope
  *    fields under a shape guarantee.
@@ -1638,6 +1706,7 @@ export function validateTx(
     deps,
     tx.likeTarget,
     tx.post,
+    currentBlockHeight,
   );
   if (!transitionCheck.valid) return transitionCheck;
 

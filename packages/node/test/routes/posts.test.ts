@@ -19,7 +19,7 @@ import {
   getBox as storeGetBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
 import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
@@ -72,6 +72,7 @@ async function request(
       getLikersForPost,
       getAncestors,
       getSubtree,
+      getTopologyAuthor: () => null,
       getCurrentHeight,
       admitTx: insertUtxoTx,
       validateTx: (tx: UtxoTransaction, height: number) => {
@@ -99,8 +100,12 @@ async function request(
               storeGetIdentityRecord(identityId),
             getKarmaValue: (owner: Uint8Array) =>
               getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-            hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) =>
-              hasActiveVouchCooldown(voucherId, targetId),
+            hasActiveVouchEscrow: (voucherId: Uint8Array) =>
+              hasActiveVouchEscrow(voucherId),
+            vouchCooldownBlocks: 2,
+            // No like reaches this router, so the marker's author pin has
+            // nothing to resolve — stated rather than stubbed silently.
+            getTopologyAuthor: () => null,
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();
             },
@@ -356,6 +361,13 @@ describe('posts routes', () => {
         kind: 'stump',
         id: prunedRootId,
         author: Buffer.from(stumpAuthor).toString('hex'),
+        // ⛔ **A SECOND author field, and the two are different questions.**
+        // `author` is the DAG's — content this node may have pruned — while
+        // `confirmedAuthor` comes from `block_topology` and is what a like's
+        // marker must name (ARCHITECTURE → Likes). `null` here because this
+        // fixture seeds no topology row; on a confirmed post the two agree, and
+        // where they do not it is a placeholder row carrying a zeroed `author`.
+        confirmedAuthor: null,
         ...stumpScalars,
       });
       // The regression this closes: a 64-hex string, not an index-keyed object.

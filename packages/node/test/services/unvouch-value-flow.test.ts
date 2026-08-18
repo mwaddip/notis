@@ -94,11 +94,20 @@ async function importMempool() {
   };
 }
 
-async function importVouchCooldowns() {
-  return (await import('../../src/store/vouch-cooldowns.js')) as {
-    getVouchCooldowns: (
+/**
+ * The escrow store, which is now the box store.
+ *
+ * ⛔ **`vouch_cooldowns` is deleted, table and all.** An unvouched stake waits in
+ * a `VouchEscrowBox` in the UTXO set — and therefore in the `stateRoot` — rather
+ * than in node-local SQL a synced node could not interpret (ARCHITECTURE →
+ * Vouch boxes). ⚠ **The escrow carries no target**, so what a voucher's escrows
+ * report is the value and the release height, never the pair the row held.
+ */
+async function importVouchEscrows() {
+  return (await import('../../src/store/utxo.js')) as unknown as {
+    getVouchEscrowsFor: (
       voucherId: Uint8Array,
-    ) => Array<{ targetId: Uint8Array; releaseAtBlock: number; karmaAmount: bigint }>;
+    ) => Array<{ value: bigint; owner: Uint8Array; releaseAtBlock: number }>;
   };
 }
 
@@ -124,10 +133,22 @@ function makeVouchBox(
 }
 
 /** A signed unvouch: the given VouchBoxes spent to zero outputs. */
-function makeUnvouchTx(vouchBoxIds: string[], signer: TestIdentity): UtxoTransaction {
+function makeUnvouchTx(
+  vouchBoxIds: string[],
+  signer: TestIdentity,
+  value: bigint,
+  releaseAtBlock = 1000,
+): UtxoTransaction {
   const tx: UtxoTransaction = {
     inputs: vouchBoxIds,
-    outputs: [],
+    // ⛔ The escrow output carries the CONSUMED BOX'S value, never
+    // `VOUCH_KARMA_AMOUNT` (TYPES_INTERFACE → VouchEscrowBox).
+    outputs: [{
+      boxType: 'vouch_escrow' as const,
+      value,
+      owner: signer.userId,
+      releaseAtBlock,
+    } as never],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
@@ -163,7 +184,7 @@ describe('P2-B phase 4 — multi-VouchBox unvouch money flow', () => {
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
-    const cooldowns = await importVouchCooldowns();
+    const escrows = await importVouchEscrows();
 
     const voucher = makeTestIdentity();
     const target1 = makeTestIdentity();
@@ -176,8 +197,15 @@ describe('P2-B phase 4 — multi-VouchBox unvouch money flow', () => {
     utxo.insertBox(v2);
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
 
-    // One transaction spending BOTH VouchBoxes to zero outputs.
-    mempool.insertUtxoTx(makeUnvouchTx([v1.id!, v2.id!], voucher), 100000);
+    // ⛔ **One transaction spending BOTH VouchBoxes, escrowing ONE stake.** That
+    // is the shape the single-input bound exists to refuse: without it the
+    // second stake is consumed and nothing holds it. It no longer conserves
+    // either, so the bound and conservation both fire — the bound is what names
+    // WHY (NODE_INTERFACE → Vouch transition rules).
+    mempool.insertUtxoTx(
+      makeUnvouchTx([v1.id!, v2.id!], voucher, VOUCH_KARMA_AMOUNT),
+      100000,
+    );
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -191,6 +219,6 @@ describe('P2-B phase 4 — multi-VouchBox unvouch money flow', () => {
     expect(ordering.getCurrentHeight()).toBe(0);
     expect(utxo.getBox(v1.id!)).not.toBeNull();
     expect(utxo.getBox(v2.id!)).not.toBeNull();
-    expect(cooldowns.getVouchCooldowns(voucher.userId)).toHaveLength(0);
+    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
   });
 });

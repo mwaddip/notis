@@ -519,6 +519,39 @@ that the verdict does not consult runtime category data.
 
 ## Structural Validation
 
+### ⛔ What a decoder subsumes depends on the ENTRY PATH, and a store read is one
+
+Since the positional codecs, a fixed-width field has **exactly one encodable width** — `readBytesN(r, 32)`
+either yields 32 bytes or throws. So a check of the form *"is this field 32 bytes"* is **subsumed**
+when the object came through a decoder, and **live** when it did not.
+
+⛔ **THE QUESTION IS NEVER "IS THIS CHECK REDUNDANT" — IT IS "BY WHICH PATHS CAN THIS OBJECT
+ARRIVE".** The same check on the same field has opposite verdicts in two packages, and the field is
+not what decides it.
+
+**Measured in `@dagsocial/net`, 2026-08-18 — four entry paths, and only half cross a decoder:**
+
+| Path | Decoded? | Width checks |
+|---|---|---|
+| gossip | ✅ `decodeTx` / `decodeOrderingBlock` | **subsumed** |
+| sync codec | ✅ | **subsumed** |
+| **store read** | ⛔ **no** — `encodeServable` takes `value: unknown` and casts `value as T` | ⚠ **LIVE** |
+| `broadcastTx` / `broadcast*` | ⛔ no | the **encoder** throws instead |
+
+⚠ **A STORE READ IS A NON-DECODER ENTRY AND IT DOES NOT LOOK LIKE ONE.** It is internal, it carries
+no untrusted-input smell, and the data never crosses a codec in either direction — it comes back out
+of SQLite as objects. **Reasoning about entry paths by looking for *edges* misses it**, which is the
+error this section exists to prevent: `net` was predicted "fully subsumed, because it has no HTTP
+edge", and the prediction was refuted by the package's own module header.
+
+⛔ **`@dagsocial/node` has BOTH a store and an HTTP edge**, so the identical checks there are live
+twice over. **Do not carry net's answer into node.**
+
+⛔ **NEVER DELETE A SUBSUMED CHECK.** Unreachable is not wrong, and it costs nothing; it is what
+stands where a future non-decoder caller would land, and that failure would be silent. ⚠ **Say so
+beside it** — a defensive check with no comment reads as a live one, and the next reader reasons
+about a path that cannot happen.
+
 ### verifyPostFieldDomains
 
 ```
@@ -873,6 +906,68 @@ and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 > unreachable and a bad value produces a **stated rejection**. Two of the four
 > also close a measured remote fail-stop — see
 > `prompts/node-fail-stop-reachability-measure-REPORT.md`.
+
+> ## ✅ RESOLVED — `coinbaseOutputs` HAS LEFT THE BODY, AND THE GAP ABOVE CLOSED BY CONSTRUCTION
+>
+> ✅ **Landed 2026-08-17/18**: C1 removed the field from `UtxoTxTree` and C2 removed the structural
+> checks here, so the body carries three arrays and this paragraph no longer has a
+> `coinbaseOutputs` clause. ⚠ **The settlement transaction that receives those outputs is still
+> ahead of code in `node`** — this package's obligation (`utxoTxIds.length >= 1`) is met; nothing
+> yet builds the transaction that makes the length meaningful.
+>
+> ⛔ **This block read `⚠ AHEAD OF CODE` after both halves had landed**, which is the second decay
+> trigger — implementation strands a **claim** while every name in it still resolves, so no
+> deletion-grep reaches it (`TYPES_INTERFACE` → How a dispatch decays this contract).
+>
+> ✅ **THE DEFECT THIS NOTE RECORDS STOPS BEING POSSIBLE.** The correction above exists because
+> *"no `u64` bound on a coinbase `value` existed anywhere in the repo"* — the field-type table covers
+> transaction **output boxes** and never `CoinbaseOutput`. Once a coinbase output **is** a transaction
+> output box, it inherits that table by being one. ⛔ **The bound stops being a second statement that
+> can rot out of step with the first**, which is the class of defect this file has now found three
+> times.
+>
+> ⚠ **All four pins leave this package, and none is dropped.** `value`, `owner` and `isTreasury` go
+> as stated above. ⛔ **`lockedUntilBlock` GOES TOO — the claim that it had "no box-level
+> equivalent" was FALSE, refuted 2026-08-17.** It is covered at apply **twice, and more strictly
+> than the structural check ever was**:
+>
+> | Cover | Where | Strength |
+> |---|---|---|
+> | non-negative safe integer, **never `-0`** | `NODE_INTERFACE` → `validateTx`'s field-type table, `credit.lockedUntilBlock` | ⬆ `isU64Safe` **plus** `-0` |
+> | `== height + CREDIT_MINER_REWARD_DELAY` | `MINING_INTERFACE` → coinbase invariants | ⬆ an equality, not `≥ block.height` |
+>
+> ⛔ **THE CHECK FOLLOWED ITS SUBJECT, WHICH IS WHY IT LEAVES.** It lived here because
+> `coinbaseOutputs` was a **structural body field**. It is not one any more, so a rule about it is a
+> rule about a transaction's contents — and that is apply's, by this package's own split.
+>
+> ⚠ **What is genuinely given up is PRE-RELAY coverage, and it is given up deliberately.** A block
+> whose coinbase lock height is wrong now relays one hop before apply refuses it. ⛔ **Buying it back
+> would cost a full `decodeStruct` of the last `utxoTxs` element on the relay path — read,
+> exhaustion, re-encode, byte-compare, per block** — and would retire the opaque-bytes premise that
+> makes `MAX_TX_BYTES` and the body bound cheap. **Refused** (2026-08-17): a block still needs valid
+> PoW to be relayed at all, so the surface is bounded by PoW rather than by this check, and `net` is
+> the one package with a measured performance defect on record.
+>
+> ⛔ **A new structural obligation replaces them, and it is SMALLER than first written:
+> `utxoTxIds.length >= 1`.** Every block carries at least one transaction, because the settlement is
+> one.
+>
+> ⚠ **"EXACTLY ONE, AND LAST" IS NOT A CHECK — IT IS A DEFINITION, and this text asserted otherwise.
+> Corrected 2026-08-17.** The settlement **is** the last entry (NODE_INTERFACE → the settlement
+> transaction), so there is no count to take and no *"settlement that is not last"* state to detect.
+> Recognising a settlement anywhere else would mean recognising **what it spends** — the pool — which
+> needs the UTXO set and is therefore node's. ⚠ **Node enforces it by recomputing each DERIVED
+> quantity and constraining each PRODUCER-CHOSEN one — not by byte-identical reconstruction, which
+> `?miner=` makes impossible** (NODE_INTERFACE → the settlement transaction). ⛔ **A definition
+> dressed as a predicate reads like coverage and produces none.**
+>
+> ⚠ **A non-empty body is therefore the precondition, and it is new.** Every block must carry at
+> least one transaction now, because the settlement is one. A structural check that admitted an
+> empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
+>
+> ⚠ **This paragraph also cites `prompts/`, which `.gitignore` excludes wholesale** — the citation
+> resolves for its author and for nobody with a clone. Recorded, not swept: it is one instance of a
+> class, and a sweep of it is its own pass.
 
 Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
 `rootPostHash`, a `subtreePostIds` array of 64-char strings, a 32-byte

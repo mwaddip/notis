@@ -43,11 +43,12 @@ function encodeServable<T>(
   try {
     return encodeItem(candidate);
   } catch (err) {
-    // A stored row can still be out of domain in a way the verdict above does
-    // not reach — `verifyOrderingBlockStructure` checks `utxoTxs` length
-    // alignment but not element types, and `writeLp` sentinels rather than
-    // throwing there. The throw becomes the same verdict rather than leaving the
-    // serve path.
+    // Depth behind the verdict, not a second one. The fixed-width writers throw
+    // outside their domain (TYPES_INTERFACE → Totality), and this module's rule
+    // is that a serve path produces `null` rather than leaving by exception —
+    // which has to hold whatever the verdict above happens to cover, since the
+    // two are stated in different packages and move independently. The throw
+    // becomes the same verdict rather than leaving the serve path.
     console.error(`[net] cannot serve ${kind} ${subject}: encode failed — ${String(err)}`);
     return null;
   }

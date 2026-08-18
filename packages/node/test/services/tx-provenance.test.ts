@@ -156,10 +156,6 @@ describe('transaction output provenance (Spec G phase C3)', () => {
         lockedUntilBlock: 900,
       } satisfies CandidateOf<CreditBox>,
       {
-        boxType: 'invite', value: 0n, inviterId: user(0xe6),
-        inviteePublicKey: user(0xe5), 
-      },
-      {
         boxType: 'bond', value: 3n, inviterId: user(0xe7),
         inviteePublicKey: user(0xe8), 
       },
