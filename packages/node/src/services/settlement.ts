@@ -36,26 +36,38 @@
  * above, then the fee boxes in **committed transaction order**, and within a
  * transaction in output order. Nothing is sorted and nothing is read from a
  * table without a stated total order — the three protocol getters are
- * `ORDER BY id LIMIT 1` (NODE_INTERFACE → Determinism is this mechanism's whole
- * risk, which admits exactly three ordering sources).
+ * `ORDER BY id LIMIT 1`.
  *
- * ## ⛔ What a verifier derives, and what it reads
+ * ## ⛔ EVERY FIELD IS DERIVED OR PRODUCER-CHOSEN-AND-CONSTRAINED. NONE IS NEITHER.
  *
- * **The verifier derives every quantity and checks the producer's against it**;
- * it does not re-derive the whole transaction and compare ids. Two things in a
- * settlement are the producer's and are not in the body: **which key the miner
- * pays their own slice to** (`GET /mining/template?miner=` is authenticated and
- * redirects the coinbase — MINING_INTERFACE → GET /mining/template) **and across
- * how many outputs**. Everything else — the input list, all three successors'
- * values, every grant's owner and amount, the credit total, the maturity lock —
- * is pinned here, and conservation is checked over the whole transaction
- * (MINING_INTERFACE → the receipt checks survive: *"refused by conservation
- * itself rather than by a separate successor check"*).
+ * (NODE_INTERFACE → Determinism is this mechanism's whole risk — but it is
+ * determinism of the VERDICT, not of the bytes.) A verifier **cannot** rebuild a
+ * byte-identical settlement: `?miner=` makes the coinbase's payout key the
+ * producer's, and it reaches a verifier only as an output of the very
+ * transaction being checked. So the property that has to hold is that every
+ * verifier reaches the same VERDICT — and a field that is neither recomputed nor
+ * constrained is one a producer sets freely while the block still validates.
  *
- * ⚠ **Determinism is still this mechanism's whole risk, one level in.** What
- * must agree across nodes is the *derivation*: two honest nodes deriving
- * different input orders reject each other's blocks. That is why every ordering
- * above is one the block or a stated `ORDER BY` fixes.
+ * | Field | |
+ * |---|---|
+ * | `inputs` | **derived**, element-wise and in order |
+ * | emission / treasury / pool successors | **derived** — presence and value |
+ * | the karma grants | **derived** — one per bond, its owner and its amount |
+ * | the credit outputs | **producer's**, constrained: they sum to the miner's slice, each carries the scheduled maturity lock, none holds `0`, and no other box type is admitted |
+ * | `signatures` | constrained — **must be empty**; no key authorizes a settlement |
+ * | `protocolVersion` | constrained — exact |
+ * | `likeTarget`, `post` | constrained — **must be absent** |
+ *
+ * ⚠ **Output ORDER is the producer's and is deliberately unconstrained.** It
+ * moves the transaction id, every output's `index` and so every box id — but the
+ * output multiset is pinned above, so no ordering carries value that another does
+ * not. It is committed in `utxoTxRoot` like everything else, and every node
+ * applies the order the block states.
+ *
+ * ⚠ **Determinism is still the risk, one level in.** What must agree across
+ * nodes is the *derivation*: two honest nodes deriving different input orders
+ * reject each other's blocks. That is why every ordering above is one the block
+ * or a stated `ORDER BY` fixes.
  */
 
 import {
