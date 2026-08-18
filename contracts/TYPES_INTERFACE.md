@@ -1699,6 +1699,35 @@ from this table — a use that reads every cell as an instruction rather than as
 | `like_accrual` | `b32(author)` |
 | `vouch_escrow` | `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
 
+> ## ⛔ WHAT A NEW BOX TYPE COSTS, AND WHY A GREP FOR THE TYPE MISSES THE WORST SITE
+>
+> A box type is enumerated in hand-kept places across three packages and **the compiler links none
+> of them.** Measured 2026-08-18 for `like_accrual` and `vouch_escrow`:
+>
+> | | |
+> |---|---|
+> | `types/src/utxo.ts` | the interface, `BOX_TYPE_TAGS`, the codec arm |
+> | `types/test/golden/structs.ts` | the corpus's **deliberately independent** reverse table |
+> | `node/src/services/utxo-engine.ts` | the output shape schema and the transition sets |
+> | `node/src/store/utxo.ts` | the row mapping |
+> | `node/src/karma-supply.ts` | ⚠ **three karma sets, and none derives from another** |
+> | `node/public/index.html` | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file** |
+>
+> ⛔ **AND ONE MORE THAT A SEARCH FOR THE TYPE CANNOT FIND.** `node/src/routes/json-to-tx.ts`'s
+> `BINARY_BOX_FIELDS` is keyed on the **field name**, not the box type — so `grep like_accrual`
+> returns the six sites above and **not** the one that decides whether the box can be expressed over
+> HTTP at all.
+>
+> ⚠ **It failed exactly that way.** `author` was missing, so a `LikeAccrualBox` arriving as JSON kept
+> its hex string and died at `validateTx`'s step-4 schema — **the whole like path was unreachable
+> over HTTP while every service-level test stayed green**, because those tests pass raw `Uint8Array`
+> objects and never cross that edge. ⛔ **The file's own comment predicted this defect in the
+> abstract, two lines above the list it was missing from.** A hazard documented at the site does not
+> fire; only a test at the right layer does.
+>
+> ✅ **So the check is a ROUTE-level test for any box type with a binary field**, and the enumeration
+> to run is **by field name as well as by type**.
+
 > ⚠ **`releaseAtBlock` is `vlqU`, NOT `vlqU64`, and NOT `opt`.** It is a block height, so it takes
 > the same writer as `credit.lockedUntilBlock` — and unlike that field it is **always present**, since
 > an escrow with no release height is not a state the type admits. ⛔ **Read the `vlqU` / `vlqU64`
