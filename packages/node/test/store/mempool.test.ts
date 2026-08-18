@@ -1012,9 +1012,8 @@ describe('mempool store', () => {
      * ⛔ **Every field the codec writes is fixed-width or bounded**, so the
      * padding has to come from a length-prefixed one: `inputs` gives 32-byte
      * steps and a post's `content` gives single-byte steps
-     * (TYPES_INTERFACE → Layout — UtxoTransaction). Padding a signature — a
-     * `b64` writer — has no encoding at all now, which is the shape this helper
-     * used to have.
+     * (TYPES_INTERFACE → Layout — UtxoTransaction). ⚠ **A signature cannot pad**
+     * — `b64` is fixed-width, so a padded one has no encoding.
      */
     async function txOfEncodedSize(byteLength: number) {
       const { encodeTx, PROTOCOL_VERSION } = await import('@dagsocial/types');

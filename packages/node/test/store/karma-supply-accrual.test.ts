@@ -3,6 +3,7 @@ import { fixtureProvenance, uid } from '../helpers.js';
 import {
   INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
+  LIKES_PER_KARMA_PAYOUT,
   VOUCH_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
@@ -52,7 +53,11 @@ const OWNER = uid('supply-owner');
 const OTHER = uid('supply-other');
 
 /** A box of every type, each carrying a value the assertions can tell apart. */
-function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
+function boxOfType(boxType: AnyBox['boxType'], value: bigint, tag = ''): AnyBox {
+  // ⚠ `tag` separates two boxes of one type and value. It reaches the
+  // provenance nonce as well as the id, because `(tx_id, output_index)` is
+  // UNIQUE and identical candidates derive one synthetic txId.
+  const nonce = tag ? [...tag].reduce((a, c) => a + c.charCodeAt(0), 0) : 0;
   const base = { boxType, value } as Record<string, unknown>;
   switch (boxType) {
     case 'karma':
@@ -88,8 +93,8 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
     default:
       break;
   }
-  const box = { ...base, ...fixtureProvenance(base, 1) } as unknown as AnyBox;
-  box.id = `${boxType}-${value}`;
+  const box = { ...base, ...fixtureProvenance(base, 1, nonce) } as unknown as AnyBox;
+  box.id = tag ? `${boxType}-${value}-${tag}` : `${boxType}-${value}`;
   return box;
 }
 
@@ -190,16 +195,17 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
   // Four transaction shapes, measured against the axiom. Each is the box
   // arithmetic a real transaction performs.
   //
-  // ⚠ **The three VIOLATION cases assert a defect, deliberately.** The axiom is
-  // `AHEAD OF CODE`, so these shapes are what the tree does and what it must
-  // stop doing; pinning the exact amount each one conjures or destroys is what
-  // makes the gap measurable instead of asserted.
+  // ⛔ **EVERY SHAPE HERE NAMES A SOURCE AND A SINK**, so each case pins a
+  // CIRCULATION change rather than a unit called into being or ended
+  // (ARCHITECTURE → The conservation axiom).
   //
-  // ⚠ **They witness the tree AS IT STANDS, where no box outside the supply set
-  // can receive karma.** Giving one of them a pool sink does NOT turn it green —
-  // the delta would be unchanged, because the pool sits outside this set on
-  // purpose. What retires a witness is the shape gaining a source and a sink
-  // *and* this file gaining the conservation total to measure them against.
+  // ⚠ **A non-zero delta is not a violation, and reading it as one is the error
+  // this header exists to prevent.** `karma_pool` sits OUTSIDE the supply set on
+  // purpose, so karma moving to or from the pool moves this figure by design —
+  // the pool holds what is not in circulation. The conservation total is
+  // `circulating + pool`, a different sum over a different set, and
+  // `conservation-axiom.test.ts` is where it is asserted
+  // (NODE_INTERFACE → Three karma sets, and none derives from another).
   // -------------------------------------------------------------------------
 
   it('a conserving karma move satisfies the axiom: nothing appears, nothing vanishes', async () => {
@@ -214,7 +220,11 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
 
-  it('⚠ VIOLATION: a like burn destroys LIKE_KARMA_COST and names no sink', async () => {
+  it('a like moves LIKE_KARMA_COST into a marker, and circulation is unchanged', async () => {
+    // ⛔ **The cost lands in a `LikeAccrualBox`**, which is karma-bearing and in
+    // the supply set — so the like is a transfer between two boxes and this
+    // figure does not move at all (ARCHITECTURE → The conservation axiom, third
+    // shape: a marker must carry its value).
     const s = await freshStore();
     const spent = boxOfType('karma', 40n);
     s.insertBox(spent);
@@ -222,6 +232,26 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     s.beginBlockJournal(1);
     s.consumeBox(spent.id!, 1);
     s.insertBox(boxOfType('karma', 40n - LIKE_KARMA_COST));
+    s.insertBox(boxOfType('like_accrual', LIKE_KARMA_COST));
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
+  });
+
+  it('the like PAYOUT sends the remainder to the pool, so circulation falls by it', async () => {
+    // ⛔ **The settlement's leg, and the one place this figure SHOULD move.**
+    // `markers×x → authorKarma(x−1) + pool(1)`: the author's share stays in
+    // circulation and the remainder leaves it for the pool, which is outside
+    // this set. ⚠ **A `-1` here is the deflation dial working**, not a defect —
+    // `conservation-axiom.test.ts` is what proves nothing was destroyed.
+    const s = await freshStore();
+    const X = BigInt(LIKES_PER_KARMA_PAYOUT);
+    const markers = Array.from({ length: LIKES_PER_KARMA_PAYOUT }, (_, i) =>
+      boxOfType('like_accrual', LIKE_KARMA_COST, `marker-${i}`),
+    );
+    for (const m of markers) s.insertBox(m);
+
+    s.beginBlockJournal(1);
+    for (const m of markers) s.consumeBox(m.id!, 1);
+    s.insertBox(boxOfType('karma', (X - 1n) * LIKE_KARMA_COST));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-LIKE_KARMA_COST);
   });
 
@@ -250,10 +280,11 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(poolAfter!.value).toBe(1000n - INVITE_KARMA_AMOUNT);
   });
 
-  it('⚠ VIOLATION: a bond forfeit ends karma and names no sink', async () => {
-    // The remainder a bond forfeits at its probation deadline is destroyed by
-    // the ABSENCE of a mint (`processMaturedBonds`), which leaves no box holding
-    // it. C3b routes it back to the pool; until then this witness stands.
+  it('a bond forfeit sends the unvested remainder to the pool', async () => {
+    // ⛔ **The forfeit is a TRANSFER and the settlement names its sink**
+    // (ARCHITECTURE → Bond outcomes). The vested part returns to the inviter and
+    // stays in circulation; the remainder goes to the pool, which is outside
+    // this set — so the figure falls by exactly the forfeit and by nothing else.
     const s = await freshStore();
     const bond = boxOfType('bond', 40n);
     s.insertBox(bond);
@@ -264,22 +295,29 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-30n);
   });
 
-  it('⚠ VIOLATION: an unvouch moves the stake to a sink no box names', async () => {
+  it('an unvouch escrows the stake, and circulation never moves', async () => {
+    // ⛔ **`VouchEscrowBox` IS IN THE SUPPLY SET**, so the stake stays in
+    // circulation for the whole cooldown — the unvouch is a transfer between two
+    // karma-bearing boxes and this figure does not move (ARCHITECTURE → Vouch
+    // boxes).
     const s = await freshStore();
     const vouch = boxOfType('vouch', VOUCH_KARMA_AMOUNT);
     s.insertBox(vouch);
 
-    // The zero-output spend: the stake leaves the UTXO set entirely and
-    // `vouch_cooldowns` — a table, not a box — is the only record of it.
     s.beginBlockJournal(1);
     s.consumeBox(vouch.id!, 1);
-    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-VOUCH_KARMA_AMOUNT);
+    s.insertBox(boxOfType('vouch_escrow', VOUCH_KARMA_AMOUNT));
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
 
-    // ⛔ **The maturity leg restoring it is exactly what the axiom refuses to
-    // accept as conservation.** The two legs net to zero, and between them there
-    // was a stretch of chain — blocks, not instants — in which the stake existed
-    // nowhere. A round trip is still a burn followed by a mint.
-    s.insertBox(boxOfType('karma', VOUCH_KARMA_AMOUNT));
+    // ⛔ **And the release moves it no further.** The escrow becomes karma; both
+    // types are in the set, so there is no stretch of chain in which the stake
+    // is anywhere but a box — which is what *"not even as an intermediary
+    // step"* asks for and a net-zero round trip does not give.
+    s.consumeBox(
+      s.getUnspentBoxes().find((b) => b.boxType === 'vouch_escrow')!.id!,
+      2,
+    );
+    s.insertBox(boxOfType('karma', VOUCH_KARMA_AMOUNT, 'released'));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
 

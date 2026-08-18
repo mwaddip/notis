@@ -445,9 +445,8 @@ export function createOrderingBlock(): OrderingBlock | null {
   //    assembly preference like the karma-first ordering, not a consensus rule.
   //
   //    ⛔ **The accumulator is SEEDED with the settlement an empty body
-  //    produces**, which is the position `coinbaseOutputs`' worst-case
-  //    reservation used to hold. Its baseline — the emission and treasury
-  //    successors and the coinbase — is there whatever the fill selects, and
+  //    produces.** Its baseline — the emission and treasury successors and the
+  //    coinbase — is there whatever the fill selects, and
   //    `entryByteCost` carries only each entry's MARGINAL growth on top
   //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here). Left
   //    out, the accumulator under-counts by the whole settlement and the trim

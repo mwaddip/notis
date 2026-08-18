@@ -1450,9 +1450,9 @@ function checkValueConservation(
  * table.
  *
  * This decides only who must have signed, which is what lets it run ahead of
- * `checkTransitions`: a transition is identifiable from the input's type and,
- * for the two invite exits, from whether the transaction produces outputs at
- * all. The rest of each shape is pinned a step later.
+ * `checkTransitions`: ⛔ **the verdict is a function of the input's TYPE alone**
+ * — `checkAuthorization` reads `inputBoxes` and the signature map and nothing
+ * else. The rest of each shape is pinned a step later.
  */
 type Authorization =
   | {

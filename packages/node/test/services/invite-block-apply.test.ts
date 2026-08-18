@@ -329,10 +329,10 @@ describe('the invite at block application', () => {
   // -------------------------------------------------------------------------
 
   it('a block whose body names one invitee twice does not apply', async () => {
-    // ⛔ **THIS WAS EMERGENT AND IS NOW A STATED RULE** (NODE_INTERFACE → Legal
-    // box transitions). The claim used to absorb the collision: Bob claimed one
-    // invite and the other was cancelled. With no claim, the second bond draws a
-    // second `INVITE_KARMA_AMOUNT` out of the pool for one key.
+    // ⛔ **A STATED RULE, because nothing else absorbs the collision**
+    // (NODE_INTERFACE → Legal box transitions). One bond is one grant, so a
+    // second bond naming a key an earlier transaction in this block already
+    // named draws a second `INVITE_KARMA_AMOUNT` out of the pool for one key.
     //
     // ⚠ **The record-existence test cannot see this.** The grant that writes
     // Bob's record is the settlement's, and it runs AFTER every embedded

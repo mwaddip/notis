@@ -957,8 +957,8 @@ export async function makeApplicableBlock(
     throw new Error(`makeApplicableBlock: the body has no valid settlement: ${built.error}`);
   }
   // The maturity-lock override reaches the coinbase's credit outputs, which is
-  // where the lock now lives — one deviation, applied to the settlement the
-  // creator built rather than to a coinbase list that no longer exists.
+  // where the lock lives — one deviation, applied to the settlement the creator
+  // built.
   const relocked = opts.lockedUntilBlock === undefined
     ? built.tx
     : {

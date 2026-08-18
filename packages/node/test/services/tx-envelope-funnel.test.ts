@@ -171,11 +171,12 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   });
 
   it('an unhashable transaction has no encoding either, so it never reaches the funnel', async () => {
-    // ⛔ **THE ORDERING THIS CASE USED TO OBSERVE IS NO LONGER OBSERVABLE, AND
-    // THE REASON IS STRONGER THAN THE ORDERING.** `encodeTx` and `computeTxId`
-    // write through the same throwing writers, so anything a producer can put
-    // into `utxoTxs` is hashable, and anything unhashable is unencodable — it
-    // cannot be committed, spliced or relayed (TYPES_INTERFACE → Totality).
+    // ⛔ **THE GATE'S ORDER AGAINST THE HASHER IS UNOBSERVABLE ON THE BLOCK
+    // PATH, AND THE REASON IS STRONGER THAN AN ORDER.** `encodeTx` and
+    // `computeTxId` write through the same throwing writers, so anything a
+    // producer can put into `utxoTxs` is hashable, and anything unhashable is
+    // unencodable — it cannot be committed, spliced or relayed
+    // (TYPES_INTERFACE → Totality).
     //
     // ⚠ **The gate is not thereby redundant**, and this is the half that keeps
     // it honest: it still answers on the HTTP edge, where `jsonToTx` builds the

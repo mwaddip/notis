@@ -1047,12 +1047,11 @@ describe('validateAndApplyTx', () => {
   // no inviter signature. It needed a mixed-type input combination, which
   // `validateTx` step 3 permitted for exactly two shapes.
   //
-  // ⛔ **Both preconditions are gone twice over now**: every legal shape is
-  // single-type, a bond input is refused by authorization whatever else the
-  // transaction holds, and the two shapes step 3 used to except no longer exist
-  // at all (ARCHITECTURE → Invite System). The sweep is enumerated here rather
-  // than assumed unreachable, because "step 3 admits no exceptions" is a claim a
-  // future arm could quietly reverse.
+  // ⛔ **Both preconditions fail twice over**: every legal shape is single-type
+  // and step 3 admits no exception, and a bond input is refused by authorization
+  // whatever else the transaction holds (ARCHITECTURE → Invite System). The
+  // sweep is enumerated here rather than assumed unreachable, because "step 3
+  // admits no exceptions" is a claim a future arm could quietly reverse.
   // ---------------------------------------------------------------------------
   describe('the bond sweep (audit H-2)', () => {
     it('rejects the 2-input sweep, attacker-signed', () => {

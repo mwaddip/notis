@@ -57,15 +57,14 @@ async function importFresh() {
  * Build the settlement a body of this shape requires and apply it — the seam
  * both box transitions now live behind.
  *
- * ⛔ **`treasury` is no longer a parameter, and that is the change.** Emission
- * and the treasury slice come from opposite directions but out of ONE
- * `splitCoinbase` over `(emission, fees, actors)` (MINING_INTERFACE → Coinbase
- * Application), so a caller that could name the treasury independently was
- * naming a seam the settlement does not have. Every case below states the income
- * instead and reads the slice back off `splitCoinbase`.
+ * ⛔ **`treasury` IS NOT A PARAMETER, and it cannot be one.** Emission and the
+ * treasury slice come from opposite directions but out of ONE `splitCoinbase`
+ * over `(emission, fees, actors)` (MINING_INTERFACE → Coinbase Application), so
+ * a caller naming the treasury independently would be naming a seam the
+ * settlement does not have. Every case below states the income and reads the
+ * slice back off `splitCoinbase`.
  *
- * Returns `false` where the old `settleEmissionAndTreasury` did: a chain that
- * cannot back the release.
+ * Returns `false` for a chain that cannot back the release.
  */
 function settle(
   s: Awaited<ReturnType<typeof importFresh>>,

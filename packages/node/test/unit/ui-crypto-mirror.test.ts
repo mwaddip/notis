@@ -768,11 +768,11 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('the tag is what separates a bond from any other box, on both sides', () => {
-    // ⛔ **Tag 2 is unassigned and reserved** — `invite` held it and the type is
-    // gone (TYPES_INTERFACE → InviteBox), so the pair this case used to compare
-    // no longer exists. `enum8Tag` is still the whole of what keeps two leaves
-    // apart, and asserting it on the UI side is what stops an encoder that
-    // dropped the tag from giving two boxes with the same parties one id.
+    // ⛔ **Tag 2 is unassigned and reserved, never to be reused**
+    // (TYPES_INTERFACE → InviteBox), so this compares a bond against a box type
+    // rather than against its neighbour. `enum8Tag` is the whole of what keeps
+    // two leaves apart, and asserting it on the UI side is what stops an encoder
+    // that dropped the tag from giving two boxes with the same parties one id.
     const b = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX));
     const tagless = b.slice(2);
     for (const other of [GOLDEN_KARMA_BOX, GOLDEN_VOUCH_BOX, GOLDEN_POST_LOCK_BOX]) {
