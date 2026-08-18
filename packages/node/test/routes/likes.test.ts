@@ -13,7 +13,7 @@ import { insertPost } from '../../src/store/posts.js';
 import {
   insertBox, getKarmaBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow as storeHasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import { castLike } from '../../src/services/likes.js';
 import {
@@ -63,7 +63,11 @@ async function request(
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      // ⛔ The like marker's author pin. One author for every post this suite
+      // builds (NODE_INTERFACE → Karma transition rules).
+      getTopologyAuthor: () => POST_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -122,6 +126,12 @@ function buildLikeTx(
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: likerPubKey,
       } as KarmaBox,
+      // ⛔ The marker carries the cost — the like conserves now.
+      {
+        boxType: 'like_accrual',
+        value: LIKE_KARMA_COST,
+        author: POST_AUTHOR,
+      } as unknown as KarmaBox,
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
@@ -135,6 +145,9 @@ function buildLikeTx(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/** The author every post in this suite belongs to — the key a marker must name. */
+const POST_AUTHOR = new Uint8Array(32).fill(0x7a);
 
 describe('likes routes', () => {
   let postId: string;
@@ -301,7 +314,7 @@ describe('likes routes', () => {
   it('POST /likes with valid signed burn tx returns 200 with pending status', async () => {
     const { txJson } = buildLikeTx(karmaBox, likerPrivKey, likerId, likerPubKeyHex, postId);
     const res = await request('/', 'POST', { tx: txJson });
-    expect(res.status).toBe(200);
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
     const body = res.data as Record<string, unknown>;
     expect(body.status).toBe('pending');
     expect(typeof body.txId).toBe('string');

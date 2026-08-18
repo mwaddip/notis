@@ -146,12 +146,26 @@ describe('db lifecycle', () => {
     expect(likeRecByName.get('applied_at_block')!.pk).toBe(0);
     expect(likeRecCols.every((c) => c.notnull === 1)).toBe(true);
 
-    // identity_records carries like_carry, NOT NULL with default 0.
+    // ⛔ **`identity_records` carries NO like-accrual column, and the absence is
+    // the assertion.** The outstanding accrual is a `LikeAccrualBox` carry box
+    // now, so the counter that used to remember karma which did not yet exist has
+    // no subject (ARCHITECTURE → Likes). Asserting the whole column set rather
+    // than the one absence, so a column re-added under any name fails here.
     const idRecCols = db.pragma('table_info(identity_records)') as Array<{
       name: string; notnull: number;
     }>;
-    const likeCarry = idRecCols.find((c) => c.name === 'like_carry');
-    expect(likeCarry).toBeDefined();
-    expect(likeCarry!.notnull).toBe(1);
+    expect(idRecCols.map((c) => c.name).sort()).toEqual([
+      'identity_id',
+      'invited_at_block',
+      'last_activity_block',
+      'last_decay_block',
+      'lifetime_likes_received',
+    ]);
+    // ⚠ Every column but the primary key. `identity_id BLOB PRIMARY KEY` is
+    // declared without `NOT NULL`, which SQLite reports as `notnull: 0` — the
+    // key's own constraint, not a nullable field.
+    expect(
+      idRecCols.filter((c) => c.name !== 'identity_id').every((c) => c.notnull === 1),
+    ).toBe(true);
   });
 });

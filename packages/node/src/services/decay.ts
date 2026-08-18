@@ -1,21 +1,7 @@
-import { computeBoxId } from '@dagsocial/types';
 import type { KarmaBox } from '@dagsocial/types';
-import { MINT_OUTPUT_INDEX, decayContext, mintTxIdFor } from '../mint-provenance.js';
 // Type-only: the decay service reaches the record through injected deps, never
 // through the store module directly.
 import type { IdentityRecord } from '../store/identity-records.js';
-
-/**
- * Per-owner summary of one decay application. Node-local: block application
- * journals the underlying box mutations at the store choke point; this
- * return value exists for the decay service's own callers and tests.
- */
-export interface DecayJournalEntry {
-  owner: Uint8Array;
-  consumedBoxIds: string[];
-  newBoxId: string;
-  burnAmount: bigint;
-}
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -38,7 +24,6 @@ export interface DecayJournalEntry {
 const NEVER_ACTIVE: IdentityRecord = {
   lastActivityBlock: 0,
   lastDecayBlock: 0,
-  likeCarry: 0n,
   invitedAtBlock: 0,
   lifetimeLikesReceived: 0n,
 };
@@ -101,9 +86,16 @@ export function owedPeriods(
 
 export interface DecayDeps {
   getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
-  consumeBox: (boxId: string, consumedAtBlock: number) => void;
-  insertBox: (box: KarmaBox) => void;
-  /** Return all distinct owners with unspent karma boxes. */
+  /**
+   * Every distinct owner holding an unspent karma box, **in a stated total
+   * order**.
+   *
+   * ⛔ **The order is a consensus obligation.** Decay is derived by the block's
+   * settlement transaction, whose outputs are hashed in the order they are
+   * emitted, so two nodes walking this list differently derive two different
+   * transactions (NODE_INTERFACE → Determinism is this mechanism's whole risk).
+   * A query with no `ORDER BY` is the fork.
+   */
   getKarmaOwners: () => Uint8Array[];
   /** The identity's decay clock, or null if it has never held karma. */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
@@ -112,11 +104,42 @@ export interface DecayDeps {
 }
 
 /**
- * Apply periodic karma decay to all stale identities.
- * Called during applyOrderingBlock after UTXO transactions are applied.
- * Returns journal entries for rollback.
+ * One identity's decay, as a plan rather than as a mutation.
+ *
+ * ⛔ **Decay moves no boxes any more.** Its burn's sink is the karma supply
+ * pool, and the pool is spent by the block's settlement transaction and by
+ * nothing else (NODE_INTERFACE → The settlement transaction) — so the boxes
+ * this describes are consumed and re-emitted there, in one operation that names
+ * both ends. Charging an owner here and crediting the pool later would be a burn
+ * and a mint separated by steps, which `ARCHITECTURE → The conservation axiom`
+ * forbids by name.
+ *
+ * ⚠ **The MECHANISM is unchanged and deliberately so.** The eager per-identity
+ * pass, the staleness predicate, the interval arithmetic and the karma floor are
+ * exactly what they were; only where the value goes has moved.
  */
-export function applyKarmaDecay(
+export interface DecayPlan {
+  owner: Uint8Array;
+  /** Every karma box the owner holds — the settlement's inputs for this leg. */
+  consumedBoxIds: string[];
+  /** What the owner is left holding. */
+  newValue: bigint;
+  /** What returns to the pool. */
+  burnAmount: bigint;
+}
+
+/**
+ * Derive the decay every stale identity owes at `currentHeight`.
+ *
+ * ⛔ **Pure with respect to the ledger: it reads and returns, and writes
+ * nothing.** The settlement emits its boxes and `commitDecayClocks` advances the
+ * clocks, so a block whose settlement is refused has not moved a decay clock
+ * either.
+ *
+ * Returned in `getKarmaOwners` order, which the dep contract requires to be a
+ * stated total order.
+ */
+export function deriveKarmaDecay(
   deps: DecayDeps,
   currentHeight: number,
   cfg: {
@@ -125,17 +148,15 @@ export function applyKarmaDecay(
     decayAmount: bigint;
     karmaMinimum: bigint;
   },
-): DecayJournalEntry[] {
-  const journal: DecayJournalEntry[] = [];
-  const owners = deps.getKarmaOwners();
+): DecayPlan[] {
+  const plans: DecayPlan[] = [];
 
-  for (const owner of owners) {
+  for (const owner of deps.getKarmaOwners()) {
     const boxes = deps.getKarmaBoxes(owner);
     if (boxes.length === 0) continue;
 
-    // The clock is read once, before anything mutates: both predicates must see
-    // the same pre-decay state, and the write-back below needs the prior
-    // `lastActivityBlock` to carry it through untouched.
+    // The clock is read once, before anything is decided: both predicates must
+    // see the same pre-decay state.
     const record = deps.getIdentityRecord(owner);
 
     if (!isIdentityStale(record, currentHeight, cfg.staleThresholdBlocks)) {
@@ -152,60 +173,50 @@ export function applyKarmaDecay(
     const burnAmount = owed < maxBurn ? owed : maxBurn;
     if (burnAmount <= 0n) continue;
 
-    const newValue = totalKarma - burnAmount;
-
-    // Consume all existing karma boxes
-    const consumedBoxIds: string[] = [];
-    for (const box of boxes) {
-      if (box.id) {
-        deps.consumeBox(box.id, currentHeight);
-        consumedBoxIds.push(box.id);
-      }
-    }
-
-    // Create single consolidated replacement box
-    // Field order is free — the committed encodings are positional.
-    //
-    // `owner` alone is an injective subject here: `applyKarmaDecay` visits each
-    // owner at most once per call (`getKarmaOwners` returns distinct owners) and
-    // runs once per block, so `(height, 'decay', owner)` cannot repeat.
-    const newBox: KarmaBox = {
-      boxType: 'karma',
-      value: newValue,
+    plans.push({
       owner,
-      decayBurn: true,
-      txId: mintTxIdFor(decayContext(owner), currentHeight),
-      index: MINT_OUTPUT_INDEX,
-    };
-    const boxId = computeBoxId(newBox);
-    newBox.id = boxId;
-    deps.insertBox(newBox);
+      // Every box, in the order `getKarmaBoxes` returns them. The settlement
+      // lists them as inputs in that order and hashes them in it, so the store's
+      // own ordering is what both nodes must share — `getKarmaBoxes` is
+      // `ORDER BY id`.
+      consumedBoxIds: boxes.filter((b) => b.id).map((b) => b.id!),
+      newValue: totalKarma - burnAmount,
+      burnAmount,
+    });
+  }
 
-    // Advance the decay half of the clock. Written after the box insert so the
-    // journal's reverse replay undoes the record before deleting the box that
-    // caused it, and only on a firing — `periods > 0` and `burnAmount > 0` both
-    // gate this, so a stale identity sitting at the karma floor keeps its clock
-    // where it was rather than silently forfeiting the intervals it is owed.
-    //
-    // `lastActivityBlock` is carried through unchanged: the decay-burn box the
-    // line above inserted is deliberately *not* activity, and resetting the
-    // activity half here would make an identity look freshly active every time
-    // it was charged. `likeCarry` likewise — it is settlement-owned, and a
-    // decay that zeroed it would silently confiscate accrued likes.
-    // `invitedAtBlock` the same: block application's claim path owns it, and a
-    // decay that reset it would both un-bar the address and move the paired
-    // bond's settlement deadline. `lifetimeLikesReceived` too — it is monotonic,
-    // and a decay that reset it would forfeit a bond the invitee had earned.
-    deps.putIdentityRecord(owner, {
+  return plans;
+}
+
+/**
+ * Advance the decay half of the clock for every identity the settlement charged.
+ *
+ * Written **after** the settlement's boxes are in, so the journal's reverse
+ * replay undoes the record before deleting the box that caused it. Only firings
+ * reach here — a stale identity sitting at the karma floor produces no plan and
+ * keeps its clock where it was, rather than silently forfeiting the intervals it
+ * is owed.
+ *
+ * `lastActivityBlock` is carried through unchanged: the decay-burn box the
+ * settlement emitted is deliberately *not* activity, and resetting the activity
+ * half here would make an identity look freshly active every time it was
+ * charged. `invitedAtBlock` the same — block application's grant path owns it,
+ * and a decay that reset it would both un-bar the address and move the paired
+ * bond's settlement deadline. `lifetimeLikesReceived` too: it is monotonic, and
+ * a decay that reset it would forfeit a bond the invitee had earned.
+ */
+export function commitDecayClocks(
+  deps: DecayDeps,
+  plans: DecayPlan[],
+  currentHeight: number,
+): void {
+  for (const plan of plans) {
+    const record = deps.getIdentityRecord(plan.owner);
+    deps.putIdentityRecord(plan.owner, {
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: currentHeight,
-      likeCarry: record?.likeCarry ?? 0n,
       invitedAtBlock: record?.invitedAtBlock ?? 0,
       lifetimeLikesReceived: record?.lifetimeLikesReceived ?? 0n,
     });
-
-    journal.push({ owner, consumedBoxIds, newBoxId: boxId, burnAmount });
   }
-
-  return journal;
 }

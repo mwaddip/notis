@@ -125,7 +125,6 @@ describe('genesis committee seeding', () => {
       expect(s.records.getIdentityRecord(bytesOf(member)), member).toEqual({
         lastActivityBlock: 500,
         lastDecayBlock: 0,
-        likeCarry: 0n,
         // A committee member was never invited, and genesis is the one event
         // that could not have been a claim.
         invitedAtBlock: 0,

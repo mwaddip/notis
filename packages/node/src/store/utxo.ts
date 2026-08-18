@@ -21,6 +21,8 @@ import type {
   EmissionBox,
   TreasuryBox,
   KarmaPoolBox,
+  VouchEscrowBox,
+  LikeAccrualBox,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,23 @@ interface PostLockExtra {
 interface VouchExtra {
   voucherId: string;    // hex-encoded pubkey
   targetId: string;     // hex-encoded pubkey
+}
+
+interface VouchEscrowExtra {
+  owner: string;           // hex-encoded pubkey — the voucher; where the karma returns
+  releaseAtBlock: number;  // unvouch height + VOUCH_COOLDOWN_BLOCKS
+}
+
+/**
+ * ⛔ **`author` goes in `extra_data`, not in the `owner` column, and the
+ * distinction is the box's whole safety property.** `author` is attribution and
+ * never authorization (TYPES_INTERFACE → LikeAccrualBox), and the `owner` column
+ * is what every owner-keyed query in this file selects on — `getKarmaBoxes`,
+ * `getCreditBoxes`, the decay owner scan. A marker in that column would answer
+ * an ownership question it does not hold the answer to.
+ */
+interface LikeAccrualExtra {
+  author: string;       // hex-encoded pubkey — the key the accrual is earmarked for
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +258,38 @@ function rowToBox(row: UtxoRow): AnyBox {
         value: row.value as VouchBox['value'],
         voucherId: hexToPubkey(e.voucherId),
         targetId: hexToPubkey(e.targetId),
+        ...prov,
+      };
+    }
+
+    case 'vouch_escrow': {
+      const e = extra as VouchEscrowExtra;
+      return {
+        id: row.id,
+        boxType: 'vouch_escrow',
+        // ⛔ The row's real value, never `VOUCH_KARMA_AMOUNT`. What makes the
+        // unvouch round trip conservation-**structural** is that the escrow
+        // carries exactly what the consumed `VouchBox` held (TYPES_INTERFACE →
+        // VouchEscrowBox), so a store that substituted the constant on read
+        // would make the property true by coincidence instead.
+        value: row.value,
+        owner: hexToPubkey(e.owner),
+        releaseAtBlock: e.releaseAtBlock,
+        ...prov,
+      };
+    }
+
+    case 'like_accrual': {
+      const e = extra as LikeAccrualExtra;
+      return {
+        id: row.id,
+        boxType: 'like_accrual',
+        // ⛔ **One type, two lifetimes, and the row cannot tell them apart**
+        // (TYPES_INTERFACE → LikeAccrualBox): `LIKE_KARMA_COST` on a marker, the
+        // running remainder on a carry box. Nothing here distinguishes them
+        // because the settlement consumes both in the same step.
+        value: row.value,
+        author: hexToPubkey(e.author),
         ...prov,
       };
     }
@@ -438,9 +489,18 @@ export function getKarmaBoxes(owner: Uint8Array): KarmaBox[] {
   const db = getDb();
   const rows = db
     .prepare(
+      // ⛔ **`value DESC` ALONE IS NOT A TOTAL ORDER, and this list feeds a
+      // derivation.** The decay pass lists these ids as the settlement's inputs
+      // and the transaction id hashes them in order, so two owners' boxes of
+      // EQUAL value — two faucet grants, a payout that matches an existing
+      // balance — would be returned in whatever order SQLite chose and two nodes
+      // would derive two different transactions (NODE_INTERFACE → A derived
+      // quantity has TWO kinds of input). `id` breaks the tie and is one of the
+      // three permitted orderings; `value DESC` stays because callers select
+      // coins from the front.
       `SELECT * FROM utxo_boxes
        WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL
-       ORDER BY value DESC`,
+       ORDER BY value DESC, id`,
     )
     .safeIntegers()
     .all(Buffer.from(owner)) as UtxoRow[];
@@ -620,6 +680,120 @@ export function getLikersForPost(targetPostId: string): string[] {
 }
 
 /**
+ * Every live `VouchEscrowBox` whose cooldown has run out at `height`.
+ *
+ * `<=` and not `==`: an escrow whose release height fell inside a reorged-away
+ * span would otherwise wait forever. The settlement consumes what is due, so
+ * "due" has to mean *at or before*.
+ *
+ * ⛔ **`ORDER BY id` is a consensus obligation, not tidiness.** The settlement
+ * emits one karma credit per escrow and its outputs are hashed in order, so two
+ * nodes reading this in different orders derive two different transactions.
+ * Ascending box id is one of the three orderings the block fixes
+ * (NODE_INTERFACE → Determinism is this mechanism's whole risk).
+ */
+export function getVouchEscrowsDueAt(height: number): VouchEscrowBox[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'vouch_escrow'
+         AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.releaseAtBlock') <= ?
+       ORDER BY id`,
+    )
+    .safeIntegers()
+    .all(height) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as VouchEscrowBox);
+}
+
+/**
+ * Every live escrow this voucher holds, ascending box id.
+ *
+ * ⚠ **It cannot report a target, because the box does not carry one**
+ * (TYPES_INTERFACE → VouchEscrowBox). The retired `vouch_cooldowns` row held
+ * `(voucher, target)` and the route reported the pair; an escrow reports the
+ * value and the release height, which is what a voucher actually needs to know.
+ */
+export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'vouch_escrow'
+         AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.owner') = ?
+       ORDER BY id`,
+    )
+    .safeIntegers()
+    .all(pubkeyToHex(voucherId)) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as VouchEscrowBox);
+}
+
+/**
+ * Does this voucher hold an unreleased escrow?
+ *
+ * ⛔ **KEYED ON THE VOUCHER ALONE, BECAUSE THE BOX CARRIES NO TARGET.** The
+ * retired `vouch_cooldowns` row held `(voucher, target)` and the rule read the
+ * pair; `VouchEscrowBox` carries `owner` and `releaseAtBlock` and nothing else
+ * (TYPES_INTERFACE → VouchEscrowBox), so the pair is not a question this state
+ * can answer. The gate is therefore **strictly stronger** than the one it
+ * replaces: a voucher cooling down may not recast at all, rather than may not
+ * recast *at the same target*.
+ *
+ * ⚠ **Stronger in the direction the design already leans.** The staked karma is
+ * in the escrow rather than in the voucher's karma boxes, so
+ * `VOUCH_MIN_BALANCE` already withholds it from a recast; this makes that a
+ * stated rule instead of an arithmetic accident.
+ */
+export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
+  const row = getDb()
+    .prepare(
+      `SELECT 1 FROM utxo_boxes
+       WHERE box_type = 'vouch_escrow'
+         AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.owner') = ?`,
+    )
+    .get(pubkeyToHex(voucherId));
+  return row !== undefined;
+}
+
+/**
+ * The live carry box for one author, or null.
+ *
+ * ⛔ **One per author is an invariant of the settlement, not of this query.**
+ * The settlement consumes an author's carry box in the same step that emits the
+ * replacement, so a second one cannot arise; `ORDER BY id LIMIT 1` is the stated
+ * total order every protocol-box read in this package carries, so a defect
+ * upstream degrades to a deterministic verdict rather than to a fork.
+ *
+ * ⛔ **`exclude` is not an optimisation — it is the only thing that separates a
+ * carry box from a marker.** The two share a type and are told apart by lifetime
+ * alone (TYPES_INTERFACE → LikeAccrualBox); at the point the settlement is
+ * derived, this block's markers are live `like_accrual` boxes naming the same
+ * author. Their ids are the caller's, from the body, so the discrimination is
+ * block content and not a heuristic on value — a carry of `1` and a marker of
+ * `LIKE_KARMA_COST` are indistinguishable by value at the constants in force.
+ */
+export function getLikeCarryBox(
+  author: Uint8Array,
+  exclude: Set<string>,
+): LikeAccrualBox | null {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'like_accrual'
+         AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.author') = ?
+       ORDER BY id`,
+    )
+    .safeIntegers()
+    .all(pubkeyToHex(author)) as UtxoRow[];
+  for (const row of rows) {
+    if (!exclude.has(row.id)) return rowToBox(row) as LikeAccrualBox;
+  }
+  return null;
+}
+
+/**
  * Return all unspent post lock boxes for per-block vesting.
  *
  * Ordered by box id — consensus code iterates the result, so the order must
@@ -645,10 +819,16 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
   const db = getDb();
   const row = db
     .prepare(
+      // One lock per post is the transition's invariant, so this names one box.
+      // ⛔ **The stated order is what keeps a defect upstream from becoming a
+      // fork**: both prune settlement and post-lock vesting walk this result
+      // into the settlement, so a second lock for one post would otherwise let
+      // two nodes pick different boxes and derive different transactions.
       `SELECT * FROM utxo_boxes
        WHERE box_type = 'post_lock'
          AND json_extract(extra_data, '$.targetPostId') = ?
-         AND spent_at_block IS NULL`,
+         AND spent_at_block IS NULL
+       ORDER BY id LIMIT 1`,
     )
     .safeIntegers()
     .get(targetPostId) as UtxoRow | undefined;
@@ -668,9 +848,7 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
  *
  * `lastDecayBlock` is carried through untouched: the fields of the record
  * have different writers, and an activity bump that reset the decay clock would
- * hand the owner a free interval. `likeCarry` likewise — it is
- * settlement-owned, and zeroing it here would confiscate accrued likes on
- * every karma receipt. `invitedAtBlock` likewise — the claim path owns it, and
+ * hand the owner a free interval. `invitedAtBlock` likewise — the grant path owns it, and
  * this hook fires on the claim's OWN karma output, so a bump that reset it would
  * erase the height the very same transaction is being recorded for. And
  * `lifetimeLikesReceived`: this hook fires on the like PAYOUT's minted box, so a
@@ -688,7 +866,6 @@ function bumpActivityClock(owner: Uint8Array): void {
   putIdentityRecord(owner, {
     lastActivityBlock: height,
     lastDecayBlock: existing?.lastDecayBlock ?? 0,
-    likeCarry: existing?.likeCarry ?? 0n,
     invitedAtBlock: existing?.invitedAtBlock ?? 0,
     lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
   });
@@ -800,6 +977,19 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
         voucherId: pubkeyToHex(v.voucherId),
         targetId: pubkeyToHex(v.targetId),
       } satisfies VouchExtra;
+      break;
+    }
+    case 'vouch_escrow': {
+      const v = box as VouchEscrowBox;
+      extraData = {
+        owner: pubkeyToHex(v.owner),
+        releaseAtBlock: v.releaseAtBlock,
+      } satisfies VouchEscrowExtra;
+      break;
+    }
+    case 'like_accrual': {
+      const a = box as LikeAccrualBox;
+      extraData = { author: pubkeyToHex(a.author) } satisfies LikeAccrualExtra;
       break;
     }
     // No `owner` and no per-type fields on any of the four, so the columns

@@ -227,8 +227,13 @@ export function seedGenesisState(systemPubKey: Uint8Array): void {
       // The faucet-bearing networks alone hold the system karma and faucet credit
       // boxes; the gate is `isFaucetNetwork`, shared with the /faucet mount and
       // the /credits/faucet handler so the three cannot drift (NODE_INTERFACE
-      // §Faucet). Mainnet's genesis state is the proof box alone — a faucet there
-      // would be a defect.
+      // §Faucet). A faucet on mainnet would be a defect rather than a shortfall.
+      //
+      // ⚠ **What each network's genesis holds is NOT restated here.** It is
+      // asserted once, in `genesis-state.test.ts`, and a prose count beside an
+      // assertion decays while the assertion stays green — the seeders below are
+      // gated one at a time, so the set is read off the gates rather than off a
+      // sentence that has to be re-read every time one is added.
       if (isFaucetNetwork(config.networkType)) {
         ensureSystemKarmaBox(systemPubKey, GENESIS_HEIGHT);
         ensureFaucetCreditBox(systemPubKey, GENESIS_HEIGHT);
@@ -239,9 +244,13 @@ export function seedGenesisState(systemPubKey: Uint8Array): void {
       // identity, one pair of values), so their ids and their AVL entries match
       // exactly; and testnet and devnet share mainnet's economics while
       // compressing only its timescale, so the emission box below separates them
-      // by value but leaves testnet's identical to mainnet's. The proof box's
-      // per-network payload is the only thing separating testnet's genesis root
-      // from mainnet's.
+      // by value but leaves testnet's identical to mainnet's.
+      //
+      // ⛔ **So the proof payload is what separates TESTNET from DEVNET, not
+      // testnet from mainnet.** Those two differ by everything behind
+      // `isFaucetNetwork` as well — the system karma box, the faucet credit box
+      // and the system identity record — so a claim that the payload is the only
+      // separator holds for the faucet pair and for no other.
       ensureGenesisProofBox(
         new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
         GENESIS_HEIGHT,

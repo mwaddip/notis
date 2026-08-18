@@ -52,7 +52,12 @@ import {
   contributeToBody,
   emptyBody,
   type SettlementBody,
+  type SettlementDeps,
 } from './settlement.js';
+import { deriveKarmaDecay } from './decay.js';
+import { planPruneSettlement } from './settle-prune-utxo.js';
+import type { PruneEntry } from '@dagsocial/types';
+import type { DecayDeps, DecayPlan } from './decay.js';
 import { materializeOutput } from './utxo-engine.js';
 import {
   MissingStoredBlockError,
@@ -69,11 +74,18 @@ import {
 import {
   getOrderingBlock,
   getCurrentHeight,
+  getDb,
   getPost,
   getBox,
+  getBondsInvitedAt,
   getEmissionBox,
+  getIdentityRecord,
+  getKarmaBoxes,
+  getLikeCarryBox,
   getTreasuryBox,
   getKarmaPoolBox,
+  getVouchEscrowsDueAt,
+  putIdentityRecord,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -391,11 +403,11 @@ export function createOrderingBlock(): OrderingBlock | null {
    */
   const rebuildBody = (): { valid: boolean; error?: string } => {
     const built = buildSettlement(
-      settlementDeps,
+      settlementDepsWith(() => deriveKarmaDecay(decayDeps, newHeight, decayConfig())),
       newHeight,
       computeBlockReward(newHeight),
       nodeConfig.creditMinerRewardDelay,
-      predictSettlementBody(userTxCbors, validatorId),
+      predictSettlementBody(userTxCbors, validatorId, pruneEntries),
       currentMinerPubkey ?? validatorId,
     );
     if ('error' in built) return { valid: false, error: built.error };
@@ -697,12 +709,88 @@ function finalizeBlock(block: OrderingBlock): void {
  * obligation requires of anything read from a table (NODE_INTERFACE → the
  * settlement transaction's determinism obligation).
  */
-export const settlementDeps = {
-  getEmissionBox,
-  getTreasuryBox,
-  getKarmaPoolBox,
-  getBox,
+/**
+ * The decay pass's seams, all through the store.
+ *
+ * ⛔ **`getKarmaOwners` carries an `ORDER BY`, and that is a consensus
+ * obligation.** Its result is walked into the settlement's input and output
+ * lists, which the transaction id hashes in order, so an unordered
+ * `SELECT DISTINCT` is a fork between two nodes holding identical state
+ * (NODE_INTERFACE → Determinism is this mechanism's whole risk).
+ */
+export const decayDeps: DecayDeps = {
+  getKarmaBoxes,
+  getIdentityRecord,
+  putIdentityRecord,
+  getKarmaOwners: () => {
+    const rows = getDb()
+      .prepare(
+        `SELECT DISTINCT owner FROM utxo_boxes
+         WHERE box_type = 'karma' AND spent_at_block IS NULL
+         ORDER BY owner`,
+      )
+      .all() as { owner: Buffer }[];
+    return rows.map((r) => new Uint8Array(r.owner));
+  },
 };
+
+/** Everything the decay pass needs from the network profile. */
+export function decayConfig(): {
+  staleThresholdBlocks: number;
+  decayIntervalBlocks: number;
+  decayAmount: bigint;
+  karmaMinimum: bigint;
+} {
+  return {
+    staleThresholdBlocks: nodeConfig.karmaStaleThresholdBlocks,
+    decayIntervalBlocks: nodeConfig.karmaDecayIntervalBlocks,
+    decayAmount: nodeConfig.karmaDecayAmount,
+    karmaMinimum: nodeConfig.karmaMinimum,
+  };
+}
+
+/**
+ * The settlement's reads, every one with a stated total order.
+ *
+ * ⛔ **ONE WIRING, SHARED BY THE PRODUCER AND THE APPLIER.** They must derive
+ * the same settlement from the same state, and two copies of this object are two
+ * derivations that agree only by inspection — which is the drift the whole unit
+ * exists to close.
+ *
+ * `plans` is a thunk because the caller has already derived the decay pass:
+ * `checkSettlement` reads it, and so does the clock commit afterwards, and two
+ * scans of the identity set that must agree is exactly what one scan avoids.
+ */
+export function settlementDepsWith(plans: () => DecayPlan[]): SettlementDeps {
+  return {
+    getEmissionBox,
+    getTreasuryBox,
+    getKarmaPoolBox,
+    getBox,
+    getLikeCarryBox,
+    getVouchEscrowsDueAt,
+    // The deadline is computed here rather than in the store, so the query stays
+    // free of network parameters — the standing `getBondsInvitedAt` rule.
+    getBondsSettlingAt: (h: number) => {
+      // `<= 0` and not `< 0`: `0` is the never-invited sentinel, so at exactly
+      // `height == INVITE_PROBATION_BLOCKS` this lands on it and every identity
+      // that never claimed would match at once. `getBondsInvitedAt` refuses the
+      // same value in SQL — the same rule in two places, and either alone
+      // suffices.
+      const invitedAt = h - nodeConfig.inviteProbationBlocks;
+      return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt);
+    },
+    // ⚠ **The count comes from the identity record, never from a scan of
+    // `like_records`.** Those records die with the post on prune, so a count
+    // derived from them would let a third party lower it: an invitee who replies
+    // in someone else's thread earns likes that the thread's author could then
+    // destroy by pruning, taking karma off an inviter who did nothing
+    // (ARCHITECTURE → Bond outcomes).
+    getLifetimeLikes: (invitee: Uint8Array) =>
+      getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
+    getDecayPlans: plans,
+  };
+}
 
 /**
  * Everything a body of these transactions contributes to the settlement: the
@@ -731,6 +819,7 @@ export const settlementDeps = {
 export function predictSettlementBody(
   txCbors: Uint8Array[],
   validator: Uint8Array,
+  pruneEntries: PruneEntry[] = [],
 ): SettlementBody {
   const txs = txCbors.map((cbor) => decodeTx(cbor));
 
@@ -759,6 +848,18 @@ export function predictSettlementBody(
   }
 
   body.actors = countKarmaActors(embedded, validator);
+  // ⛔ **The prune legs are part of the settlement and so part of the
+  // prediction.** A producer that omitted them would build a settlement its own
+  // applier refuses — the pruner's own locks would be inputs one side names and
+  // the other does not. `settlePruneUtxo` reads only the subtree's lock boxes,
+  // which the body does not touch, so deriving it here and at apply reaches the
+  // same plan.
+  //
+  for (const entry of pruneEntries) {
+    body.prunes.push(
+      planPruneSettlement(entry.rootPostHash, entry.authorId, entry.subtreePostIds),
+    );
+  }
   return body;
 }
 
@@ -774,13 +875,14 @@ export function buildBlockSettlement(
   height: number,
   validator: Uint8Array,
   minerOwner: Uint8Array,
+  pruneEntries: PruneEntry[] = [],
 ): { tx: UtxoTransaction } | { error: string } {
   return buildSettlement(
-    settlementDeps,
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, height, decayConfig())),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
-    predictSettlementBody(txCbors, validator),
+    predictSettlementBody(txCbors, validator, pruneEntries),
     minerOwner,
   );
 }

@@ -93,11 +93,20 @@ async function importMempool() {
   };
 }
 
-async function importVouchCooldowns() {
-  return (await import('../../src/store/vouch-cooldowns.js')) as {
-    getVouchCooldowns: (
+/**
+ * The escrow store, which is now the box store.
+ *
+ * ⛔ **`vouch_cooldowns` is deleted, table and all.** An unvouched stake waits in
+ * a `VouchEscrowBox` in the UTXO set — and therefore in the `stateRoot` — rather
+ * than in node-local SQL a synced node could not interpret (ARCHITECTURE →
+ * Vouch boxes). ⚠ **The escrow carries no target**, so what a voucher's escrows
+ * report is the value and the release height, never the pair the row held.
+ */
+async function importVouchEscrows() {
+  return (await import('../../src/store/utxo.js')) as unknown as {
+    getVouchEscrowsFor: (
       voucherId: Uint8Array,
-    ) => Array<{ targetId: Uint8Array; releaseAtBlock: number; karmaAmount: bigint }>;
+    ) => Array<{ value: bigint; owner: Uint8Array; releaseAtBlock: number }>;
   };
 }
 
@@ -123,10 +132,24 @@ function makeVouchBox(
 }
 
 /** A signed unvouch: the VouchBox spent to zero outputs. */
-function makeUnvouchTx(vouchBoxId: string, signer: TestIdentity): UtxoTransaction {
+function makeUnvouchTx(
+  vouchBoxId: string,
+  signer: TestIdentity,
+  value: bigint,
+  releaseAtBlock = 1000,
+): UtxoTransaction {
   const tx: UtxoTransaction = {
     inputs: [vouchBoxId],
-    outputs: [],
+    // ⛔ **The escrow output carries the CONSUMED BOX'S value**, never
+    // `VOUCH_KARMA_AMOUNT` — that is what makes the round trip
+    // conservation-structural rather than true by coincidence of the cast pin
+    // (TYPES_INTERFACE → VouchEscrowBox).
+    outputs: [{
+      boxType: 'vouch_escrow' as const,
+      value,
+      owner: signer.userId,
+      releaseAtBlock,
+    } as never],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
@@ -165,7 +188,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
-    const cooldowns = await importVouchCooldowns();
+    const escrows = await importVouchEscrows();
 
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
@@ -175,7 +198,14 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     utxo.insertBox(zeroVouch);
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
 
-    mempool.insertUtxoTx(makeUnvouchTx(zeroVouch.id!, voucher), 100000);
+    // ⚠ **`releaseAtBlock` clears the floor EXACTLY.** The engine pins only a
+    // lower bound, but this case mines to maturity, so an overshoot would leave
+    // the escrow unreleased and the assertion below would be measuring the
+    // fixture. Applied at height 1, the floor is `1 + cooldown`.
+    mempool.insertUtxoTx(
+      makeUnvouchTx(zeroVouch.id!, voucher, zeroVouch.value, 1 + config.vouchCooldownBlocks),
+      100000,
+    );
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -184,10 +214,16 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     expect(block1!.header.height).toBe(1);
     expect(utxo.getBox(zeroVouch.id!)).toBeNull(); // unvouch applied
 
-    // The escrow row records what the box actually held.
-    const rows = cooldowns.getVouchCooldowns(voucher.userId);
+    // ⛔ The escrow BOX records what the consumed `VouchBox` actually held,
+    // never `VOUCH_KARMA_AMOUNT` (TYPES_INTERFACE → VouchEscrowBox).
+    const rows = escrows.getVouchEscrowsFor(voucher.userId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.karmaAmount).toBe(0n);
+    expect(rows[0]!.value).toBe(0n);
+    // ⚠ **Read off the box, not recomputed.** The engine pins only a FLOOR — a
+    // transaction cannot commit to the height of the block that will carry it —
+    // so what the chain honours is the producer's figure
+    // (NODE_INTERFACE → Vouch transition rules). This one sits exactly on the
+    // floor, which is what makes the maturity below reachable.
     expect(rows[0]!.releaseAtBlock).toBe(1 + config.vouchCooldownBlocks);
 
     // Mine to maturity.
@@ -199,7 +235,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     // Nothing minted, escrow settled: the supply is exactly what was locked.
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
-    expect(cooldowns.getVouchCooldowns(voucher.userId)).toHaveLength(0);
+    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
   });
 
   it('V2 consequence: a block embedding a foreign-voucherId cast is rejected whole', async () => {
@@ -212,7 +248,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
-    const cooldowns = await importVouchCooldowns();
+    const escrows = await importVouchEscrows();
 
     const staker = makeTestIdentity(); // A — owns and signs away the karma
     const foreign = makeTestIdentity(); // B — named as voucherId, stakes nothing
@@ -260,7 +296,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
       1,
     ).id!;
     expect(utxo.getBox(vouchBoxId)).toBeNull();
-    expect(cooldowns.getVouchCooldowns(foreign.userId)).toHaveLength(0);
-    expect(cooldowns.getVouchCooldowns(staker.userId)).toHaveLength(0);
+    expect(escrows.getVouchEscrowsFor(foreign.userId)).toHaveLength(0);
+    expect(escrows.getVouchEscrowsFor(staker.userId)).toHaveLength(0);
   });
 });

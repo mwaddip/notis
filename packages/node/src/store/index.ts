@@ -29,6 +29,10 @@ export {
   getBondFor,
   getBondsInvitedAt,
   getBondBoxes,
+  getVouchEscrowsDueAt,
+  getVouchEscrowsFor,
+  hasActiveVouchEscrow,
+  getLikeCarryBox,
   getUnspentPostLockBoxes,
   getPostLockBox,
   getLikersForPost,
@@ -75,6 +79,7 @@ export {
   insertBlockTopology,
   getSubtreeTopology,
   getTopologyAuthor,
+  getTopologyAuthorBytes,
   rollbackBlockTopology,
 } from './topology.js';
 
@@ -114,14 +119,6 @@ export type { SystemKeypair } from './system.js';
 export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
 export { metaGet, metaPut, metaDelete, metaHas } from './meta.js';
-
-export {
-  insertVouchCooldown,
-  getVouchCooldowns,
-  getMaturedVouchCooldowns,
-  deleteVouchCooldown,
-  hasActiveVouchCooldown,
-} from './vouch-cooldowns.js';
 
 export {
   getVouchBox,

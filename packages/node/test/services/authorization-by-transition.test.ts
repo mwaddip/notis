@@ -38,7 +38,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -86,7 +86,16 @@ const CASES: readonly Case[] = [
     box: (h, o) => ({
       boxType: 'vouch', value: 1n, voucherId: h.userId, targetId: o.userId,
     }),
-    outputs: () => [],
+    // ⛔ **An escrow output, because the unvouch conserves now.** The stake
+    // moves into a box the voucher's own transaction creates
+    // (ARCHITECTURE → Vouch boxes); a zero-output spend is a whole-input
+    // deficit and is refused before authorization is reached.
+    outputs: (h) => [{
+      boxType: 'vouch_escrow' as const,
+      value: 1n,
+      owner: h.userId,
+      releaseAtBlock: 1000,
+    } as never],
     signer: 'holder',
   },
   // No transition admits any of these as an input.
@@ -157,7 +166,9 @@ describe('authorization is a property of the transition', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };
     holder = makeTestIdentity();
@@ -194,9 +205,11 @@ describe('authorization is a property of the transition', () => {
   // the runtime half: every type reaches a verdict, none reaches an "unknown"
   // arm, and none throws.
   //
-  // ⚠ **`like_accrual` and `vouch_escrow` are absent, and it is not an
-  // omission.** Nothing creates either yet, so neither can be seeded as an input
-  // to spend — the unit that first emits one adds its row here
+  // ⚠ **`like_accrual` and `vouch_escrow` are absent, and it is still not an
+  // omission.** Both are created now, but ⛔ **no user transition admits either
+  // as an INPUT** — only the block's settlement transaction consumes them
+  // (TYPES_INTERFACE → LikeAccrualBox; NODE_INTERFACE → The settlement
+  // transaction) — so neither can be spent by a transaction this table governs
   // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox). Their entry in
   // `AUTHORIZATION` is `BLOCK_APPLICATION_ONLY` and is asserted by the compiler.
   // -------------------------------------------------------------------------

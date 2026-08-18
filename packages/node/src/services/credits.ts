@@ -1,78 +1,10 @@
-import { computeBoxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
-import type { CreditBox, UtxoTransaction } from '@dagsocial/types';
-import {
-  getCreditBoxes,
-  insertBox,
-  consumeBox,
-} from '../store/index.js';
+import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 
 import { ClientError } from './client-error.js';
 import { validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
-import { MINT_OUTPUT_INDEX, mintTxIdFor } from '../mint-provenance.js';
-import type { MintContext } from '../mint-provenance.js';
-
-// ---------------------------------------------------------------------------
-// Mint (coinbase emission)
-// ---------------------------------------------------------------------------
-
-/**
- * Mint (or increase) credits for a given owner.
- *
- * Consumes ALL existing unspent credit boxes and creates a single new one
- * with the combined value + amount. Same pattern as mintKarma.
- *
- * `ctx` precedes `lockedUntilBlock` because it is required and that one is
- * optional — and because it belongs with the other identity inputs. It does not
- * admit `null`, for the reason spelled out on `mintKarma`: a required parameter
- * fails at compile time in `src`, where omitting provenance breaks consensus,
- * rather than leaving the store to catch it later.
- */
-export function mintCredits(
-  owner: Uint8Array,
-  amount: bigint,
-  blockHeight: number,
-  ctx: MintContext,
-  lockedUntilBlock?: number,
-): string {
-  if (amount <= 0n) return '';
-
-  const existingBoxes = getCreditBoxes(owner);
-  const existingTotal = existingBoxes.reduce((sum, b) => sum + b.value, 0n);
-  const newValue = existingTotal + amount;
-
-  for (const box of existingBoxes) {
-    if (box.id) consumeBox(box.id, blockHeight);
-  }
-
-  let mergedLockedUntilBlock = lockedUntilBlock;
-  for (const box of existingBoxes) {
-    if (box.lockedUntilBlock !== undefined) {
-      mergedLockedUntilBlock = Math.max(
-        mergedLockedUntilBlock ?? 0,
-        box.lockedUntilBlock,
-      );
-    }
-  }
-
-  // The conditional field is spread rather than assigned afterwards: spreading
-  // `{}` adds no key at all, so this cannot produce the explicit `undefined`
-  // that contract 1a rules out. Key *order* does not matter — the committed
-  // encodings are positional — but present-vs-absent still does.
-  const newBox: CreditBox = {
-    boxType: 'credit',
-    value: newValue,
-    owner,
-    ...(mergedLockedUntilBlock !== undefined ? { lockedUntilBlock: mergedLockedUntilBlock } : {}),
-    txId: mintTxIdFor(ctx, blockHeight),
-    index: MINT_OUTPUT_INDEX,
-  };
-  newBox.id = computeBoxId(newBox);
-
-  insertBox(newBox);
-  return newBox.id!;
-}
 
 // ---------------------------------------------------------------------------
 // Transfer

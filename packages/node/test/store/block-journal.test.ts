@@ -13,8 +13,7 @@ async function importAll() {
   const journal = await import('../../src/store/journal.js');
   const utxo = await import('../../src/store/utxo.js');
   const likes = await import('../../src/store/likes.js');
-  const cooldowns = await import('../../src/store/vouch-cooldowns.js');
-  return { ...db, ...journal, ...utxo, ...likes, ...cooldowns };
+  return { ...db, ...journal, ...utxo, ...likes };
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +85,19 @@ describe('block journal (store choke-point recording)', () => {
     expect(j.appliedUtxoTxs).toEqual([]);
     expect(j.likeRecordInsertions).toEqual([]);
     expect(j.likeRecordDeletions).toEqual([]);
-    expect(j.vouchCooldownInsertions).toEqual([]);
-    expect(j.vouchCooldownDeletions).toEqual([]);
+    // ⛔ **The vouch side-records are GONE, and no replacement pair took their
+    // place.** An unvouched stake waits in a `VouchEscrowBox`, so its creation
+    // and its spend are journalled by `insertBox`/`consumeBox` as
+    // `{kind:'box'}` with the exact inverses those already carry — the H-7
+    // machinery was deleted rather than ported (ARCHITECTURE → Vouch boxes).
+    expect(Object.keys(j).sort()).toEqual([
+      'appliedUtxoTxs',
+      'blockHeight',
+      'confirmedSubBlockIds',
+      'likeRecordDeletions',
+      'likeRecordInsertions',
+      'mutations',
+    ]);
     expect(s.isBlockJournalOpen()).toBe(false);
     expect(() => s.finishBlockJournal()).toThrow();
   });
@@ -180,69 +190,14 @@ describe('block journal (store choke-point recording)', () => {
     expect(j.mutations).toEqual([{ kind: 'box', op: 'remove', boxId: 'box-k3' }]);
   });
 
-  it('insertVouchCooldown on a fresh pair records the side-record without replaced', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-    const voucher = uid('voucher-1');
-    const target = uid('target-1');
-
-    s.beginBlockJournal(5);
-    s.insertVouchCooldown(voucher, target, 100, 40n);
-    const j = s.finishBlockJournal();
-
-    expect(j.vouchCooldownInsertions).toHaveLength(1);
-    expect(j.vouchCooldownInsertions[0]!.voucherId).toEqual(voucher);
-    expect(j.vouchCooldownInsertions[0]!.targetId).toEqual(target);
-    expect(j.vouchCooldownInsertions[0]!.replaced).toBeUndefined();
-  });
-
-  it('insertVouchCooldown over an existing row captures the replaced row', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-    const voucher = uid('voucher-2');
-    const target = uid('target-2');
-
-    s.insertVouchCooldown(voucher, target, 80, 25n);
-
-    s.beginBlockJournal(6);
-    s.insertVouchCooldown(voucher, target, 200, 60n);
-    const j = s.finishBlockJournal();
-
-    expect(j.vouchCooldownInsertions).toHaveLength(1);
-    expect(j.vouchCooldownInsertions[0]!.replaced).toEqual({
-      releaseAtBlock: 80,
-      karmaAmount: 25n,
-    });
-
-    // The stored row carries the new values
-    const rows = s.getVouchCooldowns(voucher);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.releaseAtBlock).toBe(200);
-    expect(rows[0]!.karmaAmount).toBe(60n);
-  });
-
-  it('deleteVouchCooldown captures the deleted row while open', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-    const voucher = uid('voucher-3');
-    const target = uid('target-3');
-
-    s.insertVouchCooldown(voucher, target, 120, 33n);
-
-    s.beginBlockJournal(7);
-    s.deleteVouchCooldown(voucher, target);
-    const j = s.finishBlockJournal();
-
-    expect(j.vouchCooldownDeletions).toHaveLength(1);
-    const d = j.vouchCooldownDeletions[0]!;
-    expect(d.voucherId).toEqual(voucher);
-    expect(d.targetId).toEqual(target);
-    expect(d.releaseAtBlock).toBe(120);
-    expect(d.karmaAmount).toBe(33n);
-    expect(s.hasActiveVouchCooldown(voucher, target)).toBe(false);
-  });
-
-  // --- Ordering -------------------------------------------------------------
+  // ⛔ **THREE CASES ARE DELETED WITH THEIR SUBJECT, AND THE MACHINERY WITH
+  // THEM.** They pinned `insertVouchCooldown`'s side-record, its `replaced`
+  // capture under `INSERT OR REPLACE`, and `deleteVouchCooldown`'s captured row
+  // — all three properties of a KEYED TABLE. Boxes are not keyed and a second
+  // escrow is a second box, so there is no overwrite to capture and no
+  // hand-written inverse to test. The escrow's create and spend are covered by
+  // the `insertBox`/`consumeBox` cases above, which is the whole point of the
+  // choke point.
 
   it('a mixed mutation sequence lands in the journal in application order', async () => {
     const s = await importAll();
@@ -276,21 +231,16 @@ describe('block journal (store choke-point recording)', () => {
   it('with no journal open, none of the primitives record', async () => {
     const s = await importAll();
     s.initDb(':memory:');
-    const voucher = uid('voucher-4');
-    const target = uid('target-4');
-
     s.insertBox(makeKarmaBox('nj-1'));
     s.consumeBox('nj-1', 1);
     s.insertBox(makeVouchBox('nj-vouch', 'nj-voucher', 'nj-target'));
-    s.insertVouchCooldown(voucher, target, 50, 10n);
-    s.deleteVouchCooldown(voucher, target);
 
     // A journal opened afterwards is empty
     s.beginBlockJournal(10);
     const j = s.finishBlockJournal();
     expect(j.mutations).toEqual([]);
-    expect(j.vouchCooldownInsertions).toEqual([]);
-    expect(j.vouchCooldownDeletions).toEqual([]);
+    expect(j.likeRecordInsertions).toEqual([]);
+    expect(j.likeRecordDeletions).toEqual([]);
   });
 
   it('deleteBox, unconsumeBox never record even while open', async () => {

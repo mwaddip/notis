@@ -262,7 +262,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
 
     const records = ['ee', '77', '55'].map((b) => ({
       key: b.repeat(32),
-      record: { lastActivityBlock: 4, lastDecayBlock: 2, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+      record: { lastActivityBlock: 4, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
     }));
     bootstrapAvlProver(h1, [], 0, records);
     bootstrapAvlProver(h2, [], 0, [...records].reverse());
@@ -282,7 +282,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
     const boxes = ['bb', '33', 'dd'].map((b) => makeKarmaBox(b.repeat(32), 12n, 0));
     const records = ['ee', '77'].map((b, i) => ({
       key: b.repeat(32),
-      record: { lastActivityBlock: 10 + i, lastDecayBlock: i, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+      record: { lastActivityBlock: 10 + i, lastDecayBlock: i, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
     }));
 
     // Live: boxes and records arrive together, as one block's mutations.
@@ -303,7 +303,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
     // omitted, the comparison would prove nothing about them.
     const boxes = ['bb', '33'].map((b) => makeKarmaBox(b.repeat(32), 12n, 0));
     const records = [
-      { key: 'ee'.repeat(32), record: { lastActivityBlock: 10, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
+      { key: 'ee'.repeat(32), record: { lastActivityBlock: 10, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
     ];
 
     const live = createAvlProver(db);
@@ -324,8 +324,8 @@ describe('canonical prover-feed ordering (M-12)', () => {
     const b = createAvlProver(db2);
     const key = 'ee'.repeat(32);
 
-    bootstrapAvlProver(a, [], 0, [{ key, record: { lastActivityBlock: 10, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } }]);
-    bootstrapAvlProver(b, [], 0, [{ key, record: { lastActivityBlock: 11, lastDecayBlock: 1, likeCarry: 0n, invitedAtBlock: 0, lifetimeLikesReceived: 0n } }]);
+    bootstrapAvlProver(a, [], 0, [{ key, record: { lastActivityBlock: 10, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n } }]);
+    bootstrapAvlProver(b, [], 0, [{ key, record: { lastActivityBlock: 11, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n } }]);
 
     expect(
       Buffer.from(a.prover.digest()!).equals(Buffer.from(b.prover.digest()!)),

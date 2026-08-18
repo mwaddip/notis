@@ -1265,7 +1265,7 @@ describe('revertBlock', () => {
     // (§8b) precedes the tx loop (§11). Self-like is legal by contract.
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, postId);
+    const likeTx = makeLikeTx(author, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
@@ -1295,13 +1295,28 @@ describe('revertBlock', () => {
     const forkResolution = await importForkResolution();
     forkResolution.revertBlock(1);
 
-    // Every box the block created is gone; every box it consumed is live again
+    // Every box the block created is gone; every box it consumed is live again.
+    //
+    // ⛔ **EXCEPT ONE THAT IS BOTH, AND THE LIKE MARKER IS THE FIRST OF ITS
+    // KIND.** A `LikeAccrualBox` is created by the like transaction and consumed
+    // by the same block's settlement, so it appears in BOTH lists — and after a
+    // revert it must be **gone**, not live: it never existed before this block.
+    // The journal replays its inverses in reverse order, so the unconsume is
+    // undone by the delete that follows it.
+    const intraBlock = new Set(insertedIds.filter((id) => removedIds.includes(id)));
     for (const boxId of insertedIds) {
       expect(utxo.getBox(boxId)).toBeNull();
     }
     for (const boxId of removedIds) {
+      if (intraBlock.has(boxId)) {
+        expect(utxo.getBox(boxId)).toBeNull();
+        continue;
+      }
       expect(utxo.getBox(boxId)).not.toBeNull();
     }
+    // Non-vacuity: the marker really is one, so the branch above is exercised
+    // rather than being a clause nothing takes.
+    expect(intraBlock.size).toBeGreaterThan(0);
 
     // Block and journal should be gone
     const ordering = await importOrdering();
@@ -1346,7 +1361,7 @@ describe('revertBlock', () => {
     const oldBoxId = oldBox.id!;
 
     // Apply decay manually (simulates what block application does)
-    const { applyKarmaDecay } = await import(
+    const { deriveKarmaDecay } = await import(
       '../../src/services/decay.js'
     );
     const {
@@ -1379,19 +1394,35 @@ describe('revertBlock', () => {
       getKarmaOwners: () => [identity.userId],
     };
 
-    const entries = applyKarmaDecay(
-      deps,
-      KARMA_STALE_THRESHOLD_BLOCKS + 100,
-      decayCfg,
-    );
+    const DECAY_HEIGHT = KARMA_STALE_THRESHOLD_BLOCKS + 100;
+    const entries = deriveKarmaDecay(deps, DECAY_HEIGHT, decayCfg);
 
     expect(entries.length).toBe(1);
-    const newBoxId = entries[0]!.newBoxId;
 
-    // Verify old box consumed (not returned by getKarmaBox which filters spent)
+    // ⛔ **The plan carries no box id, because decay emits no box.** It derives;
+    // the block's settlement transaction emits the replacement as one of its
+    // outputs (NODE_INTERFACE → The settlement transaction). This block stands
+    // in for that emission so the REVERT — which is what this case is about —
+    // still has something to undo.
+    const { computeBoxId } = await import('@dagsocial/types');
+    const provenance = await import('../../src/mint-provenance.js');
+    const plan = entries[0]!;
+    for (const id of plan.consumedBoxIds) utxo.consumeBox(id, DECAY_HEIGHT);
+    const emitted = {
+      boxType: 'karma' as const,
+      value: plan.newValue,
+      owner: plan.owner,
+      decayBurn: true,
+      txId: provenance.mintTxIdFor(provenance.decayContext(plan.owner), DECAY_HEIGHT),
+      index: provenance.MINT_OUTPUT_INDEX,
+    };
+    const newBoxId = computeBoxId(emitted);
+    utxo.insertBox({ ...emitted, id: newBoxId });
+
+    // Old box consumed (not returned by getKarmaBox, which filters spent)
     const afterDecayBox = utxo.getKarmaBox(identity.userId);
     expect(afterDecayBox).not.toBeNull();
-    expect(afterDecayBox!.id).toBe(newBoxId); // only unspent box is the new one
+    expect(afterDecayBox!.value).toBe(plan.newValue);
 
     // Reverse: delete new box, unconsume old boxes
     // (same logic as revertBlock step 2b in fork-resolution.ts)
@@ -1399,7 +1430,7 @@ describe('revertBlock', () => {
       '../../src/store/utxo.js'
     );
     for (const entry of entries) {
-      deleteBox(entry.newBoxId);
+      deleteBox(newBoxId);
       for (const boxId of entry.consumedBoxIds) {
         unconsumeBox(boxId);
       }
@@ -1498,7 +1529,7 @@ describe('reorg', () => {
 
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, postId);
+    const likeTx = makeLikeTx(author, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);

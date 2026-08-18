@@ -62,7 +62,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx, checkOutputShape } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -118,7 +118,9 @@ describe('field-type pin', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -407,7 +409,7 @@ describe('field-type pin', () => {
       expect(r.valid, r.error).toBe(true);
     });
 
-    it('honest unvouch (vouch → zero outputs) validates', () => {
+    it('honest unvouch (vouch → vouch_escrow) validates', () => {
       const vouch = {
         boxType: 'vouch' as const,
         value: 1n,
@@ -417,7 +419,17 @@ describe('field-type pin', () => {
       const seeded = { ...vouch, ...fixtureProvenance(vouch, 1) } as AnyBox;
       seeded.id = computeBoxId(seeded);
       storeInsertBox(seeded);
-      const r = validateTx(deps, signedTx([seeded.id!], []), 10);
+      // ⛔ **An escrow output, because the unvouch conserves now.** The stake
+      // moves into a box the voucher's own transaction creates
+      // (ARCHITECTURE → Vouch boxes); a zero-output spend is an ordinary
+      // whole-input deficit and is refused.
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: 1n,
+        owner: ownerPubKey,
+        releaseAtBlock: 1000,
+      };
+      const r = validateTx(deps, signedTx([seeded.id!], [escrow as never]), 10);
       expect(r.valid, r.error).toBe(true);
     });
   });

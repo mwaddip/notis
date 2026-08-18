@@ -19,7 +19,7 @@ import {
   getBox as storeGetBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getLikeRecordCount } from '../../src/store/likes.js';
 import { getLikersForPost } from '../../src/store/utxo.js';
 import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
@@ -99,8 +99,12 @@ async function request(
               storeGetIdentityRecord(identityId),
             getKarmaValue: (owner: Uint8Array) =>
               getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-            hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) =>
-              hasActiveVouchCooldown(voucherId, targetId),
+            hasActiveVouchEscrow: (voucherId: Uint8Array) =>
+              hasActiveVouchEscrow(voucherId),
+            vouchCooldownBlocks: 2,
+            // No like reaches this router, so the marker's author pin has
+            // nothing to resolve — stated rather than stubbed silently.
+            getTopologyAuthor: () => null,
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();
             },

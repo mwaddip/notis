@@ -1,36 +1,32 @@
 import { createHash, createPublicKey, verify } from 'crypto';
 import * as validation from '@dagsocial/validation';
-import { mintKarma } from './karma.js';
+import { transferKarma } from './karma-transfer.js';
 import {
   bondSettleContext,
   likePayoutContext,
   postlockRemainderContext,
   postlockUnlockContext,
   vouchSettleContext,
-  mintTxIdFor,
-  MINT_OUTPUT_INDEX,
 } from '../mint-provenance.js';
-import { applyKarmaDecay } from './decay.js';
-import {
-  getMaturedVouchCooldowns,
-  deleteVouchCooldown,
-  insertVouchCooldown,
-  hasActiveVouchCooldown,
-} from '../store/vouch-cooldowns.js';
-import { settlePruneUtxo } from './settle-prune-utxo.js';
+import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
+import { hasActiveVouchEscrow } from '../store/utxo.js';
+import { planPruneSettlement } from './settle-prune-utxo.js';
+import type { PruneSettlement } from './settle-prune-utxo.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
 } from './corrupt-state.js';
-import type { DecayDeps } from './decay.js';
+import type { DecayDeps, DecayPlan } from './decay.js';
 import { config } from '../config.js';
 import {
   computeBlockReward,
   computeUtxoTxRoot,
   clearTemplate,
+  decayDeps,
   rebuildTemplate,
+  settlementDepsWith,
 } from './block-creator.js';
 import {
   countKarmaActors,
@@ -72,7 +68,9 @@ import {
   removeUtxoTxEntry,
   insertBlockTopology,
   getSubtreeTopology,
+  deleteLikeRecordsForPosts,
   getTopologyAuthor,
+  getTopologyAuthorBytes,
   getIdentityRecord,
   putIdentityRecord,
   getEmissionBox,
@@ -108,7 +106,6 @@ import {
   LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
-  computeBoxId,
   leafHash,
   buildMerkleRoot,
   hexToBuf,
@@ -118,68 +115,9 @@ import type {
   EmissionBox,
   KarmaBox,
   OrderingBlock,
-  PostLockBox,
   TreasuryBox,
   UtxoTransaction,
 } from '@dagsocial/types';
-
-function processVouchCooldowns(currentHeight: number): void {
-  const matured = getMaturedVouchCooldowns(currentHeight);
-  for (const row of matured) {
-    mintKarma(
-      row.voucherId,
-      row.karmaAmount,
-      currentHeight,
-      vouchSettleContext(row.voucherId, row.targetId),
-    );
-    deleteVouchCooldown(row.voucherId, row.targetId);
-  }
-}
-
-/**
- * Settle every bond whose probation deadline is this block — once, at the
- * deadline, reading only likes (ARCHITECTURE → Bond outcomes).
- *
- * Vested is `min(floor(IdentityRecord.lifetimeLikesReceived /
- * INVITE_BOND_VEST_PER_LIKES), bond.value)`: the inviter is minted that much and
- * the remainder **burns**. Nothing else is consulted — not the invitee's
- * balance, not whether they are still active, not when the likes arrived. A
- * single evaluation is arithmetically identical to accumulated instalments
- * because the vested amount is a pure function of a lifetime count, which is what
- * lets a `BondBox` stay byte-identical from creation to here.
- *
- * ⚠ **The count comes from the identity record, never from a scan of
- * `like_records`.** Those records die with the post on prune, so a count derived
- * from them would let a third party lower it: an invitee who replies in someone
- * else's thread earns likes that the *thread's author* could then destroy by
- * pruning, taking karma off an inviter who did nothing. The record's counter is
- * monotonic and no prune path touches it.
- *
- * The deadline is computed here rather than in the store, so `getBondsInvitedAt`
- * stays free of network parameters. All arithmetic is `bigint`; a float
- * intermediate is a consensus fork.
- */
-function processMaturedBonds(height: number): void {
-  // `<= 0` and not `< 0`: `0` is the never-invited sentinel, so at exactly
-  // `height == INVITE_PROBATION_BLOCKS` this lands on it and every identity that
-  // never claimed would match at once. `getBondsInvitedAt` refuses the same
-  // value in SQL — the same rule in two places, and either alone suffices.
-  const invitedAt = height - config.inviteProbationBlocks;
-  if (invitedAt <= 0) return;
-
-  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
-  for (const bond of getBondsInvitedAt(invitedAt)) {
-    if (!bond.id) continue;
-    const likes = getIdentityRecord(bond.inviteePublicKey)?.lifetimeLikesReceived ?? 0n;
-    const earned = likes / VEST_PER_LIKES;
-    const vested = earned < bond.value ? earned : bond.value;
-    consumeBox(bond.id, height);
-    // `mintKarma` returns early at 0, so a fully-forfeit bond mints nothing and
-    // the whole value is destroyed — the burn is the absence of a mint, not a
-    // second box.
-    mintKarma(bond.inviterId, vested, height, bondSettleContext(bond.inviteePublicKey));
-  }
-}
 
 /**
  * Signals "this block is invalid" from inside the transaction that wraps block
@@ -691,6 +629,31 @@ function applyMutationPhase(
   height: number,
   dagService?: DagService,
 ): boolean {
+  // What each of this block's prune entries owes, in prune-entry order. Filled
+  // by §5 and consumed by §11a — the settlement pays every leg.
+  const prunePlans: PruneSettlement[] = [];
+
+  // ⛔ **DECAY IS DERIVED FROM PRE-BODY STATE, AND IT HAS TO BE.** The producer
+  // fixes the settlement's bytes before it can apply the body — the settlement
+  // *is* part of that body — so the only state both a producer and a verifier
+  // can read and agree on is the state the block starts from. Deriving it after
+  // the apply loop would give the two sides different answers whenever the body
+  // touched a karma box, and the plainest case is not exotic: spending karma
+  // bumps the activity clock through `insertBox`, so a stale identity that
+  // transacts in this very block is stale before the loop and fresh after it.
+  //
+  // ⚠ **The cost, stated rather than discovered: an embedded transaction may
+  // spend a karma box the decay plan names.** The settlement then lists an input
+  // the body has already consumed, `applyTx` refuses it, and the block is
+  // rejected — deterministically, by every node, so it is a liveness cost and
+  // never a fork. A producer's own speculative run reaches the same verdict and
+  // declines to produce, rather than mining a block its peers refuse.
+  const decayPlans = deriveKarmaDecay(decayDeps, height, {
+    staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+    decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+    decayAmount: config.karmaDecayAmount,
+    karmaMinimum: config.karmaMinimum,
+  });
   // Every post id the block commits to, independent of per-post confirm
   // outcomes — same semantics as the confirm loop in §7, which tolerates
   // per-post failures. Both read `postsOf`, so rollback un-confirms exactly what
@@ -862,9 +825,24 @@ function applyMutationPhase(
       return false;
     }
 
-    // 5. Settle UTXO — deterministic from post IDs
+    // 5. Settle UTXO — deterministic from post IDs.
+    //
+    // ⛔ **It names boxes rather than moving them.** The pruner's own locks
+    // leave circulation and their sink is the karma pool, which only the
+    // settlement transaction spends, so consuming them here and crediting the
+    // pool at §11a would leave that karma nowhere in between — the intermediary
+    // step `ARCHITECTURE → The conservation axiom` forbids by name. The
+    // settlement consumes them and pays every leg in one operation.
     try {
-      settlePruneUtxo(entry.rootPostHash, entry.authorId, entry.subtreePostIds, height);
+      prunePlans.push(
+        planPruneSettlement(entry.rootPostHash, entry.authorId, entry.subtreePostIds),
+      );
+      // The subtree's like-records die with the prune. The store choke point
+      // captures every doomed row as a `likeRecordDeletions` side-record before
+      // deleting, so a reverted prune restores them exactly. Done here rather
+      // than in the planner, which also runs inside the creator's template fill
+      // and must mutate nothing.
+      deleteLikeRecordsForPosts(entry.subtreePostIds);
     } catch (err) {
       console.error(`Block ${height}: prune settlement failed for ${entry.rootPostHash}: ${String(err)}`);
       return false;
@@ -925,7 +903,12 @@ function applyMutationPhase(
     getKarmaValue,
     // The vouch cast's cooldown gate (NODE_INTERFACE → "Vouch transition
     // rules") — same single-implementation rule as getKarmaValue.
-    hasActiveVouchCooldown,
+    hasActiveVouchEscrow,
+    vouchCooldownBlocks: config.vouchCooldownBlocks,
+    // ⛔ The like marker's author, from `block_topology` and never
+    // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
+    // makes, so the marker's pin and the like-record's author cannot disagree.
+    getTopologyAuthor: getTopologyAuthorBytes,
     // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
     // transition rules") — same rule again.
     getIdentityRecord,
@@ -1185,33 +1168,14 @@ function applyMutationPhase(
         likeToRecord = { targetPostId, likerId, authorHex };
       }
 
-      // Detect vouch unvouch before the VouchBox is consumed
-      for (const inputId of item.tx.inputs) {
-        const inputBox = getBox(inputId);
-        if (inputBox && inputBox.boxType === 'vouch') {
-          const vb = inputBox as import('@dagsocial/types').VouchBox;
-          if (item.tx.outputs.length === 0) {
-            // The store hook records the insertion side-record (including any
-            // replaced escrow row) — a second push here would double-record.
-            //
-            // The escrow records the ACTUAL staked value, never the constant
-            // (audit F-consensus-3): maturity re-mints exactly what the box
-            // held, so the round trip is conservation-structural rather than
-            // true by coincidence. It does not depend on the cast's
-            // VOUCH_KARMA_AMOUNT pin holding for the box in hand.
-            insertVouchCooldown(
-              vb.voucherId,
-              vb.targetId,
-              height + config.vouchCooldownBlocks,
-              vb.value,
-            );
-          }
-          // validateTx above pinned the unvouch shape to exactly one VouchBox
-          // input (NODE_INTERFACE → "Vouch transition rules"), so first-match
-          // is exhaustive, not lossy.
-          break;
-        }
-      }
+      // ⛔ **THE UNVOUCH NEEDS NO ARM HERE, AND THE ABSENCE IS THE CHANGE.** The
+      // stake moves into a `VouchEscrowBox` the voucher's own transaction
+      // outputs, so `applyTx` inserts it like any other output and the store's
+      // choke point journals it with an exact inverse. The escrow row this
+      // replaced was node-local SQL outside the `stateRoot`, remembering to
+      // re-mint karma that had been destroyed — a burn and a mint separated by
+      // blocks (ARCHITECTURE → Vouch boxes). The obligation is committed state
+      // now, so nothing has to remember it.
 
       // ⛔ **One invitee per block.** The bond IS the request, so a second bond
       // naming a key an earlier transaction in this block already named would
@@ -1313,10 +1277,11 @@ function applyMutationPhase(
     if (outputs) contributeToBody(settlementBody, outputs);
   }
   settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
+  settlementBody.prunes = prunePlans;
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    { getEmissionBox, getTreasuryBox, getKarmaPoolBox, getBox },
+    settlementDepsWith(() => decayPlans),
     height,
     emission,
     config.creditMinerRewardDelay,
@@ -1365,7 +1330,6 @@ function applyMutationPhase(
     putIdentityRecord(invitee, {
       lastActivityBlock: after?.lastActivityBlock ?? 0,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
-      likeCarry: after?.likeCarry ?? 0n,
       invitedAtBlock: height,
       // Carried through rather than written, and it is always 0 here: a legal
       // invitee is not an account yet, so it has never held karma, never posted
@@ -1375,56 +1339,56 @@ function applyMutationPhase(
     });
   }
 
-  // 11b. Per-block like settlement (NODE_INTERFACE → "Per-block like
-  // settlement"). Entirely derived — nothing rides in the block, so producer
-  // and verifier cannot disagree on it. Order pinned by the contract:
-  // embedded txs → author settlement → post-lock vesting → decay → vouch
-  // cooldowns. Blocks with no likes run neither loop. All value arithmetic
-  // bigint — a float intermediate is a consensus fork.
-  const PAYOUT_X = BigInt(LIKES_PER_KARMA_PAYOUT);
+  // 11b. The bookkeeping the settlement's boxes do not carry.
+  //
+  // ⛔ **EVERY VALUE MOVEMENT IS ABOVE THIS LINE NOW.** The like payout, the
+  // carry, the escrow releases, the vested bonds, the decay charges and the
+  // prune refunds are all outputs of the settlement transaction, because each
+  // one either draws from or returns to the karma pool and the settlement is the
+  // pool's only spender (NODE_INTERFACE → The settlement transaction). What is
+  // left here is committed state that is not a box: the like counter and the
+  // decay clock.
+  //
+  // Order pinned by the contract: embedded txs → settlement → author counters →
+  // post-lock vesting → decay clocks.
 
-  // Author settlement, ascending author-hex order (journal-order
-  // canonicality; the mint ids are order-independent regardless).
+  // The lifetime like counter, ascending author-hex order.
+  //
+  // ⛔ **This settlement is the counter's ONLY writer, and it only ever adds.**
+  // Nothing subtracts — prune deletes the like-records behind these likes and
+  // must not reach this field, or a pruning author could lower a count somebody
+  // else's bond settles against (ARCHITECTURE → Bond outcomes).
+  //
+  // ⚠ **The outstanding accrual is NOT written back**, because there is nothing
+  // to write: the carry is a `LikeAccrualBox` the settlement just emitted, and
+  // the box IS the carry (ARCHITECTURE → Likes).
   for (const authorHex of [...likesPerAuthor.keys()].sort()) {
     const author = new Uint8Array(Buffer.from(authorHex, 'hex'));
-    const record = getIdentityRecord(author);
     const received = BigInt(likesPerAuthor.get(authorHex)!);
-    const total = (record?.likeCarry ?? 0n) + received;
-    const paid = (total / PAYOUT_X) * (PAYOUT_X - 1n);
-    const carry = total % PAYOUT_X;
-    if (paid > 0n) {
-      // One mint per author per block; per X likes the likers burned X, the
-      // author receives X−1, 1 is gone — the deflation dial. The mint's
-      // insertBox bumps the author's lastActivityBlock — known,
-      // contract-recorded karma-econ behaviour (ARCHITECTURE §Likes), kept
-      // as-is until the karma-economics track redefines the trigger.
-      mintKarma(author, paid, height, likePayoutContext(author));
-    }
-    // Unconditional carry write, even at paid = 0: the carry changed, and the
-    // record is in the stateRoot — two nodes can never disagree on the next
-    // payout undetected. Re-read after the mint so the activity bump the
-    // mint's choke point just wrote is preserved; a missing record means
-    // maximally stale ({0, 0}), never "skip this owner".
+    // Re-read after the settlement so the activity bump its karma output wrote
+    // is preserved; a missing record means maximally stale ({0, 0}), never
+    // "skip this author".
     const after = getIdentityRecord(author);
     putIdentityRecord(author, {
       lastActivityBlock: after?.lastActivityBlock ?? 0,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
-      likeCarry: carry,
-      // Carried through: the claim path owns it, and an author being paid for
-      // likes in the same block they claimed is reachable.
+      // Carried through: the grant path owns it, and an author being paid for
+      // likes in the same block they were invited is reachable.
       invitedAtBlock: after?.invitedAtBlock ?? 0,
-      // This settlement is the counter's ONLY writer, and it only ever adds.
-      // Nothing subtracts — prune deletes the like-records behind these likes
-      // and must not reach this field, or a pruning author would be able to
-      // lower a count somebody else's bond settles against.
       lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
     });
   }
 
-  // Post-lock vesting, ascending post-id order, for posts liked this block
-  // that hold a live PostLockBox. Evaluated per block, from the post's lifetime
-  // like count — so the result is independent of how the likes were spread
-  // across blocks.
+  // Post-lock vesting, ascending post-id order, for posts liked this block that
+  // hold a live PostLockBox. Evaluated per block, from the post's lifetime like
+  // count — so the result is independent of how the likes were spread across
+  // blocks.
+  //
+  // ⚠ **The one karma path still outside the settlement, and it belongs
+  // outside.** A `PostLockBox` vests into its own owner's karma and a reduced
+  // lock, so the pool is uninvolved — the first of the three shapes
+  // (ARCHITECTURE → How a source and a sink get named), which needs no
+  // protocol box and therefore no place in the block's one pool spend.
   for (const postId of [...likesPerPost.keys()].sort()) {
     const lockBox = getPostLockBox(postId);
     if (!lockBox || !lockBox.id) continue;
@@ -1434,69 +1398,42 @@ function applyMutationPhase(
     const unlockable = shouldUnlock - alreadyUnlocked;
     const toUnlock = lockBox.value < unlockable ? lockBox.value : unlockable;
     if (toUnlock <= 0n) continue;
-    consumeBox(lockBox.id, height);
-    // The unlocked karma returns to the lock's owner — the author who locked
-    // it: committed value-layer state, not a dag_posts read.
-    mintKarma(lockBox.owner, toUnlock, height, postlockUnlockContext(postId));
-    const remaining = lockBox.value - toUnlock;
-    if (remaining > 0n) {
-      // A fully-unlocked lock is consumed without a remainder. One remainder
-      // per post per block, so (height, 'postlock-remainder', postId) cannot
-      // repeat.
-      const remainder: PostLockBox = {
-        boxType: 'post_lock',
-        value: remaining,
-        originalValue: lockBox.originalValue,
-        owner: lockBox.owner,
-        txId: mintTxIdFor(postlockRemainderContext(postId), height),
-        index: MINT_OUTPUT_INDEX,
-      };
-      remainder.id = computeBoxId(remainder);
-      // ⛔ Derivation route 2 (`insertBox`): this box's provenance names the
-      // MINT, not the post, so the target must be passed. Deriving it from
-      // `remainder.txId` would produce an id computed from a synthetic mint.
-      insertBox(remainder, postId);
-    }
+    // ⛔ **The `PostLockBox` is the source, and naming it is the whole change**
+    // (ARCHITECTURE → How a source and a sink get named, first shape). The
+    // unlocked karma returns to the lock's owner — the author who locked it:
+    // committed value-layer state, not a `dag_posts` read — and whatever the
+    // schedule has not yet released stays in a reduced lock whose value
+    // `transferKarma` computes. A fully-unlocked lock is consumed without a
+    // remainder. One remainder per post per block, so
+    // `(height, 'postlock-remainder', postId)` cannot repeat.
+    transferKarma(
+      [lockBox],
+      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId) }],
+      {
+        shape: (value) => ({
+          boxType: 'post_lock',
+          value,
+          originalValue: lockBox.originalValue,
+          owner: lockBox.owner,
+        }),
+        ctx: postlockRemainderContext(postId),
+        // ⛔ Derivation route 2 (`insertBox`): this box's provenance names the
+        // MINT, not the post, so the target must be passed. Deriving it from
+        // the remainder's `txId` would produce an id computed from a synthetic
+        // mint.
+        postLockTarget: postId,
+      },
+      height,
+    );
   }
 
-  // 12. Apply periodic karma decay
-  const decayDeps: DecayDeps = {
-    getKarmaBoxes: (owner: Uint8Array) => getKarmaBoxes(owner),
-    consumeBox,
-    insertBox,
-    // The decay clock now lives in committed state (Spec G D4), so decay reads
-    // and writes it through the same injected seam as its box access. The store
-    // primitives journal on their own — nothing here keeps parallel bookkeeping.
-    getIdentityRecord,
-    putIdentityRecord,
-    getKarmaOwners: () => {
-      const db = getDb();
-      const rows = db
-        .prepare(
-          `SELECT DISTINCT owner FROM utxo_boxes
-           WHERE box_type = 'karma' AND spent_at_block IS NULL`,
-        )
-        .all() as { owner: Buffer }[];
-      return rows.map((r) => new Uint8Array(r.owner));
-    },
-  };
-  // Its box mutations flow through the deps' store consumeBox/insertBox and
-  // are journaled at the choke point; the per-owner return value is unused
-  // here (the decay service keeps it for its own tests).
-  applyKarmaDecay(decayDeps, height, {
-    staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-    decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-    decayAmount: config.karmaDecayAmount,
-    karmaMinimum: config.karmaMinimum,
-  });
-
-  // 12b. Process vouch cooldowns
-  processVouchCooldowns(height);
-
-  // 12c. Settle bonds whose probation deadline is this block. After decay, on
-  // the same standing as the vouch sweep: both are height-driven settlements
-  // that read committed state the embedded transactions have already moved.
-  processMaturedBonds(height);
+  // 12. Advance the decay clock for every identity the settlement charged.
+  //
+  // ⚠ **Only firings reach here.** A stale identity sitting at the karma floor
+  // produces no plan and keeps its clock where it was, rather than silently
+  // forfeiting the intervals it is owed — the same gate the eager pass always
+  // had, now expressed as the plan's existence.
+  commitDecayClocks(decayDeps, decayPlans, height);
 
   return true;
 }

@@ -69,7 +69,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
 
@@ -376,6 +376,9 @@ describe('checkTxEnvelope — the closed envelope', () => {
 // Through validateTx — step 0, ahead of everything, on UNSIGNED transactions
 // ---------------------------------------------------------------------------
 
+/** The author `getTopologyAuthor` resolves here, and the key a marker must name. */
+const LIKE_AUTHOR = new Uint8Array(32).fill(0x5e);
+
 describe('validateTx step 0 — the envelope gate in place', () => {
   let db: Database.Database;
 
@@ -395,7 +398,12 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      // The marker's author pin. One author for every target this suite names,
+      // so a marker naming anyone else is refused (NODE_INTERFACE → Karma
+      // transition rules).
+      getTopologyAuthor: () => LIKE_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -543,8 +551,10 @@ describe('validateTx step 0 — the envelope gate in place', () => {
   });
 
   it('a like transaction with a real hex target still validates', () => {
-    // The one legal `likeTarget` shape, so the gate's hex rule is not a ban
-    // on the field. Conservation's like carve-out wants exactly the burn.
+    // The one legal `likeTarget` shape, so the gate's hex rule is not a ban on
+    // the field. ⛔ **The like CONSERVES now** — its cost moves into a marker
+    // earmarked for the target's author rather than leaving the ledger as a
+    // deficit (ARCHITECTURE → The conservation axiom).
     const tx: UtxoTransaction = {
       inputs: [seeded.id!],
       outputs: [
@@ -552,6 +562,11 @@ describe('validateTx step 0 — the envelope gate in place', () => {
           boxType: 'karma',
           value: 100n - LIKE_KARMA_COST,
           owner: owner.pub,
+        } as unknown as KarmaBox,
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          author: LIKE_AUTHOR,
         } as unknown as KarmaBox,
       ],
       signatures: {},

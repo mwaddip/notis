@@ -180,8 +180,10 @@ export function createApp(config: Config): express.Express {
     getKarmaBox: store.getKarmaBox,
     getKarmaBoxes: store.getKarmaBoxes,
     getKarmaValue: store.getKarmaValue,
-      getIdentityRecord: store.getIdentityRecord,
-    hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+    getIdentityRecord: store.getIdentityRecord,
+    hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+    vouchCooldownBlocks: config.vouchCooldownBlocks,
+    getTopologyAuthor: store.getTopologyAuthorBytes,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     isSystemBox: (boxId: string) => {
       const sysKey = getSystemKeypair();
@@ -237,7 +239,9 @@ export function createApp(config: Config): express.Express {
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
       getIdentityRecord: store.getIdentityRecord,
-      hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
@@ -255,7 +259,9 @@ export function createApp(config: Config): express.Express {
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
       getIdentityRecord: store.getIdentityRecord,
-      hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
@@ -272,7 +278,9 @@ export function createApp(config: Config): express.Express {
       getKarmaBox: store.getKarmaBox,
       getKarmaValue: store.getKarmaValue,
       getIdentityRecord: store.getIdentityRecord,
-      hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
+      getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
@@ -286,8 +294,10 @@ export function createApp(config: Config): express.Express {
       faucetRoutes({
         getKarmaBox: store.getKarmaBox,
         getKarmaValue: store.getKarmaValue,
-      getIdentityRecord: store.getIdentityRecord,
-        hasActiveVouchCooldown: store.hasActiveVouchCooldown,
+        getIdentityRecord: store.getIdentityRecord,
+        hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+        vouchCooldownBlocks: config.vouchCooldownBlocks,
+        getTopologyAuthor: store.getTopologyAuthorBytes,
         getCurrentHeight: store.getCurrentHeight,
         getBox: store.getBoxWithPending,
         insertBox: store.insertBox,

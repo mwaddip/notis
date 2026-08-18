@@ -16,7 +16,7 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
@@ -71,7 +71,9 @@ async function request(
         consumeBox,
         getKarmaBox,
         getKarmaValue,
-        hasActiveVouchCooldown,
+        hasActiveVouchEscrow: () => false,
+        vouchCooldownBlocks: 2,
+        getTopologyAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),

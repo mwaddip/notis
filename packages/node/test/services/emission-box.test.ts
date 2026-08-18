@@ -79,11 +79,21 @@ function settle(
       getTreasuryBox: s.utxo.getTreasuryBox,
       getKarmaPoolBox: s.utxo.getKarmaPoolBox,
       getBox: s.utxo.getBox,
+      // ⛔ The karma legs are empty by construction here: this suite's subject
+      // is the EMISSION box, and a body with no markers, no bonds and no stale
+      // identity derives no karma leg at all. Stated as empty rather than wired
+      // to the store, so a karma effect appearing in this fixture is a failure
+      // rather than a silent extra output.
+      getLikeCarryBox: () => null,
+      getVouchEscrowsDueAt: () => [],
+      getBondsSettlingAt: () => [],
+      getLifetimeLikes: () => 0n,
+      getDecayPlans: () => [],
     },
     height,
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, actors: opts.actors ?? 0, feeBoxIds: [], invitees: [] },
+    { fees: opts.fees ?? 0n, actors: opts.actors ?? 0, feeBoxIds: [], invitees: [], markers: [], prunes: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;

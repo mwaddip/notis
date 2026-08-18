@@ -44,7 +44,7 @@ export interface RecordMutation {
  * enforcement this invariant has; a parallel array would reinstate exactly the
  * drift-by-omission shape the single log exists to remove.
  *
- * The typed side-records below (`confirmedSubBlockIds`, `vouchCooldown*`, …)
+ * The typed side-records below (`confirmedSubBlockIds`, `likeRecord*`, …)
  * stay separate arrays because they are **not** in the `stateRoot` — they are
  * node-local bookkeeping with an exact inverse. `kind: 'record'` is the first
  * entry that is both journaled *and* committed, and that is the whole
@@ -76,23 +76,6 @@ export interface BlockJournal {
     likerId: UserId;
     appliedAtBlock: number;
   }>;
-  /**
-   * Inverse: deleteVouchCooldown, then restore `replaced` if present
-   * (insertVouchCooldown is INSERT OR REPLACE — an exact inverse must
-   * restore a row it overwrote).
-   */
-  vouchCooldownInsertions: Array<{
-    voucherId: UserId;
-    targetId: UserId;
-    replaced?: { releaseAtBlock: number; karmaAmount: bigint };
-  }>;
-  /** Inverse: insertVouchCooldown (restores the escrow row — H-7). */
-  vouchCooldownDeletions: Array<{
-    voucherId: UserId;
-    targetId: UserId;
-    releaseAtBlock: number;
-    karmaAmount: bigint;
-  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,8 +84,8 @@ export interface BlockJournal {
 // Module-level singleton: block application is synchronous single-threaded
 // better-sqlite3, so at most one journal is ever open. While open, the store
 // mutation primitives (insertBox, consumeBox, putIdentityRecord,
-// insertLikeRecord, deleteLikeRecordsForPosts, insertVouchCooldown,
-// deleteVouchCooldown) record automatically — call sites never maintain
+// insertLikeRecord, deleteLikeRecordsForPosts) record automatically — call
+// sites never maintain
 // parallel mutation bookkeeping. The rollback inverses (deleteBox,
 // unconsumeBox, deleteIdentityRecord, deleteLikeRecord, restoreLikeRecord)
 // never record.
@@ -147,8 +130,6 @@ export function beginBlockJournal(height: number): void {
     appliedUtxoTxs: [],
     likeRecordInsertions: [],
     likeRecordDeletions: [],
-    vouchCooldownInsertions: [],
-    vouchCooldownDeletions: [],
   };
   openKarmaSupplyDelta = 0n;
 }
@@ -305,33 +286,6 @@ export function recordAppliedUtxoTx(txId: string, txCbor: Uint8Array): void {
   openJournal.appliedUtxoTxs.push({ txId, txCbor });
 }
 
-/**
- * Record a vouch-cooldown insertion, capturing the row it replaced (if any)
- * so rollback can restore what INSERT OR REPLACE overwrote.
- */
-export function recordVouchCooldownInsertion(
-  voucherId: UserId,
-  targetId: UserId,
-  replaced?: { releaseAtBlock: number; karmaAmount: bigint },
-): void {
-  if (openJournal === null) return;
-  const entry: BlockJournal['vouchCooldownInsertions'][number] = { voucherId, targetId };
-  if (replaced !== undefined) {
-    entry.replaced = replaced;
-  }
-  openJournal.vouchCooldownInsertions.push(entry);
-}
-
-/** Record a vouch-cooldown deletion with the full row, so rollback can restore it (H-7). */
-export function recordVouchCooldownDeletion(
-  voucherId: UserId,
-  targetId: UserId,
-  releaseAtBlock: number,
-  karmaAmount: bigint,
-): void {
-  if (openJournal === null) return;
-  openJournal.vouchCooldownDeletions.push({ voucherId, targetId, releaseAtBlock, karmaAmount });
-}
 
 // ---------------------------------------------------------------------------
 // Persistence — one CBOR-encoded row per applied block

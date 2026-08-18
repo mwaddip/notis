@@ -15,6 +15,7 @@ import type {
   KarmaBox,
   UtxoTransaction,
   VouchBox,
+  VouchEscrowBox,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
@@ -25,10 +26,9 @@ import {
   getKarmaBox,
   getKarmaBoxes,
   insertBox,
-  insertVouchCooldown,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getPendingEntries,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
@@ -81,6 +81,27 @@ function createVouchBox(
   );
   insertBox(box);
   return box;
+}
+
+/**
+ * An unreleased `VouchEscrowBox` for a voucher — what the retired
+ * `vouch_cooldowns` row became (ARCHITECTURE → Vouch boxes).
+ *
+ * ⚠ **It names no target.** The gate it feeds is keyed on the voucher alone,
+ * because that is the only question the box can answer.
+ */
+function seedVouchEscrow(owner: Uint8Array, releaseAtBlock: number): void {
+  insertBox(
+    seedProvenance<VouchEscrowBox>(
+      {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        owner,
+        releaseAtBlock,
+      },
+      91,
+    ),
+  );
 }
 
 /** An unsigned vouch tx — for rejections that fire before validateTx. */
@@ -137,7 +158,11 @@ describe('vouch service', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      // ⛔ The real predicate, so a seeded `VouchEscrowBox` actually bars a
+      // recast. A stub would leave the rule this suite fronts untested.
+      hasActiveVouchEscrow: storeHasActiveVouchEscrow,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -419,13 +444,10 @@ describe('vouch service', () => {
         return rawPublicKey(keys.publicKey);
       })();
 
-      // Insert an active cooldown for (voucher, cooldownTarget)
-      insertVouchCooldown(
-        voucherPubKey,
-        cooldownTarget,
-        999, // release far in the future
-        VOUCH_KARMA_AMOUNT,
-      );
+      // ⛔ An unreleased escrow BOX for this voucher — the gate is keyed on the
+      // voucher, because the box carries no target (TYPES_INTERFACE →
+      // VouchEscrowBox).
+      seedVouchEscrow(voucherPubKey, 999);
 
       const tx: UtxoTransaction = {
         inputs: [],
@@ -564,7 +586,17 @@ describe('vouch service', () => {
       // Build tx that consumes the vouch box
       const tx: UtxoTransaction = {
         inputs: [vouchBox.id!],
-        outputs: [],
+        // ⛔ The escrow output, because the unvouch conserves now — the stake
+        // moves into a box rather than being destroyed with a row remembering
+        // to re-mint it (ARCHITECTURE → Vouch boxes).
+        outputs: [
+          {
+            boxType: 'vouch_escrow' as const,
+            value: vouchBox.value,
+            owner: voucherPubKey,
+            releaseAtBlock: 1000,
+          },
+        ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };
@@ -586,7 +618,17 @@ describe('vouch service', () => {
 
       const tx: UtxoTransaction = {
         inputs: [vouchBox.id!],
-        outputs: [],
+        // ⛔ The escrow output, because the unvouch conserves now — the stake
+        // moves into a box rather than being destroyed with a row remembering
+        // to re-mint it (ARCHITECTURE → Vouch boxes).
+        outputs: [
+          {
+            boxType: 'vouch_escrow' as const,
+            value: vouchBox.value,
+            owner: voucherPubKey,
+            releaseAtBlock: 1000,
+          },
+        ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };
@@ -599,7 +641,15 @@ describe('vouch service', () => {
       expect(result.txId).toBeDefined();
       expect(typeof result.txId).toBe('string');
       expect(result.expiresAtHeight).toBe(5 + MEMPOOL_EXPIRY_BLOCKS);
-      expect(result.karmaReturnsAtBlock).toBe(5 + config.vouchCooldownBlocks);
+      // ⛔ **Read off the escrow the transaction carries, never recomputed.**
+      // The client chose `releaseAtBlock` and the engine pinned only its floor
+      // (NODE_INTERFACE → Vouch transition rules), so a figure derived here from
+      // the current height would report a maturity the chain will not honour
+      // whenever the client overshot — as this fixture deliberately does.
+      expect(result.karmaReturnsAtBlock).toBe(1000);
+      expect(result.karmaReturnsAtBlock).toBeGreaterThanOrEqual(
+        5 + config.vouchCooldownBlocks,
+      );
 
       // Verify mempool has the entry
       const entries = getPendingEntries(100);

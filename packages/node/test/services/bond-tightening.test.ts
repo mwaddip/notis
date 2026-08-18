@@ -48,7 +48,7 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import { computeTxId } from '@dagsocial/types';
@@ -92,7 +92,9 @@ describe('bond transitions (audit F-consensus-1)', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array): bigint =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -289,7 +291,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     expectRefusedAsBlockApplyOnly(tx, 10);
   });
 
-  it('bond-burn non-vacuity: the unvouch zero-output spend keeps its exemption', () => {
+  it('bond-burn non-vacuity: the unvouch is the spend that DOES apply, escrowing its stake', () => {
     // The conservation exemption for a zero-output spend is vouch-only, and it
     // is still live: without this control the burn rejections above could be
     // conservation refusing every zero-output shape.
@@ -306,7 +308,16 @@ describe('bond transitions (audit F-consensus-1)', () => {
     storeInsertBox(vouch);
     const tx: UtxoTransaction = {
       inputs: [vouch.id!],
-      outputs: [],
+      // ⛔ **The escrow output, because the exemption is retired.** The unvouch
+      // is still the one karma-side spend that produces no karma box — it
+      // produces an ESCROW box — and that is what separates it from the bond
+      // burn above, which produces nothing at all and is refused.
+      outputs: [{
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        owner: voucher.pub,
+        releaseAtBlock: 1000,
+      } as never],
       signatures: {},
       protocolVersion: 1,
     };

@@ -14,7 +14,7 @@ import {
   getBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown as storeHasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow as storeHasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getPendingEntries, getBoxWithPending } from '../../src/store/mempool.js';
 import { initSystemKeypair, ensureSystemKarmaBox, getSystemKeypair } from '../../src/store/system.js';
 import { generateKeyPair, computeBoxId, computeTxId } from '@dagsocial/types';
@@ -60,7 +60,9 @@ function buildDeps(): FaucetDeps {
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     getIdentityRecord,
-    hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+    hasActiveVouchEscrow: () => false,
+    vouchCooldownBlocks: 2,
+    getTopologyAuthor: () => null,
     getCurrentHeight,
     // The pending view, as server.ts wires the submission routes: a grant
     // spending the change box of one still pooled resolves its input here, and

@@ -218,6 +218,7 @@ function makeLikeTx(
   liker: TestIdentity,
   karmaBox: KarmaBox,
   targetPostId: string,
+  author: Uint8Array = liker.userId,
 ): UtxoTransaction {
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
@@ -227,6 +228,14 @@ function makeLikeTx(
         value: karmaBox.value - LIKE_KARMA_COST,
         owner: liker.userId,
       } as KarmaBox,
+      // ⛔ **The marker carries the cost.** The like conserves now: its karma
+      // moves into a `LikeAccrualBox` earmarked for the author rather than
+      // leaving the ledger (ARCHITECTURE → The conservation axiom).
+      {
+        boxType: 'like_accrual',
+        value: LIKE_KARMA_COST,
+        author,
+      } as unknown as KarmaBox,
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,

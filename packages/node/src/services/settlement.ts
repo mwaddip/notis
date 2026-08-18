@@ -71,7 +71,9 @@
  */
 
 import {
+  INVITE_BOND_VEST_PER_LIKES,
   INVITE_KARMA_AMOUNT,
+  LIKES_PER_KARMA_PAYOUT,
   PROTOCOL_VERSION,
   encodeTx,
 } from '@dagsocial/types';
@@ -83,10 +85,14 @@ import type {
   EmissionBox,
   KarmaBox,
   KarmaPoolBox,
+  LikeAccrualBox,
   TreasuryBox,
   UtxoTransaction,
+  VouchEscrowBox,
 } from '@dagsocial/types';
 import { splitCoinbase } from './coinbase-split.js';
+import type { DecayPlan } from './decay.js';
+import type { PruneSettlement } from './settle-prune-utxo.js';
 
 // ---------------------------------------------------------------------------
 // The body a settlement is derived from
@@ -108,15 +114,55 @@ export interface SettlementBody {
   feeBoxIds: string[];
   /** The invitees of the `BondBox`es the body creates, in committed transaction order. */
   invitees: Uint8Array[];
+  /**
+   * Every `LikeAccrualBox` the body's like transactions emitted, in committed
+   * transaction order and within a transaction in output order.
+   *
+   * ⛔ **This is what makes the like payout DERIVED rather than counted.** The
+   * quantity is committed in the block as boxes, so a producer and a verifier
+   * cannot disagree about it — strictly stronger than the in-memory counter it
+   * replaces, which merely had to be recomputed the same way on both sides
+   * (NODE_INTERFACE → Per-block like settlement).
+   */
+  markers: Array<{ id: string; author: Uint8Array; value: bigint }>;
+  /** What each of the block's prune entries owes, in prune-entry order. */
+  prunes: PruneSettlement[];
 }
 
-/** The protocol boxes the settlement moves, read through the store. */
+/**
+ * Everything the settlement reads that is not in the body.
+ *
+ * ⛔ **EVERY LISTED READ CARRIES A STATED TOTAL ORDER**, because each one feeds
+ * a list this transaction hashes: two nodes reading a table in different orders
+ * derive two different settlements (NODE_INTERFACE → Determinism is this
+ * mechanism's whole risk). Three ordering sources are permitted and no fourth
+ * is — the block's committed transaction order, ascending box id, and ascending
+ * height.
+ */
 export interface SettlementDeps {
   getEmissionBox: () => EmissionBox | null;
   getTreasuryBox: () => TreasuryBox | null;
   getKarmaPoolBox: () => KarmaPoolBox | null;
   /** Resolve a box the body created or the chain holds — the settlement's inputs. */
   getBox: (id: string) => AnyBox | null;
+  /**
+   * The author's live carry box, or null.
+   *
+   * ⚠ **`exclude` is not an optimisation.** A marker and a carry box share a
+   * type and are told apart only by lifetime (TYPES_INTERFACE → LikeAccrualBox),
+   * so a query over live `like_accrual` boxes at this point in the block would
+   * return one of this block's own markers. The block's marker ids are the only
+   * thing that separates them.
+   */
+  getLikeCarryBox: (author: Uint8Array, exclude: Set<string>) => LikeAccrualBox | null;
+  /** Escrows whose cooldown has run out, ascending box id. */
+  getVouchEscrowsDueAt: (height: number) => VouchEscrowBox[];
+  /** Bonds whose probation deadline is this height, ascending box id. */
+  getBondsSettlingAt: (height: number) => BondBox[];
+  /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
+  getLifetimeLikes: (invitee: Uint8Array) => bigint;
+  /** What every stale identity owes, in the decay pass's stated owner order. */
+  getDecayPlans: () => DecayPlan[];
 }
 
 /** What a settlement's construction or check answers with. */
@@ -141,17 +187,30 @@ const OK: SettlementResult = { valid: true };
  */
 interface DerivedSettlement {
   inputs: string[];
-  /** The emission successor, absent when this height releases nothing or the box empties. */
-  emissionSuccessor: AnyBoxCandidate | null;
-  treasurySuccessor: AnyBoxCandidate | null;
-  poolSuccessor: AnyBoxCandidate | null;
-  /** One per bond the body created, in committed transaction order. */
-  grants: AnyBoxCandidate[];
+  /**
+   * Every output whose content the body decides, **in the order they are
+   * emitted**.
+   *
+   * ⛔ **OUTPUT ORDERING IS DERIVED, NOT THE PRODUCER'S** (NODE_INTERFACE →
+   * Determinism is this mechanism's whole risk — the table names output ordering
+   * among the derived fields). The one producer choice left is how the miner
+   * partitions their own slice, and those outputs are the tail.
+   *
+   * ⚠ **This is stricter than matching the output MULTISET**, and the extra
+   * strictness is load-bearing now rather than tidy. A settlement emits many
+   * karma outputs — grants, payouts, escrow releases, vested bonds, decay
+   * replacements, prune refunds — and two of them can name one owner in one
+   * block, so a content match has no single answer to give.
+   */
+  derivedOutputs: AnyBoxCandidate[];
   /** What the coinbase's credit outputs must sum to. */
   minerSlice: bigint;
   /** The maturity lock every credit output must carry. */
   lockedUntilBlock: number;
 }
+
+/** Hex of a raw key, for grouping and for ordering. */
+const hexOf = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 /**
  * Derive everything the body decides.
@@ -169,13 +228,22 @@ function derive(
 ): { derived: DerivedSettlement } | { error: string } {
   const split = splitCoinbase(emission, body.fees, body.actors);
   const inputs: string[] = [];
+  const outputs: AnyBoxCandidate[] = [];
 
-  // ---- The emission box ----
+  // What the pool owes and what it is owed, accumulated across every leg below
+  // and settled once. ⛔ **The pool box is spent by this transaction and by
+  // nothing else** (NODE_INTERFACE → The settlement transaction), so a leg
+  // cannot reach it on its own — which is the whole reason decay, the bond
+  // forfeit, the like remainder and the pruner's own locks are derived here
+  // rather than where they used to run.
+  let poolDraw = 0n;
+  let poolSink = 0n;
+
+  // ---- 1. The emission box ----
   //
   // Touched only when this height releases. At and above the terminus there is
   // no box and nothing is spent, which is why its absence there is not a fault
   // (TYPES_INTERFACE → EmissionBox).
-  let emissionSuccessor: AnyBoxCandidate | null = null;
   if (emission > 0n) {
     const box = deps.getEmissionBox();
     if (!box || !box.id) {
@@ -201,77 +269,232 @@ function derive(
     // ⛔ A successor whose value would be `0` is not created. The genesis total
     // is exactly the schedule's sum, so the last emitting block consumes the box
     // and leaves none — one block, one encoding.
-    if (remaining > 0n) {
-      emissionSuccessor = { boxType: 'emission', value: remaining };
-    }
+    if (remaining > 0n) outputs.push({ boxType: 'emission', value: remaining });
   }
 
-  // ---- The treasury box ----
+  // ---- 2. The treasury box ----
   //
   // Nothing accrues on a block whose treasury slice rounds to zero, so it does
   // not touch the box — the shape that holds above the terminus with no fees,
   // where the block touches neither. Genesis creates none: it would hold `0`.
-  let treasurySuccessor: AnyBoxCandidate | null = null;
   if (split.treasury > 0n) {
     const box = deps.getTreasuryBox();
     if (box) {
       if (!box.id) return { error: 'treasury box carries no id' };
       inputs.push(box.id);
     }
-    treasurySuccessor = {
+    outputs.push({
       boxType: 'treasury',
       value: (box?.value ?? 0n) + split.treasury,
-    };
+    });
   }
 
-  // ---- The karma pool ----
+  // ---- 3. What every karma leg owes the pool, and what it draws ----
   //
-  // ⛔ **The grant is a POOL SPEND, not a creation** (ARCHITECTURE → The
-  // conservation axiom). The bond IS the request: one bond, one grant, and the
-  // pairing is structural, so no rule compares two lists and no box is invented
-  // to carry it.
-  let poolSuccessor: AnyBoxCandidate | null = null;
-  const grants: AnyBoxCandidate[] = [];
-  const granted = INVITE_KARMA_AMOUNT * BigInt(body.invitees.length);
-  if (granted > 0n) {
+  // Derived before the pool is touched, because the pool's successor is one
+  // figure and every leg contributes to it. Each leg's own boxes are appended in
+  // the sections that follow, in the order stated there.
+
+  // 3a. The invite grants. ⛔ **A POOL SPEND, not a creation** (ARCHITECTURE →
+  // The conservation axiom). The bond IS the request: one bond, one grant, and
+  // the pairing is structural, so no rule compares two lists and no box is
+  // invented to carry it.
+  poolDraw += INVITE_KARMA_AMOUNT * BigInt(body.invitees.length);
+
+  // 3b. The like settlement. For an author with markers totalling `n` this block
+  // and a carry box holding `r`, where `x = LIKES_PER_KARMA_PAYOUT`:
+  //
+  //     markers×n + carry(r) → authorKarma(q·(x−1)) + pool(q) + carry(r′)
+  //     total = n + r,  q = ⌊total / x⌋,  r′ = total mod x
+  //
+  // ⛔ **THE POOL IS A SINK HERE AND NEVER A SOURCE — the likers funded it**
+  // (ARCHITECTURE → Likes). The remainder goes to the pool and never to the
+  // treasury: to the pool it leaves circulation for good and the dial stays
+  // deflationary; to the treasury it becomes spendable by something later,
+  // which is redistribution wearing deflation's name.
+  //
+  // ⚠ **Derived from VALUE, not from a count of likes.** The contract states
+  // `total = n + r` over likes, which coincides with the karma sum only while
+  // `LIKE_KARMA_COST` is `1`. Summing value conserves at any cost and agrees
+  // with the contract at this one, so the arithmetic does not quietly depend on
+  // a constant it never names.
+  const PAYOUT_X = BigInt(LIKES_PER_KARMA_PAYOUT);
+  const markerIds = new Set(body.markers.map((m) => m.id));
+  const byAuthor = new Map<string, { author: Uint8Array; total: bigint }>();
+  // Marker inputs first, in committed transaction order — the enumeration order
+  // the block already fixes, so it needs no sort and no rule of its own.
+  for (const marker of body.markers) {
+    inputs.push(marker.id);
+    const key = hexOf(marker.author);
+    const entry = byAuthor.get(key);
+    if (entry) entry.total += marker.value;
+    else byAuthor.set(key, { author: marker.author, total: marker.value });
+  }
+  // Then each credited author's carry box, ascending author-hex — the order the
+  // contract pins for emitting an author's outputs.
+  const authorsInOrder = [...byAuthor.keys()].sort();
+  const likePayouts: Array<{ author: Uint8Array; paid: bigint; carry: bigint }> = [];
+  for (const key of authorsInOrder) {
+    const entry = byAuthor.get(key)!;
+    const carryBox = deps.getLikeCarryBox(entry.author, markerIds);
+    let total = entry.total;
+    if (carryBox && carryBox.id) {
+      inputs.push(carryBox.id);
+      total += carryBox.value;
+    }
+    const q = total / PAYOUT_X;
+    likePayouts.push({
+      author: entry.author,
+      paid: q * (PAYOUT_X - 1n),
+      carry: total % PAYOUT_X,
+    });
+    poolSink += q;
+  }
+
+  // 3c. The vouch escrows this height releases. ✅ **No pool leg at all** — the
+  // value moves from a box the settlement consumes into one it creates, so both
+  // ends are named and the escrow is the first shape rather than the third
+  // (ARCHITECTURE → How a source and a sink get named).
+  const escrows = deps.getVouchEscrowsDueAt(height);
+  for (const escrow of escrows) {
+    if (!escrow.id) return { error: 'vouch escrow carries no id' };
+    inputs.push(escrow.id);
+  }
+
+  // 3d. The bonds settling at this height (ARCHITECTURE → Bond outcomes). The
+  // vested part returns to the inviter out of the `BondBox`; ⛔ **the unvested
+  // remainder's sink is the POOL**, which under the retired shape was the
+  // *absence* of a mint — a burn with no positive trace, and therefore invisible
+  // to any search keyed on a mint's name.
+  const VEST_PER_LIKES = BigInt(INVITE_BOND_VEST_PER_LIKES);
+  const bonds = deps.getBondsSettlingAt(height);
+  const bondSettlements: Array<{ inviter: Uint8Array; invitee: Uint8Array; vested: bigint }> = [];
+  for (const bond of bonds) {
+    if (!bond.id) return { error: 'bond box carries no id' };
+    inputs.push(bond.id);
+    const earned = deps.getLifetimeLikes(bond.inviteePublicKey) / VEST_PER_LIKES;
+    const vested = earned < bond.value ? earned : bond.value;
+    bondSettlements.push({
+      inviter: bond.inviterId,
+      invitee: bond.inviteePublicKey,
+      vested,
+    });
+    poolSink += bond.value - vested;
+  }
+
+  // 3e. Decay. ⛔ **The burn's sink is the pool** (ARCHITECTURE → The
+  // conservation axiom: "burn" means *move back to the supply pool*). The
+  // mechanism is untouched — the same eager per-identity pass, staleness
+  // predicate and karma floor; only the destination is named.
+  const decayPlans = deps.getDecayPlans();
+  for (const plan of decayPlans) {
+    for (const id of plan.consumedBoxIds) inputs.push(id);
+    poolSink += plan.burnAmount;
+  }
+
+  // 3f. The prune settlements, in prune-entry order. The refunds recirculate;
+  // the pruner's own locks are the fourth burn and go to the pool.
+  for (const prune of body.prunes) {
+    for (const id of prune.lockBoxIds) inputs.push(id);
+    poolSink += prune.toPool;
+  }
+
+  // ---- 4. The karma pool, settled once ----
+  //
+  // ⛔ **ONE POOL SPEND PER BLOCK.** The pool's id changes every time it is
+  // spent, so two spenders naming it conflict — and unlike an ordinary contended
+  // box the loser is not deferred but permanently invalid. Every leg above
+  // contributes to one figure for that reason, not for tidiness.
+  //
+  // ⚠ **A net figure is not a net-delta reconciliation.** The axiom forbids
+  // removing value at one point and restoring it later; here every unit moves in
+  // the same transaction that takes it, and the pool's successor is what one
+  // atomic operation leaves behind.
+  if (poolDraw > 0n || poolSink > 0n) {
     const box = deps.getKarmaPoolBox();
     if (!box || !box.id) {
       return {
         error:
-          `height ${height} grants ${granted} karma but this chain holds no ` +
-          `karma pool box`,
+          `height ${height} settles ${poolDraw} out of and ${poolSink} into the ` +
+          `karma pool but this chain holds no karma pool box`,
       };
     }
-    if (box.value < granted) {
+    const successor = box.value - poolDraw + poolSink;
+    if (successor < 0n) {
       return {
-        error: `karma pool holds ${box.value}, short of the ${granted} this block grants`,
+        error:
+          `karma pool holds ${box.value} and takes in ${poolSink}, short of the ` +
+          `${poolDraw} this block grants`,
       };
     }
     inputs.push(box.id);
     // ⛔ A zero-value successor IS created, and this is the one place the
     // emission box's rule inverts: the pool never terminates, so burns must
     // always have somewhere to return (TYPES_INTERFACE → KarmaPoolBox).
-    poolSuccessor = { boxType: 'karma_pool', value: box.value - granted };
-    for (const invitee of body.invitees) {
-      grants.push({ boxType: 'karma', value: INVITE_KARMA_AMOUNT, owner: invitee });
-    }
+    outputs.push({ boxType: 'karma_pool', value: successor });
   }
 
-  // ---- The fee boxes ----
+  // ---- 5. The fee boxes ----
   //
   // Block application is their only spender and it runs once per block, so a fee
   // box surviving its block would hand its value to a later miner and break the
-  // coinbase identity (MINING_INTERFACE → Coinbase Application). They are the
-  // precedent the marker inputs generalise.
+  // coinbase identity (MINING_INTERFACE → Coinbase Application).
   for (const feeBoxId of body.feeBoxIds) inputs.push(feeBoxId);
+
+  // ---- 6. The karma this block pays out ----
+  //
+  // ⛔ **NO CONSOLIDATION, and that is a change from `mintKarma`.** A recipient
+  // ends the block holding one more karma box rather than one merged box.
+  // Consolidating would make this transaction's INPUT list depend on the
+  // recipient's unrelated holdings instead of on the block's content — and two
+  // legs crediting one owner would both want to consume the same boxes, which
+  // inside one transaction is a double spend. Nothing in the axiom counts boxes;
+  // `getKarmaValue` sums them.
+  for (const invitee of body.invitees) {
+    outputs.push({ boxType: 'karma', value: INVITE_KARMA_AMOUNT, owner: invitee });
+  }
+  for (const payout of likePayouts) {
+    // Skipped at zero on both halves: `[]` and `[{value: 0}]` are two encodings
+    // of one state. An author whose total has not reached `x` is paid nothing and
+    // their whole accrual rides the carry box.
+    if (payout.paid > 0n) {
+      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author });
+    }
+    if (payout.carry > 0n) {
+      outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author });
+    }
+  }
+  for (const escrow of escrows) {
+    outputs.push({ boxType: 'karma', value: escrow.value, owner: escrow.owner });
+  }
+  for (const settled of bondSettlements) {
+    if (settled.vested > 0n) {
+      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter });
+    }
+  }
+  for (const plan of decayPlans) {
+    // ⛔ `decayBurn` is what keeps this box from resetting the owner's activity
+    // clock. Without it every charged identity looks freshly active and decay
+    // stops after one interval.
+    if (plan.newValue > 0n) {
+      outputs.push({
+        boxType: 'karma',
+        value: plan.newValue,
+        owner: plan.owner,
+        decayBurn: true,
+      });
+    }
+  }
+  for (const prune of body.prunes) {
+    for (const refund of prune.refunds) {
+      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner });
+    }
+  }
 
   return {
     derived: {
       inputs,
-      emissionSuccessor,
-      treasurySuccessor,
-      poolSuccessor,
-      grants,
+      derivedOutputs: outputs,
       minerSlice: split.miner,
       lockedUntilBlock: height + minerRewardDelay,
     },
@@ -281,17 +504,17 @@ function derive(
 /**
  * Build the block's settlement transaction.
  *
- * ⛔ **Pure in everything but the three protocol-box reads**, which are
- * `ORDER BY id LIMIT 1` — no wall clock, no local table, no iteration order the
- * block does not already fix.
+ * ⛔ **Pure in everything but the derivation's own reads**, every one of which
+ * carries a stated total order — no wall clock, no node-local table, no
+ * iteration order the block does not already fix.
  *
  * `minerOwner` is the one parameter that is not derived: the coinbase's payout
  * key is the producer's and is committed in the settlement's own bytes rather
  * than recomputed by a verifier.
  *
- * Output order is fixed here so a producer's own two runs agree, but it is
- * **not** a consensus rule: `checkSettlement` matches outputs by content, since
- * how the miner partitions their slice is theirs.
+ * ⛔ **The derived outputs come first, in derivation order; the coinbase's
+ * credit outputs are the tail.** That is a consensus rule and not a convention
+ * of this function — `checkSettlement` requires the same shape.
  */
 export function buildSettlement(
   deps: SettlementDeps,
@@ -305,22 +528,17 @@ export function buildSettlement(
   if ('error' in d) return d;
   const { derived } = d;
 
-  const outputs: AnyBoxCandidate[] = [];
-  if (derived.emissionSuccessor) outputs.push(derived.emissionSuccessor);
-  if (derived.treasurySuccessor) outputs.push(derived.treasurySuccessor);
-  if (derived.poolSuccessor) outputs.push(derived.poolSuccessor);
+  const outputs: AnyBoxCandidate[] = [...derived.derivedOutputs];
   // Skipped at zero, because no coinbase output may carry a zero value: `[]` and
   // `[{value: 0}]` are two encodings of one block with different `utxoTxRoot`.
   if (derived.minerSlice > 0n) {
-    const coinbase: AnyBoxCandidate = {
+    outputs.push({
       boxType: 'credit',
       value: derived.minerSlice,
       owner: minerOwner,
       lockedUntilBlock: derived.lockedUntilBlock,
-    };
-    outputs.push(coinbase);
+    });
   }
-  outputs.push(...derived.grants);
 
   return {
     tx: {
@@ -340,16 +558,33 @@ export function buildSettlement(
 // Validation
 // ---------------------------------------------------------------------------
 
-/** Match by content, never by position — the partition is the producer's. */
-function takeOne(
-  pool: AnyBoxCandidate[],
-  match: (o: AnyBoxCandidate) => boolean,
-): AnyBoxCandidate | undefined {
-  const i = pool.findIndex(match);
-  return i === -1 ? undefined : pool.splice(i, 1)[0];
+/**
+ * A candidate's whole content as one comparable string.
+ *
+ * ⚠ **Every field, sorted by key** — `checkSettlementOutputShape` has already
+ * pinned the exact key set and every field's runtime type, so this is total over
+ * what reaches it. A comparison that named fields explicitly would silently stop
+ * covering a field a later box type adds.
+ */
+function candidateKey(o: AnyBoxCandidate): string {
+  const rec = o as unknown as Record<string, unknown>;
+  return Object.keys(rec)
+    .sort()
+    // ⛔ **A present-`undefined` optional IS absent, and the encoder is the
+    // authority.** `opt()` gives absence exactly one encoding, so a settlement
+    // that has been through `decodeTx` carries every optional field present and
+    // holding `undefined`, while the derivation this compares it against never
+    // wrote the key at all. Two encodings of one box must produce one key here
+    // or every decoded settlement is refused.
+    .filter((k) => rec[k] !== undefined)
+    .map((k) => {
+      const v = rec[k];
+      if (typeof v === 'bigint') return `${k}=${v}`;
+      if (v instanceof Uint8Array) return `${k}=${hexOf(v)}`;
+      return `${k}=${String(v)}`;
+    })
+    .join('|');
 }
-
-const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 /**
  * Check the producer's settlement against the derivation this node makes from
@@ -416,70 +651,39 @@ export function checkSettlement(
     };
   }
 
-  // ---- 3. The derived outputs ----
-  const remaining = [...settlement.outputs];
-
-  const pinOne = (
-    expected: AnyBoxCandidate | null,
-    boxType: AnyBoxCandidate['boxType'],
-    what: string,
-  ): string | null => {
-    const present = remaining.filter((o) => o.boxType === boxType).length;
-    if (expected === null) {
-      return present === 0 ? null : `settlement emits a ${what} this block does not`;
-    }
-    if (present !== 1) {
-      return `settlement emits ${present} ${what} boxes, expected exactly 1`;
-    }
-    const got = takeOne(remaining, (o) => o.boxType === boxType)!;
-    if (got.value !== expected.value) {
-      return `settlement ${what} holds ${got.value}, the body derives ${expected.value}`;
-    }
-    return null;
-  };
-
-  for (const [expected, boxType, what] of [
-    [derived.emissionSuccessor, 'emission', 'emission successor'],
-    [derived.treasurySuccessor, 'treasury', 'treasury successor'],
-    [derived.poolSuccessor, 'karma_pool', 'karma pool successor'],
-  ] as const) {
-    const err = pinOne(expected, boxType, what);
-    if (err) return { valid: false, error: err };
-  }
-
-  // ---- 4. The grants — one per bond, on the key the bond names ----
+  // ---- 3. The derived outputs, element-wise and in order ----
   //
-  // Matched by owner rather than by position. Two bonds naming one key are
-  // refused before this runs (block application's duplicate-invitee rule), so
-  // every grant owner is distinct and the match is exact.
-  for (const expected of derived.grants) {
-    const owner = (expected as KarmaBox).owner;
-    const got = takeOne(
-      remaining,
-      (o) => o.boxType === 'karma' && hex((o as KarmaBox).owner) === hex(owner),
-    );
-    if (!got) {
+  // ⛔ **Positional, because output ordering is DERIVED** (NODE_INTERFACE →
+  // Determinism is this mechanism's whole risk names it among the derived
+  // fields). Matching by content alone has no answer when two legs credit one
+  // owner in one block — an invite grant and a like payout to the same key are
+  // two karma boxes a multiset match cannot tell apart from one of each other's.
+  const n = derived.derivedOutputs.length;
+  if (settlement.outputs.length < n) {
+    return {
+      valid: false,
+      error:
+        `settlement emits ${settlement.outputs.length} outputs, short of the ` +
+        `${n} the body derives`,
+    };
+  }
+  for (let i = 0; i < n; i++) {
+    const got = candidateKey(settlement.outputs[i]!);
+    const want = candidateKey(derived.derivedOutputs[i]!);
+    if (got !== want) {
       return {
         valid: false,
-        error: `settlement carries no invite grant for ${hex(owner)}`,
-      };
-    }
-    if (got.value !== INVITE_KARMA_AMOUNT) {
-      return {
-        valid: false,
-        error:
-          `invite grant for ${hex(owner)} holds ${got.value}, expected ` +
-          `${INVITE_KARMA_AMOUNT}`,
+        error: `settlement output ${i} is ${got}, the body derives ${want}`,
       };
     }
   }
 
-  // ---- 5. The coinbase ----
+  // ---- 4. The coinbase ----
   //
   // The sum is the rule; the partition and the payout key are the producer's
   // (MINING_INTERFACE → Coinbase Application, receipt step 2).
   let coinbaseTotal = 0n;
-  for (const out of remaining) {
+  for (const out of settlement.outputs.slice(n)) {
     if (out.boxType !== 'credit') {
       return {
         valid: false,
@@ -516,7 +720,7 @@ export function checkSettlement(
     };
   }
 
-  // ---- 6. Conservation, over the whole transaction ----
+  // ---- 5. Conservation, over the whole transaction ----
   //
   // ⛔ **The axiom's own check** (ARCHITECTURE → The conservation axiom). Every
   // clause above pins a value, so this cannot fail on its own — and it is where
@@ -600,6 +804,18 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
   for (const out of tx.outputs ?? []) {
     if (out.boxType === 'fee') bytes += INPUT_BYTES;
     else if (out.boxType === 'bond') bytes += GRANT_BYTES;
+    // ⛔ **A marker's term is an INPUT, not an output**, and that is the whole
+    // reason a per-like surcharge does not compound. Each like adds one derived
+    // input to the settlement; the payout it eventually joins is one output per
+    // AUTHOR, however many likes they received, so an author's second like in a
+    // block costs an input and nothing more (ARCHITECTURE → the settlement's
+    // marker inputs are derived, not serialized).
+    //
+    // ⚠ **The carry box is not priced here and is bounded rather than ignored.**
+    // At most one input and one output per credited author, which the marker
+    // terms already over-count against — an author with `k` likes reserves `k`
+    // inputs and needs `k + 1`, and the sizer has the last word either way.
+    else if (out.boxType === 'like_accrual') bytes += INPUT_BYTES;
   }
   return bytes;
 }
@@ -624,13 +840,22 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[]): void 
       body.feeBoxIds.push(out.id!);
     } else if (out.boxType === 'bond') {
       body.invitees.push((out as BondBox).inviteePublicKey);
+    } else if (out.boxType === 'like_accrual') {
+      // ⛔ **Only a like transaction can put one here**, and the engine's
+      // biconditional is what makes that true in both directions: `likeTarget`
+      // present ⟺ exactly one marker of `LIKE_KARMA_COST` naming the target's
+      // author (NODE_INTERFACE → Karma transition rules). Without the converse
+      // an ordinary karma transfer could emit a marker, balance, and be paid out
+      // here — so this loop's correctness is the engine's, not its own.
+      const marker = out as LikeAccrualBox;
+      body.markers.push({ id: marker.id!, author: marker.author, value: marker.value });
     }
   }
 }
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, actors: 0, feeBoxIds: [], invitees: [] };
+  return { fees: 0n, actors: 0, feeBoxIds: [], invitees: [], markers: [], prunes: [] };
 }
 
 /**

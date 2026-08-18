@@ -258,11 +258,20 @@ describe('blocks routes', () => {
          (id, box_type, value, created_at_block, spent_at_block, owner, tx_id, output_index)
        VALUES (?, ?, ?, 1, ?, NULL, ?, 0)`,
     );
+    // ⛔ **One row per member of the supply set, and the assertion below pins
+    // that they ARE the set.** A karma-bearing type added to the set and not
+    // here would make `totalKarma` short by that box and leave this green
+    // without the pin.
     const seeded: Array<[string, bigint]> = [
       ['karma', 7n],
       ['bond', 13n],
       ['post_lock', 5n],
       ['vouch', 1n],
+      // The two this unit made reachable: a marker or carry box holds karma
+      // between a like and its payout, an escrow holds an unvouched stake
+      // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+      ['like_accrual', 3n],
+      ['vouch_escrow', 2n],
     ];
     for (const [boxType, value] of seeded) {
       insert.run(`box-${boxType}`, boxType, value, null, `tx-${boxType}`);

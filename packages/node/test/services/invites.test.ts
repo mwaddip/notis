@@ -32,7 +32,7 @@ import {
   getIdentityRecord as storeGetIdentityRecord,
   putIdentityRecord as storePutIdentityRecord,
   consumeBox as storeConsumeBox,
-  hasActiveVouchCooldown as storeHasActiveVouchCooldown,
+  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getPendingEntries,
 } from '../../src/store/index.js';
 import { createInvite } from '../../src/services/invites.js';
@@ -97,7 +97,9 @@ describe('invites service', () => {
       getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
       getKarmaValue: (owner: Uint8Array) =>
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-      hasActiveVouchCooldown: storeHasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -228,7 +230,6 @@ describe('invites service', () => {
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
-      likeCarry: 0n,
       invitedAtBlock: 3,
       lifetimeLikesReceived: 0n,
     });
@@ -249,7 +250,6 @@ describe('invites service', () => {
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
-      likeCarry: 0n,
       invitedAtBlock: 0,          // never invited
       lifetimeLikesReceived: 900n, // and long since past a full vest
     });

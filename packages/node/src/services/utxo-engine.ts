@@ -11,7 +11,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, PostLockBox, Post } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, Post } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -48,7 +48,13 @@ import type { IdentityRecord } from '../store/identity-records.js';
  * conservation yes — which is what makes the separation load-bearing rather
  * than tidy.
  */
-export const KARMA_TRANSITION_TYPES = ['karma', 'bond', 'post_lock', 'vouch'] as const;
+export const KARMA_TRANSITION_TYPES = [
+  'karma',
+  'bond',
+  'post_lock',
+  'vouch',
+  'like_accrual',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -99,7 +105,32 @@ export interface UtxoEngineDeps {
    * site — row existence IS activity, since matured rows are deleted by
    * `processVouchCooldowns` in the same block application that mints them.
    */
-  hasActiveVouchCooldown: (voucherId: Uint8Array, targetId: Uint8Array) => boolean;
+  hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
+  /**
+   * `NetworkProfile.vouchCooldownBlocks` — how long an unvouched stake waits.
+   *
+   * Injected rather than imported, like every other consensus input here: it is
+   * per-network (`compress time, never economics`), so a second reader holding
+   * the constant would agree with the profile on mainnet and disagree on
+   * devnet — the failure `inviteProbationBlocks` already had.
+   */
+  vouchCooldownBlocks: number;
+  /**
+   * The consensus-recorded author of a confirmed post, raw 32 bytes, or null
+   * when no applied block has confirmed it.
+   *
+   * ⛔ **Consensus input, and the source is the whole of its correctness.** It
+   * reads `block_topology` and never `dag_posts.author` (ARCHITECTURE → Likes):
+   * a placeholder row carries a zeroed author, so a marker built from the wrong
+   * source earmarks the liker's karma to the zero key.
+   *
+   * ⚠ **A like on an UNCONFIRMED post is now unbuildable, and that is a
+   * consequence rather than a decision.** The marker has to name the author, and
+   * the author is knowable only once a block has confirmed the post — so the
+   * confirmation the apply rule already demanded at apply height is demanded at
+   * build time too.
+   */
+  getTopologyAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
   runInTransaction: (fn: () => void) => void;
   /** Return true if the box is the system karma box (faucet source). */
@@ -156,7 +187,29 @@ function checkTransitions(
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
   post: Post | undefined,
+  currentBlockHeight: number,
 ): { valid: boolean; error?: string } {
+  // ⛔ **THE MARKER'S CONVERSE, AND IT HAS NO PREDECESSOR** (NODE_INTERFACE →
+  // Karma transition rules — the like accrual marker is an exemption from the
+  // rule above). A `LikeAccrualBox` is a karma-bearing output earmarked for
+  // someone other than the input's owner, which is precisely the shape
+  // *"Karma cannot be transferred"* exists to refuse.
+  //
+  // ⛔ **The check it replaces used to be free.** The like's cost was a
+  // **deficit**, and an imbalance is self-announcing — conservation fired on it
+  // unconditionally and the only escape was matching the like shape exactly. A
+  // marker **balances**, so nothing fires unless a rule says to look. Without
+  // this line `myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)`
+  // conserves, carries no `likeTarget`, and pays Bob at settlement.
+  //
+  // Ahead of the switch rather than inside the karma arm, so it holds for every
+  // input type and not only for the one that can legitimately emit a marker.
+  if (likeTarget === undefined && outputs.some((o) => o.boxType === 'like_accrual')) {
+    return {
+      valid: false,
+      error: `a LikeAccrualBox output is only legal on a like transaction`,
+    };
+  }
   // A like transaction (`likeTarget` present) has exactly one legal shape — the
   // liker's karma boxes in, one karma box out (the arm in the karma case below).
   // Gated here as well as in the conservation carve, which independently
@@ -181,10 +234,11 @@ function checkTransitions(
       const bondOutputs = outputs.filter((o) => o.boxType === 'bond');
       const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
+      const accrualOutputs = outputs.filter((o) => o.boxType === 'like_accrual');
 
       // A karma spend produces the transition set's types and nothing else. A
-      // 'like'-type output is an illegal transition in particular: a like is a
-      // burn transaction named by `likeTarget`, never a box.
+      // 'like'-type output is an illegal transition in particular: a like moves
+      // its cost into a marker named by `likeTarget`, never into a `LikeBox`.
       const allowedOutputTypes: readonly string[] = KARMA_TRANSITION_TYPES;
       if (outputs.some((o) => !allowedOutputTypes.includes(o.boxType))) {
         return {
@@ -252,24 +306,50 @@ function checkTransitions(
       }
 
       if (likeTarget !== undefined) {
-        // Like arm: `likeTarget` present ⇒ this exact shape and nothing
-        // else. All inputs are karma boxes sharing one owner (pinned above),
-        // the single output is a karma box with that same owner (pinned
-        // above), and the transaction burns exactly LIKE_KARMA_COST. The
-        // conservation carve enforces the deficit independently — two layers,
-        // the same pattern as the bond-burn rejection.
-        if (outputs.length !== 1 || karmaOutputs.length !== 1) {
+        // ⛔ **The forward half of the biconditional** (NODE_INTERFACE → Karma
+        // transition rules). `likeTarget` present ⇒ this exact shape and nothing
+        // else: all inputs are karma boxes sharing one owner (pinned above), one
+        // karma output carries the liker's change with that same owner (pinned
+        // above), and one `LikeAccrualBox` carries the cost to the author.
+        //
+        // ⛔ **The transaction CONSERVES — there is no deficit any more.** The
+        // cost lands in a box rather than leaving the ledger (ARCHITECTURE →
+        // The conservation axiom: a marker must carry its value), so step 5's
+        // unconditional sum is what pins the total and this arm pins the shape.
+        if (outputs.length !== 2 || karmaOutputs.length !== 1 || accrualOutputs.length !== 1) {
           return {
             valid: false,
-            error: `Invalid like transition: exactly one karma output and no other outputs expected`,
+            error:
+              `Invalid like transition: exactly one karma output and one ` +
+              `like_accrual marker expected`,
           };
         }
-        const totalIn = inputs.reduce((sum, b) => sum + b.value, 0n);
-        const deficit = totalIn - (karmaOutputs[0] as KarmaBox).value;
-        if (deficit !== LIKE_KARMA_COST) {
+        const marker = accrualOutputs[0] as LikeAccrualBox;
+        if (marker.value !== LIKE_KARMA_COST) {
           return {
             valid: false,
-            error: `Like must burn exactly ${LIKE_KARMA_COST} karma, got a deficit of ${deficit}`,
+            error:
+              `Like marker must carry exactly ${LIKE_KARMA_COST} karma, got ` +
+              `${marker.value}`,
+          };
+        }
+        // ⛔ **Resolved from `block_topology`, never `dag_posts.author`** — a
+        // placeholder row carries a zeroed author, so a marker built from the
+        // wrong source earmarks the liker's karma to the zero key.
+        const author = deps.getTopologyAuthor(likeTarget);
+        if (author === null) {
+          return {
+            valid: false,
+            error: `Like target ${likeTarget} is not confirmed, so it names no author`,
+          };
+        }
+        if (Buffer.from(marker.author).toString('hex') !==
+            Buffer.from(author).toString('hex')) {
+          return {
+            valid: false,
+            error:
+              `Like marker names ${Buffer.from(marker.author).toString('hex')}, ` +
+              `but ${likeTarget}'s author is ${Buffer.from(author).toString('hex')}`,
           };
         }
       } else if (postLockOutputs.length > 0) {
@@ -353,16 +433,26 @@ function checkTransitions(
             error: `Vouch voucherId must be the karma input's owner`,
           };
         }
-        // No re-vouch while the pair's escrow is cooling down (B6, promoted
-        // from mempool policy to a consensus rule). The overwrite this blocks
-        // is `insertVouchCooldown`'s INSERT OR REPLACE destroying a live
-        // escrow's pending re-mint.
-        if (deps.hasActiveVouchCooldown(vouchOut.voucherId, vouchOut.targetId)) {
+        // No re-vouch while the voucher's escrow is cooling down
+        // (NODE_INTERFACE → Vouch transition rules).
+        //
+        // ⛔ **KEYED ON THE VOUCHER ALONE, BECAUSE THE ESCROW CARRIES NO
+        // TARGET.** `VouchEscrowBox` holds `owner` and `releaseAtBlock` and
+        // nothing else (TYPES_INTERFACE → VouchEscrowBox), so the
+        // `(voucher, target)` pair the retired table keyed on is not a question
+        // this state can answer. The gate is strictly stronger than the one it
+        // replaces — a cooling voucher may not recast at all rather than may not
+        // recast at the same target.
+        //
+        // ⚠ **The overwrite hazard it used to close is gone with the table.**
+        // A second escrow is a second box, so nothing can be destroyed by an
+        // `INSERT OR REPLACE`; what survives is the economic rule, which the
+        // escrow's own value already leans on by withholding the stake from
+        // `VOUCH_MIN_BALANCE`.
+        if (deps.hasActiveVouchEscrow(vouchOut.voucherId)) {
           return {
             valid: false,
-            error:
-              `Vouch cast is locked: an active cooldown exists for this ` +
-              `voucher/target pair`,
+            error: `Vouch cast is locked: this voucher holds an unreleased escrow`,
           };
         }
         // The voucher's balance clears VOUCH_MIN_BALANCE (ARCHITECTURE →
@@ -517,28 +607,66 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // VouchBox → (none) — unvouch, karma returned via cooldown
+    // VouchBox → VouchEscrowBox — unvouch, the stake held in a box
     // ------------------------------------------------------------------
     case 'vouch': {
-      if (outputs.length !== 0) {
-        return {
-          valid: false,
-          error: `VouchBox can only be spent to produce no outputs (unvouch)`,
-        };
-      }
       // An unvouch consumes exactly one VouchBox (NODE_INTERFACE → "Vouch
-      // transition rules"). Block application walks the inputs for a VouchBox,
-      // writes ONE escrow row, and stops — while conservation exempts
-      // zero-output vouch spends wholesale, however many inputs. Without this
-      // bound a two-VouchBox unvouch consumes both stakes and escrows one,
-      // destroying the other. Burning
-      // several stakes in one transaction has no meaning in the design, so
-      // the shape is inexpressible rather than handled — the same reasoning
-      // as the bond settlement's single-input bound.
+      // transition rules"). Burning several stakes in one transaction has no
+      // meaning in the design, so the shape is inexpressible rather than
+      // handled — the same reasoning as the bond settlement's single-input
+      // bound.
       if (inputs.length !== 1) {
         return {
           valid: false,
           error: `Unvouch must consume exactly one VouchBox`,
+        };
+      }
+      const escrowOutputs = outputs.filter((o) => o.boxType === 'vouch_escrow');
+      if (outputs.length !== 1 || escrowOutputs.length !== 1) {
+        return {
+          valid: false,
+          error: `VouchBox can only be spent to produce exactly one vouch_escrow output`,
+        };
+      }
+      const staked = inputs[0] as VouchBox;
+      const escrow = escrowOutputs[0] as VouchEscrowBox;
+      // ⛔ **The escrow's value is the CONSUMED BOX'S, never
+      // `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE → VouchEscrowBox). Step 5's
+      // unconditional conservation already pins the total; this names which
+      // box it came out of, so the round trip is conservation-structural rather
+      // than true by coincidence of the cast pin.
+      if (escrow.value !== staked.value) {
+        return {
+          valid: false,
+          error:
+            `Unvouch escrow holds ${escrow.value}, the consumed VouchBox held ` +
+            `${staked.value}`,
+        };
+      }
+      // Where the karma returns. A foreign `owner` is the `voucherId` defect in
+      // a new box: A stakes, A unvouches, and the escrow matures to B.
+      if (Buffer.from(escrow.owner).toString('hex') !==
+          Buffer.from(staked.voucherId).toString('hex')) {
+        return {
+          valid: false,
+          error: `Unvouch escrow owner must be the consumed VouchBox's voucherId`,
+        };
+      }
+      // ⛔ **A LOWER BOUND, DELIBERATELY, AND IT IS THE ONE DIRECTION THAT
+      // MATTERS.** A transaction's output cannot commit to the height of the
+      // block that will carry it — the pool does not know which block that is —
+      // so an exact pin would make every unvouch valid in exactly one block and
+      // stale everywhere else. Releasing LATE costs only the voucher; releasing
+      // early is what the cooldown exists to prevent, so only the floor is a
+      // rule. The settlement releases at `releaseAtBlock`, so a voucher who
+      // overshoots waits longer and gains nothing.
+      const floor = currentBlockHeight + deps.vouchCooldownBlocks;
+      if (escrow.releaseAtBlock < floor) {
+        return {
+          valid: false,
+          error:
+            `Unvouch escrow releases at ${escrow.releaseAtBlock}, before the ` +
+            `earliest legal height ${floor}`,
         };
       }
       return { valid: true };
@@ -1278,32 +1406,22 @@ function checkValueConservation(
   // (field-type pin), so the bigint sums below are total — this function must
   // never run on outputs that have not passed `checkOutputShape`.
 
-  // Like carve. `likeTarget` names a like, and a like burns exactly
-  // LIKE_KARMA_COST from the liker's karma — any other deficit, a surplus, a
-  // conserving transaction, or non-karma inputs under this field are invalid.
-  if (likeTarget !== undefined) {
-    if (!inputBoxes.every((b) => b.boxType === 'karma')) {
-      return {
-        valid: false,
-        error: `likeTarget is only legal on an all-karma burn transaction`,
-      };
-    }
-    const totalIn = inputBoxes.reduce((sum, b) => sum + b.value, 0n);
-    const totalOut = outputs.reduce((sum, b) => sum + b.value, 0n);
-    if (totalIn - totalOut !== LIKE_KARMA_COST) {
-      return {
-        valid: false,
-        error:
-          `Like non-conservation: a like must burn exactly ${LIKE_KARMA_COST} ` +
-          `karma (inputs=${totalIn}, outputs=${totalOut})`,
-      };
-    }
-    return { valid: true };
-  }
-
-  const inputType = inputBoxes[0]!.boxType;
-  if (outputs.length === 0 && inputType === 'vouch') {
-    return { valid: true };
+  // ⛔ **NO CARVE-OUTS. `sum(inputs) == sum(outputs)`, unconditionally**
+  // (ARCHITECTURE → The conservation axiom). Both exceptions this function
+  // carried are gone because the value they used to lose now lands in a box:
+  // the like's deficit is a `LikeAccrualBox` the transaction outputs, and the
+  // zero-output `VouchBox` spend is a `VouchEscrowBox`. **Neither was weakened
+  // — each was given somewhere to go.**
+  //
+  // ⚠ **`likeTarget` is still a parameter and still load-bearing**, one rule
+  // further out: an all-karma input set is what makes the marker exemption in
+  // `checkTransitions` reachable only from a like, and a `likeTarget` bolted
+  // onto a credit or vouch spend is refused here before any arm reads it.
+  if (likeTarget !== undefined && !inputBoxes.every((b) => b.boxType === 'karma')) {
+    return {
+      valid: false,
+      error: `likeTarget is only legal on an all-karma burn transaction`,
+    };
   }
 
   const totalInputValue = inputBoxes.reduce((sum, b) => sum + b.value, 0n);
@@ -1592,6 +1710,7 @@ export function validateTx(
     deps,
     tx.likeTarget,
     tx.post,
+    currentBlockHeight,
   );
   if (!transitionCheck.valid) return transitionCheck;
 

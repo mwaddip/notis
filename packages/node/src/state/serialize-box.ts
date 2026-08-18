@@ -76,7 +76,7 @@ export function serializeBox(box: AnyBox): Uint8Array {
  * matters most here: without it, non-minimal VLQ means two byte strings decode
  * to one record, which is two AVL values for one state.
  *
- * `likeCarry`, `invitedAtBlock` and `lifetimeLikesReceived` are **always
+ * `invitedAtBlock` and `lifetimeLikesReceived` are **always
  * written, zero included** — they are fields of the record and a layout writes
  * every field. Conditional presence would reopen the key-set-exactness fork.
  * `bigint` is the two counters' type for the `safeIntegers` row boundary, not for
@@ -86,11 +86,17 @@ export function serializeBox(box: AnyBox): Uint8Array {
  *
  * Domains belong upstream (TYPES_INTERFACE → "Totality"): the three heights are
  * `vlqU`, total by sentinel, so an out-of-domain height collides rather than
- * panicking; `likeCarry` and `lifetimeLikesReceived` are `vlqU64` and
- * `writeVlqU64OrThrow` throws outside `[0, 2⁶⁴)`. Per-block like settlement is
- * the only writer of either — `likeCarry` bounded by `LIKES_PER_KARMA_PAYOUT`,
- * the counter by how many likes one identity can receive — so it establishes
- * both domains.
+ * panicking; `lifetimeLikesReceived` is `vlqU64` and `writeVlqU64OrThrow` throws
+ * outside `[0, 2⁶⁴)`. Per-block like settlement is its only writer and it only
+ * ever adds, bounded by how many likes one identity can receive, so it
+ * establishes the domain.
+ *
+ * ⛔ **The outstanding like accrual is NOT a field here, and its absence is the
+ * point.** A counter existed to remember karma that did not yet exist; the
+ * accrual now sits in a `LikeAccrualBox` carry box, so the box **is** the carry
+ * (ARCHITECTURE → Likes). Keeping both would be two representations of one
+ * quantity, free to disagree — and the carry is in the `stateRoot` either way,
+ * because every box is.
  */
 const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
   name: 'identityRecord',
@@ -98,7 +104,6 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
     writeU8OrThrow(w, IDENTITY_RECORD_TAG);
     writeVlqU(w, record.lastActivityBlock);
     writeVlqU(w, record.lastDecayBlock);
-    writeVlqU64OrThrow(w, record.likeCarry);
     writeVlqU(w, record.invitedAtBlock);
     writeVlqU64OrThrow(w, record.lifetimeLikesReceived);
   },
@@ -116,7 +121,6 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
     return {
       lastActivityBlock: readVlqU(r),
       lastDecayBlock: readVlqU(r),
-      likeCarry: readVlqU64(r),
       invitedAtBlock: readVlqU(r),
       lifetimeLikesReceived: readVlqU64(r),
     };

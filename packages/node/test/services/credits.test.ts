@@ -25,7 +25,7 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchCooldown } from '../../src/store/vouch-cooldowns.js';
+import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getPendingEntries } from '../../src/store/mempool.js';
 import { sendCredits } from '../../src/services/credits.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -53,7 +53,9 @@ const engineDeps: UtxoEngineDeps = {
   getKarmaBox,
   getKarmaValue,
   getIdentityRecord,
-  hasActiveVouchCooldown,
+  hasActiveVouchEscrow: () => false,
+  vouchCooldownBlocks: 2,
+  getTopologyAuthor: () => null,
   runInTransaction: (fn) => fn(),
 };
 

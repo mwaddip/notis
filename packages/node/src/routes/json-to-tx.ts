@@ -7,9 +7,14 @@ import { ClientError } from '../services/client-error.js';
  * strings over the JSON HTTP API.  We convert them back during deserialisation.
  */
 const BINARY_BOX_FIELDS = new Set([
-  'owner',            // KarmaBox, CreditBox, PostLockBox
-  'inviterId',        // InviteBox, BondBox
-  'inviteePublicKey', // InviteBox, BondBox
+  'owner',            // KarmaBox, CreditBox, PostLockBox, VouchEscrowBox
+  // ⚠ **`BondBox` alone.** These read `InviteBox, BondBox` until the invite
+  // collapsed into one transaction and the type was deleted; a list of holders
+  // has to be re-read every time one goes, so this names the survivor rather
+  // than carrying the set (TYPES_INTERFACE → a prose restatement decays while
+  // the assertion beside it stays green).
+  'inviterId',        // BondBox
+  'inviteePublicKey', // BondBox
   // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over
   // HTTP JSON — the value arrives as a hex string and dies at `validateTx`'s
   // step-4 schema, which wants `bytes32`. Service-level tests cannot see it:
@@ -17,6 +22,15 @@ const BINARY_BOX_FIELDS = new Set([
   // the demo UI's `canonicalBoxBytes` mirror must name the same fields.
   'voucherId',        // VouchBox
   'targetId',         // VouchBox
+  // ⛔ **`LikeAccrualBox`, and it is the field the warning above predicted.**
+  // Every like a client builds crosses this edge, so without it the whole like
+  // path is unreachable over HTTP while every service-level test stays green —
+  // exactly the blind spot named two lines up.
+  //
+  // ⚠ **Not the same `author` as a post's.** `Post.author` is decoded by
+  // `jsonToPost` below, which validates its length; this entry governs box
+  // outputs only, and the two never see each other's objects.
+  'author',           // LikeAccrualBox
 ]);
 
 /**

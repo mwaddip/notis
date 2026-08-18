@@ -27,6 +27,7 @@ import type {
   KarmaBox,
   CreditBox,
   VouchBox,
+  VouchEscrowBox,
   PostLockBox,
   BlockHeader,
   OrderingBlock,
@@ -37,7 +38,7 @@ import type {
 import type { StoredPost } from '../../src/store/posts.js';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type { AnyBox } from '@dagsocial/types';
-import type { DecayJournalEntry } from '../../src/services/decay.js';
+import type { DecayPlan } from '../../src/services/decay.js';
 import type Database from 'better-sqlite3';
 import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
@@ -138,6 +139,7 @@ async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
     insertBox: (box: unknown, postLockTarget?: string) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
+    getKarmaValue: (owner: Uint8Array) => bigint;
     getCreditBoxes: (owner: Uint8Array) => AnyBox[];
     getBox: (boxId: string) => unknown;
     getUnspentBoxes: () => AnyBox[];
@@ -324,7 +326,7 @@ describe('block-apply journal recording', () => {
     // legal (and uneconomical) by contract.
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, postId);
+    const likeTx = makeLikeTx(author, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
@@ -750,7 +752,19 @@ describe('block-apply journal recording', () => {
 
       const unvouch: UtxoTransaction = {
         inputs: [vouchBox.id!],
-        outputs: [],
+        // ⛔ **The escrow output, because the zero-output vehicle is retired.**
+        // An unvouch conserves now — its stake lands in a `VouchEscrowBox` — so a
+        // zero-output vouch spend is an ordinary whole-input deficit and is
+        // refused by conservation. The SUBJECT here is the fee accounting, and it
+        // needs a live karma-side spend to carry it.
+        outputs: [
+          {
+            boxType: 'vouch_escrow' as const,
+            value: VOUCH_KARMA_AMOUNT,
+            owner: voucher.userId,
+            releaseAtBlock: 1 + testConfig.vouchCooldownBlocks,
+          },
+        ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };
@@ -894,7 +908,7 @@ describe('block-apply journal recording', () => {
     // and we can't build 20,000+ blocks in a test. Inside block application
     // its box mutations are journaled at the store choke point; the return
     // value asserted here is the service's own per-owner summary.
-    const { applyKarmaDecay } = await import(
+    const { deriveKarmaDecay } = await import(
       '../../src/services/decay.js'
     );
     const { KARMA_DECAY_AMOUNT, KARMA_DECAY_INTERVAL_BLOCKS, KARMA_MINIMUM } = await import('@dagsocial/types');
@@ -926,7 +940,7 @@ describe('block-apply journal recording', () => {
     };
 
     const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100;
-    const entries: DecayJournalEntry[] = applyKarmaDecay(deps, staleHeight, decayCfg);
+    const entries: DecayPlan[] = deriveKarmaDecay(deps, staleHeight, decayCfg);
 
     // Never-active clock ⇒ periods count from height 0:
     // owed = floor(staleHeight / interval) × amount.
@@ -945,58 +959,70 @@ describe('block-apply journal recording', () => {
     expect(entries[0]!.owner).toEqual(identity.userId);
     expect(entries[0]!.burnAmount).toBe(owed);
     expect(entries[0]!.consumedBoxIds).toEqual([oldBox.id!]);
-    expect(entries[0]!.newBoxId).toBeTruthy();
-    expect(entries[0]!.newBoxId).not.toBe('');
+    // ⛔ **The plan carries a VALUE, not a box id.** The replacement karma is an
+    // output of the block's settlement transaction, so its id is that
+    // transaction's to give (NODE_INTERFACE → The settlement transaction) and
+    // the derivation could not know it.
+    expect(entries[0]!.newValue).toBe(1000n - owed);
 
-    // Old box is consumed — getKarmaBox only returns unspent boxes,
-    // so it returns the new decay-burn box, not the old consumed one.
+    // ⛔ **NOTHING MOVED, and that is the assertion.** This case derives the
+    // plan directly and applies no block, so the owner's box is untouched: the
+    // replacement karma is emitted by the block's settlement transaction, which
+    // has not run here. Under the retired shape `applyKarmaDecay` consumed and
+    // inserted on the spot, and the two store reads that used to sit here were
+    // reading that side effect.
     const karmaBox = utxo.getKarmaBox(identity.userId);
     expect(karmaBox).not.toBeNull();
-    expect(karmaBox!.id).toBe(entries[0]!.newBoxId);
-
-    // New decay-burn box exists with reduced value
+    expect(karmaBox!.id).toBe(oldBox.id);
     expect(karmaBox!.boxType).toBe('karma');
-    expect(karmaBox!.value).toBe(1000n - owed);
+    // The pre-decay value, unchanged. What the plan says the owner is LEFT with
+    // is asserted above, on the plan.
+    expect(karmaBox!.value).toBe(1000n);
   });
 
   // -----------------------------------------------------------------------
-  // 12. Vouch-cooldown mint journals karma mutations + escrow deletion (H-7)
+  // 12. The escrow release journals through the box primitives (H-7 retired)
   // -----------------------------------------------------------------------
 
-  it('vouch-cooldown mint journals karma mutations and the deleted escrow row (H-7)', async () => {
+  it('an escrow release journals a box consume and a box insert, with no side-record', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
-    const { insertVouchCooldown } = (await import(
-      '../../src/store/vouch-cooldowns.js'
-    )) as {
-      insertVouchCooldown: (
-        voucherId: Uint8Array,
-        targetId: Uint8Array,
-        releaseAtBlock: number,
-        karmaAmount: bigint,
-      ) => void;
-    };
 
-    // Pre-block state: voucher karma + a matured escrow row (release ≤ 1)
+    // Pre-block state: the voucher's karma, and a matured `VouchEscrowBox`.
     const voucher = makeTestIdentity();
-    const target = makeTestIdentity();
     const oldKarma = makeKarmaBox(50n, voucher.userId, 0);
     utxo.insertBox(oldKarma);
-    insertVouchCooldown(voucher.userId, target.userId, 1, 7n);
+    utxo.insertBox(
+      seedProvenance<VouchEscrowBox>(
+        {
+          boxType: 'vouch_escrow' as const,
+          value: 7n,
+          owner: voucher.userId,
+          releaseAtBlock: 1,
+        },
+        1,
+        88,
+      ),
+    );
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
-    // H-7: the cooldown mint was journaled in NEITHER old representation —
-    // the AVL never saw it, and revert neither reversed the mint nor
-    // restored the escrow row. Both now appear: merge-consume + merged
-    // insert in the mutation log, the deleted row as a side-record.
+    // ⛔ **H-7's INVERSE MACHINERY IS DELETED, NOT PORTED.** The escrow was a
+    // node-local row, so its create and its delete each needed a hand-written
+    // side-record and a hand-written inverse. A box needs neither:
+    // `insertBox`/`consumeBox` journal `{kind:'box'}` with exact inverses, so the
+    // release is a consume and an insert like every other mutation in the block.
     const journal = await importJournalStore();
     const saved = journal.getBlockJournal(1)!;
-    expect(removedIds(saved)).toContain(oldKarma.id);
+    // ⚠ **The voucher's standing karma is NOT consumed.** The settlement emits a
+    // fresh output rather than consolidating, so a release adds a box beside
+    // what the owner already holds — consolidating would make the transaction's
+    // input list depend on the recipient's unrelated holdings.
+    expect(removedIds(saved)).not.toContain(oldKarma.id);
     const voucherInserts = boxInserts(
       saved,
       (b) =>
@@ -1004,14 +1030,10 @@ describe('block-apply journal recording', () => {
         Buffer.from((b as KarmaBox).owner).equals(Buffer.from(voucher.userId)),
     );
     expect(voucherInserts.length).toBe(1);
-    expect((voucherInserts[0]!.box as KarmaBox).value).toBe(57n);
+    expect((voucherInserts[0]!.box as KarmaBox).value).toBe(7n);
 
-    expect(saved.vouchCooldownDeletions).toHaveLength(1);
-    const del = saved.vouchCooldownDeletions[0]!;
-    expect(Buffer.from(del.voucherId).equals(Buffer.from(voucher.userId))).toBe(true);
-    expect(Buffer.from(del.targetId).equals(Buffer.from(target.userId))).toBe(true);
-    expect(del.releaseAtBlock).toBe(1);
-    expect(del.karmaAmount).toBe(7n);
+    // The escrow itself is gone from the live set, consumed by the settlement.
+    expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
   });
 });
 
@@ -1070,7 +1092,7 @@ describe('block-apply embedded tx re-validation', () => {
     // never reached. It need not name a post that exists — `validateTx` never
     // looks one up; the apply-time like rules do, and step 6 refuses the
     // missing signature long before them.
-    const forged = makeLikeTx(victim, victimBox, ZERO_HASH);
+    const forged = makeLikeTx(victim, victimBox, ZERO_HASH, victim.userId);
     forged.signatures = {};
     mempool.insertUtxoTx(forged, 1000);
 
@@ -1172,8 +1194,12 @@ describe('block-apply embedded tx re-validation', () => {
     mempool.insertUtxoTx(postATx, 1000);
     mempool.insertUtxoTx(postBTx, 1000);
 
-    const aliceTx = makeLikeTx(alice, aliceBox, postAId);
-    const bobTx = makeLikeTx(bob, bobBox, postBId);
+    // ⛔ **The marker names the POST'S author, not the liker.** Both posts are
+    // `author`'s, so both markers name `author` — a marker naming the liker
+    // would earmark their own karma to themselves and is refused by the pin
+    // (NODE_INTERFACE → Karma transition rules).
+    const aliceTx = makeLikeTx(alice, aliceBox, postAId, author.userId);
+    const bobTx = makeLikeTx(bob, bobBox, postBId, author.userId);
     mempool.insertUtxoTx(aliceTx, 1000);
     mempool.insertUtxoTx(bobTx, 1000);
 
@@ -1225,8 +1251,8 @@ describe('block-apply embedded tx re-validation', () => {
     mempool.insertUtxoTx(postATx, 1000);
     mempool.insertUtxoTx(postBTx, 1000);
 
-    const txA = makeLikeTx(liker, startBox, postAId);
-    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId);
+    const txA = makeLikeTx(liker, startBox, postAId, author.userId);
+    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
 
     // B goes in first, so the block lists it first and its input does not
     // exist on the first pass — the "inputs not present yet" case, which must
@@ -1560,9 +1586,9 @@ describe('block-apply mint provenance', () => {
     expect(minerBox!.id).not.toBe(treasuryBox!.id);
   });
 
-  it('a decay box consumed by a vouch settlement in the same block gets a distinct outpoint', async () => {
+  it('a decay charge and an escrow release in one block get distinct outpoints', async () => {
     // The real same-block adjacency between decay and a karma mint. Ordering is
-    // what makes it reachable: `applyKarmaDecay` runs *before*
+    // what makes it reachable: `deriveKarmaDecay` runs *before*
     // `processVouchCooldowns` in the mutation phase, so decay creates a box and
     // the vouch settlement immediately merge-consumes it and mints a
     // replacement — two karma boxes for one owner, at one height.
@@ -1596,7 +1622,6 @@ describe('block-apply mint provenance', () => {
       db.initDb(':memory:');
 
       const utxo = await importUtxo();
-      const vouchStore = await import('../../src/store/vouch-cooldowns.js');
       const journalStore = await importJournalStore();
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
       const { decayContext, vouchSettleContext } = await import(
@@ -1608,7 +1633,21 @@ describe('block-apply mint provenance', () => {
       const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
       // Matures at height 4 — the same block decay first fires in.
-      vouchStore.insertVouchCooldown(idle.userId, target.userId, 4, VOUCH_KARMA_AMOUNT);
+      // ⛔ An escrow BOX due at height 4, not a cooldown row: the obligation is
+      // committed state now (ARCHITECTURE → Vouch boxes). `target` no longer
+      // reaches it — the box carries only the owner and the release height.
+      utxo.insertBox(
+        seedProvenance<VouchEscrowBox>(
+          {
+            boxType: 'vouch_escrow' as const,
+            value: VOUCH_KARMA_AMOUNT,
+            owner: idle.userId,
+            releaseAtBlock: 4,
+          },
+          1,
+          89,
+        ),
+      );
 
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
@@ -1630,21 +1669,35 @@ describe('block-apply mint provenance', () => {
       // Vacuity guard: both legs must actually have fired, or this proves
       // nothing about the discriminant.
       expect(mints.length).toBe(2);
-      const [decayed, settled] = mints;
-      expect((decayed as KarmaBox & { decayBurn?: boolean }).decayBurn).toBe(true);
+      const decayed = mints.find(
+        (b) => (b as KarmaBox & { decayBurn?: boolean }).decayBurn === true,
+      )!;
+      const settled = mints.find((b) => b !== decayed)!;
 
-      expect(decayed!.txId).toBe(
-        computeMintTxId(4, 'decay', decayContext(idle.userId).subject),
-      );
-      expect(settled!.txId).toBe(
-        computeMintTxId(4, 'vouch-settle', vouchSettleContext(idle.userId, target.userId).subject),
-      );
-      expect(decayed!.txId).not.toBe(settled!.txId);
-      expect(decayed!.index).toBe(settled!.index);
+      // ⛔ **THE DISCRIMINANT IS THE OUTPUT INDEX, AND THE COLLISION IT GUARDED
+      // IS RETIRED.** Both legs used to be synthetic mints, so two karma boxes
+      // to one owner at one height were separated only by their mint REASON —
+      // `(height, 'decay', owner)` against
+      // `(height, 'vouch-settle', voucher‖target)` — and a shared reason would
+      // have tripped `UNIQUE(tx_id, output_index)`. Both are outputs of the
+      // block's one settlement transaction now, so they carry the SAME real
+      // `txId` and are told apart positionally, which cannot collide by
+      // construction (NODE_INTERFACE → The settlement transaction).
+      expect(decayed.txId).toBe(settled.txId);
+      expect(decayed.index).not.toBe(settled.index);
 
-      // The settlement consumed the decay box it had just been handed.
-      expect(utxo.getBox(decayed!.id!)).toBeNull();
-      expect(utxo.getKarmaBox(idle.userId)!.id).toBe(settled!.id);
+      // ⚠ Neither carries a synthetic id any more; both reasons are reserved
+      // and unused (NODE_INTERFACE → Reason and subject table).
+      for (const b of [decayed, settled]) {
+        expect(b.txId).not.toBe(computeMintTxId(4, 'decay', decayContext(idle.userId).subject));
+        expect(b.txId).not.toBe(
+          computeMintTxId(4, 'vouch-settle', vouchSettleContext(idle.userId, target.userId).subject),
+        );
+      }
+
+      // Both legs land side by side. ⚠ **A balance, not a box** — the
+      // settlement emits a fresh output rather than consolidating.
+      expect(utxo.getKarmaValue(idle.userId)).toBe(decayed.value + settled.value);
     } finally {
       vi.doUnmock('../../src/config.js');
     }
@@ -1654,7 +1707,7 @@ describe('block-apply mint provenance', () => {
     // The same funnel as the test above, read through the *clock* rather than
     // the outpoints (NODE_INTERFACE → "Identity Records").
     //
-    // `applyKarmaDecay` (§12) runs before `processVouchCooldowns` (§12b), so at
+    // `deriveKarmaDecay` (§12) runs before `processVouchCooldowns` (§12b), so at
     // height 4 decay writes `lastDecayBlock: 4` and the cooldown settlement's
     // mint then writes `lastActivityBlock: 4` — both halves land on the same
     // height, in that order.
@@ -1692,14 +1745,27 @@ describe('block-apply mint provenance', () => {
       db.initDb(':memory:');
 
       const utxo = await importUtxo();
-      const vouchStore = await import('../../src/store/vouch-cooldowns.js');
       const records = await import('../../src/store/identity-records.js');
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
 
       const idle = makeTestIdentity();
       const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
-      vouchStore.insertVouchCooldown(idle.userId, target.userId, 4, VOUCH_KARMA_AMOUNT);
+      // ⛔ An escrow BOX due at height 4, not a cooldown row: the obligation is
+      // committed state now (ARCHITECTURE → Vouch boxes). `target` no longer
+      // reaches it — the box carries only the owner and the release height.
+      utxo.insertBox(
+        seedProvenance<VouchEscrowBox>(
+          {
+            boxType: 'vouch_escrow' as const,
+            value: VOUCH_KARMA_AMOUNT,
+            owner: idle.userId,
+            releaseAtBlock: 4,
+          },
+          1,
+          89,
+        ),
+      );
 
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
@@ -1710,11 +1776,10 @@ describe('block-apply mint provenance', () => {
       expect(records.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 4,
-        likeCarry: 0n,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });
-      const afterAdjacency = utxo.getKarmaBox(idle.userId)!.value;
+      const afterAdjacency = utxo.getKarmaValue(idle.userId);
 
       // Height 5: within the threshold of the height-4 activity — quiet, and
       // the clock must not drift.
@@ -1722,22 +1787,20 @@ describe('block-apply mint provenance', () => {
       expect(records.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 4,
-        likeCarry: 0n,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });
-      expect(utxo.getKarmaBox(idle.userId)!.value).toBe(afterAdjacency);
+      expect(utxo.getKarmaValue(idle.userId)).toBe(afterAdjacency);
 
       // Heights 6 then 7: (7 − 4) >= 3, so decay resumes at 7 and not before.
       expect(await mineNextBlock(bc)).not.toBeNull();
-      expect(utxo.getKarmaBox(idle.userId)!.value).toBe(afterAdjacency);
+      expect(utxo.getKarmaValue(idle.userId)).toBe(afterAdjacency);
 
       expect(await mineNextBlock(bc)).not.toBeNull();
-      expect(utxo.getKarmaBox(idle.userId)!.value).toBeLessThan(afterAdjacency);
+      expect(utxo.getKarmaValue(idle.userId)).toBeLessThan(afterAdjacency);
       expect(records.getIdentityRecord(idle.userId)).toEqual({
         lastActivityBlock: 4,
         lastDecayBlock: 7,
-        likeCarry: 0n,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });

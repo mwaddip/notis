@@ -224,7 +224,6 @@ describe('the invite at block application', () => {
     records.putIdentityRecord(invitee.userId, {
       lastActivityBlock: before?.lastActivityBlock ?? invitedAtBlock,
       lastDecayBlock: before?.lastDecayBlock ?? 0,
-      likeCarry: before?.likeCarry ?? 0n,
       invitedAtBlock,
       lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
     });
@@ -304,7 +303,6 @@ describe('the invite at block application', () => {
     const mempool = await importMempool();
     const engine = await import('../../src/services/utxo-engine.js');
     const records = await importRecords();
-    const cooldowns = await import('../../src/store/vouch-cooldowns.js');
 
     mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
     expect(await mineOne()).not.toBeNull();
@@ -317,7 +315,9 @@ describe('the invite at block application', () => {
       getKarmaBox: utxo.getKarmaBox,
       getKarmaValue: utxo.getKarmaValue,
       getIdentityRecord: records.getIdentityRecord,
-      hasActiveVouchCooldown: cooldowns.hasActiveVouchCooldown,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
     expect(result.valid).toBe(false);
@@ -507,7 +507,6 @@ describe('the invite at block application', () => {
     records.putIdentityRecord(invitee.userId, {
       lastActivityBlock: 1,
       lastDecayBlock: 0,
-      likeCarry: 0n,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
     });
@@ -540,8 +539,16 @@ describe('the invite at block application', () => {
    * confirm-and-like-in-one-block is the valid shape. Distinct posts and
    * distinct likers, because one liker may like a post once.
    */
-  /** Pool one pre-seeded batch of posts and their likes, and mine it. */
-  async function poolLikes(batch: LikeFixture[]) {
+  /**
+   * Pool one pre-seeded batch of posts and their likes, and mine it.
+   *
+   * ⛔ **`author` is a parameter now, because the like's marker names it.** The
+   * engine pins the marker against `block_topology` (NODE_INTERFACE → Karma
+   * transition rules), so every post in a batch is the same author's — which is
+   * already true of these fixtures: the invitee is the one earning the likes
+   * that vest their inviter's bond.
+   */
+  async function poolLikes(batch: LikeFixture[], inviteeKey: Uint8Array) {
     const posts = await import('../../src/store/posts.js');
     const mempool = await importMempool();
     const types = await import('@dagsocial/types');
@@ -549,7 +556,7 @@ describe('the invite at block application', () => {
     for (const { post, postTx, postId, liker, karma } of batch) {
       posts.insertPost(postId, post, types.encodePost(post));
       mempool.insertUtxoTx(postTx, 1000);
-      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), 1000);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, inviteeKey), 1000);
     }
 
     expect(await mineOne()).not.toBeNull();
@@ -592,9 +599,9 @@ describe('the invite at block application', () => {
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
     // Block A: three likes. Block B: two more. floor(5 / 5) = 1 karma vested.
-    await poolLikes(likeBatches[0]!);
+    await poolLikes(likeBatches[0]!, invitee.userId);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(3n);
-    await poolLikes(likeBatches[1]!);
+    await poolLikes(likeBatches[1]!, invitee.userId);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived)
       .toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
 
@@ -621,7 +628,7 @@ describe('the invite at block application', () => {
     const invitedAtBlock = (await mineOne())!.header.height;
     await startProbation(invitee, invitedAtBlock);
 
-    const postIds = await poolLikes(likeBatches[0]!);
+    const postIds = await poolLikes(likeBatches[0]!, invitee.userId);
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
     expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
 
@@ -759,7 +766,7 @@ describe('the invite at block application — decay adjacency', () => {
       // row is written when this transaction applies (NODE_INTERFACE → Post
       // transactions). Both ride the same block, in this order.
       mempool.insertUtxoTx(postTx, 1000);
-      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId), 1000);
+      mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, invitee.userId), 1000);
     }
     await mine();
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;

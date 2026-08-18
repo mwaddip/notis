@@ -74,6 +74,15 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint): AnyBox {
     case 'genesis_proof':
       base['payload'] = new Uint8Array([1, 2, 3]);
       break;
+    case 'like_accrual':
+      // ⛔ `author` is attribution, not authorization, and it is not the `owner`
+      // column (TYPES_INTERFACE → LikeAccrualBox).
+      base['author'] = OWNER;
+      break;
+    case 'vouch_escrow':
+      base['owner'] = OWNER;
+      base['releaseAtBlock'] = 100;
+      break;
     // `emission`, `treasury`, `fee` and `karma_pool` have no owner and no
     // per-type fields — the shared prefix is the whole box.
     default:
@@ -111,12 +120,14 @@ const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   // ⛔ Karma-bearing and still `false`. The pool holds what is NOT in
   // circulation, so counting it would have the supply account for itself.
   karma_pool: false,
-  // ⚠ Karma-bearing by their type definitions and `false` because no transition
-  // emits either yet, so neither can hold karma. The unit that first emits one
-  // adds it to the supply set (TYPES_INTERFACE → LikeAccrualBox /
-  // VouchEscrowBox).
-  like_accrual: false,
-  vouch_escrow: false,
+  // ⛔ **Both `true` now, and each was added on its own evidence.** A marker
+  // holds the liker's karma between the like and the settlement and a carry box
+  // holds an author's remainder across blocks; an escrow holds a voucher's stake
+  // for the length of its cooldown. All three are karma a holder is waiting on
+  // rather than karma that stopped existing — the standing of `bond`,
+  // `post_lock` and `vouch` (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  like_accrual: true,
+  vouch_escrow: true,
 };
 
 describe('the karma supply is accounted at the box mutation choke point', () => {
@@ -127,11 +138,12 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     vi.resetModules();
   });
 
-  // ⚠ **`like_accrual` and `vouch_escrow` are answered by the predicate alone.**
-  // Nothing creates either yet, so the store carries no row mapping for them and
-  // there is no choke-point behaviour to measure — the unit that first emits one
-  // adds both together (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
-  const UNPRODUCED: ReadonlySet<string> = new Set(['like_accrual', 'vouch_escrow']);
+  // ⛔ **NOTHING IS PARKED ON THE PREDICATE ANY MORE.** Both types are produced
+  // now — the like transaction emits a marker, the unvouch emits an escrow — so
+  // the store carries a row mapping for each and both are measured at the choke
+  // point like every other karma-bearing type
+  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  const UNPRODUCED: ReadonlySet<string> = new Set<string>();
 
   for (const [boxType, counts] of Object.entries(COUNTS_AS_CIRCULATING)) {
     if (UNPRODUCED.has(boxType)) {

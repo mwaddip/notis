@@ -209,6 +209,9 @@ interface EngineDeps {
   getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   getKarmaValue: (owner: Uint8Array) => bigint;
   getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
+  hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
+  vouchCooldownBlocks: number;
+  getTopologyAuthor: (postId: string) => Uint8Array | null;
   runInTransaction: (fn: () => void) => void;
 }
 
@@ -236,6 +239,18 @@ function makeEngineDeps(
     // The invite-create once-ever bar reads it (NODE_INTERFACE → "Bond
     // transition rules"), and this suite runs the real engine.
     getIdentityRecord: (id: Uint8Array) => recordsModule.getIdentityRecord(id),
+    hasActiveVouchEscrow: (voucherId: Uint8Array) =>
+      utxoModule.hasActiveVouchEscrow(voucherId),
+    vouchCooldownBlocks: 2,
+    // ⛔ The like marker's author pin, read from `block_topology` and never
+    // `dag_posts.author` (ARCHITECTURE → Likes). This suite runs the real
+    // engine end to end, so it resolves the real row.
+    getTopologyAuthor: (postId: string) => {
+      const row = db
+        .prepare('SELECT author FROM block_topology WHERE post_id = ?')
+        .get(postId) as { author: string } | undefined;
+      return row ? new Uint8Array(Buffer.from(row.author, 'hex')) : null;
+    },
     runInTransaction: (fn: () => void) => {
       (db.transaction(fn) as () => void)();
     },
@@ -287,6 +302,19 @@ describe('full-pipeline', () => {
     const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'full-pipeline like test');
     const posts = await importPosts();
     posts.insertPost(postId, post, encodePost(post));
+    // ⛔ **The target must be CONFIRMED before a like can be built, and that is
+    // new.** The like's marker names the post's author, and the author is
+    // knowable only from `block_topology` — which an applied block writes
+    // (NODE_INTERFACE → Karma transition rules). A like on an unconfirmed post
+    // is unbuildable, so the row a confirming block would write is seeded here
+    // rather than the flow being reordered around it.
+    const topology = await import('../../src/store/topology.js');
+    topology.insertBlockTopology(
+      postId,
+      post.parentRefs ?? [],
+      Buffer.from(author.userId).toString('hex'),
+      1,
+    );
 
     // ---- Step 0: Confirm the target first. A like on an unconfirmed post is
     // invalid at apply, so the canonical flow likes an already-confirmed post;
@@ -309,6 +337,14 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: liker.userId,
         } as KarmaBox,
+        // ⛔ **The marker carries the cost.** The like conserves: its karma moves
+        // into a `LikeAccrualBox` earmarked for the author rather than leaving
+        // the ledger (ARCHITECTURE → The conservation axiom, third shape).
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          author: author.userId,
+        } as unknown as KarmaBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -379,6 +415,16 @@ describe('full-pipeline', () => {
     const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'multi-op test');
     const posts = await importPosts();
     posts.insertPost(postId, post, encodePost(post));
+    // ⛔ The target must be confirmed before a like can be built — the marker
+    // names its author, and `block_topology` is the only source for that
+    // (NODE_INTERFACE → Karma transition rules).
+    const topology = await import('../../src/store/topology.js');
+    topology.insertBlockTopology(
+      postId,
+      post.parentRefs ?? [],
+      Buffer.from(author.userId).toString('hex'),
+      1,
+    );
 
     // Insert sub-block into mempool
     const mempool = await importMempool();
@@ -394,6 +440,14 @@ describe('full-pipeline', () => {
           value: changeVal,
           owner: liker.userId,
         } as KarmaBox,
+        // ⛔ **The marker carries the cost.** The like conserves: its karma moves
+        // into a `LikeAccrualBox` earmarked for the author rather than leaving
+        // the ledger (ARCHITECTURE → The conservation axiom, third shape).
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          author: author.userId,
+        } as unknown as KarmaBox,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
