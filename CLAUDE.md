@@ -50,10 +50,11 @@ contract first, then implement against it, never the reverse.
 
 - `contracts/ARCHITECTURE.md` — system overview, invariants, protocol versioning
 - `contracts/TYPES_INTERFACE.md` — types package
+- `contracts/WIRE_INTERFACE.md` — stream framing codec
 - `contracts/VALIDATION_INTERFACE.md` — stateless checks
 - `contracts/NODE_INTERFACE.md` — API, verifier, store interface
 - `contracts/NET_INTERFACE.md` — libp2p, gossip, sync
-- `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/SUBBLOCK_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
+- `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
 - `contracts/WEB_INTERFACE.md` — web client (Phase 2)
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
 - `contracts/SPECIAL.md` — per-subsystem attention weights

@@ -14,8 +14,8 @@ context — read it and the linked docs before touching code.
    `services/block-apply.ts`, `store/`, `state/`, `routes/` and `public/index.html` each override the
    package default. Apply the profile of the component you are editing, not the package line.
 6. The interface contract(s) for your task — `../../contracts/NODE_INTERFACE.md` always, plus
-   `VALIDATION_INTERFACE.md`, `MEMPOOL_INTERFACE.md`, `MINING_INTERFACE.md`, `SUBBLOCK_INTERFACE.md`,
-   `JOURNAL_EVENTS.md` as relevant.
+   `VALIDATION_INTERFACE.md`, `MEMPOOL_INTERFACE.md`, `MINING_INTERFACE.md`, `JOURNAL_EVENTS.md`
+   as relevant.
 7. Your task's spec in `../../docs/specs/` (e.g. `2026-08-01-node-value-integrity.md`).
 
 ## What Notis is
