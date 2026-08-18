@@ -74,6 +74,21 @@ export interface Config {
   // Vouch and invite timing
   vouchCooldownBlocks: number;
   inviteProbationBlocks: number;
+  /**
+   * The faucet identity this network's genesis seeds, or absent where it seeds
+   * none. **The absence IS the gate** — mainnet omits it, so no faucet identity
+   * exists in mainnet state and there is nothing for a service to hold a key
+   * to. The node holds the public key and never a secret
+   * (ARCHITECTURE → "What varies per network, and what must not").
+   */
+  faucetPublicKey?: string;
+  /**
+   * The inclusive range an invite's bond may take, and therefore the range the
+   * grant may take — the two are one value. A cap rather than a mechanism, so
+   * it varies per network.
+   */
+  inviteBondMin: bigint;
+  inviteBondMax: bigint;
   // Karma decay
   karmaStaleThresholdBlocks: number;
   karmaDecayIntervalBlocks: number;
@@ -122,6 +137,9 @@ export function loadConfig(): Readonly<Config> {
     // decay pair below.
     vouchCooldownBlocks: profile.vouchCooldownBlocks,
     inviteProbationBlocks: profile.inviteProbationBlocks,
+    faucetPublicKey: profile.faucetPublicKey,
+    inviteBondMin: profile.inviteBondMin,
+    inviteBondMax: profile.inviteBondMax,
     // Karma decay — per-network timescale from the profile, universal economics
     // from the constants (ARCHITECTURE §Network Identity: "compress time, never
     // economics"). None of these is readable from the environment.
@@ -148,6 +166,8 @@ export function loadConfig(): Readonly<Config> {
 
   assertMiningAuthConfigured(cfg);
   assertGenesisProofPayloadEncodable(cfg);
+  assertInviteBondRangeInhabited(cfg);
+  assertFaucetPublicKeyWellFormed(cfg);
   assertOrderingTargetAboveFloor(cfg);
   assertProofHistoryCoversReorgDepth(cfg);
 
@@ -311,14 +331,41 @@ function assertGenesisProofPayloadEncodable(cfg: Config): void {
 }
 
 /**
- * Allow-list of faucet-bearing networks (NODE_INTERFACE §Faucet). Fail-closed:
- * a network added later mints nothing until someone names it here. All three
- * faucet gates — the system-box provisioning (index.ts), the /faucet mount
- * (server.ts) and the /credits/faucet handler guard (routes/utxo.ts) — call
- * this one predicate so they cannot drift.
+ * A ceiling under its floor admits no bond at all. Refused at load rather than
+ * left to surface as every invite being rejected, which reads as a broken
+ * invite rule rather than as the configuration at fault.
  */
-export function isFaucetNetwork(networkType: NetworkType): boolean {
-  return networkType === 'testnet' || networkType === 'devnet';
+function assertInviteBondRangeInhabited(cfg: Config): void {
+  if (cfg.profile.inviteBondMax < cfg.profile.inviteBondMin) {
+    throw new Error(
+      `Network "${cfg.networkType}" caps the invite bond at ${cfg.profile.inviteBondMax} ` +
+        `but floors it at ${cfg.profile.inviteBondMin}. Refusing to start — no bond ` +
+        'value satisfies both.',
+    );
+  }
+}
+
+/**
+ * The faucet identity's public key, where the profile names one.
+ *
+ * ⛔ **A key that decodes to the wrong bytes forks rather than fails.** Genesis
+ * seeds this identity's boxes and those boxes reach `genesisStateRoot`, so a
+ * malformed key produces a state root no peer shares — a node that cannot join
+ * the network it was pointed at. Refused at load, where the verdict names the
+ * configuration.
+ *
+ * Absence is not malformation: mainnet omits the field, and that omission is
+ * the whole of its faucet gate.
+ */
+function assertFaucetPublicKeyWellFormed(cfg: Config): void {
+  const faucetKey = cfg.profile.faucetPublicKey;
+  if (faucetKey === undefined) return;
+  if (!/^[0-9a-f]{64}$/.test(faucetKey)) {
+    throw new Error(
+      `Invalid faucetPublicKey for network "${cfg.networkType}" — must be 64 ` +
+        'lowercase hex characters, an Ed25519 public key',
+    );
+  }
 }
 
 /**
