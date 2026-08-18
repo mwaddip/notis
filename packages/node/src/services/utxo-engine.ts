@@ -1398,22 +1398,13 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  * the two `.reduce`s below carry no type predicate (NODE_INTERFACE →
  * `validateTx` step 7).
  *
- * Karma and credits are minted or burned only in block-application paths (like
- * settlement, decay, bond settlement), never inside a user transaction. The
- * body enforces strict equality with **one stated exception and no others**
- * (NODE_INTERFACE → `validateTx` step 7):
- *
- * - **The like burn** — `likeTarget` present ⟺ the transaction burns
- *   exactly `LIKE_KARMA_COST` from karma inputs. This is the biconditional's
- *   value half: `likeTarget` absent ⇒ zero deficit as always (strict equality
- *   below), present ⇒ exactly that deficit — never more, never less, never a
- *   surplus. The only value-destroying user transaction.
- *
- * Every other karma-side spend conserves structurally: an unvouch produces a
- * `VouchEscrowBox` carrying the consumed vouch's value, an invite produces a
- * `BondBox`, and a post produces a `PostLockBox`. The fee on a credit
- * transfer is a `FeeBox` output the transaction names, so the miner's share
- * is inside the output sum rather than a gap between two sums.
+ * ⛔ **No exceptions.** `sum(inputs) == sum(outputs)`, unconditionally
+ * (NODE_INTERFACE → `validateTx` step 7). Every user-transaction shape has
+ * somewhere for its value to go: a like's cost lands in a `LikeAccrualBox`,
+ * an unvouch's stake in a `VouchEscrowBox`, an invite's bond in a `BondBox`,
+ * a post's lock in a `PostLockBox`, and a credit transfer's fee in a
+ * `FeeBox`. Karma and credits are minted or burned only in
+ * block-application paths, never inside a user transaction.
  *
  * ⛔ **The invite carries NO surplus.** An invite is `karma → karma + bond` and
  * conserves like any other karma transaction; the invitee's grant — the bond's

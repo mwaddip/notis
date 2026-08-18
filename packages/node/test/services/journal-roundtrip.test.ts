@@ -31,6 +31,7 @@ import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
   changeBoxOf,
+  FIXTURE_BOND_KARMA,
   fixturePostId,
   fixtureProvenance,
   hex,
@@ -663,115 +664,92 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     }
   });
 
-  it('identity record: decay writes the clock and the journal reverts exactly', async () => {
+  it('identity record: an invite grant writes two record mutations and the journal reverts both', async () => {
     // The record mutation class: a block that writes the same record key
-    // **twice**, which is what exercises `proverFeedFromJournal`'s
-    // collapse-duplicates-to-last-write rule. Without a second write to one
-    // key, deleting that rule outright kills nothing.
-    //
-    // With the escrow settlement removed, the only record write at this height
-    // is decay's `lastDecayBlock` (§12). The collapse rule is still exercised
-    // by any block that writes a record key more than once (e.g. an invite
-    // grant followed by decay for the same identity).
-    // Thresholds shrunk through a test-local config mock — see the section
-    // comment above for why this replaced the env overrides.
-    try {
-      vi.doMock('../../src/config.js', async () => {
-        const actual = await vi.importActual<typeof import('../../src/config.js')>(
-          '../../src/config.js',
-        );
-        return {
-          ...actual,
-          config: Object.freeze({
-            ...actual.config,
-            karmaStaleThresholdBlocks: 3,
-            karmaDecayIntervalBlocks: 1,
-          }),
-        };
-      });
-      vi.resetModules();
+    // **twice**, exercising `proverFeedFromJournal`'s collapse-to-last-write
+    // rule. An invite grant fires two writers at one height for the invitee:
+    //   1. The settlement's karma output → `insertBox` → `bumpActivityClock`
+    //      → `putIdentityRecord(lastActivityBlock: H)`
+    //   2. The invite loop (§11a-ii) → `putIdentityRecord(invitedAtBlock: H)`
+    const db = await importDb();
+    db.initDb(':memory:');
 
-      const db = await importDb();
-      db.initDb(':memory:');
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    const utxo = await importUtxo();
+    utxo.insertBox(makeKarmaBox(100n, inviter.userId, 0));
 
-      const idle = makeTestIdentity();
-      const utxo = await importUtxo();
-      utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
+    const recordStore = await import('../../src/store/identity-records.js');
 
-      const recordStore = await import('../../src/store/identity-records.js');
-      const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
-      // ⛔ An escrow BOX maturing at height 4 — the same block decay first fires
-      // in. The obligation is committed state now, so the fixture seeds a box
-      // rather than a node-local row (ARCHITECTURE → Vouch boxes). `target` no
-      // longer reaches it: the box carries only the owner and the release
-      // height.
-      utxo.insertBox(
-        seedProvenance<VouchEscrowBox>(
-          {
-            boxType: 'vouch_escrow' as const,
-            value: VOUCH_KARMA_AMOUNT,
-            createdAtBlock: 0,
-            owner: idle.userId,
-            releaseAtBlock: 4,
-          },
-          1,
-          87,
-        ),
+    const handle = await activateProver();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(plainConfig);
+
+    // Block 1: preamble — seeds emission/pool boxes into the store and prover.
+    await mineNextBlock(bc);
+    const pre = takeSnapshot(db, handle, 1);
+    expect(recordStore.getIdentityRecord(invitee.userId)).toBeNull();
+
+    const inviteTx: UtxoTransaction = {
+      inputs: [utxo.getKarmaBox(inviter.userId)!.id!],
+      outputs: [
+        {
+          boxType: 'karma',
+          value: 100n - FIXTURE_BOND_KARMA,
+          createdAtBlock: 2,
+          owner: inviter.userId,
+        } as KarmaBox,
+        {
+          boxType: 'bond',
+          value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 2,
+          inviterId: inviter.userId,
+          inviteePublicKey: invitee.userId,
+        } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(inviteTx, inviter.privateKey, hex(inviter.userId));
+
+    const classBlock = await makeApplicableBlock({ height: 2, utxoTxs: [inviteTx] });
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
+
+    // Two record mutations for the invitee at one height.
+    const journalStore = await import('../../src/store/journal.js');
+    const recordMutations = journalStore
+      .getBlockJournal(2)!
+      .mutations.filter(
+        (m) => m.kind === 'record' &&
+          Buffer.from(m.identityId).toString('hex') === hex(invitee.userId),
       );
+    expect(recordMutations).toHaveLength(2);
+    expect(recordMutations[0]).toMatchObject({ record: { lastActivityBlock: 2 } });
+    expect(recordMutations[1]).toMatchObject({ record: { invitedAtBlock: 2 } });
 
-      const handle = await activateProver();
-      const bc = await importBlockCreator();
-      bc.startBlockCreator(plainConfig);
+    // The TREE holds the LAST write — the collapse rule's subject.
+    const key = Buffer.from(recordStore.identityRecordKey(invitee.userId), 'hex');
+    const serialize = await import('../../src/state/serialize-box.js');
+    const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
+    if (!lookup.success) throw new Error('lookup failed');
+    expect(lookup.value).toBeTruthy();
+    expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
+      lastActivityBlock: 2,
+      lastDecayBlock: 0,
+      invitedAtBlock: 2,
+      lifetimeLikesReceived: 0n,
+    });
+    handle.prover.prover.generateProof();
 
-      await mineNextBlock(bc);
-      await mineNextBlock(bc);
-      await mineNextBlock(bc);
-      const pre = takeSnapshot(db, handle, 3);
-      // Non-vacuity: no record exists yet, so the class block creates one.
-      expect(recordStore.getIdentityRecord(idle.userId)).toBeNull();
+    await assertRoundTrip(db, handle, pre, classBlock);
 
-      const classBlock = await mineNextBlock(bc);
-      expect(classBlock).not.toBeNull();
-
-      // Without the escrow release, only the decay clock write lands.
-      const journalStore = await import('../../src/store/journal.js');
-      const recordMutations = journalStore
-        .getBlockJournal(4)!
-        .mutations.filter((m) => m.kind === 'record');
-      expect(recordMutations).toHaveLength(1);
-      expect(recordMutations[0]).toMatchObject({ record: { lastDecayBlock: 4 } });
-
-      // The tree holds the single write.
-      const key = Buffer.from(recordStore.identityRecordKey(idle.userId), 'hex');
-      const serialize = await import('../../src/state/serialize-box.js');
-      const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
-      if (!lookup.success) throw new Error('lookup failed');
-      expect(lookup.value).toBeTruthy();
-      expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
-        lastActivityBlock: 0,
-        lastDecayBlock: 4,
-        invitedAtBlock: 0,
-        lifetimeLikesReceived: 0n,
-      });
-      // The lookup above recorded proof directions; drop them so the digest
-      // comparisons below see the same prover state the block left behind.
-      handle.prover.prover.generateProof();
-
-      // Round-trip. Assertion 1 (DB identity) now covers `identity_records`,
-      // and `pre.state` has none — so a revert that restored the intra-block
-      // intermediate instead of "absent" fails there, which is exactly the
-      // reverse-replay property. `assertRoundTrip` re-applies at the end.
-      await assertRoundTrip(db, handle, pre, classBlock!);
-
-      // Re-apply landed the single write back.
-      expect(recordStore.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 0,
-        lastDecayBlock: 4,
-        invitedAtBlock: 0,
-        lifetimeLikesReceived: 0n,
-      });
-    } finally {
-      vi.doUnmock('../../src/config.js');
-    }
+    // Re-apply landed the record back on the last write.
+    expect(recordStore.getIdentityRecord(invitee.userId)).toEqual({
+      lastActivityBlock: 2,
+      lastDecayBlock: 0,
+      invitedAtBlock: 2,
+      lifetimeLikesReceived: 0n,
+    });
   });
 });

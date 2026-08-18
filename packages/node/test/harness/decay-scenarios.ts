@@ -122,9 +122,11 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
     ],
   },
   {
-    // A vouch escrow maturing at the same height decay fires. The escrow
-    // survives (the owner reclaims it separately), so decay is the only
-    // mutation for this identity at this height.
+    // The harness fabricates a karma mint at the same height decay fires;
+    // production reaches the same adjacency via like settlement landing at a
+    // decay height. The two record writes (`lastActivityBlock` from the mint's
+    // `bumpActivityClock`, `lastDecayBlock` from `commitDecayClocks`) target
+    // one key and must collapse correctly.
     name: 'decay-then-mint-same-block',
     cfg: FAST,
     owners: ['alice'],
