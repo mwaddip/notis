@@ -281,21 +281,6 @@ hr{border:none;border-top:1px solid var(--border);margin:6px 0}
       <button id="createInviteBtn" class="small">Create Invite</button>
     </div>
     <div id="inviteResult"></div>
-
-    <h4>Claim</h4>
-    <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Invite Box ID:</div>
-    <div class="row">
-      <input id="inviteBoxIdInput" placeholder="Invite Box ID" style="flex:1;font-size:11px">
-      <button id="claimInviteBtn" class="small">Claim</button>
-    </div>
-    <div id="claimResult"></div>
-
-    <h4>Cancel Invite</h4>
-    <div class="row">
-      <input id="cancelInviteBoxIdInput" placeholder="Invite Box ID" style="flex:1;font-size:11px">
-      <button id="cancelInviteBtn" class="small danger">Cancel</button>
-    </div>
-    <div id="cancelInviteResult"></div>
   </div>
 </div>
 
@@ -1171,6 +1156,13 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
  *
  * **The bond is not an input.** Nothing user-signed can spend one; block
  * application settles it at the probation deadline the claim starts.
+ */
+/**
+ * ⚠ **Neither builder is called by this page, and both are held from outside
+ * it**: the node's invite route suite lifts them by name and fails loudly when
+ * a declaration it names is gone. The transitions they build are unreachable —
+ * the routes that accepted them do not exist — so these go when that suite
+ * stops naming them.
  */
 function buildClaimInviteTx(inviteBoxId, inviteePubKeyHex) {
   const karmaOutput = {
@@ -2499,10 +2491,8 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     if (res.ok) {
       result.innerHTML = `
         <span class="result-msg ok">Invite created!</span>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Invite Box ID (the invitee claims this):</div>
-        <pre>${esc(data.inviteBoxId)}</pre>
         <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Bond Box ID:</div>
-        <pre>${esc(data.bondBoxId)}</pre>
+        <pre>${esc(String(data.bondBoxId || ''))}</pre>
         <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Invitee:</div>
         <pre>${esc(inviteeHex)}</pre>
       `;
@@ -2510,104 +2500,6 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
       loadIdentityStatus();
     } else {
       result.innerHTML = `<span class="result-msg err">${esc(data.reason || data.error || 'invite creation failed')}</span>`;
-    }
-  } catch (e) {
-    result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-document.getElementById('claimInviteBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('claimInviteBtn');
-  const result = document.getElementById('claimResult');
-  const inviteBoxId = document.getElementById('inviteBoxIdInput').value.trim();
-
-  if (!inviteBoxId) {
-    result.innerHTML = '<span class="result-msg err">Invite Box ID is required</span>';
-    return;
-  }
-
-  btn.disabled = true;
-  result.innerHTML = '<span class="result-msg">Claiming invite...</span>';
-
-  try {
-    // One step and one signature — the invitee's. The id is the whole of what
-    // the inviter passes on: no secret exists, and the bond is not this
-    // transaction's to name.
-    const inviteePubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildClaimInviteTx(inviteBoxId, inviteePubKeyHex);
-    const { signature } = await signTxId(tx);
-    tx.signatures[inviteePubKeyHex] = signature;
-
-    const res = await fetch(API + '/invites/claim', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tx }, jsonBigint),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      result.innerHTML = `
-        <span class="result-msg ok">Invite claimed!</span>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">User ID:</div>
-        <pre>${esc(data.userId)}</pre>
-        <div style="font-size:11px;color:var(--inkMute);margin:4px 0">Karma Box ID:</div>
-        <pre>${esc(data.karmaBoxId)}</pre>
-      `;
-      loadStatus();
-      loadIdentityStatus();
-    } else {
-      result.innerHTML = `<span class="result-msg err">${esc(data.reason || data.error || 'claim failed')}</span>`;
-    }
-  } catch (e) {
-    result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-document.getElementById('cancelInviteBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('cancelInviteBtn');
-  const result = document.getElementById('cancelInviteResult');
-  const inviteBoxId = document.getElementById('cancelInviteBoxIdInput').value.trim();
-
-  if (!inviteBoxId) {
-    result.innerHTML = '<span class="result-msg err">Invite Box ID is required</span>';
-    return;
-  }
-
-  btn.disabled = true;
-  result.innerHTML = '<span class="result-msg">Cancelling invite...</span>';
-
-  try {
-    // Resolved against the signer's own open invites first: only the inviter
-    // may cancel, and "not one of yours" is a clearer answer than the 403 a
-    // signature check gives. `cancelInvite` owns the verdict either way.
-    const inviteState = await fetchInviteState();
-    if (!inviteState.open.some(b => b.id === inviteBoxId)) {
-      result.innerHTML = `<span class="result-msg err">Invite ${inviteBoxId.slice(0, 16)}... is not one of your open invites</span>`;
-      return;
-    }
-
-    // The bond is not named: it returns to the inviter through block
-    // application, and no user transaction can spend one.
-    const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildCancelInviteTx(inviteBoxId);
-    const { signature } = await signTxId(tx);
-    tx.signatures[pubKeyHex] = signature;
-
-    const res = await fetch(API + '/invites/cancel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tx }, jsonBigint),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      result.innerHTML = `<span class="result-msg ok">Invite cancelled! TxId: ${(data.txId || '').slice(0, 16)}...</span>`;
-      loadStatus();
-      loadIdentityStatus();
-    } else {
-      result.innerHTML = `<span class="result-msg err">${esc(data.reason || data.error || 'cancel failed')}</span>`;
     }
   } catch (e) {
     result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
@@ -2650,6 +2542,10 @@ window.addEventListener('popstate', (event) => {
 setInterval(() => {
   if (!threadPostId) loadFeed();
   loadStatus();
+  // Balances move only when a block settles a transaction, and no action of the
+  // holder's does it — a faucet grant, an invite settlement and a like all
+  // arrive from elsewhere. Polled here because nothing else would show them.
+  loadIdentityStatus();
 }, 5000);
 setInterval(loadStatus, 15000);
 </script>
