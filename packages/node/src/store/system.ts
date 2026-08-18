@@ -96,7 +96,13 @@ export function initSystemKeypair(): SystemKeypair {
 // System karma box
 // ---------------------------------------------------------------------------
 
-const SYSTEM_KARMA_INITIAL = 50_000n;
+/**
+ * The faucet identity's stake. **Capacity is this divided by the bond it
+ * chooses** — at testnet's 1000 ceiling that is 1,000 invites, at the 25 floor
+ * 40,000. It does not replenish: the bond returns only as an invitee earns
+ * likes, and what does not vest goes to the pool.
+ */
+const SYSTEM_KARMA_INITIAL = 1_000_000n;
 
 /**
  * The height a genesis mint commits to.
