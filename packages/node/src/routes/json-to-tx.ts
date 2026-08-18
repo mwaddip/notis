@@ -5,8 +5,15 @@ import { ClientError } from '../services/client-error.js';
 /**
  * Fields in box types whose runtime value is Uint8Array but arrive as hex
  * strings over the JSON HTTP API.  We convert them back during deserialisation.
+ *
+ * ⛔ **EXPORTED SO THE DEMO UI's MIRROR CAN BE CHECKED AGAINST IT.** The page
+ * writes these same fields through `b32Either`, and a field it names that this
+ * set does not — or the reverse — produces bytes the node disagrees with rather
+ * than an error either side reports (NODE_INTERFACE → the demo UI is a second
+ * implementation of consensus rules). `ui-crypto-mirror.test.ts` is the only
+ * gate that reaches that file.
  */
-const BINARY_BOX_FIELDS = new Set([
+export const BINARY_BOX_FIELDS = new Set([
   'owner',            // KarmaBox, CreditBox, PostLockBox, VouchEscrowBox
   // ⚠ **`BondBox` alone.** These read `InviteBox, BondBox` until the invite
   // collapsed into one transaction and the type was deleted; a list of holders

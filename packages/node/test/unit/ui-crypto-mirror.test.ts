@@ -28,6 +28,7 @@ import { fixturePostId } from '../helpers.js';
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { BINARY_BOX_FIELDS } from '../../src/routes/json-to-tx.js';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
@@ -442,7 +443,12 @@ interface UiCrypto {
     targetIdHex: string,
     pubKeyHex: string,
   ) => Record<string, unknown>;
-  buildUnvouchTx: (vouchBoxId: string) => Record<string, unknown>;
+  buildUnvouchTx: (
+    vouchBoxId: string,
+    stakeValue: bigint,
+    pubKeyHex: string,
+    releaseAtBlock: number,
+  ) => Record<string, unknown>;
   buildCreateInviteTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     pubKeyHex: string,
@@ -458,6 +464,7 @@ interface UiCrypto {
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     targetPostId: string,
     pubKeyHex: string,
+    authorHex: string,
   ) => UtxoTransaction;
   predictOutputBoxId: (tx: Record<string, unknown>, index: number) => string;
   recordPendingKarmaChange: (tx: Record<string, unknown>) => void;
@@ -952,7 +959,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const targetPostId = '11'.repeat(32);
 
     for (const tx of [
-      ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex),
+      ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex, LIKE_AUTHOR_HEX),
       ui.buildPostTx(karmaBox, 5n, GOLDEN_POST_HEX_AUTHOR, pubKeyHex),
     ]) {
       const asTx = tx as unknown as Record<string, unknown>;
@@ -989,7 +996,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     expect(view.boxes.map(b => b.boxId)).toEqual([changeId]);
     expect(view.total).toBe(95n);
 
-    const like = ui.buildLikeTx(view, '22'.repeat(32), pubKeyHex);
+    const like = ui.buildLikeTx(view, '22'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX);
     expect(like.inputs).toEqual([changeId]);
     expect(like.inputs).not.toContain(confirmed.boxId);
   });
@@ -1001,7 +1008,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     let view: KarmaView = { total: 100n, boxes: [{ ...confirmed }] };
 
     for (let i = 0; i < 3; i++) {
-      const tx = ui.buildLikeTx(view, '33'.repeat(32), pubKeyHex);
+      const tx = ui.buildLikeTx(view, '33'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX);
       ui.recordPendingKarmaChange(tx as unknown as Record<string, unknown>);
       view = ui.applyPendingKarmaChange({ total: 100n, boxes: [{ ...confirmed }] });
     }
@@ -1016,7 +1023,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const pubKeyHex = '02'.repeat(32);
     const confirmed = { boxId: 'c1'.repeat(32), value: 100n };
 
-    const tx = ui.buildLikeTx({ total: 100n, boxes: [{ ...confirmed }] }, '44'.repeat(32), pubKeyHex);
+    const tx = ui.buildLikeTx({ total: 100n, boxes: [{ ...confirmed }] }, '44'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX);
     ui.recordPendingKarmaChange(tx as unknown as Record<string, unknown>);
     const changeId = ui.predictOutputBoxId(tx as unknown as Record<string, unknown>, 0);
 
@@ -1045,11 +1052,11 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const pubKeyHex = '02'.repeat(32);
     const a = ui.buildLikeTx(
       { total: 100n, boxes: [{ boxId: 'a1'.repeat(32), value: 100n }] },
-      '11'.repeat(32), pubKeyHex,
+      '11'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX,
     ) as unknown as Record<string, unknown>;
     const b = ui.buildLikeTx(
       { total: 100n, boxes: [{ boxId: 'a2'.repeat(32), value: 100n }] },
-      '11'.repeat(32), pubKeyHex,
+      '11'.repeat(32), pubKeyHex, LIKE_AUTHOR_HEX,
     ) as unknown as Record<string, unknown>;
 
     expect(ui.predictOutputBoxId(a, 0)).not.toBe(ui.predictOutputBoxId(b, 0));
@@ -1183,6 +1190,27 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
 // is no post PoW. What the id derivation needs from the page instead is `u32BE`,
 // and it is total on both sides for the same M-5 reason the nonce tail was.
 // ---------------------------------------------------------------------------
+
+/**
+ * The consensus author a like's marker names, and the voucher an escrow returns
+ * to — both plain 32-byte hex, which is what the page carries and what
+ * `b32Either` widens for.
+ *
+ * ⛔ **`LIKE_AUTHOR_HEX` is the TARGET POST'S author, never the liker's.** The
+ * engine pins it against `block_topology` (NODE_INTERFACE → Karma transition
+ * rules); a fixture reusing `pubKeyHex` here would be asserting a shape the node
+ * refuses.
+ */
+const LIKE_AUTHOR_HEX = '7a'.repeat(32);
+const VOUCHER_HEX = '02'.repeat(32);
+/**
+ * A release height clearing the engine's floor.
+ *
+ * ⚠ **Only the FLOOR is a rule** — a transaction cannot commit to the height of
+ * the block that will carry it, so the page overshoots and the node accepts it
+ * (NODE_INTERFACE → Vouch transition rules).
+ */
+const ESCROW_RELEASE = 1000;
 
 describe('demo UI ↔ @dagsocial/types u32BE', () => {
   // Including the out-of-domain sentinel, because the writer is total on both
@@ -1328,6 +1356,30 @@ function constInitScopes(masked: string): Scope[] {
   return scopes;
 }
 
+/**
+ * Every field name the page hands to `b32Either` inside `boxTypeFields`.
+ *
+ * ⛔ **Read out of the source rather than listed here.** A hand-kept list is a
+ * third copy of the same fact and would go stale in the same way the two it
+ * checks can — the point of this gate is that nobody has to remember to update
+ * it when a box type lands.
+ *
+ * Scoped to `boxTypeFields` deliberately: `postFieldBytes` also calls
+ * `b32Either`, but a post's `author` is decoded by `jsonToPost` rather than by
+ * the box-field set, so including it would make this compare two things that
+ * are not the same rule.
+ */
+function extractUiBinaryFields(): Set<string> {
+  const src = readFileSync(INDEX_HTML, 'utf8');
+  const start = src.indexOf('function boxTypeFields(box) {');
+  if (start === -1) throw new Error('extractUiBinaryFields: boxTypeFields not found');
+  const end = src.indexOf('\n}', start);
+  const body = src.slice(start, end);
+  const fields = new Set<string>();
+  for (const m of body.matchAll(/b32Either\(\s*box\.(\w+)/g)) fields.add(m[1]!);
+  return fields;
+}
+
 function auditByteConstruction(): { findings: Finding[]; unattributed: Finding[] } {
   const src = readFileSync(INDEX_HTML, 'utf8');
   const masked = maskSource(src);
@@ -1393,7 +1445,7 @@ describe('demo UI vouch builders ↔ the id the node derives', () => {
   });
 
   it('an unvouch the page builds hashes to the same txId the node derives', () => {
-    const tx = ui.buildUnvouchTx('ab'.repeat(32));
+    const tx = ui.buildUnvouchTx('ab'.repeat(32), VOUCH_KARMA_AMOUNT, VOUCHER_HEX, ESCROW_RELEASE);
     expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
   });
 
@@ -1422,12 +1474,26 @@ describe('demo UI vouch builders ↔ the id the node derives', () => {
     expect(change.value + vouch.value).toBe(7n);
   });
 
-  it('the unvouch spends one named box and produces nothing', () => {
-    // Zero outputs is the shape: the stake is escrowed and re-minted at cooldown
-    // maturity, so a change output here would be the same karma twice.
-    const decoded = overTheWire(ui.buildUnvouchTx('ab'.repeat(32)));
+  it('the unvouch spends one named box and escrows exactly what it held', () => {
+    // ⛔ **One escrow output, carrying the CONSUMED BOX'S value.** The stake is
+    // held rather than destroyed, so the transaction conserves — and the value
+    // is the box's, never `VOUCH_KARMA_AMOUNT`, which is what makes the round
+    // trip conservation-structural rather than true by coincidence of the cast
+    // pin (TYPES_INTERFACE → VouchEscrowBox).
+    const decoded = overTheWire(
+      ui.buildUnvouchTx('ab'.repeat(32), VOUCH_KARMA_AMOUNT, VOUCHER_HEX, ESCROW_RELEASE),
+    );
     expect(decoded.inputs).toEqual(['ab'.repeat(32)]);
-    expect(decoded.outputs).toEqual([]);
+    expect(decoded.outputs).toHaveLength(1);
+    const escrow = decoded.outputs[0] as VouchEscrowBox;
+    expect(escrow.boxType).toBe('vouch_escrow');
+    expect(escrow.value).toBe(VOUCH_KARMA_AMOUNT);
+    expect(Buffer.from(escrow.owner).toString('hex')).toBe(VOUCHER_HEX);
+    expect(escrow.releaseAtBlock).toBe(ESCROW_RELEASE);
+
+    // ⚠ **It CONSERVES**, which the zero-output shape did not — the sum is what
+    // `validateTx` step 5 checks unconditionally now.
+    expect(escrow.value).toBe(VOUCH_KARMA_AMOUNT);
   });
 });
 
@@ -1517,6 +1583,43 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
     }
   });
 
+});
+
+describe('demo UI binary fields ↔ the HTTP edge that decodes them', () => {
+  /**
+   * ⛔ **THE ONE MIRROR THAT FAILS SILENTLY, AND THIS IS ITS ONLY GATE.**
+   *
+   * The page writes a box's key fields through `b32Either`, which takes hex or
+   * bytes, and sends them as HEX over the JSON API. `json-to-tx.ts` decodes them
+   * back by FIELD NAME. A field the page writes that `BINARY_BOX_FIELDS` does
+   * not name arrives as a string, dies at `validateTx`'s step-4 schema, and the
+   * box is unbuildable over HTTP — while every service-level test stays green,
+   * because those pass raw `Uint8Array` objects and never cross that edge.
+   *
+   * ⚠ **Every OTHER mirror in this file fails loudly**: a wrong tag or a missing
+   * field arm gives a wrong id, and a wrong id is a refused transaction with a
+   * reason. This one gives bytes that merely disagree.
+   *
+   * ⛔ **And the field name is what makes it invisible to a search.**
+   * `BINARY_BOX_FIELDS` is keyed on the field, not the box type, so
+   * `grep like_accrual` reaches every site that matters except this one.
+   */
+  const UI_BINARY_FIELDS = extractUiBinaryFields();
+
+  it('every binary field the page writes is one the HTTP edge decodes', () => {
+    const undecoded = [...UI_BINARY_FIELDS].filter((f) => !BINARY_BOX_FIELDS.has(f));
+    expect(undecoded).toEqual([]);
+  });
+
+  it('finds fields at all — an extractor that matches nothing proves nothing', () => {
+    // Non-vacuity. The assertion above is trivially true over an empty set, and
+    // an extractor silently stopping at a refactor is exactly how this gate
+    // would go quiet.
+    expect(UI_BINARY_FIELDS.size).toBeGreaterThan(5);
+    for (const known of ['owner', 'voucherId', 'targetId', 'author']) {
+      expect([...UI_BINARY_FIELDS]).toContain(known);
+    }
+  });
 });
 
 describe('demo UI byte-construction completeness audit', () => {

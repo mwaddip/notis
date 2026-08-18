@@ -116,6 +116,7 @@ async function request(
       },
       networkType: 'testnet',
       inviteProbationBlocks: 43200,
+      vouchCooldownBlocks: 60,
     };
 
     const app = express();
@@ -235,6 +236,10 @@ describe('blocks routes', () => {
     // this one is not (NODE_INTERFACE → Status).
     expect(body.inviteProbationBlocks).toBe(43200);
     expect(typeof body.inviteProbationBlocks).toBe('number');
+    // ⛔ Served for the same reason: the escrow floor a client must reproduce is
+    // per-network (NODE_INTERFACE → Vouch transition rules). A plain number too.
+    expect(body.vouchCooldownBlocks).toBe(60);
+    expect(typeof body.vouchCooldownBlocks).toBe('number');
   });
 
   // -------------------------------------------------------------------------

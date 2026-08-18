@@ -145,6 +145,13 @@ export function createRouter(deps: VouchesDeps): Router {
           // (the "every stored box has an id" invariant), so the assertion is
           // on the store's guarantee, not on hope.
           boxId: v.id!,
+          // ⛔ **The stake, because the escrow must carry the CONSUMED BOX'S
+          // value and never `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE →
+          // VouchEscrowBox). A client that used the constant would build a
+          // conserving transaction for every box the cast pin holds for and a
+          // non-conserving one for any that it does not — which is exactly the
+          // coincidence the rule exists to remove.
+          value: v.value.toString(),
           voucherId: Buffer.from(v.voucherId).toString('hex'),
           targetId: Buffer.from(v.targetId).toString('hex'),
         })),

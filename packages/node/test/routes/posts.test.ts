@@ -72,6 +72,7 @@ async function request(
       getLikersForPost,
       getAncestors,
       getSubtree,
+      getTopologyAuthor: () => null,
       getCurrentHeight,
       admitTx: insertUtxoTx,
       validateTx: (tx: UtxoTransaction, height: number) => {
@@ -360,6 +361,13 @@ describe('posts routes', () => {
         kind: 'stump',
         id: prunedRootId,
         author: Buffer.from(stumpAuthor).toString('hex'),
+        // ⛔ **A SECOND author field, and the two are different questions.**
+        // `author` is the DAG's — content this node may have pruned — while
+        // `confirmedAuthor` comes from `block_topology` and is what a like's
+        // marker must name (ARCHITECTURE → Likes). `null` here because this
+        // fixture seeds no topology row; on a confirmed post the two agree, and
+        // where they do not it is a placeholder row carrying a zeroed `author`.
+        confirmedAuthor: null,
         ...stumpScalars,
       });
       // The regression this closes: a 64-hex string, not an index-keyed object.

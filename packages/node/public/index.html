@@ -380,6 +380,20 @@ let feedFilter = 'all';
 const pendingLikes = new Set();
 /** Current block height from /status */
 let currentBlockHeight = 0;
+/**
+ * `NetworkProfile.vouchCooldownBlocks`, from /status.
+ *
+ * ⛔ **SERVED, NEVER A CONSTANT.** It is per-network, and the escrow an unvouch
+ * outputs is pinned against `height + vouchCooldownBlocks`
+ * (NODE_INTERFACE → Vouch transition rules) — a client holding the mainnet
+ * number would be refused on devnet with a generic invalid-transition error and
+ * no way to learn it guessed.
+ *
+ * The default is the mainnet value, matching `/challenge`'s discipline: on a
+ * missing field the page overshoots the floor rather than undershooting it, and
+ * only the floor is a rule.
+ */
+let vouchCooldownBlocks = 60;
 
 // ===========================================================================
 // Hex / byte utilities
@@ -653,8 +667,14 @@ function postFieldBytes(content, authorBytes, parentRefs, protocolVersion, times
  * reserved `0xff` for a type it does not know, and `boxTypeFields` then writes
  * no tail — so a missing entry does not throw, it derives a **wrong id that
  * looks well-formed**.
+ *
+ * ⛔ **TAG 2 IS A HOLE, AND IT STAYS ONE.** `invite` held it and the type is
+ * gone; a tag is never renumbered and never reused, so the next box type takes
+ * the lowest FREE number rather than the gap (TYPES_INTERFACE → InviteBox).
+ * Filling it would give a new type the identity preimage of every historical
+ * invite box.
  */
-const BOX_TYPE_TAGS = { karma: 0, credit: 1, invite: 2, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6, emission: 7, treasury: 8, fee: 9, karma_pool: 10 };
+const BOX_TYPE_TAGS = { karma: 0, credit: 1, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6, emission: 7, treasury: 8, fee: 9, karma_pool: 10, like_accrual: 11, vouch_escrow: 12 };
 
 /**
  * Byte-identical mirror of `canonicalBoxBytes` in @dagsocial/types
@@ -699,11 +719,6 @@ function boxTypeFields(box) {
         b32Either(box.owner, 32),
         opt(box.lockedUntilBlock, vlqU),
       ]);
-    case 'invite':
-      return concatUint8Arrays([
-        b32Either(box.inviterId, 32),
-        b32Either(box.inviteePublicKey, 32),
-      ]);
     case 'genesis_proof':
       // `lp`, not `b32Either`: the payload is variable-length and opaque to
       // consensus. No builder on this page carries one — the box is written by
@@ -711,8 +726,10 @@ function boxTypeFields(box) {
       // stays the byte-only primitive it is in @dagsocial/types.
       return lp(box.payload);
     case 'bond':
-      // Byte-for-byte the `invite` arm above. `enum8Tag(BOX_TYPE_TAGS, …)` is
-      // field 1, so the tag is the whole of what separates the two leaves.
+      // ⛔ **Byte-for-byte the `vouch` arm below** — two `b32` fields naming two
+      // parties, in both cases. `enum8Tag(BOX_TYPE_TAGS, …)` is field 1, so the
+      // tag is the whole of what separates the two leaves, and an encoder that
+      // dropped it would give a bond and a vouch with the same parties one id.
       return concatUint8Arrays([
         b32Either(box.inviterId, 32),
         b32Either(box.inviteePublicKey, 32),
@@ -729,6 +746,22 @@ function boxTypeFields(box) {
       return concatUint8Arrays([
         b32Either(box.voucherId, 32),
         b32Either(box.targetId, 32),
+      ]);
+    case 'like_accrual':
+      // ⛔ **`author` is attribution, not authorization** — no signature by it
+      // unlocks the box, and only the block's settlement transaction consumes
+      // one (TYPES_INTERFACE → LikeAccrualBox). The encoder makes no
+      // distinction: it is a `b32` field like `vouch.targetId`, which names a
+      // party that cannot spend either.
+      return b32Either(box.author, 32);
+    case 'vouch_escrow':
+      return concatUint8Arrays([
+        b32Either(box.owner, 32),
+        // `vlqU`, total by sentinel, which is the standing every height in this
+        // format has (TYPES_INTERFACE → Totality). Required rather than
+        // optional, so there is no `opt` tag: an escrow always names the height
+        // it releases at, and absence is not a state it has.
+        vlqU(box.releaseAtBlock),
       ]);
     case 'emission':
     case 'treasury':
@@ -766,10 +799,9 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *
  *   | 1 | inputs          | arr(ids, b32)                                |
  *   | 2 | outputs         | arr(candidates, canonicalBoxBytes)           |
- *   | 3 | preimages       | opt(arr(sorted, b32(boxId) ‖ lp(preimage)))  |
- *   | 4 | protocolVersion | vlqU                                         |
- *   | 5 | likeTarget      | opt(b32)                                     |
- *   | 6 | post            | opt(postFieldBytes)                          |
+ *   | 3 | protocolVersion | vlqU                                         |
+ *   | 4 | likeTarget      | opt(b32)                                     |
+ *   | 5 | post            | opt(postFieldBytes)                          |
  *
  * Three properties this layout secures, each of which a bare concatenation
  * would not (TYPES_INTERFACE → Layout — UtxoTransaction):
@@ -786,19 +818,18 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *    `opt`: `postFieldBytes` is self-delimiting and it is last.
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
+ *
+ * ⛔ **FIVE FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
+ * returns, so a field here that the node does not write makes the browser sign
+ * an id the node never computes — and **every transaction this page builds is
+ * rejected**, with nothing in the repo able to see it (NODE_INTERFACE → the
+ * demo UI is a second implementation of consensus rules).
  */
 function computeTxId(tx) {
   const combined = concatUint8Arrays([
     TX_ID_DOMAIN,
     arr(tx.inputs, (input) => b32Hex(input, 32)),
     arr(tx.outputs, (output) => canonicalBoxBytes(output)),
-    opt(tx.preimages, (preimages) => arr(Object.keys(preimages).sort(), (boxId) => {
-      const preimage = preimages[boxId];
-      return concatUint8Arrays([
-        b32Hex(boxId, 32),
-        lp(typeof preimage === 'string' ? hex2buf(preimage) : preimage),
-      ]);
-    })),
     vlqU(tx.protocolVersion),
     opt(tx.likeTarget, (target) => b32Hex(target, 32)),
     // ⛔ The post payload, and this is what makes the post id derivable: a
@@ -1028,13 +1059,29 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
 }
 
 /**
- * Build a like tx: karma boxes in, ONE karma box out at
- * `total − LIKE_KARMA_COST`, `likeTarget` naming the post. The burn is the
- * deficit — a like is a transaction, never a box, and `computeTxId` writes
- * `likeTarget` as `opt(b32)`, so the target is inside the bytes the signature
- * covers and a relay cannot re-point the like.
+ * Build a like tx: karma boxes in, one karma box out at
+ * `total − LIKE_KARMA_COST`, one `LikeAccrualBox` marker carrying that cost,
+ * and `likeTarget` naming the post.
+ *
+ * ⛔ **THE LIKE CONSERVES — there is no deficit.** Its cost moves into a marker
+ * earmarked for the author rather than leaving the ledger, and the block's
+ * settlement pays it out: per `x` likes the author receives `x − 1` and the
+ * remainder returns to the karma pool (ARCHITECTURE → The conservation axiom,
+ * third shape; ARCHITECTURE → Likes). ⚠ **A marker MUST carry its value** — a
+ * zero-value one would mean the karma ceased to exist between this transaction
+ * and the settlement.
+ *
+ * ⛔ **`author` MUST BE THE CONSENSUS AUTHOR, from `confirmedAuthor`.** The
+ * engine pins the marker against `block_topology`, so a marker built from the
+ * feed's `author` — the DAG's field — is refused, and a placeholder row carries
+ * a ZEROED author, which would earmark the liker's karma to the zero key
+ * (NODE_INTERFACE → Karma transition rules). The caller resolves it and this
+ * function will not guess.
+ *
+ * `computeTxId` writes `likeTarget` as `opt(b32)`, so the target is inside the
+ * bytes the signature covers and a relay cannot re-point the like.
  */
-function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
+function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
   const selected = selectBoxes(karmaBox.boxes, LIKE_KARMA_COST);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   const newKarmaValue = selectedTotal - LIKE_KARMA_COST;
@@ -1045,9 +1092,15 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
     owner: pubKeyHex,
   };
 
+  const accrualOutput = {
+    boxType: 'like_accrual',
+    value: LIKE_KARMA_COST,
+    author: authorHex,
+  };
+
   return {
     inputs: selected.map(b => b.boxId),
-    outputs: [karmaOutput],
+    outputs: [karmaOutput, accrualOutput],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     likeTarget: targetPostId,
@@ -1055,16 +1108,19 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex) {
 }
 
 /**
- * Build an invite-create tx: karma boxes → karma(change) + invite + bond.
+ * Build an invite tx: karma boxes → karma(change) + bond.
  *
- * **The inviter pays only the bond.** `INVITE_KARMA_AMOUNT` is minted at the
- * claim and never leaves their balance, so creation conserves value like any
- * other transaction (ARCHITECTURE → Invite creation).
+ * ⛔ **TWO OUTPUTS, AND THE BOND IS THE WHOLE REQUEST.** The invite is one
+ * transaction — there is no claim and no cancel — so the bond carries the
+ * invitee's key and the block's settlement grants them `INVITE_KARMA_AMOUNT`
+ * out of the karma pool (ARCHITECTURE → Invite System).
+ *
+ * **The inviter pays only the bond**, and the grant is a pool spend rather than
+ * a mint, so this transaction conserves value like any other
+ * (ARCHITECTURE → The conservation axiom).
  *
  * The invitee's key is supplied out of band and there is no secret anywhere in
  * the flow: each party proves who they are with an ordinary Ed25519 signature.
- * Both new boxes carry the inviter's id and that same key — the pair IS the
- * pairing, and `checkTransitions` rejects a create whose two boxes disagree.
  */
 function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
   const selected = selectBoxes(karmaBox.boxes, INVITE_BOND_KARMA);
@@ -1076,21 +1132,14 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
     owner: pubKeyHex,
   };
 
-  // An invite holds nothing: the karma it names does not exist until the claim
-  // mints it, and `checkTransitions` pins the value at 0 (TYPES_INTERFACE →
-  // InviteBox). Either named key may sign — the invitee's signature claims,
-  // the inviter's cancels.
-  const inviteOutput = {
-    boxType: 'invite',
-    value: 0n,
-    inviterId: pubKeyHex,
-    inviteePublicKey: inviteePubKeyHex,
-  };
-
   // The bond is the whole cost of an invite and the network's only sybil price.
-  // No user transaction consumes it at all: block application settles it at
-  // the probation deadline, or returns it when the invite is cancelled
-  // (TYPES_INTERFACE → BondBox).
+  // No user transaction consumes it at all: block application settles it at the
+  // probation deadline, returning the vested part to the inviter and the
+  // remainder to the karma pool (TYPES_INTERFACE → BondBox;
+  // ARCHITECTURE → Bond outcomes).
+  //
+  // ⛔ **`inviteePublicKey` is what the settlement grants against.** One bond is
+  // one grant, so this field is the whole of the request the block reads.
   const bondOutput = {
     boxType: 'bond',
     value: INVITE_BOND_KARMA,
@@ -1100,7 +1149,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
 
   return {
     inputs: selected.map(b => b.boxId),
-    outputs: [karmaOutput, inviteOutput, bondOutput],
+    outputs: [karmaOutput, bondOutput],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
@@ -1189,21 +1238,43 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
 }
 
 /**
- * Build an unvouch tx: one VouchBox → nothing.
+ * Build an unvouch tx: one VouchBox → one VouchEscrowBox.
  *
- * **Zero outputs is the shape, not an omission.** The staked karma is escrowed
- * by block application and re-minted to the voucher at cooldown maturity, so a
- * change output here would be karma minted twice; `checkTransitions` requires
- * `outputs.length === 0` and exactly one VouchBox input, and conservation
- * exempts precisely that shape.
+ * ⛔ **THE STAKE IS HELD, NOT DESTROYED.** The escrow is an ordinary output of
+ * this transaction, so both ends are named inside it and the transaction
+ * conserves like any other (ARCHITECTURE → Vouch boxes; ARCHITECTURE → How a
+ * source and a sink get named, first shape). `checkTransitions` requires
+ * exactly one VouchBox input and exactly one `vouch_escrow` output.
  *
- * The box id is not derivable client-side — it comes from
- * `GET /vouches?voucher=<hex>`, the one read surface that names it.
+ * ⛔ **`value` IS THE CONSUMED BOX'S, never `VOUCH_KARMA_AMOUNT`.** The round
+ * trip has to be conservation-**structural** rather than true by coincidence of
+ * the cast pin holding for the box in hand (TYPES_INTERFACE → VouchEscrowBox).
+ *
+ * ⚠ **`releaseAtBlock` is pinned by a FLOOR, not an equality.** A transaction
+ * cannot commit to the height of the block that will carry it, so the engine
+ * requires only `>= height + vouchCooldownBlocks`
+ * (NODE_INTERFACE → Vouch transition rules). Releasing late costs only the
+ * voucher; releasing early is what the cooldown exists to prevent.
+ *
+ * ⛔ **Every input is a PARAMETER, none a page global.** The caller resolves the
+ * box id, the stake and the release height, so this function is a pure
+ * `tx → bytes` mirror the crypto suite can lift and check — a builder closing
+ * over `currentBlockHeight` would be unreachable from the only gate this file
+ * has (NODE_INTERFACE → the demo UI is a second implementation of consensus
+ * rules).
+ *
+ * The box id and its value are not derivable client-side — both come from
+ * `GET /vouches?voucher=<hex>`, the one read surface that names them.
  */
-function buildUnvouchTx(vouchBoxId) {
+function buildUnvouchTx(vouchBoxId, stakeValue, pubKeyHex, releaseAtBlock) {
   return {
     inputs: [vouchBoxId],
-    outputs: [],
+    outputs: [{
+      boxType: 'vouch_escrow',
+      value: stakeValue,
+      owner: pubKeyHex,
+      releaseAtBlock,
+    }],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
@@ -1704,7 +1775,18 @@ document.getElementById('unvouchBtn').addEventListener('click', async () => {
     }
 
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildUnvouchTx(vouch.boxId);
+    // The stake as the node reports it, never the constant — see
+    // `buildUnvouchTx`. `BigInt` because the listing carries it as a decimal
+    // string, like every other value on this API.
+    // ⛔ `+ 1` because this transaction is POOLED: it applies at the next height
+    // at the earliest, and the engine's floor is read at the height that carries
+    // it. Overshooting is legal — only the floor is a rule.
+    const tx = buildUnvouchTx(
+      vouch.boxId,
+      BigInt(vouch.value),
+      pubKeyHex,
+      currentBlockHeight + 1 + vouchCooldownBlocks,
+    );
     const { signature } = await signTxId(tx);
     tx.signatures[pubKeyHex] = signature;
 
@@ -1749,8 +1831,21 @@ async function doLike(targetPostId) {
       return false;
     }
 
+    // ⛔ **The consensus author, fetched rather than taken off the feed.** The
+    // marker names it and the engine pins it against `block_topology`, so the
+    // DAG's `author` is the wrong source even when it agrees
+    // (NODE_INTERFACE → Karma transition rules). `null` means no block has
+    // confirmed the post, and a like on an unconfirmed post is unbuildable —
+    // the marker has no author to name.
+    const postRes = await fetch(API + '/posts/' + encodeURIComponent(targetPostId));
+    const confirmedAuthor = postRes.ok ? (await postRes.json()).confirmedAuthor : null;
+    if (!confirmedAuthor) {
+      setStatus('Post not confirmed yet — a like names its author, so wait a block', 'error');
+      return false;
+    }
+
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildLikeTx(karmaBox, targetPostId, pubKeyHex);
+    const tx = buildLikeTx(karmaBox, targetPostId, pubKeyHex, confirmedAuthor);
     const { signature } = await signTxId(tx);
     tx.signatures[pubKeyHex] = signature;
 
@@ -2167,6 +2262,8 @@ async function loadStatus() {
     // it hides the debug surfaces, which is the safe failure direction.
     networkType = s.networkType || 'mainnet';
     currentBlockHeight = s.blockHeight || 0;
+    // `??`, not `||`: a served `0` is a legal cooldown and must not fall back.
+    vouchCooldownBlocks = s.vouchCooldownBlocks ?? vouchCooldownBlocks;
 
     bar.innerHTML = `
       <div><span>Network:</span> <strong style="color:${networkType === 'testnet' ? 'var(--inkMute)' : networkType === 'devnet' ? 'var(--clay)' : 'var(--greenText)'}">${esc(networkType)}</strong></div>

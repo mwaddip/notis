@@ -220,6 +220,7 @@ export function createApp(config: Config): express.Express {
       getLikersForPost: store.getLikersForPost,
       getAncestors: store.getAncestors,
       getSubtree: store.getSubtree,
+      getTopologyAuthor: store.getTopologyAuthor,
       admitTx,
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
@@ -428,6 +429,7 @@ export function createApp(config: Config): express.Express {
       },
       networkType: config.networkType,
       inviteProbationBlocks: config.inviteProbationBlocks,
+      vouchCooldownBlocks: config.vouchCooldownBlocks,
     }),
   );
 
