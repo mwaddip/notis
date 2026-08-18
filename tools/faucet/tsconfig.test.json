@@ -1,0 +1,24 @@
+{
+  // Typechecks the TEST tree as well as src (ARCHITECTURE → "Build and test
+  // resolution"). Three constraints, all of them structural:
+  //
+  //  1. Extends `tsconfig.base.json` DIRECTLY, not this package's
+  //     `tsconfig.json`. `extends` cannot *unset* an inherited value, so that
+  //     config's `rootDir: "src"` would survive and every cross-package `paths`
+  //     file below it becomes TS6059 ("not under rootDir").
+  //  2. Declares `paths` mapping `@dagsocial/*` to the sibling's `src/index.ts`,
+  //     mirroring the vitest alias. Without it `tsc` follows `exports` to the
+  //     sibling's `dist` types, and the suite is checked against types it never
+  //     executes.
+  //  3. ⛔ The prefix is `../../packages/*`, NOT `../*` — this package lives
+  //     under `tools/`, one directory deeper than every package, so the sibling
+  //     packages are one level further up than they are for a package.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@dagsocial/*": ["../../packages/*/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

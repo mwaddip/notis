@@ -172,6 +172,37 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@22.20.1)
 
+  tools/faucet:
+    dependencies:
+      '@dagsocial/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      express:
+        specifier: ^4.21.0
+        version: 4.22.2
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.0
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      '@types/supertest':
+        specifier: ^7.2.1
+        version: 7.2.1
+      supertest:
+        specifier: ^7.2.2
+        version: 7.2.2
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.20)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@22.20.1)
+
 packages:
 
   '@cbor-extract/cbor-extract-darwin-arm64@2.2.2':
