@@ -325,7 +325,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: 0,
         owner: voucher.pub,
-        releaseAtBlock: 1000,
+        releaseAtBlock: 0 + 2,
       } as never],
       signatures: {},
       protocolVersion: 1,

@@ -47,6 +47,12 @@ import type { IdentityRecord } from '../store/identity-records.js';
  * conservation yes — which is what makes the separation load-bearing rather
  * than tidy.
  */
+// A vouch output's `createdAtBlock` may not lag the carrying block by more
+// than this many heights. Without a lower bound a client sets
+// `createdAtBlock = 0` and the escrow releases at `0 + cooldown`, which is
+// effectively immediate on any chain past that height.
+const VOUCH_CAST_HEIGHT_WINDOW = 5;
+
 export const KARMA_TRANSITION_TYPES = [
   'karma',
   'bond',
@@ -468,6 +474,17 @@ function checkTransitions(
               `${VOUCH_MIN_BALANCE}, voucher holds ${voucherBalance}`,
           };
         }
+        // The vouch's cast height may not lag the carrying block by more than
+        // VOUCH_CAST_HEIGHT_WINDOW blocks. Step 6 enforces the upper bound
+        // (createdAtBlock <= currentBlockHeight).
+        if (vouchOut.createdAtBlock < currentBlockHeight - VOUCH_CAST_HEIGHT_WINDOW) {
+          return {
+            valid: false,
+            error:
+              `Vouch createdAtBlock ${vouchOut.createdAtBlock} is more than ` +
+              `${VOUCH_CAST_HEIGHT_WINDOW} blocks behind height ${currentBlockHeight}`,
+          };
+        }
       } else if (bondOutputs.length > 0) {
         // karma → karma + bond — the whole invite (NODE_INTERFACE → the
         // transition table). ⛔ **The bond IS the request**: the block's
@@ -646,21 +663,19 @@ function checkTransitions(
           error: `Unvouch escrow owner must be the consumed VouchBox's voucherId`,
         };
       }
-      // ⛔ **A LOWER BOUND, DELIBERATELY, AND IT IS THE ONE DIRECTION THAT
-      // MATTERS.** A transaction's output cannot commit to the height of the
-      // block that will carry it — the pool does not know which block that is —
-      // so an exact pin would make every unvouch valid in exactly one block and
-      // stale everywhere else. Releasing LATE costs only the voucher; releasing
-      // early is what the cooldown exists to prevent, so only the floor is a
-      // rule. The settlement releases at `releaseAtBlock`, so a voucher who
-      // overshoots waits longer and gains nothing.
-      const floor = currentBlockHeight + deps.vouchCooldownBlocks;
-      if (escrow.releaseAtBlock < floor) {
+      // ⛔ **An EXACT PIN on the consumed vouch's cast height.** The cooldown
+      // runs from when the vouch was cast, not from when it is withdrawn — a
+      // long endorsement must not penalise the voucher. The escrow releases at
+      // exactly `createdAtBlock + vouchCooldownBlocks`, so the derivation is
+      // deterministic from the consumed box alone.
+      const expected = staked.createdAtBlock + deps.vouchCooldownBlocks;
+      if (escrow.releaseAtBlock !== expected) {
         return {
           valid: false,
           error:
-            `Unvouch escrow releases at ${escrow.releaseAtBlock}, before the ` +
-            `earliest legal height ${floor}`,
+            `Unvouch escrow releaseAtBlock must be ${expected} ` +
+            `(vouch cast at ${staked.createdAtBlock} + cooldown ` +
+            `${deps.vouchCooldownBlocks}), got ${escrow.releaseAtBlock}`,
         };
       }
       return { valid: true };

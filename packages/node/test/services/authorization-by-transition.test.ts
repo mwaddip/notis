@@ -97,7 +97,7 @@ const CASES: readonly Case[] = [
       value: 1n,
       createdAtBlock: 0,
       owner: h.userId,
-      releaseAtBlock: 1000,
+      releaseAtBlock: 0 + 2,
     } as never],
     signer: 'holder',
   },

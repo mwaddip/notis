@@ -763,7 +763,7 @@ describe('block-apply journal recording', () => {
             value: VOUCH_KARMA_AMOUNT,
             createdAtBlock: 0,
             owner: voucher.userId,
-            releaseAtBlock: 1 + testConfig.vouchCooldownBlocks,
+            releaseAtBlock: 0 + testConfig.vouchCooldownBlocks,
           },
         ],
         signatures: {},

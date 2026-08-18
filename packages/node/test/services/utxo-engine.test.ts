@@ -957,13 +957,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 10,
         owner: ownerPubKey,
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 10,
         voucherId: ownerPubKey,
         targetId: targetPubRaw,
       };
@@ -1085,7 +1085,7 @@ describe('validateAndApplyTx', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 8,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
       };
@@ -1100,9 +1100,9 @@ describe('validateAndApplyTx', () => {
       const escrow = {
         boxType: 'vouch_escrow' as const,
         value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 0,
+        createdAtBlock: 10,
         owner: ownerPubKey,
-        releaseAtBlock: 10 + 2,
+        releaseAtBlock: 8 + 2,
       };
       const tx = buildSignedTx([vouchBoxId], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
       const result = validateAndApplyTx(deps, tx, 10);
@@ -1110,6 +1110,138 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
       expect(deps.getBox(vouchBoxId)).toBeNull();
+    });
+
+    it('unvouch escrow dates from the vouch cast, not the unvouch height', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const CAST_HEIGHT = 5;
+      const UNVOUCH_HEIGHT = 20;
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: CAST_HEIGHT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 1);
+      storeInsertBox(seeded);
+
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: UNVOUCH_HEIGHT,
+        owner: ownerPubKey,
+        releaseAtBlock: CAST_HEIGHT + 2,
+      };
+      const tx = buildSignedTx([seeded.id!], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, UNVOUCH_HEIGHT);
+      expect(result.valid).toBe(true);
+    });
+
+    it('refuses an escrow whose releaseAtBlock derives from the unvouch height', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const CAST_HEIGHT = 5;
+      const UNVOUCH_HEIGHT = 20;
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: CAST_HEIGHT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 1);
+      storeInsertBox(seeded);
+
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: UNVOUCH_HEIGHT,
+        owner: ownerPubKey,
+        releaseAtBlock: UNVOUCH_HEIGHT + 2,
+      };
+      const tx = buildSignedTx([seeded.id!], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, UNVOUCH_HEIGHT);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('releaseAtBlock must be');
+    });
+
+    it('VouchBox is spendable at any height — withdrawal is never timing-gated', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const CAST_HEIGHT = 100;
+      const SPEND_HEIGHT = 101;
+      const vouchBox: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: CAST_HEIGHT,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const seeded = seedProvenance<VouchBox>(vouchBox, 1);
+      storeInsertBox(seeded);
+
+      const escrow = {
+        boxType: 'vouch_escrow' as const,
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: SPEND_HEIGHT,
+        owner: ownerPubKey,
+        releaseAtBlock: CAST_HEIGHT + 2,
+      };
+      const tx = buildSignedTx([seeded.id!], [escrow as AnyBox], ownerPrivKey, ownerPubKey);
+      const result = validateAndApplyTx(deps, tx, SPEND_HEIGHT);
+      expect(result.valid).toBe(true);
+    });
+
+    it('refuses a vouch cast backdated by more than VOUCH_CAST_HEIGHT_WINDOW', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const HEIGHT = 20;
+      const vouchOut: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT - 6,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const karmaChange: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: 100n - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [karmaChange as AnyBox, vouchOut as AnyBox],
+        ownerPrivKey, ownerPubKey,
+      );
+      const result = validateAndApplyTx(deps, tx, HEIGHT);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('blocks behind height');
+    });
+
+    it('accepts a vouch cast backdated by exactly VOUCH_CAST_HEIGHT_WINDOW', () => {
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const HEIGHT = 20;
+      const vouchOut: CandidateOf<VouchBox> = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT - 5,
+        voucherId: ownerPubKey,
+        targetId: rawPublicKey(targetPub),
+      };
+      const karmaChange: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: 100n - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: HEIGHT,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [karmaChange as AnyBox, vouchOut as AnyBox],
+        ownerPrivKey, ownerPubKey,
+      );
+      const result = validateAndApplyTx(deps, tx, HEIGHT);
+      expect(result.valid).toBe(true);
     });
 
     it('does not extend the zero-output exception to karma or like inputs', () => {

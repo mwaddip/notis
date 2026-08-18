@@ -340,13 +340,13 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'karma',
           value: w.voucherKarma.value - VOUCH_KARMA_AMOUNT,
-          createdAtBlock: 0,
+          createdAtBlock: 1,
           owner: w.voucher.userId,
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
-          createdAtBlock: 0,
+          createdAtBlock: 1,
           voucherId: w.voucher.userId,
           targetId: w.target.userId,
         } as VouchBox,
@@ -372,9 +372,9 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'vouch_escrow',
           value: vouchBox!.value,
-          createdAtBlock: 0,
+          createdAtBlock: 2,
           owner: w.voucher.userId,
-          releaseAtBlock: 2 + COOLDOWN,
+          releaseAtBlock: 1 + COOLDOWN,
         } as VouchEscrowBox,
       ],
       signatures: {},
@@ -393,7 +393,7 @@ describe('the conservation axiom holds over a chain', () => {
     // Mine to the release height. The settlement consumes the escrow and returns
     // the karma to its owner.
     const heldBefore = utxo.getKarmaValue(w.voucher.userId);
-    for (let h = 3; h <= 2 + COOLDOWN; h++) {
+    for (let h = 3; h <= 1 + COOLDOWN; h++) {
       await applyAndConserve(
         await makeApplicableBlock({ height: h }),
         `block ${h} on the way to release`,
@@ -508,13 +508,13 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'karma',
           value: w.voucherKarma.value - VOUCH_KARMA_AMOUNT,
-          createdAtBlock: 0,
+          createdAtBlock: 2,
           owner: w.voucher.userId,
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
-          createdAtBlock: 0,
+          createdAtBlock: 2,
           voucherId: w.voucher.userId,
           targetId: w.target.userId,
         } as VouchBox,
@@ -529,7 +529,32 @@ describe('the conservation axiom holds over a chain', () => {
       'height 2: invite + vouch',
     );
 
-    // 3 — the likes: markers in, a payout, a pool sink and a carry box out.
+    // 3 — the unvouch, escrowing the stake. Runs BEFORE the escrow is
+    // releasable (`releaseAtBlock = 2 + COOLDOWN = 4 > 3`).
+    const vouchBox = utxo
+      .getUnspentBoxes()
+      .find((b) => b.boxType === 'vouch') as VouchBox;
+    const unvouchTx: UtxoTransaction = {
+      inputs: [vouchBox.id!],
+      outputs: [
+        {
+          boxType: 'vouch_escrow',
+          value: vouchBox.value,
+          createdAtBlock: 3,
+          owner: w.voucher.userId,
+          releaseAtBlock: 2 + COOLDOWN,
+        } as VouchEscrowBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(unvouchTx, w.voucher.privateKey, Buffer.from(w.voucher.userId).toString('hex'));
+    await applyAndConserve(
+      await makeApplicableBlock({ height: 3, utxoTxs: [unvouchTx] }),
+      'height 3: the unvouch',
+    );
+
+    // 4 — the likes: markers in, a payout, a pool sink and a carry box out.
     const likeTxs = w.likers.map(({ who, karma }) => {
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
@@ -545,32 +570,8 @@ describe('the conservation axiom holds over a chain', () => {
       return tx;
     });
     await applyAndConserve(
-      await makeApplicableBlock({ height: 3, utxoTxs: likeTxs }),
-      'height 3: the likes',
-    );
-
-    // 4 — the unvouch, escrowing the stake.
-    const vouchBox = utxo
-      .getUnspentBoxes()
-      .find((b) => b.boxType === 'vouch') as VouchBox;
-    const unvouchTx: UtxoTransaction = {
-      inputs: [vouchBox.id!],
-      outputs: [
-        {
-          boxType: 'vouch_escrow',
-          value: vouchBox.value,
-          createdAtBlock: 0,
-          owner: w.voucher.userId,
-          releaseAtBlock: 4 + COOLDOWN,
-        } as VouchEscrowBox,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    signTransaction(unvouchTx, w.voucher.privateKey, Buffer.from(w.voucher.userId).toString('hex'));
-    await applyAndConserve(
-      await makeApplicableBlock({ height: 4, utxoTxs: [unvouchTx] }),
-      'height 4: the unvouch',
+      await makeApplicableBlock({ height: 4, utxoTxs: likeTxs }),
+      'height 4: the likes',
     );
 
     // 5..8 — empty blocks that carry the escrow release and the bond deadline.

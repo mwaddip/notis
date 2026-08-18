@@ -473,7 +473,7 @@ describe('validateTx output shape (integration)', () => {
     const vouch = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
-      createdAtBlock: 0,
+      createdAtBlock: 10,
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
     };

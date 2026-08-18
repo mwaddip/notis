@@ -180,20 +180,22 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       stake?: bigint;
       voucherIdInBox?: Uint8Array;
       targetId?: Uint8Array;
+      height?: number;
     } = {},
   ): UtxoTransaction {
     const stake = opts.stake ?? VOUCH_KARMA_AMOUNT;
+    const h = opts.height ?? 0;
     const vouchOut = {
       boxType: 'vouch' as const,
       value: stake,
-      createdAtBlock: 0,
+      createdAtBlock: h,
       voucherId: opts.voucherIdInBox ?? signer.pub,
       targetId: opts.targetId ?? target.pub,
     } as unknown as VouchBox;
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - stake,
-      createdAtBlock: 0,
+      createdAtBlock: h,
       owner: karmaBox.owner,
     };
     const tx: UtxoTransaction = {
@@ -218,7 +220,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     // unvouch matured into 1 karma minted from nothing (the escrow wrote the
     // constant). Measured end-to-end in vouch-value-flow.test.ts.
     const karma = seedKarma(voucher.pub, 100n);
-    const tx = buildVouchCast(karma, voucher, { stake: 0n });
+    const tx = buildVouchCast(karma, voucher, { stake: 0n, height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
@@ -229,7 +231,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     // Accepted on HEAD. The unvouch escrow wrote the constant 1, so the other
     // 99 karma were destroyed — the pin closes both directions at once.
     const karma = seedKarma(voucher.pub, 200n);
-    const tx = buildVouchCast(karma, voucher, { stake: 100n });
+    const tx = buildVouchCast(karma, voucher, { stake: 100n, height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
@@ -238,7 +240,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V1 non-vacuity: the same cast staking exactly VOUCH_KARMA_AMOUNT is accepted', () => {
     const karma = seedKarma(voucher.pub, 100n);
-    const tx = buildVouchCast(karma, voucher, { stake: VOUCH_KARMA_AMOUNT });
+    const tx = buildVouchCast(karma, voucher, { stake: VOUCH_KARMA_AMOUNT, height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(true);
@@ -260,7 +262,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     // stake to B. The block-level half lives in vouch-value-flow.test.ts.
     const foreign = makeKeys();
     const karma = seedKarma(voucher.pub, 100n);
-    const tx = buildVouchCast(karma, voucher, { voucherIdInBox: foreign.pub });
+    const tx = buildVouchCast(karma, voucher, { voucherIdInBox: foreign.pub, height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
@@ -274,7 +276,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const foreign = makeKeys();
     seedKarma(foreign.pub, 20n, 1); // castVouch reads the voucherId's balance
     const karma = seedKarma(voucher.pub, 100n);
-    const tx = buildVouchCast(karma, voucher, { voucherIdInBox: foreign.pub });
+    const tx = buildVouchCast(karma, voucher, { voucherIdInBox: foreign.pub, height: 10 });
 
     expect(() => castVouch(deps, tx, 10)).toThrow(
       /voucherId must be the karma input's owner/,
@@ -283,7 +285,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V2 non-vacuity: the same cast with voucherId == karma input owner is accepted', () => {
     const karma = seedKarma(voucher.pub, 100n);
-    const tx = buildVouchCast(karma, voucher, { voucherIdInBox: voucher.pub });
+    const tx = buildVouchCast(karma, voucher, { voucherIdInBox: voucher.pub, height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(true);
@@ -302,7 +304,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 100n);
     seedEscrow(voucher.pub, 999);
 
-    const tx = buildVouchCast(karma, voucher, {});
+    const tx = buildVouchCast(karma, voucher, { height: 10 });
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('unreleased escrow');
@@ -319,7 +321,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const karma = seedKarma(voucher.pub, 100n);
     seedEscrow(otherVoucher.pub, 999);
 
-    const tx = buildVouchCast(karma, voucher, {});
+    const tx = buildVouchCast(karma, voucher, { height: 10 });
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
@@ -335,7 +337,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V5: rejects a cast whose voucher holds less than VOUCH_MIN_BALANCE', () => {
     const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n);
-    const tx = buildVouchCast(karma, voucher, {});
+    const tx = buildVouchCast(karma, voucher, { height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
@@ -346,7 +348,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const first = seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 0);
     seedKarma(voucher.pub, VOUCH_MIN_BALANCE - 1n, 1);
 
-    const tx = buildVouchCast(first, voucher, {});
+    const tx = buildVouchCast(first, voucher, { height: 10 });
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(true);
     expect(result.error).toBeUndefined();
@@ -354,7 +356,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V5 non-vacuity: the same cast from a voucher at exactly VOUCH_MIN_BALANCE is accepted', () => {
     const karma = seedKarma(voucher.pub, VOUCH_MIN_BALANCE);
-    const tx = buildVouchCast(karma, voucher, {});
+    const tx = buildVouchCast(karma, voucher, { height: 10 });
 
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(true);

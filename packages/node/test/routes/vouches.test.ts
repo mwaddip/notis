@@ -65,11 +65,8 @@ const COOLDOWN = 2;
 /**
  * The `VouchEscrowBox` an unvouch outputs.
  *
- * ⚠ **`releaseAtBlock` is the producer's, constrained only by a FLOOR** — a
- * transaction cannot commit to the height of the block that will carry it, so an
- * exact pin would make every unvouch valid in exactly one block (NODE_INTERFACE →
- * Vouch transition rules). These fixtures validate at height 0, so the floor is
- * `COOLDOWN`.
+ * `releaseAtBlock` is an exact pin: `vouch.createdAtBlock + COOLDOWN`.
+ * The vouch fixtures use `createdAtBlock: 0`.
  */
 function unvouchEscrow(value: bigint, owner: Uint8Array) {
   return {
@@ -77,10 +74,7 @@ function unvouchEscrow(value: bigint, owner: Uint8Array) {
     value,
     createdAtBlock: 0,
     owner,
-    // The route validates at `HEIGHT`, so the floor is `HEIGHT + COOLDOWN`.
-    // Clearing it by a margin is legal because only the floor is a rule —
-    // releasing late costs the voucher and nobody else.
-    releaseAtBlock: HEIGHT + COOLDOWN,
+    releaseAtBlock: 0 + COOLDOWN,
   };
 }
 import { materializeOutput } from '../../src/services/utxo-engine.js';
@@ -121,7 +115,7 @@ function loadUiBuilders(): UiBuilders {
   const lift = (header: string): string => extractDeclaration(html, header, 'index.html');
   return new Function(
     [
-      'let currentBlockHeight = 0;',
+      `let currentBlockHeight = ${HEIGHT};`,
       lift('const PROTOCOL_VERSION ='),
       lift('const VOUCH_KARMA_AMOUNT ='),
       lift('function jsonBigint('),
@@ -278,13 +272,13 @@ describe('vouch routes — the JSON edge', () => {
     const change: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - VOUCH_KARMA_AMOUNT,
-      createdAtBlock: 0,
+      createdAtBlock: HEIGHT,
       owner: voucher.pub,
     };
     const vouchOut: CandidateOf<VouchBox> = {
       boxType: 'vouch' as const,
       value: VOUCH_KARMA_AMOUNT,
-      createdAtBlock: 0,
+      createdAtBlock: HEIGHT,
       voucherId: voucher.pub,
       targetId: target.pub,
     };
@@ -390,7 +384,7 @@ describe('vouch routes — the JSON edge', () => {
     const body = res.data as Record<string, unknown>;
     expect(body['status']).toBe('pending');
     expect(body['txId']).toBe(computeTxId(tx));
-    expect(body['karmaReturnsAtBlock']).toBeGreaterThan(HEIGHT);
+    expect(body['karmaReturnsAtBlock']).toBe(COOLDOWN);
   });
 
   // -------------------------------------------------------------------------
@@ -411,6 +405,7 @@ describe('vouch routes — the JSON edge', () => {
       // VouchEscrowBox). Without it the client has to reach for the constant,
       // which is right only by coincidence of the cast pin.
       value: vouchBox.value.toString(),
+      createdAtBlock: vouchBox.createdAtBlock,
       voucherId: voucher.hex,
       targetId: target.hex,
     });
@@ -497,7 +492,7 @@ describe('vouch routes — the JSON edge', () => {
             listed.boxId,
             BigInt(listed.value),
             voucher.hex,
-            HEIGHT + COOLDOWN,
+            0 + COOLDOWN,
           ),
         ),
       });
