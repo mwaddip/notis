@@ -84,7 +84,6 @@ function settle(
       // to the store, so a karma effect appearing in this fixture is a failure
       // rather than a silent extra output.
       getLikeCarryBox: () => null,
-      getVouchEscrowsDueAt: () => [],
       getBondsSettlingAt: () => [],
       getLifetimeLikes: () => 0n,
       getDecayPlans: () => [],

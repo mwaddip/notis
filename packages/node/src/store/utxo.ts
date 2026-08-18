@@ -682,33 +682,6 @@ export function getLikersForPost(targetPostId: string): string[] {
 }
 
 /**
- * Every live `VouchEscrowBox` whose cooldown has run out at `height`.
- *
- * `<=` and not `==`: an escrow whose release height fell inside a reorged-away
- * span would otherwise wait forever. The settlement consumes what is due, so
- * "due" has to mean *at or before*.
- *
- * ⛔ **`ORDER BY id` is a consensus obligation, not tidiness.** The settlement
- * emits one karma credit per escrow and its outputs are hashed in order, so two
- * nodes reading this in different orders derive two different transactions.
- * Ascending box id is one of the three orderings the block fixes
- * (NODE_INTERFACE → Determinism is this mechanism's whole risk).
- */
-export function getVouchEscrowsDueAt(height: number): VouchEscrowBox[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'vouch_escrow'
-         AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.releaseAtBlock') <= ?
-       ORDER BY id`,
-    )
-    .safeIntegers()
-    .all(height) as UtxoRow[];
-  return rows.map((r) => rowToBox(r) as VouchEscrowBox);
-}
-
-/**
  * Every live escrow this voucher holds, ascending box id.
  *
  * ⚠ **It reports no target, because the box carries none**

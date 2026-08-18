@@ -87,7 +87,6 @@ import type {
   LikeAccrualBox,
   TreasuryBox,
   UtxoTransaction,
-  VouchEscrowBox,
 } from '@dagsocial/types';
 import { splitCoinbase } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
@@ -161,8 +160,6 @@ export interface SettlementDeps {
    * thing that separates them.
    */
   getLikeCarryBox: (author: Uint8Array, exclude: Set<string>) => LikeAccrualBox | null;
-  /** Escrows whose cooldown has run out, ascending box id. */
-  getVouchEscrowsDueAt: (height: number) => VouchEscrowBox[];
   /** Bonds whose probation deadline is this height, ascending box id. */
   getBondsSettlingAt: (height: number) => BondBox[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
@@ -204,7 +201,7 @@ interface DerivedSettlement {
    *
    * ⚠ **This is stricter than matching the output MULTISET**, and the extra
    * strictness is load-bearing now rather than tidy. A settlement emits many
-   * karma outputs — grants, payouts, escrow releases, vested bonds, decay
+   * karma outputs — grants, payouts, vested bonds, decay
    * replacements, prune refunds — and two of them can name one owner in one
    * block, so a content match has no single answer to give.
    */
@@ -357,17 +354,7 @@ function derive(
     poolSink += q;
   }
 
-  // 3c. The vouch escrows this height releases. ✅ **No pool leg at all** — the
-  // value moves from a box the settlement consumes into one it creates, so both
-  // ends are named and the escrow is the first shape rather than the third
-  // (ARCHITECTURE → How a source and a sink get named).
-  const escrows = deps.getVouchEscrowsDueAt(height);
-  for (const escrow of escrows) {
-    if (!escrow.id) return { error: 'vouch escrow carries no id' };
-    inputs.push(escrow.id);
-  }
-
-  // 3d. The bonds settling at this height (ARCHITECTURE → Bond outcomes). The
+  // 3c. The bonds settling at this height (ARCHITECTURE → Bond outcomes). The
   // vested part returns to the inviter out of the `BondBox`; ⛔ **the unvested
   // remainder's sink is the POOL**, named here rather than left as the
   // difference between two figures.
@@ -468,9 +455,6 @@ function derive(
     if (payout.carry > 0n) {
       outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author, createdAtBlock: height });
     }
-  }
-  for (const escrow of escrows) {
-    outputs.push({ boxType: 'karma', value: escrow.value, owner: escrow.owner, createdAtBlock: height });
   }
   for (const settled of bondSettlements) {
     if (settled.vested > 0n) {

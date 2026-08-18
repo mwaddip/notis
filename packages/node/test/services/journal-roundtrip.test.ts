@@ -556,7 +556,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   // digest identity, and re-apply identity.)
   // -----------------------------------------------------------------------
 
-  it('the escrow release: the escrow box and the karma original are both restored', async () => {
+  it('the escrow survives its release height — the settlement does not sweep it', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -567,10 +567,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     const oldKarma = makeKarmaBox(50n, voucher.userId, 0);
     utxo.insertBox(oldKarma);
-    // ⛔ An escrow BOX maturing at height 2 — block 1 leaves it untouched. The
-    // obligation is in the UTXO set and therefore in the `stateRoot`, which is
-    // what makes this round trip a property of the journal's box inverses rather
-    // than of hand-written side-records (ARCHITECTURE → Vouch boxes).
     utxo.insertBox(
       seedProvenance<VouchEscrowBox>(
         {
@@ -589,24 +585,21 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const blockApply = await importBlockApply();
 
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
-    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1); // not yet matured
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
     const pre = takeSnapshot(db, handle, 1);
 
     const classBlock = await makeApplicableBlock({ height: 2 });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // The release happened: the escrow is spent and its value is the voucher's.
-    // ⚠ **No merge** — the settlement emits a fresh karma box rather than
-    // consolidating the owner's holdings, so the two sit side by side and the
-    // BALANCE is what carries the claim.
-    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
-    expect(utxo.getKarmaValue(voucher.userId)).toBe(57n);
+    // The escrow SURVIVES — the owner reclaims it via a user transaction.
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n);
 
     await assertRoundTrip(db, handle, pre, classBlock);
 
     // The re-applied block leaves the same applied state again.
-    expect(utxo.getKarmaValue(voucher.userId)).toBe(57n);
-    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n);
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
   });
 
   // -----------------------------------------------------------------------
@@ -670,7 +663,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     }
   });
 
-  it('identity record: two puts to one key in one block reach the tree as the LAST value', async () => {
+  it('identity record: decay writes the clock and the journal reverts exactly', async () => {
     // The record mutation class: a block that writes the same record key
     // **twice**, which is what exercises `proverFeedFromJournal`'s
     // collapse-duplicates-to-last-write rule. Without a second write to one
@@ -743,32 +736,22 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       const classBlock = await mineNextBlock(bc);
       expect(classBlock).not.toBeNull();
 
-      // Both writes happened, in that order.
+      // Without the escrow release, only the decay clock write lands.
       const journalStore = await import('../../src/store/journal.js');
       const recordMutations = journalStore
         .getBlockJournal(4)!
         .mutations.filter((m) => m.kind === 'record');
-      // ⚠ **The activity bump comes FIRST, and the ordering follows from where
-      // the box is emitted.** The bump rides `insertBox`, so it fires when the
-      // settlement emits the decay-burn box at §11a, while the decay CLOCK is
-      // committed after it at §12. What the case is about: two record writes at
-      // one height collapse to one AVL leaf, and the journal must carry both to
-      // revert exactly.
-      expect(recordMutations).toHaveLength(2);
-      expect(recordMutations[0]).toMatchObject({ record: { lastActivityBlock: 4 } });
-      expect(recordMutations[1]).toMatchObject({ record: { lastDecayBlock: 4 } });
+      expect(recordMutations).toHaveLength(1);
+      expect(recordMutations[0]).toMatchObject({ record: { lastDecayBlock: 4 } });
 
-      // The TREE holds the last write, not the first. Read it back through the
-      // prover, which is the only place the collapse can be observed.
+      // The tree holds the single write.
       const key = Buffer.from(recordStore.identityRecordKey(idle.userId), 'hex');
       const serialize = await import('../../src/state/serialize-box.js');
       const lookup = handle.prover.performOneOperation({ tag: 'Lookup', key });
-      // Narrow on the discriminant: `value` lives on the success arm only, and
-      // `expect(...).toBe(true)` narrows nothing for the compiler.
       if (!lookup.success) throw new Error('lookup failed');
       expect(lookup.value).toBeTruthy();
       expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
-        lastActivityBlock: 4,
+        lastActivityBlock: 0,
         lastDecayBlock: 4,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
@@ -783,9 +766,9 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       // reverse-replay property. `assertRoundTrip` re-applies at the end.
       await assertRoundTrip(db, handle, pre, classBlock!);
 
-      // Re-apply landed the record back on the last write, not the first.
+      // Re-apply landed the single write back.
       expect(recordStore.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 4,
+        lastActivityBlock: 0,
         lastDecayBlock: 4,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,

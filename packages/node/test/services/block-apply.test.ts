@@ -984,13 +984,12 @@ describe('block-apply journal recording', () => {
   // 12. The escrow release journals through the box primitives (H-7 retired)
   // -----------------------------------------------------------------------
 
-  it('an escrow release journals a box consume and a box insert, with no side-record', async () => {
+  it('the settlement does not sweep a matured escrow — the owner reclaims it', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
 
-    // Pre-block state: the voucher's karma, and a matured `VouchEscrowBox`.
     const voucher = makeTestIdentity();
     const oldKarma = makeKarmaBox(50n, voucher.userId, 0);
     utxo.insertBox(oldKarma);
@@ -1012,28 +1011,9 @@ describe('block-apply journal recording', () => {
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
-    // ⛔ **THE ESCROW NEEDS NO SIDE-RECORD AND NO INVERSE OF ITS OWN.** It is a
-    // box, so `insertBox`/`consumeBox` journal `{kind:'box'}` with exact
-    // inverses — the release is a consume and an insert like every other
-    // mutation in the block.
-    const journal = await importJournalStore();
-    const saved = journal.getBlockJournal(1)!;
-    // ⚠ **The voucher's standing karma is NOT consumed.** The settlement emits a
-    // fresh output rather than consolidating, so a release adds a box beside
-    // what the owner already holds — consolidating would make the transaction's
-    // input list depend on the recipient's unrelated holdings.
-    expect(removedIds(saved)).not.toContain(oldKarma.id);
-    const voucherInserts = boxInserts(
-      saved,
-      (b) =>
-        b.boxType === 'karma' &&
-        Buffer.from((b as KarmaBox).owner).equals(Buffer.from(voucher.userId)),
-    );
-    expect(voucherInserts.length).toBe(1);
-    expect((voucherInserts[0]!.box as KarmaBox).value).toBe(7n);
-
-    // The escrow itself is gone from the live set, consumed by the settlement.
-    expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
+    // The escrow SURVIVES the height it used to be swept at — the settlement
+    // no longer releases it.
+    expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
   });
 });
 
@@ -1592,7 +1572,7 @@ describe('block-apply mint provenance', () => {
     expect(minerBox!.id).not.toBe(treasuryBox!.id);
   });
 
-  it('a decay charge and an escrow release in one block get distinct outpoints', async () => {
+  it('a decay charge fires while a matured escrow survives in the same block', async () => {
     // The real same-block adjacency between decay and a karma mint. Ordering is
     // what makes it reachable: `deriveKarmaDecay` runs *before*
     // `processVouchCooldowns` in the mutation phase, so decay creates a box and
@@ -1673,61 +1653,22 @@ describe('block-apply mint provenance', () => {
         .map((m) => m.box as AnyBox)
         .filter((b) => b.boxType === 'karma' && hex((b as KarmaBox).owner) === ownerHex);
 
-      // Vacuity guard: both legs must actually have fired, or this proves
-      // nothing about the discriminant.
-      expect(mints.length).toBe(2);
-      const decayed = mints.find(
-        (b) => (b as KarmaBox & { decayBurn?: boolean }).decayBurn === true,
-      )!;
-      const settled = mints.find((b) => b !== decayed)!;
+      // Only the decay charge fires — the escrow survives.
+      expect(mints.length).toBe(1);
+      const decayed = mints[0]!;
+      expect((decayed as KarmaBox & { decayBurn?: boolean }).decayBurn).toBe(true);
 
-      // ⛔ **THE DISCRIMINANT IS THE OUTPUT INDEX.** Two karma boxes reach one
-      // owner at one height — a decay charge and an escrow release — and both
-      // are outputs of the block's one settlement transaction, so they carry the
-      // SAME real `txId` and are told apart positionally. ✅ **Positions inside
-      // one transaction cannot collide by construction**, so
-      // `UNIQUE(tx_id, output_index)` holds without a rule of its own
-      // (NODE_INTERFACE → The settlement transaction).
-      expect(decayed.txId).toBe(settled.txId);
-      expect(decayed.index).not.toBe(settled.index);
-
-      // ⚠ Neither carries a synthetic mint id: `decay` and `vouch-settle` are
-      // reserved and unused (NODE_INTERFACE → Reason and subject table).
-      for (const b of [decayed, settled]) {
-        expect(b.txId).not.toBe(computeMintTxId(4, 'decay', decayContext(idle.userId).subject));
-        expect(b.txId).not.toBe(
-          computeMintTxId(4, 'vouch-settle', vouchSettleContext(idle.userId, target.userId).subject),
-        );
-      }
-
-      // Both legs land side by side. ⚠ **A balance, not a box** — the
-      // settlement emits a fresh output rather than consolidating.
-      expect(utxo.getKarmaValue(idle.userId)).toBe(decayed.value + settled.value);
+      // The escrow is still live.
+      expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
     } finally {
       vi.doUnmock('../../src/config.js');
     }
   });
 
-  it('the same-block decay-then-settle adjacency resets the clock exactly as the boxes did', async () => {
-    // The same funnel as the test above, read through the *clock* rather than
-    // the outpoints (NODE_INTERFACE → "Identity Records").
-    //
-    // `deriveKarmaDecay` (§12) runs before `processVouchCooldowns` (§12b), so at
-    // height 4 decay writes `lastDecayBlock: 4` and the cooldown settlement's
-    // mint then writes `lastActivityBlock: 4` — both halves land on the same
-    // height, in that order.
-    //
-    // Staleness therefore restarts from height 4 for every subsequent block,
-    // and the record holds that for two independent reasons worth pinning
-    // separately:
-    //
-    //   staleness    (h − 4) >= 3 only from h = 7, so blocks 5 and 6 are quiet;
-    //   owedPeriods  max(4, 4) = 4, the same clock start the single surviving
-    //                non-decay box gave — the `max` cannot pick the stale half.
-    //
-    // Had the activity bump reset `lastDecayBlock`, or had decay overwritten
-    // `lastActivityBlock`, the arithmetic would still look right at height 4
-    // and diverge later. Hence the assertions at 5 and 7.
+  it('decay fires while a matured escrow survives — no activity-clock bump', async () => {
+    // Without the settlement sweeping the escrow, `lastActivityBlock` is NOT
+    // updated by the escrow's maturity. Staleness restarts from `lastDecayBlock`
+    // alone.
     // Thresholds shrunk through a test-local config mock — see the sibling
     // decay test above for why this replaced the env overrides.
     try {
@@ -1777,39 +1718,28 @@ describe('block-apply mint provenance', () => {
       bc.startBlockCreator(testConfig);
       for (let i = 0; i < 3; i++) await mineNextBlock(bc);
 
-      // Height 4: decay fires, then the cooldown settles for the same owner.
+      // Height 4: decay fires, escrow survives.
       expect(await mineNextBlock(bc)).not.toBeNull();
       expect(records.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 4,
+        lastActivityBlock: 0,
         lastDecayBlock: 4,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });
-      const afterAdjacency = utxo.getKarmaValue(idle.userId);
+      expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
+      const afterFirstDecay = utxo.getKarmaValue(idle.userId);
 
-      // Height 5: within the threshold of the height-4 activity — quiet, and
-      // the clock must not drift.
+      // Without the escrow release bumping lastActivityBlock, the identity
+      // stays stale: isIdentityStale reads lastActivityBlock alone, not
+      // max(lastActivity, lastDecay). Decay fires at every subsequent block.
       expect(await mineNextBlock(bc)).not.toBeNull();
       expect(records.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 4,
-        lastDecayBlock: 4,
+        lastActivityBlock: 0,
+        lastDecayBlock: 5,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 0n,
       });
-      expect(utxo.getKarmaValue(idle.userId)).toBe(afterAdjacency);
-
-      // Heights 6 then 7: (7 − 4) >= 3, so decay resumes at 7 and not before.
-      expect(await mineNextBlock(bc)).not.toBeNull();
-      expect(utxo.getKarmaValue(idle.userId)).toBe(afterAdjacency);
-
-      expect(await mineNextBlock(bc)).not.toBeNull();
-      expect(utxo.getKarmaValue(idle.userId)).toBeLessThan(afterAdjacency);
-      expect(records.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 4,
-        lastDecayBlock: 7,
-        invitedAtBlock: 0,
-        lifetimeLikesReceived: 0n,
-      });
+      expect(utxo.getKarmaValue(idle.userId)).toBeLessThan(afterFirstDecay);
     } finally {
       vi.doUnmock('../../src/config.js');
     }

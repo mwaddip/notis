@@ -229,9 +229,10 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(config.vouchCooldownBlocks);
 
-    // Nothing minted, escrow settled: the supply is exactly what was locked.
+    // The escrow survives — the settlement no longer sweeps it. The owner
+    // reclaims it via a user transaction.
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
-    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
+    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
   });
 
   it('V2 consequence: a block embedding a foreign-voucherId cast is rejected whole', async () => {

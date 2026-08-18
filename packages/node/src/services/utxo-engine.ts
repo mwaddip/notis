@@ -681,6 +681,35 @@ function checkTransitions(
       return { valid: true };
     }
 
+    // ------------------------------------------------------------------
+    // VouchEscrowBox → KarmaBox — the voucher reclaims their stake
+    // ------------------------------------------------------------------
+    case 'vouch_escrow': {
+      if (inputs.length !== 1) {
+        return {
+          valid: false,
+          error: `Escrow reclaim must consume exactly one VouchEscrowBox`,
+        };
+      }
+      const escrow = inputs[0] as VouchEscrowBox;
+      const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
+      if (outputs.length !== 1 || karmaOutputs.length !== 1) {
+        return {
+          valid: false,
+          error: `Escrow reclaim must produce exactly one karma output`,
+        };
+      }
+      const karmaOut = karmaOutputs[0] as KarmaBox;
+      if (Buffer.from(karmaOut.owner).toString('hex') !==
+          Buffer.from(escrow.owner).toString('hex')) {
+        return {
+          valid: false,
+          error: `Escrow reclaim karma output owner must match escrow owner`,
+        };
+      }
+      return { valid: true };
+    }
+
     default:
       return { valid: false, error: `Unknown box type: ${inputType}` };
   }
@@ -1479,9 +1508,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   bond: ALWAYS_SPENDABLE,
   post_lock: ALWAYS_SPENDABLE,
   vouch: ALWAYS_SPENDABLE,
-  // Authorization refuses escrow as BLOCK_APPLICATION_ONLY, so no user
-  // transaction can reach this entry yet.
-  vouch_escrow: ALWAYS_SPENDABLE,
+  vouch_escrow: { unlockHeight: (b) => (b as VouchEscrowBox).releaseAtBlock },
   emission: ALWAYS_SPENDABLE,
   treasury: ALWAYS_SPENDABLE,
   fee: ALWAYS_SPENDABLE,
@@ -1608,12 +1635,14 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
   emission: BLOCK_APPLICATION_ONLY,
   treasury: BLOCK_APPLICATION_ONLY,
 
-  // Both are the settlement transaction's alone — a marker it consumes, an
-  // escrow it releases (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
+  // A marker is the settlement transaction's alone.
   // `LikeAccrualBox.author` is attribution, not authorization: no signature by
   // that key unlocks the box.
   like_accrual: BLOCK_APPLICATION_ONLY,
-  vouch_escrow: BLOCK_APPLICATION_ONLY,
+
+  // Owner-signed: the voucher reclaims their own escrow once SPEND_TIMING
+  // allows it.
+  vouch_escrow: OWNER_SIGNATURE,
 
   // The karma supply pool: grants draw it down and burns return to it, both the
   // settlement's, so no user transaction may name it in either position

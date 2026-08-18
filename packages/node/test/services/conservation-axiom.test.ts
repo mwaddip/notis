@@ -390,20 +390,18 @@ describe('the conservation axiom holds over a chain', () => {
     expect(escrow, 'the stake is held in a box, not destroyed').toBeDefined();
     expect(escrow!.value).toBe(vouchBox!.value);
 
-    // Mine to the release height. The settlement consumes the escrow and returns
-    // the karma to its owner.
-    const heldBefore = utxo.getKarmaValue(w.voucher.userId);
-    for (let h = 3; h <= 1 + COOLDOWN; h++) {
+    // Mine past the release height. The settlement no longer sweeps escrows —
+    // the escrow survives and conservation still holds at every height.
+    for (let h = 3; h <= 1 + COOLDOWN + 1; h++) {
       await applyAndConserve(
         await makeApplicableBlock({ height: h }),
-        `block ${h} on the way to release`,
+        `block ${h} past release`,
       );
     }
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow'),
-      'the escrow is spent at its release height',
-    ).toBe(false);
-    expect(utxo.getKarmaValue(w.voucher.userId)).toBe(heldBefore + vouchBox!.value);
+      'the escrow survives — the owner reclaims it',
+    ).toBe(true);
   });
 
   it('a bond forfeit returns the unvested remainder to the pool', async () => {
@@ -583,10 +581,11 @@ describe('the conservation axiom holds over a chain', () => {
     }
 
     // ⛔ Every path fired, and the total never moved.
+    // The escrow survives — the owner reclaims it, not the settlement.
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow'),
-      'the escrow released',
-    ).toBe(false);
+      'the escrow survives for owner reclaim',
+    ).toBe(true);
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'bond'),
       'the bond settled',

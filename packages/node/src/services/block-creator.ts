@@ -84,7 +84,6 @@ import {
   getLikeCarryBox,
   getTreasuryBox,
   getKarmaPoolBox,
-  getVouchEscrowsDueAt,
   putIdentityRecord,
 } from '../store/index.js';
 
@@ -767,7 +766,6 @@ export function settlementDepsWith(plans: () => DecayPlan[]): SettlementDeps {
     getKarmaPoolBox,
     getBox,
     getLikeCarryBox,
-    getVouchEscrowsDueAt,
     // The deadline is computed here rather than in the store, so the query stays
     // free of network parameters — the standing `getBondsInvitedAt` rule.
     getBondsSettlingAt: (h: number) => {
