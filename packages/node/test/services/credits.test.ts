@@ -18,7 +18,6 @@ import { initDb, getDb, closeDb } from '../../src/store/db.js';
 import {
   getBox,
   getCreditBoxes,
-  getUnlockedCreditBoxes,
   getKarmaBox,
   getKarmaValue,
   insertBox,
@@ -105,7 +104,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
    * recipient output first, change output second when non-zero.
    */
   function buildSignedTransfer(amount: bigint): UtxoTransaction {
-    const boxes = getUnlockedCreditBoxes(alicePubKey, HEIGHT);
+    const boxes = getCreditBoxes(alicePubKey);
     const selected = selectBoxes(boxes, amount);
     const total = selected.reduce((s, b) => s + b.value, 0n);
     const change = total - amount;

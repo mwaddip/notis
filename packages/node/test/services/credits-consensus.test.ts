@@ -221,7 +221,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
 
     // Pool the transfer — nothing settles yet.
     const tx = buildSignedTransfer(
-      utxo.getUnlockedCreditBoxes(alicePub, 0),
+      utxo.getCreditBoxes(alicePub),
       alicePub, bob.userId, 400n, alice.privateKey,
     );
     const pooled = credits.sendCredits(engineDeps, tx, 0);
@@ -328,7 +328,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       runInTransaction: (fn: () => void) => fn(),
     };
     const tx = buildSignedTransfer(
-      utxo.getUnlockedCreditBoxes(alicePub, 2),
+      utxo.getCreditBoxes(alicePub),
       alicePub, bob.userId, 400n, alice.privateKey,
     );
     const pooled = credits.sendCredits(engineDeps, tx, 2);

@@ -10,7 +10,6 @@ import { sendCredits } from '../services/credits.js';
 import { validateTx } from '../services/utxo-engine.js';
 import { admitTx } from '../services/admit-tx.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
-import { getUnlockedCreditBoxes } from '../store/utxo.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';

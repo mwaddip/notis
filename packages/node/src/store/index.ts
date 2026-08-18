@@ -25,7 +25,6 @@ export {
   getKarmaPoolBox,
   getCreditBox,
   getCreditBoxes,
-  getUnlockedCreditBoxes,
   getBondFor,
   getBondsInvitedAt,
   getBondBoxes,
