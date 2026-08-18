@@ -51,5 +51,6 @@ export function buildInviteTx(
     protocolVersion: PROTOCOL_VERSION,
   };
 
-  return signAndRender(cfg, tx, changeValue);
+  // The karma change is output 0, and the pending chain picks up from it.
+  return signAndRender(cfg, tx, 0);
 }

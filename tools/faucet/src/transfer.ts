@@ -48,5 +48,5 @@ export function buildCreditTransferTx(
     protocolVersion: PROTOCOL_VERSION,
   };
 
-  return signAndRender(cfg, tx, changeValue);
+  return signAndRender(cfg, tx, changeValue > 0n ? 1 : null);
 }

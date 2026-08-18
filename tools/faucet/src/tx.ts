@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from 'crypto';
-import { computeTxId } from '@dagsocial/types';
+import { computeCandidateBoxId, computeTxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 
@@ -14,6 +14,16 @@ export interface BuiltTx {
   readonly tx: Record<string, unknown>;
   readonly txId: string;
   readonly changeValue: bigint;
+  /**
+   * The change output as the next transaction may spend it, or `null` when the
+   * transaction emits none.
+   *
+   * ⛔ **Derived from the output that was SIGNED**, never rebuilt from the
+   * amount and the owner. A second statement of the change box would carry its
+   * own id, and a transaction chained onto it would name an input block
+   * application never materializes.
+   */
+  readonly change: BoxRef | null;
 }
 
 export const HEX64 = /^[0-9a-f]{64}$/;
@@ -29,14 +39,27 @@ export const HEX64 = /^[0-9a-f]{64}$/;
  * The signature is raw Ed25519 over the 32 id bytes, keyed by the signer's
  * public-key hex.
  */
-export function signAndRender(cfg: FaucetConfig, tx: UtxoTransaction, changeValue: bigint): BuiltTx {
+export function signAndRender(
+  cfg: FaucetConfig,
+  tx: UtxoTransaction,
+  changeIndex: number | null,
+): BuiltTx {
   const txId = computeTxId(tx);
   const privKey = createPrivateKey({ key: cfg.secretKey, format: 'der', type: 'pkcs8' });
   // Signed after the id and outside its preimage: the signature is Ed25519
   // *over* the id, so it cannot be one of the fields the id hashes.
   const sig = sign(null, Buffer.from(txId, 'hex'), privKey);
   const signed: UtxoTransaction = { ...tx, signatures: { [cfg.publicKeyHex]: sig } };
-  return { txId, changeValue, tx: txToJson(signed) };
+
+  // `computeCandidateBoxId`, not `computeBoxId`: an output is a candidate and
+  // carries no provenance, and this is the derivation block application applies
+  // to it (TYPES_INTERFACE → BoxId).
+  const changeOut = changeIndex === null ? undefined : tx.outputs[changeIndex];
+  const change: BoxRef | null = changeOut === undefined || changeIndex === null
+    ? null
+    : { boxId: computeCandidateBoxId(changeOut, txId, changeIndex), value: changeOut.value };
+
+  return { txId, changeValue: change?.value ?? 0n, change, tx: txToJson(signed) };
 }
 
 /**
