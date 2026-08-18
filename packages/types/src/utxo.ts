@@ -109,7 +109,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  * Shared prefix, then the per-type fields in their normative order:
  *
- *   enum8(boxType) ‖ vlqU64(value) ‖ <per-type>
+ *   enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock) ‖ <per-type>
  *
  *   | karma         | b32(owner) ‖ opt(decayBurn)                                |
  *   | credit        | b32(owner) ‖ opt(lockedUntilBlock)                         |
@@ -127,7 +127,8 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * **`emission`, `treasury`, `fee` and `karma_pool` stop after the prefix**, and
  * an empty cell above is a layout rather than an omission (TYPES_INTERFACE →
  * Layout — Boxes). None of the four names an owner, so there is no trailing
- * field to write and the smallest legal box of any type is two bytes.
+ * field to write and **the smallest legal box of any type is three bytes** — the
+ * tag, a zero value and a zero height, each one group wide.
  *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
@@ -169,8 +170,18 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * whole of the difference and their ids part on the provenance `computeBoxId`
  * appends.
  *
- * ⚠ **`vlqU64`, not `vlqU`, in the table above** — `value` and
- * `post_lock.originalValue` are `bigint`, so they take `writeVlqU64OrThrow`.
+ * ⛔ **`createdAtBlock` SENTINELS, AND IT DOES SO FOR EVERY BOX TYPE.** It is the
+ * one field in the shared prefix written by a total writer: `writeVlqU` emits the
+ * reserved sentinel for anything outside `[0, MAX_SAFE_INTEGER]` rather than
+ * throwing, so a negative, fractional or oversized height **encodes**, and every
+ * out-of-domain height on a box of one type, value and tail produces **one id**.
+ * The residue reaches every box type, not one optional arm, which is why the
+ * domain has to be established upstream — node's output-shape schema,
+ * `validateTx` step 4.
+ *
+ * ⚠ **`vlqU64`, not `vlqU`, for `value` — and the prefix now holds one of each,
+ * adjacent.** `value` and `post_lock.originalValue` are `bigint`, so they take
+ * `writeVlqU64OrThrow`; `createdAtBlock` is a `number`, so it takes `writeVlqU`.
  * The bytes are identical over the overlapping range, so the difference is
  * invisible in a golden vector and cannot be inferred from a field's type:
  * `vlqU` is total by sentinel and `vlqU64` throws. TYPES_INTERFACE → Totality
@@ -181,6 +192,7 @@ export function canonicalBoxBytes(candidate: BoxCandidate): Uint8Array {
   const w = new ByteWriter();
   BOX_TYPE.write(w, candidate.boxType);
   writeVlqU64OrThrow(w, candidate.value);
+  writeVlqU(w, candidate.createdAtBlock);
   writeBoxTypeFields(w, candidate as AnyBoxCandidate);
   return w.toBytes();
 }
@@ -279,11 +291,15 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
 function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
   const boxType = BOX_TYPE.read(r);
   const value = readVlqU64(r);
+  // Read before the switch because it is prefix, not per-type — one read for
+  // twelve arms, so no arm can walk the shared prefix differently from another.
+  const createdAtBlock = readVlqU(r);
   switch (boxType) {
     case 'karma':
       return {
         boxType,
         value,
+        createdAtBlock,
         owner: readBytesN(r, 32),
         decayBurn: readOpt(r, readBool) ?? undefined,
       };
@@ -291,6 +307,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       return {
         boxType,
         value,
+        createdAtBlock,
         owner: readBytesN(r, 32),
         lockedUntilBlock: readOpt(r, readVlqU) ?? undefined,
       };
@@ -318,12 +335,13 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
           'invalid-tag',
         );
       }
-      return { boxType, value: value as 0n, payload };
+      return { boxType, value: value as 0n, createdAtBlock, payload };
     }
     case 'bond':
       return {
         boxType,
         value,
+        createdAtBlock,
         inviterId: readBytesN(r, 32),
         inviteePublicKey: readBytesN(r, 32),
       };
@@ -331,6 +349,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       return {
         boxType,
         value,
+        createdAtBlock,
         originalValue: readVlqU64(r),
         owner: readBytesN(r, 32),
       };
@@ -338,6 +357,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       return {
         boxType,
         value: value as 1n,
+        createdAtBlock,
         voucherId: readBytesN(r, 32),
         targetId: readBytesN(r, 32),
       };
@@ -345,12 +365,14 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       return {
         boxType,
         value,
+        createdAtBlock,
         author: readBytesN(r, 32),
       };
     case 'vouch_escrow':
       return {
         boxType,
         value,
+        createdAtBlock,
         owner: readBytesN(r, 32),
         releaseAtBlock: readVlqU(r),
       };
@@ -363,7 +385,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       // `boxRecordFromBytes`' exhaustion check is what makes that a decoding
       // rather than a silent stop: bytes past this point are `trailing-bytes`,
       // not a tail this reader declined to walk.
-      return { boxType, value };
+      return { boxType, value, createdAtBlock };
   }
 }
 
@@ -670,13 +692,31 @@ export interface BoxCandidate {
   // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
   // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
   // which node and validation enforce; no encoder here narrows to it.
-  // **`createdAtBlock` is not a box field** (TYPES_INTERFACE → BoxId). An
-  // apply-mutated field in the candidate makes the id dishonest: the box the
-  // store holds stops matching its own derivation. The node records the settled
-  // height in a `created_at_block` store column, which consensus code must never
-  // read — it is not committed in the `stateRoot`, so a node bootstrapping from
-  // an AVL snapshot cannot reconstruct it. The decay clock reads a committed
-  // per-identity record.
+  /**
+   * The height its creator built this box at.
+   *
+   * ⛔ **CONTENT, NOT PROVENANCE, and the distinction is forced rather than
+   * chosen.** Provenance in this codebase is what `CandidateOf` omits — `txId`
+   * and `index`, attached by block application because a creator cannot know
+   * them. A field a creator *declares* has to ride the transaction, so it has to
+   * sit in the candidate, so `canonicalBoxBytes` encodes it and `computeTxId`
+   * covers it. **A field cannot be both creator-declared and provenance.**
+   *
+   * ✅ **This is what keeps a box id derivable before inclusion.**
+   * `computeCandidateBoxId(candidate, txId, index)` is unchanged and the record's
+   * two-field tail is unchanged; the candidate simply carries one more field.
+   *
+   * ⚠ **A box may not claim the future** — `createdAtBlock <= currentBlockHeight`
+   * for every output, checked in node's `validateTx`. Backdating is unbounded,
+   * and that is safe only while nothing reads the value: **every rule that later
+   * derives from this field owes its own exact check.**
+   *
+   * ⚠ **Not the node's `created_at_block` STORE column, which holds the same
+   * number for a different reason.** The column is the settled height the node
+   * observed and is not committed in the `stateRoot`; this field is what the
+   * creator declared and signed. They are not interchangeable.
+   */
+  createdAtBlock: number;
 }
 
 /**
