@@ -184,19 +184,6 @@ const MIGRATIONS = [
     cumulative_score  INTEGER NOT NULL
   )`,
 
-  // Faucet grant ledger — one row per (identity, asset) that the testnet
-  // faucet has ever funded. Written in the same transaction as the mempool
-  // insert, so the row exists from the moment a grant is pending and survives
-  // after it settles. The composite primary key is the durable enforcement of
-  // the one-grant-per-identity rule.
-  `CREATE TABLE IF NOT EXISTS faucet_grants (
-    user_id           BLOB NOT NULL,
-    asset             TEXT NOT NULL CHECK(asset IN ('karma', 'credit')),
-    tx_id             TEXT NOT NULL,
-    granted_at_height INTEGER NOT NULL,
-    PRIMARY KEY (user_id, asset)
-  )`,
-
   // Discovered peers — persistence behind net's PeerStorage seam (audit L-14).
   // Shaped to net's PeerRecord, keyed by multiaddr: PeerDb dedupes by address,
   // and a libp2p peerId is freely regenerable so it makes a worthless key.

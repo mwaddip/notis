@@ -111,7 +111,7 @@ async function bootUnder(network: string) {
   const s = await importFresh();
   s.db.initDb(':memory:');
   s.prover.createAvlProver();
-  s.genesis.seedGenesisState(s.system.initSystemKeypair().publicKey);
+  s.genesis.seedGenesisState();
   return s;
 }
 

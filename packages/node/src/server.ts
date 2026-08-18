@@ -2,14 +2,12 @@ import express from 'express';
 import { createRouter as postRoutes } from './routes/posts.js';
 import { createRouter as likeRoutes } from './routes/likes.js';
 import { createRouter as inviteRoutes } from './routes/invites.js';
-import { createRouter as faucetRoutes } from './routes/faucet.js';
 import { deleteRoutes } from './routes/delete.js';
 import { createRouter as utxoRoutes } from './routes/utxo.js';
 import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import * as store from './store/index.js';
-import { getSystemKeypair } from './store/system.js';
 import { verifyPost } from './services/verifier.js';
 import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services/block-creator.js';
 import { isPeerReady } from './services/peer-readiness.js';
@@ -25,7 +23,6 @@ import { admitTx } from './services/admit-tx.js';
 import { createAdminRouter } from './routes/admin.js';
 import { registerProofEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
-import { isFaucetNetwork } from './config.js';
 import type { Config } from './config.js';
 import type { Server } from 'http';
 
@@ -187,19 +184,6 @@ export function createApp(config: Config): express.Express {
     inviteBondMax: config.inviteBondMax,
     getTopologyAuthor: store.getTopologyAuthorBytes,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
-    isSystemBox: (boxId: string) => {
-      const sysKey = getSystemKeypair();
-      if (!sysKey) return false;
-      // The pending view here too: the faucet's second grant in a block interval
-      // spends the change box of its first, which is still pending. Resolved
-      // against the confirmed set this returns false and the grant is rejected
-      // as an ordinary karma transfer.
-      const box = store.getBoxWithPending(boxId);
-      if (!box || box.boxType !== 'karma') return false;
-      return Buffer.from((box as import('@dagsocial/types').KarmaBox).owner).equals(
-        Buffer.from(sysKey.publicKey),
-      );
-    },
   };
 
   // ---- Routes ----
@@ -294,35 +278,6 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Faucet — /faucet (allow-listed networks only; NODE_INTERFACE §Faucet).
-  // Gate shares isFaucetNetwork with the system-box provisioning in index.ts
-  // and the /credits/faucet handler in routes/utxo.ts — the three move together.
-  if (isFaucetNetwork(config.networkType)) {
-    app.use(
-      '/faucet',
-      faucetRoutes({
-        getKarmaBox: store.getKarmaBox,
-        getKarmaValue: store.getKarmaValue,
-        getIdentityRecord: store.getIdentityRecord,
-        hasActiveVouchEscrow: store.hasActiveVouchEscrow,
-        vouchCooldownBlocks: config.vouchCooldownBlocks,
-        inviteBondMin: config.inviteBondMin,
-        inviteBondMax: config.inviteBondMax,
-        getTopologyAuthor: store.getTopologyAuthorBytes,
-        getCurrentHeight: store.getCurrentHeight,
-        getBox: store.getBoxWithPending,
-        insertBox: store.insertBox,
-        consumeBox: store.consumeBox,
-        runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
-        isSystemBox: utxoEngineDeps.isSystemBox,
-      }),
-    );
-  } else {
-    app.use('/faucet', (_req, res) => {
-      res.status(403).json({ error: 'faucet disabled in production mode' });
-    });
-  }
-
   // Delete — POST /posts/:id/prune
   app.use(
     '/',
@@ -335,7 +290,6 @@ export function createApp(config: Config): express.Express {
   app.use(
     '/',
     utxoRoutes({
-      networkType: config.networkType,
       getKarmaBox: store.getKarmaBox,
       getKarmaBoxes: store.getKarmaBoxes,
       getCreditBox: store.getCreditBox,

@@ -1,4 +1,3 @@
-import { createPrivateKey, sign } from 'crypto';
 import { BOX_VALUE_BOUND, computeBoxId } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -30,70 +29,13 @@ import {
 } from '../mint-provenance.js';
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface SystemKeypair {
-  publicKey: Uint8Array;   // 32 raw bytes
-  secretKey: Uint8Array;   // PKCS8 DER
-}
-
-// ---------------------------------------------------------------------------
-// Keypair persistence
-// ---------------------------------------------------------------------------
-
-const SYSTEM_KEYPAIR_KEY = 'system_keypair';
-
-/**
- * Retrieve the persistent system keypair. Returns null if not yet initialized.
- */
-export function getSystemKeypair(): SystemKeypair | null {
-  const db = getDb();
-  const row = db
-    .prepare('SELECT value FROM system_config WHERE key = ?')
-    .get(SYSTEM_KEYPAIR_KEY) as { value: Buffer } | undefined;
-  if (!row) return null;
-
-  // Value layout: first 32 bytes = publicKey, rest = secretKey (PKCS8 DER)
-  const buf = row.value;
-  const publicKey = new Uint8Array(buf.subarray(0, 32));
-  const secretKey = new Uint8Array(buf.subarray(32));
-  return { publicKey, secretKey };
-}
-
-// Deterministic system keypair derived from blake2b-256("dagsocial-testnet-system-v1").
-// All testnet nodes share this identity so that system box IDs match and
-// faucet/invite signatures are verifiable by every peer.
+// The faucet identity's genesis boxes
 //
-// Pre-computed rather than derived at runtime to avoid Node.js version
-// differences in PKCS8 JWK export across vitest worker threads.
-const SYSTEM_PUBKEY_HEX = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
-const SYSTEM_PKCS8_HEX = '302e020100300506032b6570042204204504541a393fe199a143e47fbf10cb32ef7ef349eecd2f0997a310487b03abf4';
-
-/**
- * Return the deterministic system keypair. Idempotent — returns the
- * stored keypair if already persisted, otherwise derives and persists
- * the hardcoded deterministic identity.
- */
-export function initSystemKeypair(): SystemKeypair {
-  const existing = getSystemKeypair();
-  if (existing) return existing;
-
-  const pubBytes = new Uint8Array(Buffer.from(SYSTEM_PUBKEY_HEX, 'hex'));
-  const privBytes = new Uint8Array(Buffer.from(SYSTEM_PKCS8_HEX, 'hex'));
-
-  // Persist: publicKey (32 raw bytes) || secretKey (PKCS8 DER).
-  const db = getDb();
-  db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run(
-    SYSTEM_KEYPAIR_KEY,
-    Buffer.concat([Buffer.from(pubBytes), Buffer.from(privBytes)]),
-  );
-
-  return { publicKey: pubBytes, secretKey: privBytes };
-}
-
-// ---------------------------------------------------------------------------
-// System karma box
+// ⛔ **THE NODE HOLDS NO SECRET KEY.** The faucet identity is named by
+// `profile.faucetPublicKey` and its key lives in an off-chain service that
+// invites like any member. Nothing here signs, and no consensus rule resolves
+// against a configured key (ARCHITECTURE → "What varies per network, and what
+// must not").
 // ---------------------------------------------------------------------------
 
 /**
@@ -442,15 +384,3 @@ export function ensureKarmaPoolBox(granted: bigint, currentHeight: number): Karm
   return box;
 }
 
-/**
- * Sign a txId with the system keypair.
- */
-export function signWithSystemKey(txId: string, secretKey: Uint8Array): Uint8Array {
-  const privKey = createPrivateKey({
-    key: Buffer.from(secretKey),
-    format: 'der',
-    type: 'pkcs8',
-  });
-  const sig = sign(null, Buffer.from(txId, 'hex'), privKey);
-  return new Uint8Array(sig);
-}

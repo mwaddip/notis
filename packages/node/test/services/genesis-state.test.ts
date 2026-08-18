@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { computePostId, encodePost, profileFor } from '@dagsocial/types';
+import { computePostId, encodePost, hexToBuf, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
 import { makePost, makeTestConfig, mineNextBlock, fixturePostId } from '../helpers.js';
 
@@ -30,6 +30,19 @@ async function importFresh() {
 
 type Store = Awaited<ReturnType<typeof importFresh>>;
 
+/**
+ * The faucet identity the running profile names, as raw bytes.
+ *
+ * ⛔ **Read off the profile, which is its single home.** The node holds no
+ * secret to go with it, and a fixture carrying its own copy would be a second
+ * source free to disagree with the one `genesisStateRoot` is pinned against.
+ */
+function faucetPubKey(network = 'devnet'): Uint8Array {
+  const hex = profileFor(network as NetworkType).faucetPublicKey;
+  if (hex === undefined) throw new Error(`${network} names no faucet identity`);
+  return new Uint8Array(hexToBuf(hex));
+}
+
 function rootOf(s: Store): string {
   const digest = s.prover.getAvlProver().prover.digest();
   if (!digest) throw new Error('prover digest is null');
@@ -49,8 +62,7 @@ async function seededRoot(dbPath: string): Promise<{ root: string; s: Store }> {
   s.initDb(dbPath);
   try {
     s.prover.createAvlProver();
-    const keypair = s.system.initSystemKeypair();
-    s.genesis.seedGenesisState(keypair.publicKey);
+    s.genesis.seedGenesisState();
     return { root: rootOf(s), s };
   } catch (err) {
     s.closeDb();
@@ -193,8 +205,7 @@ describe('seedGenesisState', () => {
 
   it('is idempotent — a second call leaves the root untouched', async () => {
     const { root, s } = await seededRoot(':memory:');
-    const keypair = s.system.getSystemKeypair()!;
-    s.genesis.seedGenesisState(keypair.publicKey);
+    s.genesis.seedGenesisState();
     expect(rootOf(s)).toBe(root);
     expect(s.genesis.isGenesisCommitted()).toBe(true);
     s.closeDb();
@@ -322,9 +333,8 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
   it('refuses to start, naming the cause and the remedy rather than two digests', async () => {
     const { s, bc } = await storeWithBlocksAndNoGenesisFlag();
     try {
-      const keypair = s.system.getSystemKeypair()!;
       let message = '';
-      try { s.genesis.seedGenesisState(keypair.publicKey); } catch (err) { message = String(err); }
+      try { s.genesis.seedGenesisState(); } catch (err) { message = String(err); }
 
       expect(message).toMatch(/no committed genesis state/i);
       expect(message).toMatch(/refusing to start/i);
@@ -346,12 +356,11 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
     // root mismatch and has nothing left that mentions genesis.
     const { s, bc } = await storeWithBlocksAndNoGenesisFlag();
     try {
-      const keypair = s.system.getSystemKeypair()!;
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey)).toThrow();
+      expect(() => s.genesis.seedGenesisState()).toThrow();
       expect(s.genesis.isGenesisCommitted()).toBe(false);
 
       // A restart re-refuses rather than proceeding on a genesis nobody holds.
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey)).toThrow();
+      expect(() => s.genesis.seedGenesisState()).toThrow();
     } finally {
       bc.stopBlockCreator();
       s.closeDb();
@@ -369,9 +378,7 @@ describe('seedGenesisState — a store that predates the genesis state', () => {
       // One block past genesis, coinbase-only — the flag, not the body, is what
       // this control turns on.
       expect(await mineNextBlock(bc)).not.toBeNull();
-
-      const keypair = s.system.getSystemKeypair()!;
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey)).not.toThrow();
+      expect(() => s.genesis.seedGenesisState()).not.toThrow();
     } finally {
       bc.stopBlockCreator();
       s.closeDb();
@@ -398,18 +405,16 @@ describe('seedGenesisState — a store that is not empty', () => {
     const s = await importFresh();
     s.initDb(':memory:');
     s.prover.createAvlProver();
-    const keypair = s.system.initSystemKeypair();
 
-    // The shape `/credits/faucet` produces on a server-role node that serves
-    // before syncing a block: the mint writes change back to the system key, so
-    // the system's credit holding is SPLIT. `ensureFaucetCreditBox` returns
-    // `existing[0]` of a `value DESC` read, so a feed built from its return
-    // value is a strict subset of the UTXO set.
-    s.system.ensureFaucetCreditBox(keypair.publicKey, 1);
-    expect(s.utxo.getCreditBoxes(keypair.publicKey).length).toBeGreaterThan(0);
+    // A store that already holds one of the boxes genesis seeds.
+    // `ensureFaucetCreditBox` returns `existing[0]` of a `value DESC` read, so a
+    // feed built from its return value is a strict subset of the UTXO set — and
+    // the refusal below is what keeps that subset from reaching the tree.
+    s.system.ensureFaucetCreditBox(faucetPubKey(), 1);
+    expect(s.utxo.getCreditBoxes(faucetPubKey()).length).toBeGreaterThan(0);
 
     let message = '';
-    try { s.genesis.seedGenesisState(keypair.publicKey); } catch (err) { message = String(err); }
+    try { s.genesis.seedGenesisState(); } catch (err) { message = String(err); }
 
     expect(message).toMatch(/already holds/i);
     expect(message).toMatch(/refusing to start/i);
@@ -429,13 +434,12 @@ describe('seedGenesisState — a store that is not empty', () => {
     const s = await importFresh();
     s.initDb(':memory:');
     s.prover.createAvlProver();
-    const keypair = s.system.initSystemKeypair();
 
-    s.system.ensureSystemKarmaBox(keypair.publicKey, 1);
-    s.records.deleteIdentityRecord(keypair.publicKey);
+    s.system.ensureSystemKarmaBox(faucetPubKey(), 1);
+    s.records.deleteIdentityRecord(faucetPubKey());
     expect(s.records.getAllIdentityRecords()).toHaveLength(0);
 
-    expect(() => s.genesis.seedGenesisState(keypair.publicKey))
+    expect(() => s.genesis.seedGenesisState())
       .toThrow(/already holds/i);
     s.closeDb();
   });
@@ -552,9 +556,8 @@ describe('assertGenesisRoot', () => {
       const s = await importFresh();
       s.initDb(':memory:');
       s.prover.createAvlProver();
-      const keypair = s.system.initSystemKeypair();
 
-      expect(() => s.genesis.seedGenesisState(keypair.publicKey))
+      expect(() => s.genesis.seedGenesisState())
         .toThrow(/genesis state root mismatch/i);
 
       // Nothing survived the throw: no flag, no boxes. A restart re-attempts

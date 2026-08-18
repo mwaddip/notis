@@ -107,14 +107,10 @@ export {
 export type { PoolEntry } from './mempool.js';
 
 export {
-  getSystemKeypair,
-  initSystemKeypair,
   ensureSystemKarmaBox,
   ensureFaucetCreditBox,
   ensureGenesisProofBox,
-  signWithSystemKey,
 } from './system.js';
-export type { SystemKeypair } from './system.js';
 
 export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 

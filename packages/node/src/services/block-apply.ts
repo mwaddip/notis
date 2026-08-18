@@ -49,7 +49,6 @@ import {
   materializeOutput,
   validateTx,
 } from './utxo-engine.js';
-import { getSystemKeypair } from '../store/system.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -916,20 +915,6 @@ function applyMutationPhase(
     getIdentityRecord,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
-    },
-    // The faucet grant is the one transaction allowed to move karma between
-    // owners, and `checkTransitions` recognises it by the system box. Without
-    // this the re-validation below would reject every block carrying a grant.
-    // Consensus-safe: the system keypair is a protocol constant, so every node
-    // classifies the same box the same way.
-    isSystemBox: (boxId: string): boolean => {
-      const sysKey = getSystemKeypair();
-      if (!sysKey) return false;
-      const box = getBox(boxId);
-      if (!box || box.boxType !== 'karma') return false;
-      return Buffer.from((box as import('@dagsocial/types').KarmaBox).owner).equals(
-        Buffer.from(sysKey.publicKey),
-      );
     },
   };
 

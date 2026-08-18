@@ -1,6 +1,5 @@
-import { loadConfig, isFaucetNetwork } from './config.js';
+import { loadConfig } from './config.js';
 import { initDb, closeDb } from './store/db.js';
-import { getSystemKeypair, initSystemKeypair } from './store/system.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
@@ -70,16 +69,14 @@ initDb(config.dbPath);
 // the only supported reset.
 createAvlProver();
 
-// 1b. Init system keypair, then seed the genesis state. Must happen after DB
-//     init, before any route that might need the system box.
+// 1b. Seed the genesis state. Must happen after DB init, before any route that
+//     might read a genesis box.
 //
 //     `seedGenesisState` owns which boxes a network's genesis holds and the
 //     order they reach the tree in; both are consensus-visible, so neither is
-//     an artefact of this file. The faucet-bearing networks alone carry the
-//     system karma and faucet credit boxes — the gate it applies is shared with
-//     the /faucet mount and the /credits/faucet handler, so the three move
-//     together (NODE_INTERFACE §Faucet): mounting without provisioning gives a
-//     faucet with nothing to mint from.
+//     an artefact of this file. It takes no parameter: the faucet identity it
+//     may seed is `profile.faucetPublicKey`, and this node holds no secret key
+//     to go with it.
 //
 //     Fail-stop in three steps: the message, then `closeDb()`, then a non-zero
 //     exit — the only startup gate in this file with that shape. Closing the
@@ -87,19 +84,12 @@ createAvlProver();
 //     a store the operator is about to inspect. Every refusal `seedGenesisState`
 //     raises is a node that must not run, and each one writes a sentence for the
 //     operator that a bare top-level throw would bury under a stack trace.
-const systemKeypair = initSystemKeypair();
 try {
-  seedGenesisState(systemKeypair.publicKey);
+  seedGenesisState();
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   closeDb();
   process.exit(1);
-}
-if (isFaucetNetwork(config.networkType)) {
-  console.log(
-    `System keypair: ${Buffer.from(systemKeypair.publicKey).toString('hex').slice(0, 12)}... ` +
-    `(faucet source)`,
-  );
 }
 
 // 2. Create NetNode
@@ -199,15 +189,6 @@ net.onTx((tx) => {
     // account must be refused here as well as at the block path.
     getIdentityRecord,
     runInTransaction: (fn: () => void) => fn(),
-    isSystemBox: (boxId: string) => {
-      const sysKey = getSystemKeypair();
-      if (!sysKey) return false;
-      const box = getBox(boxId);
-      if (!box || box.boxType !== 'karma') return false;
-      return Buffer.from((box as import('@dagsocial/types').KarmaBox).owner).equals(
-        Buffer.from(sysKey.publicKey),
-      );
-    },
   };
   const currentHeight = getCurrentHeight();
   const result = validateTx(deps, tx, currentHeight);

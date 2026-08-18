@@ -699,6 +699,58 @@ describe('validateAndApplyTx', () => {
   // mint or burn happens in a block-application path, never inside a user
   // transaction.
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // ⛔ NO BOX AND NO SIGNER IS EXEMPT FROM NON-TRANSFERABILITY.
+  //
+  // The shape below — one karma input, a same-owner change box and a
+  // different-owner beneficiary — is the exact shape the faucet's same-owner
+  // exemption admitted. It is asserted here, at the engine, rather than in a
+  // fixture that has to configure a privileged box: a test that reached the rule
+  // only through such a fixture would be testing the fixture's absence, and the
+  // rule would lose its coverage the moment the fixture went.
+  // ---------------------------------------------------------------------------
+  describe('karma is transferable nowhere (NODE_INTERFACE → Karma transition rules)', () => {
+    it('refuses a two-output karma split to a different owner, whoever owns the input', () => {
+      const recipient = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
+      const karma = createAndInsertKarma(ownerPubKey, 1000n, 51);
+
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 900n, owner: ownerPubKey } as CandidateOf<KarmaBox>,
+          { boxType: 'karma', value: 100n, owner: recipient } as CandidateOf<KarmaBox>,
+        ],
+        ownerPrivKey,
+        ownerPubKey,
+      );
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Karma cannot be transferred');
+    });
+
+    // ⛔ **The control the case above needs.** It conserves, it is owner-signed
+    // and it has the same two-output shape — so without this, the rejection
+    // could be the engine refusing any two karma outputs at all rather than
+    // refusing the owner change.
+    it('control: the same two-output split to the SAME owner is accepted', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 1000n, 52);
+
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 900n, owner: ownerPubKey } as CandidateOf<KarmaBox>,
+          { boxType: 'karma', value: 100n, owner: ownerPubKey } as CandidateOf<KarmaBox>,
+        ],
+        ownerPrivKey,
+        ownerPubKey,
+      );
+
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+    });
+  });
+
   describe('value conservation (audit C-1, L-11)', () => {
     it('rejects self-signed K(v) -> K(v) + K(2) (mints karma from nothing)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);

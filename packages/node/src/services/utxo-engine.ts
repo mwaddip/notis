@@ -143,8 +143,6 @@ export interface UtxoEngineDeps {
    */
   inviteBondMin: bigint;
   inviteBondMax: bigint;
-  /** Return true if the box is the system karma box (faucet source). */
-  isSystemBox?: (boxId: string) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,31 +276,20 @@ function checkTransitions(
         }
       }
 
-      // All karma outputs must belong to the same owner as the consumed karma.
-      // Exception: system box faucet grant — 2 karma outputs, one same-owner
-      // (system change), one different-owner (faucet beneficiary).
-      if (karmaOutputs.length === 2 && inputs.length === 1 &&
-          outputs.length === 2 && deps?.isSystemBox?.(inputKarma.id!)) {
-        const sameOwner = karmaOutputs.filter(
-          (ko) => Buffer.from((ko as KarmaBox).owner).toString('hex') ===
-                  Buffer.from(inputKarma.owner).toString('hex'),
-        );
-        if (sameOwner.length !== 1) {
+      // Every karma output belongs to the same owner as the consumed karma.
+      //
+      // ⛔ **No box and no signer is exempt** (NODE_INTERFACE → Karma transition
+      // rules). The karma a newcomer receives is a POOL DRAW in the block's
+      // settlement, never a transfer from a holder — so there is no shape a
+      // holder can sign that moves karma to someone else, and no configured key
+      // that makes one legal.
+      for (const ko of karmaOutputs) {
+        const k = ko as KarmaBox;
+        if (Buffer.from(k.owner).toString('hex') !== Buffer.from(inputKarma.owner).toString('hex')) {
           return {
             valid: false,
-            error: `Faucet grant must produce exactly one same-owner karma output (system change)`,
+            error: `Karma cannot be transferred (owner change on karma box)`,
           };
-        }
-        // Faucet grant: allowed. Skip the strict same-owner check below.
-      } else {
-        for (const ko of karmaOutputs) {
-          const k = ko as KarmaBox;
-          if (Buffer.from(k.owner).toString('hex') !== Buffer.from(inputKarma.owner).toString('hex')) {
-            return {
-              valid: false,
-              error: `Karma cannot be transferred (owner change on karma box)`,
-            };
-          }
         }
       }
 

@@ -146,7 +146,6 @@ async function storeBackedDeps() {
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },
-    isSystemBox: () => false,
   };
 }
 
