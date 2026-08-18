@@ -80,9 +80,9 @@ export interface NetworkProfile {
 
   /**
    * The `genesis_proof` box's payload, hex of raw bytes. **Differs on all three
-   * networks, and nothing else in the genesis box set does** — the system karma
-   * and faucet credit boxes are byte-identical everywhere, so this field is the
-   * whole of network identity at height 0.
+   * networks**, and it is the one genesis input every network seeds, so it is
+   * what separates mainnet's height-0 state from the two that also seed a faucet
+   * identity.
    *
    * Hex `string`, not `Uint8Array`, and the reason is immutability rather than
    * style: every profile is an `Object.freeze`d literal, and freezing a typed
@@ -180,13 +180,13 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
   // Over THREE leaves — the proof box, the emission box and the karma pool box.
-  // The system karma and faucet credit boxes sit behind `isFaucetNetwork`, and a
-  // faucet on mainnet would be a defect rather than a shortfall; the emission and
-  // pool boxes are outside that gate on purpose, because every block's coinbase is
-  // released from the one and every karma mint draws from the other
-  // (TYPES_INTERFACE → EmissionBox, KarmaPoolBox). The other two networks seed SIX
-  // leaves — those two boxes, these three, and the system identity record — which
-  // is why this root's trailing height byte (`02`) differs from theirs (`03`).
+  // The faucet's karma and credit boxes are the ones this profile does not seed,
+  // because it names no `faucetPublicKey`; the emission and pool boxes are seeded
+  // everywhere on purpose, because every block's coinbase is released from the one
+  // and every karma mint draws from the other (TYPES_INTERFACE → EmissionBox,
+  // KarmaPoolBox). The other two networks seed SIX leaves — those two boxes, these
+  // three, and the faucet identity's record — which is why this root's trailing
+  // height byte (`02`) differs from theirs (`03`).
   genesisStateRoot: 'a364ecd022e2f878259a6cf97fd0489c77a959478da04e6d07e3a3626dfe109d02',
 } satisfies NetworkProfile);
 
