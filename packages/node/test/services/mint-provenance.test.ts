@@ -81,7 +81,7 @@ const ALL_CONTEXTS = {
   // same: one pool successor per height, so the height separates instances
   // within the reason and the tag separates the reason from the other thirteen.
   'pool-settle': { ctx: poolSettleContext(), bytes: 0 },
-} satisfies Record<Exclude<MintReason, 'vouch-settle'>, { ctx: MintContext; bytes: number }>;
+} satisfies Record<MintReason, { ctx: MintContext; bytes: number }>;
 
 function allContexts(): Array<{ ctx: MintContext; bytes: number }> {
   return Object.values(ALL_CONTEXTS);
