@@ -378,7 +378,7 @@ describe('verifyTxStructure', () => {
   // instead of being credited to the rule it was written for.
   const ID_A = 'aa'.repeat(32);
   const ID_B = 'bb'.repeat(32);
-  const karmaOut = { boxType: 'karma', value: 5n, owner: new Uint8Array(32) } as const;
+  const karmaOut = { boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) } as const;
 
   it('accepts a valid transaction', () => {
     const tx: UtxoTransaction = {
@@ -458,6 +458,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   const proofOut = (payload: Uint8Array): AnyBoxCandidate => ({
     boxType: 'genesis_proof',
     value: 0n,
+    createdAtBlock: 0,
     payload,
   });
 
@@ -469,7 +470,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
   });
 
   const karmaOut: AnyBoxCandidate = {
-    boxType: 'karma', value: 5n, owner: new Uint8Array(32),
+    boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32),
   };
 
   /**
@@ -479,12 +480,12 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
    */
   const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
     ['karma', karmaOut],
-    ['credit', { boxType: 'credit', value: 5n, owner: new Uint8Array(32) }],
-    ['bond', { boxType: 'bond', value: 5n, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
-    ['post_lock', { boxType: 'post_lock', value: 5n, originalValue: 5n, owner: new Uint8Array(32) }],
-    ['vouch', { boxType: 'vouch', value: 1n, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) }],
-    ['like_accrual', { boxType: 'like_accrual', value: 1n, author: new Uint8Array(32) }],
-    ['vouch_escrow', { boxType: 'vouch_escrow', value: 1n, owner: new Uint8Array(32), releaseAtBlock: 42 }],
+    ['credit', { boxType: 'credit', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) }],
+    ['bond', { boxType: 'bond', value: 5n, createdAtBlock: 0, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
+    ['post_lock', { boxType: 'post_lock', value: 5n, createdAtBlock: 0, originalValue: 5n, owner: new Uint8Array(32) }],
+    ['vouch', { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) }],
+    ['like_accrual', { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32) }],
+    ['vouch_escrow', { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0, owner: new Uint8Array(32), releaseAtBlock: 42 }],
   ];
 
   it('rejects a transaction that outputs a genesis_proof box', () => {
@@ -2078,7 +2079,7 @@ describe('no-panic on malformed input (M-5)', () => {
     // `canonicalBoxBytes` inside the weight bound's `encodeTx`, so a box missing
     // `value` or `owner` is `Transaction is not encodable` and would make this
     // "happy path" assert the opposite of its name.
-    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 5n, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post: goodPost })).toEqual({ valid: true });
+    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post: goodPost })).toEqual({ valid: true });
     expect(verifyContentLimits('hello')).toEqual({ valid: true });
     expect(verifyContentCharacters('hello')).toEqual({ valid: true });
     expect(verifyParentRefsCount([])).toEqual({ valid: true });
@@ -3084,7 +3085,7 @@ describe('verifyTxStructure — the transaction weight bound', () => {
   const NOT_ENCODABLE = 'Transaction is not encodable';
 
   const karmaOut: AnyBoxCandidate = {
-    boxType: 'karma', value: 5n, owner: new Uint8Array(32),
+    boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32),
   };
 
   /** What `lpUtf8` costs for `k` ASCII characters: its `vlqU` length prefix plus itself. */
