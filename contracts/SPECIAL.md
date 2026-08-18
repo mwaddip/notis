@@ -147,6 +147,29 @@ public/index.html                  S7  P8  E4  C8  I6  A5  L9
   functions its list happens to name.
 ```
 
+### @dagsocial/faucet
+
+```
+default (package)         S8  P9  E3  C5  I9  A7  L7
+  The only component in this repo that HOLDS A SECRET KEY and signs with it, which is
+  the whole of the P9. It takes public HTTP input on one side and a node's responses on
+  the other, so both are hostile. Endurance is deliberately low: it is stateless by
+  design, a restart costs at most one rejected submission, and anything that would make
+  a crash expensive is the wrong change. I9 because the standing temptation is
+  architectural — a grant ledger, a local transaction encoder, a durable pending view
+  — and each is the obvious instinct and each is wrong. A7 guards the dependency count,
+  which is the argument for the package existing in this form at all.
+```
+
+⛔ **THE RISK IS IN THE BUILDERS AND THE KEY, NOWHERE ELSE.** A wrong `txId`, a wrong bond value or a
+wrong recipient signs something the network accepts and cannot take back. The rate limiter and the
+server are ordinary code guarding play money on a network that gets wiped — **review attention spent
+there is attention taken from the two files that matter.**
+
+⚠ **This package is a CALLER, not a protocol component**, so there is no `FAUCET_INTERFACE.md` and
+there should not be: the contract it must satisfy is `NODE_INTERFACE`'s HTTP surface, and a contract
+naming this service would be a contract naming one of its clients.
+
 ## Where This Does Not Reach
 
 ⚠ **No stat protects a claim from going stale, and that is this project's dominant defect class** —
@@ -156,5 +179,9 @@ one, so it does not sit cleanly on any of the seven axes.
 
 The nearest fit is **C on the component whose contract you are quoting**, but treat the discipline as
 standing rather than weighted: *cite by symbol, state enumerations with the search that produced them,
-and re-derive a claim before building on it.* `ARCHITECTURE.md → Status markers` is the rule; the
-accumulated failures are in `prompts/SESSION-HANDOFF.md → Method`.
+and re-derive a claim before building on it.* `ARCHITECTURE.md → Status markers` is the rule.
+
+⛔ **A contract cites `contracts/` and nothing else.** `.gitignore` excludes `prompts/` and
+`docs/specs/` wholesale, so a pointer into either resolves for whoever wrote it and for no one who
+clones the repo — the reader most likely to need it is the one who cannot follow it. **Reasoning that
+has to survive is written here as a rule**, not left behind a path that does not ship.
