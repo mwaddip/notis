@@ -46,12 +46,12 @@ per-block like settlement, decay, invites/vouch, faucet, prune settlement, AVL+ 
 - **Report back** to the main session via kitty `send-text` when a phase/task is complete.
 
 ## Node-relevant invariants (full set in ARCHITECTURE.md)
-- **Value conservation** — user txs conserve value, with exactly one carve-out: the like
-  transaction burns `LIKE_KARMA_COST` (`likeTarget` present ⟺ that exact deficit — the engine's
-  biconditional, P2-D). All other karma/credit mints and burns happen only in explicit
-  block-application paths, never inside a user tx. Enforced since P2-B phase 3: `validateTx` checks
-  face-value conservation as one total per side, block application re-validates every embedded tx, and the last
-  direct-mutation HTTP path (`sendCredits`) is gone — every user-value mutation rides mempool → block.
+- **Value conservation** — every user tx conserves, unconditionally: each cost lands in a box the
+  transaction itself outputs (a like's in its `LikeAccrualBox`, an unvouch's stake in its
+  `VouchEscrowBox`, a credit fee in its `FeeBox`) — `NODE_INTERFACE → validateTx step 7`. All
+  karma/credit mints and burns happen only in block-application paths, never inside a user tx.
+  `validateTx` checks the equality as one total per side, block application re-validates every
+  embedded tx, and every user-value mutation rides mempool → block.
 - **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; must match the demo
   UI's `blakejs`.
 - **Signatures** — raw Ed25519 (64 bytes), verified with `crypto.verify(null, …)` and a KeyObject.
