@@ -991,27 +991,6 @@ async function fetchCreditBoxes() {
   }
 }
 
-/**
- * The open invites and bonds the active identity holds as inviter.
- *
- * An invite has no expiry, so **open is the whole of its life** apart from
- * claimed and cancelled — which is why the endpoint names the arm `open`
- * (NODE_INTERFACE → UTXO queries).
- */
-async function fetchInviteState() {
-  if (!userId) return { open: [], bonds: [] };
-  try {
-    const res = await fetch(API + '/invites/' + encodeURIComponent(userId));
-    if (!res.ok) return { open: [], bonds: [] };
-    const data = await res.json(); // { open: InviteBox[], bonds: BondBox[] }
-    for (const b of data.open) b.value = BigInt(b.value);
-    for (const b of data.bonds) b.value = BigInt(b.value);
-    return data;
-  } catch {
-    return { open: [], bonds: [] };
-  }
-}
-
 // ===========================================================================
 // Tx construction helpers
 // ===========================================================================
@@ -1140,57 +1119,6 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
   return {
     inputs: selected.map(b => b.boxId),
     outputs: [karmaOutput, bondOutput],
-    signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
-  };
-}
-
-/**
- * Build an invite-claim tx: one InviteBox → one KarmaBox holding the bond's
- * value, owned by the invitee, who signs.
- *
- * ⛔ **This transaction does not balance, and must not be made to.** The invite
- * holds `0`, so the whole output is a **surplus** — the only karma any
- * transaction may create — and the conservation gate admits it in this shape and
- * no other (ARCHITECTURE → Invite claim).
- *
- * **The bond is not an input.** Nothing user-signed can spend one; block
- * application settles it at the probation deadline the claim starts.
- */
-/**
- * ⚠ **Neither builder is called by this page, and both are held from outside
- * it**: the node's invite route suite lifts them by name and fails loudly when
- * a declaration it names is gone. The transitions they build are unreachable —
- * the routes that accepted them do not exist — so these go when that suite
- * stops naming them.
- */
-function buildClaimInviteTx(inviteBoxId, inviteePubKeyHex) {
-  const karmaOutput = {
-    boxType: 'karma',
-    value: INVITE_BOND_DEFAULT,
-    owner: inviteePubKeyHex,
-  };
-
-  return {
-    inputs: [inviteBoxId],
-    outputs: [karmaOutput],
-    signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
-  };
-}
-
-/**
- * Build an invite-cancel tx: one InviteBox → nothing. The inviter signs.
- *
- * **Zero outputs is the shape, not an omission.** The box holds `0`, so this
- * conserves, and the bond returns to the inviter through block application,
- * resolved by `inviteePublicKey` — this transaction neither names the bond nor
- * could spend it (ARCHITECTURE → Invite cancellation).
- */
-function buildCancelInviteTx(inviteBoxId) {
-  return {
-    inputs: [inviteBoxId],
-    outputs: [],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };

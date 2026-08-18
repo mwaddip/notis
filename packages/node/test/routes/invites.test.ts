@@ -76,9 +76,7 @@ function loadUiBuilders(): UiBuilders {
       lift('function jsonBigint('),
       lift('function selectBoxes('),
       lift('function buildCreateInviteTx('),
-      lift('function buildClaimInviteTx('),
-      lift('function buildCancelInviteTx('),
-      'return { jsonBigint, buildCreateInviteTx, buildClaimInviteTx, buildCancelInviteTx };',
+      'return { jsonBigint, buildCreateInviteTx };',
     ].join('\n\n'),
   )() as UiBuilders;
 }
