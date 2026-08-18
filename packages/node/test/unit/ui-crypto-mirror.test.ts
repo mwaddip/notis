@@ -110,11 +110,16 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 // not assumed — which is what localises the move to the transaction preimage
 // rather than to the box layout.
 //
-// ⚠ **These were re-pinned to `@dagsocial/types`, which is the normative
-// encoder; the page mirrors it and not the reverse.** While the page still
-// writes the retired field it will disagree with them, and that disagreement is
-// the point: a constant left matching a stale page would be a fixture and a
-// subject drifted together, which is the one shape a mirror cannot see past.
+// ⚠ **Re-pinned to `@dagsocial/types`** (TYPES_INTERFACE → A mirror test's
+// golden must be pinned to the AUTHORITY, never to the mirror). While the page
+// still writes the retired field it will disagree with them, and that
+// disagreement is the point.
+//
+// ⚠ **The INPUT each was regenerated from** (TYPES_INTERFACE → A regenerated
+// pin's INPUT is unchecked, so state it): `computeTxId` / `computeCandidateBoxId`
+// over `GOLDEN_UTXO_TX` at the output's own index — 0 for karma, 1 for credit,
+// `0x12345678` for the wide-index case. The sentinel's input is stated at its
+// own declaration, because it is the one that is not a neighbour of these.
 const GOLDEN_KARMA_BOX_ID =
   '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
 const GOLDEN_CREDIT_BOX_ID =
@@ -165,11 +170,12 @@ const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
   'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
   'c837393c51d82567145c3cbed9f9c9cd837b9085bad1594ce9567d315375d8a4';
-// ⚠ Derived from a genuinely malformed index (`NaN`), NOT from `2**32` — that
-// one is inside `vlqU`'s domain and encodes faithfully, so it is a valid index
-// and pinning it here would make the case below assert nothing. The test's own
-// comment states the distinction; regenerating this constant from the wrong
-// input is the exact trap a regenerated pin carries.
+// ⚠ **Input: a genuinely malformed index (`NaN`), NOT `2**32`** (TYPES_INTERFACE
+// → A regenerated pin's INPUT is unchecked, so state it). `2**32` is inside
+// `vlqU`'s domain and encodes faithfully, so it is a valid index and pinning it
+// here would make the M-5 case below assert nothing — a byte-perfect constant
+// from the wrong input, which no mirror check can see because the mirror is
+// fine.
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
   '1563d15fe2d81bce59c59c294f7e21e1f5d62c3476315bf2ea0406427875fa74';
 
