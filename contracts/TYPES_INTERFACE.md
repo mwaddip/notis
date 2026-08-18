@@ -2235,6 +2235,32 @@ the claim around it still reads true; implementation strands a **claim** while e
 still resolves. ⛔ **A marker is the one contract element whose whole purpose is to be falsified**,
 and nothing in this repo watches for the moment it happens.
 
+### A fourth: a PROSE RESTATEMENT decays while the assertion beside it stays green
+
+⛔ **A fact with a test asserting it can still be wrong everywhere it is described.** The assertion
+holds, the suite is green, and every prose copy rots independently — so **nothing ever fails**, and
+the green suite is what supplies the false assurance.
+
+> ⚠ **Measured 2026-08-18.** The genesis box set is asserted once —
+> `['emission', 'genesis_proof', 'karma_pool']`, three boxes — and restated in prose **three** times,
+> **each wrong, and each wrong differently**: *"the proof box alone"* (one), *"over TWO leaves"*
+> (two), and *"seed FIVE leaves"* (five, for a set of six). ⛔ **They disagree with the assertion and
+> with each other**, because each was written at a different time as the set grew, and none was
+> re-read when it grew again.
+
+⚠ **The count of wrong copies grows with the number of times the fact changed**, not with the number
+of files — a fact that moved three times leaves three differently-stale restatements wherever it is
+described.
+
+✅ **The check is cheap and it is not a grep for staleness.** When a fact has an assertion, find the
+prose that restates it and **compare each restatement to the assertion**. The assertion is the
+authority; a restatement is a claim that has to earn agreement.
+
+⛔ **AND A STALE COUNT RARELY TRAVELS ALONE.** One of these was reported to main, propagated into a
+dispatch brief verbatim, and its **neighbour in the same sentence** was still wrong — because the
+change that invalidated one invalidated the other. **When a comment is found stale in one number,
+re-read every number in it.**
+
 ### A third failure is born wrong rather than decaying: an INVENTED prose name
 
 ⛔ **A citation of the form `FILE → prose name` can point at a heading that does not exist, while
