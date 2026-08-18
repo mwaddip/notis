@@ -25,6 +25,7 @@ import {
   type Stored,
   activateProverOverStore,
 } from '../helpers.js';
+import { config } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------
 // P2-B phase 1c — the creator must not mine a body its own mutation phase
@@ -139,6 +140,8 @@ async function storeBackedDeps() {
     getKarmaValue: utxoStore.getKarmaValue,
     hasActiveVouchEscrow: () => false,
     vouchCooldownBlocks: 2,
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
     getTopologyAuthor: () => null,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();

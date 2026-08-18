@@ -16,7 +16,6 @@ import {
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
   EMPTY_STATE_ROOT,
-  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
@@ -360,6 +359,17 @@ export function labelNonce(label: string): number {
  * default: forgetting it is a compile error rather than a silent collision.
  * Pinned by `helpers.test.ts`.
  */
+/**
+ * The bond the fixtures name where the value is incidental — any amount inside
+ * the running profile's range, which the suite's devnet profile floors at 5 and
+ * caps at 250.
+ *
+ * ⚠ **Not an endpoint.** A test that means "the floor" or "the ceiling" reads
+ * `config.inviteBondMin` / `config.inviteBondMax`, so a range change cannot
+ * quietly turn a boundary case into an interior one.
+ */
+export const FIXTURE_BOND_KARMA = 25n;
+
 export function seedBond(opts: {
   /** Distinguishes this bond from every other. Required — see above. */
   label: string;
@@ -371,7 +381,7 @@ export function seedBond(opts: {
   const invitee = opts.inviteePublicKey ?? new Uint8Array(32).fill(0xaa);
   const bondCandidate = {
     boxType: 'bond' as const,
-    value: opts.bondValue ?? INVITE_BOND_KARMA,
+    value: opts.bondValue ?? FIXTURE_BOND_KARMA,
     inviterId: opts.inviterId,
     inviteePublicKey: invitee,
   };
@@ -795,7 +805,7 @@ export async function seedEmissionBox(): Promise<void> {
  * Put this network's karma pool box in the store, if it is not there already.
  *
  * ⛔ **A block whose body creates a bond cannot be produced without one.** The
- * invitee's `INVITE_KARMA_AMOUNT` is *spent from the pool* by the settlement
+ * invitee's `FIXTURE_BOND_KARMA` is *spent from the pool* by the settlement
  * rather than minted (ARCHITECTURE → The conservation axiom), so a store holding
  * no pool has nothing to spend and both the creator and apply refuse the block.
  * Genesis seeds it on every network; suites that build stores directly with

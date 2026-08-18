@@ -41,6 +41,7 @@ import type {
 import { createRouter } from '../../src/routes/utxo.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { unlinkSync } from 'fs';
+import { config } from '../../src/config.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-utxo.sqlite';
 
@@ -73,6 +74,8 @@ async function request(
         getKarmaValue,
         hasActiveVouchEscrow: () => false,
         vouchCooldownBlocks: 2,
+        inviteBondMin: config.inviteBondMin,
+        inviteBondMax: config.inviteBondMax,
         getTopologyAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],

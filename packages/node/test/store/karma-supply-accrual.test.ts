@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { fixtureProvenance, uid } from '../helpers.js';
+import { fixtureProvenance, uid,
+  FIXTURE_BOND_KARMA,
+} from '../helpers.js';
 import {
-  INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
   VOUCH_KARMA_AMOUNT,
@@ -255,7 +256,7 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(-LIKE_KARMA_COST);
   });
 
-  it('an invite grant draws INVITE_KARMA_AMOUNT from the pool and names it', async () => {
+  it('an invite grant draws FIXTURE_BOND_KARMA from the pool and names it', async () => {
     // ⛔ **THE CASE THIS FILE'S HEADER PREDICTED, AND IT IS NOW LIVE.** The
     // settlement spends the pool to the invitee, so the delta below is a
     // CIRCULATION change with a named source, not a unit called into being
@@ -269,15 +270,15 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
 
     s.beginBlockJournal(1);
     s.consumeBox(pool.id!, 1);
-    s.insertBox(boxOfType('karma_pool', 1000n - INVITE_KARMA_AMOUNT));
-    s.insertBox(boxOfType('karma', INVITE_KARMA_AMOUNT));
+    s.insertBox(boxOfType('karma_pool', 1000n - FIXTURE_BOND_KARMA));
+    s.insertBox(boxOfType('karma', FIXTURE_BOND_KARMA));
 
     // Circulation grew by the grant …
-    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(INVITE_KARMA_AMOUNT);
+    expect(s.openBlockJournalKarmaSupplyDelta()).toBe(FIXTURE_BOND_KARMA);
     // … and the pool fell by exactly the same amount, which is the half the
     // supply delta cannot see and the half the axiom is about.
     const poolAfter = s.getKarmaPoolBox();
-    expect(poolAfter!.value).toBe(1000n - INVITE_KARMA_AMOUNT);
+    expect(poolAfter!.value).toBe(1000n - FIXTURE_BOND_KARMA);
   });
 
   it('a bond forfeit sends the unvested remainder to the pool', async () => {

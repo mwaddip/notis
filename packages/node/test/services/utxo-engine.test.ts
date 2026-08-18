@@ -4,7 +4,9 @@ import {
   seedProvenance,
   type Stored,
   fixtureProvenance,
-  uid } from '../helpers.js';
+  uid,
+  FIXTURE_BOND_KARMA,
+} from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   generateKeyPairSync,
@@ -19,8 +21,6 @@ import {
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -54,6 +54,7 @@ import {
 } from '../../src/store/index.js';
 import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps, UtxoResult } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 
 /**
  * Local convenience wrapper that replaces the removed validateAndApplyTx.
@@ -133,6 +134,8 @@ describe('validateAndApplyTx', () => {
       // ⛔ **The like marker's author pin** (NODE_INTERFACE → Karma transition
       // rules). One confirmed post, so a marker naming anyone else is refused
       // and a like on any other target has no author at all.
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: (postId: string) =>
         postId === LIKE_TARGET_POST ? LIKE_TARGET_AUTHOR : null,
       runInTransaction: (fn: () => void) => {
@@ -254,14 +257,14 @@ describe('validateAndApplyTx', () => {
     const invitee = new Uint8Array(32).fill(0xaa);
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      // Only the bond is paid: INVITE_KARMA_AMOUNT is minted at the claim.
-      value: 100n - INVITE_BOND_KARMA,
+      // Only the bond is paid: FIXTURE_BOND_KARMA is minted at the claim.
+      value: 100n - FIXTURE_BOND_KARMA,
       owner: ownerPubKey,
     };
 
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
-      value: INVITE_BOND_KARMA,
+      value: FIXTURE_BOND_KARMA,
       inviterId: ownerUserId,
       inviteePublicKey: invitee,
     };
@@ -539,7 +542,10 @@ describe('validateAndApplyTx', () => {
     let strangerPrivKey: KeyObject;
     let karmaBoxId: string;
 
-    const FUNDED = INVITE_BOND_KARMA * 2n + 10n;
+    // Sized on the CEILING, so a bond at either endpoint conserves and the
+    // range check is what answers — a fixture funded for a typical bond would
+    // have the sums refuse the ceiling case before the rule saw it.
+    const FUNDED = config.inviteBondMax * 2n + 10n;
 
     beforeEach(() => {
       const inviterKeys = generateKeyPairSync('ed25519');
@@ -561,7 +567,7 @@ describe('validateAndApplyTx', () => {
       bondInviterId?: Uint8Array;
       invitee?: Uint8Array;
     } = {}): UtxoTransaction {
-      const bondValue = opts.bondValue ?? INVITE_BOND_KARMA;
+      const bondValue = opts.bondValue ?? FIXTURE_BOND_KARMA;
       return {
         inputs: [karmaBoxId],
         outputs: [
@@ -587,7 +593,7 @@ describe('validateAndApplyTx', () => {
       const tx = signBy(inviteTx(), inviterPubKey, inviterPrivKey);
       const inSum = FUNDED;
       const outSum = tx.outputs.reduce((sum, o) => sum + o.value, 0n);
-      // ⛔ No surplus anywhere: `INVITE_KARMA_AMOUNT` comes from the pool at
+      // ⛔ No surplus anywhere: `FIXTURE_BOND_KARMA` comes from the pool at
       // settlement, so the invitee's karma is not in this transaction at all
       // (NODE_INTERFACE → validateTx step 5).
       expect(outSum).toBe(inSum);
@@ -604,15 +610,38 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('owner signature');
     });
 
-    it('rejects a bond holding anything but INVITE_BOND_KARMA', () => {
+    it('rejects a bond outside the network range, on either side', () => {
       // Conservation alone permits any value — the change output keeps the
-      // difference — so this pin is the whole of the sybil price.
-      for (const v of [0n, INVITE_BOND_KARMA - 1n, INVITE_BOND_KARMA + 1n]) {
+      // difference — so this pin is the whole of the sybil price. `0n` is listed
+      // separately from the floor: it is what conservation would admit, and it
+      // is the value that makes the price free.
+      for (const v of [0n, config.inviteBondMin - 1n, config.inviteBondMax + 1n]) {
         const tx = signBy(inviteTx({ bondValue: v }), inviterPubKey, inviterPrivKey);
         const result = validateTx(deps, tx, 10);
         expect(result.valid, `value=${v}`).toBe(false);
-        expect(result.error).toContain('BondBox must hold exactly');
+        expect(result.error).toContain('An invite bond must hold between');
       }
+    });
+
+    it('accepts a bond at each endpoint — the range is inclusive', () => {
+      // Without these the rejections above hold equally over a rule that
+      // refuses every bond.
+      for (const v of [config.inviteBondMin, config.inviteBondMax]) {
+        const tx = signBy(inviteTx({ bondValue: v }), inviterPubKey, inviterPrivKey);
+        const result = validateTx(deps, tx, 10);
+        expect(result.valid, `value=${v}`).toBe(true);
+      }
+    });
+
+    it('grants exactly the bond, so a stranded grant costs what it strands', () => {
+      // The bound that used to be a relationship between two constants is now an
+      // identity. An inviter may name 32 bytes nobody holds; equality is what
+      // makes that cost exactly what it strands.
+      const bondValue = config.inviteBondMin + 3n;
+      const tx = signBy(inviteTx({ bondValue }), inviterPubKey, inviterPrivKey);
+      expect(validateTx(deps, tx, 10).valid).toBe(true);
+      const bond = tx.outputs.find((o) => o.boxType === 'bond') as CandidateOf<BondBox>;
+      expect(bond.value).toBe(bondValue);
     });
 
     it('rejects a bond naming someone else as inviter', () => {
@@ -645,12 +674,12 @@ describe('validateAndApplyTx', () => {
       const tx = inviteTx();
       tx.outputs.push({
         boxType: 'bond',
-        value: INVITE_BOND_KARMA,
+        value: FIXTURE_BOND_KARMA,
         inviterId: inviterPubKey,
         inviteePublicKey: strangerPubKey,
       } as BondBox);
       // Still conserving, so the shape pin is what refuses it and not the sums.
-      (tx.outputs[0] as KarmaBox).value = FUNDED - INVITE_BOND_KARMA * 2n;
+      (tx.outputs[0] as KarmaBox).value = FUNDED - FIXTURE_BOND_KARMA * 2n;
       signBy(tx, inviterPubKey, inviterPrivKey);
 
       const result = validateTx(deps, tx, 10);
@@ -878,12 +907,12 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         // The bond is the whole of what leaves the change box.
-        value: 100n - INVITE_BOND_KARMA,
+        value: 100n - FIXTURE_BOND_KARMA,
         owner: ownerPubKey,
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
-        value: INVITE_BOND_KARMA,
+        value: FIXTURE_BOND_KARMA,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xbb),
       };
@@ -912,7 +941,7 @@ describe('validateAndApplyTx', () => {
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
-        value: INVITE_BOND_KARMA,
+        value: FIXTURE_BOND_KARMA,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xcc),
       };
@@ -937,7 +966,7 @@ describe('validateAndApplyTx', () => {
       // both layers with their non-vacuity controls.
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
-        value: INVITE_BOND_KARMA,
+        value: FIXTURE_BOND_KARMA,
         inviterId: ownerPubKey,
         inviteePublicKey: new Uint8Array(32).fill(0xdd),
       };
@@ -958,7 +987,7 @@ describe('validateAndApplyTx', () => {
       // what refuses.
       const conserving = buildSignedTx(
         [bondBoxId],
-        [{ boxType: 'karma', value: INVITE_BOND_KARMA, owner: ownerPubKey } as KarmaBox],
+        [{ boxType: 'karma', value: FIXTURE_BOND_KARMA, owner: ownerPubKey } as KarmaBox],
         ownerPrivKey,
         ownerPubKey,
       );
@@ -1063,7 +1092,7 @@ describe('validateAndApplyTx', () => {
       const karma = createAndInsertKarma(attackerPubKey, 100n, 3);
       const [bond] = seedAsOneTx([
         {
-          boxType: 'bond' as const, value: INVITE_BOND_KARMA, inviterId: inviterPubKey,
+          boxType: 'bond' as const, value: FIXTURE_BOND_KARMA, inviterId: inviterPubKey,
           inviteePublicKey: attackerPubKey,
         },
       ]);
@@ -1073,7 +1102,7 @@ describe('validateAndApplyTx', () => {
         inputs: [karma.id!, bond!.id!],
         outputs: [{
           boxType: 'karma',
-          value: 100n + INVITE_BOND_KARMA,
+          value: 100n + FIXTURE_BOND_KARMA,
           owner: attackerPubKey,
         } as KarmaBox],
         signatures: {},
@@ -1097,7 +1126,7 @@ describe('validateAndApplyTx', () => {
       const attackerPubKey = rawPublicKey(attackerKeys.publicKey);
       const [bond] = seedAsOneTx([
         {
-          boxType: 'bond' as const, value: INVITE_BOND_KARMA,
+          boxType: 'bond' as const, value: FIXTURE_BOND_KARMA,
           inviterId: rawPublicKey(generateKeyPairSync('ed25519').publicKey),
           inviteePublicKey: attackerPubKey,
         },
@@ -1107,7 +1136,7 @@ describe('validateAndApplyTx', () => {
       const tx: UtxoTransaction = {
         inputs: [bond!.id!],
         outputs: [{
-          boxType: 'karma', value: INVITE_BOND_KARMA, owner: attackerPubKey,
+          boxType: 'karma', value: FIXTURE_BOND_KARMA, owner: attackerPubKey,
         } as KarmaBox],
         signatures: {},
         protocolVersion: 1,

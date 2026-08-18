@@ -51,6 +51,7 @@ import {
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 
 interface TestKeys {
   pub: Uint8Array;
@@ -91,6 +92,8 @@ describe('P2-B phase 4 — input-shape pins', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

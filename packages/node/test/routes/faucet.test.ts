@@ -23,6 +23,7 @@ import { decodeTx } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/faucet.js';
 import type { FaucetDeps } from '../../src/routes/faucet.js';
 import { unlinkSync } from 'fs';
+import { config } from '../../src/config.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-faucet.sqlite';
 
@@ -62,6 +63,8 @@ function buildDeps(): FaucetDeps {
     getIdentityRecord,
     hasActiveVouchEscrow: () => false,
     vouchCooldownBlocks: 2,
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
     getTopologyAuthor: () => null,
     getCurrentHeight,
     // The pending view, as server.ts wires the submission routes: a grant

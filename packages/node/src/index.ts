@@ -188,6 +188,8 @@ net.onTx((tx) => {
     // rules") — same rule.
     hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
     // The like marker's author pin (NODE_INTERFACE → Karma transition rules) —
     // same rule again: a relayed like whose marker names the wrong author must
     // be refused here as well as at the block path.

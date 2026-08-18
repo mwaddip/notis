@@ -42,6 +42,7 @@ import {
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 
 /**
  * One case per box type. `signer` is the key the type's transitions require, or
@@ -168,6 +169,8 @@ describe('authorization is a property of the transition', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };

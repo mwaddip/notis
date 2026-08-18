@@ -17,8 +17,6 @@ import {
   computeTxId,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type { AnyBox, KarmaBox, CreditBox, Post, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -29,6 +27,7 @@ import {
   seedAsOneTx,
   seedProvenance,
   type Stored,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
   initDb,
@@ -80,6 +79,8 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -222,13 +223,13 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const invitee = new Uint8Array(32).fill(0xaa);
     const bond = {
       boxType: 'bond',
-      value: INVITE_BOND_KARMA,
+      value: FIXTURE_BOND_KARMA,
       inviterId: ownerPubKey,
       inviteePublicKey: invitee,
     };
     const tx = signedTx(
       [karma.id!],
-      [karmaChange(100n - INVITE_BOND_KARMA), bond],
+      [karmaChange(100n - FIXTURE_BOND_KARMA), bond],
     );
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
@@ -329,9 +330,9 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const karma = seedKarma(100n);
     const inviteeHex = 'bb'.repeat(32);
     const lyingPair = (key: unknown) => [
-      karmaChange(100n - INVITE_BOND_KARMA),
+      karmaChange(100n - FIXTURE_BOND_KARMA),
       {
-        boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: ownerPubKey,
+        boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId: ownerPubKey,
         inviteePublicKey: key,
       },
     ];

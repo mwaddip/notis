@@ -28,8 +28,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BOX_TYPE_TAGS,
-  INVITE_BOND_KARMA,
-  INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
   PROTOCOL_VERSION,
@@ -52,6 +50,7 @@ import {
   seedPostTx,
   signTransaction,
   type TestIdentity,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 
 /** Short enough that a bond's deadline is reachable by mining a few blocks. */
@@ -414,12 +413,12 @@ describe('the conservation axiom holds over a chain', () => {
       outputs: [
         {
           boxType: 'karma',
-          value: w.inviterKarma.value - INVITE_BOND_KARMA,
+          value: w.inviterKarma.value - FIXTURE_BOND_KARMA,
           owner: w.inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: w.inviter.userId,
           inviteePublicKey: w.invitee.userId,
         } as BondBox,
@@ -434,8 +433,8 @@ describe('the conservation axiom holds over a chain', () => {
     await applyAndConserve(b1, 'the invite');
 
     // The grant is a POOL SPEND: the invitee holds karma the pool no longer does.
-    expect(utxo.getKarmaValue(w.invitee.userId)).toBe(INVITE_KARMA_AMOUNT);
-    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaValue(w.invitee.userId)).toBe(FIXTURE_BOND_KARMA);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - FIXTURE_BOND_KARMA);
     expect(records.getIdentityRecord(w.invitee.userId)?.invitedAtBlock).toBe(1);
 
     // The invitee earns nothing, so the whole bond forfeits at the deadline.
@@ -457,7 +456,7 @@ describe('the conservation axiom holds over a chain', () => {
       'the bond settled',
     ).toBe(false);
     expect(utxo.getKarmaValue(w.inviter.userId)).toBe(inviterBefore);
-    expect(utxo.getKarmaPoolBox()!.value).toBe(poolAtDeadline + INVITE_BOND_KARMA);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolAtDeadline + FIXTURE_BOND_KARMA);
   });
 
   it('a chain carrying every path at once conserves at every height', async () => {
@@ -481,12 +480,12 @@ describe('the conservation axiom holds over a chain', () => {
       outputs: [
         {
           boxType: 'karma',
-          value: w.inviterKarma.value - INVITE_BOND_KARMA,
+          value: w.inviterKarma.value - FIXTURE_BOND_KARMA,
           owner: w.inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: w.inviter.userId,
           inviteePublicKey: w.invitee.userId,
         } as BondBox,

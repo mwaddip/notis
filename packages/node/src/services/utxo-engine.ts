@@ -3,7 +3,6 @@ import {
   BOX_VALUE_BOUND,
   computeBoxId,
   computeTxId,
-  INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
@@ -133,6 +132,17 @@ export interface UtxoEngineDeps {
   getTopologyAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
   runInTransaction: (fn: () => void) => void;
+  /**
+   * The inclusive range an invite's bond may take, and therefore the range its
+   * grant may take — the grant equals the bond.
+   *
+   * Injected rather than read from the module config, for the reason
+   * `vouchCooldownBlocks` is: a module-singleton read is config-at-a-distance,
+   * and a rule that decides how much karma leaves the pool is a poor place to
+   * keep one.
+   */
+  inviteBondMin: bigint;
+  inviteBondMax: bigint;
   /** Return true if the box is the system karma box (faucet source). */
   isSystemBox?: (boxId: string) => boolean;
 }
@@ -484,20 +494,20 @@ function checkTransitions(
           };
         }
         const bondOut = bondOutputs[0] as BondBox;
-        // The bond is the whole cost of an invite, and it is the network's only
-        // sybil price. Conservation alone permits 0n here, which would make that
-        // price free.
-        //
-        // ⛔ **`INVITE_BOND_KARMA >= INVITE_KARMA_AMOUNT` is load-bearing**
+        // ⛔ **THE GRANT EQUALS THE BOND, so the bound cannot drift**
         // (ARCHITECTURE → Invite System). An inviter may name 32 bytes nobody
-        // holds, stranding the grant in an unspendable box; the bound is what
-        // makes that cost at least what it strands.
-        if (bondOut.value !== INVITE_BOND_KARMA) {
+        // holds, stranding the grant in an unspendable box; equality is what
+        // makes that cost exactly what it strands. There is no second number
+        // free to fall below the first.
+        //
+        // The floor is the network's sybil price, and conservation alone would
+        // permit `0n` — which would make that price free.
+        if (bondOut.value < deps.inviteBondMin || bondOut.value > deps.inviteBondMax) {
           return {
             valid: false,
             error:
-              `BondBox must hold exactly ${INVITE_BOND_KARMA} karma, ` +
-              `got ${bondOut.value}`,
+              `An invite bond must hold between ${deps.inviteBondMin} and ` +
+              `${deps.inviteBondMax} karma, got ${bondOut.value}`,
           };
         }
         // The bond carries the karma input's owner as `inviterId`. Without this

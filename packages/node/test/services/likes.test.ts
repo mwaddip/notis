@@ -38,6 +38,7 @@ import {
   hasPendingLike, insertUtxoTx } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 import {
   fixtureProvenance,
   rawPublicKey,
@@ -116,6 +117,8 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       vouchCooldownBlocks: 2,
       // ⛔ The like marker's author pin: every post this fixture builds is the
       // same author's (NODE_INTERFACE → Karma transition rules).
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => POST_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

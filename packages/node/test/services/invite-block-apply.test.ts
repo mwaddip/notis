@@ -18,9 +18,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  INVITE_BOND_KARMA,
   INVITE_BOND_VEST_PER_LIKES,
-  INVITE_KARMA_AMOUNT,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
@@ -28,6 +26,7 @@ import type {
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
+import { config } from '../../src/config.js';
 import {
   makeKarmaBox,
   makeLikeTx,
@@ -38,7 +37,9 @@ import {
   seedAsOneTx,
   signTransaction,
   type TestIdentity, fixturePostId, fillerTx, seedPostTx, activateProverOverStore,
-  seedKarmaPoolBox, makeApplicableBlock } from '../helpers.js';
+  seedKarmaPoolBox, makeApplicableBlock,
+  FIXTURE_BOND_KARMA,
+} from '../helpers.js';
 
 /** Short enough that the deadline is reachable by mining a few real blocks. */
 const PROBATION = 3;
@@ -85,25 +86,26 @@ async function importBlockCreator() {
 /**
  * karma(v) → karma(v − bond) + BondBox — the whole invite, inviter-signed.
  *
- * The invitee's `INVITE_KARMA_AMOUNT` is nowhere in it: the block's settlement
+ * The invitee's `FIXTURE_BOND_KARMA` is nowhere in it: the block's settlement
  * spends the pool for that (ARCHITECTURE → Invite System).
  */
 function inviteTx(
   inviter: TestIdentity,
   invitee: TestIdentity,
   karmaIn: KarmaBox,
+  bondValue = FIXTURE_BOND_KARMA,
 ): UtxoTransaction {
   const tx: UtxoTransaction = {
     inputs: [karmaIn.id!],
     outputs: [
       {
         boxType: 'karma',
-        value: karmaIn.value - INVITE_BOND_KARMA,
+        value: karmaIn.value - bondValue,
         owner: inviter.userId,
       } as KarmaBox,
       {
         boxType: 'bond',
-        value: INVITE_BOND_KARMA,
+        value: bondValue,
         inviterId: inviter.userId,
         inviteePublicKey: invitee.userId,
       } as BondBox,
@@ -155,7 +157,7 @@ describe('the invite at block application', () => {
    * settlement while leaving the `stateRoot` untouched.
    */
   async function seedPair(
-    bondValue = INVITE_BOND_KARMA,
+    bondValue = FIXTURE_BOND_KARMA,
     likeRounds: Array<{ count: number; nonceBase: number }> = [],
   ) {
     const db = await importDb();
@@ -250,7 +252,7 @@ describe('the invite at block application', () => {
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
-    const karma = makeKarmaBox(INVITE_BOND_KARMA + 10n, inviter.userId, 0, 77);
+    const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 77);
     utxo.insertBox(karma);
     await activateProverOverStore();
 
@@ -264,9 +266,9 @@ describe('the invite at block application', () => {
     const height = block!.header.height;
 
     // The grant landed on the key the bond names …
-    expect(utxo.getKarmaValue(invitee.userId)).toBe(INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(FIXTURE_BOND_KARMA);
     // … and the pool paid for it, exactly.
-    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - FIXTURE_BOND_KARMA);
     // The bond is live: it waits for its deadline.
     expect(utxo.getBondFor(invitee.userId)).not.toBeNull();
     // The inviter paid the bond and nothing else.
@@ -293,10 +295,10 @@ describe('the invite at block application', () => {
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
-    const karma = makeKarmaBox(INVITE_BOND_KARMA + 10n, inviter.userId, 0, 78);
+    const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 78);
     utxo.insertBox(karma);
     const secondInviter = makeTestIdentity();
-    const karma2 = makeKarmaBox(INVITE_BOND_KARMA + 10n, secondInviter.userId, 0, 79);
+    const karma2 = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, secondInviter.userId, 0, 79);
     utxo.insertBox(karma2);
     await activateProverOverStore();
 
@@ -317,11 +319,59 @@ describe('the invite at block application', () => {
       getIdentityRecord: records.getIdentityRecord,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('may not name an existing account');
+  });
+
+  // -------------------------------------------------------------------------
+  // The grant is the bond, and the bond is the inviter's to choose
+  // -------------------------------------------------------------------------
+
+  // ⛔ **TWO BONDS OF DIFFERENT VALUES IN ONE BLOCK.** A fixture using one value
+  // passes equally against a settlement that multiplies a constant by the
+  // invitee count, which is the shape this replaces — so the two amounts have to
+  // differ for the assertion to have a subject.
+  it('grants each invitee exactly the bond that named them', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    await seedKarmaPoolBox();
+
+    const small = config.inviteBondMin;
+    const large = config.inviteBondMax;
+    expect(small).not.toBe(large);
+
+    const a = makeTestIdentity();
+    const b = makeTestIdentity();
+    const inviteeA = makeTestIdentity();
+    const inviteeB = makeTestIdentity();
+    const karmaA = makeKarmaBox(large + 10n, a.userId, 0, 91);
+    const karmaB = makeKarmaBox(large + 10n, b.userId, 0, 92);
+    utxo.insertBox(karmaA);
+    utxo.insertBox(karmaB);
+    await activateProverOverStore();
+
+    const poolBefore = utxo.getKarmaPoolBox()!.value;
+    const blockApply = await import('../../src/services/block-apply.js');
+
+    const block = await makeApplicableBlock({
+      utxoTxs: [
+        inviteTx(a, inviteeA, karmaA, small),
+        inviteTx(b, inviteeB, karmaB, large),
+      ],
+    });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    expect(utxo.getKarmaValue(inviteeA.userId)).toBe(small);
+    expect(utxo.getKarmaValue(inviteeB.userId)).toBe(large);
+    // The pool is the grants' only source, so what left it equals what arrived —
+    // and nothing more.
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - (small + large));
   });
 
   // -------------------------------------------------------------------------
@@ -332,7 +382,7 @@ describe('the invite at block application', () => {
     // ⛔ **A STATED RULE, because nothing else absorbs the collision**
     // (NODE_INTERFACE → Legal box transitions). One bond is one grant, so a
     // second bond naming a key an earlier transaction in this block already
-    // named draws a second `INVITE_KARMA_AMOUNT` out of the pool for one key.
+    // named draws a second `FIXTURE_BOND_KARMA` out of the pool for one key.
     //
     // ⚠ **The record-existence test cannot see this.** The grant that writes
     // Bob's record is the settlement's, and it runs AFTER every embedded
@@ -347,8 +397,8 @@ describe('the invite at block application', () => {
     const invitee = makeTestIdentity();
     const a = makeTestIdentity();
     const b = makeTestIdentity();
-    const karmaA = makeKarmaBox(INVITE_BOND_KARMA + 10n, a.userId, 0, 81);
-    const karmaB = makeKarmaBox(INVITE_BOND_KARMA + 10n, b.userId, 0, 82);
+    const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, a.userId, 0, 81);
+    const karmaB = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, b.userId, 0, 82);
     utxo.insertBox(karmaA);
     utxo.insertBox(karmaB);
     await activateProverOverStore();
@@ -383,7 +433,7 @@ describe('the invite at block application', () => {
 
     const invitee = makeTestIdentity();
     const a = makeTestIdentity();
-    const karmaA = makeKarmaBox(INVITE_BOND_KARMA + 10n, a.userId, 0, 83);
+    const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, a.userId, 0, 83);
     utxo.insertBox(karmaA);
     await activateProverOverStore();
 
@@ -392,7 +442,7 @@ describe('the invite at block application', () => {
 
     const block = await makeApplicableBlock({ utxoTxs: [inviteTx(a, invitee, karmaA)] });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
-    expect(utxo.getKarmaValue(invitee.userId)).toBe(INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(FIXTURE_BOND_KARMA);
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(1);
   });
 
@@ -410,7 +460,7 @@ describe('the invite at block application', () => {
    * the same reason `invitedAtBlock` is seeded rather than mined for — the
    * arithmetic under test is the vesting, not the counter's writer.
    */
-  async function claimThenSettle(likes: bigint, bondValue = INVITE_BOND_KARMA) {
+  async function claimThenSettle(likes: bigint, bondValue = FIXTURE_BOND_KARMA) {
     const seeded = await seedPair(bondValue);
     const { utxo, inviter, invitee, bond } = seeded;
     const mempool = await importMempool();
@@ -441,12 +491,14 @@ describe('the invite at block application', () => {
     return { ...seeded, invitedAtBlock, deadline, inviterKarma: utxo.getKarmaValue(inviter.userId) };
   }
 
-  it('the sweep vests one karma per five likes and burns the rest', async () => {
-    // 40 likes → floor(40 / 5) = 8 vested out of a 25-karma bond; 17 burn.
+  it('the sweep vests one karma per INVITE_BOND_VEST_PER_LIKES likes and burns the rest', async () => {
+    // 40 likes → floor(40 / 3) = 13 vested out of a 25-karma bond; 12 burn. The
+    // pin is derived from the ratio and then stated, so a retune moves one
+    // number here rather than leaving the assertion true of whatever V becomes.
     const { utxo, bond, inviterKarma } = await claimThenSettle(40n);
 
     const expected = 40n / BigInt(INVITE_BOND_VEST_PER_LIKES);
-    expect(expected).toBe(8n);
+    expect(expected).toBe(13n);
     expect(inviterKarma).toBe(expected);
     // The bond is consumed whole; the unvested part is destroyed rather than
     // parked in a remainder box.
@@ -465,12 +517,12 @@ describe('the invite at block application', () => {
   });
 
   it('vesting is capped at the bond — extra likes mint nothing more', async () => {
-    // 5 × 25 = 125 likes fully vests a 25-karma bond; 200 would vest 40 without
-    // the `min`, minting 15 karma out of nothing.
+    // 3 × 25 = 75 likes fully vests a 25-karma bond; 200 would vest 66 without
+    // the `min`, minting 41 karma out of nothing.
     const { utxo, bond, inviterKarma } = await claimThenSettle(200n);
 
     expect(inviterKarma).toBe(bond.value);
-    expect(inviterKarma).toBe(INVITE_BOND_KARMA);
+    expect(inviterKarma).toBe(FIXTURE_BOND_KARMA);
     expect(utxo.getBox(bond.id!)).toBeNull();
   });
 
@@ -588,7 +640,7 @@ describe('the invite at block application', () => {
     // count instead of adding it would leave the same total after a single
     // block and only diverge here.
     const { utxo, inviter, invitee, bond, likeBatches } = await seedPair(
-      INVITE_BOND_KARMA,
+      FIXTURE_BOND_KARMA,
       [{ count: 3, nonceBase: 0 }, { count: 2, nonceBase: 10 }],
     );
     const mempool = await importMempool();
@@ -598,12 +650,15 @@ describe('the invite at block application', () => {
     await startProbation(invitee, invitedAtBlock);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(0n);
 
-    // Block A: three likes. Block B: two more. floor(5 / 5) = 1 karma vested.
+    // Block A: three likes. Block B: two more. floor(5 / 3) = 1 karma vested.
     await poolLikes(likeBatches[0]!, invitee.userId);
     expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(3n);
     await poolLikes(likeBatches[1]!, invitee.userId);
-    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived)
-      .toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
+    // The SUM of the two batches, not the vesting ratio: what this test claims
+    // is that the second block adds to the first, and reading the ratio here
+    // would make the assertion true of a settlement that overwrote whenever the
+    // batches happened to sum to it.
+    expect(records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived).toBe(5n);
 
     await mineTo(invitedAtBlock + PROBATION);
 
@@ -618,7 +673,7 @@ describe('the invite at block application', () => {
     // derived from those rows the inviter — who did nothing — loses karma.
     // Design track §1.4.1 forbids destroying someone else's stake.
     const { utxo, inviter, invitee, bond, likeBatches } = await seedPair(
-      INVITE_BOND_KARMA,
+      FIXTURE_BOND_KARMA,
       [{ count: INVITE_BOND_VEST_PER_LIKES, nonceBase: 100 }],
     );
     const mempool = await importMempool();
@@ -728,7 +783,7 @@ describe('the invite at block application — decay adjacency', () => {
     // to come from the settlement's grant: decay acts on karma boxes, and a
     // hand-seeded bond leaves the invitee holding nothing for it to act on.
     await seedKarmaPoolBox();
-    const inviterKarma = makeKarmaBox(INVITE_BOND_KARMA + 5n, inviter.userId, 0, 880);
+    const inviterKarma = makeKarmaBox(FIXTURE_BOND_KARMA + 5n, inviter.userId, 0, 880);
     utxo.insertBox(inviterKarma);
 
     // Every box the run spends, seeded before the tree is built from the store.
@@ -755,7 +810,7 @@ describe('the invite at block application — decay adjacency', () => {
     mempool.insertUtxoTx(inviteTx(inviter, invitee, inviterKarma), 1000);
     const invitedAtBlock = (await mine()).header.height;
     // The settlement granted, and the grant started the clock.
-    expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaValue(invitee.userId)).toBe(inviteeBefore + FIXTURE_BOND_KARMA);
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(invitedAtBlock);
     const bond = utxo.getBondFor(invitee.userId)!;
 

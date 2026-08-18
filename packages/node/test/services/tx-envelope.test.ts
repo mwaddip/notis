@@ -72,6 +72,7 @@ import {
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 
 interface TestKeys {
   pub: Uint8Array;
@@ -403,6 +404,8 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       // The marker's author pin. One author for every target this suite names,
       // so a marker naming anyone else is refused (NODE_INTERFACE → Karma
       // transition rules).
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => LIKE_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

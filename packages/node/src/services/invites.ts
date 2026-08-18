@@ -1,6 +1,5 @@
 import {
   computeTxId,
-  INVITE_BOND_KARMA,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
@@ -66,10 +65,16 @@ export function createInvite(
   // inviter's summed balance rather than off this transaction's inputs, so the
   // diagnosis is "you do not hold enough" rather than "this transaction does not
   // balance" — conservation says the latter either way.
+  //
+  // ⛔ **Against THIS invite's bond, not against a constant.** The inviter picks
+  // the bond from the network's range, so a fixed threshold passes an inviter
+  // who cannot afford the one they named — and the rejection then arrives from
+  // conservation, which is the message this layer exists to replace.
+  const bondValue = (bondOutputs[0] as BondBox).value;
   const inviterBalance = deps.getKarmaValue(karmaInput.owner);
-  if (inviterBalance < INVITE_BOND_KARMA) {
+  if (inviterBalance < bondValue) {
     throw new ClientError(
-      `Insufficient karma to invite: the bond is ${INVITE_BOND_KARMA}, ` +
+      `Insufficient karma to invite: this invite bonds ${bondValue}, ` +
       `inviter holds ${inviterBalance}`,
     );
   }

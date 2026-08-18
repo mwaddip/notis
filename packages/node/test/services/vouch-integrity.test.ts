@@ -25,7 +25,6 @@ import {
   computeTxId,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
-  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -43,6 +42,7 @@ import {
   rawPublicKey,
   seedProvenance,
   type Stored,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
   initDb,
@@ -60,6 +60,7 @@ import {
 import { applyTx, materializeOutput, validateTx } from '../../src/services/utxo-engine.js';
 import { castVouch } from '../../src/services/vouch.js';
 import { createInvite } from '../../src/services/invites.js';
+import { config } from '../../src/config.js';
 
 interface TestKeys {
   pub: Uint8Array;
@@ -108,6 +109,8 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       // stub (NODE_INTERFACE → Vouch transition rules).
       hasActiveVouchEscrow: storeHasActiveVouchEscrow,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -391,37 +394,54 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V4: rejects an invite whose bond holds nothing', () => {
     // Conservation alone permits a 0-value bond: the karma output simply keeps
-    // the difference. Without the value pin the settlement grants the invitee
-    // `INVITE_KARMA_AMOUNT` out of the pool for no stake at all — and `B >= G`
-    // is what makes the grant arbitrage-free (ARCHITECTURE → Invite System).
+    // the difference. Without the floor the settlement grants the invitee a
+    // karma box out of the pool for no stake at all — and the grant EQUALS the
+    // bond, which is what makes it arbitrage-free (ARCHITECTURE → Invite
+    // System). At 0 the grant is 0 too, so the arbitrage is gone but the free
+    // identity is not: the floor is what prices it.
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 0n);
 
     const result = validateTx(deps, createTx, 1);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain(`BondBox must hold exactly ${INVITE_BOND_KARMA}`);
+    expect(result.error).toContain('An invite bond must hold between');
   });
 
-  it('V4: rejects an invite create whose bond is under-funded', () => {
+  it('V4: rejects an invite create whose bond is under the floor', () => {
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(
-      inviter, karma, makeKeys().pub, INVITE_BOND_KARMA - 1n,
+      inviter, karma, makeKeys().pub, config.inviteBondMin - 1n,
     );
 
     const result = validateTx(deps, createTx, 1);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain(`BondBox must hold exactly ${INVITE_BOND_KARMA}`);
+    expect(result.error).toContain('An invite bond must hold between');
   });
 
-  it('V4 service path: createInvite rejects an under-funded bond', () => {
+  it('V4: rejects an invite create whose bond is over the ceiling', () => {
+    // The boundary the old equality had no analogue for. The grant is a pool
+    // draw sized by the inviter, so without a ceiling one invite could name
+    // more of the supply than the pool holds.
+    const inviter = makeKeys();
+    const karma = seedKarma(inviter.pub, config.inviteBondMax + 100n);
+    const createTx = buildInviteCreate(
+      inviter, karma, makeKeys().pub, config.inviteBondMax + 1n,
+    );
+
+    const result = validateTx(deps, createTx, 1);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('An invite bond must hold between');
+  });
+
+  it('V4 service path: createInvite rejects a bond under the floor', () => {
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 1n);
 
     expect(() => createInvite(deps, createTx, 1)).toThrow(
-      new RegExp(`BondBox must hold exactly ${INVITE_BOND_KARMA}`),
+      /An invite bond must hold between/,
     );
   });
 
@@ -433,7 +453,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const inviter = makeKeys();
     const invitee = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
-    const createTx = buildInviteCreate(inviter, karma, invitee.pub, INVITE_BOND_KARMA);
+    const createTx = buildInviteCreate(inviter, karma, invitee.pub, FIXTURE_BOND_KARMA);
     const created = validateTx(deps, createTx, 1);
     expect(created.valid).toBe(true);
     applyTx(deps, createTx, created.computedOutputs!, 1);
@@ -461,7 +481,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     const inviter = makeKeys();
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(
-      inviter, karma, makeKeys().pub, INVITE_BOND_KARMA,
+      inviter, karma, makeKeys().pub, FIXTURE_BOND_KARMA,
     );
 
     const result = validateTx(deps, createTx, 1);

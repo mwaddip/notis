@@ -42,6 +42,7 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
 import { unlinkSync } from 'fs';
+import { config } from '../../src/config.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-posts.sqlite';
 
@@ -72,6 +73,8 @@ async function request(
       getLikersForPost,
       getAncestors,
       getSubtree,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       getCurrentHeight,
       admitTx: insertUtxoTx,
@@ -105,6 +108,8 @@ async function request(
             vouchCooldownBlocks: 2,
             // No like reaches this router, so the marker's author pin has
             // nothing to resolve — stated rather than stubbed silently.
+            inviteBondMin: config.inviteBondMin,
+            inviteBondMax: config.inviteBondMax,
             getTopologyAuthor: () => null,
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();

@@ -905,6 +905,8 @@ function applyMutationPhase(
     // rules") — same single-implementation rule as getKarmaValue.
     hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
     // ⛔ The like marker's author, from `block_topology` and never
     // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
     // makes, so the marker's pin and the like-record's author cannot disagree.
