@@ -2122,6 +2122,21 @@ sides drift together while it stays green.**
 consulted to produce it.** A mirror that disagrees is the finding; a mirror that agrees with a
 constant taken from itself is not evidence of anything.
 
+#### ⛔ A RETIRED SHAPE THAT IS AN ASSERTION'S SUBJECT IS NOT NARRATION
+
+**"Never narrate replaced code" forbids describing a retired shape as CONTEXT. It does not forbid
+using one as an OPERAND**, and read literally it would delete the strongest kind of fixture this
+format has.
+
+✅ **The test is one question: delete the sentence, and does an ASSERTION lose an input, or does a
+paragraph lose a sentence?** A hand-written vector for a retired layout is the input that makes a
+delta claim checkable — the assertion says *this change moves exactly these bytes and no others*,
+and the retired vector is the only thing the current encoder **cannot** produce. Removing its
+explanation leaves a magic constant nobody can re-derive.
+
+⚠ **A retired shape mentioned to explain how things used to work is narration and goes.** The same
+words can be either, and the difference is whether an assertion consumes them.
+
 #### ⚠ A regenerated pin's INPUT is unchecked, so state it
 
 Step 2 above validates the **derivation**. It does not validate what was fed into it. ⛔ **A pin
