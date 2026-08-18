@@ -2313,6 +2313,37 @@ protocol boxes, and the producer-chosen inputs it names** — no local state, no
 iteration order the block does not already fix. **Adding a producer-chosen field is what needs a
 rule; adding a derived one needs only that the derivation be stated.**
 
+##### ⛔ A derived quantity has TWO kinds of input, and the second needs a stated state version
+
+| Input | Agreed how |
+|---|---|
+| **block content** — the transactions, their outputs, the markers they emit | both sides read the same bytes; no ambiguity is possible |
+| **chain state** — karma boxes, identity records, bonds, escrows | ⛔ **only if both sides read the SAME VERSION of it** |
+
+⛔ **EVERY STATE-DERIVED QUANTITY IS DERIVED FROM PRE-BODY STATE — the chain tip the block builds
+on, before its own apply loop runs.** The producer must fix the settlement's bytes **before** it can
+apply the body, because the settlement is *in* that body. So pre-body state is the only state
+producer and verifier can both read and agree on. **A derivation taken after the apply loop is a
+different function on the two sides.**
+
+⚠ **It fails on the ordinary case, not an exotic one.** Spending karma bumps `lastActivityBlock`
+through `insertBox`, so an identity that is decay-eligible **before** the loop is fresh **after** it.
+A producer deriving post-body says "no decay" and a verifier deriving pre-body says "decay" — or the
+reverse — and **the block never validates.** The identity does not have to do anything unusual: it
+has to transact in the block that decays it.
+
+⚠ **The liveness cost is real, deterministic, and not a fork.** A block whose body spends a karma box
+the settlement's plan also names is **invalid** — the settlement lists an already-consumed input.
+Every node reaches that verdict identically, so it costs a block rather than splitting the chain, and
+a producer's own speculative apply reaches the same verdict and declines to build it. ⛔ **State the
+bound wherever this is implemented**: decay fires once per interval per identity, so the exclusion
+lasts at most until the decay lands.
+
+⛔ **Any store query feeding a derivation needs a total order, stated.** `getKarmaOwners` had no
+`ORDER BY` — SQLite's return order is not a rule, and a derivation that iterates it is a fork with no
+compiler signal. **Ascending owner, ascending box id, or the block's committed transaction order.
+Nothing else.**
+
 ⛔ **`vouch_cooldowns`-style node-local SQL is exactly what this forbids.** A block-application effect
 must be derivable from **block content**; an effect keyed on a local table is a fork, not a
 refactor. That is the load-bearing reason marker boxes exist rather than a tidiness argument.
