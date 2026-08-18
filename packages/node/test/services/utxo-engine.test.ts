@@ -1541,7 +1541,7 @@ describe('validateAndApplyTx', () => {
 
   // ---------------------------------------------------------------------------
   // 16. The fee box — a credit transaction conserves strictly, and a fee is a
-  // `FeeBox` output it names (NODE_INTERFACE → `validateTx` step 5; the three
+  // `FeeBox` output it names (NODE_INTERFACE → `validateTx` step 7; the three
   // stated exceptions all move karma).
   //
   // Every rejection below is the fall-through's, because there is no
@@ -1844,6 +1844,85 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toContain('CreditBox can only be spent to create CreditBox or FeeBox outputs');
       expect(result.error).not.toContain('non-conservation');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 17. Spend timing — the coinbase maturity lock (E-1).
+  //
+  // `lockedUntilBlock` was derived, validated on creation, encoded, stored and
+  // rendered — and no validation path read it on an input.
+  // ---------------------------------------------------------------------------
+  describe('spend timing — credit', () => {
+    function lockedCreditIn(
+      value: bigint,
+      seed: number,
+      lockedUntilBlock: number,
+      owner = ownerPubKey,
+    ): Stored<CreditBox> {
+      const box = seedProvenance<CreditBox>(
+        {
+          boxType: 'credit' as const,
+          value,
+          createdAtBlock: 0,
+          owner,
+          lockedUntilBlock,
+        },
+        seed,
+      );
+      storeInsertBox(box);
+      return box;
+    }
+
+    function unlockedCreditIn(value: bigint, seed: number, owner = ownerPubKey): Stored<CreditBox> {
+      const box = seedProvenance<CreditBox>(
+        {
+          boxType: 'credit' as const,
+          value,
+          createdAtBlock: 0,
+          owner,
+        },
+        seed,
+      );
+      storeInsertBox(box);
+      return box;
+    }
+
+    function creditOut(value: bigint, owner = ownerPubKey): CandidateOf<CreditBox> {
+      return { boxType: 'credit', value, createdAtBlock: 0, owner };
+    }
+
+    it('refuses a credit input before its lockedUntilBlock', () => {
+      const box = lockedCreditIn(500n, 200, 200);
+      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      const r = validateTx(deps, tx, 199);
+      expect(r.valid).toBe(false);
+      expect(r.error).toMatch(/locked until 200/);
+    });
+
+    it('accepts the same input at exactly lockedUntilBlock', () => {
+      const box = lockedCreditIn(500n, 201, 200);
+      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      expect(validateTx(deps, tx, 200).valid).toBe(true);
+    });
+
+    it('accepts a credit input carrying no lock', () => {
+      const box = unlockedCreditIn(500n, 202);
+      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      expect(validateTx(deps, tx, 1).valid).toBe(true);
+    });
+
+    it('refuses on timing before authorization, on an unsigned locked spend', () => {
+      const box = lockedCreditIn(500n, 203, 200);
+      const tx: UtxoTransaction = {
+        inputs: [box.id!],
+        outputs: [creditOut(500n)],
+        signatures: {},
+        protocolVersion: 1,
+      };
+      const r = validateTx(deps, tx, 199);
+      expect(r.error).toMatch(/locked until/);
+      expect(r.error).not.toMatch(/signature/i);
     });
   });
 });

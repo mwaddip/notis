@@ -182,7 +182,7 @@ function verifyGuardSignature(
 
 /**
  * Check legal box transitions for a given set of inputs and outputs.
- * Assumes all inputs have the same boxType (`validateTx` step 3 pins it).
+ * Assumes all inputs have the same boxType (`validateTx` step 4 pins it).
  *
  * Height-free: no transition is a predicate on the settle height any more
  * (NODE_INTERFACE → "Bond transition rules"). A bond's probation is dated from
@@ -257,7 +257,7 @@ function checkTransitions(
       // All karma inputs must share one owner (NODE_INTERFACE → "Karma
       // transition rules"). Every karma output is pinned to `inputKarma.owner`
       // below, but nothing else binds the inputs to each other — validateTx
-      // step 3 only requires a common boxType — so without this check
+      // step 4 only requires a common boxType — so without this check
       // [karmaA, karmaB] → karmaA validates with both owners co-signing, and
       // B's karma becomes A's. Consensual, but karma is
       // non-transferable by rule: a consensual transfer is still a transfer,
@@ -310,7 +310,7 @@ function checkTransitions(
         //
         // ⛔ **The transaction CONSERVES — there is no deficit any more.** The
         // cost lands in a box rather than leaving the ledger (ARCHITECTURE →
-        // The conservation axiom: a marker must carry its value), so step 6's
+        // The conservation axiom: a marker must carry its value), so step 7's
         // unconditional sum is what pins the total and this arm pins the shape.
         if (outputs.length !== 2 || karmaOutputs.length !== 1 || accrualOutputs.length !== 1) {
           return {
@@ -540,11 +540,11 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // BondBox — consumed by block application only, refused at step 7
+    // BondBox — consumed by block application only, refused at step 8
     // ------------------------------------------------------------------
     case 'bond': {
       // Unreachable through `validateTx`: no transition admits a bond input, so
-      // step 7 refuses it ahead of this. Kept as the second layer, because a
+      // step 8 refuses it ahead of this. Kept as the second layer, because a
       // transition table that *accepts* any bond shape is a consensus rule
       // waiting to be re-exposed by a reordering.
       return {
@@ -591,7 +591,7 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // PostLockBox — consumed by block application only, refused at step 7
+    // PostLockBox — consumed by block application only, refused at step 8
     // ------------------------------------------------------------------
     case 'post_lock': {
       return {
@@ -720,7 +720,7 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
    * ⚠ **This entry holds a no-panic violation shut, it is not a style gap.**
    * `canonicalBoxBytes` writes the field with `writeHexNOrThrow(…, 32)`, which
    * throws on anything that is not exactly 64 lowercase hex. Type it `'string'`
-   * here and a `post_lock` output carrying `targetPostId: 'hello'` clears step 4
+   * here and a `post_lock` output carrying `targetPostId: 'hello'` clears step 5
    * and then makes `computeTxId` **throw** at `validateTx`'s last line — turning
    * an invalid transaction into an exception on an adversary-supplied value.
    * `VALIDATION_INTERFACE`'s no-panic rule forbids exactly that.
@@ -979,7 +979,7 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   }
 
   // ---- 4. outputs: an array ----
-  // Entries are NOT typed here — that is step 4's closed per-boxType schema.
+  // Entries are NOT typed here — that is step 5's closed per-boxType schema.
   // This clause only guarantees the iteration and `.reduce` sites are total.
   if (!Array.isArray(tx.outputs)) {
     return {
@@ -1177,7 +1177,7 @@ const OUTPUT_SHAPE: Record<
     // creates one.** No transition arm admits either type as an output today:
     // `KARMA_TRANSITION_TYPES` is an allowlist that excludes both and the credit
     // arm admits only `credit` and `fee`, so a transaction naming one is refused
-    // at step 8 with the shape already checked. The settlement transaction
+    // at step 9 with the shape already checked. The settlement transaction
     // creates both and it does not pass through this table
     // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
     like_accrual: shape({ boxType: null, value: 'u64', createdAtBlock: 'uint', author: 'bytes32' }),
@@ -1247,12 +1247,12 @@ const OUTPUT_SHAPE: Record<
  * inside a block. A REQUIRED key holding `undefined` still rejects, in the
  * required-key loop below — that is a missing field, not an absent optional.
  *
- * Exported for direct testing. Through `validateTx` this check runs at step 4
+ * Exported for direct testing. Through `validateTx` this check runs at step 5
  * — the first consumer of `tx.outputs` — so it is the PRIMARY gate for every
  * malformed output, unknown boxTypes included. The transition arms' own
  * unknown-type rejections (the karma/credit totality counts, the
  * `outputs.length` pins), which made the unknown-boxType arm here unreachable
- * while the check ran at step 8, are now the defense-in-depth layer behind
+ * while the check ran at step 9, are now the defense-in-depth layer behind
  * it: they fire only if this gate regresses.
  */
 export function checkOutputShape(outputs: AnyBoxCandidate[]): UtxoResult {
@@ -1352,15 +1352,15 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  * form inside the karma family: invite creation is `karma → karma + bond`,
  * where the bond's value comes out of the karma output, so the transaction
  * conserves as one total while the `karma` type alone does not.
- * Posting and vouch casting have the same shape. Step 3 constrains the
+ * Posting and vouch casting have the same shape. Step 4 constrains the
  * **inputs** to a single box type; the outputs deliberately span several, and
  * the two `.reduce`s below carry no type predicate (NODE_INTERFACE →
- * `validateTx` step 6).
+ * `validateTx` step 7).
  *
  * Karma and credits are minted or burned only in block-application paths (like
  * settlement, decay, bond settlement), never inside a user transaction, so no
  * box type gets a blanket exemption. **Two stated exceptions and no others**
- * (NODE_INTERFACE → `validateTx` step 6):
+ * (NODE_INTERFACE → `validateTx` step 7):
  *
  * - **The like burn** — `likeTarget` present ⟺ the transaction burns
  *   exactly `LIKE_KARMA_COST` from karma inputs. This is the biconditional's
@@ -1400,7 +1400,7 @@ function checkValueConservation(
   outputs: AnyBoxCandidate[],
   likeTarget: string | undefined,
 ): UtxoResult {
-  // Output `value` types are pinned by the step-4 schema before this runs
+  // Output `value` types are pinned by the step-5 schema before this runs
   // (field-type pin), so the bigint sums below are total — this function must
   // never run on outputs that have not passed `checkOutputShape`.
 
@@ -1431,6 +1431,69 @@ function checkValueConservation(
     };
   }
 
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Spend timing — when a box of this type may be spent
+// ---------------------------------------------------------------------------
+
+/**
+ * When a box of this type may be spent — the third table keyed on `boxType`,
+ * beside `AUTHORIZATION` and `OUTPUT_SHAPE`.
+ *
+ * Its members read DIFFERENT fields — `credit.lockedUntilBlock` and
+ * `vouch_escrow.releaseAtBlock` — so a check keyed on one field name silently
+ * admits the other. The property is "this type has an unlock height", not
+ * "this field is present".
+ *
+ * Typed over every `boxType`, so a new type fails to compile until its timing
+ * is stated — the obligation `AUTHORIZATION` carries for the signer and
+ * `OUTPUT_SHAPE` for output shape.
+ */
+interface SpendTiming {
+  readonly unlockHeight?: (box: AnyBox) => number | null;
+}
+
+const ALWAYS_SPENDABLE: SpendTiming = {};
+
+const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
+  karma: ALWAYS_SPENDABLE,
+  credit: { unlockHeight: (b) => (b as CreditBox).lockedUntilBlock ?? null },
+  genesis_proof: ALWAYS_SPENDABLE,
+  bond: ALWAYS_SPENDABLE,
+  post_lock: ALWAYS_SPENDABLE,
+  vouch: ALWAYS_SPENDABLE,
+  // Authorization refuses escrow as BLOCK_APPLICATION_ONLY, so no user
+  // transaction can reach this entry yet.
+  vouch_escrow: ALWAYS_SPENDABLE,
+  emission: ALWAYS_SPENDABLE,
+  treasury: ALWAYS_SPENDABLE,
+  fee: ALWAYS_SPENDABLE,
+  karma_pool: ALWAYS_SPENDABLE,
+  like_accrual: ALWAYS_SPENDABLE,
+};
+
+/**
+ * Refuse any input whose type states an unlock height the chain has not
+ * reached.
+ *
+ * Runs before `checkAuthorization`: timing is cheaper than signature
+ * verification and refuses a transaction that cannot succeed either way.
+ */
+function checkSpendTiming(inputBoxes: AnyBox[], currentBlockHeight: number): UtxoResult {
+  for (const box of inputBoxes) {
+    if (!Object.hasOwn(SPEND_TIMING, box.boxType)) {
+      return { valid: false, error: `No spend timing states when a ${box.boxType} box may be spent` };
+    }
+    const unlock = SPEND_TIMING[box.boxType].unlockHeight?.(box) ?? null;
+    if (unlock !== null && currentBlockHeight < unlock) {
+      return {
+        valid: false,
+        error: `Box ${box.id} is locked until ${unlock}; current height is ${currentBlockHeight}`,
+      };
+    }
+  }
   return { valid: true };
 }
 
@@ -1598,34 +1661,37 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
 /**
  * Validate a transaction without applying it (read-only).
  *
- * Performs 8 validation steps:
+ * Performs 9 validation steps:
  * 0. Transaction envelope shape — `tx` is a plain object with the closed key
  *    set, hex input ids, array outputs, a hex-keyed 64-byte signature map, and
  *    `protocolVersion` strictly equal
  *    to `PROTOCOL_VERSION` (NODE_INTERFACE → "Transaction envelope shape").
- *    Ahead of every other read of `tx`, so steps 1–7 dereference envelope
+ *    Ahead of every other read of `tx`, so steps 1–9 dereference envelope
  *    fields under a shape guarantee.
  * 1. No duplicate input IDs
  * 2. All inputs exist and are unspent
- * 3. All inputs have the same boxType
- * 4. Output shape — every output is a non-null object matching the closed
+ * 3. Spend timing — no input is spent before the unlock height its type
+ *    states. The two members read different fields
+ *    (`credit.lockedUntilBlock`, `vouch_escrow.releaseAtBlock`).
+ * 4. All inputs have the same boxType
+ * 5. Output shape — every output is a non-null object matching the closed
  *    per-boxType schema: exact key set, and every field's runtime type
  *    (field-type pin, NODE_INTERFACE → "Output shape"). This is the first
  *    step that reads
- *    `tx.outputs`, so steps 5–8 dereference output fields under a schema
+ *    `tx.outputs`, so steps 7–9 dereference output fields under a schema
  *    guarantee.
- * 5. No output claims a height the chain has not reached
+ * 6. No output claims a height the chain has not reached
  *    (`createdAtBlock <= currentBlockHeight`).
- * 6. Face-value conservation — sum(in) == sum(out) across the transaction as a
+ * 7. Face-value conservation — sum(in) == sum(out) across the transaction as a
  *    whole, one total per side and not per box type. The like burn lands in a
  *    `LikeAccrualBox` and the unvouch's stake in a `VouchEscrowBox`, so every
  *    karma-side spend has somewhere for its value to go and the equality is
- *    unconditional. The `value` TYPE bound lives in step 4's schema.
- * 7. Authorization — the signer the transition requires signed this
+ *    unconditional. The `value` TYPE bound lives in step 5's schema.
+ * 8. Authorization — the signer the transition requires signed this
  *    transaction, or no transition admits the input (NODE_INTERFACE → "Legal
- *    box transitions"). Ahead of step 8, so the transition is identified from
+ *    box transitions"). Ahead of step 9, so the transition is identified from
  *    the input type and the output count rather than from a validated shape.
- * 8. Legal box transitions (`likeTarget`-aware — the like burn shape)
+ * 9. Legal box transitions (`likeTarget`-aware — the like burn shape)
  *
  * Karma decay is handled by the periodic decay engine, not at transaction
  * validation time.
@@ -1639,7 +1705,7 @@ export function validateTx(
   currentBlockHeight: number,
 ): UtxoResult {
   // ---- 0. Transaction envelope shape ----
-  // Ahead of every other read of `tx`: steps 1–7 index `tx.inputs`, iterate
+  // Ahead of every other read of `tx`: steps 1–9 index `tx.inputs`, iterate
   // `tx.outputs`, and hash the whole envelope inside `computeTxId`, all of
   // which are throw sites for a malformed envelope without this gate.
   const envelopeCheck = checkTxEnvelope(tx);
@@ -1665,7 +1731,11 @@ export function validateTx(
     inputBoxes.push(box);
   }
 
-  // ---- 3. All inputs must be the same box_type ----
+  // ---- 3. Spend timing: no input is spent before its unlock height ----
+  const timingCheck = checkSpendTiming(inputBoxes, currentBlockHeight);
+  if (!timingCheck.valid) return timingCheck;
+
+  // ---- 4. All inputs must be the same box_type ----
   // No exceptions: every legal shape is single-type. The claim needs no bond
   // alongside its invite, because the karma it produces is minted rather than
   // moved, and the cancel names no bond at all (NODE_INTERFACE → the transition
@@ -1681,17 +1751,17 @@ export function validateTx(
     }
   }
 
-  // ---- 4. Output shape: the closed per-boxType schema (field-type pin) ----
-  // First consumer of `tx.outputs`, ahead of every semantic rule: steps 5–8
+  // ---- 5. Output shape: the closed per-boxType schema (field-type pin) ----
+  // First consumer of `tx.outputs`, ahead of every semantic rule: steps 7–9
   // dereference output fields under the schema's key-set and type guarantees
-  // instead of defending per-site. Placing it here rather than at step 8
+  // instead of defending per-site. Placing it here rather than at step 9
   // changes only which error a MALFORMED output surfaces (a shape error, not
   // an arm-specific one); the accepted set for well-typed outputs is identical
   // either way.
   const shapeCheck = checkOutputShape(tx.outputs);
   if (!shapeCheck.valid) return shapeCheck;
 
-  // ---- 5. No output claims a height the chain has not reached ----
+  // ---- 6. No output claims a height the chain has not reached ----
   for (const out of tx.outputs) {
     const declared = (out as Record<string, unknown>).createdAtBlock as number;
     if (declared > currentBlockHeight) {
@@ -1702,18 +1772,18 @@ export function validateTx(
     }
   }
 
-  // ---- 6. Value conservation ----
+  // ---- 7. Value conservation ----
   const valueCheck = checkValueConservation(inputBoxes, tx.outputs, tx.likeTarget);
   if (!valueCheck.valid) return valueCheck;
 
-  // ---- 7. Authorization ----
+  // ---- 8. Authorization ----
   // Ahead of the transition arms, so a transaction that is both unsigned and
   // malformed is refused for being unsigned. The transition is identified here
-  // from the input type and the output count; step 8 pins the rest of the shape.
+  // from the input type and the output count; step 9 pins the rest of the shape.
   const authCheck = checkAuthorization(tx, inputBoxes);
   if (!authCheck.valid) return authCheck;
 
-  // ---- 8. Legal box transitions ----
+  // ---- 9. Legal box transitions ----
   const transitionCheck = checkTransitions(
     inputBoxes,
     tx.outputs,
