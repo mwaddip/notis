@@ -1,36 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createPublicKey, generateKeyPairSync, verify } from 'crypto';
-import { computeTxId, ED25519_SPKI_PREFIX, PROTOCOL_VERSION } from '@dagsocial/types';
+import { computeTxId, PROTOCOL_VERSION } from '@dagsocial/types';
 import { buildInviteTx } from '../src/invite.js';
-import type { FaucetConfig } from '../src/config.js';
-
-const kp = generateKeyPairSync('ed25519');
-const pkcs8 = kp.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
-const pubHex = (kp.publicKey.export({ format: 'der', type: 'spki' }) as Buffer)
-  .subarray(-32).toString('hex');
-
-// ⛔ Box ids are 64 hex characters. `computeTxId` writes inputs through
-// `writeHexNOrThrow`, so a short stand-in throws before any assertion runs.
-const B1 = '11'.repeat(32);
-const B2 = '22'.repeat(32);
-
-const cfg: FaucetConfig = {
-  nodeUrl: 'http://x', networkType: 'testnet', publicKeyHex: pubHex, secretKey: pkcs8,
-  bondAmount: 250n, creditAmount: 1n, port: 1, rateLimitPerHour: 1,
-};
-const invitee = 'aa'.repeat(32);
-
-const outputsOf = (tx: Record<string, unknown>) => tx.outputs as Record<string, unknown>[];
-
-function verifies(tx: Record<string, unknown>, txId: string, ownerHex: string): boolean {
-  const sigHex = (tx.signatures as Record<string, string>)[ownerHex]!;
-  const spki = Buffer.concat([
-    Buffer.from(ED25519_SPKI_PREFIX, 'hex'),
-    Buffer.from(ownerHex, 'hex'),
-  ]);
-  const pub = createPublicKey({ key: spki, format: 'der', type: 'spki' });
-  return verify(null, Buffer.from(txId, 'hex'), pub, Buffer.from(sigHex, 'hex'));
-}
+import { B1, B2, baseCfg as cfg, outputsOf, pubHex, recipient as invitee, verifies } from './fixture.js';
 
 describe('buildInviteTx', () => {
   it('spends enough boxes and leaves the remainder as change', () => {
