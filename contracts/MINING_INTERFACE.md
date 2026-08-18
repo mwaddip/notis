@@ -431,10 +431,14 @@ like settlement is, so producer and verifier cannot disagree, and both are commi
 > the same derivation; now the producer's result is **committed**, so a disagreement is a rejected
 > block rather than a silent divergence.
 >
-> ⚠ **What replaces it as the risk is determinism in the other direction.** The verifier must derive
-> a **byte-identical** settlement from the same body to check the producer's, so every ordering the
-> construction depends on must be one the block already fixes — NODE_INTERFACE → the settlement
-> transaction admits exactly three sources and no fourth.
+> ⚠ **What replaces it as the risk is determinism in the other direction**, and it is determinism of
+> the **verdict** rather than of the bytes. ⛔ **The verifier CANNOT reconstruct a byte-identical
+> settlement**: `?miner=` makes the coinbase payout key producer-chosen, so it reaches the verifier
+> only as an output of the settlement it is checking. What every verifier must reach identically is
+> the **same verdict** — each **derived** quantity recomputed and compared, each **producer-chosen**
+> one read and constrained by a stated rule, and no field neither. Every ordering the derivation
+> depends on must be one the block already fixes — NODE_INTERFACE → the settlement transaction admits
+> exactly three sources and no fourth.
 
 ## Config
 

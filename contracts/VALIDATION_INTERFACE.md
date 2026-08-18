@@ -956,8 +956,10 @@ and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
 > Corrected 2026-08-17.** The settlement **is** the last entry (NODE_INTERFACE → the settlement
 > transaction), so there is no count to take and no *"settlement that is not last"* state to detect.
 > Recognising a settlement anywhere else would mean recognising **what it spends** — the pool — which
-> needs the UTXO set and is therefore node's, enforced by byte-identical reconstruction. ⛔ **A
-> definition dressed as a predicate reads like coverage and produces none.**
+> needs the UTXO set and is therefore node's. ⚠ **Node enforces it by recomputing each DERIVED
+> quantity and constraining each PRODUCER-CHOSEN one — not by byte-identical reconstruction, which
+> `?miner=` makes impossible** (NODE_INTERFACE → the settlement transaction). ⛔ **A definition
+> dressed as a predicate reads like coverage and produces none.**
 >
 > ⚠ **A non-empty body is therefore the precondition, and it is new.** Every block must carry at
 > least one transaction now, because the settlement is one. A structural check that admitted an

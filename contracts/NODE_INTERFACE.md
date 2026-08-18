@@ -2278,12 +2278,33 @@ committed transaction order."*
   input set from the rest of the body before checking conservation. That is a field read on a pass it
   already makes, **once per block**.
 
-#### ⛔ Determinism is this mechanism's whole risk
+#### ⛔ Determinism is this mechanism's whole risk — but it is determinism of the VERDICT, not of the bytes
 
-**Every node must derive a byte-identical settlement from the same body**, or `utxoTxRoot` and
-`stateRoot` fork. Construction must be a **pure function of the block's other transactions plus the
-consumed protocol boxes** — no local state, no wall clock, and no iteration order the block does not
-already fix.
+⛔ **"EVERY NODE DERIVES A BYTE-IDENTICAL SETTLEMENT" IS IMPOSSIBLE AND THIS SECTION SAID IT.
+Corrected 2026-08-18.** The coinbase payout key comes from `?miner=<hex(32)>` on the template
+request (`MINING_INTERFACE` → Mining API) — **it is producer-chosen and reaches the body only as an
+output of the settlement itself.** A verifier cannot know which key the producer picked, so it
+cannot reconstruct the settlement independently and compare bytes.
+
+⛔ **THE PROPERTY THAT ACTUALLY BINDS: every node reaches the same VERDICT on the settlement the
+block carries.** That is what keeps `utxoTxRoot` and `stateRoot` from forking, and it is weaker than
+byte-identity in exactly one place and no more.
+
+**So every field of the settlement is one of two things, and the enumeration is the rule:**
+
+| Kind | Obligation |
+|---|---|
+| **derived** — pool successor value, emission successor, the set of markers consumed, each slice's value, output ordering | **recomputed identically by every verifier.** A mismatch is a rejected block |
+| **producer-chosen** — the coinbase payout key | **read from the settlement and constrained by a stated rule.** Never re-derived, because there is nothing to derive it from |
+
+⛔ **NO FIELD MAY BE NEITHER.** A field that is not recomputed and not constrained is a field a
+producer may set freely, and the block still validates — which is how a settlement smuggles value
+past a gate that looks exhaustive.
+
+⚠ **Construction must still be a pure function of the block's other transactions, the consumed
+protocol boxes, and the producer-chosen inputs it names** — no local state, no wall clock, and no
+iteration order the block does not already fix. **Adding a producer-chosen field is what needs a
+rule; adding a derived one needs only that the derivation be stated.**
 
 ⛔ **`vouch_cooldowns`-style node-local SQL is exactly what this forbids.** A block-application effect
 must be derivable from **block content**; an effect keyed on a local table is a fork, not a
