@@ -1250,11 +1250,21 @@ The checks:
    own key. The clause closes the class structurally rather than trusting
    either decoder's sanitizing to stay as it is.
 2. **Closed key set**: `inputs`, `outputs`, `signatures`, `protocolVersion`,
-   optionally `preimages` and `likeTarget`. Any other key rejects. A present
-   key with value `undefined` rejects (mirrors the output schema's
-   present-undefined rule — CBOR encodes `undefined`, and `computeTxId`'s
-   presence test is `!== undefined`, so a present-`undefined` `likeTarget`
-   would hash as absent; the gate refuses the ambiguity).
+   optionally `likeTarget` and `post`. Any other key rejects.
+   > ⛔ **`preimages` LEFT THIS SET, AND THE GATE ACCEPTED IT AFTER `computeTxId` STOPPED HASHING
+   > IT. Corrected 2026-08-18.** The field is deleted (TYPES_INTERFACE → Layout — UtxoTransaction).
+   > ⚠ **Node was conforming to this row while it was wrong** — the defect was the contract's, and
+   > the exposed surface was the HTTP request body and the object `jsonToTx` builds. **The mempool
+   > row, the gossip frame and every committed byte were clean**, because the pool stores
+   > `encodeTx` output and the field had already left the codec. **Gate integrity, no value at risk.**
+   >
+   > ⛔ **A REQUIRED key with value `undefined` still rejects. An OPTIONAL one no longer does**, and
+   > the reason is that this rule outlived its premise: under `cbor-x`, `undefined` **encoded** while
+   > `computeTxId`'s presence test was `!== undefined`, so present-`undefined` hashed as absent —
+   > two encodings, one hash, a real malleability. Under the positional codec `opt()` gives absence
+   > **exactly one encoding**, so present-`undefined` and absent are indistinguishable on the wire and
+   > refusing one refuses nothing the wire can express. ⚠ **The rule was correct when written and
+   > nothing about it looked stale.**
 3. `inputs`: an array; every entry a 64-char lowercase-hex string (the closed
    live set — `computeBoxId` emits nothing else). Emptiness remains step 1's
    rule ("at least one input"), not the gate's.
@@ -1268,14 +1278,11 @@ The checks:
    gate's. Extra well-formed keys are shape-legal (authorization only
    looks up, nothing iterates; the like path's exactly-one-signature rule is
    `castLike`/gate-metadata policy, unchanged).
-6. `preimages`: absent, or a plain **non-empty** object with 64-char
-   lowercase-hex keys and `Uint8Array` values. Present-but-empty rejects:
-   `computeTxId` guards on truthiness then iterates, so `{}` contributes
-   nothing to the hash — `preimages: {}` and absence would be two CBOR
-   encodings of one txId (the malleability rule 2 exists to kill), and
-   `jsonToTx` already normalizes `{}` to absent on the HTTP edge. No length
-   bound on values — the bytes are already in memory post-decode, and secret
-   length was never a consensus rule.
+6. ⚠ **`preimages` — RULE DELETED with the field, 2026-08-18.** It required a non-empty object and
+   refused present-but-empty, because under `cbor-x` `{}` and absence were two encodings of one
+   `TxId`. The field is not in the id preimage, not in the type and not on the wire, so there is
+   nothing left to constrain. ⛔ **The name stays reserved** — a future secret-carrying field would
+   have to state what reads it, which is precisely what this one never did.
 7. `protocolVersion`: an integer strictly equal to `PROTOCOL_VERSION`
    (decided 2026-08-08). Same strict-equality posture as posts and block
    headers — no version-keyed dispatch exists (repo-root warning), and this

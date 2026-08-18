@@ -79,9 +79,15 @@ Additions to the existing `OrderingBlock` type:
 |-------|------|-------------|
 | `powNonce` | `number` | PoW solution (nonce that satisfies target) |
 | `powTargetBits` | `number` | Difficulty target for this block |
-| `coinbaseOutputs` | `CoinbaseOutput[]` | Block reward distribution |
+| ~~`coinbaseOutputs`~~ | — | ⚠ **REMOVED** — the block reward is paid by the settlement transaction's outputs (NODE_INTERFACE → the settlement transaction) |
 
-### CoinbaseOutput
+### ~~CoinbaseOutput~~ — DELETED
+
+> ⚠ **The struct is gone and so is the body field.** Coinbase outputs are outputs of the block's
+> settlement transaction, so the fields below describe nothing in the tree. **`isTreasury` needs no
+> deletion pass of its own** — the struct it lived on stopped existing.
+>
+> ⛔ **The `'coinbase'` Merkle leaf domain is retired and its string reserved.**
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -197,13 +203,13 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
     "powTargetBits": 20,
     "createdAt": 1234567890000
   },
+  // ⚠ subBlockRoot / subBlockRefs / subBlockEntries below are RETIRED — a post is a
+  // transaction and rides utxoTxIds. Left in this example pending the sub-block sweep,
+  // which is not unit C's; the body itself is utxoTxIds / utxoTxs / pruneEntries.
   "subBlockRefs": ["hex(32)", ...],
   "subBlockEntries": [{ "postId": "hex(32)", "parentRefs": ["hex(32)"], "author": "hex(32)" }, ...],
   "pruneEntries": [...],
-  "utxoTxIds": [],
-  "coinbaseOutputs": [
-    { "owner": "hex(32)", "value": 90, "lockedUntilBlock": 843, "isTreasury": false }
-  ],
+  "utxoTxIds": ["hex(32)", ...],
   "powPreimage": "hex(32)"
 }
 ```

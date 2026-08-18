@@ -1964,7 +1964,11 @@ Layout — Boxes.
 **SubBlockTree:** `arr(subBlockEntries)` ‖ `arr(pruneEntries)` — **`subBlockRefs` is deleted**; it was
 uncommitted, redundant with `subBlockEntries`, and drove state mutation (see NODE_INTERFACE)
 **CoinbaseOutput:** `b32(owner)` ‖ **`vlqU64(value)`** ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`
-**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(coinbaseOutputs)`
+**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`
+
+> ⚠ **This line said `arr(coinbaseOutputs)` and omitted `pruneEntries` — wrong in both directions,
+> corrected 2026-08-18.** The normative statement is §OrderingBlock; **this is a restatement, and a
+> restatement is what decays while the thing it restates stays right.**
 **SubBlock:** `b32(subBlockId)` ‖ `postBytes` ‖ `b32(producerId)` ‖ `vlqU(protocolVersion)`
 **OrderingBlock:** `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`
 
@@ -2069,6 +2073,40 @@ provenance from a transaction whose id has changed — internally consistent, ex
 **invisible to every gate**. ⚠ **When a `TxId` moves, every literal copy of it moves with it**, and
 the occurrence count belongs in the diff.
 
+#### ⛔ A MIRROR TEST'S GOLDEN MUST BE PINNED TO THE AUTHORITY, NEVER TO THE MIRROR
+
+**A mirror test asserts that a second implementation agrees with this package.** If its frozen
+constant is taken from the **mirror**, the test asserts the mirror agrees with itself, and **both
+sides drift together while it stays green.**
+
+> ⚠ **Measured 2026-08-18.** `node`'s UI-mirror golden held `0d72f282…` — the value the demo UI's
+> `computeTxId` produces, which still carries the retired `preimages` clause — while
+> `@dagsocial/types` had moved to `14cea374…`. **The fixture and its subject were stale in the same
+> direction**, so the constant could not see the divergence it existed to catch.
+>
+> ⛔ **TWO TEST STYLES IN ONE FILE HAD OPPOSITE VISIBILITY.** The **live-comparison** cases — run
+> both implementations, compare outputs — saw the drift immediately. The **frozen-constant** cases
+> could not see it at all. ⚠ **The frozen constant is the one that reads as authoritative**, which is
+> why the file's own note could say no test caught it while a test in that same file did.
+
+**The rule: a mirror's golden is derived from the package under contract, and the mirror is never
+consulted to produce it.** A mirror that disagrees is the finding; a mirror that agrees with a
+constant taken from itself is not evidence of anything.
+
+#### ⚠ A regenerated pin's INPUT is unchecked, so state it
+
+Step 2 above validates the **derivation**. It does not validate what was fed into it. ⛔ **A pin
+regenerated from the correct code and the wrong input is byte-perfect and wrong**, and the mirror
+check passes because the mirror is fine.
+
+> ⚠ **Measured in the same pass.** A sentinel id was regenerated from index `2**32` — a value the
+> test's own prose names as **valid**, not as the sentinel. Nothing mechanical caught it; **the
+> surviving comment beside the constant did.**
+
+**So a regenerated pin says what produced it** — which input, and why that input and not a
+neighbouring one. A constant with no stated input cannot be re-checked without redoing the analysis
+that produced it, which is the analysis nobody repeats.
+
 Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxContentBytes`,
 `boxRecordBytes`). `serializePruneEntry` keeps its pre-migration name; renaming it is not in scope.
 
@@ -2085,7 +2123,7 @@ structure and allocating nothing. It is the measure `MAX_BLOCK_BODY_BYTES` is ch
 allocating the body is the wrong cost.** `verifyOrderingBlockStructure` runs on the gossip relay path
 and would allocate a whole body per arriving block; node's block creator needs a per-entry delta while
 filling, and re-encoding the candidate after each addition is quadratic. The terms are all knowable:
-the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖ `arr(coinbaseOutputs)`,
+the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`,
 and `utxoTxs` are opaque byte arrays, so nothing here depends on the transaction codec.
 
 ⛔ **The equivalence is the contract, not an implementation detail** — a test pins

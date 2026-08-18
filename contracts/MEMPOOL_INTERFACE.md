@@ -342,8 +342,6 @@ includes the sub-block and all linked UTXO entries in the same block.
 | `POST /likes` (locked) | `utxo_tx` | null |
 | `POST /likes/remove` | `utxo_tx` | null |
 | `POST /invites` | `utxo_tx` | null |
-| `POST /invites/claim` | `utxo_tx` | null |
-| `POST /invites/cancel` | `utxo_tx` | null |
 | `POST /faucet` | `utxo_tx` | null |
 | Relay: inbound sub-block | `subblock` | null |
 | Relay: inbound UTXO tx | `utxo_tx` | null |
