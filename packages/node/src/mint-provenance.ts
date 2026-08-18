@@ -232,7 +232,7 @@ export function pruneRefundAuthorContext(rootPostHash: PostId, owner: Uint8Array
 // and `bond-return` re-mint karma a `BondBox` already held, in the sense
 // `vouch-settle` re-mints an escrow.
 
-/** `invite-claim` — 32 bytes. Mints `INVITE_KARMA_AMOUNT` to the invitee. */
+/** `invite-claim` — 32 bytes. Mints the invite's grant to the invitee. */
 export function inviteClaimContext(inviteePublicKey: Uint8Array): MintContext {
   return { reason: 'invite-claim', subject: Uint8Array.from(inviteePublicKey) };
 }

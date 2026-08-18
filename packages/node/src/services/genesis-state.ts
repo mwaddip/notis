@@ -102,8 +102,8 @@ function markGenesisCommitted(): void {
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
  * **fixed, known set** — the proof box, the emission box and the karma supply
- * pool on every network, plus the system karma and faucet credit boxes on the
- * faucet-bearing ones —
+ * pool on every network, plus the faucet identity's karma and credit boxes on
+ * the profiles that name one —
  * and the order is
  * specified rather than whatever a set read produced. Every node on a network
  * performs the identical operation on an identical empty tree, so the resulting

@@ -1056,8 +1056,8 @@ function applyMutationPhase(
   // passed is `IdentityRecord` existence, and the grant that writes that record
   // is the settlement's — which runs after every transaction here — so a
   // record-existence test cannot see a sibling transaction in the same block.
-  // Without this the second bond draws a second `INVITE_KARMA_AMOUNT` from the
-  // pool for one key.
+  // Without this the second bond draws a second grant from the pool for one
+  // key, sized by whatever bond the second inviter chose.
   const invitedThisBlock = new Set<string>();
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't

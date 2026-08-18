@@ -305,12 +305,10 @@ function assertOrderingTargetAboveFloor(cfg: Config): void {
  * and forks from every honest peer at height 1. Refuse at load rather than
  * clamp or default: put the verdict where a human is reading it.
  *
- * **Non-empty, and that half is not pedantry.** The proof box is the whole of
- * the difference between testnet's and devnet's genesis states — they share the
- * system keypair and both box values, so their karma and credit boxes are
- * byte-identical and carry the same ids. An empty payload still encodes cleanly,
- * to the same `030000` on both, and collapses two networks onto one genesis
- * root. `network.test.ts` requires one or more pairs of the same profile
+ * **Non-empty, and that half is not pedantry.** An empty payload still encodes
+ * cleanly, to the same `030000` on every network, so a profile that supplied one
+ * would seed a proof box byte-identical to another network's — removing one of
+ * the things that keeps two genesis roots apart. `network.test.ts` requires one or more pairs of the same profile
  * strings; the two guards state one rule between them, so the fail-stop must not
  * be the permissive one.
  *

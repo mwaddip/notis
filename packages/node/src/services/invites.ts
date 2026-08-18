@@ -24,9 +24,9 @@ import { ClientError } from './client-error.js';
  * Create an invite. The client builds an inviter-signed transaction consuming a
  * KarmaBox and producing karma + bond outputs.
  *
- * ⛔ **The bond is the whole cost.** `INVITE_KARMA_AMOUNT` comes out of the karma
- * pool at settlement, so the inviter never pays it and the transaction conserves
- * like any other (ARCHITECTURE → Invite System).
+ * ⛔ **The bond is the whole cost.** The invitee's grant equals the bond and
+ * comes out of the karma pool at settlement, so the inviter never pays it twice
+ * and the transaction conserves like any other (ARCHITECTURE → Invite System).
  *
  * The invite is **pending** until the next ordering block is confirmed.
  */

@@ -113,15 +113,20 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
 }
 
 // ---------------------------------------------------------------------------
-// System credit box (faucet)
+// The faucet identity's credit box
 // ---------------------------------------------------------------------------
 
 const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n;  // 100k credits in base units
 
 /**
- * Ensure the system keypair has a credit box with FAUCET_CREDITS_INITIAL
- * credits for the testnet faucet. Idempotent — if the system already has
- * unspent credit boxes, returns the first without creating.
+ * Ensure the faucet identity has a credit box holding `FAUCET_CREDITS_INITIAL`.
+ * Idempotent — if it already has unspent credit boxes, returns the first
+ * without creating.
+ *
+ * ⚠ **Credits are TRADEABLE, so the service dispenses them by an ordinary
+ * owner-signed transfer** — no rule names this box, and the node holds no key
+ * to spend it with. Karma takes the other path because a karma transfer does
+ * not exist to be performed.
  *
  * Returns the box for the same reason `ensureSystemKarmaBox` does: the cold-start
  * caller has to hand what it seeded to the AVL feed, and re-reading it from the

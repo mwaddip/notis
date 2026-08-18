@@ -45,9 +45,9 @@ export class FeeBelowFloorError extends ClientError {
  *
  * `validateTx` is deliberately **not** folded in here. Every caller already
  * runs it against its own dependency set and turns a failure into its own
- * error — the faucet's differs from the invite routes', which differ from the
- * gossip relay's — and collapsing nine contracts into one would be a change to
- * satisfy a signature rather than a rule.
+ * error — the invite routes' differs from the like routes', which differ from
+ * the gossip relay's — and collapsing those contracts into one would be a
+ * change to satisfy a signature rather than a rule.
  */
 export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
   const floor = config.minFeeRatePerByte;

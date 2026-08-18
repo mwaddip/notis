@@ -492,8 +492,9 @@ export function getKarmaBoxes(owner: Uint8Array): KarmaBox[] {
       // ⛔ **`value DESC` ALONE IS NOT A TOTAL ORDER, and this list feeds a
       // derivation.** The decay pass lists these ids as the settlement's inputs
       // and the transaction id hashes them in order, so two owners' boxes of
-      // EQUAL value — two faucet grants, a payout that matches an existing
-      // balance — would be returned in whatever order SQLite chose and two nodes
+      // EQUAL value — two invite grants naming the same bond, a payout that
+      // matches an existing balance — would be returned in whatever order SQLite
+      // chose and two nodes
       // would derive two different transactions (NODE_INTERFACE → A derived
       // quantity has TWO kinds of input). `id` breaks the tie and is one of the
       // three permitted orderings; `value DESC` stays because callers select
@@ -515,7 +516,7 @@ export function getKarmaBoxes(owner: Uint8Array): KarmaBox[] {
  * validation path — pool entry, relay, block application — must compute it
  * through this one function or nodes can split. It MUST sum all unspent boxes,
  * never read a single one: multiple unspent karma boxes per owner is reachable
- * (faucet grant + mint, or a karma split), and `getKarmaBox` above is `LIMIT 1`
+ * (an invite grant alongside a mint, or a karma split), and `getKarmaBox` above is `LIMIT 1`
  * with no `ORDER BY` — an arbitrary row, so a single-box read would give two
  * nodes with different physical row order different balances for the same
  * owner, and different unlock verdicts on the same settlement.
