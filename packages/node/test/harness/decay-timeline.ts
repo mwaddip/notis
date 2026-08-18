@@ -260,7 +260,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               [{
                 owner,
                 amount: step.amount,
-                ctx: m.provenance.vouchSettleContext(owner, owner),
+                ctx: m.provenance.likePayoutContext(owner),
               }],
               null,
               height,

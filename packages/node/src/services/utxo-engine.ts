@@ -1704,7 +1704,7 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
  *    per-boxType schema: exact key set, and every field's runtime type
  *    (field-type pin, NODE_INTERFACE → "Output shape"). This is the first
  *    step that reads
- *    `tx.outputs`, so steps 7–9 dereference output fields under a schema
+ *    `tx.outputs`, so steps 6–9 dereference output fields under a schema
  *    guarantee.
  * 6. No output claims a height the chain has not reached
  *    (`createdAtBlock <= currentBlockHeight`).
@@ -1778,7 +1778,7 @@ export function validateTx(
   }
 
   // ---- 5. Output shape: the closed per-boxType schema (field-type pin) ----
-  // First consumer of `tx.outputs`, ahead of every semantic rule: steps 7–9
+  // First consumer of `tx.outputs`, ahead of every semantic rule: steps 6–9
   // dereference output fields under the schema's key-set and type guarantees
   // instead of defending per-site. Placing it here rather than at step 9
   // changes only which error a MALFORMED output surfaces (a shape error, not

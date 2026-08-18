@@ -6,7 +6,6 @@ import {
   likePayoutContext,
   postlockRemainderContext,
   postlockUnlockContext,
-  vouchSettleContext,
 } from '../mint-provenance.js';
 import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
 import { hasActiveVouchEscrow } from '../store/utxo.js';

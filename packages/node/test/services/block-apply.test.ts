@@ -1604,10 +1604,9 @@ describe('block-apply mint provenance', () => {
       const utxo = await importUtxo();
       const journalStore = await importJournalStore();
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
-      const { decayContext, vouchSettleContext } = await import(
+      const { decayContext } = await import(
         '../../src/mint-provenance.js'
       );
-      const { computeMintTxId } = await import('@dagsocial/types');
 
       const idle = makeTestIdentity();
       const target = makeTestIdentity();
