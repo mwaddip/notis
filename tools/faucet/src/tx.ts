@@ -116,6 +116,21 @@ export function valueDescending(boxes: readonly BoxRef[]): BoxRef[] {
   return [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
 }
 
+/**
+ * The faucet cannot cover a grant out of what it holds.
+ *
+ * ⚠ **Its own state, not the caller's mistake.** The faucet draws down as it
+ * invites and does not replenish, so running dry is where it ends up rather
+ * than an edge case — and a request refused for it must not read as a bad
+ * request.
+ */
+export class InsufficientFundsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InsufficientFundsError';
+  }
+}
+
 /** The recipient of any faucet transaction: 32 bytes, and never the faucet's own key. */
 export function checkRecipient(cfg: FaucetConfig, hex: string, what: string): void {
   if (!HEX64.test(hex)) {

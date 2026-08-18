@@ -1,7 +1,7 @@
 import { selectBoxes, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
-import { checkRecipient, signAndRender, valueDescending } from './tx.js';
+import { InsufficientFundsError, checkRecipient, signAndRender, valueDescending } from './tx.js';
 import type { BoxRef, BuiltTx } from './tx.js';
 
 /**
@@ -25,7 +25,9 @@ export function buildInviteTx(
 
   const total = boxes.reduce((sum, b) => sum + b.value, 0n);
   if (total < cfg.bondAmount) {
-    throw new Error(`insufficient karma: the bond is ${cfg.bondAmount}, the faucet holds ${total}`);
+    throw new InsufficientFundsError(
+      `insufficient karma: the bond is ${cfg.bondAmount}, the faucet holds ${total}`,
+    );
   }
 
   const selected = selectBoxes(valueDescending(boxes), cfg.bondAmount);

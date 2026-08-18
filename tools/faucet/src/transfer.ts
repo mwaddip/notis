@@ -1,7 +1,7 @@
 import { selectBoxes, PROTOCOL_VERSION } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
-import { checkRecipient, signAndRender, valueDescending } from './tx.js';
+import { InsufficientFundsError, checkRecipient, signAndRender, valueDescending } from './tx.js';
 import type { BoxRef, BuiltTx } from './tx.js';
 
 /**
@@ -24,7 +24,7 @@ export function buildCreditTransferTx(
 
   const total = boxes.reduce((sum, b) => sum + b.value, 0n);
   if (total < cfg.creditAmount) {
-    throw new Error(
+    throw new InsufficientFundsError(
       `insufficient credits: the grant is ${cfg.creditAmount}, the faucet holds ${total}`,
     );
   }
