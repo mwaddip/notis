@@ -2279,6 +2279,29 @@ the claim around it still reads true; implementation strands a **claim** while e
 still resolves. ⛔ **A marker is the one contract element whose whole purpose is to be falsified**,
 and nothing in this repo watches for the moment it happens.
 
+### A fifth, and the only one that is a PASSING ASSERTION: a defect WITNESS survives its own fix
+
+⛔ **A test written to document a known defect asserts that the defect EXISTS. When the defect is
+closed the test becomes false — and it stays GREEN**, because a witness usually drives the
+primitives directly to demonstrate the raw behaviour, so the fix lands at a layer the test does not
+reach.
+
+> ⚠ **Measured 2026-08-18.** Three cases titled *"VIOLATION: a like burn destroys `LIKE_KARMA_COST`
+> and names no sink"*, *"a bond forfeit ends karma and names no sink"*, *"an unvouch moves the stake
+> to a sink no box names"*. **All three defects were closed; all three still passed**, because they
+> call `insertBox`/`consumeBox` with no engine and no settlement between them. One even named the
+> unit that would close it — *"until then this witness stands"* — and named a function that had been
+> deleted.
+
+⛔ **The titles are PRESENT TENSE and assert a live violation**, so no tense-word sweep reaches them
+except by accident. **It is the inverse of every other rot in this file: it goes stale when the code
+gets BETTER, and nothing about it looks wrong.**
+
+✅ **Naming the closing unit is necessary and is not sufficient** — one of these did, and nothing
+connected the unit landing to the witness. **So closing a unit includes grepping the test tree for
+its own name.** A witness is a claim with an expiry, and it is the only kind whose expiry is an
+improvement.
+
 ### A fourth: a PROSE RESTATEMENT decays while the assertion beside it stays green
 
 ⛔ **A fact with a test asserting it can still be wrong everywhere it is described.** The assertion
