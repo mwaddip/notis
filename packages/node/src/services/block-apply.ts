@@ -1398,6 +1398,7 @@ function applyMutationPhase(
         shape: (value) => ({
           boxType: 'post_lock',
           value,
+          createdAtBlock: height,
           originalValue: lockBox.originalValue,
           owner: lockBox.owner,
         }),

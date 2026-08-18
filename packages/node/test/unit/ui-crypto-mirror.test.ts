@@ -87,12 +87,14 @@ const GOLDEN_POST_HEX_AUTHOR = {
 const GOLDEN_KARMA_CANDIDATE: CandidateOf<KarmaBox> = {
   boxType: 'karma',
   value: 100n,
+  createdAtBlock: 300,
   owner: GOLDEN_AUTHOR,
 };
 
 const GOLDEN_CREDIT_CANDIDATE: CandidateOf<CreditBox> = {
   boxType: 'credit',
   value: 123456789n * 10n ** 8n,  // 12_345_678_900_000_000 > 2^53 — why box values are bigint
+  createdAtBlock: 300,
   owner: GOLDEN_AUTHOR,
 };
 
@@ -122,11 +124,11 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 // `0x12345678` for the wide-index case. The sentinel's input is stated at its
 // own declaration, because it is the one that is not a neighbour of these.
 const GOLDEN_KARMA_BOX_ID =
-  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
+  '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
 const GOLDEN_CREDIT_BOX_ID =
-  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
+  '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
 const GOLDEN_UTXO_TX_ID =
-  '14cea3748d7b4a232b9a774b71dc1d5e4dbf112949c11d14e61147b642557565';
+  'fdbacd785aee904a5e4d9f5935986ad10e4efaac7e17ad17578d0f1156a9ee57';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -135,13 +137,15 @@ const GOLDEN_UTXO_TX_ID =
  */
 const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
-  '64' +                                                               // vlqU value 100
+  '64' +                                                               // vlqU64 value 100
+  'ac02' +                                                             // vlqU createdAtBlock 300
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
   '00';                                                                // opt decayBurn absent
 
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
-  '80eae1eac58af715' +                                                 // vlqU value
+  '80eae1eac58af715' +                                                 // vlqU64 value
+  'ac02' +                                                             // vlqU createdAtBlock 300
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
   '00';                                                                // opt lockedUntilBlock absent
 
@@ -166,11 +170,11 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '4f46bf062ba4efccb85d1db363aee824f4d175f0002ffd168697234ce362d193';
+  '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  'f8ff432e8b0e4389482f667b9c05f0c301eb34b6514314ec5cd2b776ae4f8b1c';
+  '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  'c837393c51d82567145c3cbed9f9c9cd837b9085bad1594ce9567d315375d8a4';
+  'd49dffb9bd59c0df724fa79598d75c2cd8fbb7b24e939a921d2014fd818c8997';
 // ⚠ **Input: a genuinely malformed index (`NaN`), NOT `2**32`** (TYPES_INTERFACE
 // → A regenerated pin's INPUT is unchecked, so state it). `2**32` is inside
 // `vlqU`'s domain and encodes faithfully, so it is a valid index and pinning it
@@ -178,7 +182,7 @@ const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ by
 // from the wrong input, which no mirror check can see because the mirror is
 // fine.
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '1563d15fe2d81bce59c59c294f7e21e1f5d62c3476315bf2ea0406427875fa74';
+  '587cfe1e27662b6ba96e54f40e43007019ef66963d332a232c641acdbfef1851';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -212,35 +216,35 @@ const BYTES_INVITEE = new Uint8Array(32).fill(0xb2);
 const BYTES_TARGET = new Uint8Array(32).fill(0xc3);
 
 const GOLDEN_BOND_BOX: BondBox = {
-  boxType: 'bond', value: 5n,
+  boxType: 'bond', value: 5n, createdAtBlock: 0,
   inviterId: GOLDEN_AUTHOR, inviteePublicKey: BYTES_INVITEE,
   txId: COVERAGE_TX_ID, index: 1,
 };
 
 const GOLDEN_POST_LOCK_BOX: PostLockBox = {
-  boxType: 'post_lock', value: 8n,
+  boxType: 'post_lock', value: 8n, createdAtBlock: 0,
   originalValue: 10n, owner: GOLDEN_AUTHOR,
   txId: COVERAGE_TX_ID, index: 2,
 };
 
 const GOLDEN_VOUCH_BOX: VouchBox = {
-  boxType: 'vouch', value: 1n,
+  boxType: 'vouch', value: 1n, createdAtBlock: 0,
   voucherId: GOLDEN_AUTHOR, targetId: BYTES_TARGET,
   txId: COVERAGE_TX_ID, index: 3,
 };
 
 const GOLDEN_EMISSION_BOX: EmissionBox = {
-  boxType: 'emission', value: 4226400000000n,
+  boxType: 'emission', value: 4226400000000n, createdAtBlock: 0,
   txId: COVERAGE_TX_ID, index: 4,
 };
 
 const GOLDEN_TREASURY_BOX: TreasuryBox = {
-  boxType: 'treasury', value: 77n,
+  boxType: 'treasury', value: 77n, createdAtBlock: 0,
   txId: COVERAGE_TX_ID, index: 5,
 };
 
 const GOLDEN_FEE_BOX: FeeBox = {
-  boxType: 'fee', value: 1000n,
+  boxType: 'fee', value: 1000n, createdAtBlock: 0,
   txId: COVERAGE_TX_ID, index: 6,
 };
 
@@ -251,7 +255,7 @@ const GOLDEN_FEE_BOX: FeeBox = {
 // value a real pool box carries — the encoder's own ceiling is pinned
 // separately, by the `vlqU64` vector below.
 const GOLDEN_KARMA_POOL_BOX: KarmaPoolBox = {
-  boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n,
+  boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n, createdAtBlock: 0,
   txId: COVERAGE_TX_ID, index: 7,
 };
 
@@ -261,13 +265,13 @@ const GOLDEN_KARMA_POOL_BOX: KarmaPoolBox = {
 // keyed on the box-type UNION rather than on what a transition happens to build:
 // a type the demo UI cannot encode is exactly what this file exists to catch.
 const GOLDEN_LIKE_ACCRUAL_BOX: LikeAccrualBox = {
-  boxType: 'like_accrual', value: 1n,
+  boxType: 'like_accrual', value: 1n, createdAtBlock: 0,
   author: BYTES_TARGET,
   txId: COVERAGE_TX_ID, index: 8,
 };
 
 const GOLDEN_VOUCH_ESCROW_BOX: VouchEscrowBox = {
-  boxType: 'vouch_escrow', value: 1n,
+  boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0,
   owner: GOLDEN_AUTHOR, releaseAtBlock: 40,
   txId: COVERAGE_TX_ID, index: 9,
 };
@@ -489,6 +493,7 @@ function loadUiCrypto(): UiCrypto {
   const html = readFileSync(INDEX_HTML, 'utf8');
   const source = [
     'const encoder = new TextEncoder();',
+    'let currentBlockHeight = 0;',
     ...MIRRORED_CONSTS.map((name) => extractConst(html, name)),
     ...MIRRORED_FUNCTIONS.map((name) => extractDeclaration(html, `function ${name}(`)),
     `return { ${RETURNED.join(', ')} };`,
@@ -727,7 +732,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // that could write another, so a decoration a display path attaches cannot
     // enter the hash — no strip step stands between the box and its bytes.
     const decorated = {
-      ...GOLDEN_KARMA_BOX, id: GOLDEN_KARMA_BOX_ID, createdAtBlock: 99, junk: 'x',
+      ...GOLDEN_KARMA_BOX, id: GOLDEN_KARMA_BOX_ID, junk: 'x',
     };
     expect(hexOf(ui.canonicalBoxBytes(decorated as unknown as Record<string, unknown>)))
       .toBe(GOLDEN_KARMA_BOX_BYTES);
@@ -741,15 +746,17 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // (TYPES_INTERFACE → Primitives). A width the two implementations disagreed
     // on shifts every following byte and moves the id.
     //
-    // The arm is `enum8(3) ‖ vlqU64(0) ‖ lp(payload)`, so the prefix starts at
-    // offset 2 and the three bytes read below are it plus the payload's first.
-    const prefixAt = (b: Uint8Array): string => hexOf(b.subarray(2, 5));
+    // The arm is `enum8(3) ‖ vlqU64(0) ‖ vlqU(0) ‖ lp(payload)`, so the prefix
+    // starts at offset 3 and the three bytes read below are it plus the
+    // payload's first.
+    const prefixAt = (b: Uint8Array): string => hexOf(b.subarray(3, 6));
     for (const [len, prefix] of [
       [127, '7f7878'], [128, '800178'], [16383, 'ff7f78'], [16384, '808001'],
     ] as Array<[number, string]>) {
       const box: CandidateOf<GenesisProofBox> = {
         boxType: 'genesis_proof',
         value: 0n,
+        createdAtBlock: 0,
         payload: new Uint8Array(len).fill(0x78),
       };
       const fromUi = ui.canonicalBoxBytes(box as unknown as Record<string, unknown>);
@@ -806,7 +813,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // `lp`'s injectivity and the empty payload is the smallest legal box.
     for (const payload of [new Uint8Array([0xde, 0xad, 0xbe, 0xef]), new Uint8Array(0)]) {
       const box: GenesisProofBox = {
-        boxType: 'genesis_proof', value: 0n, payload,
+        boxType: 'genesis_proof', value: 0n, createdAtBlock: 0, payload,
         txId: COVERAGE_TX_ID, index: 5,
       };
       const label = `payload=${payload.length}`;
@@ -821,7 +828,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // The tag is the first byte of the id preimage, so a table that disagrees
     // with @dagsocial/types moves every id derived here.
     const box: GenesisProofBox = {
-      boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([0x01]),
+      boxType: 'genesis_proof', value: 0n, createdAtBlock: 0, payload: new Uint8Array([0x01]),
       txId: COVERAGE_TX_ID, index: 5,
     };
     expect(hexOf(canonicalBoxBytes(box)).slice(0, 2)).toBe('03');
@@ -833,8 +840,8 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // Total, and the reserved tag is what keeps a malformed box from colliding
     // with a well-formed one: no valid boxType is 0xff.
     const bogus = { ...GOLDEN_KARMA_BOX, boxType: 'like' };
-    expect(hexOf(ui.canonicalBoxBytes(bogus as unknown as Record<string, unknown>))).toBe('ff64');
-    expect(hexOf(canonicalBoxBytes(bogus as never))).toBe('ff64');
+    expect(hexOf(ui.canonicalBoxBytes(bogus as unknown as Record<string, unknown>))).toBe('ff64ac02');
+    expect(hexOf(canonicalBoxBytes(bogus as never))).toBe('ff64ac02');
   });
 
   it('the UI reproduces the frozen golden txId (what signTxId signs)', () => {
@@ -1143,7 +1150,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    '129c319acce167afb58cafa8fbe9314e575319b000897cf3173460c36f6121ea';
+    '8338651fa51d5ffcf29dd077a4fc4f01a5c1dcf6e9fb4b23ee819fff061ccfb7';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,

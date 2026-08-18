@@ -175,6 +175,7 @@ describe('validateAndApplyTx', () => {
       {
         boxType: 'karma' as const,
         value,
+        createdAtBlock: 0,
         owner,
       },
       seed,
@@ -224,6 +225,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -259,12 +261,14 @@ describe('validateAndApplyTx', () => {
       boxType: 'karma',
       // Only the bond is paid: FIXTURE_BOND_KARMA is minted at the claim.
       value: 100n - FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       inviterId: ownerUserId,
       inviteePublicKey: invitee,
     };
@@ -294,6 +298,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n - LIKE_KARMA_COST,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
     // ⛔ The cost lands in a marker rather than leaving the ledger, so the
@@ -301,6 +306,7 @@ describe('validateAndApplyTx', () => {
     const accrual: CandidateOf<LikeAccrualBox> = {
       boxType: 'like_accrual',
       value: LIKE_KARMA_COST,
+      createdAtBlock: 0,
       author: LIKE_TARGET_AUTHOR,
     };
 
@@ -336,6 +342,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -356,6 +363,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 120n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -382,6 +390,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: otherPubRaw,
     };
 
@@ -401,6 +410,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -426,6 +436,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -464,11 +475,13 @@ describe('validateAndApplyTx', () => {
     const splitA: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 60n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
     const splitB: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 40n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -503,6 +516,7 @@ describe('validateAndApplyTx', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
 
@@ -571,10 +585,11 @@ describe('validateAndApplyTx', () => {
       return {
         inputs: [karmaBoxId],
         outputs: [
-          { boxType: 'karma', value: FUNDED - bondValue, owner: inviterPubKey } as KarmaBox,
+          { boxType: 'karma', value: FUNDED - bondValue,  createdAtBlock: 0,owner: inviterPubKey } as KarmaBox,
           {
             boxType: 'bond',
             value: bondValue,
+            createdAtBlock: 0,
             inviterId: opts.bondInviterId ?? inviterPubKey,
             inviteePublicKey: opts.invitee ?? inviteePubKey,
           } as BondBox,
@@ -675,6 +690,7 @@ describe('validateAndApplyTx', () => {
       tx.outputs.push({
         boxType: 'bond',
         value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
         inviterId: inviterPubKey,
         inviteePublicKey: strangerPubKey,
       } as BondBox);
@@ -717,8 +733,8 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!],
         [
-          { boxType: 'karma', value: 900n, owner: ownerPubKey } as CandidateOf<KarmaBox>,
-          { boxType: 'karma', value: 100n, owner: recipient } as CandidateOf<KarmaBox>,
+          { boxType: 'karma', value: 900n,  createdAtBlock: 0,owner: ownerPubKey } as CandidateOf<KarmaBox>,
+          { boxType: 'karma', value: 100n, createdAtBlock: 0, owner: recipient } as CandidateOf<KarmaBox>,
         ],
         ownerPrivKey,
         ownerPubKey,
@@ -739,8 +755,8 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!],
         [
-          { boxType: 'karma', value: 900n, owner: ownerPubKey } as CandidateOf<KarmaBox>,
-          { boxType: 'karma', value: 100n, owner: ownerPubKey } as CandidateOf<KarmaBox>,
+          { boxType: 'karma', value: 900n,  createdAtBlock: 0,owner: ownerPubKey } as CandidateOf<KarmaBox>,
+          { boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey } as CandidateOf<KarmaBox>,
         ],
         ownerPrivKey,
         ownerPubKey,
@@ -760,11 +776,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const conjured: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 2n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
 
@@ -792,11 +810,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - LIKE_KARMA_COST,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const accrual: CandidateOf<LikeAccrualBox> = {
         boxType: 'like_accrual',
         value: LIKE_KARMA_COST,
+        createdAtBlock: 0,
         author: LIKE_TARGET_AUTHOR,
       };
 
@@ -844,6 +864,7 @@ describe('validateAndApplyTx', () => {
         const newKarma: CandidateOf<KarmaBox> = {
           boxType: 'karma',
           value: 100n,
+          createdAtBlock: 0,
           owner: ownerPubKey,
         };
 
@@ -865,11 +886,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 15n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const negative: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 0n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
 
@@ -897,11 +920,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
         originalValue: POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
       };
@@ -932,11 +957,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n - VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: ownerPubKey,
         targetId: targetPubRaw,
       };
@@ -960,11 +987,13 @@ describe('validateAndApplyTx', () => {
         boxType: 'karma',
         // The bond is the whole of what leaves the change box.
         value: 100n - FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xbb),
       };
@@ -989,11 +1018,13 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
         value: 100n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
         inviterId: ownerUserId,
         inviteePublicKey: new Uint8Array(32).fill(0xcc),
       };
@@ -1019,6 +1050,7 @@ describe('validateAndApplyTx', () => {
       const bondBox: CandidateOf<BondBox> = {
         boxType: 'bond',
         value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
         inviterId: ownerPubKey,
         inviteePublicKey: new Uint8Array(32).fill(0xdd),
       };
@@ -1039,7 +1071,7 @@ describe('validateAndApplyTx', () => {
       // what refuses.
       const conserving = buildSignedTx(
         [bondBoxId],
-        [{ boxType: 'karma', value: FIXTURE_BOND_KARMA, owner: ownerPubKey } as KarmaBox],
+        [{ boxType: 'karma', value: FIXTURE_BOND_KARMA,  createdAtBlock: 0,owner: ownerPubKey } as KarmaBox],
         ownerPrivKey,
         ownerPubKey,
       );
@@ -1053,6 +1085,7 @@ describe('validateAndApplyTx', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
       };
@@ -1067,6 +1100,7 @@ describe('validateAndApplyTx', () => {
       const escrow = {
         boxType: 'vouch_escrow' as const,
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         owner: ownerPubKey,
         releaseAtBlock: 10 + 2,
       };
@@ -1098,6 +1132,7 @@ describe('validateAndApplyTx', () => {
       const creditBox = {
         boxType: 'credit' as const,
         value: 100n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       const seededCreditBox = seedProvenance<CreditBox>(creditBox, 1);
@@ -1144,7 +1179,7 @@ describe('validateAndApplyTx', () => {
       const karma = createAndInsertKarma(attackerPubKey, 100n, 3);
       const [bond] = seedAsOneTx([
         {
-          boxType: 'bond' as const, value: FIXTURE_BOND_KARMA, inviterId: inviterPubKey,
+          boxType: 'bond' as const, value: FIXTURE_BOND_KARMA,  createdAtBlock: 0,inviterId: inviterPubKey,
           inviteePublicKey: attackerPubKey,
         },
       ]);
@@ -1155,6 +1190,7 @@ describe('validateAndApplyTx', () => {
         outputs: [{
           boxType: 'karma',
           value: 100n + FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           owner: attackerPubKey,
         } as KarmaBox],
         signatures: {},
@@ -1178,7 +1214,7 @@ describe('validateAndApplyTx', () => {
       const attackerPubKey = rawPublicKey(attackerKeys.publicKey);
       const [bond] = seedAsOneTx([
         {
-          boxType: 'bond' as const, value: FIXTURE_BOND_KARMA,
+          boxType: 'bond' as const, value: FIXTURE_BOND_KARMA, createdAtBlock: 0,
           inviterId: rawPublicKey(generateKeyPairSync('ed25519').publicKey),
           inviteePublicKey: attackerPubKey,
         },
@@ -1188,7 +1224,7 @@ describe('validateAndApplyTx', () => {
       const tx: UtxoTransaction = {
         inputs: [bond!.id!],
         outputs: [{
-          boxType: 'karma', value: FIXTURE_BOND_KARMA, owner: attackerPubKey,
+          boxType: 'karma', value: FIXTURE_BOND_KARMA,  createdAtBlock: 0,owner: attackerPubKey,
         } as KarmaBox],
         signatures: {},
         protocolVersion: 1,
@@ -1215,6 +1251,7 @@ describe('validateAndApplyTx', () => {
       return {
         boxType: 'karma',
         value,
+        createdAtBlock: 0,
         owner,
       } as KarmaBox;
     }
@@ -1229,7 +1266,7 @@ describe('validateAndApplyTx', () => {
       value: bigint = LIKE_KARMA_COST,
       author: Uint8Array = TARGET_AUTHOR,
     ): LikeAccrualBox {
-      return { boxType: 'like_accrual', value, author } as LikeAccrualBox;
+      return { boxType: 'like_accrual', value, createdAtBlock: 0, author } as LikeAccrualBox;
     }
 
     // --- the four quadrants -------------------------------------------------
@@ -1380,6 +1417,7 @@ describe('validateAndApplyTx', () => {
       const creditBox = {
         boxType: 'credit' as const,
         value: 100n,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       };
       Object.assign(creditBox, fixtureProvenance(creditBox, 1));
@@ -1401,6 +1439,7 @@ describe('validateAndApplyTx', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
       };
@@ -1433,6 +1472,7 @@ describe('validateAndApplyTx', () => {
       const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: 5n,
+        createdAtBlock: 0,
         originalValue: 5n,
         owner: ownerPubKey,
       } as PostLockBox;
@@ -1457,6 +1497,7 @@ describe('validateAndApplyTx', () => {
       const relic = {
         boxType: 'like',
         value: 2n,
+        createdAtBlock: 0,
         likerId: ownerUserId,
       } as never;
       const tx = buildSignedTx(
@@ -1473,6 +1514,7 @@ describe('validateAndApplyTx', () => {
       const postLock: CandidateOf<PostLockBox> = {
         boxType: 'post_lock',
         value: POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
         originalValue: POST_LOCK_THREAD_COST,
         owner: ownerPubKey,
       };
@@ -1513,6 +1555,7 @@ describe('validateAndApplyTx', () => {
         {
           boxType: 'credit' as const,
           value,
+          createdAtBlock: 0,
           owner,
         },
         seed,
@@ -1525,12 +1568,13 @@ describe('validateAndApplyTx', () => {
       return {
         boxType: 'credit',
         value,
+        createdAtBlock: 0,
         owner,
       };
     }
 
     function feeOut(value: bigint): CandidateOf<FeeBox> {
-      return { boxType: 'fee', value };
+      return { boxType: 'fee', value, createdAtBlock: 0 };
     }
 
     // The gap is swept rather than sampled — a 1-unit fee, an ordinary one, and
@@ -1701,7 +1745,7 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [karma.id!],
         [
-          { boxType: 'karma', value: 90n, owner: ownerPubKey },
+          { boxType: 'karma', value: 90n, createdAtBlock: 0, owner: ownerPubKey },
           feeOut(10n),
         ],
         ownerPrivKey, ownerPubKey,
@@ -1725,7 +1769,7 @@ describe('validateAndApplyTx', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 114);
       const tx = buildSignedTx(
         [karma.id!],
-        [{ boxType: 'karma', value: 90n, owner: ownerPubKey }],
+        [{ boxType: 'karma', value: 90n, createdAtBlock: 0, owner: ownerPubKey }],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
@@ -1762,6 +1806,7 @@ describe('validateAndApplyTx', () => {
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId: ownerPubKey,
         targetId: rawPublicKey(targetPub),
       };

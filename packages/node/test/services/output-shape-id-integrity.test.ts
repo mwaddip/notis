@@ -95,6 +95,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       {
         boxType: 'karma',
         value,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       },
       1,
@@ -108,6 +109,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       {
         boxType: 'credit',
         value,
+        createdAtBlock: 0,
         owner: ownerPubKey,
       },
       1,
@@ -149,6 +151,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     return {
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner: ownerPubKey,
     };
   }
@@ -161,6 +164,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const lyingLock = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
       guard: 'block_apply',
@@ -185,6 +189,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const strayLock = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
       note: 'x',
@@ -204,6 +209,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const lock = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
     };
@@ -224,6 +230,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const bond = {
       boxType: 'bond',
       value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       inviterId: ownerPubKey,
       inviteePublicKey: invitee,
     };
@@ -242,6 +249,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const out = {
       boxType: 'credit',
       value: 40n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
       lockedUntilBlock: 500,
     };
@@ -257,6 +265,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const vouch = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
     };
@@ -281,6 +290,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const lyingLock: Record<string, unknown> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
+      createdAtBlock: 0,
       originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
     };
@@ -311,6 +321,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const out = {
       boxType: 'credit',
       value: 40n,
+      createdAtBlock: 0,
       owner: ownerPubKey,
       lockedUntilBlock: -0,
     };
@@ -332,7 +343,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const lyingPair = (key: unknown) => [
       karmaChange(100n - FIXTURE_BOND_KARMA),
       {
-        boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId: ownerPubKey,
+        boxType: 'bond', value: FIXTURE_BOND_KARMA,  createdAtBlock: 0,inviterId: ownerPubKey,
         inviteePublicKey: key,
       },
     ];

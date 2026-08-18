@@ -78,6 +78,7 @@ function karmaSelfSpend(id: TestIdentity, box: KarmaBox): UtxoTransaction {
       {
         boxType: 'karma',
         value: box.value,
+        createdAtBlock: 0,
         owner: id.userId,
       } as unknown as KarmaBox,
     ],
@@ -217,6 +218,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
       {
         boxType: 'post_lock',
         value: 100n,
+        createdAtBlock: 0,
         originalValue: '100', // vlqU64 THROWS on a string
         owner: alice.userId,
       },

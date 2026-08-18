@@ -148,10 +148,11 @@ export function makePostTx(
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
     outputs: [
-      { boxType: 'karma', value: 1n, owner: author.userId } as never,
+      { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
       {
         boxType: 'post_lock',
         value: lock,
+        createdAtBlock: 0,
         originalValue: lock,
         owner: author.userId,
       } as never,
@@ -402,6 +403,7 @@ export function makeKarmaBox(
   const candidate = {
     boxType: 'karma' as const,
     value,
+    createdAtBlock: seedHeight,
     owner,
   };
   const box: KarmaBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
@@ -418,6 +420,7 @@ export function makeCreditBox(
   const candidate = {
     boxType: 'credit' as const,
     value,
+    createdAtBlock: seedHeight,
     owner,
   };
   const box: CreditBox = { ...candidate, ...fixtureProvenance(candidate, seedHeight, nonce) };
@@ -452,10 +455,11 @@ export function makeCreditTx(
       {
         boxType: 'credit',
         value: total - fee,
+        createdAtBlock: 0,
         owner: recipient ?? spender.userId,
       } as CreditBox,
       ...(fee > 0n
-        ? [{ boxType: 'fee', value: fee } as FeeBox]
+        ? [{ boxType: 'fee', value: fee, createdAtBlock: 0 } as FeeBox]
         : []),
     ],
     signatures: {},
@@ -488,6 +492,7 @@ export function makeLikeTx(
       {
         boxType: 'karma',
         value: karmaBox.value - LIKE_KARMA_COST,
+        createdAtBlock: 0,
         owner: liker.userId,
       },
       // ⛔ **THE MARKER, AND IT CARRIES THE COST.** The like conserves now: its
@@ -499,6 +504,7 @@ export function makeLikeTx(
       {
         boxType: 'like_accrual',
         value: LIKE_KARMA_COST,
+        createdAtBlock: 0,
         author,
       },
     ],
@@ -1102,6 +1108,7 @@ export function withCoinbase(
         ...shares.map((share) => ({
           boxType: 'credit' as const,
           value: share.value,
+          createdAtBlock: existing.createdAtBlock,
           owner: share.owner,
           ...(lockedUntilBlock !== undefined ? { lockedUntilBlock } : {}),
         })),

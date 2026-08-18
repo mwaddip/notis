@@ -288,9 +288,9 @@ describe('the conservation axiom holds over a chain', () => {
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { boxType: 'karma', value: karma.value - LIKE_KARMA_COST, owner: who.userId } as KarmaBox,
+          { boxType: 'karma', value: karma.value - LIKE_KARMA_COST,  createdAtBlock: 0,owner: who.userId } as KarmaBox,
           // ⛔ The marker carries the cost. Nothing is destroyed at cast.
-          { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: w.author.userId } as LikeAccrualBox,
+          { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: 0, author: w.author.userId } as LikeAccrualBox,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
@@ -340,11 +340,13 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'karma',
           value: w.voucherKarma.value - VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           owner: w.voucher.userId,
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           voucherId: w.voucher.userId,
           targetId: w.target.userId,
         } as VouchBox,
@@ -370,6 +372,7 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'vouch_escrow',
           value: vouchBox!.value,
+          createdAtBlock: 0,
           owner: w.voucher.userId,
           releaseAtBlock: 2 + COOLDOWN,
         } as VouchEscrowBox,
@@ -414,11 +417,13 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'karma',
           value: w.inviterKarma.value - FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           owner: w.inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
           value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           inviterId: w.inviter.userId,
           inviteePublicKey: w.invitee.userId,
         } as BondBox,
@@ -481,11 +486,13 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'karma',
           value: w.inviterKarma.value - FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           owner: w.inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
           value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           inviterId: w.inviter.userId,
           inviteePublicKey: w.invitee.userId,
         } as BondBox,
@@ -501,11 +508,13 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'karma',
           value: w.voucherKarma.value - VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           owner: w.voucher.userId,
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           voucherId: w.voucher.userId,
           targetId: w.target.userId,
         } as VouchBox,
@@ -525,8 +534,8 @@ describe('the conservation axiom holds over a chain', () => {
       const tx: UtxoTransaction = {
         inputs: [karma.id!],
         outputs: [
-          { boxType: 'karma', value: karma.value - LIKE_KARMA_COST, owner: who.userId } as KarmaBox,
-          { boxType: 'like_accrual', value: LIKE_KARMA_COST, author: w.author.userId } as LikeAccrualBox,
+          { boxType: 'karma', value: karma.value - LIKE_KARMA_COST,  createdAtBlock: 0,owner: who.userId } as KarmaBox,
+          { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: 0, author: w.author.userId } as LikeAccrualBox,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
@@ -550,6 +559,7 @@ describe('the conservation axiom holds over a chain', () => {
         {
           boxType: 'vouch_escrow',
           value: vouchBox.value,
+          createdAtBlock: 0,
           owner: w.voucher.userId,
           releaseAtBlock: 4 + COOLDOWN,
         } as VouchEscrowBox,

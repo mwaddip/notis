@@ -31,6 +31,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     const candidate = {
       boxType: 'karma' as const,
       value: 100n,
+      createdAtBlock: 0,
       owner: new Uint8Array(32).fill(0xaa),
     };
     const box = {

@@ -261,12 +261,14 @@ describe('UTXO routes', () => {
       const outputs: CandidateOf<CreditBox>[] = [{
         boxType: 'credit',
         value: amount,
+        createdAtBlock: 0,
         owner: receiverPubKey,
       }];
       if (change > 0n) {
         outputs.push({
           boxType: 'credit',
           value: change,
+          createdAtBlock: 0,
           owner: senderPubKey,
         });
       }

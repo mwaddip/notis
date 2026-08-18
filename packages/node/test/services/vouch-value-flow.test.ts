@@ -126,6 +126,7 @@ function makeVouchBox(
   return seedProvenance<VouchBox>({
     boxType: 'vouch' as const,
     value,
+    createdAtBlock: 0,
     voucherId,
     targetId,
   }, 1);
@@ -147,6 +148,7 @@ function makeUnvouchTx(
     outputs: [{
       boxType: 'vouch_escrow' as const,
       value,
+      createdAtBlock: 0,
       owner: signer.userId,
       releaseAtBlock,
     } as never],
@@ -264,11 +266,13 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
         {
           boxType: 'karma',
           value: 99n,
+          createdAtBlock: 0,
           owner: staker.userId,
         } as KarmaBox,
         {
           boxType: 'vouch',
           value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: 0,
           voucherId: foreign.userId,
           targetId: target.userId,
         } as VouchBox,

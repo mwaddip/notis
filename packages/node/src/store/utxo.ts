@@ -138,36 +138,25 @@ function provenanceOf(row: UtxoRow): { txId: string; index: number } {
 /**
  * The height to record in the `created_at_block` **store column**.
  *
- * Taken from the open block journal, never from the box (NODE_INTERFACE → "Box
- * Identity and Mint Provenance"). A box carries no height field at all, so
- * there is nothing else `insertBox` could read — the rule is enforced by
- * construction rather than by discipline at each producer.
- *
- * `0` when no journal is open. That is every non-block path — genesis and
- * bootstrap — and it is honest rather than a fallback: those boxes were not
- * created by block application, and `0` is not a real block height. The column
- * is display and `getUnspentBoxes` ordering only; consensus must never read it,
- * so an approximate value here cannot reach the `stateRoot`.
+ * Taken from the box's own `createdAtBlock` field — which the creator declared
+ * and `canonicalBoxBytes` encodes. The column and the field hold the same
+ * number: for a settlement box the producer declares the height being applied,
+ * for a user box the client declares it and `validateTx` step 5 bounds it.
  */
-function settledHeight(): number {
-  return openBlockJournalHeight() ?? 0;
+function settledHeight(box: AnyBox): number {
+  return box.createdAtBlock ?? (openBlockJournalHeight() ?? 0);
 }
 
 /**
  * Reconstruct a typed box from a utxo_boxes row.
  *
- * Columns id, box_type, value and owner are read directly; everything else is
- * parsed from the extra_data JSON column.
- *
- * `created_at_block` is deliberately NOT read: it is a store column and never a
- * box field (Spec G D3), and putting it back on the object would change every
- * box id — `canonicalBoxBytes` strips only `id`/`txId`/`index`, so any stray key
- * enters the hash. The same is true of any other decoration a display path might
- * want; add a separate query instead.
+ * Columns id, box_type, value, created_at_block and owner are read directly;
+ * everything else is parsed from the extra_data JSON column.
  */
 function rowToBox(row: UtxoRow): AnyBox {
   const extra = row.extra_data ? JSON.parse(row.extra_data) : {};
   const prov = provenanceOf(row);
+  const createdAtBlock = Number(row.created_at_block);
 
   switch (row.box_type) {
     case 'karma': {
@@ -176,6 +165,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'karma',
         value: row.value,
+        createdAtBlock,
         owner: new Uint8Array(row.owner!),
         ...prov,
       };
@@ -191,6 +181,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'credit',
         value: row.value,
+        createdAtBlock,
         owner: new Uint8Array(row.owner!),
         ...prov,
       };
@@ -208,6 +199,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         // as `vouch` below. The cast bridges the interface's literal type,
         // which documents the pinned constant rather than a storage guarantee.
         value: row.value as GenesisProofBox['value'],
+        createdAtBlock,
         payload: new Uint8Array((extra as GenesisProofExtra).payload),
         ...prov,
       };
@@ -218,6 +210,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'bond',
         value: row.value,
+        createdAtBlock,
         inviterId: hexToPubkey(e.inviterId),
         inviteePublicKey: hexToPubkey(e.inviteePublicKey),
         ...prov,
@@ -233,6 +226,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'post_lock',
         value: row.value,
+        createdAtBlock,
         originalValue: BigInt(e.originalValue),
         owner: new Uint8Array(e.owner),
         ...prov,
@@ -256,6 +250,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         // `1n` value type, which documents the pinned constant rather than a
         // storage guarantee.
         value: row.value as VouchBox['value'],
+        createdAtBlock,
         voucherId: hexToPubkey(e.voucherId),
         targetId: hexToPubkey(e.targetId),
         ...prov,
@@ -273,6 +268,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         // VouchEscrowBox), so a store that substituted the constant on read
         // would make the property true by coincidence instead.
         value: row.value,
+        createdAtBlock,
         owner: hexToPubkey(e.owner),
         releaseAtBlock: e.releaseAtBlock,
         ...prov,
@@ -289,6 +285,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         // running remainder on a carry box. Nothing here distinguishes them
         // because the settlement consumes both in the same step.
         value: row.value,
+        createdAtBlock,
         author: hexToPubkey(e.author),
         ...prov,
       };
@@ -304,6 +301,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'emission',
         value: row.value,
+        createdAtBlock,
         ...prov,
       };
 
@@ -312,6 +310,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'treasury',
         value: row.value,
+        createdAtBlock,
         ...prov,
       };
 
@@ -320,6 +319,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'karma_pool',
         value: row.value,
+        createdAtBlock,
         ...prov,
       };
 
@@ -331,6 +331,7 @@ function rowToBox(row: UtxoRow): AnyBox {
         id: row.id,
         boxType: 'fee',
         value: row.value,
+        createdAtBlock,
         ...prov,
       };
 
@@ -1023,7 +1024,7 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
     box.id,
     box.boxType,
     box.value,
-    settledHeight(),
+    settledHeight(box),
     owner,
     JSON.stringify(extraData),
     box.txId,

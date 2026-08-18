@@ -200,6 +200,7 @@ function makeKarmaBox(
   const box = seedProvenance<KarmaBox>({
     boxType: 'karma',
     value,
+    createdAtBlock: 0,
     owner,
   }, seed);
   const id = box.id;
@@ -226,6 +227,7 @@ function makeLikeTx(
       {
         boxType: 'karma',
         value: karmaBox.value - LIKE_KARMA_COST,
+        createdAtBlock: 0,
         owner: liker.userId,
       } as KarmaBox,
       // ⛔ **The marker carries the cost.** The like conserves now: its karma
@@ -234,6 +236,7 @@ function makeLikeTx(
       {
         boxType: 'like_accrual',
         value: LIKE_KARMA_COST,
+        createdAtBlock: 0,
         author,
       } as unknown as KarmaBox,
     ],
@@ -851,6 +854,7 @@ describe('block-creator', () => {
       const candidate = {
         boxType: 'credit' as const,
         value,
+        createdAtBlock: 0,
         owner: new Uint8Array(owner),
       };
       const box = seedProvenance(candidate, 1, labelNonceOf(label));
@@ -864,7 +868,7 @@ describe('block-creator', () => {
       }));
       // Zero fee means no box (NODE_INTERFACE → the credit transition row).
       if (fee > 0n) {
-        outputs.push({ boxType: 'fee' as const, value: fee });
+        outputs.push({ boxType: 'fee' as const, value: fee,  createdAtBlock: 0,});
       }
       return {
         inputs: [box.id!],

@@ -1411,6 +1411,7 @@ describe('revertBlock', () => {
     const emitted = {
       boxType: 'karma' as const,
       value: plan.newValue,
+      createdAtBlock: DECAY_HEIGHT,
       owner: plan.owner,
       decayBurn: true,
       txId: provenance.mintTxIdFor(provenance.decayContext(plan.owner), DECAY_HEIGHT),

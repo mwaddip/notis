@@ -421,6 +421,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     const box = seedProvenance<KarmaBox>({
       boxType: 'karma' as const,
       value,
+      createdAtBlock: 0,
       owner: o,
     }, 1, nonce);
     storeInsertBox(box);
@@ -447,6 +448,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
         {
           boxType: 'karma',
           value: 100n,
+          createdAtBlock: 0,
           owner: owner.pub,
         } as unknown as KarmaBox,
       ],
@@ -564,11 +566,13 @@ describe('validateTx step 0 — the envelope gate in place', () => {
         {
           boxType: 'karma',
           value: 100n - LIKE_KARMA_COST,
+          createdAtBlock: 0,
           owner: owner.pub,
         } as unknown as KarmaBox,
         {
           boxType: 'like_accrual',
           value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
           author: LIKE_AUTHOR,
         } as unknown as KarmaBox,
       ],

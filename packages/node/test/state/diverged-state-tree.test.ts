@@ -39,6 +39,7 @@ function makeKarmaBox(id: string, value = 100n, height = 1): AnyBox & { id: stri
   const candidate = {
     boxType: 'karma' as const,
     value,
+    createdAtBlock: height,
     owner: new Uint8Array(32).fill(0x77),
   };
   return { id, ...candidate, ...fixtureProvenance(candidate, height) };

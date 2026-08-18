@@ -8,6 +8,7 @@ import type { BoxRef } from './tx.js';
  * one is parsed to `bigint` here and nothing downstream sees the wire form.
  */
 export interface NodeClient {
+  currentHeight(): Promise<number>;
   karmaBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   creditBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   submitInvite(tx: Record<string, unknown>): Promise<void>;
@@ -22,6 +23,14 @@ interface WireBox {
 
 export class HttpNodeClient implements NodeClient {
   constructor(private readonly base: string) {}
+
+  async currentHeight(): Promise<number> {
+    const res = await fetch(`${this.base}/status`);
+    if (!res.ok) throw new NodeError(res.status, await failure(res));
+    const data = (await res.json()) as { blockHeight?: number };
+    if (typeof data.blockHeight !== 'number') throw new NodeError(502, 'node status carried no height');
+    return data.blockHeight;
+  }
 
   async karmaBoxes(pubKeyHex: string): Promise<BoxRef[]> {
     return (await this.boxes(`${this.base}/karma/${pubKeyHex}`))

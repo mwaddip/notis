@@ -89,11 +89,11 @@ export function postLockTx(
     inputs: boxes.map(b => b.boxId),
     outputs: [
       {
-        boxType: 'karma', value: t - lockAmount, 
+        boxType: 'karma', value: t - lockAmount, createdAtBlock: 0,
         owner: author,
       },
       {
-        boxType: 'post_lock', value: lockAmount, originalValue: lockAmount,
+        boxType: 'post_lock', value: lockAmount, createdAtBlock: 0, originalValue: lockAmount,
         owner: author,
       },
     ],
@@ -117,7 +117,7 @@ export function likeTx(
     inputs: boxes.map(b => b.boxId),
     outputs: [
       {
-        boxType: 'karma', value: t - LIKE_KARMA_COST,
+        boxType: 'karma', value: t - LIKE_KARMA_COST, createdAtBlock: 0,
         owner: liker,
       },
     ],

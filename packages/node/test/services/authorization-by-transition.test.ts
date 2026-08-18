@@ -61,22 +61,22 @@ interface Case {
 }
 
 const karmaOut = (owner: Uint8Array, value: bigint): AnyBoxCandidate =>
-  ({ boxType: 'karma', value, owner }) as unknown as AnyBoxCandidate;
+  ({ boxType: 'karma', value, createdAtBlock: 0, owner }) as unknown as AnyBoxCandidate;
 
 const creditOut = (owner: Uint8Array, value: bigint): AnyBoxCandidate =>
-  ({ boxType: 'credit', value, owner }) as unknown as AnyBoxCandidate;
+  ({ boxType: 'credit', value, createdAtBlock: 0, owner }) as unknown as AnyBoxCandidate;
 
 const CASES: readonly Case[] = [
   // Rows naming no signer require the owner's signature.
   {
     boxType: 'karma',
-    box: (h) => ({ boxType: 'karma', value: 10n, owner: h.userId }),
+    box: (h) => ({ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: h.userId }),
     outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: 'holder',
   },
   {
     boxType: 'credit',
-    box: (h) => ({ boxType: 'credit', value: 10n, owner: h.userId }),
+    box: (h) => ({ boxType: 'credit', value: 10n, createdAtBlock: 0, owner: h.userId }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: 'holder',
   },
@@ -86,6 +86,7 @@ const CASES: readonly Case[] = [
     boxType: 'vouch',
     box: (h, o) => ({
       boxType: 'vouch', value: 1n, voucherId: h.userId, targetId: o.userId,
+      createdAtBlock: 0,
     }),
     // ⛔ **An escrow output, because the unvouch conserves now.** The stake
     // moves into a box the voucher's own transaction creates
@@ -94,6 +95,7 @@ const CASES: readonly Case[] = [
     outputs: (h) => [{
       boxType: 'vouch_escrow' as const,
       value: 1n,
+      createdAtBlock: 0,
       owner: h.userId,
       releaseAtBlock: 1000,
     } as never],
@@ -104,6 +106,7 @@ const CASES: readonly Case[] = [
     boxType: 'bond',
     box: (h, o) => ({
       boxType: 'bond', value: 25n, inviterId: h.userId, inviteePublicKey: o.userId,
+      createdAtBlock: 0,
     }),
     outputs: (h) => [karmaOut(h.userId, 25n)],
     signer: null,
@@ -112,31 +115,32 @@ const CASES: readonly Case[] = [
     boxType: 'post_lock',
     box: (h) => ({
       boxType: 'post_lock', value: 10n, originalValue: 10n, owner: h.userId,
+      createdAtBlock: 0,
     }),
     outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: null,
   },
   {
     boxType: 'fee',
-    box: () => ({ boxType: 'fee', value: 10n }),
+    box: () => ({ boxType: 'fee', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: null,
   },
   {
     boxType: 'emission',
-    box: () => ({ boxType: 'emission', value: 10n }),
+    box: () => ({ boxType: 'emission', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: null,
   },
   {
     boxType: 'treasury',
-    box: () => ({ boxType: 'treasury', value: 10n }),
+    box: () => ({ boxType: 'treasury', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: null,
   },
   {
     boxType: 'karma_pool',
-    box: () => ({ boxType: 'karma_pool', value: 10n }),
+    box: () => ({ boxType: 'karma_pool', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: null,
   },
@@ -144,6 +148,7 @@ const CASES: readonly Case[] = [
     boxType: 'genesis_proof',
     box: () => ({
       boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([0xaa]),
+      createdAtBlock: 0,
     }),
     outputs: () => [],
     signer: null,
@@ -316,7 +321,7 @@ describe('authorization is a property of the transition', () => {
     /** karma → credit: conserves and matches the schema, and no transition allows it. */
     function karmaToCredit(): UtxoTransaction {
       const karma = seedProvenance<AnyBox>({
-        boxType: 'karma', value: 10n, owner: holder.userId,
+        boxType: 'karma', value: 10n,  createdAtBlock: 0,owner: holder.userId,
       });
       storeInsertBox(karma);
       return {

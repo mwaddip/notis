@@ -71,6 +71,7 @@ function loadUiBuilders(): UiBuilders {
   const lift = (header: string): string => extractDeclaration(html, header, 'index.html');
   return new Function(
     [
+      'let currentBlockHeight = 0;',
       lift('const PROTOCOL_VERSION ='),
       lift('const INVITE_BOND_DEFAULT ='),
       lift('function jsonBigint('),
@@ -178,6 +179,7 @@ describe('invites routes', () => {
     const karma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value,
+      createdAtBlock: 0,
       owner: inviterId,
     }, 1, nonce);
     storeInsertBox(karma);
@@ -190,6 +192,7 @@ describe('invites routes', () => {
       {
         boxType: 'bond' as const,
         value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
         inviterId,
         inviteePublicKey: invitee,
       },
@@ -207,11 +210,13 @@ describe('invites routes', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n - FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       owner: inviterId,
     };
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       inviterId,
       inviteePublicKey: invitee,
     };

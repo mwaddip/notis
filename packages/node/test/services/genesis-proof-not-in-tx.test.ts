@@ -43,7 +43,7 @@ import { config } from '../../src/config.js';
  */
 
 function proofCandidate(payload = new Uint8Array([1, 2, 3])): Record<string, unknown> {
-  return { boxType: 'genesis_proof', value: 0n, payload };
+  return { boxType: 'genesis_proof', value: 0n,  createdAtBlock: 0,payload };
 }
 
 describe('a genesis_proof box may never be a transaction OUTPUT', () => {
@@ -74,7 +74,7 @@ describe('a genesis_proof box may never be a transaction OUTPUT', () => {
 
   it('refuses it at any position, and leaves the other output types alone', () => {
     const karma = {
-      boxType: 'karma', value: 10n, owner: new Uint8Array(32).fill(1),
+      boxType: 'karma', value: 10n,  createdAtBlock: 0,owner: new Uint8Array(32).fill(1),
     };
     expect(checkOutputShape([karma] as unknown as AnyBoxCandidate[]).valid).toBe(true);
     const r = checkOutputShape([karma, proofCandidate()] as unknown as AnyBoxCandidate[]);
@@ -108,6 +108,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
     proof = seedProvenance<GenesisProofBox>({
       boxType: 'genesis_proof' as const,
       value: 0n,
+      createdAtBlock: 0,
       payload: new Uint8Array([0xaa, 0xbb]),
     });
     storeInsertBox(proof);
@@ -138,7 +139,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
 
   it('refuses it whatever the transaction tries to produce', () => {
     const karmaOut = {
-      boxType: 'karma', value: 0n, owner: new Uint8Array(32).fill(2),
+      boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: new Uint8Array(32).fill(2),
     } as unknown as AnyBoxCandidate;
     const result = validateTx(deps, spend([karmaOut]), 10);
     expect(result.valid).toBe(false);
@@ -150,7 +151,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
     // violation, and both orderings reject. Pinned so the ordering is a decision
     // rather than an accident.
     const karma = seedProvenance({
-      boxType: 'karma' as const, value: 5n, owner: rawKey(),
+      boxType: 'karma' as const, value: 5n,  createdAtBlock: 0,owner: rawKey(),
     });
     storeInsertBox(karma);
     const tx: UtxoTransaction = {

@@ -187,7 +187,7 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // KarmaPoolBox). The other two networks seed SIX leaves — those two boxes, these
   // three, and the faucet identity's record — which is why this root's trailing
   // height byte (`02`) differs from theirs (`03`).
-  genesisStateRoot: 'a364ecd022e2f878259a6cf97fd0489c77a959478da04e6d07e3a3626dfe109d02',
+  genesisStateRoot: '5cc05fea25e2a7d3a4a14f10431d245a884817be1327d6286d227b3087d056bf02',
 } satisfies NetworkProfile);
 
 // testnet: mainnet's MECHANICS with relaxed CAPS — the public playground. A testnet that
@@ -215,7 +215,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: '31f7887675ce204e7af3ff0b0d1ed35131189ce4ccffd3ec0eaaad45f11f308f03',
+  genesisStateRoot: 'd5c1520829489cec74dfbf680da01a21c74add478656ac377f5cfefd6adfc00e03',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. The two values marked (harness) are the
@@ -286,7 +286,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // share mainnet's schedule — and the faucet identity, since the two profiles
   // name DIFFERENT `faucetPublicKey`s and therefore seed differently-owned
   // karma and credit boxes.
-  genesisStateRoot: 'c4fb19c120607c91b98c16446cdf2b01e5e7aeab90dc58fff89756d68df8a82303',
+  genesisStateRoot: '1595b50171e5efccc4ab003be99fd8c3e212d7a1deab808013a5bed0b5b9714603',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

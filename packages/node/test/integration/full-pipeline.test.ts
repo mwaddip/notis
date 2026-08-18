@@ -340,6 +340,7 @@ describe('full-pipeline', () => {
         {
           boxType: 'karma',
           value: changeVal,
+          createdAtBlock: 0,
           owner: liker.userId,
         } as KarmaBox,
         // ⛔ **The marker carries the cost.** The like conserves: its karma moves
@@ -348,6 +349,7 @@ describe('full-pipeline', () => {
         {
           boxType: 'like_accrual',
           value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
           author: author.userId,
         } as unknown as KarmaBox,
       ],
@@ -443,6 +445,7 @@ describe('full-pipeline', () => {
         {
           boxType: 'karma',
           value: changeVal,
+          createdAtBlock: 0,
           owner: liker.userId,
         } as KarmaBox,
         // ⛔ **The marker carries the cost.** The like conserves: its karma moves
@@ -451,6 +454,7 @@ describe('full-pipeline', () => {
         {
           boxType: 'like_accrual',
           value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
           author: author.userId,
         } as unknown as KarmaBox,
       ],
@@ -523,11 +527,13 @@ describe('full-pipeline', () => {
         {
           boxType: 'karma',
           value: changeVal,
+          createdAtBlock: 0,
           owner: inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
           value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
           inviterId: inviter.userId,
           inviteePublicKey: invitee,
         } as BondBox,
@@ -599,11 +605,11 @@ describe('full-pipeline', () => {
         inputs: [karmaIn.id!],
         outputs: [
           {
-            boxType: 'karma', value: karmaIn.value - FIXTURE_BOND_KARMA,
+            boxType: 'karma', value: karmaIn.value - FIXTURE_BOND_KARMA, createdAtBlock: 0,
             owner: inviter.userId,
           },
           {
-            boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId: bondInviterId,
+            boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0, inviterId: bondInviterId,
             inviteePublicKey: invitee,
           },
         ],

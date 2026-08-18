@@ -36,9 +36,9 @@ function spend(box: CreditBox, fee: bigint): UtxoTransaction {
     inputs: [box.id!],
     outputs: [
       {
-        boxType: 'credit', value: box.value - fee, owner: box.owner, 
+        boxType: 'credit', value: box.value - fee, createdAtBlock: 0, owner: box.owner,
       } as CreditBox,
-      { boxType: 'fee', value: fee } as FeeBox,
+      { boxType: 'fee', value: fee, createdAtBlock: 0 } as FeeBox,
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,

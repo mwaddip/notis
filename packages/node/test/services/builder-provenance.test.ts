@@ -71,6 +71,7 @@ describe('invite id prediction carries transaction provenance', () => {
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 100n - FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       owner: inviterId,
     };
     // ⛔ **The bond IS the request** — that key is the whole pairing, and the
@@ -78,6 +79,7 @@ describe('invite id prediction carries transaction provenance', () => {
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
       value: FIXTURE_BOND_KARMA,
+      createdAtBlock: 0,
       inviterId,
       inviteePublicKey: invitee,
     };

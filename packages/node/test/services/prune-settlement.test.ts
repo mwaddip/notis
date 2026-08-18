@@ -155,6 +155,7 @@ function makePostLockBox(
   const box = seedProvenance<PostLockBox>({
     boxType: 'post_lock' as const,
     value,
+    createdAtBlock: 0,
     originalValue: value,
     owner,
   }, seed);
@@ -169,6 +170,7 @@ function makeKarmaBox(
   return seedProvenance<KarmaBox>({
     boxType: 'karma' as const,
     value,
+    createdAtBlock: 0,
     owner,
   }, seed);
 }

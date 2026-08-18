@@ -20,6 +20,7 @@ export function buildInviteTx(
   cfg: FaucetConfig,
   boxes: readonly BoxRef[],
   inviteeHex: string,
+  height: number,
 ): BuiltTx {
   checkRecipient(cfg, inviteeHex, 'invitee');
 
@@ -41,10 +42,11 @@ export function buildInviteTx(
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),
     outputs: [
-      { boxType: 'karma', value: changeValue, owner },
+      { boxType: 'karma', value: changeValue, createdAtBlock: height, owner },
       {
         boxType: 'bond',
         value: cfg.bondAmount,
+        createdAtBlock: height,
         inviterId: owner,
         inviteePublicKey: Buffer.from(inviteeHex, 'hex'),
       },

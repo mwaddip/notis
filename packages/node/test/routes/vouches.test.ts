@@ -75,6 +75,7 @@ function unvouchEscrow(value: bigint, owner: Uint8Array) {
   return {
     boxType: 'vouch_escrow' as const,
     value,
+    createdAtBlock: 0,
     owner,
     // The route validates at `HEIGHT`, so the floor is `HEIGHT + COOLDOWN`.
     // Clearing it by a margin is legal because only the floor is a rule —
@@ -120,6 +121,7 @@ function loadUiBuilders(): UiBuilders {
   const lift = (header: string): string => extractDeclaration(html, header, 'index.html');
   return new Function(
     [
+      'let currentBlockHeight = 0;',
       lift('const PROTOCOL_VERSION ='),
       lift('const VOUCH_KARMA_AMOUNT ='),
       lift('function jsonBigint('),
@@ -238,6 +240,7 @@ describe('vouch routes — the JSON edge', () => {
       {
         boxType: 'karma' as const,
         value,
+        createdAtBlock: 0,
         owner,
       },
       1,
@@ -256,6 +259,7 @@ describe('vouch routes — the JSON edge', () => {
       {
         boxType: 'vouch' as const,
         value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 0,
         voucherId,
         targetId,
       },
@@ -274,11 +278,13 @@ describe('vouch routes — the JSON edge', () => {
     const change: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaBox.value - VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
       owner: voucher.pub,
     };
     const vouchOut: CandidateOf<VouchBox> = {
       boxType: 'vouch' as const,
       value: VOUCH_KARMA_AMOUNT,
+      createdAtBlock: 0,
       voucherId: voucher.pub,
       targetId: target.pub,
     };

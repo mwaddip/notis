@@ -348,6 +348,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const seeded = seedProvenance<CreditBox>({
       boxType: 'credit',
       value: 100n,
+      createdAtBlock: 0,
       owner: minerB.userId,
     }, 1);
     utxo.insertBox(seeded);
@@ -391,6 +392,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const senderBox = seedProvenance<CreditBox>({
       boxType: 'credit',
       value: 100n,
+      createdAtBlock: 0,
       owner: sender.userId,
     }, 1);
     utxo.insertBox(senderBox);
@@ -409,11 +411,13 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
         {
           boxType: 'credit',
           value: 40n,
+          createdAtBlock: 0,
           owner: recipient.userId,
         } as CreditBox,
         {
           boxType: 'credit',
           value: 60n,
+          createdAtBlock: 0,
           owner: sender.userId,
         } as CreditBox,
       ],
@@ -572,6 +576,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
         {
           boxType: 'vouch_escrow' as const,
           value: 7n,
+          createdAtBlock: 0,
           owner: voucher.userId,
           releaseAtBlock: 2,
         },
@@ -715,6 +720,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
           {
             boxType: 'vouch_escrow' as const,
             value: VOUCH_KARMA_AMOUNT,
+            createdAtBlock: 0,
             owner: idle.userId,
             releaseAtBlock: 4,
           },

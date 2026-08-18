@@ -127,12 +127,14 @@ function buildLikeTx(
       {
         boxType: 'karma',
         value: karmaBox.value - LIKE_KARMA_COST,
+        createdAtBlock: 0,
         owner: likerPubKey,
       } as KarmaBox,
       // ⛔ The marker carries the cost — the like conserves now.
       {
         boxType: 'like_accrual',
         value: LIKE_KARMA_COST,
+        createdAtBlock: 0,
         author: POST_AUTHOR,
       } as unknown as KarmaBox,
     ],
@@ -192,6 +194,7 @@ describe('likes routes', () => {
     karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma' as const,
       value: 100n,
+      createdAtBlock: 0,
       owner: likerKp.publicKey,
     }, 1);
     insertBox(karmaBox);

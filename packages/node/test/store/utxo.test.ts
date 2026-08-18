@@ -63,6 +63,7 @@ function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
   const candidate = {
     boxType: 'karma' as const,
     value: 100n,
+    createdAtBlock: 0,
     owner: OWNER_A,
     ...overrides,
   };
@@ -73,6 +74,7 @@ function makeCreditBox(overrides: Partial<CreditBox> = {}): CreditBox {
   const candidate = {
     boxType: 'credit' as const,
     value: 1000n,
+    createdAtBlock: 0,
     owner: OWNER_A,
     ...overrides,
   };
@@ -83,6 +85,7 @@ function makeBondBox(overrides: Partial<BondBox> = {}): BondBox {
   const candidate = {
     boxType: 'bond' as const,
     value: 10n,
+    createdAtBlock: 0,
     inviterId: uid('alice-inviter'),
     inviteePublicKey: bytes(32),
     ...overrides,

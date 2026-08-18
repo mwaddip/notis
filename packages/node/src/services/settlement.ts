@@ -274,7 +274,7 @@ function derive(
     // ⛔ A successor whose value would be `0` is not created. The genesis total
     // is exactly the schedule's sum, so the last emitting block consumes the box
     // and leaves none — one block, one encoding.
-    if (remaining > 0n) outputs.push({ boxType: 'emission', value: remaining });
+    if (remaining > 0n) outputs.push({ boxType: 'emission', value: remaining, createdAtBlock: height });
   }
 
   // ---- 2. The treasury box ----
@@ -291,6 +291,7 @@ function derive(
     outputs.push({
       boxType: 'treasury',
       value: (box?.value ?? 0n) + split.treasury,
+      createdAtBlock: height,
     });
   }
 
@@ -435,7 +436,7 @@ function derive(
     // ⛔ A zero-value successor IS created, and this is the one place the
     // emission box's rule inverts: the pool never terminates, so burns must
     // always have somewhere to return (TYPES_INTERFACE → KarmaPoolBox).
-    outputs.push({ boxType: 'karma_pool', value: successor });
+    outputs.push({ boxType: 'karma_pool', value: successor, createdAtBlock: height });
   }
 
   // ---- 5. The fee boxes ----
@@ -455,25 +456,25 @@ function derive(
   // inside one transaction is a double spend. Nothing in the axiom counts boxes;
   // `getKarmaValue` sums them.
   for (const invite of body.invites) {
-    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee });
+    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, createdAtBlock: height });
   }
   for (const payout of likePayouts) {
     // Skipped at zero on both halves: `[]` and `[{value: 0}]` are two encodings
     // of one state. An author whose total has not reached `x` is paid nothing and
     // their whole accrual rides the carry box.
     if (payout.paid > 0n) {
-      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author });
+      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author, createdAtBlock: height });
     }
     if (payout.carry > 0n) {
-      outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author });
+      outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author, createdAtBlock: height });
     }
   }
   for (const escrow of escrows) {
-    outputs.push({ boxType: 'karma', value: escrow.value, owner: escrow.owner });
+    outputs.push({ boxType: 'karma', value: escrow.value, owner: escrow.owner, createdAtBlock: height });
   }
   for (const settled of bondSettlements) {
     if (settled.vested > 0n) {
-      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter });
+      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, createdAtBlock: height });
     }
   }
   for (const plan of decayPlans) {
@@ -486,12 +487,13 @@ function derive(
         value: plan.newValue,
         owner: plan.owner,
         decayBurn: true,
+        createdAtBlock: height,
       });
     }
   }
   for (const prune of body.prunes) {
     for (const refund of prune.refunds) {
-      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner });
+      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, createdAtBlock: height });
     }
   }
 
@@ -541,6 +543,7 @@ export function buildSettlement(
       value: derived.minerSlice,
       owner: minerOwner,
       lockedUntilBlock: derived.lockedUntilBlock,
+      createdAtBlock: height,
     });
   }
 
@@ -769,6 +772,7 @@ function probe(inputs: number, grants: number, grantValue: bigint): UtxoTransact
     outputs: Array.from({ length: grants }, () => ({
       boxType: 'karma' as const,
       value: grantValue,
+      createdAtBlock: 0,
       owner: new Uint8Array(32),
     })),
     signatures: {},

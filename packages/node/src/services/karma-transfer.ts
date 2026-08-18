@@ -125,6 +125,7 @@ export function transferKarma(
     const box: KarmaBox = {
       boxType: 'karma',
       value: consolidated,
+      createdAtBlock: blockHeight,
       owner: c.owner,
       txId: mintTxIdFor(c.ctx, blockHeight),
       index: MINT_OUTPUT_INDEX,

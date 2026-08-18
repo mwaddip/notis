@@ -657,6 +657,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
         {
           boxType: 'karma',
           value: 1n,
+          createdAtBlock: 0,
           owner: liker.userId,
         },
         // The marker, so the transaction conserves — the shape is the engine's
@@ -664,6 +665,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
         {
           boxType: 'like_accrual',
           value: 1n,
+          createdAtBlock: 0,
           author: author.userId,
         },
       ],
