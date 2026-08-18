@@ -52,7 +52,7 @@ export function isCreditSideTx(tx: UtxoTransaction): boolean {
  * signature-keyed count is inflated to any size by appending keys that hold
  * nothing. Every karma-side operation spends a box that names its actor, and
  * what bounds the count is that spending one of those boxes cost karma —
- * an invite bonds `INVITE_BOND_KARMA` and a vouch stakes `VOUCH_KARMA_AMOUNT`
+ * an invite bonds at least `inviteBondMin` and a vouch stakes `VOUCH_KARMA_AMOUNT`
  * (NODE_INTERFACE → Bond transition rules, Vouch transition rules).
  *
  * Reading `inputBoxes[0]` alone is sound only after `validateTx`: step 3 pins

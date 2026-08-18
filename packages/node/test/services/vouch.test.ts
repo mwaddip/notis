@@ -162,6 +162,8 @@ describe('vouch service', () => {
       // recast. A stub would leave the rule this suite fronts untested.
       hasActiveVouchEscrow: storeHasActiveVouchEscrow,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

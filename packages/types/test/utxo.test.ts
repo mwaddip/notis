@@ -16,8 +16,8 @@ import {
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
   BOX_TYPE_TAGS,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
+  INVITE_BOND_MIN,
+  INVITE_BOND_MAX,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
   VOUCH_KARMA_AMOUNT,
@@ -546,13 +546,13 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
   it('the invite transaction emits ONE bond, and the key it names is signed over', () => {
     // ⛔ The invite collapses to a single transaction: it creates the `BondBox`
     // and the inviter's karma change, and nothing else (TYPES_INTERFACE →
-    // InviteBox). **The bond IS the request** — the settlement emits
-    // `INVITE_KARMA_AMOUNT` to this key — so there is no second output for a
-    // ticket, and this test would fail against a tree that still built one.
+    // InviteBox). **The bond IS the request** — the settlement emits this bond's
+    // own value to this key — so there is no second output for a ticket, and
+    // this test would fail against a tree that still built one.
     const inviteCreate: UtxoTransaction = {
       inputs: [IN_1],
       outputs: [
-        { boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
+        { boxType: 'bond', value: INVITE_BOND_MIN, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
         { boxType: 'karma', value: 75n, owner: inviter },
       ],
       signatures: {},
@@ -2076,13 +2076,23 @@ describe('transactions', () => {
     });
   });
 
-  describe('INVITE constants', () => {
-    it('INVITE_KARMA_AMOUNT is 25n', () => {
-      expect(INVITE_KARMA_AMOUNT).toBe(25n);
+  describe('the invite bond range, at the encoding layer', () => {
+    // A bond value is a box value, so the ceiling an inviter may name has to sit
+    // inside the domain a box may carry (TYPES_INTERFACE → Box value domain).
+    // Nothing in the type system relates the two.
+    it('keeps both endpoints inside the box value domain', () => {
+      expect(INVITE_BOND_MIN).toBeGreaterThan(0n);
+      expect(INVITE_BOND_MAX).toBeLessThan(BOX_VALUE_BOUND);
     });
 
-    it('INVITE_BOND_KARMA is 25n', () => {
-      expect(INVITE_BOND_KARMA).toBe(25n);
+    // ⛔ **A bond at the ceiling encodes WIDER than one at the floor**, so block
+    // space reserved from the floor falls short of what the ceiling needs. The
+    // widths are measured through the codec rather than asserted about the
+    // numbers, because VLQ width is a property of the encoder.
+    it('encodes its ceiling wider than its floor', () => {
+      const bytesAt = (value: bigint) =>
+        canonicalBoxBytes({ ...makeBondBox(), value }).length;
+      expect(bytesAt(INVITE_BOND_MAX)).toBeGreaterThan(bytesAt(INVITE_BOND_MIN));
     });
   });
 });

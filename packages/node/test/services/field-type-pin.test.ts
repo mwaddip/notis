@@ -36,8 +36,6 @@ import {
   encodeTx,
   decodeTx,
   POST_LOCK_THREAD_COST,
-  INVITE_BOND_KARMA,
-  INVITE_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type { AnyBox, AnyBoxCandidate, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -51,6 +49,7 @@ import {
   seedProvenance,
   type Stored,
   type TestIdentity,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
   initDb,
@@ -120,6 +119,8 @@ describe('field-type pin', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -383,7 +384,7 @@ describe('field-type pin', () => {
     it('honest invite (typed 32-byte key, conserving) validates', () => {
       const inviter = makeTestIdentity();
       const invitee = makeTestIdentity();
-      const karma = makeKarmaBox(INVITE_BOND_KARMA + 10n, inviter.userId, 0, 61);
+      const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 61);
       storeInsertBox(karma);
 
       const tx: UtxoTransaction = {
@@ -392,7 +393,7 @@ describe('field-type pin', () => {
           { boxType: 'karma', value: 10n, owner: inviter.userId },
           {
             boxType: 'bond',
-            value: INVITE_BOND_KARMA,
+            value: FIXTURE_BOND_KARMA,
             inviterId: inviter.userId,
             inviteePublicKey: invitee.userId,
           },

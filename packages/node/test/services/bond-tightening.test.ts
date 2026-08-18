@@ -25,7 +25,6 @@ import {
   type KeyObject,
 } from 'crypto';
 import {
-  INVITE_BOND_KARMA,
   VOUCH_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type {
@@ -37,7 +36,9 @@ import type {
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
-import { seedAsOneTx, rawPublicKey, seedProvenance } from '../helpers.js';
+import { seedAsOneTx, rawPublicKey, seedProvenance,
+  FIXTURE_BOND_KARMA,
+} from '../helpers.js';
 import {
   initDb,
   closeDb,
@@ -52,6 +53,7 @@ import {
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import { computeTxId } from '@dagsocial/types';
+import { config } from '../../src/config.js';
 
 interface TestKeys {
   pub: Uint8Array;
@@ -94,6 +96,8 @@ describe('bond transitions (audit F-consensus-1)', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -134,7 +138,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
   function seedPair(): { bond: BondBox } {
     const bondCandidate = {
       boxType: 'bond' as const,
-      value: INVITE_BOND_KARMA,
+      value: FIXTURE_BOND_KARMA,
       inviterId: inviter.pub,
       inviteePublicKey: invitee.pub,
     };
@@ -165,7 +169,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     const { bond } = seedPair();
     const tx: UtxoTransaction = {
       inputs: [bond.id!],
-      outputs: [karmaOut(invitee.pub, INVITE_BOND_KARMA)],
+      outputs: [karmaOut(invitee.pub, FIXTURE_BOND_KARMA)],
       signatures: {},
       protocolVersion: 1,
     };
@@ -181,7 +185,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     const { bond } = seedPair();
     const tx: UtxoTransaction = {
       inputs: [bond.id!],
-      outputs: [karmaOut(inviter.pub, INVITE_BOND_KARMA)],
+      outputs: [karmaOut(inviter.pub, FIXTURE_BOND_KARMA)],
       signatures: {},
       protocolVersion: 1,
     };
@@ -199,7 +203,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     const karma = seedKarma(inviter.pub, 50n);
     const tx: UtxoTransaction = {
       inputs: [karma.id!, bond.id!],
-      outputs: [karmaOut(inviter.pub, 50n + INVITE_BOND_KARMA)],
+      outputs: [karmaOut(inviter.pub, 50n + FIXTURE_BOND_KARMA)],
       signatures: {},
       protocolVersion: 1,
     };
@@ -216,14 +220,14 @@ describe('bond transitions (audit F-consensus-1)', () => {
     // rejection above could be the gate refusing anything a bond is named in.
     // ⛔ The transaction conserves — the invitee's karma comes from the pool at
     // settlement, not from the inviter (NODE_INTERFACE → validateTx step 5).
-    const karma = seedKarma(inviter.pub, 50n + INVITE_BOND_KARMA);
+    const karma = seedKarma(inviter.pub, 50n + FIXTURE_BOND_KARMA);
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
         karmaOut(inviter.pub, 50n),
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: inviter.pub,
           inviteePublicKey: invitee.pub,
         } as BondBox,
@@ -342,7 +346,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
       outputs: [
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: inviter.pub,
           inviteePublicKey: invitee.pub,
         } as BondBox,
@@ -362,7 +366,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
     const { bond } = seedPair();
     const tx: UtxoTransaction = {
       inputs: [bond.id!],
-      outputs: [karmaOut(inviter.pub, INVITE_BOND_KARMA)],
+      outputs: [karmaOut(inviter.pub, FIXTURE_BOND_KARMA)],
       signatures: {},
       protocolVersion: 1,
     };

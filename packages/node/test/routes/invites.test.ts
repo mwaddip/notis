@@ -5,6 +5,7 @@ import {
   seedProvenance,
   signTransaction,
   txToJson,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
@@ -25,8 +26,6 @@ import {
   generateKeyPair,
   computeBoxId,
   computeTxId,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
@@ -73,8 +72,7 @@ function loadUiBuilders(): UiBuilders {
   return new Function(
     [
       lift('const PROTOCOL_VERSION ='),
-      lift('const INVITE_KARMA_AMOUNT ='),
-      lift('const INVITE_BOND_KARMA ='),
+      lift('const INVITE_BOND_DEFAULT ='),
       lift('function jsonBigint('),
       lift('function selectBoxes('),
       lift('function buildCreateInviteTx('),
@@ -112,6 +110,8 @@ async function request(
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
       createInvite,
@@ -191,7 +191,7 @@ describe('invites routes', () => {
     const bond = seedProvenance<BondBox>(
       {
         boxType: 'bond' as const,
-        value: INVITE_BOND_KARMA,
+        value: FIXTURE_BOND_KARMA,
         inviterId,
         inviteePublicKey: invitee,
       },
@@ -208,12 +208,12 @@ describe('invites routes', () => {
 
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: 100n - INVITE_BOND_KARMA,
+      value: 100n - FIXTURE_BOND_KARMA,
       owner: inviterId,
     };
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
-      value: INVITE_BOND_KARMA,
+      value: FIXTURE_BOND_KARMA,
       inviterId,
       inviteePublicKey: invitee,
     };
@@ -304,7 +304,7 @@ describe('invites routes', () => {
       // builder deducting both leaves a zero change output — which still
       // balances, and so would still be accepted here. The change assertion
       // below is what separates them.
-      const funded = INVITE_BOND_KARMA + INVITE_KARMA_AMOUNT;
+      const funded = FIXTURE_BOND_KARMA * 2n;
       const karma = seedKarma(funded, labelNonce('ui-create'));
       const invitee = inviteeKeys();
 
@@ -327,9 +327,9 @@ describe('invites routes', () => {
       const outputs = jsonToTx(body).outputs as [KarmaBox, BondBox];
       expect(outputs).toHaveLength(2);
       const [change, bond] = outputs;
-      expect(change.value).toBe(funded - INVITE_BOND_KARMA);
+      expect(change.value).toBe(funded - FIXTURE_BOND_KARMA);
       expect(bond.boxType).toBe('bond');
-      expect(bond.value).toBe(INVITE_BOND_KARMA);
+      expect(bond.value).toBe(FIXTURE_BOND_KARMA);
     });
 
   });

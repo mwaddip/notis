@@ -9,8 +9,7 @@
  * blanket `catch` forwards `err.message` for both kinds and leaks internals
  * into HTTP responses.
  *
- * `PostServiceError` and `FaucetServiceError` are the same pattern, scoped to
- * their own services.
+ * `PostServiceError` is the same pattern, scoped to its own service.
  */
 export class ClientError extends Error {
   constructor(

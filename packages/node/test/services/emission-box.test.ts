@@ -92,7 +92,7 @@ function settle(
     height,
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, actors: opts.actors ?? 0, feeBoxIds: [], invitees: [], markers: [], prunes: [] },
+    { fees: opts.fees ?? 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], prunes: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;
@@ -111,7 +111,7 @@ async function bootUnder(network: string) {
   const s = await importFresh();
   s.db.initDb(':memory:');
   s.prover.createAvlProver();
-  s.genesis.seedGenesisState(s.system.initSystemKeypair().publicKey);
+  s.genesis.seedGenesisState();
   return s;
 }
 

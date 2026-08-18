@@ -29,6 +29,7 @@ import type { LikesDeps } from '../../src/routes/likes.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { MempoolFullError, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
+import { config } from '../../src/config.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-likes.sqlite';
 
@@ -67,6 +68,8 @@ async function request(
       vouchCooldownBlocks: 2,
       // ⛔ The like marker's author pin. One author for every post this suite
       // builds (NODE_INTERFACE → Karma transition rules).
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => POST_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

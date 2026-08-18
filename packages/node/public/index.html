@@ -253,19 +253,6 @@ hr{border:none;border-top:1px solid var(--border);margin:6px 0}
     <hr>
     <h2>Admin / Debug</h2>
 
-    <h3>Faucet</h3>
-    <div class="row">
-      <input id="faucetAmount" type="number" value="100" min="1" max="1000" style="width:100px">
-      <button id="faucetBtn" class="small">Grant</button>
-    </div>
-    <div id="faucetResult"></div>
-
-    <h3>Credit Faucet</h3>
-    <div class="row">
-      <button id="creditFaucetBtn" class="small">Get 1000 credits</button>
-    </div>
-    <div id="creditFaucetResult"></div>
-
     <h3>Credit Transfer</h3>
     <div class="row">
       <input id="creditTransferRecipient" placeholder="Recipient user ID (hex)" style="flex:1;font-size:11px">
@@ -338,8 +325,16 @@ const MAX_PARENT_REFS = 1;
 const LIKE_KARMA_COST = 1n;
 const POST_LOCK_THREAD_COST = 5n;
 const POST_LOCK_REPLY_COST = 3n;
-const INVITE_KARMA_AMOUNT = 25n;
-const INVITE_BOND_KARMA = 25n;
+/**
+ * The bond this page names on an invite, and therefore the karma the invitee
+ * receives — **the grant EQUALS the bond** (ARCHITECTURE → Invite System).
+ *
+ * ⚠ **The page's choice, not a protocol constant.** The inviter picks any value
+ * inside the network's `[inviteBondMin, inviteBondMax]` range, so this is a
+ * default rather than a rule, and it is the one value the mirror checks the
+ * node would accept.
+ */
+const INVITE_BOND_DEFAULT = 25n;
 /**
  * The vouch stake, pinned at cast — NODE_INTERFACE → "Vouch transition rules".
  * A vouch is one vote and always stakes exactly this, so it is not a client
@@ -1112,7 +1107,7 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
  *
  * ⛔ **TWO OUTPUTS, AND THE BOND IS THE WHOLE REQUEST.** The invite is one
  * transaction — there is no claim and no cancel — so the bond carries the
- * invitee's key and the block's settlement grants them `INVITE_KARMA_AMOUNT`
+ * invitee's key and the block's settlement grants them **the bond's own value**
  * out of the karma pool (ARCHITECTURE → Invite System).
  *
  * **The inviter pays only the bond**, and the grant is a pool spend rather than
@@ -1123,12 +1118,12 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
  * the flow: each party proves who they are with an ordinary Ed25519 signature.
  */
 function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
-  const selected = selectBoxes(karmaBox.boxes, INVITE_BOND_KARMA);
+  const selected = selectBoxes(karmaBox.boxes, INVITE_BOND_DEFAULT);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
 
   const karmaOutput = {
     boxType: 'karma',
-    value: selectedTotal - INVITE_BOND_KARMA,
+    value: selectedTotal - INVITE_BOND_DEFAULT,
     owner: pubKeyHex,
   };
 
@@ -1142,7 +1137,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
   // one grant, so this field is the whole of the request the block reads.
   const bondOutput = {
     boxType: 'bond',
-    value: INVITE_BOND_KARMA,
+    value: INVITE_BOND_DEFAULT,
     inviterId: pubKeyHex,
     inviteePublicKey: inviteePubKeyHex,
   };
@@ -1156,8 +1151,8 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
 }
 
 /**
- * Build an invite-claim tx: one InviteBox → one KarmaBox of
- * `INVITE_KARMA_AMOUNT`, owned by the invitee, who signs.
+ * Build an invite-claim tx: one InviteBox → one KarmaBox holding the bond's
+ * value, owned by the invitee, who signs.
  *
  * ⛔ **This transaction does not balance, and must not be made to.** The invite
  * holds `0`, so the whole output is a **surplus** — the only karma any
@@ -1170,7 +1165,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
 function buildClaimInviteTx(inviteBoxId, inviteePubKeyHex) {
   const karmaOutput = {
     boxType: 'karma',
-    value: INVITE_KARMA_AMOUNT,
+    value: INVITE_BOND_DEFAULT,
     owner: inviteePubKeyHex,
   };
 
@@ -1573,7 +1568,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     // 1. Fetch current karma box
     const karmaBox = await fetchKarmaBox();
     if (!karmaBox) {
-      setStatus('No karma box found — use faucet first', 'error');
+      setStatus('No karma box found — this identity needs an invite from a member', 'error');
       return;
     }
 
@@ -2272,85 +2267,16 @@ async function loadStatus() {
       <div><span>Total karma:</span> <strong>${s.totalKarma}</strong> &nbsp; <span>Total credits:</span> <strong>${formatCredits(BigInt(s.totalCredits))}</strong></div>
     `;
 
-    // Show the admin section on every network but mainnet. This is a deny-list,
-    // and deliberately NOT the shape of the node's three faucet gates: those
-    // share the `isFaucetNetwork` allow-list so that a network added later
-    // mints nothing until someone names it (NODE_INTERFACE → Faucet). Nothing
-    // on this page mints, so a panel shown one network too early is a button
-    // the node answers 403 or 404 to, not karma from nothing.
+    // Show the admin section on every network but mainnet. A deny-list, and
+    // safe as one because nothing on this page mints: every panel below builds
+    // an ordinary user transaction, so one shown a network too early is a
+    // button the node refuses, not karma from nothing.
     const admin = document.getElementById('adminSection');
     admin.style.display = networkType !== 'mainnet' ? '' : 'none';
   } catch (e) {
     bar.innerHTML = 'Status unavailable';
   }
 }
-
-// ===========================================================================
-// Admin / Debug - Faucet
-// ===========================================================================
-
-document.getElementById('faucetBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('faucetBtn');
-  const result = document.getElementById('faucetResult');
-  let amount;
-  try { amount = BigInt(document.getElementById('faucetAmount').value.trim() || '100'); }
-  catch { amount = 100n; }
-
-  btn.disabled = true;
-  result.innerHTML = '<span class="result-msg">Requesting...</span>';
-
-  try {
-    const res = await fetch(API + '/faucet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, amount }, jsonBigint),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      result.innerHTML = `<span class="result-msg ok">Granted ${amount} karma. Status: ${data.status}. TxId: ${(data.txId || '').slice(0, 16)}...</span>`;
-      loadIdentityStatus();
-      loadStatus();
-    } else {
-      result.innerHTML = `<span class="result-msg err">${esc(data.reason || data.error || 'faucet failed')}</span>`;
-    }
-  } catch (e) {
-    result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-// ===========================================================================
-// Admin / Debug - Credit Faucet
-// ===========================================================================
-
-document.getElementById('creditFaucetBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('creditFaucetBtn');
-  const result = document.getElementById('creditFaucetResult');
-
-  btn.disabled = true;
-  result.innerHTML = '<span class="result-msg">Requesting...</span>';
-
-  try {
-    const res = await fetch(API + '/credits/faucet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: userId }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      result.innerHTML = `<span class="result-msg ok">Granted ${formatCredits(BigInt(data.amount))} credits. TxId: ${(data.txId || '').slice(0, 16)}...</span>`;
-      loadIdentityStatus();
-      loadStatus();
-    } else {
-      result.innerHTML = `<span class="result-msg err">${esc(data.reason || data.error || 'faucet failed')}</span>`;
-    }
-  } catch (e) {
-    result.innerHTML = `<span class="result-msg err">${esc(e.message)}</span>`;
-  } finally {
-    btn.disabled = false;
-  }
-});
 
 // ===========================================================================
 // Admin / Debug - Credit Transfer
@@ -2472,8 +2398,8 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     // Advisory — `createInvite` owns the verdict, and it also owns the one
     // rejection this page cannot predict: the named key already being an
     // account. The bond is the whole cost; the claim mints the rest.
-    if (karmaBox.total < INVITE_BOND_KARMA) {
-      result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_KARMA}, you hold ${karmaBox.total}</span>`;
+    if (karmaBox.total < INVITE_BOND_DEFAULT) {
+      result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_DEFAULT}, you hold ${karmaBox.total}</span>`;
       return;
     }
 

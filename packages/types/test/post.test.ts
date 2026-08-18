@@ -17,8 +17,8 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
+  INVITE_BOND_MIN,
+  INVITE_BOND_MAX,
   INVITE_PROBATION_BLOCKS,
   INVITE_BOND_VEST_PER_LIKES,
   GENESIS_COMMITTEE_KEYS,
@@ -414,10 +414,12 @@ describe('constants', () => {
   });
 
   it('invite constants are defined', () => {
-    expect(INVITE_KARMA_AMOUNT).toBe(25n);
-    expect(INVITE_BOND_KARMA).toBe(25n);
+    // The bond an inviter picks from, and the grant equals whichever value they
+    // pick. There is no separate grant constant to pin.
+    expect(INVITE_BOND_MIN).toBe(25n);
+    expect(INVITE_BOND_MAX).toBe(250n);
     expect(INVITE_PROBATION_BLOCKS).toBe(43200); // 30 days at 60s blocks
-    expect(INVITE_BOND_VEST_PER_LIKES).toBe(5);
+    expect(INVITE_BOND_VEST_PER_LIKES).toBe(3);
   });
 
   it('genesis constants are defined', () => {

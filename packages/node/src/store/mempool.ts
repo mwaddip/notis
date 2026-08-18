@@ -589,12 +589,12 @@ function isOwned(box: AnyBox): box is OwnedBox {
  * The live tip of `box`'s pending spend chain, or `null` if the chain ends in
  * the box being fully consumed.
  *
- * A node that builds its own transactions — the faucets are the only ones —
- * must spend the change of its pending transaction rather than the box that
- * transaction already consumed. Selecting from the confirmed set alone, two
- * grants in one block interval name the same box and the second is refused;
- * chained, both apply in one block, which is what the apply path's dependency
- * ordering is for.
+ * ⚠ **NOTHING IN THIS PACKAGE CALLS IT.** The node builds no transactions of
+ * its own: every one arrives client-built, over HTTP or gossip. What it solves
+ * is a selector's problem — spending the change of a pending transaction rather
+ * than the box that transaction already consumed, so two transactions in one
+ * block interval chain instead of the second being refused — and a selector is
+ * client-side.
  *
  * The successor is the output carrying the same owner and box type — the
  * change. This is local selection, not consensus: picking wrong yields a

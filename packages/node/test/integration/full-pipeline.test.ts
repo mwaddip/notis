@@ -12,7 +12,9 @@ import {
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  signTransaction, fixturePostId, seedPostTx, seedKarmaPoolBox } from '../helpers.js';
+  signTransaction, fixturePostId, seedPostTx, seedKarmaPoolBox,
+  FIXTURE_BOND_KARMA,
+} from '../helpers.js';
 import {
   describe,
   it,
@@ -30,8 +32,6 @@ import {
   computeTxId,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
   encodePost,
   computePostId,
   decodeTx,
@@ -46,6 +46,7 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
+import { config } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -211,6 +212,8 @@ interface EngineDeps {
   getIdentityRecord: (id: Uint8Array) => IdentityRecord | null;
   hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
   vouchCooldownBlocks: number;
+  inviteBondMin: bigint;
+  inviteBondMax: bigint;
   getTopologyAuthor: (postId: string) => Uint8Array | null;
   runInTransaction: (fn: () => void) => void;
 }
@@ -245,6 +248,8 @@ function makeEngineDeps(
     // ⛔ The like marker's author pin, read from `block_topology` and never
     // `dag_posts.author` (ARCHITECTURE → Likes). This suite runs the real
     // engine end to end, so it resolves the real row.
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
     getTopologyAuthor: (postId: string) => {
       const row = db
         .prepare('SELECT author FROM block_topology WHERE post_id = ?')
@@ -508,10 +513,10 @@ describe('full-pipeline', () => {
     utxo.insertBox(karmaBox);
 
     // Build the invite tx: karma change + bond. Only the bond is paid —
-    // INVITE_KARMA_AMOUNT comes out of the pool at settlement, so the
+    // FIXTURE_BOND_KARMA comes out of the pool at settlement, so the
     // transaction conserves.
     const invitee = makeTestIdentity().userId;
-    const changeVal = 100n - INVITE_BOND_KARMA;
+    const changeVal = 100n - FIXTURE_BOND_KARMA;
     const inviteTx: UtxoTransaction = {
       inputs: [karmaBox.id!],
       outputs: [
@@ -522,7 +527,7 @@ describe('full-pipeline', () => {
         } as KarmaBox,
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: inviter.userId,
           inviteePublicKey: invitee,
         } as BondBox,
@@ -594,11 +599,11 @@ describe('full-pipeline', () => {
         inputs: [karmaIn.id!],
         outputs: [
           {
-            boxType: 'karma', value: karmaIn.value - INVITE_BOND_KARMA,
+            boxType: 'karma', value: karmaIn.value - FIXTURE_BOND_KARMA,
             owner: inviter.userId,
           },
           {
-            boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: bondInviterId,
+            boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId: bondInviterId,
             inviteePublicKey: invitee,
           },
         ],
@@ -649,7 +654,7 @@ describe('full-pipeline', () => {
     // ⛔ **And the settlement paid the invitee out of the POOL**, in the same
     // block — one bond, one grant, with a named source and a named sink
     // (ARCHITECTURE → The conservation axiom).
-    expect(utxo.getKarmaValue(invitee)).toBe(INVITE_KARMA_AMOUNT);
-    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaValue(invitee)).toBe(FIXTURE_BOND_KARMA);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - FIXTURE_BOND_KARMA);
   });
 });

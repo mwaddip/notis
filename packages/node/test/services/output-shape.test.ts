@@ -25,8 +25,6 @@ import {
   computeTxId,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -42,6 +40,7 @@ import {
   makePost,
   seedProvenance,
   type Stored,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
   initDb,
@@ -62,6 +61,7 @@ import {
   checkSettlementOutputShape,
 } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
+import { config } from '../../src/config.js';
 
 function rawPublicKey(keyObj: KeyObject): Uint8Array {
   const der = keyObj.export({ type: 'spki', format: 'der' }) as Buffer;
@@ -323,6 +323,8 @@ describe('validateTx output shape (integration)', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -474,11 +476,11 @@ describe('validateTx output shape (integration)', () => {
     const invitee = new Uint8Array(32).fill(0xaa);
     const bond = {
       boxType: 'bond',
-      value: INVITE_BOND_KARMA,
+      value: FIXTURE_BOND_KARMA,
       inviterId: ownerPubKey,
       inviteePublicKey: invitee,
     };
-    const change = karmaChange(100n - INVITE_BOND_KARMA);
+    const change = karmaChange(100n - FIXTURE_BOND_KARMA);
     const r = validateTx(deps, signedTx([karma.id!], [change, bond]), 10);
     expect(r.valid, r.error).toBe(true);
   });

@@ -1764,7 +1764,7 @@ describe('reorg', () => {
     proverMod.createAvlProver();
     const system = await import('../../src/store/system.js');
     const genesis = await import('../../src/services/genesis-state.js');
-    genesis.seedGenesisState(system.initSystemKeypair().publicKey);
+    genesis.seedGenesisState();
 
     const root = (): string =>
       Buffer.from(proverMod.getAvlProver().prover.digest()!).toString('hex');
@@ -2263,7 +2263,7 @@ describe('reorg — a missing AVL version at the fork height', () => {
     proverMod.createAvlProver();
     const system = await import('../../src/store/system.js');
     const genesis = await import('../../src/services/genesis-state.js');
-    genesis.seedGenesisState(system.initSystemKeypair().publicKey);
+    genesis.seedGenesisState();
 
     // Coinbase-only, for the reason stated on the fork-point-of-0 case: a post's
     // karma box can be seeded neither after the genesis bootstrap (the tree

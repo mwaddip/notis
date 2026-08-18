@@ -1108,7 +1108,7 @@ economics). Values are placeholders until the constants session pins them.
 `'like'` · the `likebox` and `epoch` Merkle leaf domains ·
 the free-like tier (`dag_likes` rows as likes) · unlike and every refund path · the epoch
 interval and `EPOCH_BLOCKS` · `LIKE_COST` · `LIKE_THRESHOLD` · `LIKE_MAX_AUTHOR_REWARD` ·
-`LIKE_FREE_THRESHOLD`.
+`LIKE_FREE_THRESHOLD` · `INVITE_KARMA_AMOUNT` · `INVITE_BOND_KARMA`.
 
 ---
 
@@ -1196,7 +1196,7 @@ open costs Alice her own capacity and no rule has to bound it.
 > settlement   pool(S) → pool(S−G) + bobKarma(G)
 > ```
 >
-> ⛔ **THE BOND IS THE REQUEST.** The settlement emits `INVITE_KARMA_AMOUNT` to the
+> ⛔ **THE BOND IS THE REQUEST.** The settlement emits **the bond's own value** to the
 > `inviteePublicKey` of every `BondBox` the block creates. Pairing is **structural** — one bond, one
 > grant — so no rule compares two lists and no box is invented to carry the pairing. This is why the
 > invite needs no marker box while a like does: the bond is already a box the transaction creates and
@@ -1292,18 +1292,21 @@ is byte-identical from creation to the block that consumes it.
 | Parameter | Description |
 |-----------|-------------|
 | `INVITE_MIN_KARMA` | Minimum karma an account must hold to invite (= `KARMA_POSTING_MINIMUM`) |
-| `INVITE_KARMA_AMOUNT` | Karma minted to the invitee at claim (`G`) |
-| `INVITE_BOND_KARMA` | Karma the inviter locks at creation (`B`) |
-| `INVITE_PROBATION_BLOCKS` | Blocks from the claim to bond settlement |
+| `inviteBondMin` / `inviteBondMax` | The inclusive range the inviter's bond may take (`B`), **per network** |
+| `INVITE_BOND_VEST_PER_LIKES` | Likes the invitee must receive per karma of bond returned (`V`) |
+| `INVITE_PROBATION_BLOCKS` | Blocks from invite creation to bond settlement |
 
-> ⚠ **AHEAD OF CODE — two of these rows change wording with the invite collapse.**
-> `INVITE_KARMA_AMOUNT` is karma **spent from the pool to the invitee at invite creation** — there is
-> no claim — and `INVITE_PROBATION_BLOCKS` runs **from invite creation** to bond settlement, not from
-> a claim. ⛔ **`INVITE_KARMA_AMOUNT`'s own comment in `constants.ts` says "MINTED … at claim" and is
-> false on both counts.**
+> ⛔ **`B = G` — THE GRANT IS THE BOND, so the bound cannot drift.** The inviter chooses `B` inside the
+> network's range and the settlement grants exactly that out of the pool. A grant to a key nobody
+> holds costs precisely what it strands, and there is no longer a second number free to fall below the
+> first. The caps vary per network; the equality does not.
 >
-> ⛔ **`B ≥ G` is a bound, not a coincidence.** Both are 25 today. The bound is what makes a grant to
-> a key nobody holds arbitrage-free, and it must survive any re-tuning.
+> ⛔ **`V` IS A SUPPLY DIAL, NEVER A SYBIL DEFENCE.** With `L = LIKES_PER_KARMA_PAYOUT`, vesting a bond
+> `B` needs `V·B` likes and each like leaks `1/L` to the pool, so a completed invite moves
+> **`B · (1 − V/L)`** into circulation — `+0.4·B` at `V = 3`, `L = 5`, and **exactly zero at `V = L`**,
+> where the network cannot inflate at all. **A sybil circle nets the same figure honest growth does**,
+> so tuning `V` favours neither. What bounds a sock-master is the `V·B` of their own liquid karma the
+> likes cost, and that what lands on the sock is non-transferable and can never return.
 
 ---
 
@@ -1629,12 +1632,13 @@ not be independently readable.
 
 ### What varies per network, and what must not
 
-**Per-network — the timescale, difficulty and genesis axes:**
+**Per-network — the timescale, difficulty, genesis and cap axes:**
 `ORDERING_BLOCK_POW_TARGET_BITS` · `POST_POW_TARGET_BITS` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `BOOTSTRAP_PERIOD_BLOCKS` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`GENESIS_CREDITS_PER_MEMBER` · `genesisProofPayload` · `genesisStateRoot`
+`GENESIS_CREDITS_PER_MEMBER` · `genesisProofPayload` · `genesisStateRoot` ·
+`inviteBondMin` · `inviteBondMax` · `faucetPublicKey`
 
 The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
 other name in the list is either a `constants.ts` export or a retired environment variable, and these
@@ -1646,15 +1650,32 @@ a fourth.
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_LOCK_*`,
-`VOUCH_KARMA_AMOUNT`, `INVITE_*`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
+`VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
 `COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
 `CREDIT_INITIAL_REWARD`).
 
-**The split is normative: compress time, never economics.** Every per-network parameter is a
-place where devnet and mainnet behave differently, which is precisely where a defect hides
-from the test written to catch it. A test chain needs a 3-block decay interval; it does not
-need cheaper likes. **Adding a parameter to the per-network set weakens every test that runs
-on devnet** — the burden is on the addition, not on keeping the set small.
+**The split is normative: mechanics are universal, caps may vary.** A defect lives in a formula,
+a ratio or a mechanism — never in the size of a limit. A network running a larger `inviteBondMax`
+catches every bug a smaller one would; a network running a different vesting formula catches none
+of them. **Every per-network parameter states which of the two it is**, and a mechanic still carries
+the old burden: adding one is a place where devnet and mainnet behave differently, which is precisely
+where a defect hides from the test written to catch it. A test chain needs a 3-block decay interval;
+it does not need cheaper likes.
+
+⚠ **`INVITE_BOND_VEST_PER_LIKES` is the boundary case, and it sits on the universal side.** It is a
+**ratio** — with `LIKES_PER_KARMA_PAYOUT` it fixes how much of a grant survives as circulating supply
+(§Invite System) — so a network that moved it would run different economics rather than looser ones.
+The bond *bounds* around it are caps and vary freely.
+
+### What each network is
+
+- **devnet — debug mode.** Tests, fast blocks, shortened timers, and relaxed constraints where a
+  specific test asks for one. **It carries no obligation to mirror mainnet.**
+- **testnet — the public playground.** Mainnet's **mechanics**, **relaxed caps**. It is where humans
+  exercise the platform, not where invite or vesting mechanics are verified — devnet is that.
+- **mainnet — not yet launched.** Its weights are placeholders that hold the shape until testnet
+  produces the evidence to set them from, and it may appear as **pre-mainnet** before making the jump.
+  ⚠ **A mainnet number in this repo is not a decision**; treat it as unset unless it says otherwise.
 
 ### How the network is committed
 
@@ -2280,11 +2301,11 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **No dependencies above the package's abstraction level** — the storage
   layer depends only on DB bindings and hashing. It MUST NOT import post
   content types, networking code, or UI code.
-  > ⚠ **FALSE in the positive clause; the prohibition holds. Verified 2026-08-11.** `store/`
-  > value-imports serializers — `decodeTx` (`store/faucet-grants.ts:1`), `encodeTx`
-  > (`store/mempool.ts:9`), `encodeStump` (`store/stumps.ts:2`) — and `store/mempool.ts:2`
+  > ⚠ **FALSE in the positive clause; the prohibition holds. Verified 2026-08-18.** `store/`
+  > value-imports serializers — `decodeTx` (`store/mempool.ts:17`), `encodeTx`
+  > (`store/mempool.ts:16`), `encodeStump` (`store/stumps.ts:2`) — and `store/mempool.ts:3`
   > imports `../config.js`: **the application layer, imported by the storage layer, and
-  > load-bearing** (it carries the mempool cap into the capacity check at `:65`). The
+  > load-bearing** (it carries the mempool cap into the capacity check at `:217`). The
   > *prohibitions* are respected: post content types are `import type` only, and there is no
   > networking or UI import.
   >

@@ -30,6 +30,7 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import type { BlockJournal } from '../../src/store/journal.js';
+import { config } from '../../src/config.js';
 import {
   fixtureProvenance,
   makeApplicableBlock,
@@ -210,6 +211,8 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       getKarmaValue: utxo.getKarmaValue,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     };
@@ -317,6 +320,8 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       getKarmaValue: utxo.getKarmaValue,
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     };

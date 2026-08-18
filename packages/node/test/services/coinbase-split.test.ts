@@ -13,7 +13,6 @@ import {
   COINBASE_TREASURY_PCT,
   COINBASE_BONUS_PCT,
   INCLUSION_BONUS_K,
-  INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -23,7 +22,9 @@ import type {
   VouchBox,
 } from '@dagsocial/types';
 import { countKarmaActors, splitCoinbase } from '../../src/services/coinbase-split.js';
-import { uid } from '../helpers.js';
+import { uid,
+  FIXTURE_BOND_KARMA,
+} from '../helpers.js';
 
 const ALICE = uid('alice');
 const BOB = uid('bob');
@@ -224,7 +225,7 @@ describe('countKarmaActors', () => {
   // bore no cost (MINING_INTERFACE → The slices).
   it('counts the inviter for an invite, and never the invitee', () => {
     const bond = {
-      boxType: 'bond', value: INVITE_BOND_KARMA, inviterId: ALICE, inviteePublicKey: BOB,
+      boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId: ALICE, inviteePublicKey: BOB,
     };
     const invite = entry(tx([karmaBox(9n, ALICE), bond]), [karmaBox(34n, ALICE)]);
     expect(countKarmaActors([invite], VALIDATOR)).toBe(1);

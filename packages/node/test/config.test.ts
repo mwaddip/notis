@@ -529,4 +529,76 @@ describe('config', () => {
       await expect(importWithBudget('-1')).rejects.toThrow(/BLOCK_BODY_BUDGET_BYTES/);
     });
   });
+  describe('13. the invite caps and the faucet identity reach config', () => {
+    // The absence of a faucet identity IS mainnet's gate — no second boolean
+    // states the same fact, so this is the whole of it.
+    it('mainnet carries no faucet identity', async () => {
+      process.env['NETWORK_TYPE'] = 'mainnet';
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().faucetPublicKey).toBeUndefined();
+    });
+
+    // Copies OF the profile, not parallel reads — the same claim section 6
+    // makes about the nine consensus fields, extended to the three this unit
+    // adds. testnet and devnet disagree on both caps, so a read sourced from
+    // the wrong profile fails here.
+    it('testnet copies its caps and its faucet key from the profile', async () => {
+      process.env['NETWORK_TYPE'] = 'testnet';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      expect(cfg.inviteBondMin).toBe(NETWORK_PROFILES.testnet.inviteBondMin);
+      expect(cfg.inviteBondMax).toBe(NETWORK_PROFILES.testnet.inviteBondMax);
+      expect(cfg.faucetPublicKey).toBe(NETWORK_PROFILES.testnet.faucetPublicKey);
+    });
+
+    it('devnet copies its own, which are not testnet\'s', async () => {
+      process.env['NETWORK_TYPE'] = 'devnet';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      expect(cfg.inviteBondMin).toBe(NETWORK_PROFILES.devnet.inviteBondMin);
+      expect(cfg.inviteBondMax).toBe(NETWORK_PROFILES.devnet.inviteBondMax);
+      expect(cfg.faucetPublicKey).toBe(NETWORK_PROFILES.devnet.faucetPublicKey);
+      expect(cfg.inviteBondMin).not.toBe(NETWORK_PROFILES.testnet.inviteBondMin);
+      expect(cfg.inviteBondMax).not.toBe(NETWORK_PROFILES.testnet.inviteBondMax);
+    });
+
+    // A ceiling under its floor admits no bond at all, and the failure would
+    // surface as every invite being rejected rather than as the configuration
+    // at fault. Section 10's fail-fast pattern: the profile is mocked, because
+    // no environment variable reaches these.
+    it('refuses a profile whose ceiling sits under its floor', async () => {
+      const types = await vi.importActual<typeof import('@dagsocial/types')>(
+        '@dagsocial/types',
+      );
+      vi.doMock('@dagsocial/types', () => ({
+        ...types,
+        profileFor: () => ({ ...types.NETWORK_PROFILES.devnet, inviteBondMin: 300n, inviteBondMax: 250n }),
+      }));
+      process.env['NETWORK_TYPE'] = 'devnet';
+      await expect(import('../src/config.js')).rejects.toThrow(/invite bond/i);
+    });
+
+    // 64 lowercase hex characters, an Ed25519 public key. A key the seeder
+    // cannot decode seeds a box owned by the wrong bytes, and the box reaches
+    // `genesisStateRoot` — so the node forks rather than fails.
+    it('refuses a faucet key that is not 64 lowercase hex characters', async () => {
+      const types = await vi.importActual<typeof import('@dagsocial/types')>(
+        '@dagsocial/types',
+      );
+      vi.doMock('@dagsocial/types', () => ({
+        ...types,
+        profileFor: () => ({ ...types.NETWORK_PROFILES.devnet, faucetPublicKey: 'NOTHEX' }),
+      }));
+      process.env['NETWORK_TYPE'] = 'devnet';
+      await expect(import('../src/config.js')).rejects.toThrow(/faucetPublicKey/);
+    });
+
+    // The control the refusal above needs: mainnet omits the field entirely and
+    // must still load, or "absent" and "malformed" would be the same verdict.
+    it('control: an absent faucet key is not a malformed one', async () => {
+      process.env['NETWORK_TYPE'] = 'mainnet';
+      const { loadConfig } = await import('../src/config.js');
+      expect(() => loadConfig()).not.toThrow();
+    });
+  });
 });

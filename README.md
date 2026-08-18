@@ -52,37 +52,36 @@ Three properties fall out of this split:
 
 ### Posting
 
-Every post costs a small Proof of Work — not mining, just making spam
-expensive while keeping posting free. Request a challenge from your node,
-iterate a nonce until the hash meets the target (under a second on a laptop),
-submit. Your solved post *is* a sub-block; a miner's ordering block anchors it.
-
-| | Sub-block | Ordering block |
-|---|---|---|
-| **Producer** | You (the poster) | Miner (PoW) |
-| **Frequency** | Per post | ~60 seconds |
-| **Contains** | One post | Batch of sub-block entries, transactions, prune entries |
+**A post is a transaction.** It rides an ordering block's transaction list like
+every other one, locking a little karma as skin in the game and paying a fee at
+the network's rate. There is one kind of block: a miner solves an ordering block
+roughly every 60 seconds, carrying that block's transactions, its prune entries,
+and the settlement that pays every party the block owes.
 
 Posts link via `parentRefs` (one parent — a forest of threads, still a DAG).
-Content is 1–300 UTF-8 bytes. Posting locks a little karma as skin in the
-game, released back as the post accumulates likes.
+Content is 1–300 UTF-8 bytes. The lock releases back to the author as the post
+accumulates likes.
 
 ### Likes and karma
 
-Karma is the non-tradeable social currency. **A like is a one-way burn.**
-Liking spends `LIKE_KARMA_COST` karma from your box in an ordinary UTXO
-transaction — the karma is destroyed, not locked, and there is no unlike and no
-free tier. One like per `(liker, post)` pair, forever.
+Karma is the non-tradeable social currency. **A like is a one-way spend.**
+Liking moves `LIKE_KARMA_COST` karma out of your box in an ordinary UTXO
+transaction — there is no unlike and no free tier. One like per `(liker, post)`
+pair, forever.
 
-The author's side settles **per block, not per epoch**. Each like accrues on a
-per-identity carry in the state root, and for every `LIKES_PER_KARMA_PAYOUT`
-likes an author receives all but one of them as karma — so `x` likes burned
-mint `x−1`, and the remainder rides the carry to the next block. Every like is
-therefore slightly deflationary by construction, without a threshold to reach
-or a tally to wait for.
+The cost never leaves the ledger: it lands in a `LikeAccrualBox` naming the
+author, and the block's settlement pays out of it. For every
+`LIKES_PER_KARMA_PAYOUT` likes, an author receives all but one as karma — `x`
+likes spent mint `x−1` — and the remainder rides an accrual box into the next
+block. Every like is therefore slightly deflationary by construction, without a
+threshold to reach or a tally to wait for.
 
-Rewards mint karma; invite-bond burns and inactivity decay destroy it. Dormant
-accounts bleed slowly down to a floor; any protocol action resets the clock.
+**Karma comes from a fixed supply, and nothing creates it.** Every grant draws
+on a supply pool and every burn returns to it, so `pool + circulating` is the
+same number at every height, forever. Karma is not scarce by policy — it is
+non-inflatable by construction. Inactivity decay bleeds dormant accounts down to
+a floor and returns what it takes to the pool; any protocol action resets the
+clock.
 
 You cannot buy, sell, or transfer karma. That's the point.
 
@@ -96,23 +95,23 @@ spend them (ads, boosts, tips).
 
 ### Invites
 
-The network is invite-only, and inviting has skin in the game:
+The network is invite-only, and inviting has skin in the game. **The bond is the
+request.** Alice locks a bond out of her own karma, choosing an amount within
+the network's range, and the block's settlement grants Bob that same amount out
+of the supply pool. One bond, one grant — no secret, no separate claim, and
+nothing for Bob to do: his account exists the moment his first box does.
 
-1. Alice locks karma for the invitee **plus an equal bond**, hash-locked to a
-   secret she hands Bob out of band
-2. Bob commits to the invite under his own key — the commit is
-   signature-verified at consensus, so holding the secret alone binds nothing
-3. Bob claims, and his account exists the moment his first box does
-4. The bond sits in escrow through a probation window:
+Because a newcomer holds nothing and a transaction needs an input, **the invite
+is the only way a fresh identity gets its first karma** — on every network.
 
-| Outcome | Bond |
-|---|---|
-| Bob reaches the karma threshold within probation | Returned to Alice |
-| Bob falls below the posting minimum during probation | **Burned** |
-| Probation expires uneventfully | Returned to Alice |
+The bond then sits through a probation window and vests against what Bob earns:
+every `INVITE_BOND_VEST_PER_LIKES` likes he receives returns one karma of it,
+capped at the bond. At the deadline the vested part goes back to Alice and the
+remainder returns to the supply pool.
 
-Burned bonds shrink the karma supply — inviting badly costs real reputation.
-Alice can cancel an unclaimed invite and get everything back.
+So a careless invite costs real reputation and a good one costs only time. The
+bond is the network's only sybil price, and because the grant equals it, naming
+32 bytes nobody holds costs exactly what it strands.
 
 ### Deletion that settles (stumps)
 
@@ -125,9 +124,9 @@ root over it, and the root author's Ed25519 signature. At block application
 every node verifies:
 
 1. **Authorship** — the entry's author *is* the consensus-recorded author of
-   the root. Every confirmed post's author travels in its block (committed
-   under the sub-block Merkle root), so "who owns this subtree" is chain data,
-   not content data — a miner cannot prune someone else's thread
+   the root, read from the chain's own `block_topology` rather than from the
+   post. "Who owns this subtree" is therefore chain data, not content data — a
+   miner cannot prune someone else's thread
 2. **Signature** — the root author signed this exact prune
 3. **Topology** — the post-id set matches the confirmed reply tree
 4. **Merkle root** — the set is exactly what was signed
@@ -142,10 +141,15 @@ stumps, not archives.
 
 Ordering blocks are mined with PoW at a height-scheduled difficulty (on-chain
 time is block height, never wall clock). Fork choice is cumulative work. The
-`@dagsocial/net` package runs libp2p with Gossipsub for sub-blocks, ordering
-blocks, and UTXO transactions, plus a header-first sync protocol: a fresh node
-downloads ordering blocks only — block entries carry enough topology and
-authorship to verify all settlement without any post content.
+`@dagsocial/net` package runs libp2p with Gossipsub for ordering blocks and
+UTXO transactions, plus a header-first sync protocol: a fresh node downloads
+ordering blocks only — block entries carry enough topology and authorship to
+verify all settlement without any post content.
+
+Every value movement a block owes — like payouts, invite grants, vested bonds,
+decay, prune refunds — is paid by a single **settlement transaction** the block
+carries, derived from the block's own contents. No signer authorizes it; every
+node recomputes the same verdict from the same body.
 
 Exact parameters (lock amounts, thresholds, emission, decay) are protocol
 constants documented in [contracts/ARCHITECTURE.md](contracts/ARCHITECTURE.md).
@@ -162,8 +166,9 @@ reorg):
   are rejected
 - **Prune authorship** — binding a prune to the consensus-recorded root author
   (see above); censorship-by-miner is rejected structurally
-- **Invite-commit signatures** — a bond commit must verify against the
-  committed key; observing a secret on the wire authorizes nothing
+- **Invite eligibility** — an invite may only name a key that is not already an
+  account, tested against consensus state rather than a local ledger; and the
+  bond must cover the grant it creates, so a grant cannot be stranded for free
 - **Coinbase discipline** — reward value, treasury split, and maturity locks
   are pure functions of height; deviation rejects the block
 - **Embedded transactions** — fully re-validated at apply (signatures, guards,
@@ -262,11 +267,9 @@ environment is not merely discouraged, it has no effect.
 | `PORT` | 3000 | HTTP API port |
 | `DB_PATH` | `dagsocial.db` | SQLite database path |
 | `NODE_ROLE` | `server` | `server` or `miner` |
-| `MAX_SUB_BLOCKS_PER_BLOCK` | — | Upper bound on sub-blocks per ordering block |
 | `BOOTSTRAP_PEERS` | (empty) | Comma-separated libp2p multiaddrs |
 | `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen address |
 | `MAX_PEERS` | — | Peer connection ceiling |
-| `CHALLENGE_WINDOW_BLOCKS` | 10 | Challenge expiry blocks |
 | `MAX_MEMPOOL_ENTRIES` | — | Mempool capacity; submissions beyond it are refused |
 | `MAX_PROOF_HISTORY` | — | Retained AVL+ proof history depth |
 | `VERIFY_STATE_ROOT` | on | Verify each block's committed `stateRoot` at apply |
@@ -278,31 +281,38 @@ environment is not merely discouraged, it has no effect.
 > file: `NETWORK_MODE` (renamed to `NETWORK_TYPE`), `MINING_MODE` (the node has
 no in-process solver; a miner node serves templates),
 `ORDERING_BLOCK_INTERVAL_MS` and `ORDERING_BLOCK_MIN_SUB_BLOCKS` (there is no
-producer timer — difficulty sets the pace), `POST_POW_TARGET_BITS`,
+producer timer — difficulty sets the pace), `MAX_SUB_BLOCKS_PER_BLOCK` (a post
+is a transaction; there are no sub-blocks), `POST_POW_TARGET_BITS`,
 > `ORDERING_BLOCK_POW_TARGET_BITS`, `CREDIT_INITIAL_REWARD`,
 > `CREDIT_TREASURY_PCT`, `TREASURY_PUBKEY`, `KARMA_STALE_THRESHOLD_BLOCKS`,
 > `KARMA_DECAY_INTERVAL_BLOCKS`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
-> `AVL_KEY_LENGTH`, `NETWORK_MAGIC`, and `EPOCH_BLOCKS` (like epochs no longer
-> exist — see *Likes and karma*).
+> `AVL_KEY_LENGTH`, `NETWORK_MAGIC`, `EPOCH_BLOCKS` (like epochs no longer
+> exist — see *Likes and karma*), and `CHALLENGE_WINDOW_BLOCKS` (a post is a
+> transaction; there is no post-PoW challenge to expire).
 
 ### Demo UI
 
 Open `http://localhost:3000` (behind nginx with path isolation: UI at
 `/testnet/`, API at `/testnet/api/`). Single HTML page, vanilla JS, no build
-step. Create an identity, hit the testnet faucets, post (the browser solves
-PoW), like, invite, transfer credits. Click a post's timestamp for thread view
-— full ancestor chain and reply tree — and copy a shareable link with OG
-metadata for rich previews in chat apps. Admin tools (faucets, invites,
-transfers) appear in testnet mode only.
+step. Create an identity, post, like, invite, transfer credits. Click a post's
+timestamp for thread view — full ancestor chain and reply tree — and copy a
+shareable link with OG metadata for rich previews in chat apps.
+
+A fresh identity needs an invite from an existing member; on testnet and devnet
+that is what the faucet service is for, and it runs outside the node.
 
 ---
 
 ## API
 
-Everything is JSON over HTTP: identities, posts, threads, challenges, likes,
-invites, vouches, credits, faucets, block queries, AVL+ UTXO proofs
-(`/api/v1/proof/:boxId`), OG link previews, and the authenticated mining
-endpoints. The demo UI exercises the whole surface.
+Everything is JSON over HTTP: identities, posts, threads, likes, invites,
+vouches, credits, block queries, AVL+ UTXO proofs (`/api/v1/proof/:boxId`), OG
+link previews, and the authenticated mining endpoints. The demo UI exercises the
+whole surface.
+
+**The node serves no faucet.** It holds no key it could sign one with, and no
+consensus rule names a privileged signer — a faucet is an ordinary account whose
+key lives in a service outside the node.
 
 The authoritative route reference lives in
 [contracts/NODE_INTERFACE.md](contracts/NODE_INTERFACE.md) — request/response
@@ -329,9 +339,8 @@ pnpm typecheck      # Type-check all packages, src and test trees
   bytes), shared by net and node.
 - **`@dagsocial/net`** — libp2p + Gossipsub relay with two-stage validation,
   header-first sync, peer discovery and scoring.
-- **`@dagsocial/node`** — Express server, PoW challenges, UTXO engine, SQLite
-  store, AVL+ state root, block creator, per-block like settlement, decay,
-  demo UI.
+- **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state
+  root, block creator, the per-block settlement transaction, decay, demo UI.
 
 ### Contracts
 
@@ -347,7 +356,6 @@ for every interface, and contracts are updated **before** implementation code.
 | `contracts/MEMPOOL_INTERFACE.md` | Mempool semantics |
 | `contracts/MINING_INTERFACE.md` | Emission, PoW, difficulty, mining API |
 | `contracts/NET_INTERFACE.md` | Gossip, sync, peer management |
-| `contracts/SUBBLOCK_INTERFACE.md` | Sub-block lifecycle |
 | `contracts/WIRE_INTERFACE.md` | Frame and message codec |
 | `contracts/JOURNAL_EVENTS.md` | Block journal events |
 | `contracts/HOUSE_STYLE.md` | Colour, type, the mark, motion, spacing, voice |
@@ -358,11 +366,12 @@ for every interface, and contracts are updated **before** implementation code.
 
 ## Roadmap
 
-Built: the dual ledger, sub-block + ordering-block consensus, verifiable
-pruning, likes as per-block karma burns, invites with bonds, vouches, karma
-decay, credit emission, AVL+ state root with light-client proofs, libp2p
-networking with header-first sync, split mining, demo UI.
+Built: the dual ledger, ordering-block consensus with a derived per-block
+settlement, verifiable pruning, likes as per-block karma spends, invites with
+bonds, vouches, karma decay against a fixed supply pool, credit emission,
+transaction fees, AVL+ state root with light-client proofs, libp2p networking
+with header-first sync, split mining, demo UI.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips), reply
 earning, karma-proportional PoW, storage pruning for lean nodes, view keys,
-parameter governance, fee market.
+parameter governance, a live fee market (the mechanism ships; the rate is 0).

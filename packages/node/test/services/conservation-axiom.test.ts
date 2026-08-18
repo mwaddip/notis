@@ -28,8 +28,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BOX_TYPE_TAGS,
-  INVITE_BOND_KARMA,
-  INVITE_KARMA_AMOUNT,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
   PROTOCOL_VERSION,
@@ -52,6 +50,7 @@ import {
   seedPostTx,
   signTransaction,
   type TestIdentity,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 
 /** Short enough that a bond's deadline is reachable by mining a few blocks. */
@@ -414,12 +413,12 @@ describe('the conservation axiom holds over a chain', () => {
       outputs: [
         {
           boxType: 'karma',
-          value: w.inviterKarma.value - INVITE_BOND_KARMA,
+          value: w.inviterKarma.value - FIXTURE_BOND_KARMA,
           owner: w.inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: w.inviter.userId,
           inviteePublicKey: w.invitee.userId,
         } as BondBox,
@@ -434,8 +433,8 @@ describe('the conservation axiom holds over a chain', () => {
     await applyAndConserve(b1, 'the invite');
 
     // The grant is a POOL SPEND: the invitee holds karma the pool no longer does.
-    expect(utxo.getKarmaValue(w.invitee.userId)).toBe(INVITE_KARMA_AMOUNT);
-    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - INVITE_KARMA_AMOUNT);
+    expect(utxo.getKarmaValue(w.invitee.userId)).toBe(FIXTURE_BOND_KARMA);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolBefore - FIXTURE_BOND_KARMA);
     expect(records.getIdentityRecord(w.invitee.userId)?.invitedAtBlock).toBe(1);
 
     // The invitee earns nothing, so the whole bond forfeits at the deadline.
@@ -457,7 +456,7 @@ describe('the conservation axiom holds over a chain', () => {
       'the bond settled',
     ).toBe(false);
     expect(utxo.getKarmaValue(w.inviter.userId)).toBe(inviterBefore);
-    expect(utxo.getKarmaPoolBox()!.value).toBe(poolAtDeadline + INVITE_BOND_KARMA);
+    expect(utxo.getKarmaPoolBox()!.value).toBe(poolAtDeadline + FIXTURE_BOND_KARMA);
   });
 
   it('a chain carrying every path at once conserves at every height', async () => {
@@ -481,12 +480,12 @@ describe('the conservation axiom holds over a chain', () => {
       outputs: [
         {
           boxType: 'karma',
-          value: w.inviterKarma.value - INVITE_BOND_KARMA,
+          value: w.inviterKarma.value - FIXTURE_BOND_KARMA,
           owner: w.inviter.userId,
         } as KarmaBox,
         {
           boxType: 'bond',
-          value: INVITE_BOND_KARMA,
+          value: FIXTURE_BOND_KARMA,
           inviterId: w.inviter.userId,
           inviteePublicKey: w.invitee.userId,
         } as BondBox,
@@ -582,5 +581,81 @@ describe('the conservation axiom holds over a chain', () => {
       'the bond settled',
     ).toBe(false);
     expect(await conservationTotal()).toBe(genesisTotal);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⛔ THE AXIOM ABOVE IS SILENT ABOUT THE TOTAL BEING LEGAL IN THE FIRST PLACE.
+//
+// It asserts the total is UNMOVED across blocks, which a genesis that seeds a
+// box BESIDE the pool rather than OUT of it satisfies perfectly: the sum is
+// wrong from height 0 and stays wrong, and every per-block check passes.
+//
+// Nothing else encodes the sum either — the value bound is per-box and each box
+// is individually legal, and `ensureKarmaPoolBox`'s refusal inspects only what
+// it was told was granted. So this is the absolute check, on every network.
+// ---------------------------------------------------------------------------
+
+describe('genesis supply is within the ceiling', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  /**
+   * Seed a real genesis under `network` and report what it holds.
+   *
+   * ⚠ `vitest.config.ts` pins `NETWORK_TYPE` in its `env` block, which overrides
+   * the shell — in-test assignment plus `vi.resetModules()` is the only way to
+   * reach another profile, and the previous value is restored rather than
+   * deleted (`genesis-state.test.ts` states the same constraint).
+   */
+  async function genesisUnder(
+    network: string,
+  ): Promise<{ pool: bigint; circulating: bigint; total: bigint }> {
+    const previous = process.env['NETWORK_TYPE'];
+    process.env['NETWORK_TYPE'] = network;
+    vi.resetModules();
+    const db = await import('../../src/store/db.js');
+    db.initDb(':memory:');
+    try {
+      const prover = await import('../../src/state/avl-prover.js');
+      const genesis = await import('../../src/services/genesis-state.js');
+      const utxo = await import('../../src/store/utxo.js');
+      const system = await import('../../src/store/system.js');
+      prover.createAvlProver();
+      genesis.seedGenesisState();
+
+      const pool = utxo.getKarmaPoolBox()!.value;
+      // Every karma-bearing box the pool is not. Read off `KARMA_BEARING`, the
+      // same total-over-BOX_TYPE_TAGS classification the suite above uses, so a
+      // box type added later cannot drop out of this sum either.
+      const circulating = utxo
+        .getUnspentBoxes()
+        .filter((b) => b.boxType !== 'karma_pool')
+        .filter((b) => KARMA_BEARING[b.boxType as keyof typeof KARMA_BEARING])
+        .reduce((sum, b) => sum + b.value, 0n);
+      return { pool, circulating, total: system.KARMA_SUPPLY_TOTAL };
+    } finally {
+      db.closeDb();
+      if (previous === undefined) delete process.env['NETWORK_TYPE'];
+      else process.env['NETWORK_TYPE'] = previous;
+      vi.resetModules();
+    }
+  }
+
+  for (const network of ['mainnet', 'testnet', 'devnet'] as const) {
+    it(`${network}: pool + circulating == KARMA_SUPPLY_TOTAL at height 0`, async () => {
+      const { pool, circulating, total } = await genesisUnder(network);
+      expect(pool + circulating).toBe(total);
+    });
+  }
+
+  it('the faucet networks seed a faucet identity, and mainnet does not', async () => {
+    // The non-vacuity the three assertions above need. Without it they would
+    // hold equally over three genesis states that seed nothing but a full pool,
+    // and the defect they exist to catch lives in a box that was seeded.
+    const seeded = await genesisUnder('testnet');
+    const bare = await genesisUnder('mainnet');
+    expect(seeded.circulating).toBeGreaterThan(0n);
+    expect(bare.circulating).toBe(0n);
   });
 });

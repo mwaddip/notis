@@ -342,13 +342,14 @@ responses is the **mempool** entry's expiry, never the invite's.
 >
 > **Create flow, revised:**
 >
-> 1. Verify the inviter holds ≥ `INVITE_BOND_KARMA` available karma. ⛔ **The bond is still the whole
->    cost** — `INVITE_KARMA_AMOUNT` comes from the pool, so the inviter never pays it. The
->    step-1 note *"minted at claim, not paid here"* keeps its conclusion and loses its reason.
+> 1. Verify the inviter holds ≥ **this transaction's own bond value** in available karma. ⛔ **Against
+>    the bond named, never against a constant** — the inviter picks it, so a fixed threshold passes
+>    someone who cannot afford the invite they built, and the rejection then arrives from
+>    conservation, which is the message this layer exists to replace. The bond is still the whole
+>    cost: the grant comes from the pool, so the inviter never pays it.
 > 2. Verify the named `inviteePublicKey` has **no `IdentityRecord` at all** — unchanged, and
 >    `ARCHITECTURE → Invite creation` still argues why the weaker test prints karma
-> 3. Build the transaction: karma box → karma box (`balance − INVITE_BOND_KARMA`) + **`BondBox`
->    only**
+> 3. Build the transaction: karma box → karma box (`balance − bond`) + **`BondBox` only**
 > 4. `insertUtxoTx(tx, null, expiresAtHeight)`; return the one box id
 >
 > ⛔ **THE SERVICE-LAYER CHECK IN STEP 2 IS NOW INSUFFICIENT ON ITS OWN, AND IT WAS SUFFICIENT
@@ -526,131 +527,39 @@ It is exposed rather than suppressed deliberately. The alternatives were a 500, 
 "corrupt state" with "request failed", and a fabricated placeholder hash, which is the class of
 lie this whole bundle exists to remove. A client seeing `null` learns something true.
 
-### Faucet (faucet-bearing networks only)
+### Faucet
 
-| Method | Path | Request | Response | Errors |
-|--------|------|---------|----------|--------|
-| `POST` | `/faucet` | `{ userId: hex }` | `{ status: "pending", txId, expiresAtHeight }` | 400 if missing fields, 403 on a network without a faucet, 409 if already funded |
+**The node serves no faucet, and holds no key it could sign one with.** `POST /faucet` and
+`POST /credits/faucet` do not exist; both answer 404 on every network.
 
-Grants karma to an identity, **once per identity, ever** (idempotent). Gated at **mount** time on
-`isFaucetNetwork(config.networkType)`, where `config` is the `Config` passed to
-`createApp(config)` — injected, not the module singleton, which is why this gate is testable
-and the `/credits/faucet` handler guard currently is not. `isFaucetNetwork` lives in `config.ts`
-and is an **allow-list**, currently `testnet` and `devnet`.
+A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
+that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
+mainnet's does not, so no faucet identity exists in mainnet state. **Absence of the field is the whole
+of the gate** — the seeded boxes reach `genesisStateRoot`, so a node that invents a faucet identity
+computes a different root and cannot join the network. The gate is chain-committed rather than read
+from configuration, which is what distinguishes it from the allow-list it replaced.
 
-**The allow-list is normative, and the reasoning matters more than the current membership.**
-It fails closed: a network added later mints nothing until someone names it. The property
-being defended is *never mint karma from nothing on a network where it has value*, and
-forgetting to update an allow-list is safe while forgetting to update a deny-list is not.
-A deny-list (`!== 'mainnet'`) hands every future network a faucet by default.
+**The two assets reach a newcomer by different routes, and the difference is a property of the
+assets.** Credits are tradeable, so the service sends them by an ordinary owner-signed transfer and no
+rule is involved. Karma is non-transferable, so it cannot be sent at all: the service **invites**, and
+the block's settlement grants the invitee out of the supply pool. There is no karma transfer to
+perform, and no exemption that would make one legal.
 
-This is the third place in this design that chooses fail-closed over convenient-default, on
-identical reasoning: `profileFor` throws rather than defaulting, `NetConfig` requires `magic`
-rather than defaulting it, and the faucet enumerates rather than excluding.
+⛔ **A user transaction may never name the karma pool.** The settlement is the pool's only spender and
+it spends once per block, from state fixed before the body applies — a second spender names a box the
+settlement already consumed, and the loser is permanently invalid rather than deferred. **A faucet
+transaction drawing on the pool directly is unbuildable, whatever authorises it.** That is why the
+faucet is a client of the invite grant rather than a transition of its own.
 
-> ⛔ **A BLOCK-APPLICATION EFFECT MUST BE DERIVABLE FROM BLOCK CONTENT, AND A FAUCET GRANT IS NOT.**
-> This is the criterion, and it is why the karma faucet cannot simply "become block application".
->
-> A like payout, post-lock vesting and bond settlement are all derived from **what the block
-> contains**, so every node computes the same effect from the same body. **A faucet grant is derived
-> from a local HTTP request.** Its only record, `faucet_grants`, is node-local SQL with **no network
-> path and no block-body carrier** — verified: zero hits in `packages/net/src`. Node A would mint at
-> height H, node B would not, and with `verifyStateRoot` defaulting **ON** the block is rejected.
-> **A protocol effect with no in-block carrier is a fork, not a refactor.**
->
-> ✅ **That is what unit C's marker boxes are for**, and it is the load-bearing reason they exist
-> rather than a tidiness argument.
->
-> ⛔ **AHEAD OF CODE — THE KARMA FAUCET IS A RULE-AUTHORIZED TRANSACTION THAT SPENDS THE POOL**
-> (user, 2026-08-17). `pool(S) → pool(S − amount) + karma(amount)`, no signature, constrained
-> entirely by shape: faucet-bearing network, fixed amount, no prior grant for that identity.
->
-> ✅ **It conserves exactly** — a named source and a named sink in one operation, which is all the
-> conservation axiom asks. It is a **transaction**, so the block carries it and every node derives
-> the same effect; the fork that killed the block-application version never arises.
->
-> ⛔ **IT IS THE ONE PLACE A USER TRANSACTION MAY NAME THE POOL, AND THE REASON IS STRUCTURAL, NOT A
-> CONCESSION.** Every other operation has a party who already holds value and can therefore build a
-> transaction. **The faucet's recipient holds nothing — that is what they are asking to fix — so the
-> source must initiate.** A transaction needs at least one input (`utxo-engine.ts`, and
-> §"Two entity kinds" depends on it for *identity*, since a zero-input transaction is replayable), so
-> there is no shape in which the recipient acts. Marker boxes do not rescue it: a marker still rides
-> a transaction that needs an input.
->
-> ⚠ **Scope is the whole of its security argument.** `isFaucetNetwork` gates it to devnet and
-> testnet; **on mainnet the transition does not exist.** It is a testing convenience — the
-> requirement is that a devnet tester can get karma to a fresh identity and start posting — and it is
-> deliberately not held to the standard the value paths are.
->
-> ⚠ **`POST /credits/faucet` is untouched and keeps its keypair.** There is no credit pool, so unit B
-> has no keyless replacement for it, and building one is a separate economic decision.
->
-> ✅ **84-1 closes and 84-2 closes with it.** `isSystemBox` and the same-owner exemption it gated go
-> with the karma faucet — that exemption existed only because the faucet posed as a karma
-> **transition**. 84-2's unstated different-owner rule closes **by the rule disappearing**, not by
-> gaining a row.
->
-> ⚠ **An admin keypair still EXISTS, and 84-1's closure does not claim otherwise.** It survives as the
-> plain **owner** of a genesis-seeded credit box: the state names it, spending needs an owner
-> signature like any credit box, and no consensus rule resolves against configuration. That satisfies
-> §2's "no privileged key is representable". It does **not** satisfy *"a private key for an admin pair
-> should never exist"* — that waits on a credit-side answer.
->
-> Three things follow from the karma faucet's removal:
->
-> - ✅ **`POST /faucet` and its route go entirely**, along with `ensureSystemKarmaBox` and the finite
->   `SYSTEM_KARMA_INITIAL` balance the grant spent down. ⚠ **`faucet_grants` is a once-per-identity
->   record, not a supply cap** — the **credit** faucet still writes it, so the table stays.
-> - ✅ **`isFaucetNetwork` stays and still gates the credit faucet.** It reads **configuration**, not a
->   key, and a rule naming a network is not a rule naming a signer.
-> - ⛔ **`getSystemKeypair` and `signWithSystemKey` STAY**, because `POST /credits/faucet` signs with
->   them and genesis seeds a credit box owned by that key. **Only `ensureSystemKarmaBox` and
->   `isSystemBox` go.** ⚠ **This is narrower than an earlier draft of this section claimed**, and the
->   difference is the whole of what unit B can honestly deliver: the **karma** side loses its
->   privileged key, the **credit** side keeps an ordinary owner key.
->
-> ⚠ **The three-gates rule below becomes two.** With no system karma box to seed, there is nothing
-> to provision — the provisioning gate has no subject. **Mount and handler remain, and they still
-> move together.**
+⛔ **No privileged key is representable.** `getSystemKeypair`, `signWithSystemKey`,
+`initSystemKeypair`, the `system_keypair` row and `isSystemBox` are gone, along with the same-owner
+karma exemption `isSystemBox` gated. No consensus rule resolves against a configured key.
 
-**The handler guard reads injected config, never the module singleton.** `UtxoDeps` carries
-
-```typescript
-readonly networkType: NetworkType;
-```
-
-and the guard is `isFaucetNetwork(deps.networkType)`. A plain readonly field rather than an
-accessor is deliberate: unlike `getCurrentHeight()`, the network cannot change after startup, and
-a field says so. `server.ts` passes `config.networkType` at the single production construction
-site; tests pass whichever network the case is about.
-
-This is not a testability nicety. A module-singleton read is the **config-at-a-distance** pattern
-`ARCHITECTURE §Network Identity` exists to remove — the same shape that let `NETWORK_MODE` reach
-nothing while ten call sites silently defaulted to mainnet. The faucet is the one place P2-A did
-not reach, and a gate that mints value from nothing is a poor place to keep the last instance.
-
-> **Coverage, measured 2026-08-07.** Two of the three gates are covered. The **mount** gate has
-> three tests (`server.test.ts`, via the injectable `createApp`). The **handler** guard has three
-> (`routes/utxo.test.ts`) and gained them with the injection above — before it, mutating that
-> guard left the entire suite green, which is what made the singleton read a correctness problem
-> rather than a style one. The **provisioning** gate runs as an import side effect of the
-> entrypoint and stays statically untestable; only the parked e2e harness, which spawns a real
-> process, can reach it. It is named here so its absence is not mistaken for an oversight.
->
-> The handler's three tests pin three separate properties, each killed by a different mutation:
-> **mainnet is rejected** (dies if the guard always allows), **the guard reads `deps.networkType`**
-> (dies if the argument is hardcoded, even to an allowed network), and **the allow-list has two
-> members** (dies if it narrows to `testnet` alone). A `testnet`-only test would have proved none
-> of them, since `testnet` is also the fixture default.
-
-**Idempotency (required):** a given `userId` may be funded at most once, ever. A repeat
-request is rejected (409). Enforced by a durable per-`(userId, asset)` grant ledger
-(`faucet_grants`) written in the **same transaction** as the mempool insert, so two
-same-block calls cannot both succeed. Backed by a settled faucet-origin karma-box check
-(`proof_source = 'faucet'`, ignoring spent — covers grants issued before the ledger and
-prevents spend-then-redraw) and a mempool scan (covers grants relayed by gossip). Credits
-rely on the ledger + mempool scan only, since a settled credit box carries no faucet marker.
-The same one-grant rule applies to `POST /credits/faucet`.
+**Idempotency is consensus state, not a ledger.** An invite may name only a key holding no identity
+record, checked in the invite transition — so an identity is granted once, ever, from state that is in
+the AVL root and reads the same way on every node. The `faucet_grants` table is gone: a node-local row
+cannot decide a validity question identically across a network, which is the property that made the
+grant ledger unusable as a consensus input.
 
 ### Mining
 
@@ -1370,16 +1279,15 @@ signature by the key at `box.owner`, or by a key the box names (`inviteePublicKe
 makes a privileged key representable, and `ARCHITECTURE` → Treasury requires the opposite property of
 the treasury.
 
-> ⛔ **ONE RULE VIOLATES THIS TODAY, AND IT IS NOT THE TREASURY.** The same-owner karma rule carries a
-> faucet exemption gated on `deps.isSystemBox`, which resolves a box id against a **configured system
-> keypair**. It is wired into block application, so it is a consensus rule and not service-layer
-> policy. The rule above is therefore **AHEAD OF CODE**: it states the property the model requires,
-> and the tree has exactly one counter-example.
+> ✅ **NO RULE VIOLATES THIS, AND THE LAST COUNTER-EXAMPLE IS GONE.** The same-owner karma rule
+> carried a faucet exemption gated on `deps.isSystemBox`, which resolved a box id against a
+> **configured system keypair** — a consensus rule naming a key from configuration. The faucet is now
+> an ordinary account whose secret lives outside the node, so the exemption has nothing left to name:
+> `isSystemBox`, the keypair and the exemption are all deleted. **No key reaches consensus from
+> outside state, and no second one may be added.**
 >
-> **What removes it:** the karma supply box, which deletes the system keypair outright — a pool
-> authorized by rule needs no configured owner, so the exemption has nothing left to name. Until then,
-> `isSystemBox` is the one place a key reaches consensus from outside state, and **no second one may
-> be added**.
+> The like accrual marker is now the **only** exemption from the same-owner karma rule, and
+> §Karma transition rules states what pins it.
 
 | Consumed | Created | Condition |
 |----------|---------|-----------|
@@ -1408,7 +1316,7 @@ own karma boxes stays legal; that is the legitimate multi-input case.
 > | Consumed | Created | Condition |
 > |----------|---------|-----------|
 > | KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. Exactly one karma output, same owner as all inputs; target live; `(liker, target)` not recorded. **Value conserved** |
-> | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `bond.value == INVITE_BOND_KARMA`; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
+> | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
 > | VouchBox | VouchEscrowBox | **Unvouch**: exactly one `VouchBox` input, voucher-signed; exactly one escrow output with `value ==` the consumed box's value, `owner == voucherId`, `releaseAtBlock == height + VOUCH_COOLDOWN_BLOCKS`. **Value conserved** |
 > | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
 > | VouchEscrowBox | KarmaBox | **Settlement only**, at `releaseAtBlock` |
@@ -1426,9 +1334,8 @@ own karma boxes stays legal; that is the legitimate multi-input case.
 > record-existence test alone cannot see a sibling transaction in the same block, so the
 > within-block clause is owed on top of it.
 >
-> ✅ **`isSystemBox` and the exemption above it go with the pool**, as the note already states. The
-> like accrual marker is then the **only** exemption from the same-owner karma rule, and §Karma
-> transition rules states what pins it.
+> ✅ **`isSystemBox` and the exemption above it are gone.** The like accrual marker is the **only**
+> exemption from the same-owner karma rule, and §Karma transition rules states what pins it.
 
 There is **no other legal bond or invite shape**. In particular:
 
@@ -1515,13 +1422,13 @@ There is **no other legal bond or invite shape**. In particular:
   the claim, so a second inviter's bond is never locked against an invite
   that could not have been claimed.
 
-  **The weaker "never invited" reading prints karma.** An established
+  **The weaker "never invited" reading drains the pool.** An established
   account that simply had not been invited — every genesis committee
-  member, every faucet recipient — could be named: the claim mints it
-  `INVITE_KARMA_AMOUNT` from nothing, and the bond then vests in full
-  against likes that key had *already* earned, so the whole stake returns
-  to the inviter at the deadline. The inviter's cost is a
-  probation-length lock and nothing else.
+  member — could be named: the settlement grants it the bond's value out
+  of the pool, and the bond then vests in full against likes that key had
+  *already* earned, so the whole stake returns to the inviter at the
+  deadline. The inviter's cost is a probation-length lock and nothing
+  else, and the pool is down a grant that bought no new account.
 
   Record existence is the right test because **every karma receipt writes
   one**, through `insertBox`'s choke point. A key with no record has
@@ -4055,7 +3962,7 @@ operator may safely change, and four consensus parameters were environment-tunab
 
 | Variable | Class | Default | Description |
 |----------|-------|---------|-------------|
-| `NETWORK_TYPE` | `network-identity` | `testnet` | **The profile selector — `mainnet` \| `testnet` \| `devnet`.** The only environment variable that may change a consensus parameter, and it changes every one of them together. Also gates debug endpoints (faucet: testnet and devnet only, via the shared `isFaucetNetwork` allow-list). An unrecognised value **throws at startup** rather than defaulting |
+| `NETWORK_TYPE` | `network-identity` | `testnet` | **The profile selector — `mainnet` \| `testnet` \| `devnet`.** The only environment variable that may change a consensus parameter, and it changes every one of them together. An unrecognised value **throws at startup** rather than defaulting. ⚠ **It no longer gates a faucet** — whether a network seeds a faucet identity is `faucetPublicKey`'s presence in the profile, which reaches `genesisStateRoot`; `isFaucetNetwork` is deleted |
 | ~~`AVL_KEY_LENGTH`~~ | **removed** | ~~`32`~~ | AVL tree key length — **sets the shape of every `stateRoot`** (`avl-prover.ts`). Env read deleted by P2-A; now a `@dagsocial/types` export (TYPES_INTERFACE → State format) that `config.ts` imports and plumbs through `Config.avlKeyLength` |
 | ~~`KARMA_DECAY_AMOUNT`~~ | **removed** | ~~`5`~~ | → universal constant `KARMA_DECAY_AMOUNT` (`@dagsocial/types`). Devnet decays *often*, not *harder* |
 | ~~`KARMA_DECAY_INTERVAL_BLOCKS`~~ | **removed** | ~~`720`~~ | → profile field `karmaDecayIntervalBlocks`. Value corrected to `1440` by P2-A (60s blocks) |

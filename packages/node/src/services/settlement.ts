@@ -72,7 +72,6 @@
 
 import {
   INVITE_BOND_VEST_PER_LIKES,
-  INVITE_KARMA_AMOUNT,
   LIKES_PER_KARMA_PAYOUT,
   PROTOCOL_VERSION,
   encodeTx,
@@ -112,8 +111,15 @@ export interface SettlementBody {
   actors: number;
   /** The ids of those fee boxes, in committed transaction order. */
   feeBoxIds: string[];
-  /** The invitees of the `BondBox`es the body creates, in committed transaction order. */
-  invitees: Uint8Array[];
+  /**
+   * The `BondBox`es the body creates, in committed transaction order: each
+   * invitee with the bond that named them.
+   *
+   * ⛔ **The amount travels with the invitee** because the grant equals the bond
+   * and the inviter chose it (ARCHITECTURE → Invite System). A count alone
+   * cannot reconstruct the draw.
+   */
+  invites: Array<{ invitee: Uint8Array; amount: bigint }>;
   /**
    * Every `LikeAccrualBox` the body's like transactions emitted, in committed
    * transaction order and within a transaction in output order.
@@ -298,7 +304,7 @@ function derive(
   // The conservation axiom). The bond IS the request: one bond, one grant, and
   // the pairing is structural, so no rule compares two lists and no box is
   // invented to carry it.
-  poolDraw += INVITE_KARMA_AMOUNT * BigInt(body.invitees.length);
+  for (const invite of body.invites) poolDraw += invite.amount;
 
   // 3b. The like settlement. For an author with markers totalling `n` this block
   // and a carry box holding `r`, where `x = LIKES_PER_KARMA_PAYOUT`:
@@ -448,8 +454,8 @@ function derive(
   // legs crediting one owner would both want to consume the same boxes, which
   // inside one transaction is a double spend. Nothing in the axiom counts boxes;
   // `getKarmaValue` sums them.
-  for (const invitee of body.invitees) {
-    outputs.push({ boxType: 'karma', value: INVITE_KARMA_AMOUNT, owner: invitee });
+  for (const invite of body.invites) {
+    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee });
   }
   for (const payout of likePayouts) {
     // Skipped at zero on both halves: `[]` and `[{value: 0}]` are two encodings
@@ -751,17 +757,18 @@ export function checkSettlement(
 
 /**
  * A settlement of this shape, used only to measure. Its field values are
- * irrelevant to the length except where a VLQ widens, so the probes below carry
- * the real `INVITE_KARMA_AMOUNT` and a full-width credit value.
+ * irrelevant to the length except where a VLQ widens, which is why the grant
+ * amount is a parameter: the inviter picks the bond, and the grant equals it, so
+ * a grant's width is a property of the invite rather than of a constant.
  */
-function probe(inputs: number, grants: number): UtxoTransaction {
+function probe(inputs: number, grants: number, grantValue: bigint): UtxoTransaction {
   return {
     inputs: Array.from({ length: inputs }, (_, i) =>
       i.toString(16).padStart(64, '0'),
     ),
     outputs: Array.from({ length: grants }, () => ({
       boxType: 'karma' as const,
-      value: INVITE_KARMA_AMOUNT,
+      value: grantValue,
       owner: new Uint8Array(32),
     })),
     signatures: {},
@@ -774,9 +781,23 @@ function probe(inputs: number, grants: number): UtxoTransaction {
 // consistent transposition round-trips perfectly — the same reason
 // `utxoTxTreeByteLength` exists rather than an arithmetic in the block creator
 // (TYPES_INTERFACE → Sizing without encoding).
-const PROBE_BASE = encodeTx(probe(0, 0)).length;
-const INPUT_BYTES = encodeTx(probe(1, 0)).length - PROBE_BASE;
-const GRANT_BYTES = encodeTx(probe(0, 1)).length - PROBE_BASE;
+const PROBE_BASE = encodeTx(probe(0, 0, 0n)).length;
+const INPUT_BYTES = encodeTx(probe(1, 0, 0n)).length - PROBE_BASE;
+
+/**
+ * What one grant of `amount` adds to the settlement, in bytes.
+ *
+ * ⛔ **Sized on the BOND BEING MEASURED, not on a representative grant.** The
+ * grant equals the bond and the inviter picks it within the network's range, so
+ * a VLQ-encoded grant's width varies across a body — reserving a fixed width
+ * under-reserves on exactly the blocks that carry the largest invites.
+ *
+ * Exact rather than a ceiling: the transaction being sized names its own bond,
+ * so there is nothing to bound.
+ */
+function grantBytes(amount: bigint): number {
+  return encodeTx(probe(0, 1, amount)).length - PROBE_BASE;
+}
 
 /**
  * What one pooled transaction adds to the settlement, in bytes.
@@ -801,7 +822,7 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
   let bytes = 0;
   for (const out of tx.outputs ?? []) {
     if (out.boxType === 'fee') bytes += INPUT_BYTES;
-    else if (out.boxType === 'bond') bytes += GRANT_BYTES;
+    else if (out.boxType === 'bond') bytes += grantBytes((out as BondBox).value);
     // ⛔ **A marker's term is an INPUT, not an output**, and that is the whole
     // reason a per-like surcharge does not compound. Each like adds one derived
     // input to the settlement; the payout it eventually joins is one output per
@@ -837,7 +858,8 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[]): void 
       body.fees += out.value;
       body.feeBoxIds.push(out.id!);
     } else if (out.boxType === 'bond') {
-      body.invitees.push((out as BondBox).inviteePublicKey);
+      const bond = out as BondBox;
+      body.invites.push({ invitee: bond.inviteePublicKey, amount: bond.value });
     } else if (out.boxType === 'like_accrual') {
       // ⛔ **Only a like transaction can put one here**, and the engine's
       // biconditional is what makes that true in both directions: `likeTarget`
@@ -853,7 +875,7 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[]): void 
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, actors: 0, feeBoxIds: [], invitees: [], markers: [], prunes: [] };
+  return { fees: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], prunes: [] };
 }
 
 /**

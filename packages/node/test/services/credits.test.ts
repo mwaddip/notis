@@ -35,6 +35,7 @@ import {
   seedProvenance,
   type Stored,
 } from '../helpers.js';
+import { config } from '../../src/config.js';
 
 function signTxId(
   tx: UtxoTransaction,
@@ -55,6 +56,8 @@ const engineDeps: UtxoEngineDeps = {
   getIdentityRecord,
   hasActiveVouchEscrow: () => false,
   vouchCooldownBlocks: 2,
+  inviteBondMin: config.inviteBondMin,
+  inviteBondMax: config.inviteBondMax,
   getTopologyAuthor: () => null,
   runInTransaction: (fn) => fn(),
 };

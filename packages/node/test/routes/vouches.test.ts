@@ -86,6 +86,7 @@ import { materializeOutput } from '../../src/services/utxo-engine.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { createRouter } from '../../src/routes/vouches.js';
 import { extractDeclaration } from '../unit/extract-declaration.js';
+import { config } from '../../src/config.js';
 
 const HEIGHT = 100;
 
@@ -166,6 +167,8 @@ describe('vouch routes — the JSON edge', () => {
       vouchCooldownBlocks: COOLDOWN,
       // No like reaches this router, so the marker's author pin has nothing to
       // resolve — stated rather than stubbed silently.
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

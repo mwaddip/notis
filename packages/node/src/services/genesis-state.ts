@@ -13,7 +13,7 @@ import { getCurrentHeight } from '../store/ordering.js';
 import { getUnspentBoxes } from '../store/utxo.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
 import type { RecordPut } from '../state/avl-prover.js';
-import { config, isFaucetNetwork } from '../config.js';
+import { config } from '../config.js';
 import { hexToBuf } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
 
@@ -102,8 +102,8 @@ function markGenesisCommitted(): void {
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
  * **fixed, known set** — the proof box, the emission box and the karma supply
- * pool on every network, plus the system karma and faucet credit boxes on the
- * faucet-bearing ones —
+ * pool on every network, plus the faucet identity's karma and credit boxes on
+ * the profiles that name one —
  * and the order is
  * specified rather than whatever a set read produced. Every node on a network
  * performs the identical operation on an identical empty tree, so the resulting
@@ -147,8 +147,13 @@ function markGenesisCommitted(): void {
  * height could only ever be that same 0; the seeders clamp it to the `>= 1`
  * their synthetic mint txIds require. Deriving it here rather than accepting it
  * removes a parameter whose only admissible value the function already knows.
+ *
+ * **No parameter at all, for the same reason.** The faucet identity the seeder
+ * needs is `profile.faucetPublicKey`, and the profile is its single home — a
+ * caller supplying it would be a second source free to disagree with the one the
+ * genesis root is pinned against.
  */
-export function seedGenesisState(systemPubKey: Uint8Array): void {
+export function seedGenesisState(): void {
   if (isGenesisCommitted()) return;
 
   const handle = getAvlProver();
@@ -224,33 +229,33 @@ export function seedGenesisState(systemPubKey: Uint8Array): void {
       // cause.
       assertEmptyBeforeGenesis();
 
-      // The faucet-bearing networks alone hold the system karma and faucet credit
-      // boxes; the gate is `isFaucetNetwork`, shared with the /faucet mount and
-      // the /credits/faucet handler so the three cannot drift (NODE_INTERFACE
-      // §Faucet). A faucet on mainnet would be a defect rather than a shortfall.
+      // ⛔ **The faucet's presence IS `faucetPublicKey`'s presence.** The boxes
+      // below reach `genesisStateRoot`, so a node that invents a faucet identity
+      // computes a different root and cannot join — the gate is chain-committed
+      // rather than read from a config file
+      // (ARCHITECTURE → "What varies per network, and what must not").
       //
       // ⚠ **What each network's genesis holds is NOT restated here.** It is
       // asserted once, in `genesis-state.test.ts`, and a prose count beside an
       // assertion decays while the assertion stays green — the seeders below are
       // gated one at a time, so the set is read off the gates rather than off a
       // sentence that has to be re-read every time one is added.
-      if (isFaucetNetwork(config.networkType)) {
-        ensureSystemKarmaBox(systemPubKey, GENESIS_HEIGHT);
-        ensureFaucetCreditBox(systemPubKey, GENESIS_HEIGHT);
+      let faucetKarma = 0n;
+      const faucetPubKeyHex = config.profile.faucetPublicKey;
+      if (faucetPubKeyHex !== undefined) {
+        const faucetPubKey = new Uint8Array(hexToBuf(faucetPubKeyHex));
+        faucetKarma = ensureSystemKarmaBox(faucetPubKey, GENESIS_HEIGHT).value;
+        ensureFaucetCreditBox(faucetPubKey, GENESIS_HEIGHT);
       }
 
-      // Every network, mainnet included — this box IS the network axis. The two
-      // boxes above are byte-identical on testnet and devnet (one hardcoded system
-      // identity, one pair of values), so their ids and their AVL entries match
-      // exactly; and testnet and devnet share mainnet's economics while
-      // compressing only its timescale, so the emission box below separates them
-      // by value but leaves testnet's identical to mainnet's.
+      // Every network, mainnet included — this box IS the network axis.
       //
-      // ⛔ **So the proof payload is what separates TESTNET from DEVNET, not
-      // testnet from mainnet.** Those two differ by everything behind
-      // `isFaucetNetwork` as well — the system karma box, the faucet credit box
-      // and the system identity record — so a claim that the payload is the only
-      // separator holds for the faucet pair and for no other.
+      // ⚠ **The payload is not the only separator, on any pair.** Testnet and
+      // devnet name DIFFERENT faucet identities, so the two boxes above carry
+      // different owners and therefore different ids and AVL entries; and
+      // mainnet names none at all, so it holds neither. The payload is what
+      // separates two networks that agree on everything else, and no pair of
+      // these three does.
       ensureGenesisProofBox(
         new Uint8Array(hexToBuf(config.profile.genesisProofPayload)),
         GENESIS_HEIGHT,
@@ -292,7 +297,12 @@ export function seedGenesisState(systemPubKey: Uint8Array): void {
       // ⛔ **The pool is created even at zero, unlike the emission box's
       // successor.** Emission terminates; the pool does not, because burns must
       // always have somewhere to return — the one place that rule inverts.
-      ensureKarmaPoolBox(granted, GENESIS_HEIGHT);
+      //
+      // ⛔ **The faucet's stake is a DRAW like the committee's, never a mint
+      // beside the pool.** Minting it alongside a full pool puts supply above
+      // the ceiling at genesis, silently: nothing encodes the sum, because the
+      // value bound is per-box and both boxes are individually legal.
+      ensureKarmaPoolBox(granted + faucetKarma, GENESIS_HEIGHT);
 
       // ⛔ **No treasury box.** It would hold `0`, and a zero-value box is not
       // created (TYPES_INTERFACE → EmissionBox's rule, which TreasuryBox

@@ -35,7 +35,6 @@ import {
   computePostId, postFieldBytes, computeBoxId, computeTxId,
   computeCandidateBoxId, canonicalBoxBytes, BOX_VALUE_BOUND, MAX_PARENT_REFS,
   PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE, u32BE,
-  INVITE_KARMA_AMOUNT, INVITE_BOND_KARMA,
 } from '@dagsocial/types';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
@@ -45,6 +44,7 @@ import type {
   EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, LikeAccrualBox, VouchEscrowBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
+import { config } from '../../src/config.js';
 
 const INDEX_HTML = fileURLToPath(new URL('../../public/index.html', import.meta.url));
 
@@ -392,7 +392,7 @@ const MIRRORED_CONSTS = [
   'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
-  'INVITE_KARMA_AMOUNT', 'INVITE_BOND_KARMA',
+  'INVITE_BOND_DEFAULT',
   'pendingKarmaChange',
 ] as const;
 
@@ -407,7 +407,7 @@ const RETURNED = [
   'buildCreateInviteTx',
   'recordPendingKarmaChange', 'applyPendingKarmaChange', 'pendingKarmaChange',
   'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
-  'INVITE_KARMA_AMOUNT', 'INVITE_BOND_KARMA',
+  'INVITE_BOND_DEFAULT',
 ] as const;
 
 /** The shape `GET /karma` returns, and what the page's builders select from. */
@@ -472,8 +472,7 @@ interface UiCrypto {
   pendingKarmaChange: Map<string, { boxId: string; value: bigint }>;
   VOUCH_KARMA_AMOUNT: bigint;
   VOUCH_MIN_BALANCE: bigint;
-  INVITE_KARMA_AMOUNT: bigint;
-  INVITE_BOND_KARMA: bigint;
+  INVITE_BOND_DEFAULT: bigint;
 }
 
 /**
@@ -1520,33 +1519,45 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   const overTheWire = (tx: Record<string, unknown>) =>
     jsonToTx(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
 
-  it('the page mirrors the two invite amounts by hand, so nothing but this compares them', () => {
-    // A drifted bond builds an invite `checkTransitions` rejects. The grant
-    // amount is the settlement's and the page never builds it — it is mirrored
-    // so the page can show what an invitee will receive.
-    expect(ui.INVITE_BOND_KARMA).toBe(INVITE_BOND_KARMA);
-    expect(ui.INVITE_KARMA_AMOUNT).toBe(INVITE_KARMA_AMOUNT);
+  it('the bond the page names is one the node would accept', () => {
+    // ⛔ **Range membership, not equality — there is no constant left to equal.**
+    // The inviter picks the bond, so the page's default is a choice; what the
+    // mirror can still check is that the choice is legal, because a bond outside
+    // the range builds an invite `checkTransitions` rejects.
+    expect(ui.INVITE_BOND_DEFAULT).toBeGreaterThanOrEqual(config.inviteBondMin);
+    expect(ui.INVITE_BOND_DEFAULT).toBeLessThanOrEqual(config.inviteBondMax);
+  });
+
+  it('the grant the page promises is the bond it names', () => {
+    // The page tells the inviter what the invitee will receive, and the
+    // settlement grants the bond's own value. One number, so the two cannot
+    // disagree — this asserts the page reads it off the bond it built.
+    const decoded = overTheWire(
+      ui.buildCreateInviteTx(karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX),
+    );
+    const bond = decoded.outputs[1] as BondBox;
+    expect(bond.value).toBe(ui.INVITE_BOND_DEFAULT);
   });
 
   it('a create the page builds hashes to the same txId the node derives', () => {
     const tx = ui.buildCreateInviteTx(
-      karmaState([INVITE_BOND_KARMA + 1n]), INVITER_HEX, INVITEE_HEX,
+      karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX,
     );
     expect(ui.computeTxId(tx)).toBe(computeTxId(overTheWire(tx)));
   });
 
   it('the invite deducts the bond and only the bond', () => {
-    // ⛔ **`INVITE_KARMA_AMOUNT` comes out of the POOL at settlement**, so it
-    // never leaves the inviter's balance (ARCHITECTURE → Invite System).
-    // Selecting exactly bond + grant is what makes the difference visible:
-    // paying both would leave no change at all.
-    const funded = INVITE_BOND_KARMA + INVITE_KARMA_AMOUNT;
+    // ⛔ **The grant comes out of the POOL at settlement**, so it never leaves
+    // the inviter's balance (ARCHITECTURE → Invite System). Funding exactly
+    // twice the bond is what makes the difference visible: a builder deducting
+    // the grant as well would leave no change at all.
+    const funded = ui.INVITE_BOND_DEFAULT * 2n;
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([funded]), INVITER_HEX, INVITEE_HEX),
     );
     const [change, bond] = decoded.outputs as [KarmaBox, BondBox];
 
-    expect(change.value).toBe(funded - INVITE_BOND_KARMA);
+    expect(change.value).toBe(funded - ui.INVITE_BOND_DEFAULT);
     expect(change.value).not.toBe(0n);
     // The invite conserves like any other transaction.
     expect(change.value + bond.value).toBe(funded);
@@ -1554,15 +1565,15 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
 
   it('the invite carries the shape consensus pins', () => {
     // NODE_INTERFACE → the transition table's invite row: one karma + one bond,
-    // the bond holding exactly `INVITE_BOND_KARMA` and carrying the karma
-    // input's owner as `inviterId`.
+    // the bond holding a value inside the network's range and carrying the
+    // karma input's owner as `inviterId`.
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([40n, 30n]), INVITER_HEX, INVITEE_HEX),
     );
     const [change, bond] = decoded.outputs as [KarmaBox, BondBox];
 
     expect(decoded.outputs).toHaveLength(2);
-    expect(bond.value).toBe(INVITE_BOND_KARMA);
+    expect(bond.value).toBe(ui.INVITE_BOND_DEFAULT);
     expect(Buffer.from(change.owner).toString('hex')).toBe(INVITER_HEX);
     expect(Buffer.from(bond.inviterId).toString('hex')).toBe(INVITER_HEX);
     expect(Buffer.from(bond.inviteePublicKey).toString('hex')).toBe(INVITEE_HEX);

@@ -51,8 +51,8 @@ export interface IdentityRecord {
    * existence of this record, not the value of this field.
    *
    * `0` stays reachable and stays meaningful — every identity that received
-   * karma without being invited carries it, genesis and faucet recipients
-   * included — so the settlement sweep must exclude it explicitly rather than
+   * karma without being invited carries it, the genesis committee and the
+   * faucet identity included — so the settlement sweep must exclude it rather than
    * treat it as an ordinary height.
    *
    * Written ONLY by block application when a claim applies. Every other writer

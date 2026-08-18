@@ -20,8 +20,6 @@ import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
-  initSystemKeypair,
-  getSystemKeypair,
 } from '../../src/store/system.js';
 import {
   generateKeyPair,
@@ -41,6 +39,7 @@ import type {
 import { createRouter } from '../../src/routes/utxo.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { unlinkSync } from 'fs';
+import { config } from '../../src/config.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-utxo.sqlite';
 
@@ -52,11 +51,9 @@ async function request(
   path: string,
   method: 'GET' | 'POST' = 'GET',
   body?: unknown,
-  networkType: NetworkType = 'testnet',
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
-      networkType,
       getKarmaBox,
       getKarmaBoxes,
       getCreditBox,
@@ -73,6 +70,8 @@ async function request(
         getKarmaValue,
         hasActiveVouchEscrow: () => false,
         vouchCooldownBlocks: 2,
+        inviteBondMin: config.inviteBondMin,
+        inviteBondMax: config.inviteBondMax,
         getTopologyAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
@@ -172,9 +171,6 @@ describe('UTXO routes', () => {
       inviteePublicKey,
     }, 1);
     insertBox(bondBox);
-
-    // Initialize system keypair for faucet tests
-    initSystemKeypair();
   });
 
   afterAll(() => {
@@ -420,94 +416,4 @@ describe('UTXO routes', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Credit faucet tests
-  // ---------------------------------------------------------------------------
-
-  describe('POST /credits/faucet', () => {
-    let faucetRecipientHex: string;
-
-    beforeAll(() => {
-      const recipient = generateKeyPair();
-      const recipientPubKey = recipient.publicKey;
-      faucetRecipientHex = Buffer.from(recipientPubKey).toString('hex');
-    });
-
-    it('rejects missing to', async () => {
-      const res = await request('/credits/faucet', 'POST', {});
-      expect(res.status).toBe(400);
-      expect((res.data as Record<string, unknown>).error).toContain('to');
-    });
-
-    it('rejects invalid to encoding', async () => {
-      const res = await request('/credits/faucet', 'POST', {
-        to: 'not-hex!!!',
-      });
-      expect(res.status).toBe(400);
-    });
-
-    it('grants faucet credits to any valid userId (no registration needed)', async () => {
-      const anyHex = Buffer.from(new Uint8Array(32).fill(0xdd)).toString('hex');
-      const res = await request('/credits/faucet', 'POST', {
-        to: anyHex,
-      });
-      expect(res.status).toBe(200);
-      const body = res.data as Record<string, unknown>;
-      expect(body.amount).toBe((1000n * 10n ** 8n).toString());
-    });
-
-    it('grants faucet credits to a valid recipient', async () => {
-      const res = await request('/credits/faucet', 'POST', {
-        to: faucetRecipientHex,
-      });
-      expect(res.status).toBe(200);
-      const body = res.data as Record<string, unknown>;
-      expect(body.amount).toBe((1000n * 10n ** 8n).toString());
-      expect(typeof body.txId).toBe('string');
-    });
-
-    it('rejects a repeat grant for the same recipient with 409', async () => {
-      // faucetRecipientHex was funded by the preceding test — one grant, ever.
-      const res = await request('/credits/faucet', 'POST', {
-        to: faucetRecipientHex,
-      });
-      expect(res.status).toBe(409);
-      expect(String((res.data as Record<string, unknown>).error)).toContain('already funded');
-    });
-
-    it('never grants more than one credit allocation to an identity', async () => {
-      const to = Buffer.from(generateKeyPair().publicKey).toString('hex');
-
-      const statuses: number[] = [];
-      for (let i = 0; i < 3; i++) {
-        const res = await request('/credits/faucet', 'POST', { to });
-        statuses.push(res.status);
-      }
-
-      expect(statuses.filter((s) => s === 200)).toHaveLength(1);
-      expect(statuses.filter((s) => s === 409)).toHaveLength(2);
-    });
-
-    it('rejects with 403 on mainnet — the allow-list excludes it', async () => {
-      const to = Buffer.from(generateKeyPair().publicKey).toString('hex');
-      const res = await request('/credits/faucet', 'POST', { to }, 'mainnet');
-      expect(res.status).toBe(403);
-      expect(String((res.data as Record<string, unknown>).error)).toContain('faucet disabled');
-    });
-
-    it('allows on devnet — the allow-list has two members, not just the fixture default', async () => {
-      const to = Buffer.from(generateKeyPair().publicKey).toString('hex');
-      const res = await request('/credits/faucet', 'POST', { to }, 'devnet');
-      expect(res.status).toBe(200);
-      expect((res.data as Record<string, unknown>).amount).toBe((1000n * 10n ** 8n).toString());
-    });
-
-    it('a mainnet rejection records no grant — the identity can still be funded elsewhere', async () => {
-      const to = Buffer.from(generateKeyPair().publicKey).toString('hex');
-      const rejected = await request('/credits/faucet', 'POST', { to }, 'mainnet');
-      expect(rejected.status).toBe(403);
-      const granted = await request('/credits/faucet', 'POST', { to });
-      expect(granted.status).toBe(200);
-    });
-  });
 });

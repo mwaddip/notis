@@ -49,7 +49,6 @@ import {
   materializeOutput,
   validateTx,
 } from './utxo-engine.js';
-import { getSystemKeypair } from '../store/system.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -905,6 +904,8 @@ function applyMutationPhase(
     // rules") — same single-implementation rule as getKarmaValue.
     hasActiveVouchEscrow,
     vouchCooldownBlocks: config.vouchCooldownBlocks,
+    inviteBondMin: config.inviteBondMin,
+    inviteBondMax: config.inviteBondMax,
     // ⛔ The like marker's author, from `block_topology` and never
     // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
     // makes, so the marker's pin and the like-record's author cannot disagree.
@@ -914,20 +915,6 @@ function applyMutationPhase(
     getIdentityRecord,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
-    },
-    // The faucet grant is the one transaction allowed to move karma between
-    // owners, and `checkTransitions` recognises it by the system box. Without
-    // this the re-validation below would reject every block carrying a grant.
-    // Consensus-safe: the system keypair is a protocol constant, so every node
-    // classifies the same box the same way.
-    isSystemBox: (boxId: string): boolean => {
-      const sysKey = getSystemKeypair();
-      if (!sysKey) return false;
-      const box = getBox(boxId);
-      if (!box || box.boxType !== 'karma') return false;
-      return Buffer.from((box as import('@dagsocial/types').KarmaBox).owner).equals(
-        Buffer.from(sysKey.publicKey),
-      );
     },
   };
 
@@ -1069,8 +1056,8 @@ function applyMutationPhase(
   // passed is `IdentityRecord` existence, and the grant that writes that record
   // is the settlement's — which runs after every transaction here — so a
   // record-existence test cannot see a sibling transaction in the same block.
-  // Without this the second bond draws a second `INVITE_KARMA_AMOUNT` from the
-  // pool for one key.
+  // Without this the second bond draws a second grant from the pool for one
+  // key, sized by whatever bond the second inviter chose.
   const invitedThisBlock = new Set<string>();
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't

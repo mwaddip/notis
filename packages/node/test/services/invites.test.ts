@@ -8,8 +8,6 @@ import {
   computeTxId,
   decodeTx,
   PROTOCOL_VERSION,
-  INVITE_KARMA_AMOUNT,
-  INVITE_BOND_KARMA,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type {
@@ -43,7 +41,9 @@ import {
   seedProvenance,
   signTransaction,
   type Stored,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
+import { config } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,6 +99,8 @@ describe('invites service', () => {
         getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
       hasActiveVouchEscrow: () => false,
       vouchCooldownBlocks: 2,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -143,7 +145,7 @@ describe('invites service', () => {
       bondInviterId?: Uint8Array;
     } = {},
   ): UtxoTransaction {
-    const bondValue = overrides.bondValue ?? INVITE_BOND_KARMA;
+    const bondValue = overrides.bondValue ?? FIXTURE_BOND_KARMA;
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: karmaIn.value - bondValue,
@@ -190,7 +192,7 @@ describe('invites service', () => {
   });
 
   it('createInvite charges only the bond', () => {
-    // `INVITE_KARMA_AMOUNT` is not paid here: it comes out of the karma pool at
+    // `FIXTURE_BOND_KARMA` is not paid here: it comes out of the karma pool at
     // settlement, so the invite conserves value like any other transaction
     // (ARCHITECTURE → Invite System). A create that paid both would fail
     // conservation.
@@ -198,7 +200,7 @@ describe('invites service', () => {
     const tx = buildCreateTx(karma, inviteePubKey);
 
     const karmaOut = tx.outputs[0] as CandidateOf<KarmaBox>;
-    expect(karmaOut.value).toBe(100n - INVITE_BOND_KARMA);
+    expect(karmaOut.value).toBe(100n - FIXTURE_BOND_KARMA);
     expect(validateTx(deps, tx, 5).valid).toBe(true);
   });
 
@@ -206,13 +208,13 @@ describe('invites service', () => {
     // The change box is empty and the bond still asks for the full stake, so
     // this is a transaction the client can build and sign — the balance is what
     // refuses it, ahead of conservation.
-    const karma = createKarmaBox(inviterId, INVITE_BOND_KARMA - 1n, 1);
+    const karma = createKarmaBox(inviterId, FIXTURE_BOND_KARMA - 1n, 1);
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
         { boxType: 'karma', value: 0n, owner: inviterId } as CandidateOf<KarmaBox>,
         {
-          boxType: 'bond', value: INVITE_BOND_KARMA, inviterId,
+          boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId,
           inviteePublicKey: inviteePubKey, 
         } as CandidateOf<BondBox>,
       ],
@@ -243,7 +245,7 @@ describe('invites service', () => {
     // ⚠ The karma-printing case, and the reason the bar is record existence
     // rather than `invitedAtBlock !== 0`. Every genesis committee member and
     // every faucet recipient holds karma without ever having been invited.
-    // Naming one draws it `INVITE_KARMA_AMOUNT` out of the pool, and the bond
+    // Naming one draws it `FIXTURE_BOND_KARMA` out of the pool, and the bond
     // then vests in full against likes that key had ALREADY earned — so the
     // whole stake comes back and the inviter's only cost is a probation-length
     // lock.
@@ -273,15 +275,70 @@ describe('invites service', () => {
     expect(createInvite(deps, tx, 5).status).toBe('pending');
   });
 
-  it('createInvite rejects a bond holding anything but INVITE_BOND_KARMA', () => {
-    // The bond is the whole cost of an invite and the network's only sybil
+  it('createInvite rejects a bond under the network floor', () => {
+    // The floor is the whole cost of an invite and the network's only sybil
     // price. Conservation alone permits any value — the karma change output just
     // keeps the difference — so this pin is what makes the price real.
     const karma = createKarmaBox(inviterId, 100n, 1);
-    const tx = buildCreateTx(karma, inviteePubKey, { bondValue: INVITE_BOND_KARMA - 1n });
+    const tx = buildCreateTx(karma, inviteePubKey, {
+      bondValue: config.inviteBondMin - 1n,
+    });
+
+    expect(() => createInvite(deps, tx, 5)).toThrow(/An invite bond must hold between/);
+  });
+
+  it('createInvite rejects a bond over the network ceiling', () => {
+    // The other boundary. A ceiling exists because the grant equals the bond and
+    // the grant is a pool draw: without one, a single invite could name the
+    // whole supply.
+    const karma = createKarmaBox(inviterId, config.inviteBondMax + 100n, 1);
+    const tx = buildCreateTx(karma, inviteePubKey, {
+      bondValue: config.inviteBondMax + 1n,
+    });
+
+    expect(() => createInvite(deps, tx, 5)).toThrow(/An invite bond must hold between/);
+  });
+
+  it('createInvite accepts a bond at each endpoint, and the bond IS the grant', () => {
+    // The endpoints are inclusive, and the two rejections above prove nothing
+    // without them — a rule that refused everything would pass both.
+    for (const bondValue of [config.inviteBondMin, config.inviteBondMax]) {
+      const karma = createKarmaBox(inviterId, config.inviteBondMax + 100n, Number(bondValue));
+      const tx = buildCreateTx(karma, rawPublicKey(generateKeyPairSync('ed25519').publicKey), {
+        bondValue,
+      });
+      expect(createInvite(deps, tx, 5).status).toBe('pending');
+      expect((tx.outputs[1] as CandidateOf<BondBox>).value).toBe(bondValue);
+    }
+  });
+
+  // ⛔ **The case a fixed threshold passes.** This inviter clears the floor, so a
+  // gate reading a constant admits them and conservation then refuses the
+  // transaction — which is the diagnosis this layer exists to replace. Built by
+  // hand for the reason the case above is: an empty change box makes it a
+  // transaction a client can build and sign.
+  it('createInvite rejects an inviter who clears the floor but not their own bond', () => {
+    // One under the ceiling: this inviter clears the floor and every fixed
+    // threshold below the ceiling, so the only gate that refuses them is one
+    // reading the bond they actually named.
+    const held = config.inviteBondMax - 1n;
+    const karma = createKarmaBox(inviterId, held, 1);
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        { boxType: 'karma', value: 0n, owner: inviterId } as CandidateOf<KarmaBox>,
+        {
+          boxType: 'bond', value: config.inviteBondMax, inviterId,
+          inviteePublicKey: inviteePubKey,
+        } as CandidateOf<BondBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
 
     expect(() => createInvite(deps, tx, 5))
-      .toThrow(new RegExp(`BondBox must hold exactly ${INVITE_BOND_KARMA}`));
+      .toThrow(new RegExp(`this invite bonds ${config.inviteBondMax}, inviter holds ${held}`));
   });
 
   it('createInvite rejects a bond naming someone else as inviter', () => {
@@ -300,7 +357,7 @@ describe('invites service', () => {
 
   it('the invite itself conserves — the grant comes from the pool', () => {
     // ⛔ **The invite-claim surplus is GONE, and with it the last one**
-    // (NODE_INTERFACE → validateTx step 5). `INVITE_KARMA_AMOUNT` is spent from
+    // (NODE_INTERFACE → validateTx step 5). `FIXTURE_BOND_KARMA` is spent from
     // the karma pool by the block's settlement transaction, so the inviter pays
     // the bond and nothing else, and the sums balance exactly.
     const karma = createKarmaBox(inviterId, 100n, 1);
@@ -313,7 +370,7 @@ describe('invites service', () => {
   });
 
   it('no shape at all may carry a karma surplus', () => {
-    // A plain karma spend that mints itself INVITE_KARMA_AMOUNT is refused by
+    // A plain karma spend that mints itself FIXTURE_BOND_KARMA is refused by
     // strict conservation — and now there is no shape the gate would have let
     // through, because the exception list is empty.
     const karma = createKarmaBox(inviterId, 100n, 1);
@@ -322,7 +379,7 @@ describe('invites service', () => {
       outputs: [
         {
           boxType: 'karma',
-          value: 100n + INVITE_KARMA_AMOUNT,
+          value: 100n + FIXTURE_BOND_KARMA,
           owner: inviterId,
         } as CandidateOf<KarmaBox>,
       ],

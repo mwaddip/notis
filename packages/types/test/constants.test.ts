@@ -23,6 +23,11 @@ import {
   MEMPOOL_CREDIT_SHARE_PCT,
   MIN_FEE_RATE_PER_BYTE,
   BOX_VALUE_BOUND,
+  INVITE_BOND_MIN,
+  INVITE_BOND_MAX,
+  INVITE_BOND_VEST_PER_LIKES,
+  LIKES_PER_KARMA_PAYOUT,
+  LIKE_KARMA_COST,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -231,5 +236,57 @@ describe('box value domain', () => {
   // last eleven bits of the domain it bounds.
   it('is a bigint', () => {
     expect(typeof BOX_VALUE_BOUND).toBe('bigint');
+  });
+});
+
+/**
+ * Invite economics — the bond range and the supply dial.
+ *
+ * TYPES_INTERFACE → Protocol Constants. The grant equals the bond, so the pair
+ * of numbers that could drift apart is one number; what remains to pin is the
+ * range an inviter picks inside, and the ratio deciding whether a completed
+ * invite adds to circulating supply or takes from it.
+ */
+describe('invite economics', () => {
+  it('the bond range is ordered and its floor is positive', () => {
+    expect(INVITE_BOND_MIN).toBeGreaterThan(0n);
+    expect(INVITE_BOND_MAX).toBeGreaterThanOrEqual(INVITE_BOND_MIN);
+  });
+
+  // Denomination (TYPES_INTERFACE → Denomination): both bounds are compared
+  // against a box value, which is a bigint. A `number` bound is a TypeError at
+  // the first invite rather than a looser range.
+  it('denominates both bounds as karma', () => {
+    expect(typeof INVITE_BOND_MIN).toBe('bigint');
+    expect(typeof INVITE_BOND_MAX).toBe('bigint');
+  });
+
+  // The supply dial. Vesting a bond `B` takes `INVITE_BOND_VEST_PER_LIKES · B`
+  // likes, and the like settlement sends `1 / LIKES_PER_KARMA_PAYOUT` of every
+  // karma spent on likes to the pool, so one completed invite moves
+  // `B · (1 − V/L)` into circulation. `V < L` is what lets the network inflate
+  // at all: at `V == L` a completed invite is exactly delta-neutral.
+  it('vests cheaper than the like leak, so invites inflate supply', () => {
+    expect(INVITE_BOND_VEST_PER_LIKES).toBeLessThan(LIKES_PER_KARMA_PAYOUT);
+  });
+
+  it('sends 40% of each bond to circulation at the current dials', () => {
+    const V = INVITE_BOND_VEST_PER_LIKES;
+    const L = LIKES_PER_KARMA_PAYOUT;
+    // ⛔ The `1 − V/L` form is a karma count only while a like costs ONE karma.
+    // The settlement derives its payout from marker VALUE, so at a higher cost
+    // the leak is `V · LIKE_KARMA_COST / L` and this figure is not 40%. Pinned
+    // here so the arithmetic does not depend on a constant it never names.
+    expect(LIKE_KARMA_COST).toBe(1n);
+    expect(1 - V / L).toBeCloseTo(0.4, 10);
+  });
+
+  // ⛔ The grant IS the bond, so no second constant is free to fall below the
+  // first. Both names are reserved and never reused (ARCHITECTURE → Retired,
+  // do not rebuild — names reserved, never reuse).
+  it('names no separate grant amount and no fixed bond', async () => {
+    const constants = await import('../src/constants.js') as Record<string, unknown>;
+    expect(constants.INVITE_KARMA_AMOUNT).toBeUndefined();
+    expect(constants.INVITE_BOND_KARMA).toBeUndefined();
   });
 });

@@ -3,7 +3,6 @@ import {
   BOX_VALUE_BOUND,
   computeBoxId,
   computeTxId,
-  INVITE_BOND_KARMA,
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
@@ -72,7 +71,7 @@ export interface UtxoEngineDeps {
    * Consensus input, not a convenience read: the vouch cast is a predicate on
    * the voucher's *current* karma (ARCHITECTURE → "Vouch boxes"). Summed rather
    * than `getKarmaBox().value` because multiple unspent karma boxes per owner is
-   * reachable — a faucet grant alongside a mint, or a plain karma split — and
+   * reachable — an invite grant alongside a mint, or a plain karma split — and
    * reading one box would let the threshold be evaded, or met, by how the karma
    * happens to be partitioned.
    */
@@ -133,8 +132,17 @@ export interface UtxoEngineDeps {
   getTopologyAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
   runInTransaction: (fn: () => void) => void;
-  /** Return true if the box is the system karma box (faucet source). */
-  isSystemBox?: (boxId: string) => boolean;
+  /**
+   * The inclusive range an invite's bond may take, and therefore the range its
+   * grant may take — the grant equals the bond.
+   *
+   * Injected rather than read from the module config, for the reason
+   * `vouchCooldownBlocks` is: a module-singleton read is config-at-a-distance,
+   * and a rule that decides how much karma leaves the pool is a poor place to
+   * keep one.
+   */
+  inviteBondMin: bigint;
+  inviteBondMax: bigint;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,31 +276,20 @@ function checkTransitions(
         }
       }
 
-      // All karma outputs must belong to the same owner as the consumed karma.
-      // Exception: system box faucet grant — 2 karma outputs, one same-owner
-      // (system change), one different-owner (faucet beneficiary).
-      if (karmaOutputs.length === 2 && inputs.length === 1 &&
-          outputs.length === 2 && deps?.isSystemBox?.(inputKarma.id!)) {
-        const sameOwner = karmaOutputs.filter(
-          (ko) => Buffer.from((ko as KarmaBox).owner).toString('hex') ===
-                  Buffer.from(inputKarma.owner).toString('hex'),
-        );
-        if (sameOwner.length !== 1) {
+      // Every karma output belongs to the same owner as the consumed karma.
+      //
+      // ⛔ **No box and no signer is exempt** (NODE_INTERFACE → Karma transition
+      // rules). The karma a newcomer receives is a POOL DRAW in the block's
+      // settlement, never a transfer from a holder — so there is no shape a
+      // holder can sign that moves karma to someone else, and no configured key
+      // that makes one legal.
+      for (const ko of karmaOutputs) {
+        const k = ko as KarmaBox;
+        if (Buffer.from(k.owner).toString('hex') !== Buffer.from(inputKarma.owner).toString('hex')) {
           return {
             valid: false,
-            error: `Faucet grant must produce exactly one same-owner karma output (system change)`,
+            error: `Karma cannot be transferred (owner change on karma box)`,
           };
-        }
-        // Faucet grant: allowed. Skip the strict same-owner check below.
-      } else {
-        for (const ko of karmaOutputs) {
-          const k = ko as KarmaBox;
-          if (Buffer.from(k.owner).toString('hex') !== Buffer.from(inputKarma.owner).toString('hex')) {
-            return {
-              valid: false,
-              error: `Karma cannot be transferred (owner change on karma box)`,
-            };
-          }
         }
       }
 
@@ -474,7 +471,7 @@ function checkTransitions(
       } else if (bondOutputs.length > 0) {
         // karma → karma + bond — the whole invite (NODE_INTERFACE → the
         // transition table). ⛔ **The bond IS the request**: the block's
-        // settlement transaction emits `INVITE_KARMA_AMOUNT` to the
+        // settlement transaction emits the bond's OWN VALUE to the
         // `inviteePublicKey` of every bond the block creates, so the pairing is
         // structural — one bond, one grant — and no second box carries it.
         if (bondOutputs.length !== 1 || vouchOutputs.length > 0) {
@@ -484,20 +481,20 @@ function checkTransitions(
           };
         }
         const bondOut = bondOutputs[0] as BondBox;
-        // The bond is the whole cost of an invite, and it is the network's only
-        // sybil price. Conservation alone permits 0n here, which would make that
-        // price free.
-        //
-        // ⛔ **`INVITE_BOND_KARMA >= INVITE_KARMA_AMOUNT` is load-bearing**
+        // ⛔ **THE GRANT EQUALS THE BOND, so the bound cannot drift**
         // (ARCHITECTURE → Invite System). An inviter may name 32 bytes nobody
-        // holds, stranding the grant in an unspendable box; the bound is what
-        // makes that cost at least what it strands.
-        if (bondOut.value !== INVITE_BOND_KARMA) {
+        // holds, stranding the grant in an unspendable box; equality is what
+        // makes that cost exactly what it strands. There is no second number
+        // free to fall below the first.
+        //
+        // The floor is the network's sybil price, and conservation alone would
+        // permit `0n` — which would make that price free.
+        if (bondOut.value < deps.inviteBondMin || bondOut.value > deps.inviteBondMax) {
           return {
             valid: false,
             error:
-              `BondBox must hold exactly ${INVITE_BOND_KARMA} karma, ` +
-              `got ${bondOut.value}`,
+              `An invite bond must hold between ${deps.inviteBondMin} and ` +
+              `${deps.inviteBondMax} karma, got ${bondOut.value}`,
           };
         }
         // The bond carries the karma input's owner as `inviterId`. Without this
@@ -515,10 +512,10 @@ function checkTransitions(
         //
         // ⚠ The weaker "never invited" reading PRINTS KARMA. An established
         // account that simply had not been invited — every genesis committee
-        // member, every faucet recipient — could be named: the settlement grants
-        // it `INVITE_KARMA_AMOUNT` out of the pool, and the bond then vests in
-        // full against likes that key had *already* earned, so the whole stake
-        // returns to the inviter at the deadline. The inviter's cost is a
+        // member — could be named: the settlement grants it the bond's value out
+        // of the pool, and the bond then vests in full against likes that key had
+        // *already* earned, so the whole stake returns to the inviter at the
+        // deadline. The inviter's cost is a
         // probation-length lock and nothing else.
         //
         // Record existence is the right test because every karma receipt writes
@@ -1348,9 +1345,9 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  * the transaction as a whole, **one total per side and not per box type**.
  *
  * ⛔ **Per-type equality would reject most karma transactions.** Value changes
- * form inside the karma family: invite creation is `karma → karma + invite +
- * bond`, where the bond's `INVITE_BOND_KARMA` comes out of the karma output, so
- * the transaction conserves as one total while the `karma` type alone does not.
+ * form inside the karma family: invite creation is `karma → karma + bond`,
+ * where the bond's value comes out of the karma output, so the transaction
+ * conserves as one total while the `karma` type alone does not.
  * Posting and vouch casting have the same shape. Step 3 constrains the
  * **inputs** to a single box type; the outputs deliberately span several, and
  * the two `.reduce`s below carry no type predicate (NODE_INTERFACE →
@@ -1377,9 +1374,9 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  *   separately.
  *
  * ⛔ **The invite carries NO surplus.** An invite is `karma → karma + bond` and
- * conserves like any other karma transaction; the invitee's
- * `INVITE_KARMA_AMOUNT` is spent from the pool by the block's settlement
- * transaction, which this gate does not govern (NODE_INTERFACE → the settlement
+ * conserves like any other karma transaction; the invitee's grant — the bond's
+ * own value — is spent from the pool by the block's settlement transaction,
+ * which this gate does not govern (NODE_INTERFACE → the settlement
  * transaction). **No user transaction creates karma.**
  *
  * Both remaining exceptions move karma. **A credit transaction conserves
@@ -1614,10 +1611,10 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
  *    `tx.outputs`, so steps 5–7 dereference output fields under a schema
  *    guarantee.
  * 5. Face-value conservation — sum(in) == sum(out) across the transaction as a
- *    whole, one total per side and not per box type (three carve-outs: the like
- *    burn — `likeTarget` present ⟺ deficit exactly LIKE_KARMA_COST — the
- *    invite-claim surplus of exactly INVITE_KARMA_AMOUNT, and the zero-output
- *    VouchBox spend). The `value` TYPE bound lives in step 4's schema.
+ *    whole, one total per side and not per box type. The like burn lands in a
+ *    `LikeAccrualBox` and the unvouch's stake in a `VouchEscrowBox`, so every
+ *    karma-side spend has somewhere for its value to go and the equality is
+ *    unconditional. The `value` TYPE bound lives in step 4's schema.
  * 6. Authorization — the signer the transition requires signed this
  *    transaction, or no transition admits the input (NODE_INTERFACE → "Legal
  *    box transitions"). Ahead of step 7, so the transition is identified from

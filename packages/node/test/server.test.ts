@@ -86,12 +86,16 @@ describe('server', () => {
     });
   });
 
-  // The mount gate is the isFaucetNetwork allow-list — testnet/devnet only
-  // (NODE_INTERFACE → Faucet) — so devnet must get the real router and mainnet
-  // the 403 stub. An empty POST discriminates the two without touching the
-  // store: the real router answers 400 (userId required) before any db access,
-  // the stub answers 403.
-  describe('faucet mount gate', () => {
+  // ⛔ **NO NETWORK MOUNTS A FAUCET, and the node holds no key to run one
+  // with.** The karma a newcomer receives is a pool draw in the settlement,
+  // requested by an ordinary member's bond, so a faucet is an off-chain service
+  // holding an owner key like anyone else (ARCHITECTURE → "What varies per
+  // network, and what must not").
+  //
+  // ⚠ **404, not 403.** A 403 would mean a route exists and refuses, which is
+  // what a network-gated mount answered — so the two statuses are exactly what
+  // separates "disabled here" from "not a thing this node serves".
+  describe('the faucet is not a route on any network', () => {
     async function postFaucet(networkType: 'mainnet' | 'testnet' | 'devnet') {
       const app = createApp(
         makeConfig({ networkType, profile: profileFor(networkType) }),
@@ -109,19 +113,33 @@ describe('server', () => {
       }
     }
 
-    it('mounts the real faucet router on devnet', async () => {
-      const res = await postFaucet('devnet');
-      expect(res.status).toBe(400);
-    });
+    for (const networkType of ['mainnet', 'testnet', 'devnet'] as const) {
+      it(`${networkType}: POST /faucet is 404`, async () => {
+        const res = await postFaucet(networkType);
+        expect(res.status).toBe(404);
+      });
+    }
 
-    it('mounts the real faucet router on testnet', async () => {
-      const res = await postFaucet('testnet');
-      expect(res.status).toBe(400);
-    });
-
-    it('serves the 403 stub on mainnet', async () => {
-      const res = await postFaucet('mainnet');
-      expect(res.status).toBe(403);
-    });
+    // The same for the credit half, which had its own handler rather than a
+    // mount — so a 404 here is the handler's absence and not the mount's.
+    for (const networkType of ['mainnet', 'testnet', 'devnet'] as const) {
+      it(`${networkType}: POST /credits/faucet is 404`, async () => {
+        const app = createApp(
+          makeConfig({ networkType, profile: profileFor(networkType) }),
+        );
+        const gateServer = app.listen(0);
+        try {
+          const addr = gateServer.address() as AddressInfo;
+          const res = await fetch(`http://localhost:${addr.port}/credits/faucet`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          expect(res.status).toBe(404);
+        } finally {
+          gateServer.close();
+        }
+      });
+    }
   });
 });

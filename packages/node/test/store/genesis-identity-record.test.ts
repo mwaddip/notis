@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
+import { hexToBuf, profileFor } from '@dagsocial/types';
 import type { KarmaBox, UserId } from '@dagsocial/types';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
 import {
@@ -14,8 +15,8 @@ import {
  * `ensureSystemKarmaBox` is the one non-decay karma producer that runs
  * **outside** block application. `insertBox`'s choke point takes the activity
  * height from the open journal, and genesis has none, so the system identity
- * would otherwise hold 50,000 karma with no clock at all and decay would fall
- * back to "never active".
+ * would otherwise hold its whole stake with no clock at all and decay would
+ * fall back to "never active".
  *
  * That fallback is not equivalent. The guard (`height <= threshold` → not
  * stale) happens to make *staleness* agree, but `owedPeriods` counts from 0
@@ -61,6 +62,17 @@ function decayDeps(s: Store) {
   };
 }
 
+/**
+ * The faucet identity the running profile names, as raw bytes — the owner
+ * `ensureSystemKarmaBox` seeds. Read off the profile, which is its single home;
+ * the node holds no secret to go with it.
+ */
+function faucetPubKey(): Uint8Array {
+  const hex = profileFor('devnet').faucetPublicKey;
+  if (hex === undefined) throw new Error('devnet names no faucet identity');
+  return new Uint8Array(hexToBuf(hex));
+}
+
 describe('genesis identity record (Spec G phase D)', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
@@ -68,10 +80,9 @@ describe('genesis identity record (Spec G phase D)', () => {
   it('the system karma box and its clock get the same height', async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    const keypair = s.system.initSystemKeypair();
 
     // `getCurrentHeight()` is 0 on a fresh chain, and genesis clamps to 1.
-    const box = s.system.ensureSystemKarmaBox(keypair.publicKey, 0);
+    const box = s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
 
     // A box carries no height field, so the cross-check is against the height
     // baked into its **mint txId** — the only place a genesis height appears in
@@ -79,7 +90,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     // is not (NODE_INTERFACE → "`created_at_block` is a store column, never a
     // consensus input").
     expect(box.txId).toBe(mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), 1));
-    expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
+    expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({
       lastActivityBlock: 1,
       lastDecayBlock: 0,
       invitedAtBlock: 0,
@@ -90,12 +101,11 @@ describe('genesis identity record (Spec G phase D)', () => {
   it('a genesis at a non-zero height records that height, not the clamp', async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    const keypair = s.system.initSystemKeypair();
 
-    const box = s.system.ensureSystemKarmaBox(keypair.publicKey, 500);
+    const box = s.system.ensureSystemKarmaBox(faucetPubKey(), 500);
 
     expect(box.txId).toBe(mintTxIdFor(genesisContext(GENESIS_SYSTEM_KARMA), 500));
-    expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
+    expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({
       lastActivityBlock: 500,
       lastDecayBlock: 0,
       invitedAtBlock: 0,
@@ -106,14 +116,13 @@ describe('genesis identity record (Spec G phase D)', () => {
   it('is idempotent — a second call neither re-mints nor rewrites the clock', async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    const keypair = s.system.initSystemKeypair();
 
-    s.system.ensureSystemKarmaBox(keypair.publicKey, 0);
+    s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
     // A later call (e.g. from `faucetGrant`) must not move the clock forward and
     // hand the system a fresh staleness window.
-    s.system.ensureSystemKarmaBox(keypair.publicKey, 900);
+    s.system.ensureSystemKarmaBox(faucetPubKey(), 900);
 
-    expect(s.records.getIdentityRecord(keypair.publicKey)).toEqual({
+    expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({
       lastActivityBlock: 1,
       lastDecayBlock: 0,
       invitedAtBlock: 0,
@@ -124,8 +133,7 @@ describe('genesis identity record (Spec G phase D)', () => {
   it("the system's first decay charges from genesis height, not from zero", async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    const keypair = s.system.initSystemKeypair();
-    s.system.ensureSystemKarmaBox(keypair.publicKey, 0);
+    s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
 
     // threshold 11, interval 3 — chosen so `(threshold + 1) % interval === 0`,
     // the exact boundary where counting from 0 buys a whole extra interval.
@@ -148,8 +156,7 @@ describe('genesis identity record (Spec G phase D)', () => {
   it('the system identity is not stale before genesis height + threshold', async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    const keypair = s.system.initSystemKeypair();
-    s.system.ensureSystemKarmaBox(keypair.publicKey, 0);
+    s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
 
     const cfg = {
       staleThresholdBlocks: 11,
@@ -157,20 +164,19 @@ describe('genesis identity record (Spec G phase D)', () => {
       decayAmount: 5n,
       karmaMinimum: 0n,
     };
-    const before = (s.utxo.getKarmaBoxes(keypair.publicKey)[0] as KarmaBox).value;
+    const before = (s.utxo.getKarmaBoxes(faucetPubKey())[0] as KarmaBox).value;
 
     expect(s.decay.deriveKarmaDecay(decayDeps(s), 11, cfg)).toHaveLength(0);
-    expect((s.utxo.getKarmaBoxes(keypair.publicKey)[0] as KarmaBox).value).toBe(before);
+    expect((s.utxo.getKarmaBoxes(faucetPubKey())[0] as KarmaBox).value).toBe(before);
   });
 
   it('the faucet credit box creates no identity record', async () => {
     const s = await importFresh();
     s.initDb(':memory:');
-    const keypair = s.system.initSystemKeypair();
 
     // Credits are not karma and carry no decay clock. Only the karma leg writes.
-    s.system.ensureFaucetCreditBox(keypair.publicKey, 0);
+    s.system.ensureFaucetCreditBox(faucetPubKey(), 0);
 
-    expect(s.records.getIdentityRecord(keypair.publicKey)).toBeNull();
+    expect(s.records.getIdentityRecord(faucetPubKey())).toBeNull();
   });
 });

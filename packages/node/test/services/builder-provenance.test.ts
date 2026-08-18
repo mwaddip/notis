@@ -4,7 +4,6 @@ import {
   computeBoxId,
   computeTxId,
   generateKeyPair,
-  INVITE_BOND_KARMA,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type {
@@ -21,6 +20,7 @@ import {
   fixtureProvenance,
   seedProvenance,
   signTransaction,
+  FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 
 /**
@@ -70,14 +70,14 @@ describe('invite id prediction carries transaction provenance', () => {
 
     const newKarma: CandidateOf<KarmaBox> = {
       boxType: 'karma',
-      value: 100n - INVITE_BOND_KARMA,
+      value: 100n - FIXTURE_BOND_KARMA,
       owner: inviterId,
     };
     // ⛔ **The bond IS the request** — that key is the whole pairing, and the
     // settlement grants it out of the pool (ARCHITECTURE → Invite System).
     const bondBox: CandidateOf<BondBox> = {
       boxType: 'bond',
-      value: INVITE_BOND_KARMA,
+      value: FIXTURE_BOND_KARMA,
       inviterId,
       inviteePublicKey: invitee,
     };
