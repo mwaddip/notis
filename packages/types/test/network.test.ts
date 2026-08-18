@@ -9,13 +9,16 @@ import {
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   MAX_GENESIS_PROOF_PAYLOAD_BYTES,
+  BOX_VALUE_BOUND,
+  INVITE_BOND_VEST_PER_LIKES,
+  LIKES_PER_KARMA_PAYOUT,
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile } from '../src/index.js';
 
 // The full contract field set — TYPES_INTERFACE §Network profiles. Guards both
 // directions: a missing field and an added one (per-network creep is how a devnet
 // test stops catching a mainnet bug).
-const PROFILE_FIELDS = [
+const REQUIRED_PROFILE_FIELDS = [
   'networkType',
   'magic',
   'orderingBlockPowTargetBits',
@@ -30,9 +33,17 @@ const PROFILE_FIELDS = [
   'genesisCommitteeKeys',
   'genesisKarmaPerMember',
   'genesisCreditsPerMember',
+  'inviteBondMin',
+  'inviteBondMax',
   'genesisProofPayload',
   'genesisStateRoot',
 ].sort();
+
+// ⛔ Optional, and the ABSENCE is the fact rather than a gap. Mainnet names no
+// faucet identity, so its key set is the required list alone while the other two
+// carry this as well — which is why the pin below is presence-and-allowance
+// rather than one list compared for equality against all three.
+const OPTIONAL_PROFILE_FIELDS = ['faucetPublicKey'];
 
 function asciiOfMagic(magic: number): string {
   return String.fromCharCode(
@@ -76,8 +87,14 @@ describe('NETWORK_PROFILES', () => {
   });
 
   it('profiles carry exactly the contract field set — nothing added, nothing missing', () => {
+    const allowed = new Set([...REQUIRED_PROFILE_FIELDS, ...OPTIONAL_PROFILE_FIELDS]);
     for (const profile of Object.values(NETWORK_PROFILES)) {
-      expect(Object.keys(profile).sort()).toEqual(PROFILE_FIELDS);
+      for (const field of REQUIRED_PROFILE_FIELDS) {
+        expect(Object.hasOwn(profile, field), `${profile.networkType}.${field}`).toBe(true);
+      }
+      for (const field of Object.keys(profile)) {
+        expect(allowed.has(field), `${profile.networkType}.${field}`).toBe(true);
+      }
     }
   });
 
@@ -109,7 +126,7 @@ describe('NETWORK_PROFILES', () => {
     expect(NETWORK_PROFILES.mainnet.karmaDecayIntervalBlocks).toBe(1440);
   });
 
-  it('testnet is identical to mainnet except identity and genesis', () => {
+  it('testnet runs mainnet MECHANICS, differing only on identity, genesis and declared caps', () => {
     const identityOrGenesis = new Set([
       'networkType',
       'magic',
@@ -119,13 +136,33 @@ describe('NETWORK_PROFILES', () => {
       // the digest over a box set whose only per-network member is that
       // payload, so the two differ across networks together or not at all.
       'genesisStateRoot',
+      // An identity, and a genesis input: whether it is present decides whether
+      // genesis seeds a faucet's boxes at all, so it separates the two networks
+      // the same way the payload does.
+      'faucetPublicKey',
     ]);
+    // ⚠ **Caps, not mechanics** (ARCHITECTURE → "What varies per network, and
+    // what must not"). Every name here is a BOUND; a formula or a ratio may not
+    // join them, and the list is what makes each difference declared rather than
+    // discovered. `inviteBondMin` is deliberately absent — testnet inherits
+    // mainnet's floor.
+    const relaxedCaps = new Set(['inviteBondMax']);
     const { mainnet, testnet } = NETWORK_PROFILES;
-    for (const field of PROFILE_FIELDS) {
-      if (identityOrGenesis.has(field)) continue;
+    // ⛔ Derived from the profiles, never from a literal list. A hardcoded set
+    // goes on passing while a field added to either profile sits uncompared, so
+    // the guarantee this test states would quietly stop covering the tree.
+    const fields = new Set([...Object.keys(mainnet), ...Object.keys(testnet)]);
+    for (const field of fields) {
+      if (identityOrGenesis.has(field) || relaxedCaps.has(field)) continue;
       expect(testnet[field as keyof NetworkProfile], field).toBe(
         mainnet[field as keyof NetworkProfile],
       );
+    }
+    // Each declared difference is a real one — an exemption covering a field
+    // that already matches is an exemption nothing checks.
+    for (const field of relaxedCaps) {
+      expect(testnet[field as keyof NetworkProfile], field)
+        .not.toBe(mainnet[field as keyof NetworkProfile]);
     }
   });
 
@@ -182,7 +219,7 @@ describe('NETWORK_PROFILES', () => {
     }
   });
 
-  it('devnet keeps mainnet economics — genesis allocations are not compressed', () => {
+  it('devnet does not compress the genesis allocations', () => {
     const { mainnet, devnet } = NETWORK_PROFILES;
     expect(devnet.genesisKarmaPerMember).toBe(mainnet.genesisKarmaPerMember);
     expect(devnet.genesisCreditsPerMember).toBe(mainnet.genesisCreditsPerMember);
@@ -271,5 +308,89 @@ describe('profileFor', () => {
     for (const bad of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
       expect(() => profileFor(bad as NetworkType), bad).toThrow(/[Uu]nknown network/);
     }
+  });
+});
+
+/**
+ * The faucet identity.
+ *
+ * A network that names one seeds its karma and credit boxes at genesis, and
+ * those boxes reach `genesisStateRoot`. Absence is therefore chain-committed
+ * rather than read from a config file.
+ */
+describe('faucet identity per network', () => {
+  // ⛔ **Absence IS the mainnet gate, and it is the whole of it.** No boolean
+  // states the same fact a second time, so a mainnet faucet is unrepresentable
+  // rather than merely disallowed.
+  it('mainnet names no faucet identity', () => {
+    expect(profileFor('mainnet').faucetPublicKey).toBeUndefined();
+    expect(Object.hasOwn(profileFor('mainnet'), 'faucetPublicKey')).toBe(false);
+  });
+
+  it('mainnet is the only profile without one', () => {
+    const absent = Object.values(NETWORK_PROFILES)
+      .filter((p) => p.faucetPublicKey === undefined)
+      .map((p) => p.networkType);
+    expect(absent).toEqual(['mainnet']);
+  });
+
+  it('testnet and devnet name DIFFERENT faucet identities', () => {
+    const t = profileFor('testnet').faucetPublicKey;
+    const d = profileFor('devnet').faucetPublicKey;
+    // A raw Ed25519 public key, 32 bytes as lowercase hex — the shape the
+    // verifier rebuilds a KeyObject from.
+    expect(t).toMatch(/^[0-9a-f]{64}$/);
+    expect(d).toMatch(/^[0-9a-f]{64}$/);
+    // ⛔ Sharing one key would make the fixture key and the live key one key:
+    // devnet's secret is in tracked source and reaches CI, testnet's guards a
+    // balance testers depend on.
+    expect(t).not.toBe(d);
+  });
+});
+
+/**
+ * The invite bond caps.
+ *
+ * ⚠ **Caps, not mechanics** (ARCHITECTURE → "What varies per network, and what
+ * must not"). The vesting formula and the `V/L` supply dial are universal; only
+ * the bounds an inviter picks between vary.
+ */
+describe('invite bond caps per network', () => {
+  it('every profile orders its own range', () => {
+    for (const n of ['mainnet', 'testnet', 'devnet'] as const) {
+      const p = profileFor(n);
+      expect(p.inviteBondMax, n).toBeGreaterThanOrEqual(p.inviteBondMin);
+      expect(p.inviteBondMin, n).toBeGreaterThan(0n);
+    }
+  });
+
+  // Denomination: both bounds are compared against a box value, so both are
+  // bigint on every profile — including the ones written as literals here
+  // rather than reached through a constant.
+  it('denominates every bound as karma, inside the box value domain', () => {
+    for (const p of Object.values(NETWORK_PROFILES)) {
+      expect(typeof p.inviteBondMin, p.networkType).toBe('bigint');
+      expect(typeof p.inviteBondMax, p.networkType).toBe('bigint');
+      expect(p.inviteBondMax, p.networkType).toBeLessThan(BOX_VALUE_BOUND);
+    }
+  });
+
+  it('testnet relaxes the ceiling above mainnet, and mechanics are untouched', () => {
+    expect(profileFor('testnet').inviteBondMax)
+      .toBeGreaterThan(profileFor('mainnet').inviteBondMax);
+    // The dial that decides whether an invite inflates supply is universal, so
+    // testnet's larger bound moves the size of a grant and nothing about how
+    // one settles.
+    expect(INVITE_BOND_VEST_PER_LIKES).toBeLessThan(LIKES_PER_KARMA_PAYOUT);
+  });
+
+  // Devnet's floor states a property, not a scaled-down number: a bond of `B`
+  // takes `INVITE_BOND_VEST_PER_LIKES · B` likes to vest in full, so the floor
+  // is what decides whether a fixture can drive one all the way rather than
+  // watching it partially forfeit.
+  it('floors the devnet bond low enough for a fixture to vest one in full', () => {
+    const likesToVestSmallest =
+      INVITE_BOND_VEST_PER_LIKES * Number(profileFor('devnet').inviteBondMin);
+    expect(likesToVestSmallest).toBeLessThanOrEqual(15);
   });
 });

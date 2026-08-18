@@ -8,10 +8,11 @@
 // Cold start seeds a box set into the AVL+ tree and height 1 is the first mined block, so
 // what a network commits to is the height-0 root below — `genesisStateRoot`.
 //
-// The per-network set covers timescale, difficulty and genesis ONLY. Every other constant
-// — format limits and every karma/credit cost — is universal: compress time, never
-// economics. Adding a field here weakens every test that runs on devnet; the burden is on
-// the addition.
+// The per-network set covers timescale, difficulty, genesis and CAPS. Adding a MECHANIC
+// here weakens every test that runs on devnet; the burden is on the addition. A CAP is
+// different in kind — a defect lives in a formula or a ratio, never in the size of a limit
+// — so a relaxed bound diverges without hiding anything. Every field added here says which
+// of the two it is (ARCHITECTURE → "What varies per network, and what must not").
 
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,
@@ -25,6 +26,8 @@ import {
   CREDIT_EPOCH_BLOCKS,
   GENESIS_KARMA_PER_MEMBER,
   GENESIS_CREDITS_PER_MEMBER,
+  INVITE_BOND_MIN,
+  INVITE_BOND_MAX,
 } from './constants.js';
 
 export type NetworkType = 'mainnet' | 'testnet' | 'devnet';
@@ -53,6 +56,28 @@ export interface NetworkProfile {
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
   readonly genesisCreditsPerMember: bigint;
+  /**
+   * The faucet identity's Ed25519 public key, 64 hex chars, or **absent**.
+   *
+   * ⛔ **Absence is the mainnet gate, and it is the whole of it.** Genesis seeds
+   * the faucet's karma and credit boxes only when this is present, and those
+   * boxes reach `genesisStateRoot` — so a node that invents a faucet identity
+   * computes a different root and cannot join. The gate is chain-committed
+   * rather than read from a config file.
+   *
+   * ⚠ **Testnet and devnet name DIFFERENT keys.** Devnet's secret lives in
+   * tracked source and reaches CI; testnet's guards a balance testers depend on.
+   * One key for both is the fixture key and the live key being one key.
+   */
+  readonly faucetPublicKey?: string;
+
+  // Invite caps — the inviter picks a bond in this range, and the grant equals
+  // it. ⚠ **Caps, not mechanics**: the vesting formula and the `V/L` supply dial
+  // are universal, and only the bounds vary (ARCHITECTURE → "What varies per
+  // network, and what must not").
+  readonly inviteBondMin: bigint;
+  readonly inviteBondMax: bigint;
+
   /**
    * The `genesis_proof` box's payload, hex of raw bytes. **Differs on all three
    * networks, and nothing else in the genesis box set does** — the system karma
@@ -142,6 +167,13 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
+
+  // ⚠ PLACEHOLDER WEIGHTS. Mainnet's numbers are testnet's output; these hold
+  // the shape until there is evidence to set them from. **No `faucetPublicKey`**
+  // — its absence is what makes a mainnet faucet unrepresentable.
+  inviteBondMin: INVITE_BOND_MIN,
+  inviteBondMax: INVITE_BOND_MAX,
+
   // ⚠ MOCK CONTENT (user, 2026-08-13). What has to hold is that the three
   // payloads DIFFER; what is inside them does not. Substituting real
   // no-premine evidence later is a value change on a network that has not
@@ -158,14 +190,21 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   genesisStateRoot: 'a364ecd022e2f878259a6cf97fd0489c77a959478da04e6d07e3a3626dfe109d02',
 } satisfies NetworkProfile);
 
-// testnet: identical to mainnet except network identity and genesis — deliberate
-// (a testnet that differs from mainnet cannot catch a mainnet bug; the burden is on the
-// difference). The spread makes identity structural: a mainnet parameter change cannot
-// silently leave testnet behind.
+// testnet: mainnet's MECHANICS with relaxed CAPS — the public playground. A testnet that
+// ran a different formula could not catch a mainnet bug; one that runs a larger bound
+// catches every one of them. Its identity and genesis differ as before. The spread makes
+// the rest structural: a mainnet parameter change cannot silently leave testnet behind.
 const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   ...MAINNET_PROFILE,
   networkType: 'testnet',
   magic: MAGIC_TESTNET,
+
+  // Generated 2026-08-18. The secret is NOT in this repo; it is deployed to the
+  // faucet service as a config value.
+  faucetPublicKey: '7d501686ebf18b2618c5a9394445bd14922a72478d2a4c36a82a8cfc2a66cce7',
+  // Relaxed so a tester arrives with enough karma to post and like freely. A cap,
+  // not a mechanic — the vesting formula is unchanged.
+  inviteBondMax: 1000n,
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   // Overridden explicitly, and it must be: the spread above would otherwise
@@ -226,16 +265,25 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable
   creditEpochBlocks: 100, // keeps fixed-rate ≈ 10 × epoch (mainnet: ≈ 8×)
 
+  // ⚠ **A PUBLICLY KNOWN TEST KEY.** Its secret is in tracked source and reaches
+  // CI, which is correct for an ephemeral network and is why it is not testnet's.
+  faucetPublicKey: '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36',
+  // A bond of `B` takes `INVITE_BOND_VEST_PER_LIKES · B` likes to vest in full, so
+  // the floor is what decides whether a fixture can drive one all the way: 5 costs
+  // it 15 likes, 25 costs it 75. The ceiling stays at mainnet's so the range check
+  // has both boundaries to fail against.
+  inviteBondMin: 5n,
+  inviteBondMax: INVITE_BOND_MAX,
+
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Testnet and devnet seed byte-identical karma and credit boxes — same system
-  // keypair, same values — so those two separate nothing. **Two things do:** the
-  // proof box's payload, and the emission box's value, which is derived from
-  // `creditFixedRateBlocks` and `creditEpochBlocks` and so is smaller here than
-  // on the two networks that share mainnet's schedule.
+  // The proof box's payload separates this root from both the others, and the
+  // emission box's value separates it from testnet's as well — derived from
+  // `creditFixedRateBlocks` and `creditEpochBlocks`, so smaller here than on the
+  // two networks that share mainnet's schedule.
   genesisStateRoot: '1fbf99d5dc21c8d09e736af952892d3c2f1f3d390a3b70cb8c11b8477a90cb5603',
 } satisfies NetworkProfile);
 
