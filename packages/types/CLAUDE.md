@@ -22,7 +22,7 @@ Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 22.
 ## This package (`@dagsocial/types`)
 The shared data model and cryptographic/encoding primitives: posts, blocks, stumps, boxes, identity,
 base58, merkle, CBOR serialization, protocol constants, and the hash/id helpers (`computePostId`,
-`computeBoxId`, `computeTxId`, `signingHash`, `postPowPreimage`). **Pure functions only** — no I/O, no state.
+`computeBoxId`, `computeTxId`). **Pure functions only** — no I/O, no state.
 
 - **Owns:** `src/*` (post, block, stump, utxo, identity, base58, merkle, serialization, constants, index).
 - **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends only on Node `crypto`

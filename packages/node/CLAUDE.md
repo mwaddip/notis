@@ -21,8 +21,8 @@ context — read it and the linked docs before touching code.
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
 prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**), bound by
-**stumps**. Consensus is PoW — user sub-blocks + validator ordering blocks. TypeScript, pnpm workspaces,
-Node.js ≥ 22.
+**stumps**. Consensus is single-phase PoW — validator-produced ordering blocks; posts and likes ride
+them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, UTXO engine, block creator + application,
