@@ -1257,7 +1257,7 @@ describe('revertBlock', () => {
     const { encodePost } = await import('@dagsocial/types');
     posts.insertPost(postId, post, encodePost(post));
 
-    // Insert sub-block
+    // Insert post transaction
     mempool.insertUtxoTx(postTx, 1000);
 
     // Insert a standalone UTXO tx. The like targets the post this block
@@ -1504,7 +1504,7 @@ describe('reorg', () => {
     expect(journalStore.getBlockJournal(2)).toBeNull();
     expect(journalStore.getBlockJournal(3)).toBeNull();
 
-    // Mempool should have re-inserted sub-blocks
+    // Mempool should have re-inserted transactions
     const pendingAfter = mempool.getPendingEntries(100);
     expect(pendingAfter.length).toBeGreaterThan(0);
   });
@@ -1594,7 +1594,7 @@ describe('reorg', () => {
     expect(ordering.getCurrentHeight()).toBe(0);
 
     // Rebuild: new chain from mempool entries (re-inserted by reorg)
-    // The block creator will pick up re-inserted sub-blocks
+    // The block creator will pick up re-inserted transactions
     await mineNextBlock(bc); // height 1
     await mineNextBlock(bc); // height 2
 
@@ -1689,7 +1689,7 @@ describe('reorg', () => {
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
-      // Two blocks, one sub-block each. Each insert sits alone in the pool
+      // Two blocks, one post transaction each. Each insert sits alone in the pool
       // (cap 1) and is consumed by its block, so building the chain is fine.
       for (let i = 0; i < 2; i++) {
         const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `full pool ${i}`);
@@ -1748,7 +1748,7 @@ describe('reorg', () => {
     const forkResolution = await importForkResolution();
     forkResolution.reorg(0, []);
 
-    // Default cap (10000): the reverted sub-blocks come back.
+    // Default cap (10000): the reverted transactions come back.
     expect(mempool.getPendingEntries(100).length).toBeGreaterThan(1);
   });
 

@@ -93,7 +93,7 @@ export function verifyPost(
   const charCheck = verifyContentCharacters(post.content);
   if (!charCheck.valid) return charCheck;
 
-  // 2. Parent refs: 0–8.
+  // 2. Parent refs: 0–1.
   if (post.parentRefs.length > MAX_PARENT_REFS) {
     return { valid: false, error: `Too many parent refs (max ${MAX_PARENT_REFS})` };
   }

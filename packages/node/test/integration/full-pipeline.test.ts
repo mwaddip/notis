@@ -324,7 +324,7 @@ describe('full-pipeline', () => {
     // ---- Step 0: Confirm the target first. A like on an unconfirmed post is
     // invalid at apply, so the canonical flow likes an already-confirmed post;
     // the confirm-and-like-in-one-block shape is test 2 below. Block 1 carries
-    // the sub-block alone.
+    // the post transaction alone.
     const mempool = await importMempool();
     mempool.insertUtxoTx(postTx, 1000);
     const bc = await importBlockCreator();
@@ -402,7 +402,7 @@ describe('full-pipeline', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. Sub-block + like tx confirmed together
+  // 2. Post transaction + like tx confirmed together
   // -------------------------------------------------------------------------
 
   it('sub-block and like tx confirmed together in one block', async () => {
@@ -433,7 +433,7 @@ describe('full-pipeline', () => {
       1,
     );
 
-    // Insert sub-block into mempool
+    // Insert post transaction into mempool
     const mempool = await importMempool();
     mempool.insertUtxoTx(postTx, 1000);
 
@@ -478,7 +478,7 @@ describe('full-pipeline', () => {
     const blockHeight = (block!.header as Record<string, unknown>).height as number;
 
     // ---- Verify ----
-    // Post confirmed (sub-block path)
+    // Post confirmed
     const confirmedPost = posts.getPost(postId);
     expect(confirmedPost).not.toBeNull();
 

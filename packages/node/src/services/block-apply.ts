@@ -128,7 +128,7 @@ class BlockRejected extends Error {}
  * Apply an ordering block — all of it, or none of it.
  *
  * A block is a single unit of state transition, so every mutation it makes
- * (coinbase mint, sub-block confirmation, prune settlement, UTXO transactions,
+ * (post confirmation, prune settlement, UTXO transactions,
  * per-block like settlement, decay) lives in one SQLite transaction. Any rejection — at any
  * step — rolls the whole thing back, leaving the node on the state it had
  * before the block arrived. Returns false for a rejected block; `reorg()`

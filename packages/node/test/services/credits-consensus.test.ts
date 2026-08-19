@@ -229,7 +229,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     expect(utxo.getBox(seeded.id!)).not.toBeNull();
     expect(utxo.getCreditBoxes(bob.userId)).toHaveLength(0);
 
-    // Mine: one sub-block to satisfy the block minimum, then create the block.
+    // Mine: one post transaction to populate the block, then create it.
     const author = makeTestIdentity();
     const { tx: postTx } = await seedPostTx(author, 'settlement fixture');
     mempool.insertUtxoTx(postTx, 1000);

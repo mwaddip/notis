@@ -665,8 +665,7 @@ function finalizeBlock(block: OrderingBlock): void {
   }
 
   // Clean up any remaining mempool entries that applyOrderingBlock didn't
-  // remove (e.g. UTXO txs that were attached to sub-blocks and removed
-  // from utxoTxIds). Double-removal is harmless.
+  // remove. Double-removal is harmless.
   //
   // This runs even when the block was rejected: whatever made it invalid came
   // out of the mempool, so leaving those entries in place would reassemble the

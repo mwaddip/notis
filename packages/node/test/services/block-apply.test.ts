@@ -316,7 +316,7 @@ describe('block-apply journal recording', () => {
     const { encodePost, computeTxId } = await import('@dagsocial/types');
     posts.insertPost(postId, post, encodePost(post));
 
-    // Insert sub-block ID
+    // Insert post transaction
     mempool.insertUtxoTx(postTx, 1000);
 
     // Insert a standalone UTXO transaction in mempool. The like targets the
@@ -2211,7 +2211,7 @@ describe('block-apply funnel totality', () => {
    * honest entry, then the hostile entry swapped into the body afterwards.
    *
    * The entry can no longer be present while the block is built —
-   * `computeSubBlockRoot` runs `serializePruneEntry`, which has no encoding for
+   * `computeUtxoTxRoot` runs `serializePruneEntry`, which has no encoding for
    * a non-byte root — so the swap is the only way to construct the case at all.
    * `expectUnbuildable` below pins that, because it is half the property.
    */
@@ -2269,7 +2269,7 @@ describe('block-apply funnel totality', () => {
     // ---- THE ORDERING PIN --------------------------------------------------
     // The structure gate runs at the top of `applyOrderingBlock`, Merkle
     // recomputation later in the same funnel (§4). That ordering is
-    // load-bearing: `computeSubBlockRoot` is partial, so if the two ever swap,
+    // load-bearing: `computeUtxoTxRoot` is partial, so if the two ever swap,
     // this block throws into the funnel's totality catch instead of producing a
     // verdict. Nothing else in the suite would notice — `applyOrderingBlock`
     // answers `false` either way — so the absence of that catch's log line is

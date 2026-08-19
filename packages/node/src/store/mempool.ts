@@ -499,7 +499,7 @@ export function hasPendingVouch(voucherId: string): boolean {
  * collided instead of only reporting that one did.
  *
  * `tx_inputs IS NOT NULL` is what the partial index covers, and it is the whole
- * filter needed: sub-block and prune rows carry no inputs, and a row written
+ * filter needed: prune rows carry no inputs, and a row written
  * before the column existed reads as zero `json_each` rows.
  */
 export function hasPendingSpend(boxIds: string[]): string | null {

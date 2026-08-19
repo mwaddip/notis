@@ -11,7 +11,7 @@
 //
 // Known limitations:
 // - The current networking layer syncs ordering-block headers but NOT
-//   sub-block data (karma boxes, posts, likes). Cross-node sub-block
+//   post data (karma boxes, posts, likes). Cross-node post
 //   assertions are logged but not enforced.
 // - Like tallying via epoch boundaries does not complete within test
 //   timeframes when combined with the long serial faucet sequence.
@@ -32,7 +32,7 @@ const ROLES = [
 
 async function tryGetKarma(client: ApiClient, userId: string, label: string): Promise<string> {
   try { const k = await client.getKarma(userId); return k.total; }
-  catch { console.log(`  ${label}: karma not synced (sub-block data)`); return '0'; }
+  catch { console.log(`  ${label}: karma not synced (post data)`); return '0'; }
 }
 
 describe('E2E Harness', () => {
