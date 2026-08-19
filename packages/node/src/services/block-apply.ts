@@ -1302,17 +1302,20 @@ function applyMutationPhase(
   // so the rollback inverse is unaffected.
   applyTx(utxoDeps, settlement.tx, settlement.outputs, height);
 
-  // 11a-ii. The probation clock, dated by the invite's own height
-  // (ARCHITECTURE → Invite System; NODE_INTERFACE → Identity Records). Read
-  // after the grant so the activity bump the settlement's karma output just
-  // wrote survives; a missing record means maximally stale ({0, 0}), never
-  // "skip". Ascending invitee order, so two grants in one block write in an
+  // 11a-ii. The clock epoch: a new record's `lastActivityBlock` starts at the
+  // claim height (NODE_INTERFACE → Identity Records; ARCHITECTURE → Karma
+  // decay, "the clock starts at onboarding"). The grant output carries
+  // `nonActivity: true`, so `insertBox` does not bump the clock — the epoch
+  // is this record write's, not a box bump's. A legal invitee has no record
+  // yet, so `after` is null and the fallback applies; a pre-existing record
+  // is a consensus bar violation upstream, not something this write papers
+  // over. Ascending invitee order, so two grants in one block write in an
   // order the block fixes rather than one a map's iteration happens to produce.
   for (const inviteeHex of [...invitedThisBlock].sort()) {
     const invitee = new Uint8Array(Buffer.from(inviteeHex, 'hex'));
     const after = getIdentityRecord(invitee);
     putIdentityRecord(invitee, {
-      lastActivityBlock: after?.lastActivityBlock ?? 0,
+      lastActivityBlock: after?.lastActivityBlock ?? height,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
       invitedAtBlock: height,
       // Carried through rather than written, and it is always 0 here: a legal

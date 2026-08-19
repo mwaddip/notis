@@ -734,7 +734,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     if (!lookup.success) throw new Error('lookup failed');
     expect(lookup.value).toBeTruthy();
     expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
-      lastActivityBlock: 0,
+      lastActivityBlock: 2,
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
@@ -743,10 +743,10 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     await assertRoundTrip(db, handle, pre, classBlock);
 
-    // Re-apply landed the record back on the last write. The grant's karma
-    // box carries nonActivity: true (received value), so lastActivityBlock is 0.
+    // Re-apply landed the record back on the last write. The clock epoch
+    // starts at the claim height (NODE_INTERFACE → Identity Records).
     expect(recordStore.getIdentityRecord(invitee.userId)).toEqual({
-      lastActivityBlock: 0,
+      lastActivityBlock: 2,
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
