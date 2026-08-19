@@ -76,29 +76,12 @@ value path. Node-side obligations:
 > by reading and by running the browser, and by nothing else.** Its own doc block states the failure
 > mode: *a missing entry does not throw, it derives a **wrong id that looks well-formed**.*
 >
-> ### ⚠ AHEAD OF CODE — what unit C owes this file, and it is four changes
->
-> 1. **`BOX_TYPE_TAGS`** — drop `invite: 2`, add `like_accrual: 11`, `vouch_escrow: 12`.
-> 2. **The `boxTypeFields` `invite` arm** — delete it; add `b32(author)` and
->    `b32(owner) ‖ vlqU(releaseAtBlock)`. ⛔ **Doing (1) without (2) is exactly the silent-wrong-id
->    case the file warns about** — the tag table would accept a type the field writer cannot encode.
-> 3. **The `bond` arm's comment** — *"Byte-for-byte the `invite` arm above"* stops being true; the
->    pair is bond/vouch now.
-> 4. ⛔ **`computeTxId`'s `preimages` field — THE ONE THAT BREAKS USERS.** The UI holds a full
->    `computeTxId` mirror and `signTx` signs its output. Left as it is, the browser signs the **old**
->    id, the node computes a different one, and **every browser-built transaction is rejected.** No
->    typecheck and no test in this repo can see it.
->
-> ⛔ **THE LIKE TRANSACTION IS A FIFTH CHANGE OF A DIFFERENT KIND** — §Likes states it: the UI must
-> build the `LikeAccrualBox` output and learn the target's **author** to name in it, from
-> `block_topology` and never `dag_posts.author`.
->
-> ### ✅ Only the consensus change reaches the browser; the wire change does not
->
-> The HTTP API is **JSON**, so the UI has no `encodeTx` mirror and the positional codec costs it
-> nothing — while the `txIdBytes` change hits it squarely. ⛔ **Two changes rode one dispatch and
-> exactly one of them reaches this file**, which is the practical form of the rule that they break
-> different things. **Ask which layer a change crosses, not how big it was.**
+> The mirrors this binds: `BOX_TYPE_TAGS` and the per-type `boxTypeFields` arms (which must track
+> `TYPES_INTERFACE`'s tag table and layouts), the full `computeTxId` mirror whose output `signTx`
+> signs, and the like transaction's `LikeAccrualBox` construction (§Likes). A divergence in the
+> `computeTxId` mirror is the one that breaks users outright: the browser signs one id, the node
+> computes another, and **every browser-built transaction is rejected** — with no typecheck or test
+> in this repo able to see it.
 
 ---
 
@@ -224,8 +207,10 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
 2. Verify the target post exists and is live (not pruned)
 3. Verify not already liked: like-record `(liker, targetPostId)` absent AND
    `hasPendingLike` over the mempool gate metadata
-4. `validateTx` — the engine enforces the biconditional like shape (karma inputs one
-   owner, exactly one karma output same owner, deficit exactly `LIKE_KARMA_COST`)
+4. `validateTx` — the engine enforces the biconditional like shape **both ways** (§validateTx
+   step 7): karma inputs one owner, exactly one karma output same owner, plus exactly one
+   `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author —
+   and the transaction **conserves**. There is no deficit.
 5. Insert into mempool: `insertUtxoTx(tx, expiresAtHeight)` (gate metadata
    `like_target`/`like_liker` from `likeTarget` + the signer)
 6. Return `{ status: "pending", txId, expiresAtHeight }`
@@ -234,29 +219,18 @@ The gateway checks are courtesy; **the consensus checks run again at apply** (se
 engine → like transition, and Block application → per-block like settlement). The liker is
 the karma inputs' owner — no separate liker field exists anywhere.
 
-> ## ⚠ AHEAD OF CODE — THE LIKE TRANSACTION GROWS AN OUTPUT, AND THE CLIENT MUST BUILD IT
->
-> Step 4's shape becomes: karma inputs one owner, **exactly one karma output same owner, plus exactly
-> one `LikeAccrualBox` of exactly `LIKE_KARMA_COST` whose `author` is the target's author** — and the
-> transaction **conserves**. The deficit is gone (§validateTx step 7).
->
-> ⛔ **THIS IS A CLIENT-VISIBLE CHANGE, NOT A NODE-INTERNAL ONE.** The transaction is **client-signed**
-> before it reaches this endpoint, so the client must construct the marker and sign over it. A client
-> that builds today's like transaction produces one the engine now refuses — and it refuses it as
-> *"no marker"*, which reads as a client bug rather than a version mismatch. The demo UI is one such
-> client.
->
-> ⛔ **THE CLIENT MUST LEARN THE TARGET'S AUTHOR TO BUILD THE TRANSACTION AT ALL.** Today it needs
-> only the post id. The author must come from the same source consensus uses — **`block_topology`,
-> never `dag_posts.author`**, which carries a zeroed author on placeholder rows. ⚠ **A read path that
-> serves it is therefore owed**, and serving it from the wrong table would earmark karma to the zero
-> key while every gateway check passed.
->
-> ✅ **Step 3's duplicate-like gate is unchanged and still necessary.** Conservation cannot see a
-> repeat: a second like on the same post is a perfectly balanced transaction.
->
-> ✅ **The one-signature rule is untouched.** The marker adds an output, not a signer, and the liker
-> is still the karma inputs' owner.
+**The marker is client-built.** The transaction is **client-signed** before it reaches this
+endpoint, so the client constructs the `LikeAccrualBox` output and signs over it — and it must
+learn the target's **author** to do so, from the same source consensus uses: **`block_topology`,
+never `dag_posts.author`**, which carries a zeroed author on placeholder rows. An author read
+from the wrong table earmarks karma to the zero key while every gateway check passes.
+
+**Step 3's duplicate-like gate is load-bearing, not courtesy-only in effect.** Conservation
+cannot see a repeat: a second like on the same post is a perfectly balanced transaction, so
+only the like-record check refuses it.
+
+**A like tx still carries exactly one signature.** The marker is an output, not a signer, and
+the liker is the karma inputs' owner.
 
 **A like tx carries exactly one signature — the liker's** (decided in N1, ratified
 2026-08-08). `castLike` rejects multi-signature like txs with a legible 400, and the
@@ -372,11 +346,11 @@ invites, vouches, credits, faucet, prune).
    the `block_topology`-recorded author of `rootPostHash`; reject the block if
    no topology row exists — an unconfirmed root is not prunable), verify
    signature, verify topology via block_topology CTE, verify Merkle root,
-   settle UTXO deterministically (consume the subtree's PostLockBoxes, mint
-   `prune-refund-author` karma **to every lock owner except `entry.authorId`**,
-   and delete the subtree's like-records —
-   journalled, so a reverted prune restores them; P2-D), insert the Stump
-   derived from the verified entry
+   settle UTXO deterministically — the settlement transaction consumes the
+   subtree's PostLockBoxes and refunds **every lock owner except
+   `entry.authorId`**, whose own locks go to the pool — and delete the
+   subtree's like-records (journalled, so a reverted prune restores them),
+   insert the Stump derived from the verified entry
    (**unconditional** — a node holding no DAG content records the same
    stump), then prune DAG content when present
 
@@ -545,15 +519,13 @@ today, and they hold them **for two different reasons** — every karma-bearing 
 also to be one a user transaction may create. That coincidence is a fact about the present type
 list, not a rule, and a single shared constant encodes it as though it were one.
 
-> ⚠ **AHEAD OF CODE — the pool does not exist yet** (`docs/specs` design §3, unit B). The rule
-> below is what its membership will be; the three-way reading it forces is true now.
-
-⛔ **A KARMA-BEARING TYPE CAN BELONG TO NEITHER SET, AND THE FIRST ONE WILL.** The karma supply
-pool holds the maximum representable karma and is spent and created **only by block application** —
-it never reaches `validateTx`. So it joins `genesis_proof`, `emission` and `treasury` in being
-**barred from both transaction positions**, which puts it outside the transition set; and its value
-must **never** reach `totalKarma`, or the network reports its supply as `u64::MAX`, which puts it
-outside the supply set.
+⛔ **A KARMA-BEARING TYPE CAN BELONG TO NEITHER SET, AND `karma_pool` IS ONE.** The karma supply
+pool holds the karma not in circulation and is spent **only by the block's settlement
+transaction** — it never reaches `validateTx`. So it joins `genesis_proof`, `emission` and
+`treasury` in being **barred from both transaction positions**, which puts it outside the
+transition set; and its value must **never** reach `totalKarma`, which reports circulation and
+would otherwise overstate it by the entire uncirculated supply — that puts it outside the supply
+set.
 
 ⚠ **Membership is therefore three-way, not two.** "Which of the two lists?" is the wrong question to
 ask of a new box type. The right one is asked twice, independently: *may a karma spend create it?*
@@ -823,11 +795,11 @@ spent away.
 inherits that by saying nothing about it. The bar is the default, and admitting a type is the
 deliberate act.
 
-> ⚠ **AHEAD OF CODE — `karma_pool` is the fourth** (`docs/specs` design §3, unit B). ⛔ **The two
-> halves cost differently, and only one is free.** The **input** bar is inherited by saying nothing.
-> The **output** bar is not: `OUTPUT_SHAPE` is keyed on an `Exclude`, so a new type compiles as
-> *requiring a shape* until it is named in that exclusion — which is the deliberate act the
-> `Exclude` exists to force. **One edit, not two, and not zero.**
+> ⛔ **The two halves of a both-positions bar cost differently, and only one is free.** The
+> **input** bar is inherited by saying nothing. The **output** bar is not: `OUTPUT_SHAPE` is keyed
+> on an `Exclude`, so a new type compiles as *requiring a shape* until it is named in that
+> exclusion — which is the deliberate act the `Exclude` exists to force. **One edit, not two, and
+> not zero.**
 
 `OUTPUT_SHAPE` is keyed on `Exclude<AnyBox['boxType'], 'genesis_proof'>`, so the
 exclusion is a type error to undo rather than an omitted entry indistinguishable
@@ -837,11 +809,11 @@ ahead of the table lookup: the verdict would be identical either way, but an
 assigned tag refused by protocol rule is not an *unknown* one, and a test
 asserting rejection must be able to assert which rule rejected.
 
-The `emission` and `treasury` types join `genesis_proof` in being barred from
-both transaction positions — block application is their only producer and their
-only spender. ⚠ **`karma_pool` joins them** (AHEAD OF CODE, design §3): the karma
-supply pool is drawn down by mints and restored by burns, both block
-application's, and no user transaction may name it in either position.
+The `emission`, `treasury` and `karma_pool` types join `genesis_proof` in being
+barred from both transaction positions: no transition admits one as an input and
+no user transaction may output one. They are created at genesis seeding or as
+settlement outputs, and the settlement transaction is the only thing that spends
+any of them (`genesis_proof` is never spent at all).
 
 ### Output shape — the closed per-boxType schema (field-type pin)
 
@@ -1175,7 +1147,7 @@ Lightweight liveness-only re-check (are inputs still unspent?). **Not sufficient
 for block application on its own** — a permissionless block producer can embed a
 tx that never passed pool entry or relay validation, so authorization, transitions,
 and conservation must NOT be assumed. Block finalization fully
-re-validates every embedded tx with `validateTx` (see Block finalization step 5).
+re-validates every embedded tx with `validateTx` (see Block finalization step 4).
 `revalidateTxInContext` remains available for the mempool's own staleness pruning,
 where the tx was already validated on entry — never as the sole gate on applying
 an untrusted, block-embedded tx.
@@ -1375,17 +1347,17 @@ inside the network's reported supply.
 - **Credits are deliberately exempt.** They are tradeable, so multi-owner
   credit inputs are an ordinary multi-party payment, not a leak.
 
-> ## ⚠ AHEAD OF CODE — THE LIKE ACCRUAL MARKER IS AN EXEMPTION FROM THE RULE ABOVE, AND IT MUST NOT BEHAVE LIKE ONE
+> ## ⛔ THE LIKE ACCRUAL MARKER IS AN EXEMPTION FROM THE RULE ABOVE, AND IT MUST NOT BEHAVE LIKE ONE
 >
 > A `LikeAccrualBox` is a **karma-bearing output earmarked for someone other than the input's owner**
 > — precisely the shape *"Karma cannot be transferred"* exists to refuse. It is admitted because a
 > like's cost must land somewhere nameable (`ARCHITECTURE` → The conservation axiom), and the marker
 > is the only such exemption in the design.
 >
-> ⛔ **THE PIN IS THE WHOLE OF ITS SAFETY, AND IT REPLACES A CHECK THAT USED TO BE FREE.** Before,
-> the like's cost was a **deficit** — an imbalance is self-announcing, so the conservation check fired
-> on it unconditionally and the only escape was matching the like shape exactly. The marker
-> **balances**, so that trigger is gone and the shape must be tested because a rule says to.
+> ⛔ **THE PIN IS THE WHOLE OF ITS SAFETY, AND NOTHING ANNOUNCES A VIOLATION FOR FREE.** An
+> imbalance is self-announcing — conservation fires on it unconditionally. The marker **balances**,
+> so no imbalance ever flags a malformed one, and the shape holds only because a rule states it and
+> a test exercises it.
 >
 > **Both directions are required, and the second has no predecessor:**
 >
@@ -1480,9 +1452,11 @@ inside the network's reported supply.
 
 ### Karma decay (periodic burn)
 
-Karma decay is applied at block application time via `applyKarmaDecay()`,
-not at individual transaction consumption time. See `decay.ts` and the
-Architecture document for the full model. Key properties:
+Karma decay is applied at block application time, not at individual
+transaction consumption time: `deriveKarmaDecay` derives each stale
+identity's charge, and the block's settlement transaction consumes the
+charged boxes, emits the replacements and pays the pool. See `decay.ts` and
+the Architecture document for the full model. Key properties:
 
 - **Staleness:** An identity must have no normal-activity karma box within
   `KARMA_STALE_THRESHOLD_BLOCKS` to be eligible
@@ -1520,10 +1494,11 @@ when all are decay-burn). The record measures from the **most recent** activity.
 
 Spec G §3.4 claimed these were equivalent, on the premise that forced
 consolidation means one karma box per owner so oldest == newest. **That premise
-is false:** `faucet-service.ts` creates karma boxes directly, bypassing
-`mintKarma`'s consolidation, so two unspent non-decay karma boxes at different
-heights is reachable — and the two formulas then disagree. Measured on the phase
-D fixture: a burn of 45 under the old rule, 30 under the new.
+is false:** settlement karma outputs land beside whatever karma the owner
+already holds — the settlement does not consolidate — so two unspent non-decay
+karma boxes at different heights is ordinary, and the two formulas then
+disagree. Measured on the phase D fixture: a burn of 45 under the old rule, 30
+under the new.
 
 The new behaviour is the intended one — "time since you were last active" is
 what a decay clock means, and measuring from the oldest surviving box is an
@@ -1542,22 +1517,23 @@ implementation *before* the change.
 
 ---
 
-## Box Identity and Mint Provenance (Spec G)
+## Box Identity and Mint Provenance
 
-Every box id derives from its creating transaction
-(`TYPES_INTERFACE.md` → BoxId). Boxes created by **block application** rather
-than by a user transaction — coinbase, karma mints, decay, epoch post-locks,
-genesis — have no transaction, so each mint *event* derives a synthetic one:
+Every box id derives from its creating transaction (`TYPES_INTERFACE.md` → BoxId), and almost
+every box block application creates is an output of the block's settlement transaction — a real
+transaction whose outputs take ordinary transaction-derived ids. **Exactly two producer classes
+create boxes with no transaction behind them**, and only they derive a synthetic id per mint
+*event*:
+
+- **genesis seeding** (`store/system.ts`) — the store is seeded before any block exists;
+- **post-lock vesting** (`transferKarma`, block application) — the one conserving-in-place
+  karma path: a `PostLockBox` vests into its own owner's karma and a reduced lock, the pool is
+  uninvolved, and so it has no place in the block's one pool spend.
 
 ```
 mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
 boxId    = blake2b512( BOX_ID_DOMAIN ‖ canonicalBoxBytes(candidate) ‖ utf8(mintTxId) ‖ u32BE(index) )[0:32]
 ```
-
-⚠ **Corrected 2026-08-16 — this line read `u32BE(height) ‖ reason ‖ subject` in all three fields.**
-`computeMintTxId` writes `writeVlqU`, an `enum8` tag byte and `writeLp`; `reason` has not been ASCII
-in the preimage since the tag table existed. Found while adding the two rows below, by reading the
-function beside the claim.
 
 Box derivation is then identical to the user-transaction path — one derivation,
 not two.
@@ -1568,23 +1544,16 @@ not two.
 > self-delimiting** — and the reason is the subject's own INTERNAL structure, not
 > its boundary. `computeMintTxId` writes `lp(subject)`, so one whole subject can
 > never be confused with another; what `lp` cannot do is separate the **parts** of
-> a multi-part subject, which it wraps as one opaque run. `prune-refund-author` is
-> `utf8(hex) ‖ raw`, and were either part variable-width, two different
-> `(rootPostHash, owner)` pairs could concatenate to the same 96 bytes and collide
-> inside one reason. Fixed-width parts are what close that.
+> a multi-part subject, which it wraps as one opaque run — were any part of one
+> variable-width, two different part-tuples could concatenate to the same bytes
+> and collide inside one reason. Every subject in the table below is a single
+> fixed-width field, so the rule holds by construction today; it binds any future
+> multi-part subject.
 >
 > *Across* reasons uniqueness holds unconditionally, because `enum8(reason)` is a
 > single distinguishing byte ahead of the subject. `@dagsocial/types` cannot
 > enforce the within-reason half: it takes `subject: Uint8Array` and the caller
 > owns the bytes. **This contract is the other half of that guarantee.**
->
-> ⚠ **Corrected 2026-08-16.** This read *"`subject` carries no length prefix"* and
-> justified across-reason uniqueness by no `MintReason` being a prefix of another.
-> Both describe an earlier preimage: the subject is `lp`-wrapped and the reason is
-> an `enum8` byte, so ASCII prefix-freeness decides nothing about ids. **The rule
-> survives the correction; only its justification was wrong** — which is the more
-> dangerous half to leave standing, because a reader deriving a NEW subject
-> encoding from a false reason reaches a false conclusion about what is safe.
 
 Two byte-form rules, both inherited from `TYPES_INTERFACE.md` → Pinned byte
 forms, so a mirror implementation derives the same ids:
@@ -1595,270 +1564,91 @@ forms, so a mirror implementation derives the same ids:
 
 ### Reason and subject table
 
-> ⚠ **The Site column is drifted table-wide and awaits the contract-vs-code audit.**
-> `mintKarma` and `mintCredits` no longer exist — value creation moved into settlement-transaction
-> outputs and direct block-application producers — and several reasons below may have no producer
-> left (`coinbaseContext` is defined and uncalled, the vouch-settle shape). Each row's Site needs
-> re-deriving against the tree; the Subject/Encoding/Bytes columns still bind any producer that
-> exists, because a mirror implementation derives ids from them.
-
 | `reason` | Subject | Encoding | Bytes | Site |
 |----------|---------|----------|-------|------|
-| `coinbase` | coinbase output index | `u32BE(i)` | 4 | `applyMutationPhase` → `mintCredits`, per coinbase output |
-| `vouch-settle` | — | — | — | ⛔ **RETIRED — tag 1 is reserved, never reused.** No producer: an unvouched stake waits in a `VouchEscrowBox` and its owner reclaims it by transaction, so no mint occurs. The tag stays reserved because reasons are `enum8` and a reuse would give a new reason an old reason's mint txIds |
-| `like-payout` | `author` | raw | 32 | per-block like settlement → `mintKarma(author, paid)`; one mint per author per block (P2-D) |
-| `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting → `mintKarma(post.author, toUnlock)` |
-| `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | per-block post-lock vesting, reduced-`PostLockBox` re-mint |
-| `decay` | `owner` | raw | 32 | `applyKarmaDecay` |
-| `genesis` | which genesis box | `u32BE(k)`: `0` = system karma, `1` = faucet credits, `2` = genesis proof, `3` = emission | 4 | `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` |
-| `genesis-committee` | the committee member | raw | 32 | ⚠ **AHEAD OF CODE** — genesis seeding, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool. `MINT_REASON` tag **13** |
-| `pool-settle` | — | *(empty)* | 0 | ⚠ **AHEAD OF CODE** — block application, the `KarmaPoolBox` successor. **One per block**, so height alone separates instances within the reason and `enum8` separates it from every other. `MINT_REASON` tag **14** |
-| `emission-release` | — | *(empty)* | 0 | block application, the `EmissionBox` successor |
-| `treasury-accrue` | — | *(empty)* | 0 | block application, the `TreasuryBox` successor |
-| `prune-refund-author` | `(rootPostHash, owner)` | `utf8(hex)` ‖ raw | 96 | `settlePruneUtxo` — one mint per lock owner **other than the pruning author**, whose own locks burn |
-| `invite-claim` | `inviteePublicKey` | raw | 32 | invite claim → `mintKarma(invitee, INVITE_KARMA_AMOUNT)` |
-| `bond-settle` | `inviteePublicKey` | raw | 32 | probation-deadline sweep → `mintKarma(bond.inviterId, vested)`; the unvested remainder burns |
-| `bond-return` | `inviteePublicKey` | raw | 32 | invite cancellation → `mintKarma(bond.inviterId, bond.value)` |
+| `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | post-lock vesting (block application) → `transferKarma`, the author's unlocked karma |
+| `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | post-lock vesting (block application) → `transferKarma`, the reduced-`PostLockBox` remainder |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = faucet karma stake, `1` = faucet credits, `2` = genesis proof, `3` = emission, `4` = karma pool | 4 | genesis seeding — `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` / `ensureKarmaPoolBox`. Selectors `0` and `1` exist only where the profile names a faucet identity; `2`–`4` on every network |
+| `genesis-committee` | the committee member | raw | 32 | genesis seeding — `seedGenesisCommittee`, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool |
 
-> ⛔ **AHEAD OF CODE — THE POOL IS SETTLED ONCE PER BLOCK, NOT ONCE PER MINT.** Every mint and burn
-> in a block changes circulating karma; block application moves the **net delta** against the pool in
-> a single transition at the end of the apply phase, accumulated at the store's own choke point
-> (`insertBox` / `consumeBox`) rather than at each mint site.
->
-> ⛔ **Per-site draws would be a discipline, and this repo has already ruled that class the wrong
-> answer.** A mint site added later that forgot to draw would **inflate the supply**, and a test would
-> only catch it if it happened to exercise that site. The choke point makes the contract's *"no rule
-> anywhere can inflate it"* literally true rather than conditional on every future author. Same shape
-> as `consumeBox` taking its liveness check into the primitive — **the property is the primitive's,
-> not its callers'**.
->
-> ⚠ **The invariant is a POST-BLOCK-APPLICATION property.** `pool.value + circulating ==
-> BOX_VALUE_BOUND − 1` holds **at every height**, not within a block: between a like transaction
-> burning its deficit and the settlement returning it, it is deliberately unbalanced. `validateTx`
-> step 5 keeps its exceptions verbatim — **user transactions still do not balance on their own, and
-> no user transaction names the pool.**
+**Four reasons, and the set is closed by the two producer classes.** A settlement output needs
+no reason — it has a transaction — so a new reason enters only with a new genesis box or a new
+conserving-in-place direct producer. Tags are `@dagsocial/types`' (`MINT_REASON`); this table
+deliberately does not repeat them. **Reasons retired before mainnet are deleted outright —
+numbers and names both free, no reservation list** (user, 2026-08-19); a **live** tag is never
+renumbered (TYPES_INTERFACE → Primitives).
 
-> ## ⚠ SUPERSEDED — THE NET-DELTA HALF OF THE BLOCK ABOVE IS DROPPED. READ THIS BEFORE IMPLEMENTING IT.
->
-> ⛔ **`ARCHITECTURE → The conservation axiom` FORBIDS A NET DELTA BY NAME**: *"not even as an
-> intermediary step."* Removing value at one point and restoring the same amount later — within a
-> block, within a transaction, anywhere — means there was an interval in which the unit did not
-> exist. **Per-block settlement of a net figure is accounting for burns, not an absence of them.**
->
-> ⛔ **It also failed in practice before the axiom existed to forbid it.** A net-burn block pushed the
-> pool successor past `2⁶³−1` and surfaced as a `RangeError` in an unrelated suite — the fixture was
-> **illegal state** that created karma from nothing and then destroyed it, and the overflow was the
-> symptom. A design flaw arriving as an arithmetic error in someone else's test is the shape nobody
-> catches by reading.
->
-> **What is wrong in the block above, sentence by sentence:**
->
-> | Claim | Now |
-> |---|---|
-> | *"moves the **net delta** against the pool"* | ⛔ **Dropped.** Every movement names its own source and sink |
-> | *"deliberately unbalanced within a block"* | ⛔ **Dropped.** A like outputs a `LikeAccrualBox` carrying its cost, so the value is located at every instant |
-> | *"step 5 keeps its exceptions verbatim"* | ⛔ **Inverted.** The list becomes **empty** — see §validateTx step 7 |
-> | *"user transactions still do not balance on their own"* | ⛔ **Inverted.** Every user transaction balances unconditionally |
-> | *"no user transaction names the pool"* | ✅ **Survives, and markers are HOW.** A user transaction still never names the pool; it hands value to a marker the settlement consumes |
->
-> ### ✅ What survives, and it is the better half
->
-> ⛔ **The choke-point argument is untouched and still decisive.** *"Per-site draws would be a
-> discipline"* — a site added later that forgot to draw would inflate supply, and a test would catch
-> it only by happening to exercise that site. **The property belongs to the primitive, not its
-> callers.** What changes is *what* the primitive accounts for: not a net delta to be reconciled, but
-> a transfer that already names both ends. ✅ **`consumeBox` taking its liveness check into the
-> primitive is still the precedent to copy.**
->
-> ⛔ **AND THE INVARIANT IS STRENGTHENED, NOT WEAKENED.** `pool.value + circulating` is constant
-> **at every height and between every pair of transactions inside a block** — not only after the
-> apply phase. ⚠ **It is a DIFFERENT sum from `getTotalKarma`**, which reports circulation and
-> excludes the pool deliberately; asserting either against the other is the error this note exists to
-> prevent.
->
-> ⛔ **AHEAD OF CODE — THE `genesis` SUBJECT IS A SINGLE NUMBER, AND COMMITTEE SEEDING CANNOT USE
-> IT** (`docs/specs` design §3, unit B). `genesis` keys on `u32BE(k)`, one value per genesis box.
-> Seeding N committee members from `genesisCommitteeKeys` produces **N karma boxes**, and every one
-> of them would take the same `k` — so the same synthetic `txId`, the same `computeBoxId` preimage,
-> and the **second insert violates `UNIQUE(tx_id, output_index)`**. The failure is loud, at genesis,
-> on any network with more than one committee member — and invisible on the empty arrays all three
-> networks carry today.
->
-> ✅ **Committee seeding takes `genesis-committee`, keyed on the MEMBER** — subject = the member's
-> public key, raw, 32 bytes, the shape `like-payout` already uses. One mint per member, distinct by
-> construction. **`MINT_REASON` tag 13.**
->
-> ⚠ **A 32-byte subject under the existing `genesis` reason would also be injective, and is still
-> wrong.** `computeMintTxId` writes `lp(subject)`, so `lp(4)` and `lp(32)` differ in their first byte
-> and can never collide — the ids would be fine. **What breaks is the description**: `genesis`'s row
-> says 4 bytes, and a mint carrying 32 makes it false. A correct-but-undescribed encoding fails no
-> test and rots on its own schedule, which is the defect class this table exists to prevent.
->
-> ⚠ **What becomes of `k = 0` is open.** `ensureSystemKarmaBox` is deleted, so subject `0` loses its
-> box. Whether the pool takes `0` or a fresh number is undecided; the chain restarts either way, so
-> nothing is at risk beyond legibility.
+**Why `(height, reason, subject)` cannot repeat, per row.** Post-lock vesting runs at most once
+per post per block and both postlock reasons key on the post id, so each `(height, post)` pair
+yields at most one unlock and one remainder. Genesis seeding runs once, on an empty store; each
+`genesis` selector names exactly one box, and a committee key appears at most once in
+`genesisCommitteeKeys`.
 
-> ⛔ **"INCREASES KARMA SUPPLY" LOSES ITS REFERENT ONCE THE POOL EXISTS, AND THE PHRASE IS NOW TWO
-> CLAIMS.** ⚠ **AHEAD OF CODE until the per-block settlement lands.** **Total** karma is constant —
-> the pool is the only source and the only sink, so **no row increases it.** What rows differ on is
-> their net effect on **circulating** karma:
->
-> | Net effect | Rows |
-> |---|---|
-> | **draws from the pool** | `invite-claim`, `like-payout`, `vouch-settle`, `genesis-committee` |
-> | **recirculates** — net zero | `bond-return`, `postlock-unlock`, `prune-refund-author` |
-> | **returns to the pool** | `decay`, and the burns that are an *absence* of a mint (bond forfeiture, a pruner's own locks) |
->
-> ✅ **The invite family's distinction survives, in the new vocabulary.** `invite-claim` draws karma
-> the invitee did not have; `bond-settle` and `bond-return` recirculate what a `BondBox` already
-> held, in the same sense `vouch-settle` returns an escrow — a synthetic txId for a box block
-> application creates, not a unit of karma coming into existence.
+⛔ **One `genesis` selector names ONE box.** N boxes under one `k` would derive one synthetic
+txId, one `computeBoxId` preimage, and the second insert violates `UNIQUE(tx_id, output_index)`
+— which is why committee seeding is keyed on the **member**, the shape any per-recipient mint
+takes. A 32-byte subject under `genesis` itself would also be injective (`lp(4)` and `lp(32)`
+differ in their first byte) and is still wrong: the row says 4 bytes, and a
+correct-but-undescribed encoding fails no test and rots on its own schedule — the defect class
+this table exists to prevent.
 
-`ARCHITECTURE` → "Karma supply
-changes" names this table as authoritative, so the distinction has to be readable
-here rather than inferred.
+**No reason increases karma supply.** Supply is fixed at genesis: the `genesis` rows are its
+creation, `genesis-committee` grants are drawn out of the pool in the same seeding, and the two
+postlock reasons recirculate karma the `PostLockBox` already held. Everything that moves value
+after genesis is either a user transaction or the block's settlement transaction
+(`ARCHITECTURE` → UTXO conservation), and neither needs a mint reason: their outputs carry
+ordinary transaction ids.
 
-⛔ **`emission-release` and `treasury-accrue` create no credits.** Both name a box that block
-application spends and recreates: the emission box's successor holds what the schedule has not yet
-released, the treasury box's holds what has accrued. A synthetic txId is what any created box needs
-in order to have an identity, and needing one is not a claim that value was minted — the same
-standing `vouch-settle`, `bond-settle` and `bond-return` already have on the karma side.
+⛔ **Value movement is never a call site's discipline.** The two operations that move karma —
+the settlement transaction and `transferKarma` — each name source and destination in one
+operation and fail closed in both directions (`transferKarma` throws `KarmaNotConservedError`;
+a settlement that does not conserve is a rejected block). A path that touches the pool, the
+emission box or the treasury is the settlement's; `transferKarma` serves the paths that
+conserve inside themselves. **The property is the primitive's, not its callers'** — the same
+standing `consumeBox`'s liveness check has.
 
-**Why `(height, reason, subject)` cannot repeat for the two empty subjects.** An empty subject is
-the honest encoding when there is nothing to discriminate, and it is self-delimiting because
-`computeMintTxId` writes `lp(subject)` — a zero length, not an absence. Exactly one emission
-successor and one treasury successor exist per height, so the height alone separates every instance
-within a reason, and `enum8(reason)` separates the two reasons from each other and from every other
-row. This satisfies the third requirement of "Discriminants are semantic, never positional" outright
-rather than by argument.
+⚠ **The conservation invariant holds at every height and between every pair of transactions
+inside a block:** `sum(every karma-bearing box) + pool` is constant from genesis
+(`ARCHITECTURE` → UTXO conservation; `test/services/conservation-axiom.test.ts` asserts it
+across an applied chain). ⚠ **It is a DIFFERENT sum from `getTotalKarma`**, which reports
+circulation and excludes the pool deliberately; asserting either against the other is an
+error.
 
-⚠ **This is why the count is not `coinbaseOutputs.length`.** Deriving either subject from a position
-in the block would be exactly the position-derived identity that section forbids, and it would be
-collision-free — which is what makes it tempting and does not make it permitted.
+Three rules about subjects that are decided, not open:
 
-**Why `(height, reason, subject)` cannot repeat for these three.** All three take
-the invitee's public key as subject; an invite may not name an existing account
-and a claim makes the invitee one, so a key is invited at most once ever
-(→ "Bond transition rules"), so each `(reason, subject)` pair occurs at most once
-in the whole history — a stronger property than this table requires, and it holds
-without reading the height at all. The three are mutually exclusive besides: an
-invite is claimed or cancelled, never both, so a key that carries `bond-settle`
-can never carry `bond-return`.
-
-**Retired by P2-D — names reserved, never reuse:** `author-reward` and `liker-refund`
-(the epoch tally's reasons, superseded by `like-payout`), and `prune-refund-liker` (with
-no `LikeBox` there is nothing to refund a liker at prune — the like's karma was burned at
-cast and is deliberately unrecoverable).
-
-✅ **Landed in phase G1/G2.** The two tags are in `MintReason`, the encoders are
-in `mint-provenance.ts`, and `settlePruneUtxo` takes `rootPostHash` and passes
-real contexts. `mintKarma`/`mintCredits` now take a **required** `MintContext` —
-the `| null` escape hatch is gone, so a producer emitting no provenance is a
-**compile error** (`TS2345`) rather than a runtime constraint failure at apply
-time. That is the whole point of removing it: the defect class left the runtime.
-
-Three things about them that are decided, not open:
-
-- **Distinct recipients-at-height need distinct `(reason, subject)` pairs.** This
-  bullet's original head — prune settlement carrying *two* reasons because one user can
-  be both author and liker in one subtree — is historical since P2-D deleted the liker
-  leg, but the rule it taught stands and has live instances: `like-payout` and
-  `postlock-unlock` can both mint to the same author at the same height, separated by
-  reason (and, as it happens, by subject shape).
-- **`rootPostHash` is load-bearing, not decoration.** `settlePruneUtxo` runs
-  **per prune entry**, so a block carrying two entries calls it twice at one
-  height. Without the entry's identity in the subject, an author with refunds in
-  both subtrees derives the same `mintTxId` twice at `index` 0, trips
-  `UNIQUE(tx_id, output_index)`, and a **legitimate block is rejected**.
-  (`subtreeMerkleRoot` — raw 32, giving a 64-byte subject — would serve equally
-  and commits to the exact post set; `rootPostHash` was chosen because the mint
-  id then traces to a post that can be looked up.)
-- ⛔ **Prefix-freeness NO LONGER HOLDS, and nothing rests on it.** `genesis` is a proper prefix
-  of `genesis-committee`. **The reason reaches the preimage as `enum8(reason)` — one byte from a
-  closed table — never as its string**, so cross-reason injectivity is structural and the strings
-  carry none of it. The union's own doc block says as much: a one-byte tag is what makes the
-  property unnecessary to maintain.
-
-  ✅ **The test that pinned it was a tripwire, not an invariant, and it fired exactly as designed.**
-  It asserted the property while stating in the same breath that it was *"true, but not required"*
-  and that a member *"could legally be named `decay-extra`"* — so that losing it would read as a
-  deliberate step rather than an accident. It now pins the loss with `genesis-committee` as the
-  named witness, **alongside the distinct-txId assertion that survives it** — which is the live
-  demonstration that the tag carries injectivity.
-
-  ⚠ **This bullet's second claim caught its first.** *"Re-checks automatically when the set is
-  edited"* is what turned a silent regression into a red test the moment the set grew.
-
-  ⚠ **Corrected 2026-08-16 — this claimed coverage the test did not have, and that claim is
-  why nobody looked.** The check ran over a **hand-written `MintReason[]`** that never tracked
-  the union, so `invite-claim`, `bond-settle` and `bond-return` — tags 8, 9 and 10 — sat in a
-  consensus preimage with **no frozen vector at all**. The list is now
-  `Readonly<Record<MintReason, string>>`, so a reason added without a vector is a compile
-  error, and the three missing vectors are pinned; all eight that already existed came out
-  byte-identical, so nothing about the encoding moved. Found by the executor adding tags 11
-  and 12, which is the first time anything forced the list to be read against the union.
-
-  ⛔ **THREE instances of one defect surfaced in a single unit, and the third had already
-  drifted before it began.** All three are lists of "every X" that nothing checks:
-
-  | Site | State when found |
-  |---|---|
-  | the mint-reason golden table (types) | tags 8, 9, 10 in a consensus preimage with no vector |
-  | `ui-crypto-mirror`'s `ALL_BOX_TYPES` | 6 of 8 box types mirrored; omitting one compiled and passed |
-  | `mint-provenance.test.ts`'s `allContexts` | **8 entries against an 11-member union**, and the test *named* "covers every `MintReason` exactly once" compared the hand-kept list against itself |
-
-  All three are now keyed on the type (`Record<…>` / `satisfies`), so an omission is a compile
-  error. **The general rule: a list of "every X" that is not derived from X's type is a manual
-  copy of a type definition, and it drifts silently — a test named for coverage is the most
-  dangerous form, because the name is what stops anyone checking.** When a contract says a
-  property is pinned "over the whole" of something, that sentence is a claim about a *type*;
-  verify the test is keyed on one.
-
-**`prune-refund-author` is NOT retired, and the reasoning that expected it to be
-was wrong in an instructive way.** Burning the pruner's own bond retires the
-*pruner's* refund, not the reason: a subtree holds replies by other people, and
-*"you may destroy your own stake, never someone else's"* means those owners are
-still paid. So the reason survives with a **narrower set** — every lock owner in
-the subtree except `entry.authorId`.
-
-⛔ **Its `rootPostHash` subject survives with it, and the collision it prevents is
-still reachable.** `MAX_PRUNES_PER_BLOCK` is 32, so one block can carry prunes by
-**different authors** whose subtrees each contain a reply by the same third party.
-That owner is minted once per entry at one height; without `rootPostHash` in the
-subject the two derive the same `mintTxId`, trip `UNIQUE(tx_id, output_index)`,
-and a legitimate block is rejected. **Narrowing the refund set did not narrow the
-collision.**
-
-The liker leg is **already gone**: P2-D deleted `prune-refund-liker` with
-`LikeBox`, since a like's karma is burned at cast and deliberately unrecoverable.
-Retired names stay reserved.
+- **Distinct recipients-at-height need distinct `(reason, subject)` pairs.** The live instance:
+  `postlock-unlock` and `postlock-remainder` can both mint against the same post at the same
+  height with **identical subjects** — the reason tag alone separates them.
+- ⛔ **Prefix-freeness of reason strings does not hold, and nothing rests on it.** `genesis` is a
+  proper prefix of `genesis-committee`. **The reason reaches the preimage as `enum8(reason)` —
+  one byte from a closed table — never as its string**, so cross-reason injectivity is
+  structural and the strings carry none of it. The types test pins the loss deliberately, with
+  `genesis-committee` as the named witness, beside the distinct-txId assertion that demonstrates
+  the tag carrying injectivity.
+- **Every "covers every `MintReason`" list is keyed on the type**
+  (`Readonly<Record<MintReason, …>>` / `satisfies`), so an omission is a compile error. A list
+  of "every X" that is not derived from X's type is a manual copy of a type definition and
+  drifts silently — a test *named* for coverage is the most dangerous form, because the name is
+  what stops anyone checking. When a contract says a property is pinned "over the whole" of
+  something, that is a claim about a *type*; verify the test is keyed on one.
 
 Every encoding above is **fixed-length**, so the rule holds by construction
-rather than by inspection. **The two empty subjects are fixed-length at zero**, which is not an
-exception to that: `computeMintTxId` writes `lp(subject)`, so an empty one encodes as a zero length
-and remains self-delimiting — an absent field and a present-but-empty one are the same bytes here
-only because there is no absent case.
+rather than by inspection.
 
-⚠ **`genesis` deliberately does not use the ASCII tags `system-karma` /
-`faucet-credits`** that Spec G §3.2 sketched. Those are variable-length and
-neither self-delimiting nor fixed — they are merely *prefix-free*, which happens
-to be sufficient for this pair but is not a property the rule can check per
-encoding. A `u32BE` selector satisfies the rule outright. Adding a genesis box then costs one
-integer, not a re-examination of prefix-freeness — which is exactly what the emission box's
-selector `3` cost.
-
-`reason` is the discriminant that separates `like-payout` from `postlock-unlock` —
-both can mint to the same author at the same height; the reason alone already
-separates them (their subjects differ in shape too: raw author vs post-id hex).
+⚠ **`genesis` deliberately does not use ASCII tags** (`system-karma` and the like). Those are
+variable-length and neither self-delimiting nor fixed — merely *prefix-free*, which happens to
+suffice for a small set but is not a property the rule can check per encoding. A `u32BE`
+selector satisfies the rule outright, and adding a genesis box costs one integer, not a
+re-examination of prefix-freeness — which is exactly what the emission box's selector `3` and
+the pool's `4` cost.
 
 ### `index` is always 0 for mints
 
-Each mint event emits exactly one box, so its `index` is `0`. Multi-output
-coinbase is **N events, not one N-output transaction**: each output gets its own
-`subject` and its own synthetic txId. That reflects what the code does — each
-`mintCredits` call merges a *different* set of pre-existing boxes, so the outputs
-share no input set and are not one transaction in any meaningful sense. The
-`index` field exists so mint and transaction derivation share one code path.
+Each mint event emits exactly one box, so its `index` is `0`. A vesting that
+unlocks karma and leaves a remainder is **two events under two reasons**, not one
+two-output transaction; genesis seeding is one event per selector and one per
+committee member. The `index` field exists so mint and transaction derivation
+share one code path.
 
 ### Which producers attach provenance, and which deliberately do not
 
@@ -1870,16 +1660,14 @@ A box gets provenance **where it is stored**, not where it is first constructed.
   `materializeOutput(box, txId, index)` rule — both the mempool path
   (`validateTx`) and the block-embedded path go through it, so there is one
   materialisation rule rather than two chances to place the keys differently.
-- **Transaction builders that insert boxes** (`invites.ts`, `credits.ts`)
-  materialise through the same helper, because their predicted ids are acted on
-  by clients.
-- **Builders that only hand a transaction to the mempool** — `faucet-service.ts`
-  and `routes/utxo.ts` — attach **nothing**. They insert no box and return no
-  predicted id; their outputs' `id` fields are vestigial, and phase G turns
-  `UtxoTransaction.outputs` into `BoxCandidate[]`, which carries *less*. Their
-  boxes get provenance when block application materialises them. Attaching there
-  would ride the wire for no consumer, have to be undone at phase G, and widen
-  the attacker-controlled-key surface (1c) to paths that currently have none.
+- **Builders that predict an output's id for the client** — `invites.ts`'s
+  `bondBoxId` — materialise through the same helper, because the predicted id is
+  acted on by clients and must match what block application later derives.
+- **Builders that only hand a transaction to the mempool** — `routes/utxo.ts`,
+  and every external client (the demo UI, the faucet package) — attach
+  **nothing**. They insert no box; `UtxoTransaction.outputs` is
+  `BoxCandidate[]`, which has no provenance keys to carry. Their boxes get
+  provenance when block application materialises them.
 
 `u32BE` is **exported from `@dagsocial/types`** (phase G1) and
 `mint-provenance.ts` imports it; it previously kept a local mirror, and a silent
@@ -2058,19 +1846,27 @@ encoding added to the table above, and an argument at the call site that
 `createOrderingBlock()` / `getCurrentTemplate()` / `clearTemplate()` /
 `submitMinedBlock(powNonce, height)`
 
-### ⚠ AHEAD OF CODE — The settlement transaction
+### The settlement transaction
 
-**One per block, covering both ledgers.** It is where every protocol effect happens, and it is the
-**only** spender of the karma pool and the emission box.
+**One per block, covering both ledgers, and it is the LAST entry in `utxoTxIds`** — that is the
+whole of how it is identified (`@dagsocial/validation` refuses a body with no last entry;
+what the settlement contains is consensus and is this section's). It is the **only** spender of
+the karma pool, the emission box and the treasury box, and the only consumer of fee boxes.
 
 | | |
 |---|---|
-| **Consumes** | the karma pool box · the emission box · every marker box the block's transactions emitted · every `VouchEscrowBox` whose `releaseAtBlock` is this height · the carry box of every author the block credits · the `BondBox` of every bond settling at this height |
-| **Emits** | the replacement pool and emission boxes · coinbase outputs · every box the block's protocol effects create |
+| **Consumes** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every author the block credits · every `VouchEscrowBox` whose `releaseAtBlock` is this height · the `BondBox` of every bond settling at this height · the karma boxes decay charges and the locks a prune entry names |
+| **Emits** | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · like payouts and carry successors · decay replacements · prune refunds |
 
-⛔ **`CoinbaseOutput` FOLDS IN.** Coinbase outputs become outputs of this transaction, so the block
-body loses its `coinbaseOutputs` field and `utxoTxRoot` loses the `'coinbase'` leaf class
-(TYPES_INTERFACE → OrderingBlock).
+⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
+transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
+leaf class (TYPES_INTERFACE → OrderingBlock).
+
+⚠ **"Every protocol effect" admits exactly one exception: post-lock vesting.** A `PostLockBox`
+vests into its own owner's karma and a reduced lock — the pool is uninvolved, so it runs as a
+direct block-application transfer (`transferKarma`) with synthetic mint ids (§Box Identity and
+Mint Provenance) rather than as settlement outputs. Every effect that touches the pool, the
+emission box, the treasury or a fee box rides the settlement.
 
 #### Why exactly one
 
@@ -2179,9 +1975,10 @@ becoming a chain split.
 listings and mempool reads are unaffected — **the obligation follows the consumer, not the query**,
 so this is checked per call site rather than by sweeping for missing `ORDER BY`.
 
-⛔ **`vouch_cooldowns`-style node-local SQL is exactly what this forbids.** A block-application effect
-must be derivable from **block content**; an effect keyed on a local table is a fork, not a
-refactor. That is the load-bearing reason marker boxes exist rather than a tidiness argument.
+⛔ **A node-local table as the derivation source is exactly what this forbids.** A
+block-application effect must be derivable from **block content**; an effect keyed on a local
+table is a fork, not a refactor. That is the load-bearing reason marker boxes exist rather than
+a tidiness argument.
 
 ⚠ **Three ordering sources are permitted and no fourth is**: the block's committed transaction order,
 ascending box id, and ascending height. Anything read from a table needs a stated total order or it
@@ -2274,10 +2071,12 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 ### Block finalization
 
 1. Store block in `block_ordering` table
-2. Apply coinbase — mint credits for each output
-3. Broadcast ordering block to peers
-4. Confirm the block's posts (`confirmPost`, ids from its post transactions)
-5. Apply UTXO transactions. The decode pass runs first and carries its own rule —
+2. Broadcast ordering block to peers
+3. Confirm the block's posts (`confirmPost`, ids from its post transactions)
+4. Apply UTXO transactions — the settlement, as the last entry in `utxoTxIds`,
+   applies here like every other, and its outputs are where the coinbase's
+   credits, the protocol-box successors and every pool-touching effect land.
+   The decode pass runs first and carries its own rule —
    see "Embedded transactions: a mismatch rejects the block": a tx whose bytes
    cannot be proven to be the id declared beside them rejects the block before
    this step sees a queue. Then, for each embedded UTXO tx, once its inputs are all
@@ -2304,14 +2103,14 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
    two nodes with different caps would disagree about a block carrying a dependency
    chain longer than the smaller one, and the disagreement would be indistinguishable
    from this rule working. A chain of any depth the block can hold must apply.
-6. Remove confirmed entries from mempool (`removeEntry` for each confirmed rowid).
+5. Remove confirmed entries from mempool (`removeEntry` for each confirmed rowid).
    ⚠ **This runs even when the block was rejected**, and that is deliberate,
    not an oversight: whatever made the body invalid is still pooled, so
    leaving it would rebuild the same rejected block every interval and stall
    the chain — expiry cannot save it, since `purgeExpired` keys on a height
    that stops advancing when production stops. Step 15b's `body rejected`
    outcome applies the same eviction for the same reason.
-7. Reset pending counter and template
+6. Reset pending counter and template
 
 ### Mining modes
 
@@ -2418,12 +2217,10 @@ reads. Above the terminus no emission box exists and nothing is released.
 > the one site. Checked against the input box itself, so a node holding the `stateRoot` holds
 > everything the refusal reads.
 >
-> **The consolidation that made enforcement unsafe is gone.** `mintCredits` — which consolidated
-> every credit box an owner held into one carrying `max(all locks)`, so enforcing the lock would
-> have frozen an active miner's whole balance and mining again would have extended the freeze —
-> no longer exists. The coinbase credit is an output of the block's settlement transaction: one
-> box per block, carrying its own lock, which is the coinbase-keeps-its-own-box shape Bitcoin and
-> Ergo use. A miner's successive rewards unlock on their own schedules.
+> **Each block's coinbase credit is its own box.** It is an output of the block's settlement
+> transaction: one box per block, carrying its own lock — the coinbase-keeps-its-own-box shape
+> Bitcoin and Ergo use. A miner's successive rewards unlock on their own schedules, so enforcing
+> one lock never freezes another block's reward.
 
 ### Difficulty schedule
 
@@ -2437,10 +2234,11 @@ local wall time (audit M-2). Normative spec: `MINING_INTERFACE.md`
 
 ### Per-block like settlement (P2-D — replaced the epoch tally)
 
-Runs at the end of **every** block's mutation phase. Entirely **derived** — nothing rides
-in the block (compare the retired `EpochTallyResults`, which had to be carried and
-compared; per-block settlement cannot disagree between producer and verifier because
-neither transports it).
+Runs at the end of **every** block's mutation phase, through the block's settlement
+transaction. The quantities are **committed, not transported**: the markers ride the block as
+outputs of its like transactions, so a producer/verifier disagreement is impossible — the
+settlement reads what the block itself carries (compare the retired `EpochTallyResults`, which
+had to be carried and compared).
 
 **During embedded-tx application**, each like transaction (the `likeTarget` biconditional
 shape, validated by the engine):
@@ -2450,58 +2248,28 @@ shape, validated by the engine):
    `dag_posts.author`; like-record `(liker, targetPostId)` absent — else the tx is
    invalid and the block is rejected
 2. Writes the like-record via `insertLikeRecord` (journalled side-record)
-3. Increments an in-memory per-author counter and per-post counter for this block
+3. Applies the transaction's outputs like any other — the `LikeAccrualBox` marker among
+   them — and counts the like per author and per post for the end-of-phase steps
 
 **At end of mutation phase, after all embedded txs** (order pinned: embedded txs →
-like settlement → post-lock vesting → decay):
+the settlement transaction → lifetime-like counters → post-lock vesting → decay clocks):
 
-4. **Author settlement** — for each author with a non-zero counter, in ascending
-   author-hex order:
+4. **Author settlement — outputs of the settlement transaction.** For each author with
+   likes this block, in ascending author-hex order, the settlement consumes their `n`
+   markers (in committed transaction order) and their carry box holding `r`, and emits:
    ```
-   total = record.likeCarry + likesThisBlock
-   paid  = (total / LIKES_PER_KARMA_PAYOUT) * (LIKES_PER_KARMA_PAYOUT − 1)   // integer, truncating
-   carry = total % LIKES_PER_KARMA_PAYOUT
+   markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
+       total = n + r,   q = ⌊total / x⌋,   r′ = total mod x,   x = LIKES_PER_KARMA_PAYOUT
    ```
-   If `paid > 0`: `mintKarma(author, paid, { reason: 'like-payout', subject: author })` —
-   one mint per author per block, consolidating as every karma mint does. Write `carry`
-   back via `putIdentityRecord` **unconditionally** (it changed even when `paid` is 0) —
-   journalled as `kind:'record'`, so it reaches the AVL feed and the `stateRoot`.
-
-   > ## ⚠ AHEAD OF CODE — THE COUNTER AND THE MINT BOTH GO; THE ARITHMETIC DOES NOT
-   >
-   > ⛔ **`IdentityRecord.likeCarry` IS DELETED.** A counter exists to remember karma that does not
-   > yet exist; once the karma sits in a box, **the box is the carry**, and keeping both is two
-   > representations of one quantity free to disagree. ✅ **This also dissolves the standing open
-   > question *"whether outstanding carry counts as live supply"*** — it is live, in the UTXO set, and
-   > in the `stateRoot` because every box is.
-   >
-   > ⛔ **`mintKarma` IS DELETED HERE, NOT REPOINTED.** The payout has no source today; under the
-   > accrual it needs none, because **the likers funded it.** Step 4 becomes an output of the block's
-   > settlement transaction:
-   >
-   > ```
-   > markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
-   >     total = n + r,   q = ⌊total / x⌋,   r′ = total mod x,   x = LIKES_PER_KARMA_PAYOUT
-   > ```
-   >
-   > ✅ **The economics are unchanged** — per `x` likes the author receives `x−1` and 1 leaves
-   > circulation. ⛔ **On this path the pool is a SINK and never a source.** A holder cannot
-   > distinguish "destroyed" from "returned to a pool nothing can spend"; only the accounting identity
-   > changes. **The remainder goes to the pool, never the treasury** — §Likes settles that, and
-   > routing it to the treasury would be redistribution wearing deflation's name.
-   >
-   > ✅ **"Entirely derived — nothing rides in the block" SURVIVES, and step 3's in-memory counter is
-   > what changes.** The markers *are* in the block, as outputs of the like transactions, so the
-   > settlement reads them instead of a counter it accumulated. That is strictly stronger: a
-   > producer/verifier disagreement is now impossible because the quantity is **committed**, not
-   > merely recomputed the same way on both sides.
-   >
-   > ⚠ **Ordering still binds.** Ascending author-hex order stays the rule for emitting an author's
-   > outputs; the markers themselves are consumed in committed transaction order. **Both orders are
-   > fixed by the block** — see §the settlement transaction's determinism obligation, which admits
-   > exactly three ordering sources and no fourth.
-   >
-   > ⛔ **All integer arithmetic, unchanged.** A float intermediate is a consensus fork.
+   The likers funded the payout — on this path the pool is a **SINK and never a
+   source**; per `x` likes the author receives `x−1` and 1 leaves circulation for good
+   (**to the pool, never the treasury** — §Likes settles that, and routing it to the
+   treasury would be redistribution wearing deflation's name). **The box is the carry** —
+   no counter field exists; a holder cannot distinguish "destroyed" from "returned to a
+   pool nothing can spend", and the accounting identity is what conservation checks.
+   `IdentityRecord.lifetimeLikesReceived` is bumped in the bookkeeping step after the
+   settlement, and only ever adds. All integer arithmetic; a float intermediate is a
+   consensus fork.
 5. **Post-lock vesting** — for each post with a non-zero per-post counter and a live
    `PostLockBox`, in ascending post-id order:
    ```
@@ -2510,12 +2278,13 @@ like settlement → post-lock vesting → decay):
    shouldUnlock    = totalLikes / POST_LOCK_UNLOCK_PER_LIKES   // integer division
    toUnlock        = min(value, shouldUnlock − alreadyUnlocked)
    ```
-   If `toUnlock > 0`: consume the box, `mintKarma(post.author, toUnlock,
-   { reason: 'postlock-unlock', subject: targetPostId })`, and re-mint the reduced box
-   (`postlock-remainder`) unless fully unlocked.
+   If `toUnlock > 0`: `transferKarma` consumes the box, credits `toUnlock` to the lock's
+   owner (`postlock-unlock`) and shapes the reduced lock as the remainder
+   (`postlock-remainder`) unless fully unlocked — the `PostLockBox` is the source, the
+   pool is uninvolved, and the transfer throws rather than create or destroy.
 
-**Determinism:** iteration orders are pinned (author hex, post id) for journal-order
-canonicality; the mint ids are order-independent regardless (`(height, reason, subject)`).
+**Determinism:** iteration orders are pinned (author hex, post id), and the settlement's
+marker inputs follow committed transaction order — every order is one the block fixes.
 All arithmetic `bigint`/integer — a float intermediate is a consensus fork.
 
 **Same-block exclusion:** a block may not carry both a like on post `P` and a prune entry
@@ -2523,8 +2292,9 @@ covering `P`. Prune settlement runs before embedded txs in the mutation order, s
 finds its target pruned, is invalid, and the whole block is rejected. Producers must not
 assemble such a block; the rule makes the outcome deterministic when one does.
 
-**Blocks with no likes** run neither loop — no record writes, no mints, no vesting. An
-author's carry sits unchanged in the `stateRoot` until their next liked block.
+**Blocks with no likes** run neither loop — no record writes, no like leg in the
+settlement, no vesting. An author's carry box sits unchanged (and in the `stateRoot`,
+because every box is) until their next liked block.
 
 ---
 
@@ -2679,11 +2449,15 @@ clock has to live in committed state (Spec G D4).
 IdentityRecord {
   lastActivityBlock: number     // u32 — bumped when a non-decay karma box is created for the owner
   lastDecayBlock: number        // u32 — bumped when decay fires
-  likeCarry: bigint             // < LIKES_PER_KARMA_PAYOUT — outstanding like accrual (P2-D)
-  invitedAtBlock: number        // u32 — height the invite claim applied; 0 = never invited
+  invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
 }
 ```
+
+⛔ **The outstanding like accrual is deliberately NOT a field here.** The carry sits in a
+`LikeAccrualBox` — **the box IS the carry** (ARCHITECTURE → Likes) — and a record field
+beside it would be two representations of one quantity, free to disagree. The carry reaches
+the `stateRoot` either way, because every box does.
 
 **The record's existence is the invite bar; `invitedAtBlock` is the probation
 clock and nothing else.** An invite may only name a key holding no record at all,
@@ -2712,8 +2486,8 @@ fall under it.
 The record is a full-row upsert and the type forces every field *present*, so a
 writer passing `0` compiles and passes typecheck while erasing a probation clock
 or a like history. **Every writer other than the one that owns a field carries the
-stored value through unchanged** — `invitedAtBlock` is owned by the claim path,
-`lifetimeLikesReceived` by like settlement, and `likeCarry` by settlement too.
+stored value through unchanged** — `invitedAtBlock` is owned by the grant path,
+`lifetimeLikesReceived` by the lifetime-counter bookkeeping.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
 the raw `identityId`.** Records and boxes share one 32-byte AVL keyspace, and
@@ -2723,38 +2497,24 @@ entity kinds in the tree. Hashing under a domain tag makes that infeasible and
 is what makes the two kinds provably disjoint.
 
 **Table:** `identity_records (identity_id BLOB PRIMARY KEY, last_activity_block
-INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, like_carry INTEGER NOT NULL
-DEFAULT 0, invited_at_block INTEGER NOT NULL DEFAULT 0, lifetime_likes_received
-INTEGER NOT NULL DEFAULT 0)`. The SQL table keys on
-the raw 32 bytes; the AVL key is derived. Both are total functions of the
-identity, so the two representations cannot drift.
-
-⚠ **`likeCarry` enters the record's AVL value encoding as an always-present field** —
-conditional presence would reopen the key-set-exactness fork (contract 1a: cbor-x
-encodes present-but-`undefined` differently from absent, and the map header counts
-keys). The record shape change moves every record's AVL value bytes ⇒ `stateRoot`
-changes ⇒ covered by the standing fresh-chain deploy gate.
+INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, invited_at_block INTEGER
+NOT NULL DEFAULT 0, lifetime_likes_received INTEGER NOT NULL DEFAULT 0)`. The
+SQL table keys on the raw 32 bytes; the AVL key is derived. Both are total
+functions of the identity, so the two representations cannot drift.
 
 #### Layout — IdentityRecord
 
-> **Added 2026-08-10 to close a contract gap.** Phase 5 moves AVL values to the positional format
-> and found there was **no byte layout for this record anywhere** — five layout tables existed
-> (`Post`, `Stump`/`PruneEntry`, `Boxes`, `UtxoTransaction`, `Block`), all in `TYPES_INTERFACE`, and
-> none for the second committed entity. The struct above defined the *fields*, which is not the same
-> thing. The executor stopped rather than inventing one; that was correct — an encoding invented in
-> `node` is a consensus format with no contract, which is the defect class this bundle exists to
-> close. **It lives here rather than in `TYPES_INTERFACE` because `IdentityRecord` is a `node` type
-> and `state/serialize-box.ts` is its only encoder**, but it uses the same writer vocabulary, and
-> `TYPES_INTERFACE` → Layout — Boxes governs the box arm of the same tree.
+> **It lives here rather than in `TYPES_INTERFACE` because `IdentityRecord` is a `node` type
+> and `state/serialize-box.ts` is its only encoder** — but it uses the same writer vocabulary,
+> and `TYPES_INTERFACE` → Layout — Boxes governs the box arm of the same tree.
 
 | # | Field | Encoding |
 |---|---|---|
 | 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Two entity kinds") |
 | 2 | `lastActivityBlock` | `vlqU` |
 | 3 | `lastDecayBlock` | `vlqU` |
-| 4 | `likeCarry` | `vlqU64` |
-| 5 | `invitedAtBlock` | `vlqU` |
-| 6 | `lifetimeLikesReceived` | `vlqU64` |
+| 4 | `invitedAtBlock` | `vlqU` |
+| 5 | `lifetimeLikesReceived` | `vlqU64` |
 
 **The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where
 `enum8(boxType)` is field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One
@@ -2763,17 +2523,13 @@ encoder, one byte string, no composition step where a caller could disagree abou
 **Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock` and
 `invitedAtBlock` are `u32` block
 heights; `vlqU` is total *by sentinel*, so an out-of-domain height cannot panic the encoder — it
-**collides**, exactly as `createdAt` did in the header before 1f. `likeCarry` is `vlqU64` and
-`writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`. Per spec §2.5 the domain belongs upstream of the
-encoder: `likeCarry` is written **only** by per-block like settlement and is bounded by
-`LIKES_PER_KARMA_PAYOUT`, so the producer establishes it. **A domain check at the encoder would be
-the band-aid; if this field ever gains a second writer, that writer owns the domain.**
-
-`lifetimeLikesReceived` is `vlqU64` on the same rule and from the same single writer, but its
-domain argument is different: it is unbounded by design and bounded only by the writer's `2⁶⁴`. One
-like per block for the life of the chain does not approach that, and the field is a **count**, never
-an amount — a saturating or wrapping write here would silently re-price every bond that settles
-afterwards.
+**collides**, exactly as `createdAt` did in the header before 1f. `lifetimeLikesReceived` is
+`vlqU64` and `writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`; the domain belongs upstream of
+the encoder — the lifetime-counter bookkeeping is its only writer, it is unbounded by design and
+bounded only by the writer's `2⁶⁴`. One like per block for the life of the chain does not
+approach that, and the field is a **count**, never an amount — a saturating or wrapping write
+here would silently re-price every bond that settles afterwards. **A domain check at the encoder
+would be the band-aid; if the field ever gains a second writer, that writer owns the domain.**
 
 > ⚠ **The same encodable-versus-storable gap that narrowed box values applies here, one field over.**
 > `lifetimeLikesReceived` is `vlqU64` into a SQLite `INTEGER`, which is **signed**, so its real
@@ -2784,12 +2540,13 @@ afterwards.
 
 ⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
 NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
-positional layout has no keys and no map header, so neither is expressible. **`likeCarry` must still
-always be written, zero included** — not because absence would fork the bytes any more, but because
-the field is part of the record and a layout writes every field. Likewise `bigint` stays the type:
-under `vlqU64` a `number` and a `bigint` of equal value encode identically, so the type no longer
-guards the *bytes* — it guards the `safeIntegers` row boundary against a silent `Number()` coercion,
-which is a different and still-live reason.
+positional layout has no keys and no map header, so neither is expressible. **`invitedAtBlock` and
+`lifetimeLikesReceived` must still always be written, zero included** — not because absence would
+fork the bytes any more, but because the fields are part of the record and a layout writes every
+field. Likewise `bigint` stays `lifetimeLikesReceived`'s type: under `vlqU64` a `number` and a
+`bigint` of equal value encode identically, so the type no longer guards the *bytes* — it guards
+the `safeIntegers` row boundary against a silent `Number()` coercion, which is a different and
+still-live reason.
 
 | Function | Signature |
 |----------|-----------|
@@ -2798,7 +2555,7 @@ which is a different and still-live reason.
 | `deleteIdentityRecord(identityId)` | `(UserId) => void` — fork-rollback inverse only; never records |
 
 **Lifecycle:** created on first karma receipt or on the first like received (the
-settlement's unconditional carry write — P2-D), **never deleted** in normal
+lifetime-counter write), **never deleted** in normal
 operation — only by rollback. Deleting at zero balance would keep the tree
 smaller but would require revert to resurrect records with their exact prior
 values; unbounded-but-simple is the deliberate choice at this stage.
@@ -2819,22 +2576,17 @@ boundary. **D5 is withdrawn** (spec corrected 2026-08-05).
 `IDENTITY_KEY_DOMAIN` is unaffected — it separates the record's AVL key from the
 box keyspace, which is a distinct concern from how the bytes are typed.
 
-**Phase B builds this entity and does not populate it.** No producer calls
-`putIdentityRecord` until phase D, and `decay.ts` keeps reading box heights
-until then. A phase-B tree contains zero records — which is why the proof
-endpoint's obligation (AVL+ State Root → "Two entity kinds") falls to phase D.
-
-#### Populating the record (phase D)
+#### Populating the record
 
 - **`lastActivityBlock`** — bumped at the **store choke point**, `insertBox`,
-  when the inserted box is a karma box with `decayBurn !== true`. That is
-  exactly today's staleness predicate ("no unspent non-decay karma box newer
-  than the threshold"), so the swap is behaviour-preserving by construction
-  rather than by re-derivation.
+  when the inserted box is a karma box with `decayBurn !== true` ("no unspent
+  non-decay karma box newer than the threshold" is the staleness predicate).
 - **`lastDecayBlock`** — bumped when decay fires for that owner.
-- **`likeCarry`** (P2-D) — written **only** by per-block like settlement, via
-  `putIdentityRecord` at the end of the mutation phase, unconditionally for every
-  author who received likes in the block. No other path may touch it.
+- **`invitedAtBlock`** — written only by block application when an invite grant
+  applies (the settlement's grant leg); every other writer carries it through.
+- **`lifetimeLikesReceived`** — bumped only by the lifetime-counter bookkeeping
+  after the settlement, for every author who received likes in the block; only
+  ever adds.
 
 **Two heights meet at `insertBox`, and they answer different questions.**
 
@@ -3005,11 +2757,8 @@ The journal is the single source of truth for undoing a block and for feeding
 the AVL prover (ARCHITECTURE → "Block application journal"). One CBOR-encoded
 row per applied block, purged below `height − MAX_REORG_DEPTH` (20).
 
-**Types are node-owned** (`src/store/journal.ts`). The former
-`@dagsocial/types` journal exports — `BlockJournal`, `KarmaMint`,
-`AppliedUtxoTx`, `DecayJournalEntry` — are removed from types; node was their
-only consumer. (`applyKarmaDecay`'s return type moves into the node package
-with it.)
+**Types are node-owned** (`src/store/journal.ts`); `@dagsocial/types` exports
+no journal types.
 
 ```
 BoxMutation {
@@ -3098,12 +2847,12 @@ included), and re-applying a block at the height — a reorg back to a
 previously-reverted chain — re-inserts the same content-addressed version
 and trips its PRIMARY KEY, permanently rejecting the block.
 Apply-then-revert MUST restore the exact pre-block UTXO set and AVL digest
-for every mutation class: coinbase (including pre-existing credit boxes
-merged in), like-payout mints (including pre-existing karma merged in),
-post-lock vesting swap, like-record inserts and prune-time deletes (rows
-restored exactly), decay, vouch-cooldown mint (escrow row restored), prune
-settlement, user txs, and **identity records** (`likeCarry` included). Reorg re-insertion reads
-`appliedUtxoTxs` (txCbor) and `confirmedSubBlockIds` as before.
+for every mutation class: the settlement transaction's every leg (coinbase
+credits, protocol-box successors, invite grants, like markers and carry,
+decay replacements, prune refunds, fee-box consumption), post-lock vesting's
+transfer, like-record inserts and prune-time deletes (rows restored
+exactly), prune settlement, user txs, and **identity records**. Reorg
+re-insertion reads `appliedUtxoTxs` (txCbor) and `confirmedSubBlockIds`.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse

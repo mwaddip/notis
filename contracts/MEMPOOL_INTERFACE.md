@@ -347,36 +347,17 @@ footprint first — both mandatory, and neither the miner's to trim — then tra
 with what remains. The settlement's size depends on what the fill selected, so the
 trim loop re-derives it per iteration rather than measuring it once.
 
-> ## ⚠ AHEAD OF CODE — THE SETTLEMENT TRANSACTION REPLACES `coinbaseOutputs` HERE, AND IT IS NOT A FIXED RESERVATION
->
-> Coinbase outputs become outputs of the block's settlement transaction
-> (`NODE_INTERFACE` → the settlement transaction), so the order becomes `pruneEntries` and **the
-> settlement** first, then transactions with what remains.
->
-> ⛔ **THE DIFFERENCE THAT MATTERS: `coinbaseOutputs` HAD A BOUNDED WORST CASE AND THE SETTLEMENT
-> DOES NOT.** The reservation could be seeded with the largest encoding a coinbase could take. A
-> settlement grows with **what the fill selected** — one accrual marker consumed per like — so
-> reserving its maximum would reserve most of the block.
->
-> ⛔ **"THE LOOP RUNS AT MOST ONCE" IS DERIVED FROM AN ACCUMULATOR THAT WOULD NOT SEE THIS.** That
-> bound holds because the running total is nearly right before the final exact measurement. A
-> transaction that also grows a structure the accumulator does not model breaks the premise, and the
-> loop's iteration count stops being bounded by the argument stated above.
->
-> ✅ **The fix keeps the bound rather than replacing it: `entryByteCost` must include the entry's
-> MARGINAL cost to the settlement**, not only its own encoded length. Then the accumulator is
-> nearly right again for the same reason it was before, and *"the sizer has the last word"* is
-> undisturbed.
->
-> ⚠ **The marginal cost is not uniform across entry kinds.** A like adds a marker the settlement
-> consumes and may add an author's carry-box output; an ordinary credit transfer adds nothing. **A
-> flat per-entry surcharge would over-reserve on the common case and under-reserve on a block full of
-> likes** — under-reserving is the direction that puts an assembled body over a budget every peer
-> measures.
->
-> ✅ **Popping is still monotone**, so the loop converges: removing a transaction removes its
-> settlement contribution too. **The settlement must be rebuilt on each iteration** rather than
-> measured once, or the trim loop shrinks the body while measuring a stale tail.
+⛔ **The settlement's footprint is NOT a fixed reservation, and `entryByteCost` is what keeps
+the loop bound.** A settlement grows with **what the fill selected** — one accrual marker
+consumed per like — so seeding the fill with its maximum would reserve most of the block.
+Instead **`entryByteCost` includes each entry's MARGINAL cost to the settlement**, not only
+its own encoded length, so the accumulator stays nearly right and *"the sizer has the last
+word"* is undisturbed. ⚠ **The marginal cost is not uniform across entry kinds** — a like adds
+a marker the settlement consumes and may add an author's carry-box output; an ordinary credit
+transfer adds nothing — and under-reserving is the direction that puts an assembled body over
+a budget every peer measures. ✅ **Popping is monotone**, so the trim loop converges: removing
+a transaction removes its settlement contribution too, and the settlement is rebuilt on each
+iteration rather than measured once.
 
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 
