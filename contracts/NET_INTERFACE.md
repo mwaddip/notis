@@ -1004,7 +1004,6 @@ Runs after Stage 1 passes, via registered `on*` callbacks:
 - Parent refs exist (live post or stump)
 - Author has sufficient karma
 - UTXO inputs unspent, each transition's authorization satisfied
-- Challenge check skipped for relayed posts (challenge was local to origin node)
 
 ### Forwarding Rule
 

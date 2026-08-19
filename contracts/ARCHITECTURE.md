@@ -275,20 +275,20 @@ Post {
   content: string              // 1–MAX_CONTENT_BYTES UTF-8
   author: UserId               // 32 raw bytes — see the representation rule below
   parentRefs: PostId[]         // 0–MAX_PARENT_REFS per post
-  challenge: bytes             // Random nonce issued by node (anti-precomputation)
-  powNonce: number             // PoW solution — proves work against challenge
   protocolVersion: number
   timestamp: number
-  signature: bytes             // Ed25519 over signingHash(post)
 }
 
-PostId = blake2b512(POST_ID_DOMAIN ‖ postFieldBytes(post) ‖ vlqU(powNonce))[0:32], hex
+PostId = computePostId(txId, index) — provenance-derived from the creating
+transaction; the post's own fields do not enter its id (TYPES_INTERFACE →
+Post identity). There is no post signature and no post PoW — authorship is
+the creating transaction's signature.
 ```
 
-> **The byte-exact preimage is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
+> **The byte-exact layout is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
 > Post") and nowhere else.** Every field is length-prefixed and the ref array carries an
-> explicit count (audit M-1); the domain tag keeps a post id from ever colliding with the PoW
-> hash over the same post. **Do not restate the formula here.** This document previously
+> explicit count (audit M-1); the id's domain tag keeps a post id from ever colliding with a
+> box or tx id derived from the same provenance. **Do not restate the formula here.** This document previously
 > carried it twice, in two different field orders, both in the pre-M-1 unprefixed form — a
 > restatement of a byte format is a mirror implementation in prose, and it diverged exactly
 > the way mirrors do.
@@ -847,11 +847,11 @@ pruned by its author, and pruning it releases the name.
 >
 > **Blocking dependency, live here:** the marker post below carries `type: "profile"`, and
 > **`Post` has no `type` field** — nor any other discriminator (`types/src/post.ts`, `Post` is
-> eight fields: content, author, parentRefs, challenge, powNonce, protocolVersion, timestamp,
-> signature). So profiles cannot be built
-> until post typing exists, and adding a field to `Post` enters `postFieldBytes`, which
-> **moves every post id**. That makes it a protocol-breaking change that should ride with
-> another id-moving change rather than go alone.
+> five fields: content, author, parentRefs, protocolVersion, timestamp). So profiles cannot be
+> built until post typing exists, and adding a field to `Post` enters `postFieldBytes`, which
+> enters the creating transaction's `TxId` — and a post's provenance-derived id moves with it.
+> That makes it a protocol-breaking change that should ride with another id-moving change
+> rather than go alone.
 >
 > This dependency was originally recorded against usernames and is void there — a UTXO asset
 > is not a post. It applies to profiles instead. **Any alternative discriminator (a reserved
