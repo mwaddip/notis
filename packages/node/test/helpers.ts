@@ -763,7 +763,6 @@ export function makePruneEntry(
     subtreeMerkleRoot,
     authorId: signWith.userId,
     authorSignature: new Uint8Array(cryptoSign(null, payload, signWith.privateKey)),
-    trigger: 'author',
   };
 }
 

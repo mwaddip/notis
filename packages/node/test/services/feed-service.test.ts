@@ -83,7 +83,6 @@ describe('feed-service', () => {
   const stumpScalars = {
     replyCount: 1,
     upvoteCount: 0,
-    trigger: 'author',
     protocolVersion: PROTOCOL_VERSION,
     compactedAtBlockHeight: 7,
   } as const;

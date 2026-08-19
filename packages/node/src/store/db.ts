@@ -32,7 +32,6 @@ const MIGRATIONS = [
     author_id BLOB NOT NULL,          -- 32-byte Ed25519 public key
     reply_count INTEGER NOT NULL,
     upvote_count INTEGER NOT NULL,
-    trigger TEXT NOT NULL,
     protocol_version INTEGER NOT NULL,
     compacted_at_block_height INTEGER NOT NULL
   )`,
@@ -262,7 +261,6 @@ function migrateVerifiablePrune(database: Database.Database): void {
       author_id BLOB NOT NULL,
       reply_count INTEGER NOT NULL,
       upvote_count INTEGER NOT NULL,
-      trigger TEXT NOT NULL,
       protocol_version INTEGER NOT NULL,
       compacted_at_block_height INTEGER NOT NULL
     );

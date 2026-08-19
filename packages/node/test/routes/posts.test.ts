@@ -351,7 +351,6 @@ describe('posts routes', () => {
     const stumpScalars = {
       replyCount: 3,
       upvoteCount: 2,
-      trigger: 'storage_prune' as const,
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: 11,
     };

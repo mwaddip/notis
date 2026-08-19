@@ -40,7 +40,6 @@ function makeStump(rootPostHash: string, overrides: Partial<Stump> = {}): Stump 
     authorId: uid('author-integration'),
     replyCount: 0,
     upvoteCount: 0,
-    trigger: 'author',
     protocolVersion: 1,
     compactedAtBlockHeight: 1,
     ...overrides,

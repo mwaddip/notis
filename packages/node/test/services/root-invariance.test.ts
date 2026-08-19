@@ -71,7 +71,6 @@ function asPruneEntry(v: GoldenVector): PruneEntry {
     subtreeMerkleRoot: hexToBuf(j.subtreeMerkleRoot as string),
     authorId: hexToBuf(j.authorId as string),
     authorSignature: hexToBuf(j.authorSignature as string),
-    trigger: j.trigger as PruneEntry['trigger'],
   };
 }
 
@@ -87,10 +86,6 @@ const rootOfLeaves = (...preimages: [string, string][]): string =>
 //
 //   PruneEntry = b32(rootPostHash) ‖ arr(subtreePostIds, b32)
 //              ‖ b32(subtreeMerkleRoot) ‖ b32(authorId) ‖ b64(authorSignature)
-//              ‖ enum8(trigger)
-//
-// `arr` is a vlqU count followed by the elements. `trigger` is `storage_prune`
-// on this vector, which is tag 1.
 //
 // ⚠ **Every 32-byte field carries a DIFFERENT fill**, which is the whole reason
 // this catches a transposition: `rootPostHash` is `c1`, `subtreeMerkleRoot`
@@ -104,8 +99,7 @@ const PRUNE_LEAF_PREIMAGE =
   'a1'.repeat(32) +   // b32(subtreePostIds[0])
   'd1'.repeat(32) +   // b32(subtreeMerkleRoot)
   'b1'.repeat(32) +   // b32(authorId)
-  'e1'.repeat(64) +   // b64(authorSignature)
-  '01';               // enum8(storage_prune)
+  'e1'.repeat(64);    // b64(authorSignature)
 
 // ---------------------------------------------------------------------------
 // Anchor — node's leaf preimage IS types' frozen wire form

@@ -107,7 +107,6 @@ function signPruneIntent(
 
   return {
     rootPostHash,
-    trigger: 'author',
     authorId,
     subtreeMerkleRoot: merkleRoot,
     subtreePostIds,
@@ -171,7 +170,6 @@ describe('stump-engine', () => {
     // Should return a PruneEntry
     expect(entry.rootPostHash).toBe(rootId);
     expect(entry.authorId).toEqual(authorId);
-    expect(entry.trigger).toBe('author');
     expect(entry.subtreePostIds.length).toBeGreaterThanOrEqual(3); // root + replies
     expect(entry.authorSignature).toEqual(intent.signature);
 
@@ -305,7 +303,6 @@ describe('stump-engine', () => {
 
     const intent: PruneIntent = {
       rootPostHash: fakeRootId,
-      trigger: 'author',
       authorId,
       subtreeMerkleRoot: merkleRoot,
       subtreePostIds,
@@ -348,7 +345,6 @@ describe('stump-engine', () => {
       authorId,
       replyCount: 1,
       upvoteCount: 0,
-      trigger: 'author',
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: 7,
     });
@@ -376,7 +372,6 @@ describe('stump-engine', () => {
       authorId,
       replyCount: 0,
       upvoteCount: 0,
-      trigger: 'author',
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: 7,
     });

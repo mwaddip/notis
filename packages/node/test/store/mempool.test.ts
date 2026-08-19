@@ -148,7 +148,6 @@ const ROOT_2 = '32'.repeat(32);
 function pruneEntry(rootPostHash: string) {
   return {
     rootPostHash,
-    trigger: 'author',
     authorId: new Uint8Array(32),
     subtreeMerkleRoot: new Uint8Array(32),
     subtreePostIds: [rootPostHash],
@@ -720,7 +719,6 @@ describe('mempool store', () => {
       expect(drained).toHaveLength(1);
       expect(drained[0].rootPostHash).toBe(entry.rootPostHash);
       expect(drained[0].subtreePostIds).toEqual(entry.subtreePostIds);
-      expect(drained[0].trigger).toBe(entry.trigger);
       // `applyMutationPhase` tests `authorId instanceof Uint8Array` before it
       // hexes the claimed author, and hands all three byte fields to
       // `Buffer.from` / `createHash().update()`.

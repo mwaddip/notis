@@ -20,7 +20,6 @@ async function request(
       subtreeMerkleRoot: new Uint8Array(32),
       authorId: new Uint8Array(32),
       authorSignature: new Uint8Array(64),
-      trigger: 'author',
     };
 
     const deps = {
@@ -73,7 +72,6 @@ function validBody() {
     subtreeMerkleRoot: TEST_MERKLE_ROOT,
     subtreePostIds: [TEST_POST_HASH],
     signature: TEST_SIGNATURE,
-    trigger: 'author',
   };
 }
 
