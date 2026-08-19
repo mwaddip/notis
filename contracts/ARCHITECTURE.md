@@ -1422,19 +1422,12 @@ before multi-node operation rather than after it.
 ### Wire Format
 
 Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip
-bodies are positional for ordering blocks and UTXO transactions, and CBOR for stumps —
-see the marker below. The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
+bodies are positional — ordering blocks through `decodeOrderingBlock`, UTXO transactions through
+`decodeTx` (`net/src/gossip.ts`). A stump never travels: it is a local projection with no wire
+form (`NODE_INTERFACE` → "Stumps are derived state"; `TYPES_INTERFACE` → Layout — Stump /
+PruneEntry). The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
 not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
 
-> ⚠ **Stumps are the one CBOR survivor — carried register #6.** Gossip decodes ordering
-> blocks through `decodeOrderingBlock` and UTXO transactions through the positional
-> `decodeTx` (`net/src/gossip.ts`); `encodeStump`/`decodeStump` are bare `cbor-x`, so
-> every stump still travels as CBOR. No phase claims it.
->
-> ⚠ **The old headline said "gossip stops being CBOR" while its own body said CBOR survives in
-> net's transport framing.** Both halves were written at once and contradicted each other; the
-> resolution is the split above — per *message type*, not per *layer*.
->
 > **Every consensus preimage becomes a positional byte layout** built on `@dagsocial/wire` — the
 > normative per-struct tables live in `TYPES_INTERFACE.md` → Serialization. CBOR is retired from
 > every committed byte. It survives only where nothing is committed: local storage (the journal,
@@ -2186,9 +2179,9 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **No dependencies above the package's abstraction level** — the storage
   layer depends only on DB bindings and hashing. It MUST NOT import post
   content types, networking code, or UI code.
-  > ⚠ **FALSE in the positive clause; the prohibition holds. Verified 2026-08-18.** `store/`
+  > ⚠ **FALSE in the positive clause; the prohibition holds.** `store/`
   > value-imports serializers — `decodeTx` (`store/mempool.ts:17`), `encodeTx`
-  > (`store/mempool.ts:16`), `encodeStump` (`store/stumps.ts:2`) — and `store/mempool.ts:3`
+  > (`store/mempool.ts:16`) — and `store/mempool.ts:3`
   > imports `../config.js`: **the application layer, imported by the storage layer, and
   > load-bearing** (it carries the mempool cap into the capacity check at `:217`). The
   > *prohibitions* are respected: post content types are `import type` only, and there is no

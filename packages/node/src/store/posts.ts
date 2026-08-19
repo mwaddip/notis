@@ -26,7 +26,6 @@ interface StumpRow {
   trigger: string;
   protocol_version: number;
   compacted_at_block_height: number;
-  raw_cbor: Buffer;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,30 +174,19 @@ export function getPost(id: string): StoredPost | Stump | null {
 }
 
 /**
- * Retrieve the raw CBOR bytes for a post or stump by id.
- * Returns null if not found. Used for independent hash recomputation
- * (validate-don't-trust: verify that the hash of the stored bytes matches
- * the claimed id).
+ * Retrieve the raw CBOR bytes for a post by id from `dag_posts`.
+ * Returns null if not found. Stumps have no wire form and are not
+ * stored as bytes — this function queries posts only.
  */
 export function getPostRaw(id: string): Uint8Array | null {
   const db = getDb();
 
-  // Try dag_posts first
   const postRow = db
     .prepare('SELECT raw_cbor FROM dag_posts WHERE id = ?')
     .get(id) as { raw_cbor: Buffer } | undefined;
 
   if (postRow) {
     return new Uint8Array(postRow.raw_cbor);
-  }
-
-  // Try dag_stumps
-  const stumpRow = db
-    .prepare('SELECT raw_cbor FROM dag_stumps WHERE id = ?')
-    .get(id) as { raw_cbor: Buffer } | undefined;
-
-  if (stumpRow) {
-    return new Uint8Array(stumpRow.raw_cbor);
   }
 
   return null;

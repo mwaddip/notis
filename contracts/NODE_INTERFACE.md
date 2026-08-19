@@ -344,7 +344,13 @@ invites, vouches, credits, faucet, prune).
    subtree's like-records (journalled, so a reverted prune restores them),
    insert the Stump derived from the verified entry
    (**unconditional** — a node holding no DAG content records the same
-   stump), then prune DAG content when present
+   stump), then prune DAG content when present.
+   **The stump's `upvoteCount` is the like tally of the pruned subtree**: the
+   count of like-records the deletion removed, the root's likes included
+   (`replyCount` counts replies, so it excludes the root). Like-records derive
+   from applied blocks, so the count is the same on every synced node, and a
+   reverted prune restores the exact rows — a re-apply recounts the identical
+   set
 
 **Stumps are derived state.** A `dag_stumps` row is a local projection of a
 PruneEntry inside an applied ordering block — never information in its own

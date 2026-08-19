@@ -914,9 +914,51 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     expect(stump!.rootPostHash).toBe(rootId);
     expect(hex(stump!.authorId)).toBe(hex(author.userId));
     expect(stump!.replyCount).toBe(1); // subtreePostIds.length - 1
+    expect(stump!.upvoteCount).toBe(0); // no like-records in this fixture
     expect(stump!.trigger).toBe('author');
     expect(stump!.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(stump!.compactedAtBlockHeight).toBe(2); // the carrying block's height
+  });
+
+  // NODE_INTERFACE → prune settlement step 6: upvoteCount is the like tally
+  // of the pruned subtree. This fixture seeds like-records on both the root
+  // and a reply, so the count is non-zero and spans the whole subtree.
+  it('stump upvoteCount equals the like-record count of the pruned subtree', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const likerA = makeTestIdentity();
+    const likerB = makeTestIdentity();
+    const root = await seedPostTx(author, 'liked root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'liked reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const blockApply = await importBlockApply();
+
+    const confirmBlock = await makeApplicableBlock({
+      utxoTxs: [root.tx, reply.tx],
+    });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    // Seed like-records: two on the root, one on the reply — three total.
+    const likes = await importLikes();
+    likes.insertLikeRecord(rootId, likerA.userId, 1);
+    likes.insertLikeRecord(rootId, likerB.userId, 1);
+    likes.insertLikeRecord(replyId, likerA.userId, 1);
+
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [makePruneEntry(rootId, [rootId, replyId], author)],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+
+    const { getStump } = await importStumps();
+    const stump = getStump(rootId);
+    expect(stump).not.toBeNull();
+    expect(stump!.upvoteCount).toBe(3);
+    expect(stump!.replyCount).toBe(1);
   });
 
   // The discriminating case for P2-F F1: the stump insert is structural —
