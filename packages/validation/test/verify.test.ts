@@ -652,10 +652,9 @@ describe('verifyOrderingBlockStructure', () => {
   // carrying no `utxoTxTree` a verdict rather than a TypeError — the failure
   // direction `VALIDATION_INTERFACE`'s no-panic rule forbids.
   //
-  // The `SubBlockEntry` postId/author domain pins that used to live here are
-  // gone with the struct. Their successor is the `post` clause in
-  // `verifyTxStructure` (below): a post's fields are pinned on the transaction
-  // that carries them, which is also the thing that hashes them.
+  // Post field domain pins are in `verifyTxStructure` (below): a post's fields
+  // are pinned on the transaction that carries them, the same object that
+  // hashes them.
 
   it('rejects a block with no utxoTxTree at all — a rejection, not a TypeError', () => {
     const block = { ...makeValidBlock(), utxoTxTree: undefined } as unknown as OrderingBlock;
@@ -962,13 +961,11 @@ describe('verifyOrderingBlockStructure', () => {
 // block and shown to pass, and the control proves the rest of the structure
 // check passes on an otherwise identical object.
 //
-// The path this closes is not the preimage but the store. `block-apply`'s
-// entry loop takes `subBlockId = entry.postId` and calls
-// `insertPostPlaceholder(subBlockId, entry.parentRefs)` whenever a block
-// confirms a sub-block whose content has not arrived; `insertPost` then
-// upgrades the row without ever revisiting `parent_refs`. A 64-character
-// non-hex ref therefore reaches `dag_posts.parent_refs` and stays there, and
-// `rowToPost` → `computePostId` reads it at feed-service and stump-engine.
+// The path this closes is the store, not the preimage. Prune entries carry
+// hex-32 fields (`rootPostHash`, `subtreePostIds`) that reach `block_topology`
+// and `rowToPost` → `computePostId`. A 64-character non-hex string passes a
+// bare length check, reaches a hex-decode boundary, and either throws or
+// silently produces wrong bytes — the hex-alphabet pin here is the gate.
 // ---------------------------------------------------------------------------
 
 describe('ordering-block hex domains — the pin has teeth', () => {
@@ -1349,10 +1346,9 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   // -------------------------------------------------------------------------
 
   describe('the parentRefs bound comes from MAX_PARENT_REFS', () => {
-    // ⛔ The carrier moved, the rule did not. These pinned
-    // `SubBlockEntry.parentRefs`; a post's refs now ride inside the transaction
-    // that creates it, so `verifyTxStructure` is where the bound is enforced —
-    // and it is the same `verifyParentRefsCount`, reading the same constant.
+    // ⛔ A post's refs ride inside the transaction that creates it, so
+    // `verifyTxStructure` is where the bound is enforced — the same
+    // `verifyParentRefsCount`, reading the same constant.
 
     /** N distinct well-formed refs, so the count rule is the only thing under test. */
     const refs = (n: number): string[] =>
@@ -1710,12 +1706,10 @@ describe('verifyContentCharacters — version-independent table (M-4)', () => {
 // ---------------------------------------------------------------------------
 
 describe('integer guards on the header nonce and targetBits (M-6)', () => {
-  // ⛔ **`isU64Safe` did NOT retire with post PoW, and this is the reason.**
-  // These guards used to be pinned on `verifyPoW`. The ordering-block header's
-  // `powNonce` is the same shape the argument was about — a `vlqU` field, written
-  // by a total-by-sentinel writer, and a search variable an attacker varies
-  // against a target — so the totality argument moved onto `HEADER_DOMAIN`
-  // rather than going away with the function that used to carry it.
+  // ⛔ The ordering-block header's `powNonce` is a `vlqU` field, written by
+  // a total-by-sentinel writer and a search variable an attacker varies against
+  // a target. The `isU64Safe` guard lives in `HEADER_DOMAIN`
+  // (`verifyHeaderFieldDomains`).
   //
   // What closes it is the pin here PLUS `verifyOrderingBlockPoW` encoding the
   // nonce as a fixed 8-byte LE, which has no sentinel at all. `computePowHash`
@@ -1907,9 +1901,8 @@ describe('no-panic on malformed input (M-5)', () => {
     for (const bad of MALFORMED) {
       expect(() => verifyTxStructure(bad as any)).not.toThrow();
       expect(() => verifyTxStructure({ inputs: bad, outputs: bad, protocolVersion: 1 } as any)).not.toThrow();
-      // ⛔ The post payload, field by field — the sweep `verifyPostSignature`
-      // used to carry. `post: null` is the sharpest of these: it is the one
-      // value where a property read before `isObject` would throw, which is why
+      // ⛔ The post payload, field by field. `post: null` is the sharpest
+      // case: a property read before `isObject` would throw, which is why
       // `verifyPostFieldDomains` runs first inside the clause.
       // The output is a whole karma box so the sweep reaches the post clause on
       // its own terms: with an unencodable output every iteration would end at
@@ -2016,9 +2009,8 @@ describe('no-panic on malformed input (M-5)', () => {
   });
 
   it('rejects a post whose shape would throw inside postFieldBytes', () => {
-    // The successor to "would throw inside signingHash": the encoder a malformed
-    // post reaches is now `postFieldBytes`, via `computeTxId`, and
-    // `verifyTxStructure` is the gate in front of it.
+    // The encoder a malformed post reaches is `postFieldBytes` via
+    // `computeTxId`; `verifyTxStructure` is the gate in front of it.
     //
     // ⛔ The output is a WHOLE karma box, and that is what makes the test
     // measure anything: a bare `{ boxType: 'karma' }` is unencodable, so the
@@ -2103,10 +2095,8 @@ describe('no-panic on malformed input (M-5)', () => {
 // ---------------------------------------------------------------------------
 
 describe('integer guards on protocolVersion and timestamp (M-6)', () => {
-  // ⛔ The GATE moved, the guard did not. These pinned `verifyPostSignature`,
-  // which no longer exists — a post carries no signature of its own. The same
-  // numeric domain is now enforced by `verifyPostFieldDomains`, reached through
-  // `verifyTxStructure`'s post clause, and it protects the same encoder:
+  // ⛔ `verifyPostFieldDomains` enforces the numeric domain, reached through
+  // `verifyTxStructure`'s post clause, protecting the same encoder:
   // `postFieldBytes` is inside the `computeTxId` preimage.
 
   /** A well-formed post payload — every field in domain. */
@@ -2213,14 +2203,8 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   /**
-   * The signature really does cover this post. Only callable on an in-domain
-   * post now — `signingHash` is the same encoder that refuses the poisoned one
-   * — so its job has changed from "prove the malformed post is otherwise
-   * flawless" to "prove the builder these fixtures are cut from is sound".
-   */
-  /**
-   * The payload really is encodable — which is what "the builder is sound" means
-   * now. `postFieldBytes` throws on an out-of-domain `author` or ref, so a
+   * The payload really is encodable — which is what "the builder is sound" means.
+   * `postFieldBytes` throws on an out-of-domain `author` or ref, so a
    * successful encode is the same evidence a genuine signature used to be: the
    * twin a poisoned fixture is cut from is not itself broken.
    */
@@ -2294,10 +2278,9 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   it('TEETH: `verifyTxStructure` gated nothing about a post before — now it gates gossip', () => {
-    // ⛔ The successor to the `verifySubBlockStructure` teeth demonstration. The
-    // caller moved from `net`'s sub-block topic to its `tx` topic, and the check
-    // it runs before anything hashes the payload is this one — `computeTxId`
-    // reaches `postFieldBytes`, which throws on a 31-byte author.
+    // ⛔ `verifyTxStructure` gates gossip on the `tx` topic; it runs before
+    // anything hashes the payload. `computeTxId` reaches `postFieldBytes`,
+    // which throws on a 31-byte author.
     const { honest, post } = signedThenPoisoned({ author: new Uint8Array(31).fill(4) });
 
     // Every check that does not look inside the post still passes: the
@@ -2316,7 +2299,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // author / challenge widths
+  // author width
   // -------------------------------------------------------------------------
 
   it.each([0, 1, 31, 33, 64])('rejects a %i-byte author', (n) => {
@@ -2743,7 +2726,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     }
     reasons.add(verifyHeaderFieldDomains(header({ stateRoot: 'nope' })).error!);
     reasons.add(verifyHeaderFieldDomains(header({ validatorId: 'nope' as unknown as Uint8Array })).error!);
-    // NINE, not ten — `subBlockRoot` is gone from the header.
+    // Nine header fields, each with a distinct domain rule.
     expect(reasons.size).toBe(9);
   });
 

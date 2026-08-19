@@ -159,7 +159,7 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
  *
  * **Type checks** (audit M-5/M-6): a malformed post must not throw inside
  * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
- * `author`/`challenge` throws on `.length`, an `author` that is not a byte view
+ * `author` throws on `.length`, an `author` that is not a byte view
  * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
  * `protocolVersion` / `timestamp` throws in `TextEncoder.encode` / `String()`.
  *
