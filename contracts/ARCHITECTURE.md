@@ -96,28 +96,22 @@ The hybrid preserves the strengths of both.
 
 ### Block architecture: ordering blocks
 
-Inspired by Ergo's subblock model (EIP-15):
+One block type. Validators produce **ordering blocks**: full PoW, one committed body
+(`utxoTxIds` + `pruneEntries`), a configurable interval. Every post and like is an
+ordinary UTXO transaction riding `utxoTxIds` with everything else, and each block
+carries the settlement transaction stated below.
 
-| Block type | Producer | PoW difficulty | Purpose | Interval |
-|------------|----------|----------------|---------|----------|
-| **Sub-block** | User (post author) | Post PoW | Fast inclusion: the post | Per post |
-| **Ordering block** | Validator | Full PoW | Consensus anchor: batches sub-blocks, orders UTXO transactions, settles per-block like accrual | Configurable |
+**There are no sub-blocks and no per-post PoW** (§Blocks and ordering). A post's
+admission is its transaction's: priced by the karma post-lock, authenticated by the
+transaction's signature, ordered by the block that includes it.
 
-A user's post PoW solution IS the sub-block proof. A sub-block carries exactly
-the post — likes are ordinary UTXO transactions and ride `utxoTxIds` in the
-ordering block like every other transaction (P2-D; see §Likes).
-
-Validators produce ordering blocks: full PoW, batch all sub-blocks produced
-since the previous ordering block, order the pending UTXO transactions (likes
-included), and distribute credit rewards.
-
-> ## ⚠ AHEAD OF CODE — every block carries ONE SETTLEMENT TRANSACTION, and it is where protocol effects live
+> ## Every block carries ONE SETTLEMENT TRANSACTION, and it is where protocol effects live
 >
 > **One per block, covering both ledgers**, built by the producer and validated by rule. It spends the
 > karma pool and the emission box, consumes the markers the block's user transactions emitted, and
-> emits every box the block's protocol effects create. ⛔ **`CoinbaseOutput` stops being a block-body
-> concept** — coinbase outputs become outputs of this transaction, so the body loses a field and
-> `utxoTxRoot` loses a leaf class (TYPES_INTERFACE → OrderingBlock).
+> emits every box the block's protocol effects create. ⛔ **`CoinbaseOutput` is not a block-body
+> concept** — coinbase outputs are outputs of this transaction; no body field and no
+> `utxoTxRoot` leaf class carries the reward (TYPES_INTERFACE → OrderingBlock).
 >
 > **Why exactly one.** The pool's id changes every time it is spent, so two transactions naming it
 > conflict — and unlike an ordinary contended box **the loser is not deferred but permanently
@@ -313,38 +307,24 @@ content availability.
 **`UserId` is `Uint8Array` — 32 raw bytes — everywhere it appears as `UserId`.** This
 document previously said `hex(publicKey) — 64 chars`, which was never true of `Post.author`.
 
-A public key is rendered as a **hex `string`** in exactly two places, each explicitly
-typed `string` rather than `UserId`: `SubBlockEntry.author` and the `signatures` map keys.
-That is deliberate, not drift — those structures are JSON-oriented and
-JSON has no byte type. `SubBlockEntry` in particular is serialized through
-`JSON.stringify` into a consensus Merkle leaf, so a byte array there would encode as
-`{"0":1,"1":2,…}`.
+A public key is rendered as a **hex `string`** in exactly one place, explicitly
+typed `string` rather than `UserId`: the `signatures` map keys. That is deliberate,
+not drift — the map encodes as an array sorted by key, and lowercase hex keys make
+the string order and the decoded-byte order agree (TYPES_INTERFACE → Layout —
+UtxoTransaction).
 
 **The rule: if the field is typed `UserId`, it is raw bytes. If it is typed `string`, it
 is lowercase hex.** The type is the boundary marker; there is no third form. Both
 representations are genuinely live, so this is a convention to state and hold, not drift
 to eliminate.
 
-#### Post-level PoW (sub-block mechanism)
+#### Post admission — there is no post-level PoW
 
-PoW is a single challenge-response pass, collapsed from the Phase 1 two-phase
-model. The post's PoW solution IS the sub-block proof:
-
-1. Author requests a challenge from a node → node returns random nonce
-2. Author constructs the post and iterates `powNonce` until `postPowPreimage(post)`
-   hashes below the target difficulty — **preimage specified in `TYPES_INTERFACE.md`,
-   not here** (see the note above; the formula previously restated at this line
-   disagreed with the one four lines earlier on field order)
-3. Author submits the completed post → it becomes a sub-block (a sub-block
-   carries only the post; likes are ordinary UTXO transactions — P2-D)
-4. Validators verify the PoW when anchoring sub-blocks in an ordering block
-
-The challenge prevents precomputation. Requesting a new challenge replaces
-any existing one (upsert). Challenge expires after `CHALLENGE_WINDOW_BLOCKS`.
-
-PoW difficulty is a protocol parameter (`POST_POW_TARGET_BITS`). It may
-become karma-proportional in the future (high karma → lower difficulty),
-but for Phase 2 it is fixed.
+Post PoW, its challenge handshake, and the sub-block mechanism are retired. A post is
+created by a transaction: admission is priced by the karma post-lock, authenticated by
+the transaction's signature, and ordered by the block that includes it. The retired
+names (`POST_POW_TARGET_BITS`, `postPowTargetBits`, `CHALLENGE_WINDOW_BLOCKS`) stay
+reserved (`TYPES_INTERFACE` → PoW).
 
 #### Subtree pruning (deletion)
 
@@ -358,9 +338,9 @@ The root author may prune their entire subtree at any time. Pruning:
 The prune is authorized **solely** by the root author's Ed25519 signature
 over `(rootPostHash, subtreeMerkleRoot)`. The signature travels in the block
 as a PruneEntry. Who "the author" is, is itself consensus data: every
-confirmed post's `author` is carried in its block's `SubBlockEntry` and
-recorded in `block_topology`, and a PruneEntry is valid only if its
-`authorId` equals that recorded author (audit H-3) — so a signature from
+confirmed post's `author` is the signer of its creating transaction,
+recorded at confirmation in `block_topology`, and a PruneEntry is valid only
+if its `authorId` equals that recorded author (audit H-3) — so a signature from
 anyone else, however valid for its own key, authorizes nothing. No validator
 attestation is required — settlement is deterministically computable from the
 UTXO state (the subtree's PostLockBoxes) plus the like-records it deletes
@@ -763,7 +743,7 @@ Stump {
 3. Client submits signed PruneIntent to node via `POST /posts/:id/prune`
 4. Node verifies signature, subtree completeness, and Merkle root
 5. Node enqueues PruneEntry in mempool — included in next ordering block via
-   `SubBlockTree.pruneEntries`. Nothing else leaves the node: the prune
+   `utxoTxTree.pruneEntries`. Nothing else leaves the node: the prune
    propagates only inside the block that carries it
 6. At block application, every node independently verifies: authorship
    binding (`authorId` equals the `block_topology`-recorded author of the
@@ -797,8 +777,8 @@ specified here.
 - The author's signature over `(rootPostHash, subtreeMerkleRoot)` in the block
   is the single point of authorization, and "the author" is pinned by
   consensus: `PruneEntry.authorId` must equal the author recorded for the
-  root in `block_topology` (carried by `SubBlockEntry.author`, verified
-  against real content by every node that holds it at confirmation time)
+  root in `block_topology` (the signer of the root's creating transaction,
+  verified against real content by every node that holds it at confirmation time)
 - A node that held the full subtree can verify the Merkle root against the
   original content
 - Parent hashes remain valid — a reply referencing a pruned post still has a
@@ -1113,130 +1093,79 @@ interval and `EPOCH_BLOCKS` · `LIKE_COST` · `LIKE_THRESHOLD` · `LIKE_MAX_AUTH
 ## Invite System
 
 The network is invite-only. An existing account must stake for every new
-account, and **the invite is the network's only source of karma** — nothing else
-creates it after genesis.
+account, and the invite is the only path by which a new key receives karma — a
+**pool spend**, never a creation (§The conservation axiom). *"The network's only
+source of karma"* survives only as a statement about **circulation**; genesis is
+the only source of supply.
 
 An invite names its invitee. Bob gives Alice his public key out of band; from
 there each of them acts under their own signature and no secret exists anywhere
 in the flow.
 
-### Invite creation
+### The invite is ONE transaction
 
 ```
-Consume: Alice's karma box (K karma)
-
-Create:
-  1. Alice's remaining karma box:  K − B
-  2. InviteBox:                    0 karma      — a named right to mint
-     inviterId = Alice, inviteePublicKey = Bob
-     Bob's signature claims it, Alice's cancels it
-  3. BondBox:                      B karma
-     inviterId = Alice, inviteePublicKey = Bob
-     No user transaction can spend it
+invite tx    aliceKarma(K) → BondBox(B, inviterId=Alice, inviteePublicKey=Bob) + aliceKarma(K−B)
+settlement   pool(S) → pool(S−B) + bobKarma(B)
 ```
 
-**Alice pays only the bond.** `G` does not exist yet: the invite is a right to
-mint it, and creation therefore conserves value like any other transaction.
+**Alice pays only the bond**, and creation conserves value like any other
+transaction. No user transaction can spend the bond. There is no `InviteBox`, no
+claim transaction and no cancellation transaction — `TYPES_INTERFACE → InviteBox`
+governs the retired names.
+
+⛔ **THE BOND IS THE REQUEST.** The settlement emits **the bond's own value** to
+the `inviteePublicKey` of every `BondBox` the block creates. Pairing is
+**structural** — one bond, one grant — so no rule compares two lists and no box
+is invented to carry the pairing. This is why the invite needs no marker box
+while a like does: the bond is already a box the transaction creates and the
+settlement can read.
+
 ⛔ **Bob's key must not already be an account** — meaning it holds no identity
-record, which every karma receipt writes. Checked at creation, so a second
-inviter's bond is never locked against an invite that could not be claimed.
-
-The weaker test, *"has not been invited before"*, **prints karma**: an established
-account that had simply never been invited could be named, the claim would mint it
-`G` from nothing, and the bond would vest in full against likes that key had
-already earned — returning Alice's whole stake for the price of a
-probation-length lock. Record existence is the test that closes it, and it also
-means a legal invitee has never posted and never been liked, so the claim is
-always the record-*creating* event.
+record, which every karma receipt writes. Checked at creation. The weaker test,
+*"has not been invited before"*, hands out pool karma against value already
+earned: an established account that had simply never been invited could be
+named, the settlement would grant it the bond's value, and the bond would vest
+in full against likes that key had already earned — returning Alice's whole
+stake for the price of a probation-length lock. **Record existence is the test
+that closes it**, and it also means a legal invitee has never posted and never
+been liked, so the grant is always the record-*creating* event. ⛔ **The test is
+IDENTITY-RECORD existence, never karma-box existence** — a karma-box test
+carries the same hole in different clothes: an account that spent down to
+nothing.
 
 Being barred costs an uninvited party nothing: with no karma they have never
 posted, so the identity carries nothing and a new keypair costs a keygen.
 
-### Invite claim
+### What the grant carries, and what it does not
 
-```
-Consume: InviteBox (0 karma, Bob signs)
+**Bob's signature is not part of the flow, and it was never the sybil defence.**
+The bond is, and Bob's key could always have been Alice's second key. Consent is
+already out of band: Bob gives Alice his public key.
 
-Create:
-  1. Bob's karma box: G karma — MINTED. Bob's account exists now
-```
+⚠ **The cost, stated rather than hidden:** Alice may name 32 bytes nobody holds,
+and the grant lands in a box no one can ever spend. It is **parked, not
+destroyed** — the axiom holds — and her bond forfeits at probation's end against
+a key that never engages, so stranding a grant costs Alice her full stake and
+there is no arbitrage.
 
-The bond is not an input. This is the only transaction in the system that may
-create karma, and the conservation gate admits a surplus of exactly `G` in this
-shape and no other. The claim is also what starts the clock: block application
-records the height on Bob's identity record, which both dates the probation and
-bars his key from any further invite.
+**The probation clock:** `IdentityRecord.invitedAtBlock` is the invite's own
+height — the grant is the record-creating event, which both dates the probation
+and bars the key from any further invite.
 
-### Invite cancellation
+**Cancellation does not exist — dropped as UNRELIABLE, not as unimportant**
+(user, 2026-08-17). Under the claim flow Bob could always claim faster than
+Alice could regret, so cancelling was a race she might lose rather than a
+guarantee she held.
 
-```
-Consume: InviteBox (0 karma, Alice signs)
+**The rate limit is `K / B` invites per `INVITE_PROBATION_BLOCKS`** — the bond
+locks for probation and resolves by outcome (below). ✅ **Nothing locks
+forever.**
 
-Create:  (nothing)
-```
-
-The bond returns to Alice through block application, resolved by Bob's key.
-Alice's cancel transaction does not name the bond and could not spend it.
-
-**An invite never expires.** It stays claimable until Alice cancels it, and her
-bond stays locked for exactly that long — which is the whole of the rate limit.
-An account can fund `K / B` concurrent invites and no more, so leaving invites
-open costs Alice her own capacity and no rule has to bound it.
-
-> ## ⚠ AHEAD OF CODE — THE INVITE IS ONE TRANSACTION, AND THE THREE SECTIONS ABOVE COLLAPSE INTO IT
->
-> **`InviteBox`, the claim transaction and the cancellation transaction are all DELETED**
-> (user, 2026-08-17). The two sections above this marker describe the running tree and stay until the
-> code does; **nothing new may be built against them.**
->
-> ```
-> invite tx    aliceKarma(K) → BondBox(B, inviterId=Alice, inviteePublicKey=Bob) + aliceKarma(K−B)
-> settlement   pool(S) → pool(S−G) + bobKarma(G)
-> ```
->
-> ⛔ **THE BOND IS THE REQUEST.** The settlement emits **the bond's own value** to the
-> `inviteePublicKey` of every `BondBox` the block creates. Pairing is **structural** — one bond, one
-> grant — so no rule compares two lists and no box is invented to carry the pairing. This is why the
-> invite needs no marker box while a like does: the bond is already a box the transaction creates and
-> the settlement can read.
->
-> ✅ **The mint moves to where the source is.** `G` is a **pool spend**, not a creation, which is what
-> §The conservation axiom requires. *"The invite is the network's only source of karma"* survives only
-> as a statement about **circulation**; genesis is the only source of supply.
->
-> ### What the claim carried
->
-> **Bob's signature, proving he holds the key — dropped.** It was never the sybil defence; the bond is,
-> and Bob's key could always have been Alice's second key. Consent is already out of band, as
-> §Invite System states: *"Bob gives Alice his public key out of band."*
->
-> ⚠ **The cost, stated rather than hidden:** Alice may name 32 bytes nobody holds, and `G` lands in a
-> box no one can ever spend. It is **parked, not destroyed** — the axiom holds. ⛔ **What makes it
-> harmless is `B ≥ G`**, so stranding `G` costs at least `G` and there is no arbitrage. **That bound
-> is load-bearing and a re-tuning must not invert it.**
->
-> **The probation clock — moved.** `IdentityRecord.invitedAtBlock` becomes the invite's own height.
->
-> **Cancellation — dropped as UNRELIABLE, not as unimportant** (user, 2026-08-17). Bob could always
-> claim faster than Alice could regret, so cancelling was a race she might lose rather than a
-> guarantee she held — and the window is one in which the two are likely still in live contact.
->
-> ⚠ **The rate limit changes shape, and §Invite cancellation's argument goes with it.** *"Leaving
-> invites open costs Alice her own capacity and no rule has to bound it"* depended on the open invite.
-> The limit becomes **`K / B` invites per `INVITE_PROBATION_BLOCKS`** rather than `K / B` concurrent
-> and indefinite. ✅ **Nothing locks forever any more**, which is the stronger property of the two.
->
-> ### The rule this owes
->
-> ⛔ **Two inviters naming the same key in one block must not both grant.** Today the claim absorbs
-> this: Bob claims one invite and the other is cancelled. With no claim, the second invite grants a
-> second `G` to the same key unless **apply-time refuses it** — and a block whose embedded
-> transactions do not all apply is refused whole, so a producer must not pack both. **This was an
-> emergent property and becomes a stated rule.**
->
-> ⛔ **The eligibility test stays IDENTITY-RECORD existence, never karma-box existence.** §Invite
-> creation's argument is unchanged and still decisive: the weaker test *prints karma*, and a
-> karma-box test carries the same hole in different clothes — an account that spent down to nothing.
+⛔ **Two inviters naming the same key in one block must not both grant.**
+Apply-time refuses the second — and a block whose embedded transactions do not
+all apply is refused whole, so a producer must not pack both. **A stated rule,
+not an emergent property.**
 
 ### Bond outcomes
 
@@ -1246,7 +1175,6 @@ INVITE_PROBATION_BLOCKS`, and reads one thing:
 
 | Scenario | Bond karma | Significance |
 |----------|------------|--------------|
-| Alice cancels before Bob claims | Returned to Alice | No account was created |
 | Bob's counter reached `INVITE_BOND_VEST_PER_LIKES · B` | Returned to Alice in full | Alice vouched for someone the network valued |
 | Bob's counter is lower | `floor(counter / INVITE_BOND_VEST_PER_LIKES)` returned, **the rest burned** | Alice's stake was partly forfeit |
 | Bob never engaged | Burned entirely | Alice vouched for nobody |
@@ -1326,10 +1254,10 @@ material may also hold karma and author posts.
 
 ### Responsibilities
 
-1. Produce ordering blocks — batch sub-blocks, order UTXO transactions
-   (per-block like settlement runs inside block application, not here)
-2. Earn newly minted credits as ordering block rewards
-3. Anchor the sub-block chain via Merkle tree digest in each ordering block
+1. Produce ordering blocks — order UTXO transactions and prune entries into one
+   committed body (per-block like settlement runs inside block application, not here)
+2. Earn credit rewards as outputs of the block's settlement transaction, spent
+   from the emission box
 
 Validators do **not** attest to stumps. The prune authorization is the root
 author's signature alone.
@@ -1469,15 +1397,18 @@ before multi-node operation rather than after it.
                            └──────────┘
 ```
 
-1. **Genesis:** Committee mints initial karma/credit boxes
-2. **Invite:** Committee invites first users, each invite naming one public key
-3. **Account creation:** Invitee claims invite with keypair → karma box exists
-4. **Posting:** User requests challenge from node, constructs post, solves
-   PoW → sub-block + karma-lock UTXO tx → mempool (batch-linked by postId)
-5. **Liking:** User spends karma → like box UTXO tx → mempool (standalone)
-6. **Ordering:** Block creator pulls from mempool (FIFO), assembles block with
-   sub-blocks + UTXO txs (likes included), mines PoW, finalizes → state
-   applied atomically
+1. **Genesis:** The genesis state seeds the system boxes (karma pool, emission,
+   treasury, faucet) and the genesis identity
+2. **Invite:** An inviter bonds karma naming the invitee's public key; the block's
+   settlement grants the invitee's starting karma from the pool (§Invite System)
+3. **Account creation:** The granted karma box and the invitee's identity record
+   are the account — there is no claim transaction
+4. **Posting:** User builds a post transaction — the content rides the transaction
+   and the karma post-lock prices it → mempool (`utxo_tx`)
+5. **Liking:** User spends karma → like transaction → mempool (standalone)
+6. **Ordering:** Block creator pulls from mempool (FIFO), assembles the body
+   (UTXO txs + prune entries), appends the settlement transaction, mines PoW,
+   finalizes → state applied atomically
 7. **Like settlement:** Every block, at the end of the mutation phase — like
    burns recorded, per-author accrual settled against `IdentityRecord.likeCarry`
    (`like-payout` mints), post-lock vesting evaluated (§Likes)
@@ -1486,7 +1417,7 @@ before multi-node operation rather than after it.
 9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; its owner
    reclaims it by transaction once `releaseAtBlock` is reached — no per-block
    step touches it
-10. **Net:** libp2p gossips sub-blocks, ordering blocks, and UTXO transactions.
+10. **Net:** libp2p gossips ordering blocks, UTXO transactions, and stumps.
    Stage 1 (stateless) validation via `@dagsocial/validation` runs before
    forwarding. Stage 2 (stateful) validation runs in the node after receipt.
    Relay handlers insert into mempool — state applied at block application.
@@ -1496,20 +1427,14 @@ before multi-node operation rather than after it.
 ### Wire Format
 
 Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip
-bodies are positional for sub-blocks and ordering blocks, and CBOR for UTXO transactions and stumps —
+bodies are positional for ordering blocks and UTXO transactions, and CBOR for stumps —
 see the marker below. The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
 not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
 
-> ⚠ **PARTIAL — the migration this marker predicted has SHIPPED except for two encoders.
-> Re-verified 2026-08-11.** It read `AHEAD OF CODE` until Phase 9; the positional bundle
-> (Phases 0–8) is merged, so the forward-looking framing was stale.
->
-> **Positional today:** gossip decodes sub-blocks and ordering blocks through `decodeSubBlock` and
-> `decodeOrderingBlock` (`net/src/gossip.ts:78`, `:97`), which are the positional decoders.
-> **Still CBOR:** `encodeTx`/`decodeTx` (`types/src/serialization.ts:522-528`) and
-> `encodeStump`/`decodeStump` (`:164-170`) are bare `cbor-x`, so the gossip UTXO-transaction path
-> (`gossip.ts:136`) and every stump still travel as CBOR. **No phase claims these two** — carried
-> register #6.
+> ⚠ **Stumps are the one CBOR survivor — carried register #6.** Gossip decodes ordering
+> blocks through `decodeOrderingBlock` and UTXO transactions through the positional
+> `decodeTx` (`net/src/gossip.ts`); `encodeStump`/`decodeStump` are bare `cbor-x`, so
+> every stump still travels as CBOR. No phase claims it.
 >
 > ⚠ **The old headline said "gossip stops being CBOR" while its own body said CBOR survives in
 > net's transport framing.** Both halves were written at once and contradicted each other; the
@@ -1782,11 +1707,11 @@ a committed byte, and none of them need to wait for a break bundle.
 
 ## Protocol Versioning
 
-Every post, stump, ordering block, sub-block, and UTXO transaction carries a
+Every post, stump, ordering block, and UTXO transaction carries a
 `protocolVersion` field. Validation rules are keyed to this version:
 
 - **Version 1 (current):** Dual-ledger architecture, sovereign subtrees, stumps,
-  UTXO karma/credits, likes, invite system, sub-blocks + ordering blocks, PoW
+  UTXO karma/credits, likes, invite system, ordering blocks, PoW
   validators, libp2p networking, two-stage validation (`@dagsocial/validation`
   + `@dagsocial/net`), unified mempool.
 - **Future versions:** Credit sinks, reply earning, karma-proportional PoW,
@@ -1889,7 +1814,7 @@ forever. A node rejects objects with an unsupported protocol version.
   > openssl 3.0.17: `crypto.verify` rejects the classic `S + L` malleation and the
   > high-bit variant, enforcing RFC 8032's `0 ≤ S < L`. This matters because
   > `serializePruneEntry` puts `authorSignature` **inside** the `prune` Merkle leaf, hence
-  > inside `subBlockRoot` — every other signature in the system is excluded from every
+  > inside `utxoTxRoot` — every other signature in the system is excluded from every
   > preimage. A second verifier (light client, a pure-JS Ed25519 library) that is
   > cofactored or skips the range check would accept a second valid signature, and there
   > it would mean two valid *blocks*. **Any mirror implementation MUST enforce
@@ -1897,7 +1822,6 @@ forever. A node rejects objects with an unsupported protocol version.
   > cofactored-vs-cofactorless verification
 - Public keys: 32 raw bytes, hex-encoded on wire
 - Secret keys never in API responses, DTOs, or committed data structures
-- Post PoW acts as sub-block proof — verified by validators at ordering time
 
 
 ### Content sovereignty
@@ -2196,12 +2120,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > `NODE_INTERFACE` and `node/src/services/corrupt-state.ts`. That is not an exception to this
   > bullet; it is a different subject.
 - **Validate, don't trust** — independently recompute every self-reported
-  claim. A post's parent hash, PoW solution, and signature MUST be verified
-  by the local node before the post enters the store.
+  claim. A post's parent refs and its creating transaction's signature MUST be
+  verified by the local node before the post enters the store.
   > ⚠ **VIOLATED — two write paths run ahead of verification. The rule is right; the code is
   > wrong. Re-verified 2026-08-14.**
   > - `insertPostPlaceholder` (`node/src/store/posts.ts`) writes a row built from a *block's*
-  >   sub-block entry: empty content, a 32-zero-byte author, a 64-zero-byte signature. Nothing
+  >   committed post topology: empty content, a 32-zero-byte author, a 64-zero-byte signature. Nothing
   >   in that row is author-signed, and `confirmPost` will set `status = 'confirmed'` on it —
   >   so a confirmed row precedes any verified bytes, in two steps rather than one. The
   >   `parent_refs` it writes are the block's, and `insertPost`'s upgrade branch does not
@@ -2450,31 +2374,11 @@ around it.
 
 ## Store Architecture
 
-> ⚠ **The namespacing below does not match the schema.** 17 of 18 lines are original
-> 2026-07-20 text and predate the actual tables by weeks. **`sub_*` has no tables at all**
-> — sub-block state lives in the mempool and in `block_topology`. Ordering blocks are
-> outside the `block_*` prefix. The audit also found the store contract naming tables and
-> columns that do not exist, and `routes/status.ts` querying three (`blocks`, `posts`,
-> `identities`) that were never created — **that file was deleted 2026-08-07**, so the
-> remaining instances of this defect are in the contract text below, not in code.
->
-> **`NODE_INTERFACE.md → Store Interface` is authoritative for the schema; this section is
-> a sketch of an organising principle that was not followed.** Do not derive table names
-> from it.
-
-Phase 2 uses a fresh SQLite database with namespaced tables:
-
-| Prefix | Content |
-|--------|---------|
-| `dag_*` | Posts, parent refs, stumps |
-| `utxo_*` | Karma boxes, credit boxes, like boxes, invite boxes, bond boxes |
-| `sub_*` | Sub-blocks, sub-block-to-post mapping |
-| `block_*` | Ordering blocks, block-to-sub-block mapping |
-| `peers` | Discovered peer addresses (unprefixed — it belongs to none of the four ledgers; it backs `@dagsocial/net`'s PeerDb across restarts) |
-
-Single WAL, single connection. Phase 1 schema is not migrated — Phase 2 starts
-fresh. Namespacing keeps the option open to split into separate stores later
-(e.g., UTXO moves to an authenticated state trie for light client proofs).
+**`NODE_INTERFACE.md → Store Interface` is authoritative for the schema — do not derive
+table names from this section.** Single SQLite database, single WAL, single connection.
+Post topology lives in `block_topology`; there are no sub-block tables and no sub-block
+mempool rows (`store/db.ts` reserves `subblock_id`, `batch_id`, and the `'subblock'`
+entry type). `peers` backs `@dagsocial/net`'s PeerDb across restarts.
 
 ---
 
@@ -2495,16 +2399,19 @@ fresh. Namespacing keeps the option open to split into separate stores later
   > tier and no epoch — `node/src/services/likes.ts` states the rule at its head ("no free tier,
   > no refund"). The **free-like tier has no producer anywhere in the node** — correctly never
   > built rather than a gap. See §Likes.
-- Invite system: key-named invites, bond vesting against likes, cancel
+- Invite system: karma-bonded invites naming the invitee's key; the block's
+  settlement grants the starting karma (§Invite System)
 - ~~Post karma locking with gradual unlock at epoch boundaries~~
   > ⚠ **PARTIAL. Verified 2026-08-11** — `PostLockBox` is a live interface in
   > `types/src/utxo.ts` and a member of the `AnyBox` union. The post bond is real and stays — it is
   > the anti-dodge
   > mechanism. But **"at epoch boundaries" is superseded**: vesting moves to per-block with
   > the epoch's removal, and block application is the box's only spender.
-- Sub-blocks + ordering blocks with PoW (user PoW + validator PoW)
+- Ordering blocks with validator PoW; posts and likes ride them as ordinary
+  transactions
 - Verifiable prune: block-level PruneEntry, Ed25519-signed, UTXO-deterministic
-  settlement (consumes PostLockBoxes and LikeBoxes, mints refund karma)
+  settlement (consumes PostLockBoxes, mints `prune-refund-author` karma, deletes
+  like-records)
 - AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
   headers, `GET /api/v1/proof/:boxId` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all
