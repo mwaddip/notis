@@ -171,17 +171,16 @@ to the envelope structure (not the message bodies).
 | 16 | `GetBlocks` | → | Request whole ordering blocks by height range (reorg) |
 | 17 | `Blocks` | ← | Ordering block list response |
 
-Codes 6–7, 10–11 and 12–13 are retired: a post is a transaction and a block
+Codes 6–7, 10–11 and 12–13 are holes: a post is a transaction and a block
 carries its posts whole in `utxoTxs`, so no post crosses the network as its own
 message; stumps are derived state — every node projects its own `dag_stumps`
 rows from the PruneEntries in applied blocks (NODE_INTERFACE → "Stumps are
-derived state"). The numbers stay reserved so a stale peer sending one is an
-identifiable protocol violation rather than a misparse of some future message.
+derived state"). A new message takes the lowest free code.
 
-**This table is the code allocator; `net/src/types.ts` mirrors it**, retirement comment included.
-⚠ **Neither is findable by grepping `MSG_`.** A reservation is a comment, not an assignment, and
-`handshake.ts:72` frames its code as the literal `1` rather than through `MSG_HANDSHAKE` — so a
-`MSG_`-keyed search sees neither the reservations nor every allocation. The sweep that does is
+**This table is the code allocator; `net/src/types.ts` mirrors it.**
+⚠ **Not every allocation is findable by grepping `MSG_`** —
+`handshake.ts:72` frames its code as the literal `1` rather than through `MSG_HANDSHAKE`, so a
+`MSG_`-keyed search misses allocations. The sweep that finds them all is
 `grep -rn 'encodeFrame([A-Za-z_.]*, *[0-9]' packages/`, read together with this table.
 
 Codes 14–17 carry fork resolution's two queries and `/dagsocial/headers/1` is deleted. Those queries
@@ -207,8 +206,9 @@ the rule and the measurement behind it.
 | `/dagsocial/ordering-block/1` | OrderingBlock (positional) | Critical | Consensus anchors |
 | `/dagsocial/tx/1` | UtxoTransaction (positional) | High | Posts, likes, invites, vouches, credit transfers |
 
-**Reserved, never to be reused: the topic string `/dagsocial/subblock/1`**
-(`net/src/gossip.ts` states the same at the topic map).
+**Tracked reservation (remnant-bounded — TYPES_INTERFACE → tag rules, condition 3): the
+topic string `/dagsocial/subblock/1`.** Held by its live guard — `gossip.test.ts` asserts
+the topic has no validator — and it leaves with that guard.
 
 `/dagsocial/stump/1` is retired (P2-F F1): a gossiped stump is unverifiable
 by construction (no author signature, no `subtreePostIds`) and stumps are
@@ -1063,9 +1063,7 @@ membership test is the thing standing between a relayed hint and a counterparty 
 ⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
 code or a malformed body — `requestBlocks`' result goes straight to
 `reorg(forkHeight, newBlocks)`, so an empty array would truncate our own chain
-rather than fail to extend it. (`requestPosts` and its `GetPostsMsg` /
-`PostsEntry` / `PostsMsg` types are retired, names reserved —
-`net/src/types.ts`.)
+rather than fail to extend it.
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
@@ -1121,10 +1119,9 @@ interface NetConfig {
   listenAddrs: string
   maxPeers: number
 
-  // Network — both REQUIRED, both supplied by the node from its resolved profile.
-  // No defaults; see §Magic Bytes and §Consensus parameters net enforces.
+  // Network — REQUIRED, supplied by the node from its resolved profile.
+  // No default; see §Magic Bytes and §Consensus parameters net enforces.
   magic: number                    // mainnet 0x4D444147 · testnet 0x54444147 · devnet 0x44444147
-  postPowTargetBits: number        // gossip verifies post PoW against this before relay
 
   // Peer discovery
   minPeers: number                 // floor for fill phase (default 3)
@@ -1143,28 +1140,16 @@ interface NetConfig {
 
 ### Consensus parameters net enforces
 
-Stage-1 relay validation checks proof-of-work before forwarding, so **net enforces a
-consensus parameter** and must be told which network it is on. It receives values; it does
-not resolve them, does not import `NetworkProfile`, and reads no environment variable for
-them.
+Stage-1 relay validation checks ordering-block proof-of-work before forwarding
+(`verifyOrderingBlockStructure` + `verifyOrderingBlockPoW`), but that check needs no
+per-network parameter: a block is checked against its own header's `powTargetBits` and the
+`ORDERING_BLOCK_POW_TARGET_FLOOR` constant from `@dagsocial/types`. The one per-network
+value net receives is `magic`. Net receives values; it does not resolve them, does not
+import `NetworkProfile`, and reads no environment variable for them.
 
 | Value | Why net needs it | Today |
 |---|---|---|
 | `magic` | Frame assembly and the frame-magic check | ✅ Supplied by the node from its resolved profile — see §Magic Bytes |
-| `postPowTargetBits` | `gossip.ts:255` verifies post PoW before relay | ✅ Supplied by the node; `net/src` imports no PoW constant |
-
-> ✅ **RESOLVED — closed by P2-A, re-verified 2026-08-11.** `net/src/gossip.ts` calls
-> `v.verifyPoW(powInput, post.powNonce, postPowTargetBits)` with the parameter threaded from
-> `this.config.postPowTargetBits` in `net/src/node.ts`, and `POST_POW_TARGET_BITS` occurs
-> **0 times across every package's `src`**.
->
-> ⚠ **It occurs 10 times in `net/test`.** The production path is clean; the test tree still
-> asserts against the compile-time constant rather than the profile field. That passes only
-> because the suite runs on the profile where the two are equal by construction — carried
-> register #23, and this is a net-side instance of it. *Historical:* it checked against the compile-time constant, making post difficulty
-> network-invariant at the relay boundary even though it is a profile field — **a devnet node
-> would have rejected its own network's posts**, mined at devnet's target and checked against
-> mainnet's, before they ever reached the node.
 
 > ✅ **RESOLVED — verified 2026-08-10, re-verified 2026-08-11 by count. The resolution stated at
 > the foot of this note was carried out:** `net/src/config.ts` no longer exists, `loadNetConfig`

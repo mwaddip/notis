@@ -93,9 +93,7 @@ included in an ordering block, and applied atomically when the block is
 finalized. See `MEMPOOL_INTERFACE.md` for the full contract.
 
 **Key properties:**
-- Single SQLite table `mempool` with type discriminator (`utxo_tx` | `prune`) —
-  `subblock_id`, `batch_id` and the `'subblock'` entry type are reserved, never
-  reused (`store/db.ts`)
+- Single SQLite table `mempool` with type discriminator (`utxo_tx` | `prune`)
 - FIFO ordering by insertion (`ORDER BY rowid ASC`)
 - TTL: 720 blocks (~12h at 60s block time)
 - Expired entries purged at block assembly time
@@ -118,12 +116,6 @@ are hex-encoded.
 
 `userId` on the wire is hex-encoded (64 hex chars). Internally `UserId` is
 `Uint8Array` (32 raw bytes).
-
-### Challenge (PoW)
-
-| Method | Path | Request | Response | Errors |
-|--------|------|---------|----------|--------|
-| ~~`POST`~~ | ~~`/challenge`~~ | **DELETED** — the PoW handshake goes with post PoW. The `challenges` table and `challengeWindowBlocks` go with it. Route path reserved | | |
 
 ### Posts
 
@@ -627,13 +619,6 @@ transaction's signature over its `TxId` ("Post transactions"), and a parent
 ref's id cannot be recomputed from the parent post — a post id is
 provenance-derived, so the store's recorded id is the only statement of it and
 existence is what remains checkable here.
-
-### verifyPostForRelay
-
-**Reserved, never to be reused** (`services/verifier.ts` states the same at the
-definition site). There is no per-post relay validation: a post arrives as a
-transaction, and the relay gate is the cached karma-membership check — see
-"Post transactions".
 
 ---
 
@@ -2315,12 +2300,6 @@ Fresh schema — no Phase 1 migration.
 | `getDb()` | `() => Database` | Return better-sqlite3 handle, throw if not initialized |
 | `closeDb()` | `() => void` | Graceful shutdown |
 
-### Challenges
-
-**Reserved, never to be reused:** `createChallenge`, `getActiveChallenge`,
-`consumeChallenge`, and the `challenges` table — deleted with post PoW's
-challenge handshake (§Challenge (PoW) above).
-
 ### Posts DAG
 
 | Function | Signature |
@@ -2346,7 +2325,6 @@ challenge handshake (§Challenge (PoW) above).
 > verdict rather than an absence — every response served `"unknown"` and nothing complained. A
 > required field makes a caller with no status fail to compile instead.
 | `pruneSubtree(rootPostId)` | `(string) => void` — mark subtree as pruned |
-| `insertPostPlaceholder(postId, parentRefs)` | `(string, string[]) => void` — for block-synced posts |
 
 ### Like-records (P2-D — replaces `dag_likes`)
 
@@ -2718,10 +2696,6 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
 | `hasPendingVouch(voucherId)` | `(string) => boolean` | SQL EXISTS over gate metadata (L-4) |
 | `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
-
-**Reserved, never to be reused** (`store/mempool.ts` states the same at the
-definition site): `insertSubBlock` / `insertMempoolSubBlock` and
-`removeSubBlockEntries`.
 
 All insert functions throw a typed `MempoolFullError` at `MAX_MEMPOOL_ENTRIES`
 (default 10000). Three callers, three behaviors: routes map it to 503; gossip
@@ -3549,7 +3523,6 @@ operator may safely change, and four consensus parameters were environment-tunab
 | Value | Destination | Why |
 |---|---|---|
 | `ORDERING_BLOCK_POW_TARGET_BITS` | **profile** | Difficulty differs per network |
-| `POST_POW_TARGET_BITS` | **profile** | Difficulty differs per network |
 | `KARMA_DECAY_INTERVAL_BLOCKS` | **profile** | Timescale differs per network |
 | `KARMA_STALE_THRESHOLD_BLOCKS` | **profile** | Timescale differs per network |
 | `TREASURY_PUBKEY` | **deleted outright** | The treasury is a box no key can spend, so there is no key to place anywhere |
@@ -3572,13 +3545,11 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
 | `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |
-| ~~`POST_POW_TARGET_BITS`~~ | **removed** | ~~`20`~~ | Deleted with post PoW; the name and the profile field `postPowTargetBits` stay reserved (`TYPES_INTERFACE` → PoW). A6's `advertised` class died with the mechanism |
 | ~~`NETWORK_MODE`~~ | **renamed** | ~~`testnet`~~ | → `NETWORK_TYPE`. The name changes because the meaning does: it selected a faucet flag, it now selects the whole consensus parameter table |
 | ~~`MAX_SUB_BLOCKS_PER_BLOCK`~~ | **replaced** | ~~`1000`~~ | → `BLOCK_BODY_BUDGET_BYTES`. A count, named for a structure that no longer exists, capping every entry type at once. Its "CONSENSUS GAP" note is closed by `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE` → Size caps), which is enforced in structure validation |
 | `BLOCK_BODY_BUDGET_BYTES` | `local` | `MAX_BLOCK_BODY_BYTES` | Body bytes this node fills blocks **it produces** to. Genuinely local: a miner may publish smaller blocks. **Clamped to `MAX_BLOCK_BODY_BYTES`** — a node cannot raise its own consensus bound, and a value above it would build blocks every peer rejects |
 | ~~`ORDERING_BLOCK_MIN_SUB_BLOCKS`~~ | **removed** | ~~`1`~~ | Sub-block arrival no longer triggers production |
 | ~~`ORDERING_BLOCK_INTERVAL_MS`~~ | **removed** | ~~`60000`~~ | There is no producer timer. Block cadence is set by the ordering-block PoW target |
-| ~~`CHALLENGE_WINDOW_BLOCKS`~~ | **removed** | ~~`10`~~ | Deleted with the challenge handshake; the name stays reserved (`TYPES_INTERFACE` → PoW) |
 | `MAX_MEMPOOL_ENTRIES` | `local` | `10000` | Mempool capacity |
 | `MAX_PEERS` | `local` | `50` | Max connected libp2p peers |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
@@ -3592,7 +3563,6 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `BOOTSTRAP_PEERS` | `operational` | `[]` | Comma-separated libp2p multiaddrs |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
-| ~~`EPOCH_BLOCKS`~~ | **removed** | ~~`60`~~ | Epoch interval — **the epoch is deleted** (P2-D); accrual and settlement are per-block. No env read, no constant remains; the name is retired-reserved |
 
 > ⚠ **The karma decay constants are documented for a block time the node does not use.**
 > `constants.ts` annotates `KARMA_STALE_THRESHOLD_BLOCKS = 20160` as "28 days at 2m blocks" and
@@ -3634,10 +3604,6 @@ to peers. Broadcast calls are fire-and-forget — failures are logged but do
 not fail the API request.
 
 ### Relay handlers (mempool-based)
-
-**Reserved, never to be reused: the sub-block relay handler** (`node/src/index.ts`
-states the same at the registration site). A post arrives as a transaction,
-through `onTx`.
 
 - **`onTx(tx)`**: validates (read-only, `validateTx`) → inserts into mempool via
   `insertUtxoTx`
@@ -3937,11 +3903,9 @@ funnel:
 - **`setBlocksHandler(cb)`**: called by sync machine to apply blocks during sync
 - **`setHeadersHandler(getBlock)`**: serves block headers for fork resolution
 
-**Reserved, never to be reused: `setSyncHandler` and `setPostsHandler`**
-(`node/src/index.ts` states the same at the registration site). A block carries
-its posts whole in `utxoTxs`, so there is no content-sweep and no per-post
-serve path. `onPeerActive` is wired to peer-readiness (`notePeerMet`), not to
-any sweep.
+A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
+no per-post serve path. `onPeerActive` is wired to peer-readiness
+(`notePeerMet`), not to any sweep.
 
 The node registers no stump handlers in either direction: inbound
 `/dagsocial/stump/1` gossip is not consumed, `broadcastStump` is not called,

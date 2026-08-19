@@ -324,9 +324,7 @@ to eliminate.
 
 Post PoW, its challenge handshake, and the sub-block mechanism are retired. A post is
 created by a transaction: admission is priced by the karma post-lock, authenticated by
-the transaction's signature, and ordered by the block that includes it. The retired
-names (`POST_POW_TARGET_BITS`, `postPowTargetBits`, `CHALLENGE_WINDOW_BLOCKS`) stay
-reserved (`TYPES_INTERFACE` → PoW).
+the transaction's signature, and ordered by the block that includes it.
 
 #### Subtree pruning (deletion)
 
@@ -1054,11 +1052,9 @@ No user transaction can spend a `PostLockBox` — block application is its only 
 All universal constants — never per-network (§Network Identity: compress time, never
 economics). Values are placeholders until the constants session pins them.
 
-**Retired, do not rebuild — names reserved, never reuse:** `LikeBox` and the boxType string
-`'like'` · the `likebox` and `epoch` Merkle leaf domains ·
-the free-like tier (`dag_likes` rows as likes) · unlike and every refund path · the epoch
-interval and `EPOCH_BLOCKS` · `LIKE_COST` · `LIKE_THRESHOLD` · `LIKE_MAX_AUTHOR_REWARD` ·
-`LIKE_FREE_THRESHOLD` · `INVITE_KARMA_AMOUNT` · `INVITE_BOND_KARMA`.
+**Retired, do not rebuild:** the like box · the free-like tier (`dag_likes` rows as
+likes) · unlike and every refund path · the epoch interval. The boxType string `'like'`
+is a tracked reservation (`TYPES_INTERFACE` → Tracked reservations).
 
 ---
 
@@ -2064,9 +2060,9 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   verified by the local node before the post enters the store.
   > ⚠ **HALF RESOLVED BY STRUCTURE; the other half is a standing claim to re-verify. The rule
   > is right.**
-  > - `insertPostPlaceholder` is **reserved** (`node/src/store/posts.ts`): a post is a
-  >   transaction, so a node holding the block body holds the content — no confirmed row
-  >   precedes verified bytes on that path, and the F6 unsigned-refs route died with it.
+  > - The placeholder path is deleted: a post is a transaction, so a node holding the
+  >   block body holds the content — no confirmed row precedes verified bytes on that
+  >   path, and the F6 unsigned-refs route died with it.
   > - `post-service.ts` calling `insertPost` **before** `validateTx` on the creating
   >   transaction, with no rollback, is this note's surviving claim; it is recorded here
   >   unverified against the current tree.
@@ -2158,8 +2154,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > typing) rather than as a second coordinated break later.
   >
   > `stump`, `prune` and `utxotx` are simple byte forms and are unaffected — they get written
-  > specs as-is. `epoch` and `likebox` are deleted by P2-D, their domain strings **reserved,
-  > never reused** (§Likes).
+  > specs as-is. `epoch` and `likebox` are deleted by P2-D.
 
 ### Package boundaries
 - **No dependencies above the package's abstraction level** — the storage
@@ -2262,8 +2257,8 @@ Six rules govern it:
    carries a `tsconfig.test.json` (`include: ["src", "test"]`) wired into its `typecheck` script, so
    `pnpm -r typecheck` covers what the suites actually execute — an unchecked test tree is exactly
    where a new *required* field (e.g. `UtxoDeps.networkType`) hides as a runtime surprise, and where
-   mocks of deleted fields rot silently (`headers.test.ts` mocked `SubBlockTree.stumpIds` units after
-   it died). Three constraints, all measured 2026-08-08: the config extends `tsconfig.base.json`
+   mocks of deleted fields rot silently (a header test once mocked a deleted struct's field for
+   units after the struct died). Three constraints, all measured 2026-08-08: the config extends `tsconfig.base.json`
    **directly**, not the package `tsconfig.json` — `extends` cannot *unset* the inherited
    `rootDir: "src"`, and the cross-package `paths` files below then violate it (TS6059); it declares
    `paths` mapping `@dagsocial/*` to `../<pkg>/src/index.ts`, mirroring the vitest alias above —
@@ -2315,8 +2310,7 @@ around it.
 **`NODE_INTERFACE.md → Store Interface` is authoritative for the schema — do not derive
 table names from this section.** Single SQLite database, single WAL, single connection.
 Post topology lives in `block_topology`; there are no sub-block tables and no sub-block
-mempool rows (`store/db.ts` reserves `subblock_id`, `batch_id`, and the `'subblock'`
-entry type). `peers` backs `@dagsocial/net`'s PeerDb across restarts.
+mempool rows. `peers` backs `@dagsocial/net`'s PeerDb across restarts.
 
 ---
 

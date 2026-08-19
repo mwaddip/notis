@@ -37,11 +37,6 @@ CREATE TABLE mempool (
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
 ```
 
-**Reserved, never to be reused** (`store/db.ts` states the same at the schema):
-`subblock_id`, `batch_id`, and the entry type `'subblock'`. A post is a
-transaction, so the post/lock pair `batch_id` existed to regroup is a single
-object.
-
 The SQLite `rowid` is the canonical identifier for entries.
 
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
@@ -89,10 +84,6 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 ---
 
 ## API Surface
-
-**Reserved, never to be reused** (`store/mempool.ts` states the same at the
-definition site): `insertSubBlock` / `insertMempoolSubBlock` and
-`removeSubBlockEntries`.
 
 ### insertUtxoTx
 
@@ -287,7 +278,7 @@ Batch cleanup happens through `removeEntry` per rowid.
 
 **Every entry stands alone.** A post is one transaction carrying its payload and
 its karma lock, so nothing produces multiple pool entries that must travel
-together; `batch_id` is reserved (schema note above).
+together.
 
 | Operation | Pool entry type |
 |-----------|----------------|

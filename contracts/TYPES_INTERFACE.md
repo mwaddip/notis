@@ -147,9 +147,8 @@ needs nothing from its content. A signature of `(Post) => PostId` is what the ol
 content-derived id required, and reintroducing it would reintroduce the uniqueness problem
 PoW was carrying.
 
-**Deleted:** `postPowPreimage`, `signingHash`, `powNonceBytes`, `verifyPostId`. The first
-three exist only for post PoW; `verifyPostId(post, expectedId)` cannot exist at all once the
-id is not a function of the post. **Names stay reserved.**
+`verifyPostId(post, expectedId)` cannot exist: once the id is not a function of the post,
+there is nothing such a signature could check.
 
 ⚠ **`utf8(txId)`, not decoded bytes.** `TxId` is typed as a hex string, and this contract's
 standing rule (→ Pinned byte forms) is that a **standalone derivation** takes it as the UTF-8
@@ -215,10 +214,9 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
 > leaf preimage can ever begin with `0x00`. The **three** live domains are `stump`, `prune`,
 > `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
-> **Four are retired and every one of their strings stays reserved**, because a future domain
-> reusing one would collide with historical leaf meanings: `likebox` and `epoch` (P2-D),
-> `subblock` (a post is a transaction, so it rides `utxotx`), and `coinbase` (coinbase
-> outputs are outputs of the settlement transaction).
+> **Two retired domain strings are tracked reservations** (→ Tracked reservations, below the
+> boxType tag table): `subblock` and `coinbase`. Both are remnant-bounded, and `coinbase`'s
+> remnant is the live coinbase concept itself, so it holds while that concept does.
 >
 > ⛔ **A live/retired list restated in two places is the drift class this file names
 > everywhere else; there is one list and it is here.**
@@ -532,9 +530,9 @@ coinbase) cannot be spent until `lockedUntilBlock` passes.
 
 **There is no like box.** A like burns its karma at cast, so there is no held value and
 nothing for a box to carry — a like is a **transaction** (`UtxoTransaction.likeTarget`,
-below) plus a node-side `(liker, post)` record. The boxType string **`'like'` is reserved,
-never to be reused**: a future box type wearing it would make old-vs-new greps and
-historical debugging ambiguous forever.
+below) plus a node-side `(liker, post)` record. The boxType string **`'like'` is a tracked
+reservation** (→ Tracked reservations): reserved while its remnants — the live
+illegal-transition rule and the reject vectors that wear it — remain in the tree.
 
 ### InviteBox
 
@@ -585,8 +583,8 @@ self-enforcing without a rule.
 > pairing is structural: one bond, one grant. A like needs a marker because its value goes to a party
 > holding no box in the transaction; an invite already creates one.
 >
-> ⛔ **The boxType string `'invite'` is reserved, never to be reused** — the same rule `~~LikeBox~~`
-> states above, for the same reason. ⚠ **`KARMA_BOX_TYPES` loses `'invite'` and gains the vouch
+> ⛔ **The boxType string `'invite'` is a tracked reservation** (→ Tracked reservations) — the
+> same remnant-bounded rule `~~LikeBox~~` states above. ⚠ **`KARMA_BOX_TYPES` loses `'invite'` and gains the vouch
 > escrow**; anything quoting that list must re-derive it rather than editing a remembered copy.
 
 ### BondBox
@@ -1219,13 +1217,6 @@ the thing an authorship claim would be about, and verifies it rather than trusts
 is not enough — the ids do not contain the post. **Any sync path that delivers ids
 without bodies regresses H-3.**
 
-**Reserved, never to be reused** (`types/src/index.ts` states the same list at the
-export surface): the struct names `SubBlock`, `SubBlockTree`, `SubBlockEntry` and
-`CoinbaseOutput`, the functions `subBlockEntryBytes`, `subBlockFromPost` and
-`coinbaseOutputBytes`, the header field name `subBlockRoot`, and the body fields
-`subBlockRefs` and `coinbaseOutputs`. A retired consensus name returning with a
-different meaning makes historical bytes ambiguous against new ones; the leaf-domain
-half of the rule is §Merkle primitives'.
 
 `likeBoxIds` and `epochTallyResults` were deleted by P2-D: likes ride `utxoTxIds` like
 every other transaction, and per-block settlement is **derived state** computed identically
@@ -1353,10 +1344,17 @@ callers must remember to invoke is the shape that produced this defect class in 
      unit forces a fresh chain, so there is no id for the new meaning to collide with;
   2. **every other tag keeps its number**, which is what makes "no existing id moves" checkable
      rather than asserted — the ids that move are exactly the ones that do not exist; and
-  3. **the retired *name* stays reserved.** The number is reusable; the string is not, because a new
-     type wearing it makes old-vs-new greps and historical debugging ambiguous forever.
+  3. **the retired *name* stays reserved while remnants of the retired type remain in the
+     codebase** (user, 2026-08-19). A new type wearing a name the tree still mentions makes
+     old-vs-new greps and debugging ambiguous against those mentions. When the last remnant
+     goes, the reservation expires with it — a name with zero occurrences cannot be ambiguous
+     with anything. **Surviving reservations are tracked in the allocator table they guard**
+     (the tracked-reservations block below the tag table), each row naming the remnant class
+     that holds it; a deletion-proof guard test is itself a remnant, so freeing a name
+     includes deleting its guard. **A mention inside a dated record block is not a remnant** —
+     a record is timestamped and cannot be confused with a live meaning.
 
-  Fail any one of them and the number stays reserved — left out of the table, never reused.
+  Fail condition 1 or 2 and the number stays reserved — left out of the table, never reused.
 
   > ## ⛔ AND WHEN ALL THREE HOLD, REUSE IS NOT OPTIONAL (user, 2026-08-17)
   >
@@ -1423,8 +1421,9 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > was length-prefixed, so any width encoded faithfully and injectively.
 >
 > **The enumeration was `postFieldBytes`' four then-entry points — `signingHash`,
-> `postPowPreimage`, `computePostId` and `verifyPostId` (all four deleted, names reserved) —
-> reaching it from 15 production call sites.** (An earlier
+> `postPowPreimage`, the content-derived `computePostId` and `verifyPostId` (all four
+> deleted; the `computePostId` NAME was later reused for the live provenance-derived
+> `(txId, index)` form, a different function) — reaching it from 15 production call sites.** (An earlier
 > draft of this block said "eight further sites"; that was main's count, and it was wrong. It also
 > missed `verifyPostId` as an entry point altogether, and `store/posts.ts:82` `insertPost`, which is
 > the store-admission write that the whole downstream classification depends on.)
@@ -1584,11 +1583,23 @@ from this table — a use that reads every cell as an instruction rather than as
 | 12 | `vouch_escrow` |
 | **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
 
-> ## ⛔ TAG 2 IS RESERVED, NOT FREE
+> ## Tracked reservations (remnant-bounded — tag rules, condition 3)
 >
-> `invite` is deleted (§InviteBox) and **its number is never reused.** The never-renumber rule
-> governs the string; this row governs the number. A hole **inside** the assigned range is a distinct
-> decode case from a tag past the end, and both need a reject vector.
+> Reserved while the named remnants stand; the row leaves this table when they go.
+>
+> | Reserved | Held by |
+> |---|---|
+> | tag `2` + boxType `'invite'` | §InviteBox record and its in-code citations; the tag-2 reject vectors; `node/store/db.ts`'s tag-order comment |
+> | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
+> | leaf domain `'subblock'` | node's live-legacy identifiers (`confirmedSubBlockIds`, `recordConfirmedSubBlocks`, `unconfirmPost(subBlockId)`) |
+> | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
+
+> ## ⛔ TAG 2 IS A TRACKED HOLE
+>
+> `invite` is deleted (§InviteBox) and its number is reserved **while the tracked-reservations
+> row above holds** — the lowest-free-tag rule then governs it like any hole. A hole **inside**
+> the assigned range is a distinct decode case from a tag past the end, and both need a reject
+> vector.
 >
 > ## ⛔ A REJECT VECTOR MUST NOT BE PINNED TO "THE NEXT FREE TAG"
 >
@@ -2133,10 +2144,6 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
 | `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
 
-> ⛔ **Reserved, never to be reused — export names with no definition in `src`:**
-> `encodeSubBlock`, `decodeSubBlock`, `encodeSubBlockTree`, `decodeSubBlockTree`,
-> `subBlockEntryBytes`, `coinbaseOutputBytes`. A row here is a signature a reader will call
-> (§How a dispatch decays this contract, below).
 
 ### How a dispatch decays this contract, and why nothing catches it
 
@@ -2328,7 +2335,6 @@ export interface NetworkProfile {
 
   // Difficulty
   readonly orderingBlockPowTargetBits: number;
-  // `postPowTargetBits` is reserved, never to be reused (§PoW constants)
 
   // Block-denominated durations
   readonly karmaDecayIntervalBlocks: number;
@@ -2563,11 +2569,9 @@ and only the origination comparison fails.
 
 ### PoW
 
-```typescript
-// POST_POW_TARGET_BITS is DELETED with post PoW; the name, the profile field
-// `postPowTargetBits`, and `CHALLENGE_WINDOW_BLOCKS` stay reserved. Ordering-block
-// PoW is unaffected — it is the consensus PoW and always was.
-```
+Ordering-block PoW is the consensus PoW; its constants are
+`ORDERING_BLOCK_POW_TARGET_BITS` and `ORDERING_BLOCK_POW_TARGET_FLOOR` (§Consensus). A post
+carries no PoW of its own.
 
 ### Karma
 
@@ -2618,9 +2622,6 @@ export const LIKE_KARMA_COST = 1n;             // Karma burned by the liker per 
 export const LIKES_PER_KARMA_PAYOUT = 5;       // x: per x likes an author accrues x−1; 1 burned
 ```
 
-The four retired like constants (`LIKE_COST`, `LIKE_THRESHOLD`, `LIKE_MAX_AUTHOR_REWARD`,
-`LIKE_FREE_THRESHOLD`) and the epoch (`EPOCH_BLOCKS`) are **deleted** — P2-D. Names
-reserved; the deletion-proof grep for the old mechanics depends on them never returning.
 
 ### Invites
 
@@ -2634,9 +2635,8 @@ export const INVITE_BOND_VEST_PER_LIKES = 3;       // consensus — likes the in
 
 ⛔ **THE GRANT IS THE BOND, so there is no separate grant constant.** The inviter picks a
 bond inside `[INVITE_BOND_MIN, INVITE_BOND_MAX]` — both **per-network caps** — and the
-settlement grants exactly that value out of the pool. `INVITE_KARMA_AMOUNT` and
-`INVITE_BOND_KARMA` are **deleted, names reserved**: the bound `B ≥ G` used to be a
-relationship between two numbers that could drift, and equality removes the second number
+settlement grants exactly that value out of the pool. The bound `B ≥ G` used to be a
+relationship between two numbers that could drift; equality removes the second number
 rather than restating the rule.
 
 ⛔ **`INVITE_BOND_VEST_PER_LIKES` is not `LIKES_PER_KARMA_PAYOUT`, and the two must
@@ -2645,10 +2645,6 @@ inviter's stake* versus *how many likes an author is paid for before one is burn
 each moves without the other. **Their ratio is the supply dial**: a completed invite moves
 `B · (1 − V/L)` into circulation, so `V = L` would mean the network cannot inflate at all.
 They are 3 and 5; a single constant serving both would re-price one silently.
-
-`MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **deleted. Names reserved**,
-on the same argument as the retired like constants: a deletion-proof grep only
-works while the old name stays gone.
 
 The pending-invite cap needs no successor because the balance is one. An inviter
 locks their chosen bond per invite out of their own karma, so `K /
