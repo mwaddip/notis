@@ -25,6 +25,10 @@ import {
   computeTxId,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -111,6 +115,12 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

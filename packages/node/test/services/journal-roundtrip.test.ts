@@ -646,16 +646,15 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       expect(utxo.getBox(oldBox.id!)).not.toBeNull();
       const pre = takeSnapshot(db, handle, 3);
 
-      // Height 4 > threshold 3: stale, owes 4 periods × 5 = 20, capped at
-      // value − minimum = 40 → burn 20, one consolidated decay-burn box.
+      // Height 4 > threshold 3: stale but UNTOUCHED — virtual decay does
+      // not fire a settlement leg. The face value stays; the round-trip still
+      // exercises the block's other mutations (coinbase, pool successor).
       const classBlock = await mineNextBlock(bc);
       expect(classBlock).not.toBeNull();
 
-      expect(utxo.getBox(oldBox.id!)).toBeNull();
-      const burned = utxo.getKarmaBox(idle.userId);
-      expect(burned).not.toBeNull();
-      expect(burned!.value).toBe(30n);
-      expect((burned as KarmaBox & { decayBurn?: boolean }).decayBurn).toBe(true);
+      // No touch, no squaring — the old box survives at face value.
+      expect(utxo.getBox(oldBox.id!)).not.toBeNull();
+      expect(utxo.getKarmaBox(idle.userId)!.value).toBe(50n);
 
       await assertRoundTrip(db, handle, pre, classBlock!);
     } finally {
@@ -715,7 +714,9 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const blockApply = await importBlockApply();
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // Two record mutations for the invitee at one height.
+    // One record mutation for the invitee: the settlement's invite-grant
+    // writes invitedAtBlock. The karma box it inserts carries decayBurn: true
+    // (received value), so insertBox does not bump lastActivityBlock.
     const journalStore = await import('../../src/store/journal.js');
     const recordMutations = journalStore
       .getBlockJournal(2)!
@@ -723,9 +724,8 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
         (m) => m.kind === 'record' &&
           Buffer.from(m.identityId).toString('hex') === hex(invitee.userId),
       );
-    expect(recordMutations).toHaveLength(2);
-    expect(recordMutations[0]).toMatchObject({ record: { lastActivityBlock: 2 } });
-    expect(recordMutations[1]).toMatchObject({ record: { invitedAtBlock: 2 } });
+    expect(recordMutations).toHaveLength(1);
+    expect(recordMutations[0]).toMatchObject({ record: { invitedAtBlock: 2 } });
 
     // The TREE holds the LAST write — the collapse rule's subject.
     const key = Buffer.from(recordStore.identityRecordKey(invitee.userId), 'hex');
@@ -734,7 +734,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     if (!lookup.success) throw new Error('lookup failed');
     expect(lookup.value).toBeTruthy();
     expect(serialize.deserializeIdentityRecord(lookup.value!)).toEqual({
-      lastActivityBlock: 2,
+      lastActivityBlock: 0,
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
@@ -743,9 +743,10 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     await assertRoundTrip(db, handle, pre, classBlock);
 
-    // Re-apply landed the record back on the last write.
+    // Re-apply landed the record back on the last write. The grant's karma
+    // box carries decayBurn: true (received value), so lastActivityBlock is 0.
     expect(recordStore.getIdentityRecord(invitee.userId)).toEqual({
-      lastActivityBlock: 2,
+      lastActivityBlock: 0,
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,

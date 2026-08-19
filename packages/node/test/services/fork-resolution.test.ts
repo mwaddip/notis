@@ -1391,11 +1391,10 @@ describe('revertBlock', () => {
       insertBox: utxo.insertBox,
       getIdentityRecord: records.getIdentityRecord,
       putIdentityRecord: records.putIdentityRecord,
-      getKarmaOwners: () => [identity.userId],
     };
 
     const DECAY_HEIGHT = KARMA_STALE_THRESHOLD_BLOCKS + 100;
-    const entries = deriveKarmaDecay(deps, DECAY_HEIGHT, decayCfg);
+    const entries = deriveKarmaDecay(deps, [identity.userId], DECAY_HEIGHT, decayCfg);
 
     expect(entries.length).toBe(1);
 

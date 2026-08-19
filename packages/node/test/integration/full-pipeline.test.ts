@@ -214,6 +214,12 @@ interface EngineDeps {
   vouchCooldownBlocks: number;
   inviteBondMin: bigint;
   inviteBondMax: bigint;
+  decayCfg: {
+    staleThresholdBlocks: number;
+    decayIntervalBlocks: number;
+    decayAmount: bigint;
+    karmaMinimum: bigint;
+  };
   getTopologyAuthor: (postId: string) => Uint8Array | null;
   runInTransaction: (fn: () => void) => void;
 }
@@ -250,6 +256,12 @@ function makeEngineDeps(
     // engine end to end, so it resolves the real row.
     inviteBondMin: config.inviteBondMin,
     inviteBondMax: config.inviteBondMax,
+    decayCfg: {
+      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+      decayAmount: config.karmaDecayAmount,
+      karmaMinimum: config.karmaMinimum,
+    },
     getTopologyAuthor: (postId: string) => {
       const row = db
         .prepare('SELECT author FROM block_topology WHERE post_id = ?')

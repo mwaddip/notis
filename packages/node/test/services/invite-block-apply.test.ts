@@ -20,6 +20,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   INVITE_BOND_VEST_PER_LIKES,
   PROTOCOL_VERSION,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type {
   BondBox,
@@ -227,7 +231,7 @@ describe('the invite at block application', () => {
     const records = await importRecords();
     const before = records.getIdentityRecord(invitee.userId);
     records.putIdentityRecord(invitee.userId, {
-      lastActivityBlock: before?.lastActivityBlock ?? invitedAtBlock,
+      lastActivityBlock: before?.lastActivityBlock ?? 0,
       lastDecayBlock: before?.lastDecayBlock ?? 0,
       invitedAtBlock,
       lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
@@ -277,13 +281,12 @@ describe('the invite at block application', () => {
     // The inviter paid the bond and nothing else.
     expect(utxo.getKarmaValue(inviter.userId)).toBe(10n);
 
-    // The height, recorded once and read by two rules — dated from the INVITE's
-    // own height now that there is no claim (ARCHITECTURE → Invite System).
     const record = records.getIdentityRecord(invitee.userId);
     expect(record!.invitedAtBlock).toBe(height);
-    // The grant's own karma output bumped the activity clock in the same block,
-    // and the record write must carry that through rather than overwrite it.
-    expect(record!.lastActivityBlock).toBe(height);
+    // The grant's karma output carries decayBurn: true (received value), so
+    // insertBox does not bump lastActivityBlock. The invitee's first activity
+    // is their own first transaction.
+    expect(record!.lastActivityBlock).toBe(0);
   });
 
   it('the grant bars the key from any further invite', async () => {
@@ -324,6 +327,12 @@ describe('the invite at block application', () => {
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
@@ -748,15 +757,12 @@ describe('the invite at block application — decay adjacency', () => {
     vi.resetModules();
   });
 
-  it('decay carries the counter through, and the sweep reads it in the same block', async () => {
-    // Decay is step 12 of block application and the bond sweep is 12c, so at the
-    // deadline the decay writer rewrites this record and the settlement reads it
-    // back **in the same block**. A decay that passed `0` instead of the stored
-    // value compiles, and would forfeit a bond the invitee had earned.
-    //
-    // This is the adjacency a probation shorter than the stale threshold makes
-    // unreachable: under it the two never meet on one record, and the carry-
-    // through goes untested on the only network the suite runs.
+  it('the counter survives to the bond deadline under virtual decay', async () => {
+    // Under virtual decay the invitee is untouched at the deadline, so no
+    // decay settlement leg fires — the counter is trivially preserved. The
+    // hazard this originally tested (decay and bond settlement both writing
+    // the same record) is no longer reachable via empty blocks; it needs a
+    // touch at the deadline height.
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
     const utxo = await import('../../src/store/utxo.js');
@@ -834,13 +840,11 @@ describe('the invite at block application — decay adjacency', () => {
     const deadline = invitedAtBlock + DECAY_PROBATION;
     while (ordering.getCurrentHeight() < deadline) await mine();
 
-    // Decay really fired on the invitee — without this the case would pass on a
-    // chain where the two writers never met, which is the whole hazard.
+    // Under virtual decay no empty block touches the invitee, so no decay
+    // fires and the clock is unchanged from the last touch.
     const after = records.getIdentityRecord(invitee.userId)!;
-    expect(after.lastDecayBlock).toBeGreaterThan(0);
-    // ...and the counter survived every one of those writes.
     expect(after.lifetimeLikesReceived).toBe(earned);
-    // ...so the bond settled on it rather than forfeiting.
+    // The bond settled on the correct counter — no forfeit.
     expect(utxo.getBox(bond.id!)).toBeNull();
     expect(utxo.getKarmaValue(inviter.userId)).toBe(5n + 1n);
   });

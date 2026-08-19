@@ -49,17 +49,19 @@ function decayDeps(s: Store) {
     insertBox: s.utxo.insertBox,
     getIdentityRecord: s.records.getIdentityRecord,
     putIdentityRecord: s.records.putIdentityRecord,
-    getKarmaOwners: () =>
-      (
-        s
-          .getDb()
-          .prepare(
-            `SELECT DISTINCT owner FROM utxo_boxes
-             WHERE box_type = 'karma' AND spent_at_block IS NULL`,
-          )
-          .all() as { owner: Buffer }[]
-      ).map((r) => new Uint8Array(r.owner)),
   };
+}
+
+function allKarmaOwners(s: Store): Uint8Array[] {
+  const rows = s
+    .getDb()
+    .prepare(
+      `SELECT DISTINCT owner FROM utxo_boxes
+       WHERE box_type = 'karma' AND spent_at_block IS NULL
+       ORDER BY owner`,
+    )
+    .all() as { owner: Buffer }[];
+  return rows.map((r) => new Uint8Array(r.owner));
 }
 
 /**
@@ -142,7 +144,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     //   never-active  (0) : floor((12 − 0) / 3) = 4 periods → burn 20
     //
     // 15 is what the box-height clock produced, `createdAtBlock` being 1.
-    const entries = s.decay.deriveKarmaDecay(decayDeps(s), 12, {
+    const entries = s.decay.deriveKarmaDecay(decayDeps(s), allKarmaOwners(s), 12, {
       staleThresholdBlocks: 11,
       decayIntervalBlocks: 3,
       decayAmount: 5n,
@@ -166,7 +168,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     };
     const before = (s.utxo.getKarmaBoxes(faucetPubKey())[0] as KarmaBox).value;
 
-    expect(s.decay.deriveKarmaDecay(decayDeps(s), 11, cfg)).toHaveLength(0);
+    expect(s.decay.deriveKarmaDecay(decayDeps(s), allKarmaOwners(s), 11, cfg)).toHaveLength(0);
     expect((s.utxo.getKarmaBoxes(faucetPubKey())[0] as KarmaBox).value).toBe(before);
   });
 

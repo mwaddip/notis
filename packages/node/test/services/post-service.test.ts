@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { createPost, PostServiceError } from '../../src/services/post-service.js';
 import type { PostServiceDeps } from '../../src/services/post-service.js';
 import type { Post, UtxoTransaction, AnyBox, KarmaBox } from '@dagsocial/types';
-import { PROTOCOL_VERSION, computePostId, computeTxId } from '@dagsocial/types';
+import {
+  PROTOCOL_VERSION, computePostId, computeTxId,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Minimal mock deps factory
@@ -12,6 +18,13 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
   return {
     verifyPost: () => ({ valid: true }),
     getKarmaBoxes: () => [{ value: 100n }],
+    getIdentityRecord: () => null,
+    decayCfg: {
+      staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+      decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+      decayAmount: KARMA_DECAY_AMOUNT,
+      karmaMinimum: KARMA_MINIMUM,
+    },
     // `(id) => StoredPost | Stump | null`. These tests only need presence, so
     // return a real stored post — carrying the `id` the store now supplies.
     getPost: (id: string) => ({ ...makePost({ content: 'hello' }), id, status: 'confirmed' as const }),

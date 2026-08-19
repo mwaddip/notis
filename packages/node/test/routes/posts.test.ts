@@ -32,6 +32,10 @@ import {
   computeBoxId,
   computePostId,
   POST_LOCK_THREAD_COST,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -68,6 +72,13 @@ async function request(
       encodePost,
       verifyPost: overrides?.verifyPost ?? verifyPost,
       getKarmaBoxes,
+      getIdentityRecord: storeGetIdentityRecord,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getKarmaBox,
       getLikeRecordCount,
       getLikersForPost,
@@ -110,6 +121,12 @@ async function request(
             // nothing to resolve — stated rather than stubbed silently.
             inviteBondMin: config.inviteBondMin,
             inviteBondMax: config.inviteBondMax,
+            decayCfg: {
+              staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+              decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+              decayAmount: KARMA_DECAY_AMOUNT,
+              karmaMinimum: KARMA_MINIMUM,
+            },
             getTopologyAuthor: () => null,
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();

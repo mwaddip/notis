@@ -21,6 +21,10 @@ import {
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -137,6 +141,12 @@ describe('validateAndApplyTx', () => {
       // and a like on any other target has no author at all.
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: (postId: string) =>
         postId === LIKE_TARGET_POST ? LIKE_TARGET_AUTHOR : null,
       runInTransaction: (fn: () => void) => {

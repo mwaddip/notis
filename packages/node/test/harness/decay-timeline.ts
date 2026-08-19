@@ -179,17 +179,19 @@ function decayDeps(m: Modules): Parameters<Modules['decay']['deriveKarmaDecay']>
     getKarmaBoxes: (owner: Uint8Array) => m.utxo.getKarmaBoxes(owner),
     getIdentityRecord: m.records.getIdentityRecord,
     putIdentityRecord: m.records.putIdentityRecord,
-    getKarmaOwners: () => {
-      const rows = m.db
-        .getDb()
-        .prepare(
-          `SELECT DISTINCT owner FROM utxo_boxes
-           WHERE box_type = 'karma' AND spent_at_block IS NULL`,
-        )
-        .all() as { owner: Buffer }[];
-      return rows.map((r) => new Uint8Array(r.owner));
-    },
   };
+}
+
+function allKarmaOwners(m: Modules): Uint8Array[] {
+  const rows = m.db
+    .getDb()
+    .prepare(
+      `SELECT DISTINCT owner FROM utxo_boxes
+       WHERE box_type = 'karma' AND spent_at_block IS NULL
+       ORDER BY owner`,
+    )
+    .all() as { owner: Buffer }[];
+  return rows.map((r) => new Uint8Array(r.owner));
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +290,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
             // The harness stands in for that emission so the timeline keeps
             // testing the decay ARITHMETIC — the staleness predicate, the
             // interval count, the karma floor — which this unit did not touch.
-            const entries = m.decay.deriveKarmaDecay(decayDeps(m), height, scenario.cfg);
+            const entries = m.decay.deriveKarmaDecay(decayDeps(m), allKarmaOwners(m), height, scenario.cfg);
             applyDecayPlans(m, entries, height);
             m.decay.commitDecayClocks(decayDeps(m), entries, height);
             for (const entry of entries) {

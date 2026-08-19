@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 import type {
   AnyBox,
   AnyBoxCandidate,
@@ -102,6 +107,12 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };

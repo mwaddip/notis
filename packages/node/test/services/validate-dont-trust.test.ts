@@ -3,7 +3,13 @@ import { createPost, PostServiceError } from '../../src/services/post-service.js
 import type { PostServiceDeps } from '../../src/services/post-service.js';
 import type { Post, UtxoTransaction, AnyBox, KarmaBox } from '@dagsocial/types';
 import type { StoredPost } from '../../src/store/posts.js';
-import { PROTOCOL_VERSION, computePostId, computeTxId, encodePost } from '@dagsocial/types';
+import {
+  PROTOCOL_VERSION, computePostId, computeTxId, encodePost,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Validate, don't trust — what that means once ids are provenance-derived
@@ -63,6 +69,13 @@ function mockDeps(store: MockStore, overrides?: Partial<PostServiceDeps>): PostS
       return { valid: true };
     },
     getKarmaBoxes: () => [{ value: 100n }],
+    getIdentityRecord: () => null,
+    decayCfg: {
+      staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+      decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+      decayAmount: KARMA_DECAY_AMOUNT,
+      karmaMinimum: KARMA_MINIMUM,
+    },
     getPost: (id: string) => (store.posts.has(id) ? makeStoredParent(id) : null),
     encodePost,
     insertPost: () => {},

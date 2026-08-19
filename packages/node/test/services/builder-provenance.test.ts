@@ -105,6 +105,17 @@ describe('invite id prediction carries transaction provenance', () => {
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
     getIdentityRecord: () => null,
+    hasActiveVouchEscrow: () => false,
+    vouchCooldownBlocks: 1000,
+    inviteBondMin: 1n,
+    inviteBondMax: 100n,
+    decayCfg: {
+      staleThresholdBlocks: 40320,
+      decayIntervalBlocks: 1440,
+      decayAmount: 5n,
+      karmaMinimum: 10n,
+    },
+    getTopologyAuthor: () => null,
     runInTransaction: (fn: () => void) => fn(),
   });
 
