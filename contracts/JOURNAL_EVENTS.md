@@ -116,11 +116,6 @@ Event-specific fields are additional top-level keys.
 **Fields:** `post_id` (string), `depth` (number)
 **Emitted:** After post is stored and linked into the DAG.
 
-### pow_verification_failed
-**Level:** WARN
-**Fields:** `post_id` (string), `reason` (string)
-**Emitted:** On PoW check failure.
-
 ### dag_reorg
 **Level:** WARN
 **Fields:** `fork_point` (string), `demoted` (number), `old_tip` (string),

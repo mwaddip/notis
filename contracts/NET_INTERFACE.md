@@ -763,9 +763,8 @@ Node start
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
 
-⚠ **Declared and never triggered:** `PenaltyKind.RateLimit` (would score 100) and
-the `PenaltyType` members `'spam'` and `'non-delivery'` — the unions are wider
-than the behavior, and no call site produces them.
+The table is the whole system: every `PenaltyType` and `PenaltyKind` member has
+a producing call site.
 
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 
@@ -1042,7 +1041,7 @@ structure, PoW, and signatures.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
-| `onTx(callback)` | `((UtxoTransaction) => void) => void` | Register handler for inbound UTXO transactions |
+| `onTx(callback)` | `((UtxoTransaction, fromPeerId: string) => void) => void` | Register handler for inbound UTXO transactions. `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s |
 
 ⚠ **`fromPeerId` is not guaranteed to be a peer id.** It is read defensively from the gossip event's
 `propagationSource`, which the gossipsub type declares required — and *required by the type* is not

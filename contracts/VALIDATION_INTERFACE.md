@@ -983,21 +983,18 @@ block-level checks (`pruneEntries`, `utxoTxIds`, `utxoTxs` alignment and weight,
 
 ### verifyBlockChainLink
 
-> ⚠ **NEVER BUILT as described, and it has no production caller. Verified 2026-08-11.** The
-> function exists — defined and exported from `@dagsocial/validation` — but
-> `packages/node/src` calls it **zero times**; the chain-link check on the live path is done
-> elsewhere. It also documents fields that **stopped existing on 2026-07-24**, and the same
-> refactor left a phantom `hash` check in the structure list below. Kept so it is not
-> re-adopted on the assumption that it is the sanctioned chain-link check; **verify what
-> the apply path actually does before relying on this signature.**
-
 ```
 verifyBlockChainLink(block: OrderingBlock, prevBlock: OrderingBlock): boolean
 ```
 
-Returns `true` iff `block.prevBlockHash === prevBlock.hash` and
-`block.height === prevBlock.height + 1`. Pure chain-link check — does
-not verify PoW, signatures, or UTXO state transitions.
+Returns `true` iff `block.header.prevBlockHash === blockHash(prevBlock.header)`
+and `block.header.height === prevBlock.header.height + 1`. The previous block's
+hash is **recomputed from its header**, never read off the block — a block
+carries no `hash` field. Pure chain-link check — does not verify PoW,
+signatures, or UTXO state transitions.
+
+This is the sanctioned chain-link check: `applyOrderingBlock` calls it for
+every non-genesis block (the genesis case has no previous block to link to).
 
 ---
 
@@ -1048,9 +1045,8 @@ Stage 2 (@dagsocial/node — after receipt)
   └── Block receipt (applyOrderingBlock — the funnel every apply path passes
         through: gossip, sync, reorg — so no path can skip it)
         ├── verifyOrderingBlockStructure
-        ├── chain-link check — inline: prevBlockHash against blockHash(prev
-        │     header) + height increment. `verifyBlockChainLink` the export has
-        │     zero production callers (its section below says so)
+        ├── verifyBlockChainLink (non-genesis: prevBlockHash against
+        │     blockHash(prev header) + height increment)
         ├── verifyOrderingBlockPoW
         ├── verifyValidatorSignature (blockHash(header) signed with validatorId's key)
         └── State application (UTXO, post confirmation, mempool cleanup)
