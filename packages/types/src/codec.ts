@@ -575,10 +575,10 @@ export interface Enum8<T extends string> {
 /**
  * Build an `enum8` codec from a tag table.
  *
- * **Tags reserve retired values and are never renumbered** (TYPES_INTERFACE →
- * Primitives). A renumber silently moves every id and `stateRoot` covering the
- * tag, and these tags sit inside id preimages. Reserve a retired tag by leaving
- * its number out of the table, never by reusing it.
+ * **Tags are never renumbered; retired values are remnant-bounded
+ * reservations** (TYPES_INTERFACE → tag rules, condition 3). A renumber
+ * silently moves every id and `stateRoot` covering the tag, and these tags sit
+ * inside id preimages.
  *
  * The table itself is code, not untrusted input, so the construction-time
  * checks below throw: a duplicate or out-of-range tag is a build defect and

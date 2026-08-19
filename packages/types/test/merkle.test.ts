@@ -108,11 +108,8 @@ describe('leaf/node domain separation (L-9)', () => {
 
   it('no leaf domain in use can begin with the node tag', () => {
     // Every leafHash call site in the monorepo passes one of these literals.
-    // ⛔ Reserved, never reuse: 'likebox', 'epoch', 'subblock', 'coinbase'. A leaf
-    // domain sits inside a consensus preimage, so a later leaf class wearing one
-    // of those strings would make historical roots ambiguous against new ones.
-    // Coinbase outputs are outputs of the block's settlement transaction and
-    // reach `utxoTxRoot` under 'utxotx' with every other transaction.
+    // The two retired domains `'subblock'` and `'coinbase'` are tracked
+    // reservations (TYPES_INTERFACE → Tracked reservations).
     for (const d of ['stump', 'prune', 'utxotx']) {
       expect(new TextEncoder().encode(d + '\0')[0]).not.toBe(0x00);
     }

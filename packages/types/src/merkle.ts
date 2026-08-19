@@ -36,9 +36,8 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
  * start a leaf preimage, which makes 0x00 a safe reserved tag for internal nodes.
  * Any future leaf domain must likewise be a non-empty printable string.
  *
- * ⛔ **Four are retired and every one of their strings stays reserved**:
- * 'likebox', 'epoch', 'subblock' and 'coinbase'. A future domain reusing one
- * would collide with historical leaf meanings.
+ * ⛔ **Two retired domains are tracked reservations** (TYPES_INTERFACE →
+ * Tracked reservations): `'subblock'` and `'coinbase'`.
  *
  * ⚠ **There is ONE list and it is TYPES_INTERFACE → Merkle primitives.** This
  * comment mirrors it and must be re-derived against it rather than edited from

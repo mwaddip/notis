@@ -630,11 +630,9 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
  * hashes. No `id`, no provenance.
  */
 export interface BoxCandidate {
-  // `'like'` and `'invite'` are retired box types — strings reserved, never
-  // reuse (TYPES_INTERFACE → ~~LikeBox~~, → InviteBox). A new box type wearing
-  // either name would make old-vs-new greps and historical debugging ambiguous
-  // forever. **The retired NUMBER is a separate rule in a separate section** —
-  // §Layout — Boxes reserves tag 2, and `BOX_TYPE_TAGS` leaves it out.
+  // `'like'` and `'invite'` are tracked reservations (TYPES_INTERFACE →
+  // Tracked reservations). Tag 2 is a tracked hole (TYPES_INTERFACE →
+  // tag rules); `BOX_TYPE_TAGS` leaves it out.
   boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
     | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain

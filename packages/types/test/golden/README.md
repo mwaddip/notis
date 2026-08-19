@@ -32,10 +32,9 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 the all-zeros case is where a transposition of two same-width fields becomes
 invisible.
 
-⛔ **The header is NINE fields.** `subBlockRoot` is gone and every position after
-`prevBlockHash` shifted down by one, which is a renumbering rather than a
-deletion in place — a reader keeping the old offsets produces a silently wrong
-`blockHash`, not a decode error. The `blockHeader` vectors are what catch that.
+⛔ **The header is NINE fields.** A reader keeping stale offsets produces a
+silently wrong `blockHash`, not a decode error. The `blockHeader` vectors are
+what catch that.
 
 ⛔ **The body tree is THREE arrays.** Coinbase outputs are outputs of the block's
 settlement transaction, so they arrive inside `utxoTxs` like every other
@@ -51,11 +50,9 @@ around it. The domain tag is **not** in the vector bytes; it is the caller's,
 which is what makes the leaf preimage and the wire encoding the same bytes rather
 than merely parallel ones.
 
-**Reserved, never to be reused:** the vector names `subBlockEntry`,
-`subBlockTree`, `subBlock`, `coinbaseOutput`, `powNonceTail` and `powPreimage`,
-and the leaf domains `'subblock'` and `'coinbase'`. A post is a transaction, so
-there is no sub-block to encode and no PoW nonce to append; `encodePost` is
-exactly `postFieldBytes`, so the `postFields` vectors pin the wire post too.
+The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
+(TYPES_INTERFACE → Tracked reservations). `encodePost` is exactly
+`postFieldBytes`, so the `postFields` vectors pin the wire post too.
 
 ⛔ **No reject vector may be pinned at "the next free tag."** `boxes.json` probes
 an unassigned box type at the literal **255**, which `enum8` reserves as its
@@ -70,7 +67,7 @@ surfaces as a vector that mysteriously needs re-pinning.
 regression test.
 
 `structs.ts` is the opposite, deliberately: **its write half IS the production function**
-(`postPowPreimage`, `powNonceBytes`, `canonicalBoxBytes`, `serializePruneEntry`), and only the reader is written
+(`canonicalBoxBytes`, `serializePruneEntry`), and only the reader is written
 test-side, from the layout tables in `contracts/TYPES_INTERFACE.md`. An encode assertion therefore
 pins the shipped encoder rather than a lookalike, and the decode direction — parse with the
 independent reader, assert exhaustion, re-encode through the *production* writer, byte-compare —

@@ -100,14 +100,6 @@ export const BOX_VALUE_BOUND = 1n << 63n;
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
 
-// PoW
-//
-// Reserved, never to be reused: `POST_POW_TARGET_BITS`, the profile field
-// `postPowTargetBits`, and `CHALLENGE_WINDOW_BLOCKS`. Post PoW and its challenge
-// handshake are gone — a post is admitted by the stateful karma lock. Ordering
-// -block PoW is unaffected: it is the consensus PoW and always was, and
-// consensus is now honestly single-phase.
-
 // Karma decay (periodic burn model)
 export const KARMA_POSTING_MINIMUM = 1n;
 export const KARMA_STALE_THRESHOLD_BLOCKS = 40320; // 28 days at 60s blocks (duration itself under review — constants-pinning) → profile: karmaStaleThresholdBlocks
@@ -130,14 +122,6 @@ export const VOUCH_MIN_BALANCE = 11n;          // Must have >= this to vouch
 export const VOUCH_COOLDOWN_BLOCKS = 60;       // Blocks before karma returned → profile: vouchCooldownBlocks
 
 // Invites
-//
-// `MAX_PENDING_INVITES` and `INVITE_KARMA_THRESHOLD` are **retired — names
-// reserved, never reuse** (TYPES_INTERFACE → Invites). The concurrent-invite cap
-// needs no successor: an inviter locks the whole bond out of their own karma per
-// invite, so `K / INVITE_BOND_MIN` bounds them without a rule. The threshold went
-// with the early-unlock leg it served — a bond settles once, at
-// `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and no karma balance
-// decides it.
 //
 // ⛔ **THE INVITE IS ONE TRANSACTION** (TYPES_INTERFACE → InviteBox;
 // `ARCHITECTURE` → Invite System). There is no claim and no cancel: the

@@ -37,7 +37,6 @@ export interface NetworkProfile {
   readonly magic: number;              // wire frame magic — one per network
 
   // Difficulty — ordering-block PoW only; consensus is single-phase.
-  // `postPowTargetBits` is reserved, never to be reused (constants.ts).
   readonly orderingBlockPowTargetBits: number;
 
   // Block-denominated durations

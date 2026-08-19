@@ -41,15 +41,6 @@ describe('PoW difficulty constants', () => {
     expect(ORDERING_BLOCK_POW_TARGET_BITS / 256).toBe(23.375);
   });
 
-  // ⛔ There is exactly ONE PoW constant, and consensus is single-phase.
-  // `POST_POW_TARGET_BITS` is deleted with post PoW — a post is admitted by the
-  // stateful karma lock, not by a proof of burned milliseconds.
-  it('has no post-PoW difficulty', async () => {
-    const constants = await import('../src/constants.js') as Record<string, unknown>;
-    expect(constants.POST_POW_TARGET_BITS).toBeUndefined();
-    expect(constants.CHALLENGE_WINDOW_BLOCKS).toBeUndefined();
-  });
-
   // NOT the x256 rescale of 4. VALIDATION_INTERFACE → blockWork / cumulativeWork:
   // work resolves on [2305, 63357] and at neither end, so a chain admitted below
   // 2180 retargets without moving the quantity fork choice selects on. The floor
@@ -282,11 +273,5 @@ describe('invite economics', () => {
   });
 
   // ⛔ The grant IS the bond, so no second constant is free to fall below the
-  // first. Both names are reserved and never reused (ARCHITECTURE → Retired,
-  // do not rebuild — names reserved, never reuse).
-  it('names no separate grant amount and no fixed bond', async () => {
-    const constants = await import('../src/constants.js') as Record<string, unknown>;
-    expect(constants.INVITE_KARMA_AMOUNT).toBeUndefined();
-    expect(constants.INVITE_BOND_KARMA).toBeUndefined();
-  });
+  // first (ARCHITECTURE → Invite System).
 });
