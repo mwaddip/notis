@@ -442,15 +442,16 @@ function derive(
   // legs crediting one owner would both want to consume the same boxes, which
   // inside one transaction is a double spend. Nothing in the axiom counts boxes;
   // `getKarmaValue` sums them.
+  // ⛔ **`decayBurn: true` on every settlement karma output.** The settlement
+  // is a protocol effect, not a user-initiated action — received value must
+  // not reset the recipient's activity clock (ARCHITECTURE → Karma decay →
+  // Clocks). The `insertBox` choke point gates on `decayBurn !== true`.
   for (const invite of body.invites) {
-    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, createdAtBlock: height });
+    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, decayBurn: true, createdAtBlock: height });
   }
   for (const payout of likePayouts) {
-    // Skipped at zero on both halves: `[]` and `[{value: 0}]` are two encodings
-    // of one state. An author whose total has not reached `x` is paid nothing and
-    // their whole accrual rides the carry box.
     if (payout.paid > 0n) {
-      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author, createdAtBlock: height });
+      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author, decayBurn: true, createdAtBlock: height });
     }
     if (payout.carry > 0n) {
       outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author, createdAtBlock: height });
@@ -458,13 +459,10 @@ function derive(
   }
   for (const settled of bondSettlements) {
     if (settled.vested > 0n) {
-      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, createdAtBlock: height });
+      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, decayBurn: true, createdAtBlock: height });
     }
   }
   for (const plan of decayPlans) {
-    // ⛔ `decayBurn` is what keeps this box from resetting the owner's activity
-    // clock. Without it every charged identity looks freshly active and decay
-    // stops after one interval.
     if (plan.newValue > 0n) {
       outputs.push({
         boxType: 'karma',
@@ -477,7 +475,7 @@ function derive(
   }
   for (const prune of body.prunes) {
     for (const refund of prune.refunds) {
-      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, createdAtBlock: height });
+      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, decayBurn: true, createdAtBlock: height });
     }
   }
 

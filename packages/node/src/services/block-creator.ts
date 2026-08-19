@@ -57,7 +57,8 @@ import {
 import { deriveKarmaDecay } from './decay.js';
 import { planPruneSettlement } from './settle-prune-utxo.js';
 import type { PruneEntry } from '@dagsocial/types';
-import type { DecayDeps, DecayPlan } from './decay.js';
+import type { DecayCfg, DecayDeps, DecayPlan } from './decay.js';
+import type { KarmaBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
 import {
   MissingStoredBlockError,
@@ -401,8 +402,11 @@ export function createOrderingBlock(): OrderingBlock | null {
    * write the whole body — the users' entries then the settlement, last.
    */
   const rebuildBody = (): { valid: boolean; error?: string } => {
+    const touched = collectTouchedKarmaOwners(
+      userTxCbors.map((cbor) => decodeTx(cbor)),
+    );
     const built = buildSettlement(
-      settlementDepsWith(() => deriveKarmaDecay(decayDeps, newHeight, decayConfig())),
+      settlementDepsWith(() => deriveKarmaDecay(decayDeps, touched, newHeight, decayConfig())),
       newHeight,
       computeBlockReward(newHeight),
       nodeConfig.creditMinerRewardDelay,
@@ -719,17 +723,41 @@ export const decayDeps: DecayDeps = {
   getKarmaBoxes,
   getIdentityRecord,
   putIdentityRecord,
-  getKarmaOwners: () => {
-    const rows = getDb()
-      .prepare(
-        `SELECT DISTINCT owner FROM utxo_boxes
-         WHERE box_type = 'karma' AND spent_at_block IS NULL
-         ORDER BY owner`,
-      )
-      .all() as { owner: Buffer }[];
-    return rows.map((r) => new Uint8Array(r.owner));
-  },
 };
+
+/**
+ * Identities whose karma boxes the block's user transactions consume.
+ *
+ * ⛔ **The order is a consensus obligation.** Decay plans land in the
+ * settlement in this order, so two nodes seeing different orderings derive
+ * different transactions. Sorted ascending by raw bytes — the same total
+ * order `getKarmaOwners` used to provide.
+ *
+ * Reads from the PRE-BODY UTXO set: an input that is another transaction's
+ * output within the same block has no pre-body box, so `getBox` returns
+ * null and it is skipped. The identity is already in the set from the first
+ * transaction that consumed a pre-body karma box.
+ */
+export function collectTouchedKarmaOwners(
+  txs: { inputs: string[] }[],
+): Uint8Array[] {
+  const seen = new Set<string>();
+  const result: Uint8Array[] = [];
+  for (const tx of txs) {
+    for (const inputId of tx.inputs) {
+      const box = getBox(inputId);
+      if (box?.boxType === 'karma') {
+        const ownerHex = Buffer.from((box as KarmaBox).owner).toString('hex');
+        if (!seen.has(ownerHex)) {
+          seen.add(ownerHex);
+          result.push((box as KarmaBox).owner);
+        }
+      }
+    }
+  }
+  result.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  return result;
+}
 
 /** Everything the decay pass needs from the network profile. */
 export function decayConfig(): {
@@ -873,8 +901,9 @@ export function buildBlockSettlement(
   minerOwner: Uint8Array,
   pruneEntries: PruneEntry[] = [],
 ): { tx: UtxoTransaction } | { error: string } {
+  const touched = collectTouchedKarmaOwners(txCbors.map((cbor) => decodeTx(cbor)));
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, height, decayConfig())),
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, touched, height, decayConfig())),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
