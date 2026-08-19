@@ -253,10 +253,9 @@ const POST_CHANGE = 1n;
 /**
  * The author's outstanding accrual, read off the ledger.
  *
- * ⛔ **`IdentityRecord.likeCarry` IS DELETED, AND THE BOX IS THE CARRY.** A
- * counter existed to remember karma that did not yet exist; once the karma sits
- * in a `LikeAccrualBox` the box *is* the carry, and keeping both would be two
- * representations of one quantity free to disagree (ARCHITECTURE → Likes).
+ * ⛔ **THE BOX IS THE CARRY.** The karma sits in a `LikeAccrualBox`, so the
+ * box *is* the carry — a counter beside it would be two representations of
+ * one quantity free to disagree (ARCHITECTURE → Likes).
  *
  * ⚠ **Read AFTER the block applies**, when this block's markers are spent — a
  * marker and a carry box share a type and are told apart only by lifetime, so
@@ -384,7 +383,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Mint identity
   // -------------------------------------------------------------------------
 
-  it('one like-payout mint per author per block: two authors → two mints, with pinned mint ids', async () => {
+  it('two authors in one block receive two settlement outputs sharing one txId', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -422,26 +421,15 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(utxo.getKarmaValue(authorA.userId)).toBe(X - 1n + POST_CHANGE);
     expect(utxo.getKarmaValue(authorB.userId)).toBe(X - 1n + POST_CHANGE);
 
-    // ⛔ **THE SYNTHETIC MINT ID IS RETIRED, AND SO IS THE COLLISION ARGUMENT
-    // BEHIND IT.** A payout is an output of the block's settlement transaction,
-    // so it carries that transaction's real `(txId, index)`; `like-payout` is a
-    // reason nothing derives any more (NODE_INTERFACE → Reason and subject
-    // table). ⚠ **What the pin bought is now structural**: two payouts in one
-    // block are two outputs of one transaction and cannot collide, where two
-    // synthetic mints under one `(height, reason, subject)` could.
     const payouts = utxo
       .getUnspentBoxes()
       .filter((b) => b.boxType === 'karma' && b.value === X - 1n);
     expect(payouts).toHaveLength(2);
     // Both are outputs of the SAME transaction — the block's one settlement.
     expect(new Set(payouts.map((b) => b.txId)).size).toBe(1);
-    for (const b of payouts) {
-      expect(b.txId).not.toBe(computeMintTxId(2, 'like-payout', authorA.userId));
-      expect(b.txId).not.toBe(computeMintTxId(2, 'like-payout', authorB.userId));
-    }
   });
 
-  it('likes on two posts of one author in one block consolidate into ONE mint', async () => {
+  it('likes on two posts of one author in one block produce one settlement output', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -962,12 +950,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // journal's box primitives already own.
     expect(utxo.getBox(authorKarma.id!)).not.toBeNull();
     expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n);
-    // ⛔ The payout carries the settlement's real `(txId, index)`; the
-    // `like-payout` reason derives nothing any more.
-    const payout = utxo
-      .getUnspentBoxes()
-      .find((b) => b.boxType === 'karma' && b.value === 4n)!;
-    expect(payout.txId).not.toBe(computeMintTxId(3, 'like-payout', author.userId));
     expect(await carryOf(author.userId)).toBe(0n);
 
     await assertRoundTrip(db, handle, pre, classBlock);

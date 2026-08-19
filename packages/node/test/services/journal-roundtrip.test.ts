@@ -332,12 +332,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   // Coinbase — an OUTPUT of the block's settlement transaction, so revert must
   // undo the credit box it created and restore the emission box it spent.
   //
-  // ⛔ **There is no merge, and that is the change.** `mintCredits` consumed
-  // the owner's pre-existing credit boxes and wrote one merged successor; a
-  // settlement output is a new box beside whatever the owner already held
-  // (MINING_INTERFACE → Coinbase Application: the credits are spent from the
-  // `EmissionBox` by the transaction that emits them). What revert has to
-  // restore is therefore an emission predecessor, not a merged-in original.
+  // ⛔ **There is no merge.** A settlement output is a new box beside
+  // whatever the owner already held (MINING_INTERFACE → Coinbase Application:
+  // the credits are spent from the `EmissionBox` by the transaction that
+  // emits them). What revert has to restore is therefore an emission
+  // predecessor, not a merged-in original.
   // -----------------------------------------------------------------------
 
   it('coinbase: the settlement\'s credit output and the emission it spent are both reverted', async () => {

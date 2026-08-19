@@ -17,8 +17,8 @@ import {
  *
  * This module is that check. It drives a timeline of blocks against the
  * **production** code path — the real store (`insertBox`, `consumeBox`,
- * `getKarmaBoxes`), the real block journal, the real `mintKarma`, and the real
- * `applyKarmaDecay` — and captures burn amounts, balances and heights. The
+ * `getKarmaBoxes`), the real block journal, `transferKarma`, and the real
+ * `deriveKarmaDecay` — and captures burn amounts, balances and heights. The
  * captures are frozen as fixtures, and any edit to the decay path has to
  * reproduce them exactly.
  *
@@ -50,14 +50,13 @@ export interface DecayCfg {
 /**
  * One thing that happens inside a block, in the order listed.
  *
- * `mint` is the production activity producer: `mintKarma` consumes every
- * existing karma box for the owner and emits one consolidated replacement, so
- * an owner normally holds exactly one. That is the shape the ledger is usually
- * in.
+ * `mint` is the production activity producer: `transferKarma` consumes the
+ * owner's existing karma boxes and emits one consolidated replacement, so an
+ * owner normally holds exactly one. That is the shape the ledger is usually in.
  *
  * `seed` inserts a karma box **without** consolidating — the shape reached when
- * an identity receives karma it did not pay for (invite claim, then a faucet
- * grant: neither transaction spends the recipient's existing karma box). A clock
+ * settlement karma outputs land beside existing holdings (an invite grant and
+ * a later payout to the same owner do not spend the recipient's karma). A clock
  * kept on the boxes has to choose between the oldest and the newest here, and
  * the committed record does not, which is why multi-box owners get their own
  * fixture group rather than being folded into the consolidated ones.
@@ -157,7 +156,7 @@ function applyDecayPlans(
       createdAtBlock: height,
       owner: plan.owner,
       decayBurn: true,
-      txId: m.provenance.mintTxIdFor(m.provenance.decayContext(plan.owner), height),
+      txId: m.provenance.mintTxIdFor(m.provenance.genesisCommitteeContext(plan.owner), height),
       index: m.provenance.MINT_OUTPUT_INDEX,
     };
     m.utxo.insertBox({ ...box, id: computeBoxId(box) });
@@ -260,7 +259,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               [{
                 owner,
                 amount: step.amount,
-                ctx: m.provenance.likePayoutContext(owner),
+                ctx: m.provenance.postlockUnlockContext(Buffer.from(owner).toString('hex')),
               }],
               null,
               height,

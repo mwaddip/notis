@@ -19,7 +19,7 @@ import type { ScenarioCapture } from '../harness/decay-timeline.js';
  * they would encode the new behaviour as correct and check nothing at all.
  *
  * The timelines run against production code — the real store, the real block
- * journal, the real `mintKarma`, the real `applyKarmaDecay`. See
+ * journal, `transferKarma`, `deriveKarmaDecay`. See
  * `test/harness/decay-timeline.ts` for why a fake store would have made this
  * vacuous.
  *

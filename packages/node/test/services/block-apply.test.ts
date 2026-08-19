@@ -1499,12 +1499,12 @@ describe('block-apply embedded tx re-validation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mint provenance at the apply path (Spec G phase C1)
+// Mint provenance at the apply path
 //
 // These exercise the *wiring* rather than the encoders: which context each
-// `mintKarma`/`mintCredits` call site passes. A unit test on
-// `mint-provenance.ts` cannot see a call site that hands the wrong one over,
-// and both mistakes below are silent — a collision, not an error.
+// `transferKarma` call site passes. A unit test on `mint-provenance.ts`
+// cannot see a call site that hands the wrong one over, and both mistakes
+// below are silent — a collision, not an error.
 // ---------------------------------------------------------------------------
 
 describe('block-apply mint provenance', () => {
@@ -1604,10 +1604,6 @@ describe('block-apply mint provenance', () => {
       const utxo = await importUtxo();
       const journalStore = await importJournalStore();
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
-      const { decayContext } = await import(
-        '../../src/mint-provenance.js'
-      );
-
       const idle = makeTestIdentity();
       const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));

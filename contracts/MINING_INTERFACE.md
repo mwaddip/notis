@@ -83,18 +83,11 @@ Additions to the existing `OrderingBlock` type:
 
 ### ~~CoinbaseOutput~~ — DELETED
 
-> ⚠ **The struct is gone and so is the body field.** Coinbase outputs are outputs of the block's
-> settlement transaction, so the fields below describe nothing in the tree. **`isTreasury` needs no
-> deletion pass of its own** — the struct it lived on stopped existing.
+> ⚠ **The struct is gone and so is the body field** (`isTreasury` and all — the struct it lived
+> on stopped existing). Coinbase outputs are credit outputs of the block's settlement
+> transaction.
 >
 > ⛔ **The `'coinbase'` Merkle leaf domain is retired and its string reserved.**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `owner` | `Uint8Array` (32 bytes) | Recipient public key |
-| `value` | `number` | Credits minted |
-| `lockedUntilBlock` | `number` | Height at which credits become spendable |
-| `isTreasury` | `boolean` | **Always `false`** — no output is the treasury's. Scheduled for deletion; see TYPES_INTERFACE → Coinbase output |
 
 ### Block hash and PoW preimage (header model)
 
@@ -314,7 +307,8 @@ miner cannot substitute entries, coinbase outputs, or any body content.
 - 422: PoW invalid or template stale (height no longer matches the current template)
 
 On success, the node assembles the final block (inserts `powNonce`, signs with
-validator key), stores it, broadcasts it, and applies coinbase mints.
+validator key), stores it, broadcasts it, and applies it — the settlement
+transaction's credit outputs are the reward.
 
 ## Coinbase Application
 
@@ -330,38 +324,21 @@ never reach the AVL tree and `stateRoot` is unaffected (NODE_INTERFACE → the p
 derivation).
 
 ### On block creation (miner):
-1. Fill the body **first** — the fees and the actor count are properties of what was included
+1. Fill the body **first** — the fees and the actor count are properties of what was
+   included, and the settlement is derived from the body, so it is built **last**. It is
+   itself part of the body, which the producer's byte budget must absorb: the settlement
+   grows with what was selected, so it is **rebuilt on each trim iteration**, never measured
+   once (trimming shrinks it monotonically)
 2. `income = computeBlockReward(height) + fees`, `fees = Σ FeeBox.value` over the body
-3. Split per the slice table below. **Only the miner's slice becomes a `CoinbaseOutput`**; the
-   treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
-4. Include `CoinbaseOutput[]` in block
-5. After block storage: for each output, mint credits via `mintCredits(owner, value, lockedUntilBlock)` — creates or increases a `CreditBox` in the UTXO set
+3. Split per the slice table below. **Only the miner's slice becomes settlement credit
+   outputs**; the treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
+4. The miner's slice rides as **credit outputs of the settlement transaction** — the body
+   has no `coinbaseOutputs` field, and the credits are **spent from the `EmissionBox`** (and
+   the consumed fee boxes) by the same transaction that emits them: source and destination
+   named in one operation, nothing minted
 
-> ## ⚠ AHEAD OF CODE — THE COINBASE BECOMES OUTPUTS OF THE BLOCK'S SETTLEMENT TRANSACTION
->
-> `CoinbaseOutput` stops being a block-body concept (TYPES_INTERFACE → OrderingBlock,
-> NODE_INTERFACE → the settlement transaction). ⛔ **The slice arithmetic, the income shape and every
-> row of the slice table are UNCHANGED** — what moves is where the result is written down.
->
-> | Step | Becomes |
-> |---|---|
-> | 4. *"Include `CoinbaseOutput[]` in block"* | the miner's slice becomes **outputs of the settlement transaction**; the body has no `coinbaseOutputs` field |
-> | 5. *"mint credits via `mintCredits`"* | ⛔ **deleted, not repointed.** The credits are **spent from the `EmissionBox`** by the same transaction that emits them, so source and destination are named in one operation |
->
-> ✅ **Step 1's *"fill the body first"* becomes load-bearing rather than merely efficient.** The
-> settlement depends on the body's content, so it is built last — and it is itself part of the body,
-> which the producer's byte budget must absorb. ⚠ **The reservation that seeds the fill with the
-> largest possible coinbase no longer bounds it**, because the settlement grows with what was
-> selected. The existing trim loop generalises — trimming shrinks the settlement monotonically — but
-> **the settlement must be rebuilt on each trim iteration**, not measured once.
->
-> ✅ **The fee-box pairing note above is the precedent this generalises.** *"Block application
-> consumes the fee boxes in the block that created them"* is already a marker consumed by a protocol
-> effect; the settlement makes that a transaction instead of an implicit apply-time step.
->
-> ⛔ **THE `'coinbase'` MERKLE LEAF DOMAIN IS RETIRED AND RESERVED** — never reused, the rule
-> `'like'` and `'subblock'` already carry. A root is the one thing that cannot be re-derived to
-> settle an ambiguity later.
+The fee-box pairing note above is the same shape one level down: a `FeeBox` is a marker
+consumed by the settlement in the block that created it.
 
 ### The slices
 
@@ -395,51 +372,29 @@ application has no release path for is that rule, while a key nobody admits to h
 the shape it rejects. The forfeit is a lock rather than a burn, on every network equally.
 
 ⚠ **Emission and the treasury slice come from opposite directions.** The miner's slice is
-paid out of released emission plus recreated fees, so it is a `CoinbaseOutput`; the
+paid out of released emission plus recreated fees, so it is a settlement credit output; the
 treasury's is never released at all, so it is a value the successor box carries. Both are
 derived from the same `splitCoinbase` result and neither is the producer's choice.
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify `sum(coinbaseOutputs.map(o => o.value))` equals the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus, both of which go to the `TreasuryBox` rather than to any output
-3. Verify the two box transitions: the emission box's successor holds `value − emission(height)` and the treasury box's holds `value + treasury`, both **exactly**. This is where the split is enforced — a block paying the whole income to its miner sums correctly against nothing, and it is the successors that refuse it
-4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes
-4b. Verify no output carries `isTreasury === true`. Nothing is paid to the treasury through the coinbase, so the flag has one legal value and a block claiming otherwise is rejected rather than reinterpreted
-5. For each output, mint credits
-6. Coinbase outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — the UTXO engine enforces this during transaction validation
+2. Verify the settlement's credit outputs sum to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus, both of which accrue to the `TreasuryBox` rather than to any credit output
+3. Verify the two box transitions: the emission box's successor holds `value − emission(height)` and the treasury box's holds `value + treasury`, both **exactly**. This is where the split is enforced — emission and treasury successors are inputs and outputs of the same transaction, so a block paying the whole income to its miner is refused by **conservation itself**
+4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes. **Not made redundant by conservation**, which a zero-value output satisfies
+5. Settlement credit outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — `SPEND_TIMING`'s `credit` entry refuses a locked input at `validateTx` step 3
 
-**Neither transition rides in the block.** Both are derived from the body the way per-block
-like settlement is, so producer and verifier cannot disagree, and both are committed through
-`stateRoot` — an unbacked successor forks its author out at the next header.
+**Both transitions ride in the block**, as parts of a transaction committed under
+`utxoTxRoot` — the producer's result is committed, so a disagreement is a rejected block
+rather than a silent divergence — and both are covered by `stateRoot` besides: an unbacked
+successor forks its author out at the next header.
 
-> ## ⚠ AHEAD OF CODE — THE RECEIPT CHECKS SURVIVE; THREE OF THEM STOP BEING SEPARATE CHECKS
->
-> With the coinbase inside the settlement transaction, the same properties are enforced — several as
-> **consequences of conservation** rather than as their own steps.
->
-> | Step | Becomes |
-> |---|---|
-> | 2. sum equals the miner's slice | unchanged in substance; the sum is over the settlement's credit outputs |
-> | 3. the two box transitions | ⛔ **unchanged and still the enforcement point.** Emission and treasury successors are inputs and outputs of the same transaction, so *"a block paying the whole income to its miner sums correctly against nothing"* is now refused by **conservation itself** rather than by a separate successor check |
-> | 4. no output carries `value === 0` | ✅ **survives, and its reason survives with it** — two encodings of one block with different `utxoTxRoot`. **It is not made redundant by conservation**, which a zero-value output satisfies |
-> | 4b. no output carries `isTreasury === true` | ⛔ **deleted with the field.** The struct is gone, so there is no flag to misdeclare |
-> | 5. *"For each output, mint credits"* | ⛔ **deleted.** The credits are spent from the `EmissionBox` by the transaction that emits them |
-> | 6. `lockedUntilBlock` | unchanged |
->
-> ⛔ **"NEITHER TRANSITION RIDES IN THE BLOCK" IS INVERTED, AND THAT IS THE POINT OF THE UNIT.** Both
-> now ride in the block, as a transaction committed under `utxoTxRoot`. ✅ **The property the sentence
-> was protecting is strengthened**: producer and verifier could not disagree because both recomputed
-> the same derivation; now the producer's result is **committed**, so a disagreement is a rejected
-> block rather than a silent divergence.
->
-> ⚠ **What replaces it as the risk is determinism in the other direction**, and it is determinism of
-> the **verdict** rather than of the bytes. ⛔ **The verifier CANNOT reconstruct a byte-identical
-> settlement**: `?miner=` makes the coinbase payout key producer-chosen, so it reaches the verifier
-> only as an output of the settlement it is checking. What every verifier must reach identically is
-> the **same verdict** — each **derived** quantity recomputed and compared, each **producer-chosen**
-> one read and constrained by a stated rule, and no field neither. Every ordering the derivation
-> depends on must be one the block already fixes — NODE_INTERFACE → the settlement transaction admits
-> exactly three sources and no fourth.
+> ⚠ **The mechanism's risk is determinism of the VERDICT, not of the bytes.** ⛔ **The verifier
+> CANNOT reconstruct a byte-identical settlement**: `?miner=` makes the coinbase payout key
+> producer-chosen, so it reaches the verifier only as an output of the settlement it is checking.
+> What every verifier must reach identically is the **same verdict** — each **derived** quantity
+> recomputed and compared, each **producer-chosen** one read and constrained by a stated rule,
+> and no field neither. Every ordering the derivation depends on must be one the block already
+> fixes — NODE_INTERFACE → the settlement transaction admits exactly three sources and no fourth.
 
 ## Config
 

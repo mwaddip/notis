@@ -490,20 +490,10 @@ function u32BEMirror(n: number): Uint8Array {
  * only by hand.
  */
 const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
-  coinbase:               '32fe945568d48465eb9a2b74d506b0ec16395136fbb4357c8de21cef5a105c0a',
-  'like-payout':          '53a7f0ab4f60e54e0b7bbc694c0082e777c6e4ebf910db321dcfb4c1d222f59a',
   'postlock-unlock':      '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f',
   'postlock-remainder':   '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d',
-  decay:                  'a483b6263e7a5ed49246aca51adae2c12e0cd24958412657ced84f64dca0e77a',
   genesis:                '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2',
-  'prune-refund-author':  'aa42ffca37cb6d20d30cc5afe2c691567fd31106a3a79a21e715cf616b863a32',
-  'invite-claim':         'f59f898a63637ffd1c7ebc705ca88321bfc9035f23caa047366d56d49b1e8173',
-  'bond-settle':          'b036b7e30827db46de4d98f80c982b978aa011e7a1a5a3f11389788e335eafde',
-  'bond-return':          '7b6ffca09e60c23b597e01b4e217846117744e64b444ca41523e05912f5705c1',
-  'emission-release':     '4cb4b95c47aa83dc1330235f096c09348ba7735ad7871eb18f21160ff2f5f0a1',
-  'treasury-accrue':      '83b6e7983c2c14be4bdc71da51278d43372a9123ef071a5cf06aefd80fedca65',
   'genesis-committee':    '0cf15bc43dcc566062faad29d7e9569aa12f43e034ecd8babd19bffd85715d12',
-  'pool-settle':          '62836985b94a5679810e0ba68b501d0be64b8ffe92cc031c4ae7d75e04b66cbf',
 };
 
 const MINT_GOLDEN_HEIGHT = 1;
@@ -523,10 +513,8 @@ const GOLDEN_CANDIDATE_KARMA_ID =
   '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
 const GOLDEN_CANDIDATE_CREDIT_ID =
   '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
-const GOLDEN_MINT_COINBASE_ID =
-  'da905d0f72efd81bc5c1ed3074e28fae890d7d1140fcb7f17d155da4bc12ce18';
-const GOLDEN_MINT_DECAY_ID =
-  '126ae615fa41a7707f9261852e4f5335640d0c18016be2b696811737778fe42f';
+const GOLDEN_MINT_GENESIS_ID =
+  '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2';
 
 describe('canonicalBoxBytes', () => {
   it('is deterministic', () => {
@@ -1242,11 +1230,11 @@ describe('u32BE', () => {
     }
   });
 
-  it('is the writer the coinbase and genesis SUBJECTS actually use', () => {
+  it('is the writer the genesis SUBJECT actually uses', () => {
     // Pins the export against a frozen vector rather than against itself. It is
     // also the only remaining path by which a `u32BE` reaches an id at all: the
     // bytes go in as `subject`, opaque to `computeMintTxId`.
-    expect(computeMintTxId(70000, 'coinbase', u32BE(0))).toBe(GOLDEN_MINT_COINBASE_ID);
+    expect(computeMintTxId(MINT_GOLDEN_HEIGHT, 'genesis', MINT_GOLDEN_SUBJECT)).toBe(GOLDEN_MINT_GENESIS_ID);
   });
 
   it('nothing in this package hashes a u32BE any more', () => {
@@ -1621,28 +1609,11 @@ describe('boxRecordFromBytes', () => {
 });
 
 describe('computeMintTxId', () => {
-  it('golden vector: coinbase mint is frozen', () => {
-    expect(computeMintTxId(70000, 'coinbase', u32BEMirror(0))).toBe(GOLDEN_MINT_COINBASE_ID);
-  });
-
-  it('golden vector: decay mint (subject = owner key) is frozen', () => {
-    expect(computeMintTxId(70000, 'decay', GOLDEN_OWNER)).toBe(GOLDEN_MINT_DECAY_ID);
-  });
-
   it('varies with height, reason and subject independently', () => {
-    const base = computeMintTxId(70000, 'decay', GOLDEN_OWNER);
-    expect(computeMintTxId(70001, 'decay', GOLDEN_OWNER)).not.toBe(base);
-    expect(computeMintTxId(70000, 'genesis', GOLDEN_OWNER)).not.toBe(base);
-    expect(computeMintTxId(70000, 'decay', new Uint8Array(32).fill(0xff))).not.toBe(base);
-  });
-
-  it('separates like-payout from postlock-unlock for the same subject bytes', () => {
-    // The reason tag is the only separator when two same-height mints share
-    // subject bytes — the accrual payout and a lock vesting unlock both land on
-    // an author in one block's settlement.
-    const subject = new Uint8Array(32).fill(0x11);
-    expect(computeMintTxId(70000, 'like-payout', subject))
-      .not.toBe(computeMintTxId(70000, 'postlock-unlock', subject));
+    const base = computeMintTxId(70000, 'genesis', GOLDEN_OWNER);
+    expect(computeMintTxId(70001, 'genesis', GOLDEN_OWNER)).not.toBe(base);
+    expect(computeMintTxId(70000, 'postlock-unlock', GOLDEN_OWNER)).not.toBe(base);
+    expect(computeMintTxId(70000, 'genesis', new Uint8Array(32).fill(0xff))).not.toBe(base);
   });
 
   it('every reason derives a distinct mint id for the same subject', () => {
@@ -1709,8 +1680,8 @@ describe('computeMintTxId', () => {
     // id minted under it. Pinned as a length delta rather than against the tag
     // values, which the goldens above already freeze.
     const shortSubject = new Uint8Array(1);
-    const a = computeMintTxId(1, 'coinbase', shortSubject);
-    const b = computeMintTxId(1, 'prune-refund-author', shortSubject);
+    const a = computeMintTxId(1, 'genesis', shortSubject);
+    const b = computeMintTxId(1, 'postlock-unlock', shortSubject);
     expect(a).not.toBe(b);
     // An unknown reason takes enum8's reserved 0xff rather than throwing — the
     // no-panic property, preserved through the encoding change.
@@ -1724,64 +1695,17 @@ describe('computeMintTxId', () => {
     // reason/subject table carried a standing obligation: every per-reason
     // encoding had to be fixed-length or self-delimiting, or two subjects under
     // one reason could concatenate identically. `lp(subject)` discharges it.
-    const one = computeMintTxId(1, 'decay', new Uint8Array([1]));
-    const two = computeMintTxId(1, 'decay', new Uint8Array([1, 0]));
+    const one = computeMintTxId(1, 'genesis', new Uint8Array([1]));
+    const two = computeMintTxId(1, 'genesis', new Uint8Array([1, 0]));
     expect(one).not.toBe(two);
     // Still total on a non-byte-view subject: the length prefix takes the
     // sentinel rather than throwing.
-    expect(() => computeMintTxId(1, 'decay', undefined as unknown as Uint8Array)).not.toThrow();
-  });
-
-  it('the empty-subject reasons separate from each other and from an empty-subject peer', () => {
-    // `emission-release`, `treasury-accrue` and `pool-settle` carry no subject,
-    // so the tag byte is the whole separator between them at one height —
-    // including against a reason whose subject merely happens to be empty in
-    // this call.
-    const empty = new Uint8Array(0);
-    const ids = (['emission-release', 'treasury-accrue', 'pool-settle', 'coinbase'] as const)
-      .map((r) => computeMintTxId(70000, r, empty));
-    expect(new Set(ids).size).toBe(4);
-  });
-
-  it('an empty-subject reason still separates heights', () => {
-    // The property the empty subject rests on. With nothing to discriminate
-    // inside a reason, the height is the only thing left, and exactly one
-    // emission successor, one treasury successor and one pool successor exist
-    // per height (NODE_INTERFACE → Reason and subject table).
-    const empty = new Uint8Array(0);
-    for (const reason of ['emission-release', 'treasury-accrue', 'pool-settle'] as const) {
-      const heights = [0, 1, 2, 70000];
-      const ids = heights.map((h) => computeMintTxId(h, reason, empty));
-      expect(new Set(ids).size, reason).toBe(heights.length);
-    }
-  });
-
-  it('an empty subject encodes as a zero LENGTH, not as an absence', () => {
-    // Recomputed from the layout rather than from the function under test:
-    // MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject). At height 1
-    // with an empty subject that is three bytes — 0x01, the tag, and a zero
-    // length — so the tag numbers are pinned here independently of the goldens.
-    const mirror = (tail: number[]) =>
-      createHash('blake2b512')
-        .update(Buffer.from(MINT_ID_DOMAIN))
-        .update(Buffer.from(tail))
-        .digest()
-        .subarray(0, 32)
-        .toString('hex');
-
-    const empty = new Uint8Array(0);
-    expect(computeMintTxId(1, 'emission-release', empty)).toBe(mirror([0x01, 0x0b, 0x00]));
-    expect(computeMintTxId(1, 'treasury-accrue', empty)).toBe(mirror([0x01, 0x0c, 0x00]));
-    expect(computeMintTxId(1, 'pool-settle', empty)).toBe(mirror([0x01, 0x0e, 0x00]));
-
-    // Drop the length byte and the id moves: present-and-empty is not absent,
-    // which is what keeps the subject self-delimiting at width zero.
-    expect(computeMintTxId(1, 'emission-release', empty)).not.toBe(mirror([0x01, 0x0b]));
+    expect(() => computeMintTxId(1, 'genesis', undefined as unknown as Uint8Array)).not.toThrow();
   });
 
   it('does not throw on an unencodable height (M-5 no-panic)', () => {
     for (const bad of [-1, 1.5, NaN, Infinity]) {
-      expect(() => computeMintTxId(bad, 'decay', GOLDEN_OWNER)).not.toThrow();
+      expect(() => computeMintTxId(bad, 'genesis', GOLDEN_OWNER)).not.toThrow();
     }
   });
 });

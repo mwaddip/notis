@@ -128,10 +128,15 @@ transaction's signature, ordered by the block that includes it.
 > A validator reconstructs its input set from the rest of the body before checking conservation. That
 > reconstruction is a field read on a pass the validator already makes, and it runs **once per block**.
 >
-> ⛔ **DETERMINISM IS THIS MECHANISM'S WHOLE RISK.** Every node must derive a byte-identical
-> settlement from the same body, or `utxoTxRoot` and `stateRoot` fork. Its construction must be a
-> **pure function of the block's other transactions plus the pool boxes** — no local state, no clock,
-> no iteration order that the block does not already fix. `NODE_INTERFACE` states the construction.
+> ⛔ **DETERMINISM IS THIS MECHANISM'S WHOLE RISK — of the VERDICT, not of the bytes.** The
+> coinbase payout key is producer-chosen, so a verifier cannot rebuild a byte-identical
+> settlement; what must hold is that every node reaches the same **verdict** on the settlement
+> the block carries. Every field is either **derived** (recomputed identically by every
+> verifier; a mismatch rejects the block) or **producer-chosen and constrained by a stated
+> rule** — no field may be neither. Construction is a pure function of the block's other
+> transactions, the consumed protocol boxes and the producer-chosen inputs it names — no local
+> state, no clock, no iteration order the block does not already fix. `NODE_INTERFACE` states
+> the construction.
 
 ---
 
@@ -181,24 +186,21 @@ implementations:**
   same operation that removes it, and value entering has to come from somewhere nameable. A rule that
   forbids every transaction from naming the supply box forces a burn.
 
-⛔ **`mintKarma` and `mintCredits` VIOLATE THIS AXIOM AS WRITTEN, AND THE VIOLATION IS THE FUNCTION,
-NOT THE NET.** Both consume the owner's existing boxes and insert one holding `existingTotal +
-amount`, with `amount` originating nowhere. That another operation decrements the emission box
-elsewhere does not save `mintCredits`: the axiom bars the *function from existing*, not merely the
-aggregate from drifting. **Both are replaced by transfer primitives that name a source.**
-
-⚠ **AHEAD OF CODE.** The tree does not satisfy this yet. The karma supply pool exists
-(TYPES_INTERFACE → KarmaPoolBox) and the box choke point accounts for supply changes, but the mint
-and burn paths are still mints and burns. **Every one of them is a defect against this section until
-it names a source and a sink.**
+⛔ **A MINT FUNCTION IS BARRED FROM EXISTING, NOT MERELY FROM MIS-SUMMING.** A primitive that
+takes an amount and no source cannot fail, because there is nothing for it to check against —
+and an operation decrementing the emission box elsewhere would not save it: the axiom bars the
+*function*, not merely the aggregate from drifting. The tree satisfies this: no mint or burn
+function exists. Value moves through exactly two operations, each naming source and destination
+in one call — the block's settlement transaction (every pool-, emission- and treasury-touching
+effect; NODE_INTERFACE → The settlement transaction) and `transferKarma` (the
+conserving-in-place paths) — and `test/services/conservation-axiom.test.ts` asserts the sum
+across an applied chain.
 
 ### How a source and a sink get named — the three shapes, and there are only three
 
-⛔ **Most paths already conserve and need only a different primitive.** A bond return, a bond's vested
+⛔ **Most paths conserve inside themselves and need no shape at all.** A bond's vested
 part, post-lock vesting, a prune refund and the coinbase all take their value from a box being
-consumed. They are defects here because they call a *mint* function that does not link source to
-destination, **not because the arithmetic is wrong.** Replacing the primitive fixes them with no
-economic decision in it.
+consumed in the same operation that pays it out.
 
 For the paths where value genuinely enters or leaves circulation, exactly three shapes are available:
 
@@ -492,10 +494,11 @@ CreditBox {
 }
 ```
 
-Credits are freely transferable between accounts. They are minted as validator
-rewards for producing ordering blocks. Credit sinks (ads, author boosts, tips)
-are deferred to future protocol versions. For Phase 2, the credit supply grows
-with each ordering block — the reward amount is a protocol parameter.
+Credits are freely transferable between accounts. Validator rewards are
+released from the genesis `EmissionBox` as settlement outputs, never minted
+(§The conservation axiom). Credit sinks (ads, author boosts, tips) are deferred
+to future protocol versions. Circulating credits grow with each ordering block
+until the emission terminus — the reward amount is a protocol parameter.
 
 #### Vouch boxes
 
@@ -574,7 +577,7 @@ cast's pin holding for the box in hand.
 All box transitions are atomic — a transaction consuming N boxes and creating M
 boxes either fully commits or fully fails. The ledger enforces:
 
-- Total value in = total value out (conservation, except mint/burn)
+- Total value in = total value out — conservation, with no exceptions (§The conservation axiom)
 - Every consumed box is consumed by a transition whose requirements are satisfied
 - New boxes are valid under protocol rules
 
@@ -749,9 +752,9 @@ Stump {
    binding (`authorId` equals the `block_topology`-recorded author of the
    root; unconfirmed roots are not prunable), Ed25519 signature, postId set
    against block_topology, Merkle root, then settles UTXO deterministically
-   (consumes the subtree's PostLockBoxes, mints `prune-refund-author` karma
-   **to every lock owner except the pruning author**, deletes the subtree's
-   like-records — journalled; P2-D)
+   — the settlement transaction consumes the subtree's PostLockBoxes and
+   refunds **every lock owner except the pruning author**, whose own locks
+   go to the pool; the subtree's like-records are deleted (journalled)
 7. The simplified Stump is inserted, derived from the verified entry —
    unconditionally, so a node holding no DAG content records the same
    stump — then DAG content is pruned when present
@@ -763,8 +766,8 @@ prune, and the settlement is deterministically computable from UTXO state.
 returns theirs.** `PostLockBox.owner` against the entry's `authorId` decides
 which, from committed state alone — no `block_topology` read. Refunding the
 pruner made post → prune → repost a free loop that recycled the same karma
-forever, and the same rule sets **withdrawal's** price: a withdrawn post burns
-its author's remaining lock and mints nothing.
+forever, and the same rule sets **withdrawal's** price: a withdrawn post's
+remaining lock goes to the pool and nothing is refunded.
 
 ⚠ **The descendant-count price is NOT part of this rule.** Charging the pruner
 for the replies they destroy is a separate consensus transition and is not
@@ -940,91 +943,63 @@ increments the target author's like count for this block.
 
 ### Per-block accrual and settlement
 
-There is no epoch. At the end of every block's mutation phase, for each author who received
-likes in this block (ascending author-hex order):
+There is no epoch. **A like moves its `LIKE_KARMA_COST` into a box earmarked for the author** —
+the like transaction outputs a `LikeAccrualBox` marker — and the block's settlement transaction
+settles every accrual at the end of the mutation phase. Every step names a source and a sink,
+so nothing is created and nothing destroyed: the liker's karma goes to the accrual box, the
+accrual box goes to the author and the pool.
+
+**THE CARRIER IS TWO OBJECTS, NOT ONE** (user, 2026-08-17). They have different lifetimes and
+neither substitutes for the other:
+
+| | Lifetime | Count |
+|---|---|---|
+| **accrual marker** | created and consumed inside one block | one per like |
+| **carry box** | persists across blocks | one per author, holding `r < LIKES_PER_KARMA_PAYOUT` |
+
+⛔ **A LIKE MUST NOT NAME A SHARED BOX.** If the liker's transaction consumed the author's carry
+box, two likers of the same author in the same block would name the same box id and the second
+would be **permanently invalid, not deferred** — a popular author becomes unlikeable. The like
+therefore emits a **fresh marker per like**, and only the settlement touches the carry box.
+
+⚠ **The marker count is bounded per BLOCK, not per author.** An author may receive any number of
+likes in one block, so `LIKES_PER_KARMA_PAYOUT` bounds the *carry*, never the markers. What keeps
+that off the block is that the settlement **derives** its marker inputs rather than listing them.
+
+For an author with `n` markers this block and a carry box holding `r`, in ascending author-hex
+order, where `x = LIKES_PER_KARMA_PAYOUT`:
 
 ```
-total = record.likeCarry + likesThisBlock
-paid  = (total / LIKES_PER_KARMA_PAYOUT) * (LIKES_PER_KARMA_PAYOUT − 1)   // integer, truncating
-carry = total % LIKES_PER_KARMA_PAYOUT
+settlement   markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
+             total = n + r,   q = ⌊total / x⌋,   r′ = total mod x
 ```
 
-`paid` (when > 0) is minted to the author — reason `like-payout`, subject = the raw author
-key, one mint per author per block. `carry` is written back to the author's committed
-`IdentityRecord` (`likeCarry`) **even when `paid` is 0**, and the record is in the
-`stateRoot` — two nodes can never disagree on the next payout undetected. All integer
-arithmetic; a float intermediate is a consensus fork. Per `x = LIKES_PER_KARMA_PAYOUT`
-likes: likers paid `x`, the author receives `x−1`, **1 returns to the pool** — the deflation dial.
+✅ **The payout draws from the accrual, never from the pool.** The likers funded it; on this path
+the pool is a **sink** and never a source. Per `x` likes: likers paid `x`, the author receives
+`x−1`, **1 returns to the pool** — the deflation dial. All integer arithmetic; a float
+intermediate is a consensus fork.
 
-> ⛔ **AHEAD OF CODE — THE ACCRUAL IS A BOX, NOT A COUNTER** (user, 2026-08-17). Under §The
-> conservation axiom the model above mints `paid` and burns 1, and neither is permitted. The
-> replacement:
->
-> **A like moves its `LIKE_KARMA_COST` into a box earmarked for the author.** When that box's
-> contents reach a multiple of `LIKES_PER_KARMA_PAYOUT` it becomes spendable: **`x − 1` to the
-> author, the remainder back to the supply pool.** Every step names a source and a sink, so nothing
-> is created and nothing destroyed — the liker's karma goes to the accrual box, the accrual box goes
-> to the author and the pool.
->
-> ✅ **THE REMAINDER GOES TO THE POOL, NOT THE TREASURY** (user, 2026-08-17). ⛔ **Those are different
-> economies and the choice is settled, not incidental**: to the pool it leaves circulation for good
-> and the dial stays **deflationary**; to the treasury it becomes spendable by something later, which
-> is **redistribution wearing deflation's name**.
->
-> ✅ **The dial's economics are therefore unchanged.** Per `x` likes the author still receives `x − 1`
-> and 1 still leaves circulation. A holder cannot distinguish "destroyed" from "returned to a pool
-> nothing can spend"; only the accounting identity changes.
->
-> ⛔ **`IdentityRecord.likeCarry` IS REPLACED BY THE BOX'S VALUE.** The counter exists only to
-> remember karma that does not yet exist; once the karma sits in a box, the box *is* the carry.
-> Keeping both would be two representations of one quantity, free to disagree.
->
-> ✅ **This dissolves the open question below rather than answering it.** *"Whether outstanding carry
-> counts as live supply"* has no content once the carry is karma in a box: it is live, it is in the
-> UTXO set, and it is in the `stateRoot` because every box is.
->
-> ✅ **THE CARRIER IS TWO OBJECTS, NOT ONE** (user, 2026-08-17). They have different lifetimes and
-> neither substitutes for the other:
->
-> | | Lifetime | Count |
-> |---|---|---|
-> | **accrual marker** | created and consumed inside one block | one per like |
-> | **carry box** | persists across blocks | one per author, holding `r < LIKES_PER_KARMA_PAYOUT` |
->
-> ⛔ **A LIKE MUST NOT NAME A SHARED BOX.** If the liker's transaction consumed the author's carry
-> box, two likers of the same author in the same block would name the same box id and the second
-> would be **permanently invalid, not deferred** — a popular author becomes unlikeable. The like
-> therefore emits a **fresh marker per like**, and only the settlement touches the carry box.
->
-> ⚠ **The marker count is bounded per BLOCK, not per author.** An author may receive any number of
-> likes in one block, so `LIKES_PER_KARMA_PAYOUT` bounds the *carry*, never the markers. What keeps
-> that off the block is that the settlement **derives** its marker inputs rather than listing them.
->
-> For an author with `n` markers this block and a carry box holding `r`, where
-> `x = LIKES_PER_KARMA_PAYOUT`:
->
-> ```
-> settlement   markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
->              total = n + r,   q = ⌊total / x⌋,   r′ = total mod x
-> ```
->
-> ✅ **The payout draws from the accrual, never from the pool.** The likers funded it. On this path
-> the pool is a **sink** and never a source, so the `like-payout` mint does not gain a funding line —
-> it ceases to exist.
+✅ **THE REMAINDER GOES TO THE POOL, NOT THE TREASURY** (user, 2026-08-17). ⛔ **Those are
+different economies and the choice is settled, not incidental**: to the pool it leaves
+circulation for good and the dial stays **deflationary**; to the treasury it becomes spendable
+by something later, which is **redistribution wearing deflation's name**. A holder cannot
+distinguish "destroyed" from "returned to a pool nothing can spend"; only the accounting
+identity differs.
+
+⛔ **THE BOX IS THE CARRY.** There is no counter field — `IdentityRecord` carries no accrual — 
+because a counter beside the box would be two representations of one quantity, free to
+disagree. The carry is live supply by construction: it is karma, in the UTXO set, and in the
+`stateRoot` because every box is.
 
 The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent
 of arrival pattern — the floor runs over a running total, never over a per-window group.
 
-> **Recorded open question (design track §5.3):** whether outstanding carry counts as live
-> supply. Nothing in the code reads a live-supply denominator today; decide before anything
-> (decay honesty accounting, governance quorum) does.
-
 > ⚠ **Known karma-econ item, stated rather than hidden:** `lastActivityBlock` bumps on any
-> non-decay karma insert, so a `like-payout` mint resets the author's decay clock —
+> non-decay karma insert, so a settlement like payout resets the author's decay clock —
 > "receiving karma is activity," which `karmanomics.md` explicitly rejects for likes (an
 > activity reset must cost a bond, or a second account resets your clock for 1 karma).
-> Redefining the activity trigger is karma-econ scope; P2-D keeps bump-on-mint semantics.
+> Redefining the activity trigger is karma-econ scope; the bump-on-insert semantics stand.
 
 ### Like-records
 
@@ -1056,18 +1031,15 @@ shouldUnlock    = totalLikes / POST_LOCK_UNLOCK_PER_LIKES                  // in
 toUnlock        = min(value, shouldUnlock − alreadyUnlocked)
 ```
 
-`toUnlock > 0` consumes the box, mints that karma to the author (`postlock-unlock`), and
-recreates the reduced box (`postlock-remainder`) unless fully unlocked. The formula is the
-retired epoch schedule evaluated per block; posts are processed in ascending post-id order.
+`toUnlock > 0` runs `transferKarma`: the `PostLockBox` is consumed as the source, `toUnlock`
+lands in the author's karma (`postlock-unlock`), and the reduced box is the remainder
+(`postlock-remainder`) unless fully unlocked — a transfer that names both ends and refuses to
+create or destroy (§The conservation axiom). The formula is the retired epoch schedule
+evaluated per block; posts are processed in ascending post-id order. **This is the one karma
+path outside the settlement transaction, and it belongs outside**: the lock vests into its own
+owner's karma, so the pool is uninvolved.
 
 No user transaction can spend a `PostLockBox` — block application is its only spender.
-
-> ⚠ **AHEAD OF CODE — "mints that karma" is the WORD, not the mechanism, and this path already
-> conserves.** The karma comes out of the `PostLockBox` being consumed, so source and destination are
-> both present; what is missing is only that the code reaches them through a mint primitive which does
-> not link the two. ✅ **Under §The conservation axiom this is a mechanical substitution with no
-> economic decision in it** — the same as a bond return, a bond's vested part, a prune refund and the
-> coinbase. **It is not one of the paths where value enters or leaves circulation.**
 
 ### Like parameters
 
@@ -1295,14 +1267,14 @@ separate keys if desired.
 
 ## Genesis
 
-> ⚠ **NOT IMPLEMENTED — 22 lines, 100% original 2026-07-20 text, and it ships in a state
-> that cannot run. Verified 2026-08-11, every limb.** `GENESIS_COMMITTEE_KEYS` is `[]`
-> (`types/src/constants.ts`) and **all three network profiles freeze it empty**
-> (`types/src/network.ts` — mainnet, testnet, devnet alike). **Nothing fails loudly if a chain
-> starts with an empty committee** — a search for any startup assertion on committee emptiness
-> returns nothing — so the two-phase model below silently has no phase one. Committee
-> dissolution is likewise unimplemented: `BOOTSTRAP_PERIOD_BLOCKS` and `bootstrapPeriodBlocks`
-> appear **only in `types/src`**, with no reader anywhere in `node/src` (carried register #19).
+> ⚠ **PARTLY IMPLEMENTED — the karma seeding runs; dissolution does not.**
+> `seedGenesisCommittee` creates one karma box per `genesisCommitteeKeys` entry, **drawn out of
+> the pool** (`genesis-committee` mints, store seeding — there is no genesis ordering block).
+> All three network profiles carry an **empty** committee today, so the grant loop runs zero
+> times, and **nothing fails loudly if a chain starts with an empty committee**. **Committee
+> credit boxes are unseeded**: `genesisCreditsPerMember` rides every profile and no seeder
+> reads it. **Dissolution is unimplemented**: `BOOTSTRAP_PERIOD_BLOCKS` /
+> `bootstrapPeriodBlocks` have no reader anywhere in `node/src`.
 >
 > **Genesis is where an unset consensus parameter is least recoverable** — it is baked into
 > the first block and every state root after it. Before any launch: decide the committee
@@ -1311,13 +1283,13 @@ separate keys if desired.
 
 Bootstrap uses a **two-phase genesis committee** model:
 
-1. The genesis ordering block mints N karma boxes and M credit boxes,
-   assigned to a small set of known genesis committee public keys
+1. Genesis seeding creates one karma box per genesis committee key, **drawn out
+   of the pool**, and — design ahead of code — one credit box per member
 2. The committee's sole purpose: invite the first cohort of users and
    bootstrap ordering block production
-3. After `BOOTSTRAP_PERIOD_BLOCKS`, all remaining genesis committee karma is
-   burned and genesis committee credit boxes are distributed to early
-   validators (proportional to blocks produced)
+3. After `BOOTSTRAP_PERIOD_BLOCKS` — design ahead of code — all remaining
+   genesis committee karma returns to the pool and genesis committee credit
+   boxes are distributed to early validators (proportional to blocks produced)
 4. The committee dissolves — no permanent genesis class
 
 | Parameter | Description |
@@ -1410,9 +1382,10 @@ before multi-node operation rather than after it.
 6. **Ordering:** Block creator pulls from mempool (FIFO), assembles the body
    (UTXO txs + prune entries), appends the settlement transaction, mines PoW,
    finalizes → state applied atomically
-7. **Like settlement:** Every block, at the end of the mutation phase — like
-   burns recorded, per-author accrual settled against `IdentityRecord.likeCarry`
-   (`like-payout` mints), post-lock vesting evaluated (§Likes)
+7. **Like settlement:** Every block, at the end of the mutation phase — the
+   settlement transaction consumes the block's markers and each credited
+   author's carry box, pays authors and the pool, and emits carry successors;
+   post-lock vesting evaluated (§Likes)
 8. **Pruning:** Author signs prune intent → stump constructed with deterministic
    karma deltas → committed in ordering block → DAG compacted
 9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; its owner
@@ -1794,8 +1767,9 @@ forever. A node rejects objects with an unsupported protocol version.
 - The UTXO ledger's correctness is independent of the DAG's index state
   > **Holds since P2-D** (was FALSE AS DESIGNED: the epoch tally's author reward read a
   > `dag_likes` row count — a DAG index read inside a consensus mutation). Settlement now
-  > reads the per-identity `likeCarry` in the `stateRoot` and `like_records` — consensus
-  > state written only at block application (`block_topology` tier), never by a route.
+  > reads the block's own `LikeAccrualBox` markers, the carry boxes and `like_records` —
+  > consensus state written only at block application (`block_topology` tier), never by a
+  > route.
 - Stumps are the sole bridge: DAG compaction → karma issuance
 - A like is a burn transaction plus a `(liker, post)` like-record — no box, no held
   value. Like-records are content-layer consensus state (`block_topology` tier):
@@ -1853,22 +1827,26 @@ forever. A node rejects objects with an unsupported protocol version.
 
 ### UTXO conservation
 
-- Karma supply changes only via the mint reasons (NODE_INTERFACE's mint-reason table is
-  the **authoritative enumeration** — derive from it, never maintain a parallel list here;
-  a hand-kept mirror of it had already diverged once) and exactly three burns: **decay**,
-  **the like burn** — `LIKE_KARMA_COST` leaves the liker per like, `x−1` per `x` returns
-  via `like-payout`, net 1 burned per `LIKES_PER_KARMA_PAYOUT` likes — and **bond
-  forfeiture**, the unvested remainder destroyed at a bond's settlement.
-  > ⚠ **This is the whole of karma emission.** Only **one** reason on
-  > that table increases supply after genesis: `invite-claim`. `bond-settle` and
-  > `bond-return` re-mint value a `BondBox` already held, exactly as `vouch-settle`
-  > re-mints an escrow. **Read the table's own note before deriving a supply figure from
-  > it** — a reason that mints is not the same as a reason that creates.
-  >
-  > Every source and sink is therefore an **invite**: `G` enters when one is claimed, and
-  > the unvested part of `B` leaves when the bond settles. Supply grows only as fast as
-  > the network admits members who earn likes, and shrinks when it admits members who do
-  > not — on top of decay and the like burn, which run against everyone.
+- **Karma supply is fixed at genesis and never changes** — nothing is created or destroyed
+  after the genesis seeding (§The conservation axiom). What moves is **circulation**: the
+  settlement transaction spends the pool and receives into it, and it is the pool's **only**
+  spender — one settlement per block, so two spends never contend (NODE_INTERFACE → The
+  settlement transaction). Exactly three transfers return karma to the pool — **decay**,
+  **the like remainder** (per `x = LIKES_PER_KARMA_PAYOUT` likes, `x−1` recirculates to the
+  author and 1 goes to the pool) and **bond forfeiture** (the unvested remainder at a bond's
+  settlement, the pruner's own locks riding the same rule) — and the **invite grant** draws
+  from it: `G` enters circulation when a bond is created, and the unvested part leaves when
+  it settles. Circulation grows only as fast as the network admits members who earn likes,
+  and shrinks when it admits members who do not — on top of decay and the like remainder,
+  which run against everyone.
+  > ⛔ **"Supply" and "circulation" are different quantities and the words are not
+  > interchangeable.** Supply is fixed; circulation is what invites and transfers to the pool
+  > move — *"the invite is the network's only source of karma"* is a statement about
+  > circulation. The checkable invariant: **`sum(every karma-bearing box) + pool` is constant
+  > from genesis at every height** (`node`'s `conservation-axiom.test.ts` asserts it). ⚠ **It
+  > is a DIFFERENT sum from `getTotalKarma`**, which reports circulation and deliberately
+  > excludes the pool; asserting either against the other is the error this note exists to
+  > prevent.
 - Total credit supply = genesis + ordering block rewards - future sinks
   > The reward term is bounded: emission terminates, totalling 422,640,000 credits
   > (`MINING_INTERFACE → Emission Schedule`). Genesis credits sit on top of that and sinks
@@ -1880,66 +1858,26 @@ forever. A node rejects objects with an unsupported protocol version.
   > (TYPES_INTERFACE → EmissionBox). An observer reads how much may still be emitted
   > instead of trusting that a schedule will be honoured — which is what makes the
   > fair-launch claim checkable on day one rather than a promise about future code.
-- Every UTXO transaction conserves value, with a closed set of stated exceptions.
-  **NODE_INTERFACE's `validateTx` step 5 is the authoritative enumeration** — derive from
-  it, never maintain a parallel list here. This is the same rule the mint-reason table
-  above carries and for the same reason: this entry read *"exactly one stated exception"*
-  while that list already held three. All other mints and burns happen only in
-  block-application paths, never inside a user transaction.
-  > **Every exception is on the karma ledger, and credits conserve strictly.** A fee is a
+- **Every UTXO transaction conserves value, unconditionally — the exception list is empty.**
+  **NODE_INTERFACE's `validateTx` step 7 is the authoritative statement** — derive from it,
+  never maintain a parallel list here. Each cost lands in a box the transaction itself
+  outputs, so every user transaction balances on its own; all other value movement happens
+  only in block-application paths — the settlement transaction and post-lock vesting — never
+  inside a user transaction.
+  > **Credits and karma both conserve strictly, and there are no deficits.** A fee is a
   > `FeeBox` output the transaction names (TYPES_INTERFACE → FeeBox), so what the miner
-  > takes is inside the output sum rather than a gap between two sums. **There is exactly
-  > one deficit in the system** — the like burn — so `likeTarget` ⟺ a deficit stays exact
-  > with no ledger argument behind it: there is no second deficit for it to be confused
-  > with, and no shape a fee could take that would collide with it.
-  > Conservation is **enforced** since P2-B (`checkValueConservation` per transaction,
-  > full re-validation at apply; the unvouch and `sendCredits` violations closed in its
-  > phases 2–3) — this entry's previous `⚠ UNENFORCED` marker had outlived its defect.
-  > The like carve-out is enforced since P2-D N1 (the biconditional lives in the engine's
-  > like arm). P2-B landing first is what made it safe to add — a deficit rule only means
-  > something once conservation is otherwise enforced.
+  > takes is inside the output sum rather than a gap between two sums; a like's cost rides
+  > its `LikeAccrualBox` marker the same way. The like rule is a statement about **shape**,
+  > enforced both ways in the engine's like arm: `likeTarget` present ⟺ exactly one accrual
+  > marker of `LIKE_KARMA_COST` naming the target's author — and the pin must be tested,
+  > because a balanced marker announces nothing by itself (NODE_INTERFACE → the like accrual
+  > marker). Conservation is **enforced**: `checkValueConservation` per transaction, full
+  > re-validation at apply.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
   (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
   non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
 - A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay applied periodically at block application time (not at spend time)
-
-> ## ⚠ AHEAD OF CODE — WHAT §The conservation axiom DOES TO EVERY ENTRY ABOVE
->
-> The entries above describe the running tree. **Each one is narrowed rather than deleted**, and the
-> narrowing is the same in every case: a quantity that had no counterparty gets one.
->
-> **"Exactly three burns" becomes exactly three TRANSFERS TO THE POOL.** Decay, the like remainder
-> and bond forfeiture all keep their names — a burn is a direction — and each names the pool as its
-> sink. ⛔ **`vouch-settle` no longer "re-mints an escrow"**: the escrow becomes a real box the
-> unvouch transaction outputs, so the value is never absent and there is nothing to re-mint.
->
-> **"Only one reason increases supply after genesis: `invite-claim`" becomes NO reason does.**
-> `G` is spent from the pool at invite creation. ⚠ **The sentence survives verbatim if "supply" is
-> read as "circulation"** — which is exactly why it must not be. **Supply is fixed at genesis;
-> circulation is what invites and burns move.**
->
-> ⛔ **"THERE IS EXACTLY ONE DEFICIT IN THE SYSTEM" BECOMES ZERO.** The like transaction outputs an
-> accrual marker carrying `LIKE_KARMA_COST` (§Likes), so it **conserves like every other transaction**
-> and `validateTx` step 5's exception list collapses to nothing. ✅ **The biconditional survives, over
-> a different property**: `likeTarget` present ⟺ the transaction carries exactly one accrual marker
-> of `LIKE_KARMA_COST` naming the target post's author — a statement about **shape**, where it used
-> to be a statement about a **gap between two sums**.
->
-> ⚠ **That is a strengthening, and it costs the argument that protected it.** *"There is no second
-> deficit for it to be confused with"* was doing real work while a deficit existed. With no deficits
-> at all the confusion cannot arise — **but the marker must then be pinned by shape as tightly as the
-> deficit was**, or a transaction could emit an accrual marker naming an author it never liked.
->
-> **"All other mints and burns happen only in block-application paths" becomes stronger, not weaker.**
-> No path mints or burns anywhere. Block application spends the pool and receives into it, and it is
-> the **only** spender of the pool — one settlement transaction per block, so two spends never
-> contend (`NODE_INTERFACE` → the settlement transaction).
->
-> ⛔ **THE ONE INVARIANT THIS BUYS, AND IT IS CHECKABLE:** `sum(every karma-bearing box) + pool` is
-> **constant from genesis at every height**. ⚠ **It is a DIFFERENT sum from `getTotalKarma`**, which
-> reports circulation and deliberately excludes the pool. Asserting either against the other is the
-> error this note exists to prevent.
 
 ### Block application journal (Spec B P1)
 
@@ -1953,8 +1891,9 @@ forever. A node rejects objects with an unsupported protocol version.
   the epoch; the like-record side-records journal through their own hooks,
   with exact inverses.)
 - **Accounting-agnostic.** The log carries no per-mutation-class fields.
-  Future mutation classes (invite/post bonds, one-way like accounting,
-  storage rent, coinbase splits) journal through the same log unchanged.
+  Every mutation class — settlement legs, bonds, like accounting, coinbase
+  splits, and future ones like storage rent — journals through the same log
+  unchanged.
 - **Rollback replays inverses.** Reverting a block walks the log in reverse:
   `insert` → delete the box, `remove` → un-spend it. Non-box side effects
   (post confirmations, like-records,
@@ -2409,8 +2348,8 @@ entry type). `peers` backs `@dagsocial/net`'s PeerDb across restarts.
 - Ordering blocks with validator PoW; posts and likes ride them as ordinary
   transactions
 - Verifiable prune: block-level PruneEntry, Ed25519-signed, UTXO-deterministic
-  settlement (consumes PostLockBoxes, mints `prune-refund-author` karma, deletes
-  like-records)
+  settlement (the settlement transaction consumes PostLockBoxes and refunds
+  lock owners other than the pruner; like-records deleted)
 - AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
   headers, `GET /api/v1/proof/:boxId` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all

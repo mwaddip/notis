@@ -517,69 +517,28 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
 }
 
 /**
- * Why a box created by block application rather than by a user transaction
- * still has one — coinbase, karma mints, decay, post-lock vesting, genesis,
- * prune settlement. The discriminant is semantic, never positional: deriving it
- * from journal position would put ordering back into *identity*, which is the
- * failure class M-12 closed for the AVL feed.
+ * Synthetic ids exist for genesis seeding and post-lock vesting only;
+ * everything else is a settlement output with an ordinary transaction id
+ * (NODE_INTERFACE → Box Identity and Mint Provenance).
+ *
+ * The discriminant is semantic, never positional: deriving it from journal
+ * position would put ordering back into *identity*, which is the failure
+ * class M-12 closed for the AVL feed.
  *
  * Subject bytes are the caller's, per `NODE_INTERFACE.md`'s reason/subject
  * table; this package never sees a postId.
  *
- * `like-payout` settles likes per block (ARCHITECTURE → Per-block accrual and
- * settlement): one mint per author per block, subject = the raw author key.
- *
- * The three invite reasons all take the invitee's public key as subject, and a
- * key is invited **at most once** — an invite may not name an existing account
- * and the grant makes the invitee one (NODE_INTERFACE → Bond transition rules) —
- * so each `(reason, subject)` pair occurs at most once in the whole history,
- * without reading the height at all. **No reason increases total karma** — the
- * pool is the only source and the only sink (→ `KarmaPoolBox`) — so what the
- * rows differ on is their net effect on **circulating** karma: `invite-claim`
- * **draws from the pool**, karma the invitee did not have, while `bond-settle`
- * and `bond-return` **recirculate** what a `BondBox` already held
- * (NODE_INTERFACE → Reason and subject table).
- *
- * `emission-release`, `treasury-accrue` and `pool-settle` take an **empty**
- * subject, and `lp(subject)` writes that as a zero length rather than as an
- * absence. Exactly one emission successor, one treasury successor and one pool
- * successor exist per height, so the height alone separates every instance
- * within a reason and the tag byte separates the reasons — nothing is derived
- * from a position in the block. None of the three creates value: each names a
- * box that block application spends and recreates — the first two on the credit
- * side, `pool-settle` the `KarmaPoolBox` successor holding the karma that is not
- * in circulation (NODE_INTERFACE → Reason and subject table).
- *
- * `genesis-committee` keys on the **member** — the raw 32-byte public key, one
- * karma box per `genesisCommitteeKeys` entry, drawn out of the karma pool. The
- * `genesis` reason cannot carry it: that subject is `u32BE(k)`, one number per
- * genesis box, so every member would share one synthetic txId (NODE_INTERFACE →
- * Reason and subject table).
- *
- * **Retired reasons — reserved, never reuse:** `'author-reward'`,
- * `'liker-refund'`, `'prune-refund-liker'` (likes are one-way burns, so
- * prune settlement refunds no liker) and `'vouch-settle'` (an unvouched
- * stake waits in a `VouchEscrowBox` and its owner reclaims it by
- * transaction; no mint occurs in the vouch lifecycle). `'vouch-settle'`
- * held tag 1, which stays reserved in `MINT_REASON` — a new reason wearing
- * that tag would derive mint txIds that collide with historical
- * vouch-settle mints.
+ * `genesis-committee` keys on the **member** — the raw 32-byte public key,
+ * one karma box per `genesisCommitteeKeys` entry, drawn out of the karma
+ * pool. The `genesis` reason cannot carry it: that subject is `u32BE(k)`,
+ * one number per genesis box, so every member would share one synthetic
+ * txId (NODE_INTERFACE → Reason and subject table).
  */
 export type MintReason =
-  | 'coinbase'
-  | 'like-payout'
   | 'postlock-unlock'
   | 'postlock-remainder'
-  | 'decay'
   | 'genesis'
-  | 'prune-refund-author'
-  | 'invite-claim'
-  | 'bond-settle'
-  | 'bond-return'
-  | 'emission-release'
-  | 'treasury-accrue'
-  | 'genesis-committee'
-  | 'pool-settle';
+  | 'genesis-committee';
 
 /**
  * The `MintReason` tag table.
@@ -599,30 +558,16 @@ export type MintReason =
  *   would rest on no member being a prefix of another — checkable, pinnable, and
  *   one careless addition away from false. A one-byte tag makes it structural.
  *
- * **Tags reserve retired values and are never renumbered** (TYPES_INTERFACE →
- * Primitives). A renumber
- * moves every mint txId carrying the tag and, through `computeCandidateBoxId`,
- * every box id minted under it — with no compiler signal. Reserve by leaving the
- * number out of this table; never reuse it.
+ * **A live tag is never renumbered** (TYPES_INTERFACE → Primitives). A
+ * renumber moves every mint txId carrying the tag and, through
+ * `computeCandidateBoxId`, every box id minted under it — with no compiler
+ * signal.
  */
 const MINT_REASON = enum8<MintReason>('mintReason', {
-  coinbase: 0,
-  // tag 1 reserved: formerly 'vouch-settle' — reasons are enum8, so a new
-  // reason wearing tag 1 would derive mint txIds that collide with historical
-  // vouch-settle mints
-  'like-payout': 2,
   'postlock-unlock': 3,
   'postlock-remainder': 4,
-  decay: 5,
   genesis: 6,
-  'prune-refund-author': 7,
-  'invite-claim': 8,
-  'bond-settle': 9,
-  'bond-return': 10,
-  'emission-release': 11,
-  'treasury-accrue': 12,
   'genesis-committee': 13,
-  'pool-settle': 14,
 });
 
 /**

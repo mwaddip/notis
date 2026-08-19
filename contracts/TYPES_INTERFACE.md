@@ -153,7 +153,7 @@ id is not a function of the post. **Names stay reserved.**
 
 ⚠ **`utf8(txId)`, not decoded bytes.** `TxId` is typed as a hex string, and this contract's
 standing rule (→ Pinned byte forms) is that a **standalone derivation** takes it as the UTF-8
-bytes of its hex text — as the `postlock-*` and `prune-refund-author` mint subjects do. The
+bytes of its hex text — as the `postlock-*` mint subjects do. The
 decoded-bytes form belongs to the positional struct encoders, which establish their domain
 upstream; this function has no upstream and must stay total on an attacker-supplied `txId`.
 
@@ -347,8 +347,8 @@ computes different ids.
     written by `writeHexNOrThrow`, which decodes. This covers `computeTxId`'s `inputs`
     (via `txIdBytes`), `postFieldBytes`' `parentRefs`, and `boxRecordBytes`' `txId`.
   - **A free byte string concatenated into a hash enters as the UTF-8 bytes of its
-    64-character hex text.** This covers `computePostId`'s `txId` and the `postlock-unlock`,
-    `postlock-remainder` and `prune-refund-author` mint subjects. **`reason` does NOT enter
+    64-character hex text.** This covers `computePostId`'s `txId` and the `postlock-unlock`
+    and `postlock-remainder` mint subjects. **`reason` does NOT enter
     this way** — it is an `enum8` tag byte, not ASCII text (corrected 2026-08-16).
 
   ⛔ **The dividing line is a FIXED WIDTH, and that is why it is principled rather than
@@ -488,10 +488,11 @@ KarmaBox extends BoxBase {
 ```
 
 Karma boxes are non-tradeable. They can only be consumed by the owner to:
-- Create invite boxes
-- Burn `LIKE_KARMA_COST` in a like transaction (`likeTarget` — there is no like box, P2-D)
+- Create a bond box (inviting — ARCHITECTURE → Invite System)
+- Fund a like — the `LIKE_KARMA_COST` rides the transaction's own `LikeAccrualBox` marker
 - Create a new karma box for the same owner (balance change)
 - Create a post lock box (when posting)
+- Create a vouch box (staking for another member)
 
 `lastTouchBlock` was removed by Spec G — it had no reader anywhere in `src`, and the activity
 clock it nominally represented now lives in the committed per-identity record
@@ -501,12 +502,11 @@ clock it nominally represented now lives in the committed per-identity record
 preimage. A mint's `txId` is `computeMintTxId(height, reason, subject)`, whose `reason` tag
 names why the karma was created; a user-path box carries the transaction that made it.
 
-⚠ **`mintKarma` still consolidates** — it consumes every unspent karma box an owner holds and
-mints one replacement — and `getKarmaBoxes` orders by value with no tie-break. That is
-identity-harmless now, because nothing the merge chooses between reaches the id preimage.
-It was not: while a free-text provenance tag was in the preimage, the merge inherited one
-arbitrarily and two nodes ordering an equal-valued pair differently derived **different box
-ids**. Removing the consolidation is a separate change and is not owed by this rule.
+⚠ **`transferKarma` (node) consolidates its credits** — a credited owner's existing karma
+boxes are consumed and one box holding the total is inserted — and `getKarmaBoxes` orders by
+value with no tie-break. That is identity-harmless, because nothing the merge chooses between
+reaches the id preimage. Settlement karma outputs do **not** consolidate: they land beside
+whatever karma the owner already holds.
 
 ### CreditBox
 
@@ -616,23 +616,13 @@ both have to be carried. A bond settles **once**, for
 arithmetically identical to accumulated instalments. No partial state exists to
 record.
 
-**Nothing spends a bond.** Creation, claim, cancellation and settlement all move
-it through block application, so no transition admits it into a user transaction —
-the same standing `PostLockBox` has.
-
-> ⚠ **AHEAD OF CODE — the field list survives; two of its justifications do not.**
-> ✅ **`BondBox`'s SHAPE is unchanged** by the invite collapse, and `inviteePublicKey` gains a second
-> job: it is what the settlement reads to address the grant.
->
-> ⛔ **"The window runs from the claim, not the creation" is false once there is no claim.**
-> `IdentityRecord.invitedAtBlock` becomes the **invite's own height**, so the probation window and
-> the bond's creation now start together. ✅ **The conclusion still holds for a different reason** —
-> the height is still recorded on the identity record, so carrying it here would still be a second
-> copy of committed state. **Do not read the conclusion's survival as the argument's.**
->
-> ⛔ **"Creation, claim, cancellation and settlement" enumerates two transitions that stop existing.**
-> The list becomes **creation and settlement**. ✅ **"Nothing spends a bond" is untouched** and is the
-> half that matters.
+**Nothing spends a bond.** Creation and settlement both move it through block
+application — the create transaction outputs it, the settlement transaction
+consumes it at the probation deadline — so no transition admits it into a user
+transaction, the same standing `PostLockBox` has. `inviteePublicKey` is also
+what the settlement reads to address the grant, and the probation window runs
+from the invite's own height (`IdentityRecord.invitedAtBlock`) — recorded on the
+identity record, so carrying it here would be a second copy of committed state.
 
 ### PostLockBox
 
@@ -725,14 +715,10 @@ holds the obligation, rather than a root it cannot interpret without replaying e
 
 ### LikeAccrualBox
 
-> ## ⚠ PARTIAL — the type and its layout exist; nothing produces or consumes one
->
-> ✅ **Landed in `types` (C1, 2026-08-17)**: the interface, tag **11** and the wire layout below.
-> ⚠ **Still ahead of code in `node`** — the like transition does not emit a marker, the settlement
-> does not consume one, and `IdentityRecord.likeCarry` is still the carry.
->
-> It is **the only marker box in the design** (`ARCHITECTURE` → The conservation axiom, "the three
-> shapes"), and it replaces `IdentityRecord.likeCarry`.
+**The only marker box in the design** (`ARCHITECTURE` → The conservation axiom, "the three
+shapes"): the like transaction emits one per like, the block's settlement transaction consumes
+them with the author's carry box, and the carry has no counter representation anywhere — the
+box is the carry.
 
 ```
 LikeAccrualBox extends BoxBase {
@@ -1063,7 +1049,7 @@ recompute the hash and check the signature.
 | `computeBoxId(box)` | `(BoxBase) => BoxId` | Box id from `candidate ‖ txId ‖ index`. Total function of a stored box — no second argument, so `stored.id === computeBoxId(stored)` is checkable anywhere |
 | `computeCandidateBoxId(candidate, txId, index)` | `(BoxCandidate, TxId, number) => BoxId` | Same derivation, for a candidate not yet materialized. Used by creators and by clients predicting an id at signing time |
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
-| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes created by block application. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
+| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding and post-lock vesting; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (demo UI, light client) assert against the encoder that computes ids, not a lookalike |
 
 ---
@@ -1255,39 +1241,13 @@ This is what makes prune authorship (audit H-3) checkable deterministically, and
 replaces a rule that required nodes holding the post to reject a block whose entry
 disagreed with it.
 
-### Coinbase output
+### ~~Coinbase output~~ — DELETED (C1)
 
-```
-CoinbaseOutput {
-  owner: UserId              // 32-byte recipient public key
-  value: bigint              // Credits minted (integer base units)
-  lockedUntilBlock: number   // Height at which credits become spendable
-  isTreasury: boolean        // Always false — see below
-}
-```
-
-**Every coinbase output is the miner's, so `isTreasury` is `false` on every output at every
-height.** The treasury's slice accrues to a `TreasuryBox` and is never a coinbase output. Node
-rejects a block carrying an output with `isTreasury: true` (MINING_INTERFACE → Coinbase
-Application).
-
-> ## ✅ RESOLVED in `types` (C1, 2026-08-17) — THE WHOLE STRUCT HAS LEFT THE BLOCK BODY
->
-> Coinbase outputs become outputs of the block's **settlement transaction** (§OrderingBlock's marker
-> above; `NODE_INTERFACE` → the settlement transaction), so `CoinbaseOutput` stops being a
-> block-body concept, `coinbaseOutputBytes` stops being a Merkle leaf preimage, and the `'coinbase'`
-> leaf domain is retired and reserved.
->
-> ⛔ **`isTreasury`'S SEPARATE DELETION IS THEREFORE MOOT, AND THAT CLOSES THE SEQUENCING QUESTION.**
-> Whether that field's removal should ride the settlement work or land ahead of it was the wrong
-> question — the struct it lives on stops existing, so there is nothing to schedule. ⚠ **A deletion
-> pass aimed at the field alone would touch 24 files across four packages and then be redone**, which
-> is the failure this note exists to prevent.
-
-> **AHEAD OF CODE — the field is scheduled for deletion.** It carries no information once no
-> output can be the treasury's, and it survives only because removing it is a wire-format change
-> reaching `@dagsocial/validation` and `@dagsocial/net` as well as this package and node. Deleting
-> it is its own unit; **do not add a reader of it.**
+The struct has left the block body, `isTreasury` and all: coinbase outputs are credit outputs
+of the block's **settlement transaction** (`NODE_INTERFACE` → the settlement transaction),
+`coinbaseOutputBytes` is no Merkle leaf preimage, and the `'coinbase'` leaf domain is retired
+and reserved. The treasury's slice accrues to a `TreasuryBox` and is never a credit output
+(MINING_INTERFACE → Coinbase Application).
 
 ### ~~Epoch tally~~ — DELETED (P2-D)
 

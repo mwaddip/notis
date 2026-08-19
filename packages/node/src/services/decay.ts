@@ -66,7 +66,7 @@ export function isIdentityStale(
  * box-reading version expressed as "use the youngest box when all boxes are
  * decay-burn".
  *
- * No clamp at zero, matching the predecessor: `applyKarmaDecay` skips anything
+ * No clamp at zero: `deriveKarmaDecay` skips anything
  * `<= 0`, and swallowing a negative here would hide a clock that had somehow
  * run ahead of the chain.
  */
