@@ -67,7 +67,6 @@ function makePruneEntry(subtreeCount = 3): PruneEntry {
     subtreeMerkleRoot: new Uint8Array(32).fill(0x11),
     authorId: new Uint8Array(32).fill(0x22),
     authorSignature: new Uint8Array(64).fill(0x33),
-    trigger: 'author',
   };
 }
 
@@ -266,25 +265,8 @@ describe('sentinel branches', () => {
     const entry = { ...makePruneEntry(), subtreePostIds: null as unknown as string[] };
     const tree = makeTree({ pruneEntries: [entry] });
     expectSizeMatchesEncoder(tree);
-    // 160 fixed bytes + the tag, with the array's count sentinelled.
-    expect(utxoTxTreeByteLength(tree) - EMPTY_SIZE).toBe(161 + SENTINEL_WIDTH);
-  });
-
-  // ⛔ **NO FIELD IN THE BODY IS A BARE `vlqU` BELOW THE SECTION PREFIXES**, so
-  // an unencodable value inside an element has nowhere to sit and this section
-  // does not cover that shape. `vlqU`'s sentinel IS covered where it scales with
-  // the body — through a **count** and a **length** prefix, the two cases above —
-  // which is where an under-report costs a block. A `vlqU` field added to an
-  // element owes a case of its own.
-
-  // `enum8` is total at BYTE width — an out-of-table trigger still costs exactly
-  // one byte, so a sizer that treated it as variable would over-report.
-  it('costs an out-of-table trigger one byte', () => {
-    const withTrigger = makeTree({
-      pruneEntries: [{ ...makePruneEntry(0), trigger: 'nonsense' as PruneEntry['trigger'] }],
-    });
-    expectSizeMatchesEncoder(withTrigger);
-    expect(utxoTxTreeByteLength(withTrigger) - EMPTY_SIZE).toBe(162);
+    // 160 fixed bytes with the array's count sentinelled.
+    expect(utxoTxTreeByteLength(tree) - EMPTY_SIZE).toBe(160 + SENTINEL_WIDTH);
   });
 });
 

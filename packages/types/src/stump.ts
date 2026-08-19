@@ -1,7 +1,6 @@
 import { createHash } from 'crypto';
 import { ByteWriter } from '@dagsocial/wire';
 import {
-  enum8,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
@@ -9,29 +8,13 @@ import {
 import type { UserId } from './identity.js';
 import type { PostId } from './post.js';
 
-/**
- * What caused a subtree to be compacted. Shared by `PruneIntent`, `PruneEntry`
- * and `Stump` — one alias rather than three inline unions, because it is also
- * the domain of the `trigger` tag table below.
- */
-export type PruneTrigger = 'author' | 'storage_prune';
+const encoder = new TextEncoder();
 
 /**
- * The `trigger` tag table (TYPES_INTERFACE → Layout — Stump / PruneEntry).
- *
- * **Tags are never renumbered; retired values are remnant-bounded
- * reservations** (TYPES_INTERFACE → tag rules, condition 3). A renumber
- * silently moves every prune Merkle leaf and every id covering the tag, with no
- * compiler signal, and this tag sits inside a consensus preimage.
- *
- * Exported because `Stump` and the golden-vector harness both need
- * *this* table rather than a second copy of it: two implementations of one tag
- * table is the drift class this format exists to close.
+ * Domain separator for the prune-entry id (TYPES_INTERFACE → Layout — Stump /
+ * PruneEntry). Module-local, following `POST_ID_DOMAIN` (`post.ts`).
  */
-export const TRIGGER = enum8<PruneTrigger>('trigger', {
-  author: 0,
-  storage_prune: 1,
-});
+const PRUNE_ENTRY_ID_DOMAIN = encoder.encode('dagsocial/prune-entry-id/1');
 
 // ---------------------------------------------------------------------------
 // Karma delta (aggregated from pruned subtree)
@@ -48,7 +31,6 @@ export interface KarmaDelta {
 
 export interface PruneIntent {
   rootPostHash: PostId;
-  trigger: PruneTrigger;
   authorId: UserId;
   subtreeMerkleRoot: Uint8Array;   // 32 bytes — Merkle root over leafHash('stump', postId) per pruned post
   subtreePostIds: PostId[];        // All post IDs in the reply subtree
@@ -65,7 +47,6 @@ export interface PruneEntry {
   subtreeMerkleRoot: Uint8Array;
   authorId: UserId;
   authorSignature: Uint8Array;     // 64 bytes — Ed25519 sig over blake2b512(rootPostHash ++ subtreeMerkleRoot)
-  trigger: PruneTrigger;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +58,6 @@ export interface Stump {
   authorId: UserId;
   replyCount: number;
   upvoteCount: number;
-  trigger: PruneTrigger;
   protocolVersion: number;
   compactedAtBlockHeight: number;
 }
@@ -89,20 +69,26 @@ export type StumpId = string;
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic ID for a PruneEntry.
+ * Deterministic ID for a PruneEntry (TYPES_INTERFACE → Layout — Stump /
+ * PruneEntry).
  *
- * ⚠ **Not the positional format, and deliberately so.** `rootPostHash` enters
- * as the UTF-8 of its hex text while the two byte fields enter raw, so this is
- * the one preimage in this file that does not go through the codec layer. It is
- * not a `serializePruneEntry` caller and no committed root covers it — the id is
- * a mempool/store key — so moving it is an independent byte change, flagged
- * rather than folded in here.
+ * `hex( blake2b512( PRUNE_ENTRY_ID_DOMAIN ‖ b32(rootPostHash) ‖
+ * b32(subtreeMerkleRoot) ‖ b32(authorId) )[0..32] )`
+ *
+ * Two fields stay out deliberately (TYPES_INTERFACE → Layout — Stump /
+ * PruneEntry): `subtreePostIds` (committed transitively by
+ * `subtreeMerkleRoot`) and `authorSignature` (the id is the mempool dedup
+ * key — two identically-parameterized prunes under different valid signature
+ * bytes are one intent and must collapse to one entry).
  */
 export function computePruneEntryId(entry: PruneEntry): string {
+  const w = new ByteWriter();
+  w.writeBytes(PRUNE_ENTRY_ID_DOMAIN);
+  writeHexNOrThrow(w, entry.rootPostHash, 32);
+  writeBytesNOrThrow(w, entry.subtreeMerkleRoot, 32);
+  writeBytesNOrThrow(w, entry.authorId, 32);
   const h = createHash('blake2b512');
-  h.update(entry.rootPostHash);
-  h.update(entry.subtreeMerkleRoot);
-  h.update(entry.authorId);
+  h.update(w.toBytes());
   return h.digest().subarray(0, 32).toString('hex');
 }
 
@@ -117,15 +103,13 @@ export function computePruneEntryId(entry: PruneEntry): string {
  *   | 3 | subtreeMerkleRoot | b32 (bytes)    |
  *   | 4 | authorId          | b32 (bytes)    |
  *   | 5 | authorSignature   | b64 (bytes)    |
- *   | 6 | trigger           | enum8          |
  *
  * Every field is fixed-width, so **every writer throws** outside its domain
  * (TYPES_INTERFACE → Totality): there is no unreachable sentinel at a fixed
  * width, and padding a malformed id to 32 bytes would map it onto a well-formed
- * entry's leaf. The
- * domain is `verifyOrderingBlockStructure`'s, which pins the hex and
- * byte widths of every prune-entry field before a block reaches the Merkle
- * builder.
+ * entry's leaf. The domain is `verifyOrderingBlockStructure`'s, which pins the
+ * hex and byte widths of every prune-entry field before a block reaches the
+ * Merkle builder.
  */
 export function serializePruneEntry(entry: PruneEntry): Uint8Array {
   const w = new ByteWriter();
@@ -134,6 +118,5 @@ export function serializePruneEntry(entry: PruneEntry): Uint8Array {
   writeBytesNOrThrow(w, entry.subtreeMerkleRoot, 32);
   writeBytesNOrThrow(w, entry.authorId, 32);
   writeBytesNOrThrow(w, entry.authorSignature, 64);
-  TRIGGER.write(w, entry.trigger);
   return w.toBytes();
 }

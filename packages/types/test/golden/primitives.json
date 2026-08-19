@@ -451,20 +451,20 @@
     },
 
     {
-      "name": "enum8/trigger-author",
-      "codec": { "enum8": "trigger" },
-      "value": "author",
-      "bytes": "00"
+      "name": "enum8/mintReason-postlock-unlock",
+      "codec": { "enum8": "mintReason" },
+      "value": "postlock-unlock",
+      "bytes": "03"
     },
     {
-      "name": "enum8/trigger-storage-prune",
-      "codec": { "enum8": "trigger" },
-      "value": "storage_prune",
-      "bytes": "01"
+      "name": "enum8/mintReason-genesis",
+      "codec": { "enum8": "mintReason" },
+      "value": "genesis",
+      "bytes": "06"
     },
     {
       "name": "enum8/sentinel-unknown-value",
-      "codec": { "enum8": "trigger" },
+      "codec": { "enum8": "mintReason" },
       "value": "nonsense",
       "raw": true,
       "bytes": "ff",

@@ -79,14 +79,14 @@
     },
     {
       "name": "tag/enum8-unknown",
-      "codec": { "enum8": "trigger" },
-      "bytes": "02",
+      "codec": { "enum8": "mintReason" },
+      "bytes": "00",
       "code": "invalid-tag",
-      "note": "Tag 2 is not in the trigger table. Reserved tags stay unreadable rather than decoding to a neighbour."
+      "note": "Tag 0 is not in the mintReason table. Reserved tags stay unreadable rather than decoding to a neighbour."
     },
     {
       "name": "tag/enum8-sentinel-byte",
-      "codec": { "enum8": "trigger" },
+      "codec": { "enum8": "mintReason" },
       "bytes": "ff",
       "code": "invalid-tag",
       "note": "The encode-side sentinel must not decode back into a value — otherwise a malformed round trip would look clean."
