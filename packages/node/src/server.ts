@@ -295,6 +295,7 @@ export function createApp(config: Config): express.Express {
     utxoRoutes({
       getKarmaBox: store.getKarmaBox,
       getKarmaBoxes: store.getKarmaBoxes,
+      getIdentityRecord: store.getIdentityRecord,
       getCreditBox: store.getCreditBox,
       getCreditBoxes: store.getCreditBoxes,
       getBondBoxes: store.getBondBoxes,
