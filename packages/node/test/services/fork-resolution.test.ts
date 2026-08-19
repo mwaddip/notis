@@ -1415,7 +1415,7 @@ describe('revertBlock', () => {
       value: plan.newValue,
       createdAtBlock: DECAY_HEIGHT,
       owner: plan.owner,
-      decayBurn: true,
+      nonActivity: true,
       txId: provenance.mintTxIdFor(provenance.genesisCommitteeContext(plan.owner), DECAY_HEIGHT),
       index: provenance.MINT_OUTPUT_INDEX,
     };

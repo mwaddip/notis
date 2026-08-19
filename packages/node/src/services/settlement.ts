@@ -442,16 +442,16 @@ function derive(
   // legs crediting one owner would both want to consume the same boxes, which
   // inside one transaction is a double spend. Nothing in the axiom counts boxes;
   // `getKarmaValue` sums them.
-  // ⛔ **`decayBurn: true` on every settlement karma output.** The settlement
+  // ⛔ **`nonActivity: true` on every settlement karma output.** The settlement
   // is a protocol effect, not a user-initiated action — received value must
   // not reset the recipient's activity clock (ARCHITECTURE → Karma decay →
-  // Clocks). The `insertBox` choke point gates on `decayBurn !== true`.
+  // Clocks). The `insertBox` choke point gates on `nonActivity !== true`.
   for (const invite of body.invites) {
-    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, decayBurn: true, createdAtBlock: height });
+    outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, nonActivity: true, createdAtBlock: height });
   }
   for (const payout of likePayouts) {
     if (payout.paid > 0n) {
-      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author, decayBurn: true, createdAtBlock: height });
+      outputs.push({ boxType: 'karma', value: payout.paid, owner: payout.author, nonActivity: true, createdAtBlock: height });
     }
     if (payout.carry > 0n) {
       outputs.push({ boxType: 'like_accrual', value: payout.carry, author: payout.author, createdAtBlock: height });
@@ -459,7 +459,7 @@ function derive(
   }
   for (const settled of bondSettlements) {
     if (settled.vested > 0n) {
-      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, decayBurn: true, createdAtBlock: height });
+      outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, nonActivity: true, createdAtBlock: height });
     }
   }
   for (const plan of decayPlans) {
@@ -468,14 +468,14 @@ function derive(
         boxType: 'karma',
         value: plan.newValue,
         owner: plan.owner,
-        decayBurn: true,
+        nonActivity: true,
         createdAtBlock: height,
       });
     }
   }
   for (const prune of body.prunes) {
     for (const refund of prune.refunds) {
-      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, decayBurn: true, createdAtBlock: height });
+      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, nonActivity: true, createdAtBlock: height });
     }
   }
 

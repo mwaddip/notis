@@ -22,7 +22,7 @@ import {
  *
  * The staleness clock lives in the committed record, and `insertBox` is the
  * choke point that keeps it there: it bumps `lastActivityBlock` for exactly the
- * boxes staleness counts — karma boxes with `decayBurn !== true` — so no
+ * boxes staleness counts — karma boxes with `nonActivity !== true` — so no
  * producer has to remember to do it.
  *
  * The height comes from the **open journal**, never from the box. `insertBox`
@@ -72,7 +72,7 @@ function karmaBox(
   o: UserId,
   seed: number,
   value: bigint,
-  decayBurn?: boolean,
+  nonActivity?: boolean,
 ): Stored<KarmaBox> {
   const candidate: CandidateOf<KarmaBox> = {
     boxType: 'karma',
@@ -83,7 +83,7 @@ function karmaBox(
     // hashes it into the synthetic provenance, so distinct boxes keep distinct
     // ids. The journal height is what the clock assertions turn on.
   };
-  if (decayBurn !== undefined) candidate.decayBurn = decayBurn;
+  if (nonActivity !== undefined) candidate.nonActivity = nonActivity;
   return seedProvenance<KarmaBox>(candidate, seed);
 }
 
@@ -171,7 +171,7 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
-    // The whole point of `decayBurn` is that decay's own replacement box is not
+    // The whole point of `nonActivity` is that decay's own replacement box is not
     // activity — if it were, one decay would make the identity look fresh and
     // no second cycle could ever fire.
     const alice = owner('alice');
@@ -182,14 +182,14 @@ describe('insertBox populates the activity clock (Spec G phase D2)', () => {
     expect(getIdentityRecord(alice)).toBeNull();
   });
 
-  it('an explicit `decayBurn: false` box IS activity', async () => {
+  it('an explicit `nonActivity: false` box IS activity', async () => {
     const { initDb } = await importDbFresh();
     const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { insertBox } = await importUtxoFresh();
     const { getIdentityRecord } = await importRecordsFresh();
     initDb(':memory:');
 
-    // The predicate is `decayBurn !== true`, not `=== undefined`: an explicit
+    // The predicate is `nonActivity !== true`, not `=== undefined`: an explicit
     // `false` is activity, and only decay's own replacement box is not.
     const alice = owner('alice');
     beginBlockJournal(50);

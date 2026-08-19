@@ -270,7 +270,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     for (const o of r.computedOutputs!) expectIdClean(o.id!);
   });
 
-  it('honest karma → karma + vouch (and karma with decayBurn) applies and round-trips id-clean', () => {
+  it('honest karma → karma + vouch (and karma with nonActivity) applies and round-trips id-clean', () => {
     const karma = seedKarma(100n);
     const vouch = {
       boxType: 'vouch',
@@ -279,7 +279,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
     };
-    const change = { ...karmaChange(100n - VOUCH_KARMA_AMOUNT), decayBurn: true };
+    const change = { ...karmaChange(100n - VOUCH_KARMA_AMOUNT), nonActivity: true };
     const tx = signedTx([karma.id!], [change, vouch]);
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);

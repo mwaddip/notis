@@ -42,7 +42,7 @@ export interface KarmaCredit {
   /** Why — the half of the box's synthetic transaction id this module cannot know. */
   ctx: MintContext;
   /** Received value — the box must not reset the owner's activity clock. */
-  decayBurn?: boolean;
+  nonActivity?: boolean;
 }
 
 /**
@@ -129,7 +129,7 @@ export function transferKarma(
       value: consolidated,
       createdAtBlock: blockHeight,
       owner: c.owner,
-      ...(c.decayBurn ? { decayBurn: true } : {}),
+      ...(c.nonActivity ? { nonActivity: true } : {}),
       txId: mintTxIdFor(c.ctx, blockHeight),
       index: MINT_OUTPUT_INDEX,
     };

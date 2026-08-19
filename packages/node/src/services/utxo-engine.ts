@@ -1182,7 +1182,7 @@ const OUTPUT_SHAPE: Record<
   return {
     karma: shape(
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
-      { decayBurn: 'boolean' },
+      { nonActivity: 'boolean' },
     ),
     credit: shape(
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
@@ -1287,7 +1287,7 @@ const OUTPUT_SHAPE: Record<
  *
  * ⛔ **A key present with the value `undefined` IS absence, and every reader
  * agrees.** `canonicalBoxBytes` writes one byte string for an absent optional
- * field — measured: a karma candidate with `decayBurn: undefined` and one
+ * field — measured: a karma candidate with `nonActivity: undefined` and one
  * without encode identically — so the two are not two shapes for a rule to tell
  * apart. ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes
  * every optional box field as an own key, holding `undefined` where the tag said

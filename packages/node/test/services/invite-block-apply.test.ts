@@ -283,7 +283,7 @@ describe('the invite at block application', () => {
 
     const record = records.getIdentityRecord(invitee.userId);
     expect(record!.invitedAtBlock).toBe(height);
-    // The grant's karma output carries decayBurn: true (received value), so
+    // The grant's karma output carries nonActivity: true (received value), so
     // insertBox does not bump lastActivityBlock. The invitee's first activity
     // is their own first transaction.
     expect(record!.lastActivityBlock).toBe(0);

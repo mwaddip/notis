@@ -723,7 +723,7 @@ function boxTypeFields(box) {
     case 'karma':
       return concatUint8Arrays([
         b32Either(box.owner, 32),
-        opt(box.decayBurn, boolByte),
+        opt(box.nonActivity, boolByte),
       ]);
     case 'credit':
       return concatUint8Arrays([

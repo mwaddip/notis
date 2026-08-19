@@ -1392,7 +1392,7 @@ function applyMutationPhase(
     // `(height, 'postlock-remainder', postId)` cannot repeat.
     transferKarma(
       [lockBox],
-      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId), decayBurn: true }],
+      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId), nonActivity: true }],
       {
         shape: (value) => ({
           boxType: 'post_lock',

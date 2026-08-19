@@ -155,7 +155,7 @@ function applyDecayPlans(
       value: plan.newValue,
       createdAtBlock: height,
       owner: plan.owner,
-      decayBurn: true,
+      nonActivity: true,
       txId: m.provenance.mintTxIdFor(m.provenance.genesisCommitteeContext(plan.owner), height),
       index: m.provenance.MINT_OUTPUT_INDEX,
     };

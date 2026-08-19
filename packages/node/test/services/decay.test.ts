@@ -320,7 +320,7 @@ describe('deriveKarmaDecay', () => {
     expect(consumed).toHaveLength(0);
   });
 
-  it('the new box has decayBurn: true', () => {
+  it('the new box has nonActivity: true', () => {
     const { deps, postBodyKarma, inserted } = oneOwner(
       [makeKarmaBox({ id: 'old-box', value: 100n })],
       clock(ACTIVITY_AT),
@@ -328,7 +328,7 @@ describe('deriveKarmaDecay', () => {
 
     const plans = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
-    // ⚠ **`decayBurn` is the SETTLEMENT's to set now**, on the karma output it
+    // ⚠ **`nonActivity` is the SETTLEMENT's to set now**, on the karma output it
     // emits for this plan — it is what keeps the replacement from resetting the
     // owner's activity clock. The derivation carries the value; that the flag
     // rides it is asserted where the box is made, in `conservation-axiom` and
@@ -357,7 +357,7 @@ describe('deriveKarmaDecay', () => {
     // and burn down to the floor instead of one period's worth.
     const firstDecayAt = ACTIVITY_AT + KARMA_STALE_THRESHOLD_BLOCKS;
     const { deps, postBodyKarma } = oneOwner(
-      [makeKarmaBox({ id: 'decay-box', value: 100n, decayBurn: true })],
+      [makeKarmaBox({ id: 'decay-box', value: 100n, nonActivity: true })],
       clock(ACTIVITY_AT, firstDecayAt),
     );
 

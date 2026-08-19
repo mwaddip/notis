@@ -208,7 +208,7 @@ describe('field-type pin', () => {
       ['karma owner 31 bytes', { ...honest('karma'), owner: new Uint8Array(31) }],
       ['karma owner 33 bytes', { ...honest('karma'), owner: new Uint8Array(33) }],
       ['karma owner as number', { ...honest('karma'), owner: 5 }],
-      ['karma decayBurn as string', { ...honest('karma'), decayBurn: 'yes' }],
+      ['karma nonActivity as string', { ...honest('karma'), nonActivity: 'yes' }],
       ['credit lockedUntilBlock negative', { ...honest('credit'), lockedUntilBlock: -1 }],
       ['credit lockedUntilBlock as -0', { ...honest('credit'), lockedUntilBlock: -0 }],
       ['post_lock originalValue as string (the class-3 poison)', { ...honest('post_lock'), originalValue: 'x' }],
@@ -297,7 +297,7 @@ describe('field-type pin', () => {
     function honestCandidate(boxType: string): Record<string, unknown> {
       switch (boxType) {
         case 'karma':
-          return { boxType, value: 10n, createdAtBlock: 0, owner: bytes32(1), decayBurn: false };
+          return { boxType, value: 10n, createdAtBlock: 0, owner: bytes32(1), nonActivity: false };
         case 'credit':
           return { boxType, value: 10n, createdAtBlock: 0, owner: bytes32(1), lockedUntilBlock: 5 };
         case 'bond':
@@ -314,7 +314,7 @@ describe('field-type pin', () => {
     // For each boxType, every pinned field and a value violating its spec.
     // (`boxType` is pinned by its own arm, tested in the output-shape suite.)
     const WRONG: Record<string, Record<string, unknown>> = {
-      karma: { value: 10, owner: new Uint8Array(31), decayBurn: 1 },
+      karma: { value: 10, owner: new Uint8Array(31), nonActivity: 1 },
       credit: { value: -1n, owner: 'aa'.repeat(32), lockedUntilBlock: -1 },
       bond: {
         value: BOX_VALUE_BOUND,

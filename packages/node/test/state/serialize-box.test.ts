@@ -235,7 +235,7 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
       '64' +            // vlqU64(100)
       '00' +            // vlqU(createdAtBlock = 0)
       'aa'.repeat(32) + // b32(owner)
-      '00' +            // opt(decayBurn) absent
+      '00' +            // opt(nonActivity) absent
       PROV,
     );
   });

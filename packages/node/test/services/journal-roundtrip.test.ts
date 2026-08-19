@@ -715,7 +715,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
     // One record mutation for the invitee: the settlement's invite-grant
-    // writes invitedAtBlock. The karma box it inserts carries decayBurn: true
+    // writes invitedAtBlock. The karma box it inserts carries nonActivity: true
     // (received value), so insertBox does not bump lastActivityBlock.
     const journalStore = await import('../../src/store/journal.js');
     const recordMutations = journalStore
@@ -744,7 +744,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     await assertRoundTrip(db, handle, pre, classBlock);
 
     // Re-apply landed the record back on the last write. The grant's karma
-    // box carries decayBurn: true (received value), so lastActivityBlock is 0.
+    // box carries nonActivity: true (received value), so lastActivityBlock is 0.
     expect(recordStore.getIdentityRecord(invitee.userId)).toEqual({
       lastActivityBlock: 0,
       lastDecayBlock: 0,
