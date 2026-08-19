@@ -2420,7 +2420,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
       expect(verifyPostFieldDomains(bad as unknown as Post).valid).toBe(false);
       const good = signedPost();
       expect(() => verifyPostFieldDomains({ ...good, author: bad } as unknown as Post)).not.toThrow();
-      expect(() => verifyPostFieldDomains({ ...good, challenge: bad } as unknown as Post)).not.toThrow();
+      expect(() => verifyPostFieldDomains({ ...good, extraJunk: bad } as unknown as Post)).not.toThrow();
       expect(() => verifyPostFieldDomains({ ...good, parentRefs: bad } as unknown as Post)).not.toThrow();
       expect(() => verifyPostFieldDomains({ ...good, parentRefs: [bad] } as unknown as Post)).not.toThrow();
     }
