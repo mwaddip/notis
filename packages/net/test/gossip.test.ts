@@ -461,7 +461,7 @@ const RELAY_PEER = 'peer-that-relayed-it';
 
 function makeDispatchHarness(handlers: {
   onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx?: (tx: unknown) => void;
+  onTx?: (tx: unknown, fromPeerId: string) => void;
 } = {}) {
   let listener: GossipListener | null = null;
   const stub = {
@@ -607,6 +607,36 @@ describe('gossip dispatch listener', () => {
       expect.stringContaining('passed its topic validator and then failed to decode'),
     );
     errSpy.mockRestore();
+  });
+
+  it('hands the tx handler the peer that relayed the transaction', () => {
+    const plainTx: UtxoTransaction = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const seen: string[] = [];
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, from) => seen.push(from) });
+
+    deliver(TOPICS.tx, encodeTx(plainTx));
+
+    expect(seen).toEqual([RELAY_PEER]);
+  });
+
+  it('delivers empty string when the tx event carries no source', () => {
+    const plainTx: UtxoTransaction = {
+      inputs: ['aa'.repeat(32)],
+      outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    const seen: string[] = [];
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, from) => seen.push(from) });
+
+    deliver(TOPICS.tx, encodeTx(plainTx), null);
+
+    expect(seen).toEqual(['']);
   });
 
   it('ignores a topic it does not route', () => {

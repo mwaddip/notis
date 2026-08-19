@@ -69,7 +69,7 @@ export interface GossipHandlers {
    * dispatch below for why `msg.from` is the wrong value.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx: (tx: UtxoTransaction) => void;
+  onTx: (tx: UtxoTransaction, fromPeerId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ export function subscribeTopics(
     if (topic === TOPICS.orderingBlock) {
       deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block, relayPeerId));
     } else if (topic === TOPICS.tx) {
-      deliver(decodeTx, (tx) => handlers.onTx(tx));
+      deliver(decodeTx, (tx) => handlers.onTx(tx, relayPeerId));
     }
   });
 

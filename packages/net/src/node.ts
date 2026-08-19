@@ -59,7 +59,7 @@ import {
 } from './types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
-type TxCallback = (tx: UtxoTransaction) => void;
+type TxCallback = (tx: UtxoTransaction, fromPeerId: string) => void;
 
 /**
  * Return the libp2p node cast to the Libp2pGossip interface expected by the
@@ -730,7 +730,7 @@ export class NetNode {
       onOrderingBlock: (block, fromPeerId) => {
         for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
       },
-      onTx: (tx) => { for (const cb of this.txHandlers) cb(tx); },
+      onTx: (tx, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, fromPeerId); },
     };
 
     await subscribeTopics(
