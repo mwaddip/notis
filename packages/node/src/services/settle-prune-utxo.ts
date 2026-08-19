@@ -63,8 +63,7 @@ export interface PruneSettlement {
  * ⛔ **A REFUND CARRIES NO MINT PROVENANCE.** It is an output of the block's
  * settlement transaction, so it takes that transaction's real `(txId, index)`
  * like every other output, and two outputs of one transaction cannot collide on
- * `UNIQUE(tx_id, output_index)`. **The `prune-refund-author` reason stays
- * reserved and unused** (NODE_INTERFACE → Reason and subject table).
+ * `UNIQUE(tx_id, output_index)`.
  */
 export function planPruneSettlement(
   _rootPostHash: PostId,
