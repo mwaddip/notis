@@ -722,9 +722,6 @@ export function verifyOrderingBlockStructure(
     if (!isBytes(entry.authorSignature) || entry.authorSignature.length !== 64) {
       return { valid: false, error: 'Ordering block pruneEntry has invalid authorSignature' };
     }
-    if (entry.trigger !== 'author' && entry.trigger !== 'storage_prune') {
-      return { valid: false, error: 'Ordering block pruneEntry has invalid trigger' };
-    }
   }
   // `isBytes`, not a bare `.length` — the same rule the prune-entry block above
   // states, and it governs the two byte fields outside that block too

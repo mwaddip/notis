@@ -842,7 +842,6 @@ describe('verifyOrderingBlockStructure', () => {
     subtreeMerkleRoot: new Uint8Array(32).fill(7),
     authorId: new Uint8Array(32).fill(3),
     authorSignature: new Uint8Array(64).fill(9),
-    trigger: 'author',
   });
 
   /** The valid block, carrying one prune entry with `over` applied to it. */
@@ -858,10 +857,6 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(blockWithPrune())).toEqual({ valid: true });
   });
 
-  it('accepts the "storage_prune" trigger', () => {
-    expect(verifyOrderingBlockStructure(blockWithPrune({ trigger: 'storage_prune' })))
-      .toEqual({ valid: true });
-  });
 
   it('rejects a block with no pruneEntries field at all', () => {
     const block = makeValidBlock();
@@ -921,9 +916,6 @@ describe('verifyOrderingBlockStructure', () => {
     { name: 'authorSignature is {length: 64}', over: { authorSignature: { length: 64 } }, error: 'invalid authorSignature' },
     { name: 'authorSignature is 32 bytes', over: { authorSignature: new Uint8Array(32) }, error: 'invalid authorSignature' },
     { name: 'authorSignature missing', over: { authorSignature: undefined }, error: 'invalid authorSignature' },
-    { name: 'trigger is an unknown string', over: { trigger: 'whatever' }, error: 'invalid trigger' },
-    { name: 'trigger is missing', over: { trigger: undefined }, error: 'invalid trigger' },
-    { name: 'trigger is a number', over: { trigger: 1 }, error: 'invalid trigger' },
   ];
 
   for (const shape of REJECTED_SHAPES) {
@@ -938,7 +930,7 @@ describe('verifyOrderingBlockStructure', () => {
     // One error string per field, so an operator reading a rejection log can
     // tell which field the producer got wrong.
     const errors = new Set(REJECTED_SHAPES.map((s) => s.error));
-    expect(errors.size).toBe(7);
+    expect(errors.size).toBe(6);
     for (const shape of REJECTED_SHAPES) {
       expect(verifyOrderingBlockStructure(blockWithPrune(shape.over)).error).toContain(shape.error);
     }
@@ -1071,7 +1063,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     subtreeMerkleRoot: new Uint8Array(32).fill(7),
     authorId: new Uint8Array(32).fill(3),
     authorSignature: new Uint8Array(64).fill(9),
-    trigger: 'author',
     ...over,
   });
 
@@ -1935,7 +1926,6 @@ describe('no-panic on malformed input (M-5)', () => {
                 subtreeMerkleRoot: bad,
                 authorId: bad,
                 authorSignature: bad,
-                trigger: bad,
               },
             ],
           },
