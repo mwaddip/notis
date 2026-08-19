@@ -15,8 +15,8 @@ Depends on:
 - `@dagsocial/types` — shared data structures and constants
 - `@dagsocial/validation` — Stage 1 stateless checks (PoW, signatures,
   structural validity)
-- `@dagsocial/net` — libp2p networking for ordering block, UTXO
-  transaction, and stump gossip
+- `@dagsocial/net` — libp2p networking for ordering block and UTXO
+  transaction gossip
 
 ---
 

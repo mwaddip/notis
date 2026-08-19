@@ -7,7 +7,7 @@
 ## Scope
 
 libp2p-based peer-to-peer networking for DAGsocial. Owns: wire framing,
-handshake, header-first historical sync, peer discovery, sub-block gossip,
+handshake, header-first historical sync, peer discovery,
 ordering block gossip, UTXO transaction relay, and peer penalty management.
 
 Depends on `@dagsocial/wire` for ByteReader/ByteWriter/VLQ/frame encode-decode
@@ -158,12 +158,12 @@ to the envelope structure (not the message bodies).
 | 3 | `Inv` | both | "I have these objects" — type + ID list |
 | 4 | `ModifierRequest` | → | "Send me these objects" |
 | 5 | `ModifierResponse` | ← | Serialized objects |
-| 6 | `GetSubBlock` | → | Request sub-block by ID (specific) |
-| 7 | `SubBlockResponse` | ← | Sub-block or not-found |
+| 6 | — | | **Retired** (was `GetSubBlock`) — never reuse |
+| 7 | — | | **Retired** (was `SubBlockResponse`) — never reuse |
 | 8 | `GetPeers` | → | Request peer list |
 | 9 | `Peers` | ← | Peer list response |
-| 10 | `GetPosts` | → | Request posts by ID |
-| 11 | `Posts` | ← | Posts response |
+| 10 | — | | **Retired** (was `GetPosts`) — never reuse |
+| 11 | — | | **Retired** (was `Posts`) — never reuse |
 | 12 | — | | **Retired** (was `GetStumps`; P2-F F1) — never reuse |
 | 13 | — | | **Retired** (was `Stumps`; P2-F F1) — never reuse |
 | 14 | `GetHeaders` | → | Request headers by height range (fork resolution) |
@@ -171,13 +171,12 @@ to the envelope structure (not the message bodies).
 | 16 | `GetBlocks` | → | Request whole ordering blocks by height range (reorg) |
 | 17 | `Blocks` | ← | Ordering block list response |
 
-Codes 10–11 support content-sweep (placeholder fill) for posts the node
-has headers for but not content. Codes 12–13 are retired: stumps are
-derived state — every node projects its own `dag_stumps` rows from the
-PruneEntries in applied blocks (NODE_INTERFACE → "Stumps are derived
-state"), so no stump crosses the network in either direction. The numbers
-stay reserved so a stale peer sending code 12 is an identifiable protocol
-violation rather than a misparse of some future message.
+Codes 6–7, 10–11 and 12–13 are retired: a post is a transaction and a block
+carries its posts whole in `utxoTxs`, so no post crosses the network as its own
+message; stumps are derived state — every node projects its own `dag_stumps`
+rows from the PruneEntries in applied blocks (NODE_INTERFACE → "Stumps are
+derived state"). The numbers stay reserved so a stale peer sending one is an
+identifiable protocol violation rather than a misparse of some future message.
 
 **This table is the code allocator; `net/src/types.ts` mirrors it**, retirement comment included.
 ⚠ **Neither is findable by grepping `MSG_`.** A reservation is a comment, not an assignment, and
@@ -185,7 +184,6 @@ violation rather than a misparse of some future message.
 `MSG_`-keyed search sees neither the reservations nor every allocation. The sweep that does is
 `grep -rn 'encodeFrame([A-Za-z_.]*, *[0-9]' packages/`, read together with this table.
 
-Codes 6-7 replace the old ad-hoc `/dagsocial/sync/1` stream protocol.
 Codes 14–17 carry fork resolution's two queries and `/dagsocial/headers/1` is deleted. Those queries
 have **no expression in codes 2–5**: 2–5 are an id-addressed inventory conversation, offering ids
 forward from a peer's height along the server's own best chain, while fork resolution asks for a
@@ -206,16 +204,18 @@ the rule and the measurement behind it.
 
 | Topic | Payload | Priority | Description |
 |-------|---------|----------|-------------|
-| `/dagsocial/subblock/1` | SubBlock (CBOR) | High | User posts + sidecar likes |
-| `/dagsocial/ordering-block/1` | OrderingBlock (CBOR) | Critical | Consensus anchors |
-| `/dagsocial/tx/1` | UtxoTransaction (CBOR) | High | Invites, claims, cancellations, credit transfers |
+| `/dagsocial/ordering-block/1` | OrderingBlock (positional) | Critical | Consensus anchors |
+| `/dagsocial/tx/1` | UtxoTransaction (positional) | High | Posts, likes, invites, vouches, credit transfers |
+
+**Reserved, never to be reused: the topic string `/dagsocial/subblock/1`**
+(`net/src/gossip.ts` states the same at the topic map).
 
 `/dagsocial/stump/1` is retired (P2-F F1): a gossiped stump is unverifiable
 by construction (no author signature, no `subtreePostIds`) and stumps are
 derived locally from applied blocks, so the topic is neither subscribed nor
 published. Prunes propagate as PruneEntries inside ordering blocks.
 
-All gossip topics carry CBOR-encoded messages directly — no framing.
+All gossip topics carry the object's own positional wire encoding directly — no framing.
 The topic version (`/1`) matches the protocol version for topic naming but
 is independent — if the wire format changes incompatibly, the topic version
 increments.
@@ -373,7 +373,7 @@ Anchors at heights `[tipHeight, tipHeight - 16, tipHeight - 128, tipHeight - 512
 
 ```typescript
 {
-  typeId: 101 | 102             // 101 = ordering block header, 102 = sub-block
+  typeId: 101                    // ordering block header; 102 (sub-block) is retired, never reused
   ids: string[]                  // hex IDs, max 400 per batch
 }
 ```
@@ -382,7 +382,7 @@ Anchors at heights `[tipHeight, tipHeight - 16, tipHeight - 128, tipHeight - 512
 
 ```typescript
 {
-  typeId: 101 | 102
+  typeId: 101
   ids: string[]
 }
 ```
@@ -411,18 +411,14 @@ Late Node (height 0)                      Synced Peer (height 200)
      │◄── Inv (type=101, headers from h=1) ──────│
      │                                            │
      │── ModifierRequest (those ids) ────────────►│
-     │◄── ModifierResponse (headers 1-200) ──────│
+     │◄── ModifierResponse (whole ordering       │
+     │    blocks 1-200, byte-bounded) ───────────│
      │                                            │
-     │ validate headers, build chain to h=200     │
+     │ validate + apply, build chain to h=200     │
      │── SyncInfo (height=200) ──────────────────►│
      │ peer sees equal → no Inv needed            │
      │                                            │
-     │ sync complete → block body download        │
-     │── ModifierRequest (type=102, missing       │
-     │    sub-block ids from ordering blocks) ───►│
-     │◄── ModifierResponse (sub-blocks) ─────────│
-     │                                            │
-     │ apply blocks to state, now at tip          │
+     │ now at tip                                 │
 ```
 
 ### Serve Side (Peer Behind Us)
@@ -493,9 +489,8 @@ Three watermarks tracked:
 | `stateAppliedHeight` | Highest height where ordering blocks applied to UTXO state |
 | `chainHeight` | Best chain tip height |
 
-During header sync, advance `downloadedHeight`. Once caught up, request
-sub-blocks for ordering blocks referencing unknown sub-block IDs, advancing
-`stateAppliedHeight`.
+During sync, advance `downloadedHeight`. A block carries its whole body, so
+blocks apply as they arrive, advancing `stateAppliedHeight`.
 
 Invariant: `stateAppliedHeight <= downloadedHeight <= chainHeight`.
 
@@ -514,9 +509,9 @@ durably recorded.
 
 ### Block Body Download
 
-After header sync: request sub-blocks for each ordering block whose
-`subBlockIds` are not in the local store. Direct `ModifierRequest` (type 102)
-to the sync peer.
+There is no separate body download: a block carries its whole body, and the
+modifier conversation moves whole serialized ordering blocks, byte-bounded at
+`MAX_SERVE_BODY_BYTES`.
 
 ---
 
@@ -765,8 +760,8 @@ Node start
 | Penalty type | Trigger | Score |
 |-------------|---------|-------|
 | MisbehaviorPenalty | Invalid message (fails Stage 1) | 100 |
-| SpamPenalty | Duplicate sub-block within window | 50 |
-| NonDeliveryPenalty | Missing sub-block request timeout | 75 |
+| SpamPenalty | Duplicate message within window | 50 |
+| NonDeliveryPenalty | Unanswered request timeout | 75 |
 | PermanentPenalty | Wrong magic bytes, incompatible version | 500 (instant ban) |
 
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
@@ -777,8 +772,7 @@ Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 one arrived recently — that made ban pressure independent of attack
 rate, since a peer flooding invalid messages paid exactly what a peer
 misbehaving once every safe interval paid, while each invalid message
-still cost full Stage-1 work (which now includes PoW and signature
-verification).
+still cost full Stage-1 work (ordering-block PoW verification included).
 
 Instead the accumulated score **decays with time**: it is reduced by
 `PENALTY_DECAY_PER_INTERVAL` (100 — one MisbehaviorPenalty) for every
@@ -971,8 +965,8 @@ the band-aid; the root cause was the second dialect, so the dialect is gone.
   it is given — so an empty array *truncates our own chain* instead of failing to extend it.
 
 Removed protocols:
-- Old `/dagsocial/sync/1` (individual sub-block request/response) —
-  replaced by framed GetSubBlock/SubBlockResponse (codes 6-7)
+- The old text-based `/dagsocial/sync/1` (individual sub-block request/response) —
+  its framed successors, codes 6–7, are themselves retired with sub-blocks
 - `/dagsocial/headers/1` — replaced by GetHeaders/Headers and GetBlocks/Blocks (codes 14–17).
   Its two queries kept their signatures; what changed is the stream they ride, the encoding of the
   request, and the admission policy that reaches them.
@@ -993,9 +987,8 @@ ban); well-formed but invalid → misbehavior penalty (100). Uses
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| sub-block | `verifySubBlockStructure`; content limits (1–300 UTF-8 bytes) + character rules; parent-refs count; protocol version; post PoW (`verifyPoW` over `postPowPreimage` at `POST_POW_TARGET_BITS`); post signature (`verifyPostSignature` — the post's own `author` key) |
 | ordering-block | `verifyOrderingBlockStructure`; protocol version; `header.height` is a safe integer (NaN/float/±Infinity → Reject); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9) |
-| tx | `verifyTxStructure`; protocol version |
+| tx | `verifyTxStructure`; protocol version; for a post-bearing tx, the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions) |
 
 Stage 1 is stateless. It does **not** check the difficulty schedule
 (`powTargetBits === expectedTarget(height)`), chain linkage, validator
@@ -1039,7 +1032,6 @@ structure, PoW, and signatures.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `broadcastSubBlock(sb)` | `(SubBlock) => Promise<void>` | Gossip a newly assembled sub-block |
 | `broadcastOrderingBlock(b)` | `(OrderingBlock) => Promise<void>` | Gossip a newly created ordering block |
 | `broadcastTx(tx)` | `(UtxoTransaction) => Promise<void>` | Gossip a UTXO transaction |
 
@@ -1047,7 +1039,6 @@ structure, PoW, and signatures.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `onSubBlock(callback)` | `((SubBlock) => void) => void` | Register handler for inbound sub-blocks |
 | `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
 | `onTx(callback)` | `((UtxoTransaction) => void) => void` | Register handler for inbound UTXO transactions |
 
@@ -1067,13 +1058,13 @@ membership test is the thing standing between a relayed hint and a counterparty 
 |----------|-----------|-------------|
 | `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution (codes 14/15) |
 | `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
-| `requestPosts(peerId, postIds)` | `(string, string[]) => Promise<PostsMsg>` | Request posts by ID (content-sweep) |
 
-⚠ **`requestHeaders` and `requestBlocks` THROW where `requestPosts` returns empty.** `requestPosts`
-answers an unexpected frame code or a malformed body with `{ entries: [] }`; the two chain queries must
-reject instead, for the reason given under **responses** above — `requestBlocks`' result goes straight
-to `reorg(forkHeight, newBlocks)`, so an empty array truncates our own chain rather than failing to
-extend it. They share a transport and a shape; they do not share an error contract.
+⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
+code or a malformed body — `requestBlocks`' result goes straight to
+`reorg(forkHeight, newBlocks)`, so an empty array would truncate our own chain
+rather than fail to extend it. (`requestPosts` and its `GetPostsMsg` /
+`PostsEntry` / `PostsMsg` types are retired, names reserved —
+`net/src/types.ts`.)
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
@@ -1085,10 +1076,8 @@ offer.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `setSyncHandler(cb)` | `((id: string) => SubBlock \| null) => void` | Provider for sub-block content (placeholder fill) |
 | `setBlocksHandler(cb)` | `((block: OrderingBlock) => void) => void` | Handler for blocks received during sync |
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16). Returns the whole block, not the header: one provider serves both responses — `Headers` reads `.header`, `Blocks` returns the block |
-| `setPostsHandler(cb)` | `((ids: string[]) => PostsEntry[]) => void` | Provider for posts by ID |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired when sync finishes |
 | `onPeerActive(cb)` | `((peerId: string) => void) => void` | Fired when a peer becomes active |
 
@@ -1225,10 +1214,11 @@ them.
   subscribed gossip topics
 - Handshake validated — wrong-network peers rejected at magic byte level
 - Sync initiated with peers ahead of us; sync served to peers behind us
-- Sub-blocks received from peers are validated and forwarded to local node
-  for storage
+- UTXO transactions received from peers are validated and forwarded to the
+  local node's mempool
 - Ordering blocks received from peers are validated and applied
-- Locally-produced sub-blocks and ordering blocks are gossiped to peers
+- Locally-produced ordering blocks and locally-submitted transactions are
+  gossiped to peers
 - PeerDb populated from handshakes and Peers gossip; outbound manager
   maintaining peer count between minPeers and maxPeers
 
@@ -1236,15 +1226,16 @@ them.
 
 - Frame magic bytes reject wrong-network connections at the transport layer
 - Frame checksum catches corruption before body parsing
-- Stream protocols carry framed messages; Gossipsub topics carry raw CBOR
+- Stream protocols carry framed messages; Gossipsub topics carry the object's
+  own positional wire encoding, unframed
 - Sync is bidirectional — nodes serve peers behind them, not just consume
 - Watermark invariant: `stateAppliedHeight <= downloadedHeight <= chainHeight`
 - Flush ordering: state → validated_height → modifiers (same order every time)
 - Unknown message codes and peer capabilities are preserved, not rejected
 - PeerDb self-address filter prevents self-dial loops
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
-- Sub-block gossip is stateless — verification depends only on the post's
-  PoW target, not on challenge provenance
+- Stage 1 reads no store — its one stateful input is the cached
+  karma-membership set (`NODE_INTERFACE` → Post transactions)
 - Ordering blocks are verified before application — a block extending an
   unknown chain may be buffered but never applied
 - UTXO transactions are verified against the local UTXO view — conflicting

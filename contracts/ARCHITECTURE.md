@@ -1417,7 +1417,7 @@ before multi-node operation rather than after it.
 9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; its owner
    reclaims it by transaction once `releaseAtBlock` is reached — no per-block
    step touches it
-10. **Net:** libp2p gossips ordering blocks, UTXO transactions, and stumps.
+10. **Net:** libp2p gossips ordering blocks and UTXO transactions.
    Stage 1 (stateless) validation via `@dagsocial/validation` runs before
    forwarding. Stage 2 (stateful) validation runs in the node after receipt.
    Relay handlers insert into mempool — state applied at block application.
