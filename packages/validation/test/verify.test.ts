@@ -1857,12 +1857,6 @@ describe('no-panic on malformed input (M-5)', () => {
 
   // --- the fuzz sweep: every argument position of every exported verify fn ---
 
-  // ⛔ `verifyPoW`, `verifyPostSignature` and `verifySubBlockStructure` are gone,
-  // and the post's no-panic obligation went WITH its payload rather than away:
-  // `verifyTxStructure` below now sweeps every post field, because that is where
-  // an attacker-supplied post reaches a throwing encoder (`postFieldBytes` inside
-  // `computeTxId`).
-
   it('verifyValidatorSignature survives every malformed argument', () => {
     for (const bad of MALFORMED) {
       expect(() => verifyValidatorSignature(bad as any, new Uint8Array(64))).not.toThrow();
@@ -2320,11 +2314,6 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     expect(() => postFieldBytes(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
   });
 
-  // Reserved, never to be reused: the `challenge` width cases. `challenge` was a
-  // node-issued random field whose only job was PoW anti-precomputation, and it
-  // is gone with post PoW. `author` above is the surviving `b32` in a post, and
-  // it carries the same argument.
-
   it.each([
     ['empty', '', '0 chars'],
     ['63 hex chars', 'a'.repeat(63), '63 chars'],
@@ -2439,15 +2428,6 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Reserved, never to be reused: the `verifySubBlockStructure` teeth suite.
-//
-// Its three domain pins — `subBlockId` hex-32, `protocolVersion` isU64Safe,
-// `producerId` 32 bytes — described fields that cease to exist. A transaction
-// has a `TxId`, its own `protocolVersion`, and a signer rather than a producer.
-// The part of that suite with a successor is the POST-domain leg, and it moved
-// to `verifyTxStructure` above, where the same `verifyPostFieldDomains` runs in
-// front of the same encoder.
 // ---------------------------------------------------------------------------
 // The header encoders establish their own domain
 //
