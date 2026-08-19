@@ -760,8 +760,7 @@ with a `header`; every header field's domain via `verifyHeaderFieldDomains` —
 delegated to the one statement of those domains, re-labelled with this
 function's messages. Every `utxoTxTree.pruneEntries` element: `rootPostHash`
 hex-32, `subtreePostIds` an array of hex-32, `subtreeMerkleRoot` 32 bytes,
-`authorId` 32 bytes, `authorSignature` 64 bytes, `trigger`
-`'author' | 'storage_prune'` — byte fields by `isBytes`, never a bare
+`authorId` 32 bytes, `authorSignature` 64 bytes — byte fields by `isBytes`, never a bare
 `.length`, because a stored row put back through a cast can carry any type and
 a length check passes what the hash calls throw on. `validatorSignature` is 64
 bytes (`isBytes`, same rule). Then the two semantic floors a domain check
@@ -832,8 +831,7 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 
 Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
 `rootPostHash`, a `subtreePostIds` array of 64-char strings, a 32-byte
-`subtreeMerkleRoot`, a 32-byte `authorId`, a 64-byte `authorSignature`, and a
-`trigger` of exactly `"author"` or `"storage_prune"`. Byte-length fields must
+`subtreeMerkleRoot`, a 32-byte `authorId`, and a 64-byte `authorSignature`. Byte-length fields must
 be `Uint8Array`, not merely length-bearing — a CBOR payload can put any type
 in any field, and the consumers of these fields call `Buffer.from(...)` and
 `createHash().update(...)`, which throw on a number or object. Structure

@@ -138,7 +138,6 @@ StumpJson = {
   author: hex(authorId),     // 32-byte Ed25519 key as hex — PostJson.author's convention
   replyCount: number,
   upvoteCount: number,
-  trigger: 'author' | 'storage_prune',
   protocolVersion: number,
   compactedAtBlockHeight: number
 }
@@ -322,7 +321,7 @@ invites, vouches, credits, faucet, prune).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ rootPostHash: hex, authorId: hex, subtreeMerkleRoot: hex, subtreePostIds: hex[], signature: hex(128), trigger?: "author"\|"storage_prune" }` | `{ status: "deleted", entryId: hex, postId: hex, replyCount: number }` (201) | 400 if post is not root (has parent), 403 if not author, 404 |
+| `POST` | `/posts/:id/prune` | `{ rootPostHash: hex, authorId: hex, subtreeMerkleRoot: hex, subtreePostIds: hex[], signature: hex(128) }` | `{ status: "deleted", entryId: hex, postId: hex, replyCount: number }` (201) | 400 if post is not root (has parent), 403 if not author, 404 |
 
 **Prune flow:**
 
@@ -2845,7 +2844,7 @@ that keeps the last `replaced`; that restores an intra-block intermediate.
 
 | Function | Signature |
 |----------|-----------|
-| `insertStump(stump)` | `(Stump) => void` — simplified Stump (rootPostHash, authorId, replyCount, upvoteCount, trigger, protocolVersion, compactedAtBlockHeight) |
+| `insertStump(stump)` | `(Stump) => void` — simplified Stump (rootPostHash, authorId, replyCount, upvoteCount, protocolVersion, compactedAtBlockHeight) |
 | `getStump(stumpId)` | `(string) => Stump \| null` |
 
 `insertStump`'s only caller is prune settlement in block application — every

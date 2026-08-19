@@ -1054,18 +1054,15 @@ PruneIntent {
   authorId: UserId
   subtreeMerkleRoot: Uint8Array(32)  // Merkle root over subtree postIds
   subtreePostIds: PostId[]           // All postIds in the subtree
-  signature: Uint8Array(64)           // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
-  trigger?: "author" | "storage_prune"
+  signature: Uint8Array(64)          // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
 }
 
 PruneEntry {
   rootPostHash: PostId
-  authorId: UserId
-  subtreeMerkleRoot: Uint8Array(32)  // Merkle root over subtree postIds
   subtreePostIds: PostId[]           // All postIds in the subtree
-  signature: Uint8Array(64)           // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
-  trigger: "author" | "storage_prune"
-  protocolVersion: number
+  subtreeMerkleRoot: Uint8Array(32)  // Merkle root over subtree postIds
+  authorId: UserId
+  authorSignature: Uint8Array(64)    // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
 }
 
 Stump {
@@ -1073,7 +1070,6 @@ Stump {
   authorId: UserId
   replyCount: number
   upvoteCount: number
-  trigger: "author" | "storage_prune"
   protocolVersion: number
   compactedAtBlockHeight: number
 }
@@ -1081,7 +1077,7 @@ Stump {
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `computePruneEntryId(entry)` | `(PruneEntry) => string` | Deterministic PruneEntry ID |
+| `computePruneEntryId(entry)` | `(PruneEntry) => string` | Local mempool/store key — see the preimage under Layout — Stump / PruneEntry |
 | `serializePruneEntry(entry)` | `(PruneEntry) => Uint8Array` | Positional canonical bytes — see Layout — Stump / PruneEntry |
 
 ---
@@ -1471,16 +1467,35 @@ cross-implementation anchor, reproduced by the demo-UI mirror.
 
 ### Layout — Stump / PruneEntry
 
-`trigger` tags: `0 = author`, `1 = storage_prune`.
-
 **A `Stump` has no wire form.** It is a local projection of a PruneEntry inside an applied
 ordering block — derived at settlement, never transmitted, never re-read as bytes
 (`NODE_INTERFACE` → "Stumps are derived state"). Its id is its `rootPostHash`, not a hash of any
-encoding. The `trigger` tag table above serves the `PruneEntry` layout and `Stump.trigger`'s
-value domain.
+encoding.
+
+**A prune has no `trigger` field.** Every prune is the author's act — the author signs it and
+the author's locks pay for it — so the cause is a constant and carries no field anywhere:
+not in `PruneIntent`, `PruneEntry`, or `Stump`.
 
 **PruneEntry** (`serializePruneEntry`): `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖
-`b32(subtreeMerkleRoot)` ‖ `b32(authorId)` ‖ `b64(authorSignature)` ‖ `enum8(trigger)`
+`b32(subtreeMerkleRoot)` ‖ `b32(authorId)` ‖ `b64(authorSignature)`
+
+**PruneEntry id** (`computePruneEntryId`):
+
+```
+hex( blake2b512( PRUNE_ENTRY_ID_DOMAIN ‖ b32(rootPostHash) ‖ b32(subtreeMerkleRoot) ‖ b32(authorId) )[0..32] )
+```
+
+`PRUNE_ENTRY_ID_DOMAIN = utf8('dagsocial/prune-entry-id/1')`, module-local like
+`POST_ID_DOMAIN`. The preimage is built with the codec-layer writers (`writeHexNOrThrow`,
+`writeBytesNOrThrow`), so a malformed field throws rather than hashing garbage. The id is a
+**local mempool/store key** — no committed root covers it. Two fields stay out deliberately:
+
+- `subtreePostIds` — committed transitively: `subtreeMerkleRoot` is the Merkle root over them,
+  so two entries with different id sets already differ in the preimage.
+- `authorSignature` — the id is the mempool dedup key. Two identically-parameterized prunes
+  under different valid signature bytes are one intent and must collapse to one entry; a
+  signature-bearing preimage would let a re-signer stuff duplicates of the same prune into
+  the pool.
 
 ### Layout — Boxes
 
@@ -2413,9 +2428,9 @@ ruled (user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
 
 ### Domain tags are network-agnostic — deliberately
 
-The five id-derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
-`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN` — **do not carry the network, and must not be
-changed to.** No derivation function takes a network argument, and this package holds no
+The six id-derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
+`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`, `PRUNE_ENTRY_ID_DOMAIN` — **do not carry the network,
+and must not be changed to.** No derivation function takes a network argument, and this package holds no
 module-level network state.
 
 This was proposed and **rejected on 2026-08-06**. Recorded here because the proposal is

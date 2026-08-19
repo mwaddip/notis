@@ -752,7 +752,6 @@ Stump {
   authorId: UserId
   replyCount: number
   upvoteCount: number
-  trigger: "author" | "storage_prune"
   protocolVersion: number
   compactedAtBlockHeight: number
 }
@@ -1815,7 +1814,8 @@ forever. A node rejects objects with an unsupported protocol version.
 - Pruning cascades to all descendants — replying is consent to this
 - Pruning requires root author's signature (sole authorization)
 - Pruning is irreversible
-- Future prune triggers (storage pruning) use their own auth paths
+- The author's signature is the only prune authorization there is — a prune
+  has no `trigger` field and no other cause (ruled 2026-08-19)
 
 ### Identity
 
