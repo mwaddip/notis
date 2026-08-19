@@ -1082,7 +1082,7 @@ Stump {
 | Export | Signature | Description |
 |--------|-----------|-------------|
 | `computePruneEntryId(entry)` | `(PruneEntry) => string` | Deterministic PruneEntry ID |
-| `serializePruneEntry(entry)` | `(PruneEntry) => Uint8Array` | Canonical CBOR encoding |
+| `serializePruneEntry(entry)` | `(PruneEntry) => Uint8Array` | Positional canonical bytes — see Layout — Stump / PruneEntry |
 
 ---
 
@@ -1263,12 +1263,6 @@ it contains, move with the function — `VALIDATION_INTERFACE → blockWork / cu
 > this section as a description of current behaviour."* The positional bundle (Phases 0–8)
 > is merged, so **everything from here to the Export table is now a description of running
 > code** and should be read as one.
->
-> ⚠ **Two encoders are still CBOR and are not covered by that statement.** `encodeTx` /
-> `decodeTx` and `encodeStump` / `decodeStump` in `types/src/serialization.ts` are bare
-> `cbor-x`, so the gossip UTXO-transaction path and every stump still travel as CBOR. **No
-> phase claims them** — carried register #6. Everything under a committed root is positional;
-> these two are not under one.
 >
 > ⚠ **This marker disclaimed roughly 500 lines, which is why retiring it matters more than the
 > count suggests.** A marker saying "do not read this as current" creates an **unreviewed
@@ -1479,13 +1473,14 @@ cross-implementation anchor, reproduced by the demo-UI mirror.
 
 `trigger` tags: `0 = author`, `1 = storage_prune`.
 
-**Stump:** `b32(rootPostHash)` ‖ `b32(authorId)` ‖ `vlqU(replyCount)` ‖ `vlqU(upvoteCount)` ‖
-`enum8(trigger)` ‖ `vlqU(protocolVersion)` ‖ `vlqU(compactedAtBlockHeight)`
+**A `Stump` has no wire form.** It is a local projection of a PruneEntry inside an applied
+ordering block — derived at settlement, never transmitted, never re-read as bytes
+(`NODE_INTERFACE` → "Stumps are derived state"). Its id is its `rootPostHash`, not a hash of any
+encoding. The `trigger` tag table above serves the `PruneEntry` layout and `Stump.trigger`'s
+value domain.
 
 **PruneEntry** (`serializePruneEntry`): `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖
 `b32(subtreeMerkleRoot)` ‖ `b32(authorId)` ‖ `b64(authorSignature)` ‖ `enum8(trigger)`
-
-Field order matches the current object literal, so the change is dialect-only.
 
 ### Layout — Boxes
 
@@ -1797,7 +1792,8 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 > **`encodeTx` is positional and reaches `writeTxIdFields`**, so the wire form and the `TxId`
 > preimage share one writer rather than agreeing by inspection. This banner read `⚠ UNENFORCED`
 > against a `cbor-x` implementation; the gap `serialization.ts` recorded in its own words is closed
-> on the `encodeTx` half and **still open on `Stump`**.
+> on both halves — `encodeTx` is positional, and the `Stump` codec is deleted rather than
+> converted: a stump has no wire form (Layout — Stump / PruneEntry).
 >
 > **What the gap cost, measured against `packages/types/dist` on 2026-08-17** — a like transaction
 > with one karma input, one karma output, one signature and a `likeTarget`:
@@ -2100,16 +2096,8 @@ discriminate are the VLQ width boundaries and the sentinel branches above.
 > the bytes they produce and the guarantees they carry: the positional layout above, plus the
 > four-step boundary check on every `decodeX`.
 >
-> ⚠ **The rows below were "left describing CBOR" and that wording is now the hazard.** Any row
-> still describing a CBOR encode is describing the old format, **except** the `Stump` rows,
-> where CBOR is still correct (carried register #6). Read a CBOR mention here as stale unless
-> it names `Stump`.
->
-> ⛔ **The exception used to name `Tx` as well, and it stopped being true when `encodeTx` went
-> positional (2026-08-17).** `encodeTx` / `decodeTx` are `txIdBytes ‖ arr(signatures)` — see
-> Layout — UtxoTransaction — and the rows below still say "CBOR encode"/"CBOR decode".
-> ⚠ **An exception list is the worst place for a stale entry**: every other stale CBOR mention
-> is caught by the disclaimer, and the ones it exempts are caught by nothing.
+> Nothing in this package encodes CBOR. Every row below describes the positional codec it names;
+> `Stump` has no codec and no row — a stump has no wire form (Layout — Stump / PruneEntry).
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in
@@ -2122,14 +2110,12 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | Export | Signature | Description |
 |--------|-----------|-------------|
 | ~~`serializeTx(tx)`~~ | — | ⚠ **DELETED (G3b) — and the description was never true.** It was built on cbor-x's default `encode`, which is neither of the two encoders that matter, so its bytes were consumed by no identity path. Transaction identity comes from `computeTxId`. Doubly wrong: the function is gone *and* "canonical CBOR encode for tx identity" never described it |
-| `encodePost(post)` | `(Post) => Uint8Array` | CBOR encode |
-| `decodePost(bytes)` | `(Uint8Array) => Post` | CBOR decode |
-| `encodeStump(stump)` | `(Stump) => Uint8Array` | CBOR encode |
-| `decodeStump(bytes)` | `(Uint8Array) => Stump` | CBOR decode |
-| `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | CBOR encode — the input to `blockHash` / `computePowHash` |
-| `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | CBOR decode |
-| `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
-| `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
+| `encodePost(post)` | `(Post) => Uint8Array` | Positional — see Layout — Post |
+| `decodePost(bytes)` | `(Uint8Array) => Post` | Inverse of `encodePost` |
+| `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | Positional — the input to `blockHash` / `computePowHash`. See Layout — Block |
+| `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | Inverse of `encodeHeader` |
+| `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | Positional (body section) — see Layout — Block |
+| `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | Inverse of `encodeUtxoTxTree` |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
 | `serializePruneEntry(e)` | `(PruneEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'prune'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Positional wire framing: `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)` — see Layout — Block |
