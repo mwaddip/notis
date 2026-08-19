@@ -38,7 +38,7 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  *
  * This ports the reasoning in `post.ts`'s Totality note above `postFieldBytes`,
  * not a new scheme. Wire's writers throw on non-integers, negatives, and
- * anything past `MAX_SAFE_INTEGER` (`wire/src/vlq.ts:3-9`), and `signingHash`
+ * anything past `MAX_SAFE_INTEGER` (`wire/src/vlq.ts:3-9`), and `postFieldBytes`
  * is reached with malformed posts — `@dagsocial/validation`'s `isSignablePost`
  * admits them — so a throwing writer turns a malformed post into a panic and
  * breaks the no-panic contract validation asserts (audits M-5/M-6).
@@ -361,9 +361,9 @@ export function vlqU64ByteLength(value: bigint): number {
  * onto a well-formed id's encoding.
  *
  * **The post path's domain is established upstream, not here.**
- * `@dagsocial/validation`'s `verifyPostFieldDomains` pins `author` and
- * `challenge` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex,
- * and `isSignablePost` is exactly that check — so `signingHash` cannot reach
+ * `@dagsocial/validation`'s `verifyPostFieldDomains` pins `author` at
+ * 32 bytes and every `parentRefs` entry at 64 **lowercase** hex,
+ * and `isSignablePost` is exactly that check — so `postFieldBytes` cannot reach
  * these writers out of domain. Lowercase is load-bearing: `'AB…'` and `'ab…'`
  * decode to identical bytes, so accepting both would make this boundary
  * non-injective.
@@ -392,7 +392,7 @@ export function readHexN(r: ByteReader, n: number): string {
 
 /**
  * `b32` / `b64` from a `Uint8Array` — for the fields typed as raw bytes in
- * memory rather than hex (`Post.author`, `Post.challenge`, every signature).
+ * memory rather than hex (`Post.author`, every signature).
  *
  * **THROWS** on a wrong length, per `writeHexNOrThrow`'s reasoning and with
  * the same unmet domain obligation.

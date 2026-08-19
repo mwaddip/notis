@@ -55,7 +55,7 @@ export interface PruneIntent {
 }
 
 // ---------------------------------------------------------------------------
-// Prune entry (committed in SubBlockTree; one per pruned reply subtree)
+// Prune entry (committed in utxoTxTree; one per pruned reply subtree)
 // ---------------------------------------------------------------------------
 
 export interface PruneEntry {
@@ -107,7 +107,7 @@ export function computePruneEntryId(entry: PruneEntry): string {
 
 /**
  * The canonical encoding of a PruneEntry — the Merkle leaf preimage in the
- * subtree proof, committed under `subBlockRoot`.
+ * subtree proof, committed under `utxoTxRoot`.
  *
  * TYPES_INTERFACE → Layout — Stump / PruneEntry:
  *

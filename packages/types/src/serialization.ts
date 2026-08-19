@@ -128,7 +128,7 @@ export function decodePost(bytes: Uint8Array): Post {
 // Stump — cbor-x
 // ---------------------------------------------------------------------------
 //
-// No block struct embeds a `Stump`: `SubBlockTree` commits `PruneEntry`, whose
+// No block struct embeds a `Stump`: `utxoTxTree` commits `PruneEntry`, whose
 // preimage is positional. `TYPES_INTERFACE` → Layout — Stump specifies a
 // positional form for `Stump` too, and this codec does not implement it — an
 // open gap, flagged rather than closed here, because closing it moves bytes.

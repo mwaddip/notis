@@ -14,8 +14,8 @@ export function hexToBuf(hex: string): Buffer {
 
 /**
  * Domain-separated leaf hash for Merkle trees.
- * Prevents cross-tree collision (a subBlock ID hash can't collide with a
- * UTXO tx ID hash even if the underlying bytes match).
+ * Prevents cross-tree collision (a prune leaf hash can't collide with a
+ * utxotx leaf hash even if the underlying bytes match).
  */
 export function leafHash(domain: string, data: Uint8Array): Uint8Array {
   const domainBytes = new TextEncoder().encode(domain + '\0');
@@ -55,7 +55,7 @@ const NODE_TAG = Uint8Array.of(0x00);
  * Hash of two child nodes in the Merkle tree: `blake2b512(NODE_TAG ‖ left ‖ right)[:32]`.
  *
  * Protocol-breaking relative to the untagged form — it changes every
- * `subBlockRoot` / `utxoTxRoot`. `PROTOCOL_VERSION` is unchanged; devnet DBs
+ * `utxoTxRoot`. `PROTOCOL_VERSION` is unchanged; devnet DBs
  * are wiped on deploy. Producer (block-creator) and verifier (block-apply)
  * both derive roots through this function, so they stay in agreement.
  */
