@@ -10,6 +10,8 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
+import { effectiveKarma } from './decay.js';
+import type { DecayCfg } from './decay.js';
 import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, Post } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
@@ -146,6 +148,7 @@ export interface UtxoEngineDeps {
    */
   inviteBondMin: bigint;
   inviteBondMax: bigint;
+  decayCfg: DecayCfg;
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +465,11 @@ function checkTransitions(
         // service gate — `getKarmaValue` is the confirmed-set reader every
         // validation path shares, so the predicate decides the same way on
         // every node.
-        const voucherBalance = deps.getKarmaValue(vouchOut.voucherId);
+        const voucherFace = deps.getKarmaValue(vouchOut.voucherId);
+        const voucherRecord = deps.getIdentityRecord(vouchOut.voucherId);
+        const voucherBalance = effectiveKarma(
+          voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg,
+        );
         if (voucherBalance < VOUCH_MIN_BALANCE) {
           return {
             valid: false,
@@ -1175,7 +1182,7 @@ const OUTPUT_SHAPE: Record<
   return {
     karma: shape(
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
-      { decayBurn: 'boolean' },
+      { nonActivity: 'boolean' },
     ),
     credit: shape(
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
@@ -1280,7 +1287,7 @@ const OUTPUT_SHAPE: Record<
  *
  * ⛔ **A key present with the value `undefined` IS absence, and every reader
  * agrees.** `canonicalBoxBytes` writes one byte string for an absent optional
- * field — measured: a karma candidate with `decayBurn: undefined` and one
+ * field — measured: a karma candidate with `nonActivity: undefined` and one
  * without encode identically — so the two are not two shapes for a rule to tell
  * apart. ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes
  * every optional box field as an own key, holding `undefined` where the tag said

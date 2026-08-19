@@ -140,7 +140,7 @@ const GOLDEN_KARMA_BOX_BYTES =
   '64' +                                                               // vlqU64 value 100
   'ac02' +                                                             // vlqU createdAtBlock 300
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  '00';                                                                // opt decayBurn absent
+  '00';                                                                // opt nonActivity absent
 
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
@@ -369,7 +369,7 @@ const MIRRORED_OTHER = [
   'postFieldBytes', 'u32BE',
   'computePostId', 'canonicalBoxBytes', 'boxTypeFields',
   'computeBoxId', 'computeCandidateBoxId', 'computeTxId',
-  'jsonBigint',
+  'jsonBigint', 'effectiveKarma',
 ] as const;
 
 /**
@@ -397,6 +397,8 @@ const MIRRORED_CONSTS = [
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
   'INVITE_BOND_DEFAULT',
+  'KARMA_STALE_THRESHOLD_BLOCKS', 'KARMA_DECAY_INTERVAL_BLOCKS',
+  'KARMA_DECAY_AMOUNT', 'KARMA_MINIMUM',
   'pendingKarmaChange',
 ] as const;
 
@@ -410,6 +412,7 @@ const RETURNED = [
   'buildPostTx', 'buildLikeTx', 'predictOutputBoxId',
   'buildCreateInviteTx',
   'recordPendingKarmaChange', 'applyPendingKarmaChange', 'pendingKarmaChange',
+  'effectiveKarma',
   'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'INVITE_BOND_DEFAULT',
 ] as const;
@@ -474,6 +477,7 @@ interface UiCrypto {
   recordPendingKarmaChange: (tx: Record<string, unknown>) => void;
   applyPendingKarmaChange: (data: KarmaView) => KarmaView;
   pendingKarmaChange: Map<string, { boxId: string; value: bigint }>;
+  effectiveKarma: (faceTotal: bigint, lastActivity: number, lastDecay: number, height: number) => bigint;
   VOUCH_KARMA_AMOUNT: bigint;
   VOUCH_MIN_BALANCE: bigint;
   INVITE_BOND_DEFAULT: bigint;

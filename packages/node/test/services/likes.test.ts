@@ -12,6 +12,10 @@ import {
   LIKE_KARMA_COST,
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { KarmaBox, LikeAccrualBox, Post, Stump, UtxoTransaction, AnyBox } from '@dagsocial/types';
 
@@ -119,6 +123,12 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       // same author's (NODE_INTERFACE → Karma transition rules).
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => POST_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

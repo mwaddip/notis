@@ -447,7 +447,7 @@
       "codec": { "opt": "bool" },
       "value": false,
       "bytes": "0100",
-      "note": "decayBurn?: boolean — `false` present must differ from absent, or a box loses a committed field silently."
+      "note": "nonActivity?: boolean — `false` present must differ from absent, or a box loses a committed field silently."
     },
 
     {

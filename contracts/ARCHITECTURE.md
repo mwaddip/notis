@@ -410,25 +410,44 @@ non-tradeable. An account's karma box can be consumed only to:
 - Create a new karma box for the same owner (after earning/burning, resetting
   the activity clock)
 
-#### Karma decay (periodic burn)
+#### Karma decay (virtual, squared on touch)
 
-After 28 days of inactivity, karma is burned periodically at block application
-time:
+Decay is a **valuation, not a per-block mutation**. After 28 days of
+inactivity an identity's karma decays *virtually*: every karma-sufficiency
+read computes the **effective** value from committed state, and the face
+values in boxes move only when a transaction touches the identity.
 
-- **Staleness check:** An identity is stale if it has NO unspent karma box
-  without `decayBurn` that was created within `KARMA_STALE_THRESHOLD_BLOCKS`
-- **Decay execution:** At each ordering block, stale karma boxes have their karma
-  boxes consumed and replaced with a single consolidated box with value reduced
-  by `KARMA_DECAY_AMOUNT` per `KARMA_DECAY_INTERVAL_BLOCKS` elapsed
-- **Floor:** Decay never reduces karma below `KARMA_MINIMUM`
-- **Provenance:** Decay-created boxes are marked with `decayBurn: true` so they
-  don't reset the staleness clock. Normal user activity (post, like, invite)
-  creates boxes without this flag, resetting the clock.
-- **Rollback:** Decay burns are journaled and reversed during fork rollback
+- **Staleness:** `(height − lastActivityBlock) >= KARMA_STALE_THRESHOLD_BLOCKS`,
+  read from the identity record — the committed clock, not box heights.
+- **Effective value:** `faceTotal − owedPeriods · KARMA_DECAY_AMOUNT`, clamped
+  so it never drops below `min(faceTotal, KARMA_MINIMUM)`, where
+  `owedPeriods = floor((height − max(lastActivityBlock, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`.
+  **One implementation** — the engine, the verifier and the demo UI call the
+  same exported valuation function (`VALIDATION_INTERFACE` → One
+  implementation per rule).
+- **Sufficiency reads effective; conservation stays face.** A transaction's
+  value-conservation equality is over face values, unconditionally; whether an
+  identity *may* spend is judged against effective.
+- **Squaring, per identity, on touch:** when a block's body consumes any of an
+  identity's karma boxes, that block's settlement squares the identity — it
+  consumes their post-body karma boxes and re-emits the effective value to the
+  owner and the owed remainder to the karma pool. The touching transaction
+  itself conserves at face, unchanged.
+- **No periodic pass.** There is no per-block walk over karma owners and no
+  background sweep. An identity nothing touches keeps its face values and its
+  virtual decay indefinitely; its effective value still dissolves, and the
+  pool — seeded with the supply total — does not depend on decay inflow.
+- **Clocks:** the touching spend is activity (`lastActivityBlock` advances at
+  the store choke point); squaring advances `lastDecayBlock`. Received value
+  — a like payout, a vesting return, a settlement re-emit — is **not**
+  activity and must not reset the clock.
+- **Rollback:** squarings ride the settlement and the identity-record journal;
+  reverse replay restores both.
 
-All four are **consensus parameters** — decay mutates committed state, so two nodes
-holding different values compute different `stateRoot`s and partition permanently.
-Classes are defined in `NODE_INTERFACE.md → Configuration`.
+All four constants are **consensus parameters** — the valuation feeds
+validation verdicts and the squaring feeds committed state, so two nodes
+holding different values diverge. Classes are defined in
+`NODE_INTERFACE.md → Configuration`.
 
 | Parameter | Class | Default | Description |
 |-----------|-------|---------|-------------|
@@ -1050,7 +1069,9 @@ No user transaction can spend a `PostLockBox` — block application is its only 
 | `POST_LOCK_UNLOCK_PER_LIKES` | `10` | Every N lifetime likes unlocks 1 karma |
 
 All universal constants — never per-network (§Network Identity: compress time, never
-economics). Values are placeholders until the constants session pins them.
+economics). Values are placeholders until the constants session pins them — with one
+pinned exception: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is ruled at 28 days
+(user, 2026-08-19; `TYPES_INTERFACE` states the same at the profile passage).
 
 **Retired, do not rebuild:** the like box · the free-like tier (`dag_likes` rows as
 likes) · unlike and every refund path · the epoch interval. The boxType string `'like'`
@@ -1873,7 +1894,9 @@ forever. A node rejects objects with an unsupported protocol version.
   (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
   non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
 - A box can only be consumed by a transition whose authorization requirement is satisfied
-- Karma decay applied periodically at block application time (not at spend time)
+- Karma decay is virtual — effective value at every sufficiency read — and is
+  squared into committed state by the settlement of the block whose body
+  touches the identity (§Karma decay)
 
 ### Block application journal (Spec B P1)
 

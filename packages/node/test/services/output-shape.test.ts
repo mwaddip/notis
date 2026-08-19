@@ -25,6 +25,10 @@ import {
   computeTxId,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -196,8 +200,8 @@ describe('checkOutputShape (direct)', () => {
     }
   });
 
-  it('accepts the declared optionals present (karma.decayBurn, credit.lockedUntilBlock)', () => {
-    expect(shapeOf([{ ...honestCandidate('karma', owner), decayBurn: true }]).valid).toBe(true);
+  it('accepts the declared optionals present (karma.nonActivity, credit.lockedUntilBlock)', () => {
+    expect(shapeOf([{ ...honestCandidate('karma', owner), nonActivity: true }]).valid).toBe(true);
     expect(
       shapeOf([{ ...honestCandidate('credit', owner), lockedUntilBlock: 500 }]).valid,
     ).toBe(true);
@@ -262,7 +266,7 @@ describe('checkOutputShape (direct)', () => {
     // a gate refusing it refuses every ordinary output arriving inside a block.
     const { canonicalBoxBytes } = await import('@dagsocial/types');
     const absent = honestCandidate('karma', owner);
-    const undef = { ...absent, decayBurn: undefined };
+    const undef = { ...absent, nonActivity: undefined };
     expect(shapeOf([undef]).valid).toBe(true);
     expect(Buffer.from(canonicalBoxBytes(undef as never)).toString('hex'))
       .toBe(Buffer.from(canonicalBoxBytes(absent as never)).toString('hex'));
@@ -333,6 +337,12 @@ describe('validateTx output shape (integration)', () => {
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -400,17 +410,17 @@ describe('validateTx output shape (integration)', () => {
 
   // ---- accept controls: one legal transition per output boxType ----
 
-  it('accepts karma → karma (honest, decayBurn absent)', () => {
+  it('accepts karma → karma (honest, nonActivity absent)', () => {
     const karma = seedKarma(100n);
     const r = validateTx(deps, signedTx([karma.id!], [karmaChange(100n)]), 10);
     expect(r.valid, r.error).toBe(true);
   });
 
-  it('accepts karma → karma with decayBurn present', () => {
+  it('accepts karma → karma with nonActivity present', () => {
     const karma = seedKarma(100n);
     const r = validateTx(
       deps,
-      signedTx([karma.id!], [{ ...karmaChange(100n), decayBurn: true }]),
+      signedTx([karma.id!], [{ ...karmaChange(100n), nonActivity: true }]),
       10,
     );
     expect(r.valid, r.error).toBe(true);
@@ -566,13 +576,13 @@ describe('validateTx output shape (integration)', () => {
     // output arriving inside a block, so a gate refusing it would refuse the
     // ordinary case. What the box round-trips is the absent form.
     const karma = seedKarma(100n);
-    const tx = signedTx([karma.id!], [{ ...karmaChange(100n), decayBurn: undefined }]);
+    const tx = signedTx([karma.id!], [{ ...karmaChange(100n), nonActivity: undefined }]);
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     const stored = deps.getBox(r.computedOutputs![0]!.id!);
     expect(stored).not.toBeNull();
-    expect('decayBurn' in stored!).toBe(false);
+    expect('nonActivity' in stored!).toBe(false);
   });
 
   // ---- unknown boxType: the step-4 schema rejects it first ----

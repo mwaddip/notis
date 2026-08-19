@@ -10,6 +10,9 @@ import {
   verifyProtocolVersion,
   verifyPostFieldDomains,
 } from '@dagsocial/validation';
+import { effectiveKarma } from './decay.js';
+import type { DecayCfg } from './decay.js';
+import type { IdentityRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -17,6 +20,9 @@ import {
 
 export interface VerifierDeps {
   getKarmaBoxes: (owner: Uint8Array) => { value: bigint; id?: string }[];
+  getIdentityRecord: (owner: Uint8Array) => IdentityRecord | null;
+  currentHeight: number;
+  decayCfg: DecayCfg;
   /**
    * The store's real signature. Both arms are meaningful here rather than
    * incidental: a parent ref may name a live post OR a stump, and both are
@@ -90,24 +96,28 @@ export function verifyPost(
     return { valid: false, error: 'Unsupported protocol version' };
   }
 
-  // 4. Karma: author must have sufficient karma across all boxes.
+  // 4. Karma: author must have sufficient EFFECTIVE karma across all boxes.
   //
   //    ⚠ This is an early, friendlier rejection and NOT the enforcement point.
   //    The lock is enforced structurally by the UTXO engine's post biconditional
   //    — `post` present ⟺ exactly one PostLockBox of the right cost, value
   //    conserved — which is what a block re-validates. A sufficiency check here
   //    that disagreed with the engine would reject nothing the engine accepts.
+  //    Reads effective, not face (ARCHITECTURE → Karma decay → Sufficiency
+  //    reads effective; conservation stays face).
   const karmaBoxes = deps.getKarmaBoxes(post.author);
   if (karmaBoxes.length === 0) {
     return { valid: false, error: 'No karma box found' };
   }
-  const totalKarma = karmaBoxes.reduce((sum, b) => sum + b.value, 0n);
+  const faceTotal = karmaBoxes.reduce((sum, b) => sum + b.value, 0n);
+  const record = deps.getIdentityRecord(post.author);
+  const available = effectiveKarma(faceTotal, record, deps.currentHeight, deps.decayCfg);
   const requiredKarma =
     post.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-  if (totalKarma < requiredKarma) {
+  if (available < requiredKarma) {
     return {
       valid: false,
-      error: `Insufficient karma: need ${requiredKarma} (have ${totalKarma})`,
+      error: `Insufficient karma: need ${requiredKarma} (have ${available})`,
     };
   }
 

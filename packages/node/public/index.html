@@ -341,8 +341,28 @@ const VOUCH_KARMA_AMOUNT = 1n;
  * owns the verdict, and its message is what the button shows on a refusal.
  */
 const VOUCH_MIN_BALANCE = 11n;
+const KARMA_STALE_THRESHOLD_BLOCKS = 40320;
+const KARMA_DECAY_INTERVAL_BLOCKS = 1440;
+const KARMA_DECAY_AMOUNT = 5n;
+const KARMA_MINIMUM = 10n;
 /** Credits are 8-decimal: 10⁸ base units (10⁻⁸ credit) per displayed credit. */
 const CREDIT_SCALE = 100000000n;
+
+/**
+ * Effective karma — the one implementation (VALIDATION_INTERFACE → One
+ * implementation per rule). Mirrors decay.ts:effectiveKarma.
+ */
+function effectiveKarma(faceTotal, lastActivityBlock, lastDecayBlock, height) {
+  if (height <= KARMA_STALE_THRESHOLD_BLOCKS) return faceTotal;
+  if (height - lastActivityBlock < KARMA_STALE_THRESHOLD_BLOCKS) return faceTotal;
+  const clockStart = Math.max(lastActivityBlock, lastDecayBlock);
+  const periods = Math.floor((height - clockStart) / KARMA_DECAY_INTERVAL_BLOCKS);
+  if (periods <= 0) return faceTotal;
+  const owed = BigInt(periods) * KARMA_DECAY_AMOUNT;
+  const floor = faceTotal < KARMA_MINIMUM ? faceTotal : KARMA_MINIMUM;
+  const decayed = faceTotal - owed;
+  return decayed > floor ? decayed : floor;
+}
 
 /** JSON.stringify replacer: bigint → decimal string (JSON cannot carry bigint). */
 function jsonBigint(_k, v) { return typeof v === 'bigint' ? v.toString() : v; }
@@ -703,7 +723,7 @@ function boxTypeFields(box) {
     case 'karma':
       return concatUint8Arrays([
         b32Either(box.owner, 32),
-        opt(box.decayBurn, boolByte),
+        opt(box.nonActivity, boolByte),
       ]);
     case 'credit':
       return concatUint8Arrays([
@@ -938,10 +958,17 @@ async function fetchKarmaBox() {
   try {
     const res = await fetch(API + '/karma/' + encodeURIComponent(userId));
     if (!res.ok) return null;
-    const data = await res.json(); // { userId, total, boxes: [{ boxId, value }] }
+    const data = await res.json();
     data.total = BigInt(data.total);
     for (const b of data.boxes) b.value = BigInt(b.value);
-    return applyPendingKarmaChange(data);
+    const patched = applyPendingKarmaChange(data);
+    patched.effective = effectiveKarma(
+      patched.total,
+      data.lastActivityBlock ?? 0,
+      data.lastDecayBlock ?? 0,
+      data.height ?? 0,
+    );
+    return patched;
   } catch {
     return null;
   }
@@ -1588,8 +1615,8 @@ document.getElementById('postBtn').addEventListener('click', async () => {
 
     // 3. Determine lock amount
     const lockAmount = parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-    if (karmaBox.total < lockAmount) {
-      setStatus(`Insufficient karma: need ${lockAmount}, have ${karmaBox.total}`, 'error');
+    if (karmaBox.effective < lockAmount) {
+      setStatus(`Insufficient karma: need ${lockAmount}, have ${karmaBox.effective}`, 'error');
       return;
     }
 
@@ -1725,7 +1752,7 @@ document.getElementById('vouchBtn').addEventListener('click', async () => {
   btn.textContent = '...';
   try {
     const karmaBox = await fetchKarmaBox();
-    if (!karmaBox || karmaBox.total < VOUCH_MIN_BALANCE) {
+    if (!karmaBox || karmaBox.effective < VOUCH_MIN_BALANCE) {
       document.getElementById('vouchStatus').textContent =
         `need ${VOUCH_MIN_BALANCE} karma to vouch`;
       return;
@@ -1819,8 +1846,8 @@ async function doLike(targetPostId) {
       setStatus('No karma box — cannot like', 'error');
       return false;
     }
-    if (karmaBox.total < LIKE_KARMA_COST) {
-      setStatus(`Insufficient karma to like: need ${LIKE_KARMA_COST}, have ${karmaBox.total}`, 'error');
+    if (karmaBox.effective < LIKE_KARMA_COST) {
+      setStatus(`Insufficient karma to like: need ${LIKE_KARMA_COST}, have ${karmaBox.effective}`, 'error');
       return false;
     }
 
@@ -2215,10 +2242,15 @@ async function loadIdentityStatus() {
     const res = await fetch(API + '/karma/' + encodeURIComponent(userId));
     if (res.ok) {
       const data = await res.json();
-      const total = BigInt(data.total);
-      karmaEl.textContent = total.toString();
-      // Green is karma, gold is credits — the two-ledger mapping, and gold means nothing else.
-      karmaEl.style.color = total > 0n ? 'var(--greenText)' : 'var(--inkMute)';
+      const face = BigInt(data.total);
+      const eff = effectiveKarma(
+        face,
+        data.lastActivityBlock ?? 0,
+        data.lastDecayBlock ?? 0,
+        data.height ?? 0,
+      );
+      karmaEl.textContent = face === eff ? eff.toString() : `${eff} (${face})`;
+      karmaEl.style.color = eff > 0n ? 'var(--greenText)' : 'var(--inkMute)';
     } else {
       karmaEl.textContent = '0';
       karmaEl.style.color = 'var(--inkMute)';
@@ -2398,8 +2430,8 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     // Advisory — `createInvite` owns the verdict, and it also owns the one
     // rejection this page cannot predict: the named key already being an
     // account. The bond is the whole cost; the claim mints the rest.
-    if (karmaBox.total < INVITE_BOND_DEFAULT) {
-      result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_DEFAULT}, you hold ${karmaBox.total}</span>`;
+    if (karmaBox.effective < INVITE_BOND_DEFAULT) {
+      result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_DEFAULT}, you hold ${karmaBox.effective}</span>`;
       return;
     }
 

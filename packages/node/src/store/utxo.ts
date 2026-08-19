@@ -51,7 +51,7 @@ interface UtxoRow {
 // ---------------------------------------------------------------------------
 
 interface KarmaExtra {
-  decayBurn?: boolean;
+  nonActivity?: boolean;
 }
 
 interface CreditExtra {
@@ -169,8 +169,8 @@ function rowToBox(row: UtxoRow): AnyBox {
         owner: new Uint8Array(row.owner!),
         ...prov,
       };
-      if (e.decayBurn !== undefined) {
-        kb.decayBurn = e.decayBurn;
+      if (e.nonActivity !== undefined) {
+        kb.nonActivity = e.nonActivity;
       }
       return kb;
     }
@@ -791,7 +791,7 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
  * Bump an identity's activity clock to the height of the block being applied
  * (NODE_INTERFACE → "Populating the record").
  *
- * Called from `insertBox` for every karma box with `decayBurn !== true` — the
+ * Called from `insertBox` for every karma box with `nonActivity !== true` — the
  * staleness predicate ("no unspent non-decay karma box newer than the
  * threshold") read from the write end. Recording it at the store choke point is
  * what makes the clock correct by construction rather than by re-derivation at
@@ -871,15 +871,15 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
     case 'karma': {
       const k = box as KarmaBox;
       const ke: KarmaExtra = {};
-      if (k.decayBurn !== undefined) {
-        ke.decayBurn = k.decayBurn;
+      if (k.nonActivity !== undefined) {
+        ke.nonActivity = k.nonActivity;
       }
       extraData = ke satisfies KarmaExtra;
       owner = Buffer.from(k.owner);
       // `!== true`, not `=== undefined`: a decay-burn box is the one karma box
-      // that must NOT reset the clock, and `decayBurn: false` is normal
+      // that must NOT reset the clock, and `nonActivity: false` is normal
       // activity. This is the same test `isIdentityStale` applied to boxes.
-      if (k.decayBurn !== true) activityOwner = k.owner;
+      if (k.nonActivity !== true) activityOwner = k.owner;
       break;
     }
     case 'credit': {

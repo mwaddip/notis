@@ -937,11 +937,13 @@ describe('block-apply journal recording', () => {
       insertBox: (box: KarmaBox) => utxo.insertBox(box),
       getIdentityRecord: records.getIdentityRecord,
       putIdentityRecord: records.putIdentityRecord,
-      getKarmaOwners: () => [identity.userId],
     };
 
     const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100;
-    const entries: DecayPlan[] = deriveKarmaDecay(deps, staleHeight, decayCfg);
+    const ownerHex = Buffer.from(identity.userId).toString('hex');
+    const karmaBoxes = deps.getKarmaBoxes(identity.userId);
+    const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
+    const entries: DecayPlan[] = deriveKarmaDecay(deps, postBody, staleHeight, decayCfg);
 
     // Never-active clock ⇒ periods count from height 0:
     // owed = floor(staleHeight / interval) × amount.
@@ -1572,16 +1574,10 @@ describe('block-apply mint provenance', () => {
     expect(minerBox!.id).not.toBe(treasuryBox!.id);
   });
 
-  it('a decay charge fires while a matured escrow survives in the same block', async () => {
-    // Decay fires at a height where a matured escrow exists. The escrow
-    // survives — the settlement no longer sweeps it — so only the decay
-    // charge lands as a karma mutation for this owner.
-    //
-    // Thresholds are shrunk through a test-local mock of the config module so
-    // a 4-block chain crosses the staleness window. The env overrides this
-    // test used before P2-A were the consensus violation the network profile
-    // removed; a module mock is a seam only a test can reach — a running node
-    // has no equivalent.
+  it('a stale untouched identity keeps its face karma — no decay settlement leg', async () => {
+    // Under virtual decay a stale identity nothing touches keeps its face
+    // values; its effective dissolves but no settlement leg fires. The escrow
+    // survives as before.
     try {
       vi.doMock('../../src/config.js', async () => {
         const actual = await vi.importActual<typeof import('../../src/config.js')>(
@@ -1596,7 +1592,7 @@ describe('block-apply mint provenance', () => {
           }),
         };
       });
-      vi.resetModules(); // re-import the module graph against the mocked config
+      vi.resetModules();
 
       const db = await importDb();
       db.initDb(':memory:');
@@ -1605,12 +1601,7 @@ describe('block-apply mint provenance', () => {
       const journalStore = await importJournalStore();
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
       const idle = makeTestIdentity();
-      const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
-      // Matures at height 4 — the same block decay first fires in.
-      // ⛔ An escrow BOX due at height 4. The obligation is committed state
-      // (ARCHITECTURE → Vouch boxes), and the box carries only the owner and the
-      // release height — no target.
       utxo.insertBox(
         seedProvenance<VouchEscrowBox>(
           {
@@ -1630,22 +1621,21 @@ describe('block-apply mint provenance', () => {
       await mineNextBlock(bc);
       await mineNextBlock(bc);
       await mineNextBlock(bc);
-
-      // Height 4 > threshold 3: decay fires, then the cooldown settles.
       const block = await mineNextBlock(bc);
       expect(block).not.toBeNull();
 
       const journal = journalStore.getBlockJournal(4)!;
       const ownerHex = hex(idle.userId);
-      const mints = journal.mutations
+      const karmaMints = journal.mutations
         .filter((m): m is BoxMutation => m.kind === 'box' && m.op === 'insert')
         .map((m) => m.box as AnyBox)
         .filter((b) => b.boxType === 'karma' && hex((b as KarmaBox).owner) === ownerHex);
 
-      // Only the decay charge fires — the escrow survives.
-      expect(mints.length).toBe(1);
-      const decayed = mints[0]!;
-      expect((decayed as KarmaBox & { decayBurn?: boolean }).decayBurn).toBe(true);
+      // No touch, no squaring — face stays.
+      expect(karmaMints.length).toBe(0);
+
+      // The karma box is still live at its face value.
+      expect(utxo.getKarmaValue(idle.userId)).toBe(50n);
 
       // The escrow is still live.
       expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
@@ -1654,12 +1644,9 @@ describe('block-apply mint provenance', () => {
     }
   });
 
-  it('decay fires while a matured escrow survives — no activity-clock bump', async () => {
-    // Without the settlement sweeping the escrow, `lastActivityBlock` is NOT
-    // updated by the escrow's maturity. Staleness restarts from `lastDecayBlock`
-    // alone.
-    // Thresholds shrunk through a test-local config mock — see the sibling
-    // decay test above for why this replaced the env overrides.
+  it('a stale untouched identity keeps its record — no clock advances without a touch', async () => {
+    // Under virtual decay the record does not move for an untouched identity:
+    // no decay settlement leg fires, so lastDecayBlock stays where it was.
     try {
       vi.doMock('../../src/config.js', async () => {
         const actual = await vi.importActual<typeof import('../../src/config.js')>(
@@ -1684,11 +1671,7 @@ describe('block-apply mint provenance', () => {
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
 
       const idle = makeTestIdentity();
-      const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
-      // ⛔ An escrow BOX due at height 4. The obligation is committed state
-      // (ARCHITECTURE → Vouch boxes), and the box carries only the owner and the
-      // release height — no target.
       utxo.insertBox(
         seedProvenance<VouchEscrowBox>(
           {
@@ -1705,30 +1688,90 @@ describe('block-apply mint provenance', () => {
 
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
-      for (let i = 0; i < 3; i++) await mineNextBlock(bc);
-
-      // Height 4: decay fires, escrow survives.
+      for (let i = 0; i < 4; i++) await mineNextBlock(bc);
       expect(await mineNextBlock(bc)).not.toBeNull();
-      expect(records.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 0,
-        lastDecayBlock: 4,
-        invitedAtBlock: 0,
-        lifetimeLikesReceived: 0n,
-      });
+
+      // No touch: the record is unchanged from genesis seeding.
+      const record = records.getIdentityRecord(idle.userId);
+      expect(record?.lastDecayBlock ?? 0).toBe(0);
+
+      // The face value is unchanged — decay is virtual.
+      expect(utxo.getKarmaValue(idle.userId)).toBe(50n);
       expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
-      const afterFirstDecay = utxo.getKarmaValue(idle.userId);
+    } finally {
+      vi.doUnmock('../../src/config.js');
+    }
+  });
 
-      // Without the escrow release bumping lastActivityBlock, the identity
-      // stays stale: isIdentityStale reads lastActivityBlock alone, not
-      // max(lastActivity, lastDecay). Decay fires at every subsequent block.
-      expect(await mineNextBlock(bc)).not.toBeNull();
-      expect(records.getIdentityRecord(idle.userId)).toEqual({
-        lastActivityBlock: 0,
-        lastDecayBlock: 5,
-        invitedAtBlock: 0,
-        lifetimeLikesReceived: 0n,
+  it('a stale TOUCHED identity is squared: post tx applies, owner ends at effective', async () => {
+    try {
+      vi.doMock('../../src/config.js', async () => {
+        const actual = await vi.importActual<typeof import('../../src/config.js')>(
+          '../../src/config.js',
+        );
+        return {
+          ...actual,
+          config: Object.freeze({
+            ...actual.config,
+            karmaStaleThresholdBlocks: 3,
+            karmaDecayIntervalBlocks: 1,
+          }),
+        };
       });
-      expect(utxo.getKarmaValue(idle.userId)).toBeLessThan(afterFirstDecay);
+      vi.resetModules();
+
+      const db = await importDb();
+      db.initDb(':memory:');
+
+      const utxo = await importUtxo();
+      const records = await import('../../src/store/identity-records.js');
+      const mempool = await import('../../src/store/mempool.js');
+      const { POST_LOCK_THREAD_COST, KARMA_DECAY_AMOUNT, KARMA_MINIMUM } =
+        await import('@dagsocial/types');
+
+      const stale = makeTestIdentity();
+      const karmaBox = makeKarmaBox(50n, stale.userId, 0);
+      utxo.insertBox(karmaBox);
+
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+
+      const { getKarmaPoolBox } = await import('../../src/store/utxo.js');
+      const poolBefore = getKarmaPoolBox()!.value;
+
+      const post = makePost(stale.userId, 'stale post');
+      const postTx: UtxoTransaction = {
+        inputs: [karmaBox.id!],
+        outputs: [
+          { boxType: 'karma', value: 50n - POST_LOCK_THREAD_COST, createdAtBlock: 0, owner: stale.userId } as never,
+          { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: 0, originalValue: POST_LOCK_THREAD_COST, owner: stale.userId } as never,
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+        post,
+      };
+      signTransaction(postTx, stale.privateKey, hex(stale.userId));
+      mempool.insertUtxoTx(postTx, 1000);
+
+      const block = await mineNextBlock(bc);
+      expect(block).not.toBeNull();
+
+      const postBodyChange = 50n - POST_LOCK_THREAD_COST;
+      const periods = 4;
+      const owed = BigInt(periods) * KARMA_DECAY_AMOUNT;
+      const floor = postBodyChange < KARMA_MINIMUM ? postBodyChange : KARMA_MINIMUM;
+      const effective = (postBodyChange - owed) > floor
+        ? postBodyChange - owed : floor;
+      const burn = postBodyChange - effective;
+
+      expect(utxo.getKarmaValue(stale.userId)).toBe(effective);
+      expect(records.getIdentityRecord(stale.userId)!.lastDecayBlock).toBe(4);
+
+      const poolAfter = getKarmaPoolBox()!.value;
+      expect(poolAfter - poolBefore).toBe(burn);
     } finally {
       vi.doUnmock('../../src/config.js');
     }

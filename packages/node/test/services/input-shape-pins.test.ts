@@ -29,7 +29,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
-import { computeBoxId, computeTxId, VOUCH_KARMA_AMOUNT } from '@dagsocial/types';
+import { computeBoxId, computeTxId, VOUCH_KARMA_AMOUNT,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 import type { AnyBox, KarmaBox, VouchBox, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 
@@ -94,6 +99,12 @@ describe('P2-B phase 4 — input-shape pins', () => {
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

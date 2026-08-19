@@ -9,6 +9,7 @@ import {
   hasPendingVouch,
 } from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
+import { effectiveKarma } from './decay.js';
 import { validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
@@ -37,7 +38,10 @@ export function castVouch(
   // (ARCHITECTURE → "Vouch boxes"). `checkTransitions` holds the same predicate
   // at apply, so this is the named early refusal rather than the rule's only
   // statement — the same pairing as the cooldown gate below.
-  if (deps.getKarmaValue(voucherId) < VOUCH_MIN_BALANCE) {
+  const voucherFace = deps.getKarmaValue(voucherId);
+  const voucherRecord = deps.getIdentityRecord(voucherId);
+  const balance = effectiveKarma(voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg);
+  if (balance < VOUCH_MIN_BALANCE) {
     throw new ClientError(
       `Insufficient karma: need at least ${VOUCH_MIN_BALANCE} to vouch`,
     );

@@ -1391,11 +1391,13 @@ describe('revertBlock', () => {
       insertBox: utxo.insertBox,
       getIdentityRecord: records.getIdentityRecord,
       putIdentityRecord: records.putIdentityRecord,
-      getKarmaOwners: () => [identity.userId],
     };
 
     const DECAY_HEIGHT = KARMA_STALE_THRESHOLD_BLOCKS + 100;
-    const entries = deriveKarmaDecay(deps, DECAY_HEIGHT, decayCfg);
+    const ownerHex = Buffer.from(identity.userId).toString('hex');
+    const karmaBoxes = getKarmaBoxes(identity.userId);
+    const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
+    const entries = deriveKarmaDecay(deps, postBody, DECAY_HEIGHT, decayCfg);
 
     expect(entries.length).toBe(1);
 
@@ -1413,7 +1415,7 @@ describe('revertBlock', () => {
       value: plan.newValue,
       createdAtBlock: DECAY_HEIGHT,
       owner: plan.owner,
-      decayBurn: true,
+      nonActivity: true,
       txId: provenance.mintTxIdFor(provenance.genesisCommitteeContext(plan.owner), DECAY_HEIGHT),
       index: provenance.MINT_OUTPUT_INDEX,
     };

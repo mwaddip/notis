@@ -17,6 +17,10 @@ import {
   computeTxId,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
 } from '@dagsocial/types';
 import type { AnyBox, KarmaBox, CreditBox, Post, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
@@ -81,6 +85,12 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       vouchCooldownBlocks: 2,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -260,7 +270,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     for (const o of r.computedOutputs!) expectIdClean(o.id!);
   });
 
-  it('honest karma → karma + vouch (and karma with decayBurn) applies and round-trips id-clean', () => {
+  it('honest karma → karma + vouch (and karma with nonActivity) applies and round-trips id-clean', () => {
     const karma = seedKarma(100n);
     const vouch = {
       boxType: 'vouch',
@@ -269,7 +279,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       voucherId: ownerPubKey,
       targetId: new Uint8Array(32).fill(0xcc),
     };
-    const change = { ...karmaChange(100n - VOUCH_KARMA_AMOUNT), decayBurn: true };
+    const change = { ...karmaChange(100n - VOUCH_KARMA_AMOUNT), nonActivity: true };
     const tx = signedTx([karma.id!], [change, vouch]);
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);

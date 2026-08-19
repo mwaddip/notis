@@ -3,6 +3,7 @@ import {
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
+import { effectiveKarma } from './decay.js';
 import { materializeOutput, validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
@@ -71,7 +72,11 @@ export function createInvite(
   // who cannot afford the one they named — and the rejection then arrives from
   // conservation, which is the message this layer exists to replace.
   const bondValue = (bondOutputs[0] as BondBox).value;
-  const inviterBalance = deps.getKarmaValue(karmaInput.owner);
+  const inviterFace = deps.getKarmaValue(karmaInput.owner);
+  const inviterRecord = deps.getIdentityRecord(karmaInput.owner);
+  const inviterBalance = effectiveKarma(
+    inviterFace, inviterRecord, currentBlockHeight, deps.decayCfg,
+  );
   if (inviterBalance < bondValue) {
     throw new ClientError(
       `Insufficient karma to invite: this invite bonds ${bondValue}, ` +

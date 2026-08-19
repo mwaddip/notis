@@ -10,6 +10,7 @@ import { sendCredits } from '../services/credits.js';
 import { validateTx } from '../services/utxo-engine.js';
 import { admitTx } from '../services/admit-tx.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
+import type { IdentityRecord } from '../store/identity-records.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
@@ -21,6 +22,7 @@ import { respondError } from './respond-error.js';
 export interface UtxoDeps {
   getKarmaBox(owner: Uint8Array): KarmaBox | null;
   getKarmaBoxes(owner: Uint8Array): KarmaBox[];
+  getIdentityRecord(owner: Uint8Array): IdentityRecord | null;
   getCreditBox(owner: Uint8Array): CreditBox | null;
   getCreditBoxes(owner: Uint8Array): CreditBox[];
   getBondBoxes(inviterId: Uint8Array): BondBox[];
@@ -60,17 +62,21 @@ export function createRouter(deps: UtxoDeps): Router {
       return;
     }
 
-    // Box values are bigint; JSON carries them as decimal strings.
     const total = karmaBoxes.reduce((sum, b) => sum + b.value, 0n);
     const boxes = karmaBoxes.map(b => ({
       boxId: b.id!,
       value: b.value.toString(),
     }));
+    const record = deps.getIdentityRecord(userIdBytes);
+    const height = deps.getCurrentHeight();
 
     res.json({
       userId: req.params['userId'],
       total: total.toString(),
       boxes,
+      lastActivityBlock: record?.lastActivityBlock ?? 0,
+      lastDecayBlock: record?.lastDecayBlock ?? 0,
+      height,
     });
   });
 

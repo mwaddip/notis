@@ -110,7 +110,7 @@ const postFieldsCodec: ValueCodec<PostFields> = {
  * could not reconstruct it if it did.
  */
 export type BoxContent =
-  | { boxType: 'karma'; value: bigint; createdAtBlock: number; owner: Uint8Array; decayBurn: boolean | null }
+  | { boxType: 'karma'; value: bigint; createdAtBlock: number; owner: Uint8Array; nonActivity: boolean | null }
   | { boxType: 'credit'; value: bigint; createdAtBlock: number; owner: Uint8Array; lockedUntilBlock: number | null }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */
   | { boxType: 'genesis_proof'; value: bigint; createdAtBlock: number; payload: Uint8Array }
@@ -171,7 +171,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           value,
           createdAtBlock,
           owner: hex(j.owner as string),
-          decayBurn: (j.decayBurn ?? null) as boolean | null,
+          nonActivity: (j.nonActivity ?? null) as boolean | null,
         };
       case 'credit':
         return {
@@ -254,7 +254,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           value,
           createdAtBlock,
           owner: readBytesN(r, 32),
-          decayBurn: readOpt(r, readBool),
+          nonActivity: readOpt(r, readBool),
         };
       case 'credit':
         return {

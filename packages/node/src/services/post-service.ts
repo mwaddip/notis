@@ -5,6 +5,8 @@ import {
 import type { Post, Stump, KarmaBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
 import type { StoredPost } from '../store/posts.js';
 import type { VerifierDeps, VerificationResult } from './verifier.js';
+import type { DecayCfg } from './decay.js';
+import type { IdentityRecord } from '../store/identity-records.js';
 import { ClientError } from './client-error.js';
 import { emitPostReceived, emitPostValidated, emitPostIndexed } from '../journal.js';
 
@@ -35,6 +37,8 @@ export interface PostServiceDeps {
   // Validation
   verifyPost: (deps: VerifierDeps, post: Post) => VerificationResult;
   getKarmaBoxes: (owner: Uint8Array) => { value: bigint; id?: string }[];
+  getIdentityRecord: (owner: Uint8Array) => IdentityRecord | null;
+  decayCfg: DecayCfg;
   /**
    * The store's real signature — passed straight through to `VerifierDeps`,
    * which needs only the `Post` half. Named as the store returns it because
@@ -109,6 +113,9 @@ export function createPost(
   const validationStart = performance.now();
   const verifierDeps: VerifierDeps = {
     getKarmaBoxes: deps.getKarmaBoxes,
+    getIdentityRecord: deps.getIdentityRecord,
+    currentHeight,
+    decayCfg: deps.decayCfg,
     getPost: deps.getPost,
   };
   const result = deps.verifyPost(verifierDeps, post);

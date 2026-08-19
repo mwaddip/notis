@@ -18,6 +18,7 @@ import {
 import type { DecayDeps, DecayPlan } from './decay.js';
 import { config } from '../config.js';
 import {
+  collectPostBodyKarma,
   computeBlockReward,
   computeUtxoTxRoot,
   clearTemplate,
@@ -625,27 +626,11 @@ function applyMutationPhase(
   // by §5 and consumed by §11a — the settlement pays every leg.
   const prunePlans: PruneSettlement[] = [];
 
-  // ⛔ **DECAY IS DERIVED FROM PRE-BODY STATE, AND IT HAS TO BE.** The producer
-  // fixes the settlement's bytes before it can apply the body — the settlement
-  // *is* part of that body — so the only state both a producer and a verifier
-  // can read and agree on is the state the block starts from. Deriving it after
-  // the apply loop would give the two sides different answers whenever the body
-  // touched a karma box, and the plainest case is not exotic: spending karma
-  // bumps the activity clock through `insertBox`, so a stale identity that
-  // transacts in this very block is stale before the loop and fresh after it.
-  //
-  // ⚠ **The cost, stated rather than discovered: an embedded transaction may
-  // spend a karma box the decay plan names.** The settlement then lists an input
-  // the body has already consumed, `applyTx` refuses it, and the block is
-  // rejected — deterministically, by every node, so it is a liveness cost and
-  // never a fork. A producer's own speculative run reaches the same verdict and
-  // declines to produce, rather than mining a block its peers refuse.
-  const decayPlans = deriveKarmaDecay(decayDeps, height, {
-    staleThresholdBlocks: config.karmaStaleThresholdBlocks,
-    decayIntervalBlocks: config.karmaDecayIntervalBlocks,
-    decayAmount: config.karmaDecayAmount,
-    karmaMinimum: config.karmaMinimum,
-  });
+  // ⛔ **DECAY IS DERIVED FROM PRE-BODY STATE, AND IT HAS TO BE.** Computed
+  // after decoding (the touched set comes from the decoded transactions'
+  // inputs) but before the apply loop, so the UTXO state is pre-body.
+  // `decayPlans` is declared here and assigned after the decode loop at §9b.
+
   // Every post id the block commits to, independent of per-post confirm
   // outcomes — same semantics as the confirm loop in §7, which tolerates
   // per-post failures. Both read `postsOf`, so rollback un-confirms exactly what
@@ -900,6 +885,12 @@ function applyMutationPhase(
     vouchCooldownBlocks: config.vouchCooldownBlocks,
     inviteBondMin: config.inviteBondMin,
     inviteBondMax: config.inviteBondMax,
+    decayCfg: {
+      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+      decayAmount: config.karmaDecayAmount,
+      karmaMinimum: config.karmaMinimum,
+    },
     // ⛔ The like marker's author, from `block_topology` and never
     // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
     // makes, so the marker's pin and the like-record's author cannot disagree.
@@ -1053,6 +1044,20 @@ function applyMutationPhase(
   // Without this the second bond draws a second grant from the pool for one
   // key, sized by whatever bond the second inviter chose.
   const invitedThisBlock = new Set<string>();
+
+  // §9b. Decay: squared per identity on touch (ARCHITECTURE → Karma decay).
+  // The post-body projection derives from decoded transactions + the pre-body
+  // UTXO set — both available before the apply loop. The settlement consumes
+  // the projected boxes, which are the ones that exist after the body applies.
+  const postBodyKarma = collectPostBodyKarma(
+    queue.map((q) => ({ txId: q.txId, inputs: q.tx.inputs, outputs: q.outputs })),
+  );
+  const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, {
+    staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+    decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+    decayAmount: config.karmaDecayAmount,
+    karmaMinimum: config.karmaMinimum,
+  });
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1387,7 +1392,7 @@ function applyMutationPhase(
     // `(height, 'postlock-remainder', postId)` cannot repeat.
     transferKarma(
       [lockBox],
-      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId) }],
+      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId), nonActivity: true }],
       {
         shape: (value) => ({
           boxType: 'post_lock',

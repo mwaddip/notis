@@ -1,7 +1,13 @@
 import { ByteKeyedMap } from '../helpers.js';
 import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync } from 'crypto';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import {
+  PROTOCOL_VERSION,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
@@ -29,6 +35,14 @@ function createMockDeps(store: MockStore): VerifierDeps {
     getKarmaBoxes: (owner: Uint8Array) => {
       const hex = Buffer.from(owner).toString('hex');
       return store.karmaBoxes.get(hex) ?? [];
+    },
+    getIdentityRecord: () => null,
+    currentHeight: 100,
+    decayCfg: {
+      staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+      decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+      decayAmount: KARMA_DECAY_AMOUNT,
+      karmaMinimum: KARMA_MINIMUM,
     },
     getPost: (id: string) => store.posts.get(id) ?? null,
   };

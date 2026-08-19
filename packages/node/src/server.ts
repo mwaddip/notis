@@ -9,7 +9,7 @@ import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks
 import { createRouter as miningRoutes } from './routes/mining.js';
 import * as store from './store/index.js';
 import { verifyPost } from './services/verifier.js';
-import { getCurrentTemplate, submitMinedBlock, setMinerPubkey } from './services/block-creator.js';
+import { getCurrentTemplate, submitMinedBlock, setMinerPubkey, decayConfig } from './services/block-creator.js';
 import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
@@ -182,6 +182,7 @@ export function createApp(config: Config): express.Express {
     vouchCooldownBlocks: config.vouchCooldownBlocks,
     inviteBondMin: config.inviteBondMin,
     inviteBondMax: config.inviteBondMax,
+    decayCfg: decayConfig(),
     getTopologyAuthor: store.getTopologyAuthorBytes,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
   };
@@ -198,6 +199,8 @@ export function createApp(config: Config): express.Express {
       getPost: store.getPost,
       queryPosts: store.queryPosts,
       getKarmaBoxes: store.getKarmaBoxes,
+      getIdentityRecord: store.getIdentityRecord,
+      decayCfg: decayConfig(),
       getCurrentHeight: store.getCurrentHeight,
       getLikeRecordCount: store.getLikeRecordCount,
       getLikersForPost: store.getLikersForPost,
@@ -227,6 +230,7 @@ export function createApp(config: Config): express.Express {
       vouchCooldownBlocks: config.vouchCooldownBlocks,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: decayConfig(),
       getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -249,6 +253,7 @@ export function createApp(config: Config): express.Express {
       vouchCooldownBlocks: config.vouchCooldownBlocks,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: decayConfig(),
       getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -270,6 +275,7 @@ export function createApp(config: Config): express.Express {
       vouchCooldownBlocks: config.vouchCooldownBlocks,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
+      decayCfg: decayConfig(),
       getTopologyAuthor: store.getTopologyAuthorBytes,
       runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
@@ -289,6 +295,7 @@ export function createApp(config: Config): express.Express {
     utxoRoutes({
       getKarmaBox: store.getKarmaBox,
       getKarmaBoxes: store.getKarmaBoxes,
+      getIdentityRecord: store.getIdentityRecord,
       getCreditBox: store.getCreditBox,
       getCreditBoxes: store.getCreditBoxes,
       getBondBoxes: store.getBondBoxes,

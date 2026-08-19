@@ -480,7 +480,7 @@ constraint and must not be described as one.
 KarmaBox extends BoxBase {
   boxType: "karma"
   owner: Uint8Array            // 32 raw bytes — Ed25519 public key
-  decayBurn?: boolean          // Set by the decay engine on its burn outputs; gates the decay clock
+  nonActivity?: boolean        // Set on any karma output that must not bump the owner's activity clock — settlement outputs and vesting returns; absent on a user transaction's own outputs
 }
 ```
 
@@ -1624,7 +1624,7 @@ from this table — a use that reads every cell as an instruction rather than as
 
 | Type | Trailing fields |
 |---|---|
-| `karma` | `b32(owner)` ‖ `opt(decayBurn, u8)` |
+| `karma` | `b32(owner)` ‖ `opt(nonActivity, u8)` |
 | `credit` | `b32(owner)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(inviterId)` ‖ `b32(inviteePublicKey)` |
 | `genesis_proof` | `lp(payload)` |
@@ -1716,7 +1716,7 @@ option, and the `enum8` tag is the whole of what separates them at equal `value`
 ⚠ **The option tag is what keeps absence from being a value.** An absent `lockedUntilBlock`
 writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `vlqU` with `0`
 standing for "unlocked" would give an unlocked box and a box locked until block 0 one id. The
-same holds for `decayBurn`, which is the field the decay clock reads.
+same holds for `nonActivity`, which is the field the activity clock reads.
 
 **`bond.inviteePublicKey` is `b32`.** The field is exactly 32 bytes at every point
 in a bond's life: invite creation sets it (BondBox above) and no later transition
@@ -2427,9 +2427,9 @@ an override parameter is the same defect as the environment read, reached by a d
 door.
 
 ⚠ **Values are not pinned here.** `devnet`'s compressed timings and both public networks'
-difficulty belong to the constants-pinning session, together with the figure already
-flagged open below (`KARMA_STALE_THRESHOLD_BLOCKS`'s duration). **Do not read any number in
-this contract as decided.**
+difficulty belong to the constants-pinning session. **Do not read any number in this
+contract as decided** — with one exception: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is
+ruled (user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
 
 ### Domain tags are network-agnostic — deliberately
 

@@ -100,9 +100,9 @@ export const BOX_VALUE_BOUND = 1n << 63n;
 // State format
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
 
-// Karma decay (periodic burn model)
+// Karma decay (virtual — ARCHITECTURE → Karma decay)
 export const KARMA_POSTING_MINIMUM = 1n;
-export const KARMA_STALE_THRESHOLD_BLOCKS = 40320; // 28 days at 60s blocks (duration itself under review — constants-pinning) → profile: karmaStaleThresholdBlocks
+export const KARMA_STALE_THRESHOLD_BLOCKS = 40320; // 28 days at 60s blocks → profile: karmaStaleThresholdBlocks
 export const KARMA_DECAY_INTERVAL_BLOCKS = 1440;   // 24 hours at 60s blocks → profile: karmaDecayIntervalBlocks
 export const KARMA_DECAY_AMOUNT = 5n;              // karma burned per interval
 export const KARMA_MINIMUM = 10n;                  // floor — decay never reduces below this

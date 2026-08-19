@@ -18,7 +18,7 @@ import type { UserId } from '@dagsocial/types';
  * one; `decay.ts` carries the full argument.
  *
  * **Who populates this.** `insertBox` bumps `lastActivityBlock` from the
- * open journal's height for every karma box with `decayBurn !== true`;
+ * open journal's height for every karma box with `nonActivity !== true`;
  * `commitDecayClocks` bumps `lastDecayBlock` when decay fires; and
  * `ensureSystemKarmaBox` writes genesis's own record, since it runs outside
  * block application where the choke point has no height to read.

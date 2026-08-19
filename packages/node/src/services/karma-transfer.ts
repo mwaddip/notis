@@ -41,6 +41,8 @@ export interface KarmaCredit {
   amount: bigint;
   /** Why — the half of the box's synthetic transaction id this module cannot know. */
   ctx: MintContext;
+  /** Received value — the box must not reset the owner's activity clock. */
+  nonActivity?: boolean;
 }
 
 /**
@@ -127,6 +129,7 @@ export function transferKarma(
       value: consolidated,
       createdAtBlock: blockHeight,
       owner: c.owner,
+      ...(c.nonActivity ? { nonActivity: true } : {}),
       txId: mintTxIdFor(c.ctx, blockHeight),
       index: MINT_OUTPUT_INDEX,
     };

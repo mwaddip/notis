@@ -171,7 +171,7 @@ describe('box provenance columns (Spec G phase B)', () => {
     // branches, so a regression in any one of them moves the digest.
     const produced: AnyBox[] = [
       makeKarmaBox('11'.repeat(32)),
-      makeKarmaBox('22'.repeat(32), { decayBurn: true }),
+      makeKarmaBox('22'.repeat(32), { nonActivity: true }),
       {
         id: '33'.repeat(32), boxType: 'credit', value: 5000n,
         createdAtBlock: 0, owner: OWNER,

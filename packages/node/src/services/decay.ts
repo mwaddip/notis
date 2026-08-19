@@ -81,22 +81,51 @@ export function owedPeriods(
 }
 
 // ---------------------------------------------------------------------------
+// The valuation function — one implementation (VALIDATION_INTERFACE → One
+// implementation per rule). The engine, the verifier and the demo UI all
+// call this; an inline copy anywhere is the mirror defect class.
+// ---------------------------------------------------------------------------
+
+export interface DecayCfg {
+  staleThresholdBlocks: number;
+  decayIntervalBlocks: number;
+  decayAmount: bigint;
+  karmaMinimum: bigint;
+}
+
+/**
+ * Effective karma: the face total reduced by virtual decay.
+ *
+ *     effective = clamp(faceTotal − owedPeriods · decayAmount)
+ *
+ * Clamped so effective never drops below `min(faceTotal, KARMA_MINIMUM)`:
+ * an identity holding less than the minimum never decays below what it
+ * has, and one holding more never decays below the minimum.
+ */
+export function effectiveKarma(
+  faceTotal: bigint,
+  record: IdentityRecord | null,
+  height: number,
+  cfg: DecayCfg,
+): bigint {
+  if (!isIdentityStale(record, height, cfg.staleThresholdBlocks)) {
+    return faceTotal;
+  }
+  const periods = owedPeriods(record, height, cfg.decayIntervalBlocks);
+  if (periods <= 0) return faceTotal;
+
+  const owed = BigInt(periods) * cfg.decayAmount;
+  const floor = faceTotal < cfg.karmaMinimum ? faceTotal : cfg.karmaMinimum;
+  const decayed = faceTotal - owed;
+  return decayed > floor ? decayed : floor;
+}
+
+// ---------------------------------------------------------------------------
 // Decay execution
 // ---------------------------------------------------------------------------
 
 export interface DecayDeps {
   getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
-  /**
-   * Every distinct owner holding an unspent karma box, **in a stated total
-   * order**.
-   *
-   * ⛔ **The order is a consensus obligation.** Decay is derived by the block's
-   * settlement transaction, whose outputs are hashed in the order they are
-   * emitted, so two nodes walking this list differently derive two different
-   * transactions (NODE_INTERFACE → Determinism is this mechanism's whole risk).
-   * A query with no `ORDER BY` is the fork.
-   */
-  getKarmaOwners: () => Uint8Array[];
   /** The identity's decay clock, or null if it has never held karma. */
   getIdentityRecord: (identityId: Uint8Array) => IdentityRecord | null;
   /** Write the clock back. Journals at the store choke point. */
@@ -114,9 +143,8 @@ export interface DecayDeps {
  * and a mint separated by steps, which `ARCHITECTURE → The conservation axiom`
  * forbids by name.
  *
- * ⚠ **The MECHANISM is unchanged and deliberately so.** The eager per-identity
- * pass, the staleness predicate, the interval arithmetic and the karma floor are
- * exactly what they were; only where the value goes has moved.
+ * ⚠ The trigger is touch: the squaring fires per identity when the block
+ * body consumes their boxes. There is no per-block walk.
  */
 export interface DecayPlan {
   owner: Uint8Array;
@@ -129,34 +157,30 @@ export interface DecayPlan {
 }
 
 /**
- * Derive the decay every stale identity owes at `currentHeight`.
+ * Derive the decay owed by each TOUCHED identity at `currentHeight`.
  *
  * ⛔ **Pure with respect to the ledger: it reads and returns, and writes
  * nothing.** The settlement emits its boxes and `commitDecayClocks` advances the
  * clocks, so a block whose settlement is refused has not moved a decay clock
  * either.
  *
- * Returned in `getKarmaOwners` order, which the dep contract requires to be a
- * stated total order.
+ * `postBodyKarma` is the post-body karma projection — for each identity the
+ * block's body touched, the karma boxes they hold AFTER the body's user
+ * transactions but BEFORE the settlement. The caller provides entries in
+ * ascending owner-hex order (ARCHITECTURE → Karma decay). The identity record
+ * is read from pre-body state (user transactions do not write it).
  */
 export function deriveKarmaDecay(
   deps: DecayDeps,
+  postBodyKarma: Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>,
   currentHeight: number,
-  cfg: {
-    staleThresholdBlocks: number;
-    decayIntervalBlocks: number;
-    decayAmount: bigint;
-    karmaMinimum: bigint;
-  },
+  cfg: DecayCfg,
 ): DecayPlan[] {
   const plans: DecayPlan[] = [];
 
-  for (const owner of deps.getKarmaOwners()) {
-    const boxes = deps.getKarmaBoxes(owner);
+  for (const [, { owner, boxes }] of postBodyKarma) {
     if (boxes.length === 0) continue;
 
-    // The clock is read once, before anything is decided: both predicates must
-    // see the same pre-decay state.
     const record = deps.getIdentityRecord(owner);
 
     if (!isIdentityStale(record, currentHeight, cfg.staleThresholdBlocks)) {
@@ -166,21 +190,15 @@ export function deriveKarmaDecay(
     const periods = owedPeriods(record, currentHeight, cfg.decayIntervalBlocks);
     if (periods <= 0) continue;
 
-    const totalKarma = boxes.reduce((sum, b) => sum + b.value, 0n);
-    const overMinimum = totalKarma - cfg.karmaMinimum;
-    const maxBurn = overMinimum > 0n ? overMinimum : 0n;
-    const owed = BigInt(periods) * cfg.decayAmount;
-    const burnAmount = owed < maxBurn ? owed : maxBurn;
+    const faceTotal = boxes.reduce((sum, b) => sum + b.value, 0n);
+    const effective = effectiveKarma(faceTotal, record, currentHeight, cfg);
+    const burnAmount = faceTotal - effective;
     if (burnAmount <= 0n) continue;
 
     plans.push({
       owner,
-      // Every box, in the order `getKarmaBoxes` returns them. The settlement
-      // lists them as inputs in that order and hashes them in it, so the store's
-      // own ordering is what both nodes must share — `getKarmaBoxes` is
-      // `ORDER BY id`.
       consumedBoxIds: boxes.filter((b) => b.id).map((b) => b.id!),
-      newValue: totalKarma - burnAmount,
+      newValue: effective,
       burnAmount,
     });
   }

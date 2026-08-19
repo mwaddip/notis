@@ -433,7 +433,7 @@ describe('positional serialization', () => {
     // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow` OR `writeBool`**,
     // so this section pins neither writer and a reader must not infer that the
     // body covers them. **Both are pinned one struct over**, in `utxo.test.ts`:
-    // box `value` is the `vlqU64` row and `karma.decayBurn` the `writeBool` one.
+    // box `value` is the `vlqU64` row and `karma.nonActivity` the `writeBool` one.
     // A `bigint` or `boolean` field added to the body owes a row here.
 
     it('trigger is enum8, and the out-of-table byte has no decoding', () => {

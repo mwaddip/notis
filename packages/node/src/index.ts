@@ -177,6 +177,12 @@ net.onTx((tx, fromPeerId) => {
     vouchCooldownBlocks: config.vouchCooldownBlocks,
     inviteBondMin: config.inviteBondMin,
     inviteBondMax: config.inviteBondMax,
+    decayCfg: {
+      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+      decayAmount: config.karmaDecayAmount,
+      karmaMinimum: config.karmaMinimum,
+    },
     // The like marker's author pin (NODE_INTERFACE → Karma transition rules) —
     // same rule again: a relayed like whose marker names the wrong author must
     // be refused here as well as at the block path.
