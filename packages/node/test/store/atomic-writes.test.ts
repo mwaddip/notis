@@ -64,7 +64,6 @@ function makeStump(overrides: Partial<Stump> = {}): Stump {
     authorId: uid('tester'),
     replyCount: 0,
     upvoteCount: 0,
-    trigger: 'author' as const,
     protocolVersion: 1,
     compactedAtBlockHeight: 10,
     ...overrides,

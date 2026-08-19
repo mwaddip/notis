@@ -270,7 +270,6 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       authorId: likerId,
       replyCount: 3,
       upvoteCount: 0,
-      trigger: 'author',
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: 4,
     };

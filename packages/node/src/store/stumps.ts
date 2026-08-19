@@ -11,7 +11,6 @@ interface StumpRow {
   author_id: Buffer; // 32-byte Ed25519 public key
   reply_count: number;
   upvote_count: number;
-  trigger: string;
   protocol_version: number;
   compacted_at_block_height: number;
 }
@@ -26,7 +25,6 @@ function rowToStump(row: StumpRow): Stump {
     authorId: new Uint8Array(row.author_id),
     replyCount: row.reply_count,
     upvoteCount: row.upvote_count,
-    trigger: row.trigger as Stump['trigger'],
     protocolVersion: row.protocol_version,
     compactedAtBlockHeight: row.compacted_at_block_height,
   };
@@ -48,15 +46,14 @@ export function insertStump(stump: Stump): void {
   db.prepare(
     `INSERT OR REPLACE INTO dag_stumps
        (id, root_post_hash, author_id, reply_count, upvote_count,
-        trigger, protocol_version, compacted_at_block_height)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        protocol_version, compacted_at_block_height)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     stumpId,
     stump.rootPostHash,
     Buffer.from(stump.authorId),
     stump.replyCount,
     stump.upvoteCount,
-    stump.trigger,
     stump.protocolVersion,
     stump.compactedAtBlockHeight,
   );

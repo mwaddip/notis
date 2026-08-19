@@ -38,7 +38,7 @@ import {
   writeVlqU,
   writeVlqU64OrThrow,
 } from '../../src/codec.js';
-import { TRIGGER, hex, registerStruct, type ValueCodec } from './harness.js';
+import { MINT_REASON, hex, registerStruct, type ValueCodec } from './harness.js';
 
 export interface Probe {
   version: number;
@@ -49,7 +49,7 @@ export interface Probe {
   payload: Uint8Array;
   amount: bigint;
   offset: number;
-  trigger: 'author' | 'storage_prune';
+  mintReason: 'postlock-unlock' | 'postlock-remainder' | 'genesis' | 'genesis-committee';
   extra: number | null;
   flag: boolean;
 }
@@ -69,7 +69,7 @@ export interface Probe {
  * | 6 | `payload` | `lp`          |
  * | 7 | `amount`  | `vlqU` (u64)  |
  * | 8 | `offset`  | `vlqS`        |
- * | 9 | `trigger` | `enum8`       |
+ * | 9 | `mintReason` | `enum8`    |
  * | 10| `extra`   | `opt(vlqU)`   |
  * | 11| `flag`    | `u8` (bool)   |
  */
@@ -85,7 +85,7 @@ export const probeCodec: StructCodec<Probe> = {
     writeLp(w, p.payload);
     writeVlqU64OrThrow(w, p.amount);
     writeVlqS(w, p.offset);
-    TRIGGER.write(w, p.trigger);
+    MINT_REASON.write(w, p.mintReason);
     writeOpt(w, p.extra, (ww, v) => writeVlqU(ww, v));
     writeBool(w, p.flag);
   },
@@ -100,7 +100,7 @@ export const probeCodec: StructCodec<Probe> = {
       payload: readLp(r),
       amount: readVlqU64(r),
       offset: readVlqS(r),
-      trigger: TRIGGER.read(r),
+      mintReason: MINT_REASON.read(r),
       extra: readOpt(r, (rr) => readVlqU(rr)),
       flag: readBool(r),
     };
@@ -120,7 +120,7 @@ const probeValueCodec: ValueCodec<Probe> = {
       payload: hex(j.payload as string),
       amount: BigInt(j.amount as string),
       offset: j.offset as number,
-      trigger: j.trigger as Probe['trigger'],
+      mintReason: j.mintReason as Probe['mintReason'],
       extra: (j.extra ?? null) as number | null,
       flag: j.flag as boolean,
     };

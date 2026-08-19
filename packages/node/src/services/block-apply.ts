@@ -840,7 +840,6 @@ function applyMutationPhase(
       authorId: entry.authorId,
       replyCount: entry.subtreePostIds.length - 1, // exclude root
       upvoteCount: likeTally,
-      trigger: entry.trigger,
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: height,
     });

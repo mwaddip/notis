@@ -50,7 +50,7 @@ import {
 } from './codec.js';
 import { postFieldBytes, readPostFields, type Post } from './post.js';
 import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
-import { TRIGGER, serializePruneEntry, type PruneEntry } from './stump.js';
+import { serializePruneEntry, type PruneEntry } from './stump.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -181,7 +181,7 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
 
 /**
  * `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖ `b32(subtreeMerkleRoot)` ‖
- * `b32(authorId)` ‖ `b64(authorSignature)` ‖ `enum8(trigger)`.
+ * `b32(authorId)` ‖ `b64(authorSignature)`.
  *
  * **The write half delegates to `serializePruneEntry` rather than restating the
  * layout**, and that is the whole point of doing it this way: those bytes are
@@ -206,18 +206,14 @@ function readPruneEntry(r: ByteReader): PruneEntry {
     subtreeMerkleRoot: readBytesN(r, 32),
     authorId: readBytesN(r, 32),
     authorSignature: readBytesN(r, 64),
-    trigger: TRIGGER.read(r),
   };
 }
 
 /**
  * The width `writePruneEntry` produces (TYPES_INTERFACE → Sizing without
- * encoding). Four fixed-width fields and a `u8` tag around one count-prefixed
- * array of `b32` ids — the entry's only variable term, and the reason an entry
- * has no constant size.
- *
- * `trigger` is a byte on every input: `enum8` writes `0xff` for a value outside
- * its table rather than throwing.
+ * encoding). Four fixed-width fields around one count-prefixed array of `b32`
+ * ids — the entry's only variable term, and the reason an entry has no constant
+ * size.
  */
 function pruneEntryByteLength(e: PruneEntry): number {
   return (
@@ -225,8 +221,7 @@ function pruneEntryByteLength(e: PruneEntry): number {
     arrByteLength(e.subtreePostIds, () => 32) + // subtreePostIds    arr(ids, b32)
     32 +                                        // subtreeMerkleRoot b32
     32 +                                        // authorId          b32
-    64 +                                        // authorSignature   b64
-    1                                           // trigger           enum8
+    64                                          // authorSignature   b64
   );
 }
 

@@ -35,7 +35,7 @@ import {
   readVlqU64,
 } from '../../src/codec.js';
 import { postFieldBytes, type Post } from '../../src/post.js';
-import { serializePruneEntry, TRIGGER, type PruneEntry } from '../../src/stump.js';
+import { serializePruneEntry, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
 import {
   encodeHeader,
@@ -338,7 +338,6 @@ const pruneEntryCodec: ValueCodec<PruneEntry> = {
       subtreeMerkleRoot: hex(j.subtreeMerkleRoot as string),
       authorId: hex(j.authorId as string),
       authorSignature: hex(j.authorSignature as string),
-      trigger: j.trigger as PruneEntry['trigger'],
     };
   },
 
@@ -355,7 +354,6 @@ const pruneEntryCodec: ValueCodec<PruneEntry> = {
       subtreeMerkleRoot: readBytesN(r, 32),
       authorId: readBytesN(r, 32),
       authorSignature: readBytesN(r, 64),
-      trigger: TRIGGER.read(r),
     };
   },
 };
@@ -412,7 +410,6 @@ function readPrune(r: ByteReader): PruneEntry {
     subtreeMerkleRoot: readBytesN(r, 32),
     authorId: readBytesN(r, 32),
     authorSignature: readBytesN(r, 64),
-    trigger: TRIGGER.read(r),
   };
 }
 
@@ -423,7 +420,6 @@ function parsePrune(j: Record<string, unknown>): PruneEntry {
     subtreeMerkleRoot: hex(j.subtreeMerkleRoot as string),
     authorId: hex(j.authorId as string),
     authorSignature: hex(j.authorSignature as string),
-    trigger: j.trigger as PruneEntry['trigger'],
   };
 }
 

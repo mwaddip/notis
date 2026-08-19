@@ -915,7 +915,6 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     expect(hex(stump!.authorId)).toBe(hex(author.userId));
     expect(stump!.replyCount).toBe(1); // subtreePostIds.length - 1
     expect(stump!.upvoteCount).toBe(0); // no like-records in this fixture
-    expect(stump!.trigger).toBe('author');
     expect(stump!.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(stump!.compactedAtBlockHeight).toBe(2); // the carrying block's height
   });

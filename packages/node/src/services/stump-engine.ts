@@ -108,7 +108,6 @@ export function executePrune(intent: PruneIntent): PruneEntry {
     subtreeMerkleRoot: intent.subtreeMerkleRoot,
     authorId: intent.authorId,
     authorSignature: intent.signature,
-    trigger: intent.trigger,
   };
 
   // 8. Enqueue in mempool. Nothing is broadcast at prune initiation: the prune

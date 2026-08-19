@@ -544,7 +544,7 @@ export type MintReason =
  * The `MintReason` tag table.
  *
  * A closed set of ASCII tags inside a consensus preimage is exactly what
- * `enum8` is for, and it is what `boxType` and `trigger` already use — writing
+ * `enum8` is for, and it is what `boxType` already uses — writing
  * this one as `lpUtf8` instead would put two ways of encoding one kind of thing
  * back into a format whose entire purpose is that there is one.
  *

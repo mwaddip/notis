@@ -23,7 +23,6 @@ interface StumpRow {
   author_id: Buffer;          // 32-byte Ed25519 public key
   reply_count: number;
   upvote_count: number;
-  trigger: string;
   protocol_version: number;
   compacted_at_block_height: number;
 }
@@ -72,9 +71,6 @@ function rowToPost(row: PostRow): StoredPost {
     parentRefs: JSON.parse(row.parent_refs) as string[],
     protocolVersion: row.protocol_version,
     timestamp: row.timestamp,
-    // The one narrowing cast on this path — the column is TEXT, and the
-    // schema's three-value domain is what `PostStatus` states. Same shape as
-    // `rowToStump`'s `trigger`.
     status: row.status as PostStatus,
   };
 }
@@ -85,7 +81,6 @@ function rowToStump(row: StumpRow): Stump {
     authorId: new Uint8Array(row.author_id),
     replyCount: row.reply_count,
     upvoteCount: row.upvote_count,
-    trigger: row.trigger as Stump['trigger'],
     protocolVersion: row.protocol_version,
     compactedAtBlockHeight: row.compacted_at_block_height,
   };

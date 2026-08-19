@@ -63,7 +63,6 @@ export interface StumpJson {
   author: string;
   replyCount: number;
   upvoteCount: number;
-  trigger: 'author' | 'storage_prune';
   protocolVersion: number;
   compactedAtBlockHeight: number;
 }
@@ -118,7 +117,6 @@ export function stumpToJson(stump: Stump): StumpJson {
     author: Buffer.from(stump.authorId).toString('hex'),
     replyCount: stump.replyCount,
     upvoteCount: stump.upvoteCount,
-    trigger: stump.trigger,
     protocolVersion: stump.protocolVersion,
     compactedAtBlockHeight: stump.compactedAtBlockHeight,
   };

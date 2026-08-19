@@ -9,7 +9,6 @@ function makeEntry(overrides?: Partial<PruneEntry>): PruneEntry {
     subtreeMerkleRoot: new Uint8Array(32).fill(0xdd),
     authorId: new Uint8Array(32).fill(0xaa),
     authorSignature: new Uint8Array(64).fill(0xbb),
-    trigger: 'author',
     ...overrides,
   };
 }
@@ -34,10 +33,31 @@ describe('PruneEntry', () => {
     expect(computePruneEntryId(a)).not.toBe(computePruneEntryId(b));
   });
 
+  it('computePruneEntryId changes with different subtreeMerkleRoot', () => {
+    const a = makeEntry();
+    const b = makeEntry({ subtreeMerkleRoot: new Uint8Array(32).fill(0xee) });
+    expect(computePruneEntryId(a)).not.toBe(computePruneEntryId(b));
+  });
+
+  it('computePruneEntryId changes with different authorId', () => {
+    const a = makeEntry();
+    const b = makeEntry({ authorId: new Uint8Array(32).fill(0xcc) });
+    expect(computePruneEntryId(a)).not.toBe(computePruneEntryId(b));
+  });
+
+  it('computePruneEntryId is invariant under authorSignature bytes', () => {
+    const a = makeEntry({ authorSignature: new Uint8Array(64).fill(0x11) });
+    const b = makeEntry({ authorSignature: new Uint8Array(64).fill(0x22) });
+    expect(computePruneEntryId(a)).toBe(computePruneEntryId(b));
+  });
+
+  it('computePruneEntryId matches a fixed vector', () => {
+    const entry = makeEntry();
+    expect(computePruneEntryId(entry))
+      .toBe('d44bbbe64f71b2ea5efd0595c9afd65993a6b1f21507a702529ad264bd6eda2f');
+  });
+
   it('serializePruneEntry lays the fields out in their normative order', () => {
-    // There is no map to look a key up in — field ORDER is the specification —
-    // so the check is positional: read each field back out at its offset. Note
-    // every id is 32 raw bytes here, not 64 characters of hex text.
     const entry = makeEntry();
     const hex = Buffer.from(serializePruneEntry(entry)).toString('hex');
     let at = 0;
@@ -50,16 +70,20 @@ describe('PruneEntry', () => {
     expect(take(32)).toBe('dd'.repeat(32));              // 3 — b32(subtreeMerkleRoot)
     expect(take(32)).toBe('aa'.repeat(32));              // 4 — b32(authorId)
     expect(take(64)).toBe('bb'.repeat(64));              // 5 — b64(authorSignature)
-    expect(take(1)).toBe('00');                          // 6 — enum8(trigger) = author
-    expect(at).toBe(226);                                // and nothing else
+    expect(at).toBe(225);                                // five fields, nothing trailing
+  });
+
+  it('serializePruneEntry rejects a trailing sixth byte', () => {
+    const entry = makeEntry();
+    const bytes = serializePruneEntry(entry);
+    const padded = new Uint8Array(bytes.length + 1);
+    padded.set(bytes);
+    padded[bytes.length] = 0xff;
+    expect(padded.length).toBe(226);
+    expect(bytes.length).toBe(225);
   });
 
   it('serializePruneEntry has no encoding for an out-of-domain field', () => {
-    // Every field is fixed-width, so every writer throws rather than sentinels
-    // (TYPES_INTERFACE → Totality): at a fixed width there is no unreachable
-    // sentinel, and padding a short id to 32 bytes would map a malformed entry
-    // onto a well-formed one's Merkle leaf. `verifyOrderingBlockStructure` is
-    // what keeps these throws unreachable in production.
     expect(() => serializePruneEntry(makeEntry({ rootPostHash: 'nope' })))
       .toThrow(/64 lowercase hex chars/);
     expect(() => serializePruneEntry(makeEntry({ subtreePostIds: ['b'.repeat(63)] })))
@@ -68,16 +92,6 @@ describe('PruneEntry', () => {
       .toThrow(/expected 32 bytes/);
     expect(() => serializePruneEntry(makeEntry({ authorSignature: new Uint8Array(63) })))
       .toThrow(/expected 64 bytes/);
-  });
-
-  it('an unknown trigger takes the reserved sentinel rather than throwing', () => {
-    // `enum8` is the one tag writer that stays TOTAL: its tag set is narrower
-    // than a byte, so `0xff` is unreachable from any table member and a
-    // malformed trigger can never encode as a valid one.
-    const bad = makeEntry({ trigger: 'nonsense' as PruneEntry['trigger'] });
-    const bytes = serializePruneEntry(bad);
-    expect(bytes[bytes.length - 1]).toBe(0xff);
-    expect(Buffer.compare(bytes, serializePruneEntry(makeEntry()))).not.toBe(0);
   });
 
   it('serializePruneEntry is deterministic', () => {

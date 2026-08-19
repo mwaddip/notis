@@ -33,7 +33,6 @@ import {
 } from '../src/serialization.js';
 import { postFieldBytes, type Post } from '../src/post.js';
 import { computeTxId } from '../src/utxo.js';
-import type { PruneEntry } from '../src/stump.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -102,7 +101,6 @@ function makeUtxoTxTree(): UtxoTxTree {
       subtreeMerkleRoot: new Uint8Array(32).fill(0x44),
       authorId: userA,
       authorSignature: sig64,
-      trigger: 'storage_prune',
     }],
   };
 }
@@ -190,7 +188,7 @@ describe('positional serialization', () => {
         ...tree,
         pruneEntries: [
           tree.pruneEntries[0]!,
-          { ...tree.pruneEntries[0]!, subtreePostIds: [], trigger: 'author' },
+          { ...tree.pruneEntries[0]!, subtreePostIds: [] },
         ],
       };
       expect(decodeUtxoTxTree(encodeUtxoTxTree(two))).toEqual(two);
@@ -418,22 +416,6 @@ describe('positional serialization', () => {
     // box `value` is the `vlqU64` row and `karma.nonActivity` the `writeBool` one.
     // A `bigint` or `boolean` field added to the body owes a row here.
 
-    it('trigger is enum8, and the out-of-table byte has no decoding', () => {
-      // The body's one notation-versus-type row: `enum8` in the table and a
-      // closed string set in the code, total by a `0xff` its tag set cannot
-      // reach. `writeU8OrThrow` would throw on every prune entry; a lenient
-      // reader would map 254 byte strings onto one value.
-      const tree = makeUtxoTxTree();
-      expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).pruneEntries[0]!.trigger)
-        .toBe('storage_prune');
-      const bad: UtxoTxTree = {
-        ...tree,
-        pruneEntries: [{ ...tree.pruneEntries[0]!, trigger: 'nonsense' as PruneEntry['trigger'] }],
-      };
-      const bytes = encodeUtxoTxTree(bad);
-      expect(hex(bytes)).toContain('ff');
-      expect(() => decodeUtxoTxTree(bytes)).toThrow(ReaderError);
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -732,7 +714,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('a6cdc4336195b4ac33264f5f23b4d1b6397791ce47ab41b3c75d57f0b32b3f5d');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('728b6773548de993b08f2aeada12e28e87f9ff0cbefe33467989549fb8b088b3');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

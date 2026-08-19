@@ -34,7 +34,6 @@ function makeStump(overrides: Partial<Stump> = {}): Stump {
     authorId: uid('author-alice'),
     replyCount: 3,
     upvoteCount: 7,
-    trigger: 'author',
     protocolVersion: 1,
     compactedAtBlockHeight: 42,
     ...overrides,
@@ -65,7 +64,6 @@ describe('stumps store', () => {
       authorId: uid('author-bob'),
       replyCount: 5,
       upvoteCount: 12,
-      trigger: 'storage_prune',
       protocolVersion: 1,
       compactedAtBlockHeight: 99,
     });
@@ -80,7 +78,6 @@ describe('stumps store', () => {
     expect(result!.authorId).toEqual(uid('author-bob'));
     expect(result!.replyCount).toBe(5);
     expect(result!.upvoteCount).toBe(12);
-    expect(result!.trigger).toBe('storage_prune');
     expect(result!.protocolVersion).toBe(1);
     expect(result!.compactedAtBlockHeight).toBe(99);
   });

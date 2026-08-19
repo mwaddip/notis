@@ -198,14 +198,16 @@ function parseSpecials(json: unknown): unknown {
 const asNumber = (json: unknown): number => parseSpecials(json) as number;
 const asString = (json: unknown): string => parseSpecials(json) as string;
 
-/** The `trigger` tag table (TYPES_INTERFACE → Layout — Stump / PruneEntry). */
-export const TRIGGER = enum8<'author' | 'storage_prune'>('trigger', {
-  author: 0,
-  storage_prune: 1,
+/** The `MintReason` tag table (`utxo.ts`). */
+export const MINT_REASON = enum8<'postlock-unlock' | 'postlock-remainder' | 'genesis' | 'genesis-committee'>('mintReason', {
+  'postlock-unlock': 3,
+  'postlock-remainder': 4,
+  genesis: 6,
+  'genesis-committee': 13,
 });
 
 const ENUM_TABLES: Record<string, ReturnType<typeof enum8>> = {
-  trigger: TRIGGER as ReturnType<typeof enum8>,
+  mintReason: MINT_REASON as ReturnType<typeof enum8>,
 };
 
 const LEAF_CODECS: Record<string, ValueCodec<never>> = {

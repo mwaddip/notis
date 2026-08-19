@@ -63,7 +63,6 @@ function makeStump(overrides: Partial<Stump>): Stump {
     authorId: uid('alice123'),
     replyCount: 0,
     upvoteCount: 0,
-    trigger: 'author',
     protocolVersion: 1,
     compactedAtBlockHeight: 10,
     ...overrides,
@@ -172,7 +171,6 @@ describe('posts store', () => {
     expect(retrieved.replyCount).toBe(3);
     expect(retrieved.upvoteCount).toBe(7);
     expect(retrieved.compactedAtBlockHeight).toBe(5);
-    expect(retrieved.trigger).toBe('author');
   });
 
   // 4. queryPosts with author filter

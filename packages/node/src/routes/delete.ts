@@ -27,7 +27,6 @@ export function deleteRoutes(deps: DeleteDeps): Router {
         subtreeMerkleRoot,
         subtreePostIds,
         signature,
-        trigger,
       } = req.body;
 
       // Validate required fields
@@ -71,7 +70,6 @@ export function deleteRoutes(deps: DeleteDeps): Router {
 
       const intent: PruneIntent = {
         rootPostHash,
-        trigger: trigger === 'storage_prune' ? 'storage_prune' : 'author',
         authorId: Buffer.from(authorId, 'hex'),
         subtreeMerkleRoot: Buffer.from(subtreeMerkleRoot, 'hex'),
         subtreePostIds,

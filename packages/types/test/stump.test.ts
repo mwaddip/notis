@@ -15,7 +15,6 @@ function makePruneEntry(overrides: Partial<PruneEntry> = {}): PruneEntry {
     subtreeMerkleRoot: merkleRoot32,
     authorId: authorKey,
     authorSignature: sig64,
-    trigger: 'author',
     ...overrides,
   };
 }
@@ -51,6 +50,17 @@ describe('stump', () => {
       const b = makePruneEntry({ authorId: otherAuthorKey });
       expect(computePruneEntryId(a)).not.toBe(computePruneEntryId(b));
     });
+
+    it('is invariant under authorSignature bytes', () => {
+      const a = makePruneEntry({ authorSignature: new Uint8Array(64).fill(0x11) });
+      const b = makePruneEntry({ authorSignature: new Uint8Array(64).fill(0x99) });
+      expect(computePruneEntryId(a)).toBe(computePruneEntryId(b));
+    });
+
+    it('matches a fixed vector', () => {
+      expect(computePruneEntryId(makePruneEntry()))
+        .toBe('b4845742e43ffaf390d6efb88e48cb5767d2178f3b82689584966bb114bc01f6');
+    });
   });
 
   describe('serializePruneEntry', () => {
@@ -70,12 +80,6 @@ describe('stump', () => {
     it('changes with different subtreePostIds', () => {
       const a = makePruneEntry();
       const b = makePruneEntry({ subtreePostIds: ['dd'.repeat(32)] });
-      expect(Buffer.compare(serializePruneEntry(a), serializePruneEntry(b))).not.toBe(0);
-    });
-
-    it('changes with different trigger', () => {
-      const a = makePruneEntry();
-      const b = makePruneEntry({ trigger: 'storage_prune' });
       expect(Buffer.compare(serializePruneEntry(a), serializePruneEntry(b))).not.toBe(0);
     });
   });
