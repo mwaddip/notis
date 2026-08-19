@@ -343,8 +343,7 @@ All messages are CBOR-encoded bodies wrapped in frames.
 >   read** by the receiver: the cap check counts them, nothing consumes their values. There is
 >   no ancestor search. **Verified 2026-08-11.** Fork resolution instead asks a peer for a header
 >   range over codes 14–17. Wiring anchors up would let divergence be discovered from the
->   `SyncInfo` both nodes already exchange — sketched, and not planned, in
->   `docs/specs/2026-08-14-sync-transport-unification-design.md` Part 2.
+>   `SyncInfo` both nodes already exchange — sketched, and not planned.
 >
 > ⚠ **The "not header-first" claim above is also made in four places outside this file, and they
 > are not covered by this marker:** `CLAUDE.md:27`, `README.md:146`, `:331`, `:364`, and **this
@@ -353,7 +352,7 @@ All messages are CBOR-encoded bodies wrapped in frames.
 > separate items having booked it as the home of this prose. **When correcting a claim, re-derive
 > where it actually lives rather than inheriting the pointer.**
 >
-> Per-mechanism status is marked below. Inventory: `prompts/audit-net.report.md`.
+> Per-mechanism status is marked below.
 
 ### SyncInfo (code 2)
 
@@ -903,9 +902,8 @@ registered per protocol — it acquires its own admission policy by omission rat
 **Landed 2026-08-10.** Both arms previously answered in a **second wire format** — `encode({ blocks })`
 / `encode(headers)` out, `decode(raw) as {…}` back — bare `cbor-x` plus a TypeScript cast, while every
 other whole-block path in this package used `encode`/`decodeOrderingBlock`. A cast is not a check, and
-the gap was **measured**: it was the sole delivery path for a remote fail-stop
-(`prompts/node-fail-stop-reachability-measure-REPORT.md`). Shape-validating the CBOR would have been
-the band-aid; the root cause was the second dialect, so the dialect is gone.
+the gap was **measured**: it was the sole delivery path for a remote fail-stop. Shape-validating
+the CBOR would have been the band-aid; the root cause was the second dialect, so the dialect is gone.
 
 - **Blocks:** `arr(blocks, lp(encodeOrderingBlock))`. **Headers:** `arr(headers, lp(encodeHeader))`.
 - **The per-element `lp` is load-bearing**: it gives each item its own byte span, so the four-part

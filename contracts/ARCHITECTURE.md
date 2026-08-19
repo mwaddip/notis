@@ -180,8 +180,7 @@ implementations:**
   which the unit did not exist. **Per-block settlement of a net figure is accounting for burns, not
   an absence of them.**
 - **A marker box standing in for value MUST CARRY THAT VALUE.** A zero-value marker means the units
-  it represents ceased to exist between the transaction and the settlement. This decides
-  `docs/specs` §5's open question in the only direction the axiom permits.
+  it represents ceased to exist between the transaction and the settlement.
 - **The pool is therefore NAMEABLE.** Value leaving circulation has to go *somewhere* nameable in the
   same operation that removes it, and value entering has to come from somewhere nameable. A rule that
   forbids every transaction from naming the supply box forces a burn.
@@ -637,8 +636,7 @@ reaches `writeHexNOrThrow` by the identical route and carries the same
 obligation.
 
 > ✅ **RESOLVED — the inbound obligation is now structural. Verified 2026-08-11.** This read
-> `AHEAD OF CODE` until Phase 9; the positional bundle
-> (`docs/specs/2026-08-09-positional-wire-format.md`) is merged, so it describes running code and is
+> `AHEAD OF CODE` until Phase 9; the positional bundle is merged, so it describes running code and is
 > no longer forward-looking. "Any path admitting client-supplied structure into those bytes must hold
 > it to a closed schema" is no longer an obligation a check must enforce: it is a property of the
 > encoding, because a positional layout has nowhere to put an unknown field and a field's width and
@@ -1431,8 +1429,6 @@ not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wir
 > net's transport framing.** Both halves were written at once and contradicted each other; the
 > resolution is the split above — per *message type*, not per *layer*.
 >
-> Per `docs/specs/2026-08-09-positional-wire-format.md`.
->
 > **Every consensus preimage becomes a positional byte layout** built on `@dagsocial/wire` — the
 > normative per-struct tables live in `TYPES_INTERFACE.md` → Serialization. CBOR is retired from
 > every committed byte. It survives only where nothing is committed: local storage (the journal,
@@ -1743,8 +1739,6 @@ forever. A node rejects objects with an unsupported protocol version.
 > implementation) and five are the bigint/value-denomination and authorization/decay rules Specs B
 > and G touched. Of the 15 false, **ten are July text**, and **all ten Ergo-Adopted bullets
 > are July text** — six false, three unenforced or qualified, one true.
->
-> Full per-invariant verdicts with sources: `prompts/audit-architecture.report.md` §3a.
 
 ### Cross-layer
 

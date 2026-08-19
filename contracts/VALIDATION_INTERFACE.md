@@ -829,10 +829,6 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > ⚠ **A non-empty body is therefore the precondition, and it is new.** Every block must carry at
 > least one transaction now, because the settlement is one. A structural check that admitted an
 > empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
->
-> ⚠ **This paragraph also cites `prompts/`, which `.gitignore` excludes wholesale** — the citation
-> resolves for its author and for nobody with a clone. Recorded, not swept: it is one instance of a
-> class, and a sweep of it is its own pass.
 
 Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
 `rootPostHash`, a `subtreePostIds` array of 64-char strings, a 32-byte
@@ -928,7 +924,7 @@ block-level checks (`pruneEntries`, `utxoTxIds`, `utxoTxs` alignment and weight,
 > every header field check into `HEADER_DOMAIN` / `firstHeaderDomainFailure`; Phase 3b deleted
 > the `subBlockRefs` presence and alignment checks along with the field. What remains *is*
 > already "what the codec cannot guarantee" — it merely also coincides with what the store path
-> needs. Full argument: `docs/specs/2026-08-10-pow-nonce-split.md` §4.1.
+> needs.
 >
 > **The table below is kept, because it is correct about what this function must never lose.**
 > What survives, and a codec cannot know:

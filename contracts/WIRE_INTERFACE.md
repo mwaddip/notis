@@ -45,8 +45,7 @@ mismatches.
   re-encode to different bytes. Both halves match the references, and the
   asymmetry is exactly what lets the layer above detect non-minimal input.
 
-> ⚠ **THIS PACKAGE IS A CONSENSUS DEPENDENCY.** Per
-> `docs/specs/2026-08-09-positional-wire-format.md`; landed in Phase 1b. Re-verified
+> ⚠ **THIS PACKAGE IS A CONSENSUS DEPENDENCY.** Landed in Phase 1b. Re-verified
 > 2026-08-11. **A standing warning, not one of the status markers** in
 > `ARCHITECTURE.md` §Status markers — it states a property of the package, so it does not
 > decay and does not need retiring. See §VLQ Standalone Functions, where this being true is

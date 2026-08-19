@@ -241,7 +241,7 @@ boxId = blake2b512( BOX_ID_DOMAIN ‖ canonicalCbor(candidate) ‖ txId ‖ u32B
 ```
 
 Box identity derives from **creating-transaction provenance**, not from content alone
-(Spec G — `docs/specs/2026-08-05-box-identity.md`). A pure content hash cannot be
+(Spec G). A pure content hash cannot be
 simultaneously *honest* (matching an apply-mutated box) and *predictable* (known at signing
 time); provenance gives both, and makes collisions structurally impossible.
 
@@ -426,7 +426,6 @@ strings and `Uint8Array`s, and a nested object added later would need it applied
 path (karma/like/vouch hold small bigints; credits are integer base units of
 10⁻⁸ credit). Float math is non-deterministic across platforms, and credit sums
 exceed `Number.MAX_SAFE_INTEGER` (2⁵³) once scaled ×10⁸ — both break consensus.
-See `docs/specs/2026-08-01-node-consensus-determinism.md` P0.
 
 ### Box value domain — `[0, 2⁶³)`, stated here and cited everywhere else
 
@@ -1265,10 +1264,9 @@ it contains, move with the function — `VALIDATION_INTERFACE → blockWork / cu
 
 > ✅ **RESOLVED — this section describes the code. Verified 2026-08-11.** It read
 > `AHEAD OF CODE` until Phase 9, with the disclaimer *"The code is still `cbor-x`. Do not read
-> this section as a description of current behaviour."* The positional bundle
-> (`docs/specs/2026-08-09-positional-wire-format.md`, Phases 0–8) is merged, so **everything
-> from here to the Export table is now a description of running code** and should be read as
-> one.
+> this section as a description of current behaviour."* The positional bundle (Phases 0–8)
+> is merged, so **everything from here to the Export table is now a description of running
+> code** and should be read as one.
 >
 > ⚠ **Two encoders are still CBOR and are not covered by that statement.** `encodeTx` /
 > `decodeTx` and `encodeStump` / `decodeStump` in `types/src/serialization.ts` are bare
