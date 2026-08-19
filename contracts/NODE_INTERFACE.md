@@ -1855,8 +1855,12 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every author the block credits · every `VouchEscrowBox` whose `releaseAtBlock` is this height · the `BondBox` of every bond settling at this height · the karma boxes decay charges and the locks a prune entry names |
-| **Emits** | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · like payouts and carry successors · decay replacements · prune refunds |
+| **Consumes** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every author the block credits · the `BondBox` of every bond settling at this height · the karma boxes decay charges and the locks a prune entry names |
+| **Emits** | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond, back to its inviter · like payouts and carry successors · decay replacements · prune refunds |
+
+⚠ **A `VouchEscrowBox` is deliberately NOT here.** Its owner reclaims it by ordinary
+transaction once `releaseAtBlock` passes (`OWNER_SIGNATURE`, `SPEND_TIMING`'s `vouch_escrow`
+entry) — no per-block step touches it.
 
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
