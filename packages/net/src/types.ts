@@ -156,7 +156,7 @@ export interface NetConfig {
 // ---------------------------------------------------------------------------
 
 // Reserved, never to be reused: `verifyPoW`, `verifyPostSignature`,
-// `verifySubBlockStructure`. The relay gate for a post is now membership in the
+// `verifySubBlockStructure`. The relay gate for a post is membership in the
 // karma set (`KarmaMembers` in gossip.ts) plus `verifyTxStructure`, which pins
 // the post payload's field domains.
 export interface NetValidators {

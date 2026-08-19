@@ -6,7 +6,7 @@ export interface SyncInfo {
 }
 
 export interface Inv {
-  typeId: number; // 101 = ordering block header, 102 = sub-block
+  typeId: number; // 101 = ordering block header; 102 retired, never reuse
   ids: string[];
 }
 

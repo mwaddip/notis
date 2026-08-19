@@ -68,15 +68,12 @@ describe('sync protocol', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The error contract these two do NOT share with requestPosts
-//
-// `requestPosts` answers an unexpected frame code or a malformed body with
-// `{ entries: [] }`. These two must reject: `requestBlocks`' result goes
-// straight to `reorg(forkHeight, newBlocks)`, which reverts above the fork point
-// and applies what it is given, so an empty array truncates our own chain
-// instead of failing to extend it (NET_INTERFACE → Pull Requests). Same
-// transport, same shape, different error contract — and that difference is only
-// visible in a test that sends the wrong code.
+// Both chain queries THROW on an unexpected frame code or a malformed body.
+// `requestBlocks`' result goes straight to `reorg(forkHeight, newBlocks)`,
+// which reverts above the fork point and applies what it is given, so an empty
+// array truncates our own chain instead of failing to extend it (NET_INTERFACE
+// → Pull Requests). That difference is only visible in a test that sends the
+// wrong code.
 // ---------------------------------------------------------------------------
 
 describe('chain queries reject a frame bearing another code', () => {

@@ -27,13 +27,12 @@ export const SYNC_PROTOCOL = '/dagsocial/sync/1';
 // we asked, so an answer bearing the wrong code is refused instead of decoded
 // against the wrong codec.
 //
-// ⚠ **These two throw where `requestPosts` returns empty** (NET_INTERFACE →
+// Both THROW on an unexpected frame code or a malformed body (NET_INTERFACE →
 // Pull Requests). Fork resolution feeds `requestBlocks`' result straight to
 // `reorg(forkHeight, newBlocks)`, so an empty array rolls our chain back to the
 // fork point and applies nothing — a peer sending junk would truncate our chain
 // instead of failing to extend it. The throw lands in that function's existing
-// catch and abandons the reorg. Same transport and same shape as
-// `requestPosts`; deliberately not the same error contract.
+// catch and abandons the reorg.
 // ---------------------------------------------------------------------------
 
 /**

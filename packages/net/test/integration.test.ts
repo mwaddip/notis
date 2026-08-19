@@ -123,7 +123,7 @@ describe('Two-node integration', () => {
     expect(nodeB.peers().length).toBeGreaterThanOrEqual(1);
   }, TIMEOUT);
 
-  it('sub-block propagates from A to B via gossip', async () => {
+  it('transaction propagates from A to B via gossip', async () => {
     // Start node A
     nodeA = new NetNode(makeConfig(), validators);
     await nodeA.start();
@@ -219,7 +219,7 @@ describe('Two-node integration', () => {
     expect(receivedBlock!.header.protocolVersion).toBe(1);
   }, TIMEOUT);
 
-  it('invalid sub-block does NOT trigger handler on B', async () => {
+  it('invalid transaction does NOT trigger handler on B', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     await nodeA.start();
     const multiaddrs = nodeA.libp2pNode?.getMultiaddrs() ?? [];
