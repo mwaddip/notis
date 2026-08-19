@@ -760,9 +760,8 @@ describe('the invite at block application — decay adjacency', () => {
   it('the counter survives to the bond deadline under virtual decay', async () => {
     // Under virtual decay the invitee is untouched at the deadline, so no
     // decay settlement leg fires — the counter is trivially preserved. The
-    // hazard this originally tested (decay and bond settlement both writing
-    // the same record) is no longer reachable via empty blocks; it needs a
-    // touch at the deadline height.
+    // write-collision between decay and bond settlement needs a touch at the
+    // deadline height; an empty block cannot reach it.
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
     const utxo = await import('../../src/store/utxo.js');

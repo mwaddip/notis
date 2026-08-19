@@ -143,9 +143,8 @@ export interface DecayDeps {
  * and a mint separated by steps, which `ARCHITECTURE → The conservation axiom`
  * forbids by name.
  *
- * ⚠ **The trigger changed: touch, not walk.** The staleness predicate, the
- * interval arithmetic and the karma floor are unchanged; the squaring fires
- * per identity on touch rather than walking every karma owner every block.
+ * ⚠ The trigger is touch: the squaring fires per identity when the block
+ * body consumes their boxes. There is no per-block walk.
  */
 export interface DecayPlan {
   owner: Uint8Array;
