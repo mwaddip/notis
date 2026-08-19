@@ -40,6 +40,7 @@ import {
   mineNextBlock,
   seedAsOneTx,
   signTransaction,
+  uid,
   type TestIdentity, fixturePostId, fillerTx, seedPostTx, activateProverOverStore,
   seedKarmaPoolBox, makeApplicableBlock,
   FIXTURE_BOND_KARMA,
@@ -231,7 +232,7 @@ describe('the invite at block application', () => {
     const records = await importRecords();
     const before = records.getIdentityRecord(invitee.userId);
     records.putIdentityRecord(invitee.userId, {
-      lastActivityBlock: before?.lastActivityBlock ?? 0,
+      lastActivityBlock: before?.lastActivityBlock ?? invitedAtBlock,
       lastDecayBlock: before?.lastDecayBlock ?? 0,
       invitedAtBlock,
       lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
@@ -283,10 +284,145 @@ describe('the invite at block application', () => {
 
     const record = records.getIdentityRecord(invitee.userId);
     expect(record!.invitedAtBlock).toBe(height);
-    // The grant's karma output carries nonActivity: true (received value), so
-    // insertBox does not bump lastActivityBlock. The invitee's first activity
-    // is their own first transaction.
-    expect(record!.lastActivityBlock).toBe(0);
+    // The clock epoch: lastActivityBlock starts at the claim height, not 0
+    // (NODE_INTERFACE → Identity Records). The grant output carries
+    // nonActivity: true, so insertBox does not bump the clock — the epoch is
+    // the record write's.
+    expect(record!.lastActivityBlock).toBe(height);
+  });
+
+  it('an invitee acting within the staleness threshold is NOT squared', async () => {
+    // The positive path: the clock epoch means a freshly-granted invitee is
+    // not stale, so their first self-action does not trigger decay squaring
+    // and the granted face value survives intact minus the act's own cost.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    await seedKarmaPoolBox();
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 77);
+    utxo.insertBox(karma);
+
+    await activateProverOverStore();
+
+    const mempool = await importMempool();
+    const records = await importRecords();
+    const types = await import('@dagsocial/types');
+
+    // Block 1: the invite.
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    const inviteBlock = await mineOne();
+    expect(inviteBlock).not.toBeNull();
+    const claimHeight = inviteBlock!.header.height;
+    expect(records.getIdentityRecord(invitee.userId)!.lastActivityBlock).toBe(claimHeight);
+
+    const grantedKarma = utxo.getKarmaValue(invitee.userId);
+    expect(grantedKarma).toBe(FIXTURE_BOND_KARMA);
+
+    // Block 2 (within the threshold): the invitee posts — a self-action that
+    // touches their karma via the post-lock. Build the tx against the
+    // GRANTED karma box, not a pre-seeded fixture. The settlement must NOT
+    // square them because they are not stale: claimHeight + 1 is well within
+    // KARMA_STALE_THRESHOLD_BLOCKS of the claim.
+    const grantedBox = utxo.getKarmaBoxes(invitee.userId);
+    expect(grantedBox.length).toBe(1);
+
+    const post = makePost(invitee.userId, 'first post');
+    const { POST_LOCK_THREAD_COST } = types;
+    const postTx: UtxoTransaction = {
+      inputs: [grantedBox[0]!.id!],
+      outputs: [
+        { boxType: 'karma', value: grantedKarma - POST_LOCK_THREAD_COST, createdAtBlock: 0, owner: invitee.userId } as never,
+        { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: 0, originalValue: POST_LOCK_THREAD_COST, owner: invitee.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post,
+    };
+    signTransaction(postTx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
+
+    const postId = types.computePostId(types.computeTxId(postTx), 0);
+    const posts = await import('../../src/store/posts.js');
+    posts.insertPost(postId, post, types.encodePost(post));
+    mempool.insertUtxoTx(postTx, 1000);
+    const postBlock = await mineOne();
+    expect(postBlock).not.toBeNull();
+
+    // Face value after posting: granted minus the thread lock cost. No decay
+    // squaring happened — the full granted amount is still there, less only
+    // the lock.
+    const afterPost = utxo.getKarmaValue(invitee.userId);
+    expect(afterPost).toBe(grantedKarma - POST_LOCK_THREAD_COST);
+
+    // The mechanism: lastActivityBlock is still the claim height (the post
+    // advances it to block 2, which is even more recent).
+    const afterRecord = records.getIdentityRecord(invitee.userId)!;
+    expect(afterRecord.lastActivityBlock).toBeGreaterThanOrEqual(claimHeight);
+  });
+
+  it('an invitee idle past the threshold decays from the claim height, not from 0', async () => {
+    // The boundary path: the epoch shifts where decay measures from. An
+    // invitee whose clock started at 0 would owe periods back to genesis; one
+    // whose clock starts at the claim height owes only from there.
+    //
+    // Pick a claim height and test height so the owed-periods differ enough
+    // to produce different effective karma. With KARMA_DECAY_AMOUNT = 5 and
+    // FIXTURE_BOND_KARMA = 25, it takes 3 periods to reach the floor (10).
+    // The claim-epoch identity must owe <= 2 periods while the clock-0
+    // identity owes >= 3.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const records = await importRecords();
+
+    const { isIdentityStale, owedPeriods: owedPeriodsFromDecay, effectiveKarma } =
+      await import('../../src/services/decay.js');
+
+    // Claimed at a height that puts the claim-epoch owed periods at exactly 1
+    // when measured at boundaryHeight, while the clock-0 identity owes many
+    // more. claimHeight chosen so (boundaryHeight - claimHeight) / interval = 1.
+    const claimHeight = KARMA_STALE_THRESHOLD_BLOCKS;
+    const boundaryHeight = claimHeight + KARMA_STALE_THRESHOLD_BLOCKS + KARMA_DECAY_INTERVAL_BLOCKS;
+
+    records.putIdentityRecord(uid('boundary-invitee'), {
+      lastActivityBlock: claimHeight,
+      lastDecayBlock: 0,
+      invitedAtBlock: claimHeight,
+      lifetimeLikesReceived: 0n,
+    });
+
+    const cfg = {
+      staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+      decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+      decayAmount: BigInt(KARMA_DECAY_AMOUNT),
+      karmaMinimum: BigInt(KARMA_MINIMUM),
+    };
+
+    const record = records.getIdentityRecord(uid('boundary-invitee'))!;
+
+    // Stale: the identity has been idle for threshold + interval blocks.
+    expect(isIdentityStale(record, boundaryHeight, cfg.staleThresholdBlocks)).toBe(true);
+    const periods = owedPeriodsFromDecay(record, boundaryHeight, cfg.decayIntervalBlocks);
+    // owedPeriods = floor((boundaryHeight − claimHeight) / interval) = threshold/interval + 1 = 29
+    expect(periods).toBe(Math.floor(KARMA_STALE_THRESHOLD_BLOCKS / KARMA_DECAY_INTERVAL_BLOCKS) + 1);
+
+    // Contrast: with clock 0 the owed periods are much larger.
+    const clockZero = { ...record, lastActivityBlock: 0 };
+    const periodsFromZero = owedPeriodsFromDecay(clockZero, boundaryHeight, cfg.decayIntervalBlocks);
+    expect(periodsFromZero).toBeGreaterThan(periods);
+
+    // Effective karma: from the claim height, only 29 periods of decay
+    // (5 × 29 = 145, which exceeds 25 → clamped to min(25, 10) = 10).
+    // But from clock 0, even MORE periods are owed.
+    // To show the difference clearly, use a larger face value.
+    const face = 200n;
+    const effective = effectiveKarma(face, record, boundaryHeight, cfg);
+    const effectiveFromZero = effectiveKarma(face, clockZero, boundaryHeight, cfg);
+    // From the claim height: 200 - 29*5 = 200 - 145 = 55
+    expect(effective).toBe(face - BigInt(periods) * cfg.decayAmount);
+    // From clock 0: many more periods, floored to minimum.
+    expect(effectiveFromZero).toBeLessThan(effective);
   });
 
   it('the grant bars the key from any further invite', async () => {

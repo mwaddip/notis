@@ -440,6 +440,12 @@ values in boxes move only when a transaction touches the identity.
   the store choke point); squaring advances `lastDecayBlock`. Received value
   — a like payout, a vesting return, a settlement re-emit — is **not**
   activity and must not reset the clock.
+- **The clock starts at onboarding.** A never-onboarded identity is neither
+  active nor inactive — inactivity presupposes activity — and the invite is
+  the one onboarding path, so the claim that creates the identity record
+  initializes `lastActivityBlock` to the claim height. The grant output stays
+  `nonActivity`: the epoch is the record write's, not a box bump's, and an
+  invitee has no earlier clock for the `nonActivity` rule to protect.
 - **Rollback:** squarings ride the settlement and the identity-record journal;
   reverse replay restores both.
 

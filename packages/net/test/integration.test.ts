@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   generateKeyPair,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
 import type { Post, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
@@ -57,7 +58,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
     powNonce: 100,
-    powTargetBits: 4 * 256,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000,
     ...overrides,
   };
@@ -275,6 +276,10 @@ describe('Two-node integration', () => {
     const chain = new Map<number, OrderingBlock>();
     for (let h = 1; h <= 3; h++) {
       chain.set(h, makeBlock(makeHeader({ height: h, createdAt: 1_000_000 + h })));
+    }
+    for (const [, block] of chain) {
+      const r = verifyOrderingBlockStructure(block);
+      expect(r.valid, `fixture block h=${block.header.height}: ${r.error}`).toBe(true);
     }
     nodeA.setHeadersHandler((h) => chain.get(h) ?? null);
     await nodeA.start();

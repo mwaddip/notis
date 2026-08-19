@@ -1199,7 +1199,7 @@ the treasury.
 | CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
 | PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
 | BondBox | KarmaBox / — | Block application only: settlement at the probation deadline — **no user transaction can spend a `BondBox`** |
-| KarmaPoolBox | KarmaPoolBox + … | **Settlement only**, once per block — the pool's sole spender |
+| KarmaPoolBox | KarmaPoolBox + … | **Settlement only** — the pool's sole spender, spent in blocks whose settlement moves karma and left alone otherwise |
 
 ⚠ **"Same owner" binds the inputs to each other, not only the outputs to
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
@@ -2419,7 +2419,7 @@ clock has to live in committed state (Spec G D4).
 
 ```
 IdentityRecord {
-  lastActivityBlock: number     // u32 — bumped when a non-decay karma box is created for the owner
+  lastActivityBlock: number     // u32 — starts at the claim height that creates the record; bumped when a non-decay karma box is created for the owner
   lastDecayBlock: number        // u32 — bumped when decay fires
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
@@ -2458,7 +2458,9 @@ fall under it.
 The record is a full-row upsert and the type forces every field *present*, so a
 writer passing `0` compiles and passes typecheck while erasing a probation clock
 or a like history. **Every writer other than the one that owns a field carries the
-stored value through unchanged** — `invitedAtBlock` is owned by the grant path,
+stored value through unchanged** — `invitedAtBlock` and `lastActivityBlock`'s
+**epoch** are owned by the grant path (the claim write initializes the activity
+clock to the claim height; advancement stays the store choke point's),
 `lifetimeLikesReceived` by the lifetime-counter bookkeeping.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
@@ -3931,8 +3933,12 @@ phase; NET_INTERFACE is authoritative for that side.
 - Protocol version checked at verification
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit
-- Karma decay applied periodically at block application time
-- Like deduplication happens at ordering block creation time
+- Karma decay is virtual — sufficiency reads value through `effectiveKarma`; the
+  settlement squares touched identities at block application (`ARCHITECTURE` →
+  Karma decay)
+- Like deduplication is the like-record's existence at block application —
+  `hasLikeRecord` refuses the duplicate (relay admission mirrors it), and the
+  `like_records` primary key is the structural backstop
 - All state mutations flow through mempool → ordering block inclusion →
   block application. Zero direct `consumeBox`/`insertBox` calls in HTTP routes.
 - Mutating routes return `{ status: "pending", txId, expiresAtHeight }` —
