@@ -211,7 +211,7 @@ export class CodecError extends ReaderError {
  * A bare `u8`'s wire domain is the whole byte, so it has no unreachable
  * sentinel — same structural situation as `vlqU64` and the fixed-width
  * writers. Note that the `u8` *fields* in the layout tables never hit this:
- * `decayBurn` is a boolean (`writeBool`, whose `{0,1}` domain really is
+ * `nonActivity` is a boolean (`writeBool`, whose `{0,1}` domain really is
  * narrower) and box/trigger/reason tags are `enum8` (a closed table). Both
  * of those stay total.
  *
@@ -537,7 +537,7 @@ export function arrByteLength<T>(items: T[], sizeOf: (x: T) => number): number {
  *
  * `undefined` counts as absent alongside `null`. Wire's `writeOption` tests
  * `=== null` only, and the optional fields in the layout tables are declared
- * `decayBurn?: boolean` / `lockedUntilBlock?: number` — so an absent field
+ * `nonActivity?: boolean` / `lockedUntilBlock?: number` — so an absent field
  * arrives as `undefined` and would otherwise take the *present* branch and
  * serialize nothing after the tag.
  */

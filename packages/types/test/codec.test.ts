@@ -197,7 +197,7 @@ describe('hex ↔ bytes lives here and only here', () => {
 describe('opt', () => {
   it('treats undefined as absent, like null', () => {
     // Wire's own writeOption tests `=== null` only, and the optional fields in
-    // the layout tables are declared `decayBurn?:` / `lockedUntilBlock?:` — so
+    // the layout tables are declared `nonActivity?:` / `lockedUntilBlock?:` — so
     // an absent one arrives as undefined and would take the *present* branch.
     const absentNull = bytes((w) => writeOpt<number>(w, null, (ww, v) => writeVlqU(ww, v)));
     const absentUndef = bytes((w) => writeOpt<number>(w, undefined, (ww, v) => writeVlqU(ww, v)));

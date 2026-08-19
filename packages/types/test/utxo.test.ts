@@ -187,9 +187,9 @@ describe('boxes', () => {
       expect(() => computeBoxId(makeVouchEscrowBox())).not.toThrow();
     });
 
-    it('computeBoxId differs when decayBurn differs', () => {
+    it('computeBoxId differs when nonActivity differs', () => {
       const box1 = makeKarmaBox({ value: 100n });
-      const box2 = makeKarmaBox({ value: 100n, decayBurn: true });
+      const box2 = makeKarmaBox({ value: 100n, nonActivity: true });
       const id1 = computeBoxId(box1);
       const id2 = computeBoxId(box2);
       expect(id1).not.toBe(id2);
@@ -297,7 +297,7 @@ const GOLDEN_CREDIT_BOX: CreditBox = { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_
  * against.
  *
  *   karma  = 00 | 64 | ac02 | b32(owner)      | 00
- *            ^tag ^vlqU64(100)                  ^opt decayBurn absent
+ *            ^tag ^vlqU64(100)                  ^opt nonActivity absent
  *                      ^vlqU(300) createdAtBlock
  *   credit = 01 | vlqU64(12345678900000000) | ac02 | b32(owner) | 00
  *                                                                 ^opt lockedUntilBlock absent
@@ -307,7 +307,7 @@ const GOLDEN_KARMA_BOX_BYTES =
   '64' +                                                               // vlqU64(100)
   'ac02' +                                                             // vlqU(300) createdAtBlock
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  '00';                                                                // opt decayBurn absent
+  '00';                                                                // opt nonActivity absent
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
   '80eae1eac58af715' +                                                 // vlqU64(12345678900000000)
@@ -329,7 +329,7 @@ const GOLDEN_CREDIT_BOX_BYTES =
  *   vlqU64(value)         1n                 → `01`      (1 < 0x80, one group)
  *   vlqU(createdAtBlock)  300                → `ac 02`   (see below)
  *   b32(owner)            32 × 0x11          → `11`×32
- *   opt(decayBurn)        absent             → `00`      (`writeOpt` writes `u8(0)`)
+ *   opt(nonActivity)        absent             → `00`      (`writeOpt` writes `u8(0)`)
  *
  * **`vlqU(300)`**: base-128, low group first, continuation bit high.
  * `300 = 0b100101100`. Low seven bits `0101100` = 44 = `0x2c`; a group remains,
@@ -358,7 +358,7 @@ describe('the shared prefix carries the creation height', () => {
       Buffer.from([0x01]),         // vlqU64 1n
       Buffer.from([0xac, 0x02]),   // vlqU 300
       Buffer.alloc(32, 0x11),      // b32 owner
-      Buffer.from([0x00]),         // opt decayBurn absent
+      Buffer.from([0x00]),         // opt nonActivity absent
     ]);
     expect(Buffer.from(canonicalBoxBytes(box))).toEqual(expected);
     // 37: the two-byte prefix the format had, plus two for a height that needs
@@ -725,7 +725,7 @@ describe('like_accrual and vouch_escrow', () => {
   it('a like accrual is tag, value and the author key — 34 bytes, no option tag', () => {
     expect(hexOf(canonicalBoxBytes(makeLikeAccrualBox()))).toBe(LIKE_ACCRUAL_BYTES);
     // 34, where `karma` at the same value is 35: the karma arm's absent
-    // `decayBurn` option costs a byte this arm has no field for.
+    // `nonActivity` option costs a byte this arm has no field for.
     expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(36);
     expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(37);
   });
@@ -1466,7 +1466,7 @@ describe('boxRecordFromBytes', () => {
    */
   const ALL_BOX_TYPES: [string, AnyBoxCandidate][] = [
     ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
-    ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, decayBurn: true }],
+    ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, nonActivity: true }],
     ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
     ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
     // The same trailing fields under two tags, at values the other never

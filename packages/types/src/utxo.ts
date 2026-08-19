@@ -111,7 +111,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *
  *   enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock) ‖ <per-type>
  *
- *   | karma         | b32(owner) ‖ opt(decayBurn)                                |
+ *   | karma         | b32(owner) ‖ opt(nonActivity)                                |
  *   | credit        | b32(owner) ‖ opt(lockedUntilBlock)                         |
  *   | genesis_proof | lp(payload)                                               |
  *   | bond          | b32(inviterId) ‖ b32(inviteePublicKey)                     |
@@ -202,7 +202,7 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
   switch (box.boxType) {
     case 'karma':
       writeBytesNOrThrow(w, box.owner, 32);
-      writeOpt(w, box.decayBurn, writeBool);
+      writeOpt(w, box.nonActivity, writeBool);
       return;
     case 'credit':
       writeBytesNOrThrow(w, box.owner, 32);
@@ -284,7 +284,7 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
  *
  * One absence is mapped rather than passed through, and it is what makes the
  * re-encode compare close: `opt` fields decode to `undefined`, not `null`.
- * `decayBurn?: boolean` and `lockedUntilBlock?: number` are optional, so
+ * `nonActivity?: boolean` and `lockedUntilBlock?: number` are optional, so
  * `undefined` is the type-correct spelling of absent and it is what re-encodes to
  * the same `u8(0)`.
  */
@@ -301,7 +301,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         value,
         createdAtBlock,
         owner: readBytesN(r, 32),
-        decayBurn: readOpt(r, readBool) ?? undefined,
+        nonActivity: readOpt(r, readBool) ?? undefined,
       };
     case 'credit':
       return {
@@ -707,7 +707,7 @@ export interface KarmaBox extends BoxBase {
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
-  decayBurn?: boolean;
+  nonActivity?: boolean;
 }
 
 // --- Credit ---
@@ -1196,7 +1196,7 @@ export function writeTxIdFields(w: ByteWriter, tx: UtxoTransaction): void {
  * `readOpt` answers `null` for an absent option and the fields are optional, so
  * `undefined` is the type-correct spelling of absent and it is what re-encodes to
  * the same `u8(0)` — the mapping `readBoxContentFields` already makes for
- * `decayBurn`, and what keeps the re-encode compare closable.
+ * `nonActivity`, and what keeps the re-encode compare closable.
  */
 export function readTxIdFields(r: ByteReader): Omit<UtxoTransaction, 'signatures'> {
   return {
