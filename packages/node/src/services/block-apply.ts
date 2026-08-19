@@ -2,8 +2,6 @@ import { createHash, createPublicKey, verify } from 'crypto';
 import * as validation from '@dagsocial/validation';
 import { transferKarma } from './karma-transfer.js';
 import {
-  bondSettleContext,
-  likePayoutContext,
   postlockRemainderContext,
   postlockUnlockContext,
 } from '../mint-provenance.js';
@@ -746,8 +744,8 @@ function applyMutationPhase(
   //   2. Verify Ed25519 author signature over (rootPostHash || subtreeMerkleRoot)
   //   3. Verify postId set against block_topology (deterministic, no DAG walk)
   //   4. Verify Merkle root from entry.subtreePostIds
-  //   5. Settle UTXO — consume PostLockBoxes, mint prune-refund-author karma
-  //      to every owner but the pruning author, delete the subtree's
+  //   5. Settle UTXO — consume PostLockBoxes, refund karma to every owner
+  //      but the pruning author via the settlement, delete the subtree's
   //      like-records (journalled)
   //   6. Prune DAG content, insert simplified Stump for historical record
   for (const entry of block.utxoTxTree.pruneEntries) {

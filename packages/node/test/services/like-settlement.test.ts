@@ -422,23 +422,12 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(utxo.getKarmaValue(authorA.userId)).toBe(X - 1n + POST_CHANGE);
     expect(utxo.getKarmaValue(authorB.userId)).toBe(X - 1n + POST_CHANGE);
 
-    // ⛔ **THE SYNTHETIC MINT ID IS RETIRED, AND SO IS THE COLLISION ARGUMENT
-    // BEHIND IT.** A payout is an output of the block's settlement transaction,
-    // so it carries that transaction's real `(txId, index)`; `like-payout` is a
-    // reason nothing derives any more (NODE_INTERFACE → Reason and subject
-    // table). ⚠ **What the pin bought is now structural**: two payouts in one
-    // block are two outputs of one transaction and cannot collide, where two
-    // synthetic mints under one `(height, reason, subject)` could.
     const payouts = utxo
       .getUnspentBoxes()
       .filter((b) => b.boxType === 'karma' && b.value === X - 1n);
     expect(payouts).toHaveLength(2);
     // Both are outputs of the SAME transaction — the block's one settlement.
     expect(new Set(payouts.map((b) => b.txId)).size).toBe(1);
-    for (const b of payouts) {
-      expect(b.txId).not.toBe(computeMintTxId(2, 'like-payout', authorA.userId));
-      expect(b.txId).not.toBe(computeMintTxId(2, 'like-payout', authorB.userId));
-    }
   });
 
   it('likes on two posts of one author in one block consolidate into ONE mint', async () => {
@@ -962,12 +951,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // journal's box primitives already own.
     expect(utxo.getBox(authorKarma.id!)).not.toBeNull();
     expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n);
-    // ⛔ The payout carries the settlement's real `(txId, index)`; the
-    // `like-payout` reason derives nothing any more.
-    const payout = utxo
-      .getUnspentBoxes()
-      .find((b) => b.boxType === 'karma' && b.value === 4n)!;
-    expect(payout.txId).not.toBe(computeMintTxId(3, 'like-payout', author.userId));
     expect(await carryOf(author.userId)).toBe(0n);
 
     await assertRoundTrip(db, handle, pre, classBlock);

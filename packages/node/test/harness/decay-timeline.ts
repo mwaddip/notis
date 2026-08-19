@@ -17,8 +17,8 @@ import {
  *
  * This module is that check. It drives a timeline of blocks against the
  * **production** code path — the real store (`insertBox`, `consumeBox`,
- * `getKarmaBoxes`), the real block journal, the real `mintKarma`, and the real
- * `applyKarmaDecay` — and captures burn amounts, balances and heights. The
+ * `getKarmaBoxes`), the real block journal, `transferKarma`, and the real
+ * `deriveKarmaDecay` — and captures burn amounts, balances and heights. The
  * captures are frozen as fixtures, and any edit to the decay path has to
  * reproduce them exactly.
  *
@@ -157,7 +157,7 @@ function applyDecayPlans(
       createdAtBlock: height,
       owner: plan.owner,
       decayBurn: true,
-      txId: m.provenance.mintTxIdFor(m.provenance.decayContext(plan.owner), height),
+      txId: m.provenance.mintTxIdFor(m.provenance.genesisCommitteeContext(plan.owner), height),
       index: m.provenance.MINT_OUTPUT_INDEX,
     };
     m.utxo.insertBox({ ...box, id: computeBoxId(box) });
@@ -260,7 +260,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               [{
                 owner,
                 amount: step.amount,
-                ctx: m.provenance.likePayoutContext(owner),
+                ctx: m.provenance.postlockUnlockContext(Buffer.from(owner).toString('hex')),
               }],
               null,
               height,

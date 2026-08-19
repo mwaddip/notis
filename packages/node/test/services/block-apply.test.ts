@@ -1604,10 +1604,6 @@ describe('block-apply mint provenance', () => {
       const utxo = await importUtxo();
       const journalStore = await importJournalStore();
       const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
-      const { decayContext } = await import(
-        '../../src/mint-provenance.js'
-      );
-
       const idle = makeTestIdentity();
       const target = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));

@@ -1414,7 +1414,7 @@ describe('revertBlock', () => {
       createdAtBlock: DECAY_HEIGHT,
       owner: plan.owner,
       decayBurn: true,
-      txId: provenance.mintTxIdFor(provenance.decayContext(plan.owner), DECAY_HEIGHT),
+      txId: provenance.mintTxIdFor(provenance.genesisCommitteeContext(plan.owner), DECAY_HEIGHT),
       index: provenance.MINT_OUTPUT_INDEX,
     };
     const newBoxId = computeBoxId(emitted);

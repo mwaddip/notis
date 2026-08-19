@@ -260,7 +260,7 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
     const {
       postlockUnlockContext,
       postlockRemainderContext,
-      decayContext,
+      genesisCommitteeContext,
     } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
@@ -275,7 +275,7 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
     const produced = await producedBoxes(HEIGHT, () => {
       transferKarma(s1, [{ owner: user(0x11), amount: 10n, ctx: postlockUnlockContext(POST_A) }], null, HEIGHT);
       transferKarma(s2, [{ owner: user(0x12), amount: 20n, ctx: postlockRemainderContext(POST_A) }], null, HEIGHT);
-      transferKarma(s3, [{ owner: user(0x13), amount: 30n, ctx: decayContext(user(0x13)) }], null, HEIGHT);
+      transferKarma(s3, [{ owner: user(0x13), amount: 30n, ctx: genesisCommitteeContext(user(0x13)) }], null, HEIGHT);
     });
     expect(produced.length).toBe(3);
 
@@ -303,7 +303,7 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
     const {
       postlockUnlockContext,
       postlockRemainderContext,
-      decayContext,
+      genesisCommitteeContext,
     } = await import('../../src/mint-provenance.js');
     initDb(':memory:');
 
@@ -314,7 +314,7 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
     const produced = await producedBoxes(HEIGHT, () => {
       transferKarma(t1, [{ owner: user(0x21), amount: 10n, ctx: postlockUnlockContext(POST_A) }], null, HEIGHT);
       transferKarma(t2, [{ owner: user(0x22), amount: 20n, ctx: postlockRemainderContext(POST_A) }], null, HEIGHT);
-      transferKarma(t3, [{ owner: user(0x23), amount: 30n, ctx: decayContext(user(0x23)) }], null, HEIGHT);
+      transferKarma(t3, [{ owner: user(0x23), amount: 30n, ctx: genesisCommitteeContext(user(0x23)) }], null, HEIGHT);
     });
 
     // "Stayed up": the prover holds the producer-built objects.
