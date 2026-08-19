@@ -1048,7 +1048,9 @@ Stage 2 (@dagsocial/node — after receipt)
   └── Block receipt (applyOrderingBlock — the funnel every apply path passes
         through: gossip, sync, reorg — so no path can skip it)
         ├── verifyOrderingBlockStructure
-        ├── verifyBlockChainLink (against previous block)
+        ├── chain-link check — inline: prevBlockHash against blockHash(prev
+        │     header) + height increment. `verifyBlockChainLink` the export has
+        │     zero production callers (its section below says so)
         ├── verifyOrderingBlockPoW
         ├── verifyValidatorSignature (blockHash(header) signed with validatorId's key)
         └── State application (UTXO, post confirmation, mempool cleanup)
