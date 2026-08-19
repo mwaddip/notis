@@ -103,18 +103,28 @@ Event-specific fields are additional top-level keys.
 
 ### post_received
 **Level:** INFO
-**Fields:** `post_id` (string), `source` (string: "local" or peer_id)
-**Emitted:** On post arrival via gossip or local API.
+**Fields:** `post_id` (string), `source` (string: "local" or the relaying peer
+  id — which may be `''`, NET_INTERFACE → the `fromPeerId` caveat)
+**Emitted:** Once an arriving post is nameable: its creating transaction has
+validated and `computePostId` can run. An id is not computable on an
+unvalidated payload (TYPES_INTERFACE → Totality), so an invalid arrival emits
+nothing.
 
 ### post_validated
 **Level:** INFO
 **Fields:** `post_id` (string), `validation_duration_ms` (number)
-**Emitted:** After all validation phases pass.
+**Emitted:** After the arrival path's validation passes. The duration spans the
+work that path runs locally — `verifyPost` + `validateTx` on the local API
+path, `validateTx` alone on the relay path — so the two paths' durations are
+not comparable.
 
 ### post_indexed
 **Level:** INFO
-**Fields:** `post_id` (string), `depth` (number)
-**Emitted:** After post is stored and linked into the DAG.
+**Fields:** `post_id` (string), `parent_ref_count` (number: 0 root, 1 reply)
+**Emitted:** After the post is stored — at local creation, or at block
+application for a post first stored there. Once per post. `parent_ref_count`
+is the post's own parent-ref count; DAG depth is a consumer's store walk, not
+a field.
 
 ### dag_reorg
 **Level:** WARN
