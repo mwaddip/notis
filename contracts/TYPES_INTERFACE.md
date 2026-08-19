@@ -896,10 +896,10 @@ rejected by the karma transition arm rather than by a rule of its own
 ### KarmaPoolBox
 
 > ✅ **Live end to end.** The interface, tag **10**, the wire layout and the genesis seed landed
-> with unit B (**#87**); the block settlement transaction spends the pool — its sole spender,
-> once per block — and re-emits its successor, so every karma mint draws from a named source and
-> every burn returns to one (`NODE_INTERFACE` → Legal box transitions; `ARCHITECTURE` → The
-> conservation axiom).
+> with unit B (**#87**); the block settlement transaction is the pool's sole spender — spending
+> it in blocks whose settlement moves karma and re-emitting its successor — so every karma mint
+> draws from a named source and every burn returns to one (`NODE_INTERFACE` → Legal box
+> transitions; `ARCHITECTURE` → The conservation axiom).
 
 ```
 KarmaPoolBox extends BoxBase {

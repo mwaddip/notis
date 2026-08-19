@@ -1199,7 +1199,7 @@ the treasury.
 | CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
 | PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
 | BondBox | KarmaBox / — | Block application only: settlement at the probation deadline — **no user transaction can spend a `BondBox`** |
-| KarmaPoolBox | KarmaPoolBox + … | **Settlement only**, once per block — the pool's sole spender |
+| KarmaPoolBox | KarmaPoolBox + … | **Settlement only** — the pool's sole spender, spent in blocks whose settlement moves karma and left alone otherwise |
 
 ⚠ **"Same owner" binds the inputs to each other, not only the outputs to
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
