@@ -625,9 +625,9 @@ existence is what remains checkable here.
 ## UTXO Engine Contract
 
 The UTXO engine manages box lifecycle, transaction validation, and
-conservation rules. Karma decay is handled separately by the periodic
-decay engine at block application time. The engine is split into three
-functions:
+conservation rules. Karma sufficiency is judged against the **effective**
+value (`ARCHITECTURE` → Karma decay); conservation is checked over face
+values. The engine is split into three functions:
 
 ### validateTx
 
@@ -1435,29 +1435,23 @@ inside the network's reported supply.
   bound. The one-vouch-at-a-time rule remains service-layer only; the escrow
   gate above is what bounds a voucher's concurrent stakes at consensus.
 
-### Karma decay (periodic burn)
+### Karma decay (virtual, squared on touch)
 
-Karma decay is applied at block application time, not at individual
-transaction consumption time: `deriveKarmaDecay` derives each stale
-identity's charge, and the block's settlement transaction consumes the
-charged boxes, emits the replacements and pays the pool. See `decay.ts` and
-the Architecture document for the full model. Key properties:
+Decay is a **valuation over committed state**, applied at every
+karma-sufficiency read; face values move only when a block's body touches the
+identity, and then only through that block's settlement transaction
+(`ARCHITECTURE` → Karma decay is the model's one statement). The derivation
+produces the same per-identity leg shape as before — consume the identity's
+post-body karma boxes, re-emit effective to the owner and the remainder to the
+pool — with the trigger being **touch**, never a per-block walk. See
+`decay.ts`.
 
-- **Staleness:** An identity must have no normal-activity karma box within
-  `KARMA_STALE_THRESHOLD_BLOCKS` to be eligible
-- **Burn rate:** `KARMA_DECAY_AMOUNT` karma per `KARMA_DECAY_INTERVAL_BLOCKS`
-- **Floor:** Never reduces below `KARMA_MINIMUM`
-- **Provenance:** Decay-created boxes carry `decayBurn: true` so subsequent
-  decay cycles continue burning. Normal activity boxes reset the clock.
-- **Rollback:** Journaled and reversed during fork resolution.
-
-**The clock moves to committed state (Spec G).** `isIdentityStale` and
-`owedPeriods` read box `createdAtBlock` today. Boxes stop carrying a height, so
-the clock becomes the `IdentityRecord` (Store Interface → Identity Records):
+The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
 ```
 stale       = (height − lastActivityBlock) >= staleThresholdBlocks
 owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / interval )
+effective   = clamp(faceTotal − owedPeriods · decayAmount)   // never below min(faceTotal, KARMA_MINIMUM)
 ```
 
 ⚠ **The comparison is `>=`, not `>`.** This contract and Spec G §3.4 both said
@@ -1491,14 +1485,10 @@ artifact of reading box ages rather than a clock. **User-accepted 2026-08-05**,
 taken deliberately pre-network rather than discovered later. Pinned by
 `test/fixtures/decay-divergence.json`.
 
-Everything else in this unit stays behaviour-identical; any *other* difference is
-a bug, not a design change. The decay *trigger* change (bonded posts) belongs to
-the karma-economics track.
-
-**Phase D owns this switch**, along with populating the record —
-`lastActivityBlock` on non-decay karma creation, `lastDecayBlock` when decay
-fires — and a golden-output equivalence harness captured from the current
-implementation *before* the change.
+The record is populated at the producing paths: `lastActivityBlock` on the
+owner's own karma-spending activity — **received value (a like payout, a
+vesting return, a settlement re-emit) is not activity and must not reset the
+clock** — and `lastDecayBlock` when a squaring fires.
 
 ---
 
@@ -3564,17 +3554,10 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
 
-> ⚠ **The karma decay constants are documented for a block time the node does not use.**
-> `constants.ts` annotates `KARMA_STALE_THRESHOLD_BLOCKS = 20160` as "28 days at 2m blocks" and
-> `KARMA_DECAY_INTERVAL_BLOCKS = 720` as "24 hours at 2m blocks", while the ordering-block PoW target is
-> set for a **60-second** solve and MINING_INTERFACE's emission schedule is computed "at 60-second blocks".
-> ⚠ **The 60s figure moved anchor:** it was `ORDERING_BLOCK_INTERVAL_MS`, a producer timer; it is now
-> `ORDERING_BLOCK_POW_TARGET_BITS`, a consensus parameter — so the block time is an *emergent* property
-> of difficulty and hashrate rather than a configured one, and the real interval drifts with the
-> participant set until a retarget tracks it.
-> At 60s the real durations are **14 days and 12 hours** — half the documented values. Either the
-> annotations are stale or the block interval is. These are consensus parameters and the discrepancy
-> must be resolved before launch, not after.
+> ⚠ **Every "at 60 seconds" duration annotation is nominal, not guaranteed.** The block time is
+> an *emergent* property of `ORDERING_BLOCK_POW_TARGET_BITS` and hashrate — there is no producer
+> timer — so the real interval drifts with the participant set until a retarget tracks it, and
+> every block-denominated duration drifts with it.
 
 ---
 

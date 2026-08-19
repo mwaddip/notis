@@ -2427,9 +2427,9 @@ an override parameter is the same defect as the environment read, reached by a d
 door.
 
 ⚠ **Values are not pinned here.** `devnet`'s compressed timings and both public networks'
-difficulty belong to the constants-pinning session, together with the figure already
-flagged open below (`KARMA_STALE_THRESHOLD_BLOCKS`'s duration). **Do not read any number in
-this contract as decided.**
+difficulty belong to the constants-pinning session. **Do not read any number in this
+contract as decided** — with one exception: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is
+ruled (user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
 
 ### Domain tags are network-agnostic — deliberately
 
