@@ -76,6 +76,16 @@ describe('miner.mjs PoW predicate ↔ @dagsocial/validation', () => {
     expect(src.split('const ORDERING_TARGET_PRECISION = ').length - 1).toBe(1);
   });
 
+  it('carries no second expansion beside the one this mirror pins', () => {
+    // The count above pins how many times the extracted declaration appears; it
+    // cannot see a *differently named* expansion sitting next to it. `powTarget`
+    // is a live validation export (the whole-bit expansion), and nothing but its
+    // absence says the script is not calling it somewhere this mirror does not
+    // extract.
+    const src = readFileSync(MINER, 'utf8');
+    expect(src.includes('function powTarget(')).toBe(false);
+  });
+
   it('produces byte-identical targets across the whole domain', () => {
     // All 65537 admitted inputs, not a sample: the fractional path is 256 base
     // values and a shift (VALIDATION_INTERFACE → orderingPowTarget), so a
