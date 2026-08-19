@@ -211,8 +211,8 @@ export class CodecError extends ReaderError {
  * A bare `u8`'s wire domain is the whole byte, so it has no unreachable
  * sentinel — same structural situation as `vlqU64` and the fixed-width
  * writers. Note that the `u8` *fields* in the layout tables never hit this:
- * `isTreasury` and `decayBurn` are booleans (`writeBool`, whose `{0,1}` domain
- * really is narrower) and box/trigger tags are `enum8` (a closed table). Both
+ * `decayBurn` is a boolean (`writeBool`, whose `{0,1}` domain really is
+ * narrower) and box/trigger/reason tags are `enum8` (a closed table). Both
  * of those stay total.
  *
  * @throws {Error} unless `value` is an integer in `0..255`
