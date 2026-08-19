@@ -1,5 +1,4 @@
 import { getDb } from './db.js';
-import { encodeStump } from '@dagsocial/types';
 import type { Stump } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -15,7 +14,6 @@ interface StumpRow {
   trigger: string;
   protocol_version: number;
   compacted_at_block_height: number;
-  raw_cbor: Buffer;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,8 +48,8 @@ export function insertStump(stump: Stump): void {
   db.prepare(
     `INSERT OR REPLACE INTO dag_stumps
        (id, root_post_hash, author_id, reply_count, upvote_count,
-        trigger, protocol_version, compacted_at_block_height, raw_cbor)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        trigger, protocol_version, compacted_at_block_height)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     stumpId,
     stump.rootPostHash,
@@ -61,7 +59,6 @@ export function insertStump(stump: Stump): void {
     stump.trigger,
     stump.protocolVersion,
     stump.compactedAtBlockHeight,
-    Buffer.from(encodeStump(stump)),
   );
 }
 

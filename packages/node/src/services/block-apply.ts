@@ -811,6 +811,7 @@ function applyMutationPhase(
     // pool at §11a would leave that karma nowhere in between — the intermediary
     // step `ARCHITECTURE → The conservation axiom` forbids by name. The
     // settlement consumes them and pays every leg in one operation.
+    let likeTally: number;
     try {
       prunePlans.push(
         planPruneSettlement(entry.rootPostHash, entry.authorId, entry.subtreePostIds),
@@ -820,7 +821,7 @@ function applyMutationPhase(
       // deleting, so a reverted prune restores them exactly. Done here rather
       // than in the planner, which also runs inside the creator's template fill
       // and must mutate nothing.
-      deleteLikeRecordsForPosts(entry.subtreePostIds);
+      likeTally = deleteLikeRecordsForPosts(entry.subtreePostIds);
     } catch (err) {
       console.error(`Block ${height}: prune settlement failed for ${entry.rootPostHash}: ${String(err)}`);
       return false;
@@ -838,7 +839,7 @@ function applyMutationPhase(
       rootPostHash: entry.rootPostHash,
       authorId: entry.authorId,
       replyCount: entry.subtreePostIds.length - 1, // exclude root
-      upvoteCount: 0, // not captured — the subtree's like-records are deleted at settlement (step 5)
+      upvoteCount: likeTally,
       trigger: entry.trigger,
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: height,

@@ -34,8 +34,7 @@ const MIGRATIONS = [
     upvote_count INTEGER NOT NULL,
     trigger TEXT NOT NULL,
     protocol_version INTEGER NOT NULL,
-    compacted_at_block_height INTEGER NOT NULL,
-    raw_cbor BLOB NOT NULL
+    compacted_at_block_height INTEGER NOT NULL
   )`,
 
   // UTXO boxes
@@ -265,8 +264,7 @@ function migrateVerifiablePrune(database: Database.Database): void {
       upvote_count INTEGER NOT NULL,
       trigger TEXT NOT NULL,
       protocol_version INTEGER NOT NULL,
-      compacted_at_block_height INTEGER NOT NULL,
-      raw_cbor BLOB NOT NULL
+      compacted_at_block_height INTEGER NOT NULL
     );
   `);
 }

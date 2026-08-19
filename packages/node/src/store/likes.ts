@@ -71,8 +71,8 @@ export function getLikeRecordCount(postId: string): number {
  * `restoreLikeRecord`). Capture order is pinned by the primary key so the
  * journal bytes are a function of state, not of SQLite's row order.
  */
-export function deleteLikeRecordsForPosts(postIds: string[]): void {
-  if (postIds.length === 0) return;
+export function deleteLikeRecordsForPosts(postIds: string[]): number {
+  if (postIds.length === 0) return 0;
   const db = getDb();
   const placeholders = postIds.map(() => '?').join(', ');
   if (isBlockJournalOpen()) {
@@ -95,9 +95,9 @@ export function deleteLikeRecordsForPosts(postIds: string[]): void {
       })),
     );
   }
-  db.prepare(
+  return db.prepare(
     `DELETE FROM like_records WHERE target_post_id IN (${placeholders})`,
-  ).run(...postIds);
+  ).run(...postIds).changes;
 }
 
 /**
