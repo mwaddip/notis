@@ -895,15 +895,11 @@ rejected by the karma transition arm rather than by a rule of its own
 
 ### KarmaPoolBox
 
-> ⚠ **PARTIAL — the type exists; nothing spends it.** ✅ Landed by unit B (**#87**): the interface,
-> tag **10**, the wire layout, and a genesis pool seeded from it. ⚠ **No transition spends the pool
-> yet** — the settlement transaction that draws from it and returns to it is `node`'s and unbuilt, so
-> every mint and burn path is still a defect against `ARCHITECTURE` → The conservation axiom.
->
-> ⛔ **This block read `AHEAD OF CODE — the type does not exist yet` from before #87 until
-> 2026-08-17**, and it also cited `docs/specs`, which `.gitignore` excludes wholesale — **a tracked
-> contract pointing at a path that resolves for nobody with a clone.** Both corrected together
-> because they were found by the same read.
+> ✅ **Live end to end.** The interface, tag **10**, the wire layout and the genesis seed landed
+> with unit B (**#87**); the block settlement transaction spends the pool — its sole spender,
+> once per block — and re-emits its successor, so every karma mint draws from a named source and
+> every burn returns to one (`NODE_INTERFACE` → Legal box transitions; `ARCHITECTURE` → The
+> conservation axiom).
 
 ```
 KarmaPoolBox extends BoxBase {
