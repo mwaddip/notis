@@ -47,14 +47,11 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
  * `'utxotx'` and `'prune'`, each NUL-terminated and therefore prefix-free — not
  * their position.
  *
- * ⛔ **`coinbaseOutputs` IS GONE, AND `utxoTxRoot` LOST A LEAF CLASS WITH IT.**
- * Every block carries one settlement transaction, riding `utxoTxIds` / `utxoTxs`
- * like any other, and coinbase outputs are **its outputs** (`ARCHITECTURE` →
- * Block architecture; TYPES_INTERFACE → OrderingBlock). The `'coinbase'` leaf
- * domain is **retired and reserved**, on the same rule `'subblock'` carries: a
- * leaf domain sits inside a consensus preimage, so a later leaf class wearing it
- * would make historical roots ambiguous against new ones — and a root is the one
- * thing that cannot be re-derived to settle the question.
+ * ⛔ **TWO LEAF CLASSES.** Every block carries one settlement transaction,
+ * riding `utxoTxIds` / `utxoTxs` like any other, and coinbase outputs are
+ * **its outputs** (`ARCHITECTURE` → Block architecture; TYPES_INTERFACE →
+ * OrderingBlock). The leaf domains `'coinbase'` and `'subblock'` are tracked
+ * reservations (TYPES_INTERFACE → Tracked reservations).
  */
 export interface UtxoTxTree {
   utxoTxIds: TxId[];            // UTXO transactions — posts, likes and the settlement included

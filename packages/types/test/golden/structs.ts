@@ -436,11 +436,8 @@ function parsePrune(j: Record<string, unknown>): PruneEntry {
 // where node hashes it directly and a conformance reader can check one leaf
 // without building a tree around it.
 //
-// Reserved, never to be reused: the `subBlockEntry` and `coinbaseOutput` vector
-// names, and the `'subblock'` and `'coinbase'` leaf domains. Coinbase outputs
-// are outputs of the block's settlement transaction now, so they reach
-// `utxoTxRoot` through the `'utxotx'` leaf that transaction's id already gets —
-// there is no separate leaf preimage for a conformance reader to hold.
+// The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
+// (TYPES_INTERFACE → Tracked reservations).
 
 const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   parse(json: unknown): UtxoTxTree {
@@ -463,9 +460,8 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   },
 };
 
-// Reserved, never to be reused: the `subBlock` vector name. `encodePost` is now
-// exactly `postFieldBytes`, so the `postFields` vectors pin the wire post too —
-// there is no second post encoding to fix.
+// `encodePost` is now exactly `postFieldBytes`, so the `postFields` vectors pin
+// the wire post too.
 
 const orderingBlockCodec: ValueCodec<OrderingBlock> = {
   parse(json: unknown): OrderingBlock {

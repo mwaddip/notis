@@ -35,9 +35,6 @@ import type { NetValidators } from '../src/types.js';
 //     out-of-domain value encodes *successfully* into bytes `decodeOrderingBlock`
 //     then refuses. Nothing downstream of the encoder can see this one.
 //
-// Reserved, never to be reused: `encodeServableSubBlock` and its two suites. A
-// post is a transaction and is served inside the block body, so the ordering
-// block is the only servable object and the same two failure classes apply to it.
 // ---------------------------------------------------------------------------
 
 const validators: NetValidators = {

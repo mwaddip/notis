@@ -72,11 +72,8 @@ export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 
 // Posts
 //
-// `postFieldBytes` is exported for the reason `coinbaseOutputBytes` is: it is a
-// preimage layout other packages build against, and a second statement of it is
-// free to drift. Reserved, never to be reused: `signingHash`, `postPowPreimage`,
-// `powNonceBytes`, `verifyPostId` — the first three existed only for post PoW,
-// and the last cannot exist once a post's id is not a function of the post.
+// `postFieldBytes` is a preimage layout other packages build against, and a
+// second statement of it is free to drift.
 export { postFieldBytes, computePostId, getPostDiscriminator, buildProfileContent } from './post.js';
 export type { Post, PostId } from './post.js';
 
@@ -139,16 +136,8 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger 
 // exports for node to build a leaf from. The `leafHash` domain tag is the
 // caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
 //
-// Reserved, never to be reused: the struct names `SubBlock`, `SubBlockTree`,
-// `SubBlockEntry` and `CoinbaseOutput`, the functions `encodeSubBlock`,
-// `decodeSubBlock`, `encodeSubBlockTree`, `decodeSubBlockTree`,
-// `subBlockEntryBytes`, `subBlockFromPost` and `coinbaseOutputBytes`, the
-// header field `subBlockRoot`, the body fields `subBlockRefs` and
-// `coinbaseOutputs`, and the leaf domains
-// `'subblock'` and `'coinbase'` — a leaf domain sits inside a consensus
-// preimage, so reuse would make two different trees share a byte string.
-// Coinbase outputs are outputs of the block's settlement transaction now, so
-// they reach `utxoTxRoot` through the `'utxotx'` leaf its id already gets.
+// The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
+// (TYPES_INTERFACE → Tracked reservations).
 export {
   EMPTY_STATE_ROOT,
 } from './block.js';

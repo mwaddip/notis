@@ -19,7 +19,8 @@ export type PruneTrigger = 'author' | 'storage_prune';
 /**
  * The `trigger` tag table (TYPES_INTERFACE → Layout — Stump / PruneEntry).
  *
- * **Tags reserve retired values and are never renumbered.** A renumber
+ * **Tags are never renumbered; retired values are remnant-bounded
+ * reservations** (TYPES_INTERFACE → tag rules, condition 3). A renumber
  * silently moves every prune Merkle leaf and every id covering the tag, with no
  * compiler signal, and this tag sits inside a consensus preimage.
  *

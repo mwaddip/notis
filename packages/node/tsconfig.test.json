@@ -21,11 +21,6 @@
   //     which would license the drift the explicit-import convention prevents
   //     (ARCHITECTURE rule 5). Now measured true: every test file imports what
   //     it uses, and this config is wired into `typecheck` at zero errors.
-  //
-  // `test/e2e/**` is excluded: it is parked until its post-P2-D rewrite, and
-  // vitest excludes it from the run for the same reason (rule 4). Typechecking
-  // a suite nothing executes would pay down debt against code slated to be
-  // rewritten.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
@@ -33,6 +28,5 @@
       "@dagsocial/*": ["../*/src/index.ts"]
     }
   },
-  "include": ["src", "test"],
-  "exclude": ["test/e2e"]
+  "include": ["src", "test"]
 }

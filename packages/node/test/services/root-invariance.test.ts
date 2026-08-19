@@ -14,14 +14,12 @@ import {
 // ---------------------------------------------------------------------------
 // Merkle leaf pins for the one root node computes.
 //
-// ## The two leaf classes, and the two that are reserved
+// ## The two leaf classes, and the two tracked holes
 //
 // `utxoTxRoot` has exactly two: `'utxotx'` over a bare 32-byte transaction id,
 // and `'prune'` over `serializePruneEntry`. ⛔ **`'coinbase'` and `'subblock'`
-// are retired and reserved, never to be reused** — the coinbase is an output of
-// the block's settlement transaction, which rides `utxoTxIds` like every other
-// transaction, and a post rides it too (TYPES_INTERFACE → OrderingBlock). A
-// later leaf class wearing either tag would make historical roots ambiguous
+// are tracked holes** (TYPES_INTERFACE → leaf-domain table, remnant-bounded) —
+// a later leaf class wearing either tag would make historical roots ambiguous
 // against new ones, and a root is the one thing that cannot be re-derived to
 // settle the question.
 //
@@ -122,10 +120,9 @@ const PRUNE_LEAF_PREIMAGE =
 // ---------------------------------------------------------------------------
 
 describe('leaf preimages are types\' frozen wire bytes', () => {
-  // Reserved, never to be reused: the `'subblock'` and `'coinbase'` leaf cases
-  // and the vectors they read. Neither domain has a leaf in the combined tree —
-  // a post and the settlement both ride `utxoTxIds`, whose leaf is a bare
-  // 32-byte id.
+  // `'subblock'` and `'coinbase'` are tracked holes (TYPES_INTERFACE →
+  // leaf-domain table). Neither domain has a leaf in the combined tree — a post
+  // and the settlement both ride `utxoTxIds`, whose leaf is a bare 32-byte id.
 
   const golden = vector('utxoTxTree/txs-and-prunes');
 

@@ -87,7 +87,8 @@ Additions to the existing `OrderingBlock` type:
 > on stopped existing). Coinbase outputs are credit outputs of the block's settlement
 > transaction.
 >
-> ⛔ **The `'coinbase'` Merkle leaf domain is retired and its string reserved.**
+> ⛔ **The `'coinbase'` Merkle leaf domain is retired; its string is a tracked
+> reservation** (`TYPES_INTERFACE` → Tracked reservations).
 
 ### Block hash and PoW preimage (header model)
 

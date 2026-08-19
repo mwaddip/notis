@@ -4,9 +4,6 @@ import { emitDbOpenStarted, emitDbOpenComplete } from '../journal.js';
 let db: Database.Database | null = null;
 
 const MIGRATIONS = [
-  // Reserved, never to be reused: the `challenges` table. The PoW challenge
-  // handshake is gone with post PoW.
-
   // Posts DAG
   `CREATE TABLE IF NOT EXISTS dag_posts (
     id TEXT PRIMARY KEY,
@@ -63,7 +60,7 @@ const MIGRATIONS = [
   //
   `CREATE TABLE IF NOT EXISTS utxo_boxes (
     id TEXT PRIMARY KEY,
-    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'invite' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch' | 'emission' | 'treasury' | 'fee' | 'karma_pool'
+    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch' | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow'
     value INTEGER NOT NULL,
     created_at_block INTEGER NOT NULL,
     spent_at_block INTEGER,           -- NULL = unspent
@@ -119,10 +116,6 @@ const MIGRATIONS = [
   // operator's to wipe: the node neither versions its store nor refuses to start
   // against an old one (NODE_INTERFACE → No store schema version, and none is
   // owed).
-  //
-  // Reserved, never to be reused: `subblock_id`, `batch_id`, and the entry type
-  // `'subblock'`. A post is a transaction, so the post/lock pair `batch_id`
-  // existed to regroup is a single object.
   //
   // The like_/invite_/vouch_ columns are gate metadata (audit M-8): populated by
   // insertUtxoTx from the tx outputs so the correctness gates are plain SQL over
@@ -195,13 +188,6 @@ const MIGRATIONS = [
     capabilities      TEXT NOT NULL    -- JSON array of message codes
   )`,
 ];
-
-// Reserved, never to be reused: `migrateMempoolForStumps`. It reshaped a mempool
-// that still had a `subblock` entry type, and this change removes both that type
-// and the `batch_id` column it carried forward — so the schema it produced is one
-// no current code can read. Every stored block is unreadable across this change
-// anyway (the header lost a field and every position after 3 shifted down), which
-// is what makes a wipe the operator's only path rather than one option.
 
 function migrateAvlTree(database: Database.Database): void {
   const tables = database

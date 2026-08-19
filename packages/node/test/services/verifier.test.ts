@@ -57,12 +57,6 @@ function createMockDeps(store: MockStore): VerifierDeps {
 // Tests
 // ---------------------------------------------------------------------------
 
-// Reserved, never to be reused: the challenge, PoW and post-signature cases.
-// `verifyPost` checks the post PAYLOAD only. The rules those tests covered are
-// either gone (there is no challenge and no post PoW) or moved to the
-// transaction path — the post's authorship is the transaction's signature, which
-// `validateTx` checks, and the engine's post biconditional is what enforces the
-// karma lock.
 describe('verifyPost', () => {
   // Shared test fixtures
   let pubKeyRaw: Uint8Array;

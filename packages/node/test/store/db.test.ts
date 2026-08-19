@@ -14,8 +14,6 @@ async function importFresh() {
   };
 }
 
-// ⛔ Reserved, never to be reused: `challenges`. The PoW challenge handshake is
-// gone with post PoW, and the table with it.
 const EXPECTED_TABLES = [
   'canonical_branch',
   'dag_meta',

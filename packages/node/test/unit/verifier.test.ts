@@ -131,9 +131,4 @@ describe('verifier', () => {
     expect(result.valid).toBe(false);
     expect(result.error).toBe('No karma box found');
   });
-
-  // Reserved, never to be reused: the post-signature case. A post carries no
-  // signature of its own — the creating transaction is signed over its TxId and
-  // the signer is the author, so authorship is checked by the transaction path
-  // (`validateTx`) and by the engine's author-owns-the-spent-karma rule.
 });

@@ -2,12 +2,10 @@
  * Lifting a declaration out of a file by name — the machinery both mirror tests
  * run on.
  *
- * Two PoW consumers cannot import `@dagsocial/validation` and are held by mirrors
- * instead: `public/index.html`, served statically with no bundler, and
- * `scripts/miner.mjs`, standalone by decision. They mirror different halves —
- * the page does post PoW and copies `powTarget`, the script does header PoW and
- * copies `orderingPowTarget` (VALIDATION_INTERFACE → orderingPowTarget →
- * Mirrors). Each extracts declarations by name and cross-checks them.
+ * `scripts/miner.mjs` cannot import `@dagsocial/validation` (standalone by
+ * decision) and mirrors `orderingPowTarget` instead (VALIDATION_INTERFACE →
+ * orderingPowTarget → Mirrors). It extracts declarations by name and
+ * cross-checks them.
  *
  * Shared rather than copied into each mirror: a brace matcher maintained twice is
  * the shape those mirrors exist to catch.

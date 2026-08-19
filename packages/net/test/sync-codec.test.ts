@@ -189,12 +189,4 @@ describe('sync codec decode boundary', () => {
       expect(decodeModifierResponse(body({ typeId: 101, modifiers: [{ id: 5, data: new Uint8Array([1]) }] }))).toBeNull();
     });
   });
-
-  // Reserved, never to be reused: the `GetPosts` / `Posts` codec suites. A
-  // bare-post-by-id fetch has no verifiable answer once post ids are
-  // provenance-derived — the receiver cannot bind the bytes it gets back to the
-  // id it asked for — so the message pair is deleted and codes 10/11 are
-  // reserved. Anything that returns a post must return the transaction that
-  // created it, which is a different message.
-
 });

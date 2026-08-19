@@ -22,9 +22,8 @@
  * ## The element writer holds no layout of its own
  *
  * `writePruneEntry` is one `w.writeBytes(...)`, delegating to
- * `serializePruneEntry` beside its struct. A prune entry is the one element left
- * whose bytes are also a Merkle leaf preimage — `'coinbase'` retired with
- * `CoinbaseOutput` and `'subblock'` before it — and the delegation is what keeps
+ * `serializePruneEntry` beside its struct. A prune entry is the one element
+ * whose bytes are also a Merkle leaf preimage, and the delegation is what keeps
  * the wire form and the committed form one statement instead of two. **It may
  * not grow a field writer of its own** — a reviewer can check that at a glance,
  * which is the point of the shape.

@@ -12,7 +12,7 @@
  *     kind. A `toThrow()` with no class and no reason passes for the wrong
  *     reason as readily as the right one.
  *  3. **Closure tests for the three defects an open map format allows** — an
- *     open key set, an uncommitted `subBlockRefs`, and a non-minimal VLQ.
+ *     open key set, an uncommitted body field, and a non-minimal VLQ.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -95,9 +95,8 @@ function makeBlockHeader(): BlockHeader {
  * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement
  * transaction, so they arrive inside `utxoTxs` like every other transaction's and
  * reach `utxoTxRoot` under the `'utxotx'` leaf that transaction's id already gets
- * (`block.ts` → `UtxoTxTree`). ⛔ **The `'coinbase'` leaf domain is retired and
- * reserved** — a later leaf class wearing it would make historical roots
- * ambiguous against new ones.
+ * (`block.ts` → `UtxoTxTree`). The leaf domains `'coinbase'` and `'subblock'` are
+ * tracked reservations (TYPES_INTERFACE → Tracked reservations).
  *
  * The fixture carries a prune entry because it is the **one element writer whose
  * width varies**, so a populated body exercises an element layout rather than
@@ -192,8 +191,7 @@ describe('positional serialization', () => {
     it('UtxoTxTree with prune entries — the Merkle-leaf preimage, verbatim', () => {
       // ⛔ Prune entries moved INTO this tree — `utxoTxRoot` commits them now, and
       // the `'prune'` leaf domain is what keeps them apart from the transaction
-      // leaves under the same root. Those two are the only leaf classes left:
-      // `'coinbase'` retired with `CoinbaseOutput` and `'subblock'` before it.
+      // leaves under the same root. Those two are the only leaf classes.
       expect(decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()))).toEqual(makeUtxoTxTree());
     });
 
@@ -485,7 +483,7 @@ describe('positional serialization', () => {
         .toEqual(['utxoTxIds', 'utxoTxs', 'pruneEntries']);
       // The retired section is unrepresentable, not merely unwritten: an object
       // carrying it encodes to the same bytes as one without.
-      const withCoinbase = { ...makeUtxoTxTree(), coinbaseOutputs: [{ owner: userB, value: 1n }] };
+      const withCoinbase = { ...makeUtxoTxTree(), extraJunk: [{ owner: userB, value: 1n }] };
       expect(hex(encodeUtxoTxTree(withCoinbase as UtxoTxTree)))
         .toBe(hex(encodeUtxoTxTree(makeUtxoTxTree())));
     });
@@ -497,11 +495,11 @@ describe('positional serialization', () => {
       // decoded block.
       const withSub = {
         ...makeOrderingBlock(),
-        subBlockTree: { subBlockEntries: [{ postId: 'de'.repeat(32) }], pruneEntries: [] },
+        extraJunk: { entries: [{ postId: 'de'.repeat(32) }], pruneEntries: [] },
       };
       expect(hex(encodeOrderingBlock(withSub as OrderingBlock)))
         .toBe(hex(encodeOrderingBlock(makeOrderingBlock())));
-      const withRoot = { ...makeBlockHeader(), subBlockRoot: 'de'.repeat(32) };
+      const withRoot = { ...makeBlockHeader(), extraJunk: 'de'.repeat(32) };
       expect(hex(encodeHeader(withRoot as BlockHeader)))
         .toBe(hex(encodeHeader(makeBlockHeader())));
     });
@@ -710,9 +708,8 @@ describe('positional serialization', () => {
     it('Post: the sub-block wrapper is dead and the post itself is the pin', () => {
       // ⛔ The sequence continues rather than restarting. Each adjacent pair is
       // one recorded, intentional consensus break: cbor → positional →
-      // posts-as-transactions. `encodeSubBlock` is gone, so what this pins is the
-      // post encoding that used to ride inside it — three fields lighter, since
-      // `challenge`, `powNonce` and `signature` all died with post PoW.
+      // posts-as-transactions. This pins the five-field post layout
+      // (TYPES_INTERFACE → Layout — Post).
       const bytes = encodePost(PINNED_POST);
       // The key name cannot appear: there are no key names.
       expect(hex(bytes)).not.toContain(Buffer.from('likeBoxes', 'utf8').toString('hex'));
@@ -725,8 +722,7 @@ describe('positional serialization', () => {
     });
 
     it('BlockHeader: the blockHash preimage moved, and shrank', () => {
-      // ⛔ NINE fields, not ten — `subBlockRoot` is gone and every position after
-      // `prevBlockHash` shifted down by one. 140 positional bytes: five VLQ
+      // ⛔ NINE fields. 140 positional bytes: five VLQ
       // integers (1+1+1+2+6) plus 32+32+33+32 raw bytes, exactly 32 fewer than
       // the ten-field form's 172. A reader that dropped the field but kept the
       // old offsets would still be 140 bytes and would hash differently, which

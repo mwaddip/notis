@@ -314,12 +314,6 @@ export function getParentRefs(postId: string): string[] {
   return rows.map((r) => r.parent_id);
 }
 
-// Reserved, never to be reused: `insertPostPlaceholder`. A placeholder existed
-// because a block committed a post's topology while its content
-// arrived separately. A post is now a transaction, so a node holding the block
-// body holds the content — there is no state in which a confirmed post has no
-// content, and nothing left for a content sweep to resolve.
-
 /**
  * Return all descendant posts of the given root post, using a recursive CTE
  * over dag_parent_refs. The root post itself is NOT included in the result.

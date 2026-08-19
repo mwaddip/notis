@@ -609,8 +609,8 @@ export function makeTestConfig(overrides: Partial<Config> = {}): Config {
 /**
  * A map keyed by **bytes**, for mocks that stand in for a store lookup.
  *
- * Production compares `user_id` as a SQLite BLOB — **by value**
- * (`getActiveChallenge` binds `Buffer.from(userId)`). A plain `Map` keyed by a
+ * Production compares `user_id` as a SQLite BLOB — **by value** (store
+ * functions bind `Buffer.from(userId)`). A plain `Map` keyed by a
  * `Uint8Array` compares **by reference**, so a mock built that way is strictly
  * *less* permissive than the thing it stands in for: it hits only while a test
  * reuses one array instance, and the moment a key is built twice (`uid('alice')`

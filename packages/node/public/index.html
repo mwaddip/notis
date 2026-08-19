@@ -839,17 +839,6 @@ function computeTxId(tx) {
 }
 
 // ===========================================================================
-// Reserved, never to be reused: powTarget, meetsPowTarget, buildPowInput,
-// powNonceTail, postPowHash, solvePoW, buildSignHashInput, signPost.
-//
-// ⛔ There is no post PoW and no post signature. A post is the payload of the
-// transaction that locks its karma, and that transaction is signed over its
-// `TxId` by the author (NODE_INTERFACE → Post transactions) — so `signTxId`
-// below is the only signing this page does, and the relay gate is membership
-// rather than burned milliseconds.
-// ===========================================================================
-
-// ===========================================================================
 // Signing — txId-based (Ed25519 over computeTxId)
 // ===========================================================================
 

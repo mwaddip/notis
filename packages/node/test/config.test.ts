@@ -15,7 +15,6 @@ import {
 const TEST_KEYS = [
   'PORT',
   'DB_PATH',
-  'CHALLENGE_WINDOW_BLOCKS',
   'BLOCK_BODY_BUDGET_BYTES',
   'MAX_MEMPOOL_ENTRIES',
   'NETWORK_TYPE',
@@ -29,7 +28,6 @@ const TEST_KEYS = [
   // string an operator may still carry in a `.env`, which is the only thing
   // that makes asserting it inert worth anything. Renaming one to follow a
   // constant leaves the guard pointed at a variable nobody has ever set.
-  'POST_POW_TARGET_BITS',
   'ORDERING_BLOCK_POW_TARGET_BITS',
   'KARMA_DECAY_INTERVAL_BLOCKS',
   'KARMA_STALE_THRESHOLD_BLOCKS',
@@ -81,7 +79,6 @@ describe('config', () => {
     it('reads overrides from env vars', async () => {
       process.env['PORT'] = '8080';
       process.env['DB_PATH'] = '/tmp/test.db';
-      process.env['CHALLENGE_WINDOW_BLOCKS'] = '5';
       process.env['BLOCK_BODY_BUDGET_BYTES'] = '500';
       process.env['MAX_MEMPOOL_ENTRIES'] = '25';
       process.env['NETWORK_TYPE'] = 'mainnet';
@@ -207,8 +204,8 @@ describe('config', () => {
       //
       // All nine discriminate, `orderingBlockPowTargetBits` included: devnet's
       // 3072 is below testnet's 5984 (TYPES_INTERFACE → Network profiles), so a
-      // read sourced from the wrong profile fails here. It is in units of 1/256
-      // of a bit; `postPowTargetBits` is not.
+      // read sourced from the wrong profile fails here. The target is in units
+      // of 1/256 of a bit.
       expect(cfg.orderingBlockPowTargetBits).toBe(3072);
       expect(cfg.karmaDecayIntervalBlocks).toBe(3);
       expect(cfg.karmaStaleThresholdBlocks).toBe(500);
@@ -283,7 +280,7 @@ describe('config', () => {
   // Expected values are baked literals rather than reads of the same constants,
   // so a silent constant change fails here too.
   //
-  // ⚠ Ten are set below and eight are asserted. `CREDIT_INITIAL_REWARD` has no
+  // ⚠ Nine are set below and seven are asserted. `CREDIT_INITIAL_REWARD` has no
   // matching `expect`; `CREDIT_TREASURY_PCT` has no `Config` field left to
   // assert against, since the coinbase's percentages are read straight from
   // `@dagsocial/types` and nothing plumbs them. Both are still set here, which
@@ -292,7 +289,6 @@ describe('config', () => {
   describe('7. consensus env reads are dead (P2-A)', () => {
     it('ignores every formerly-readable consensus variable', async () => {
       process.env['NETWORK_TYPE'] = 'testnet';
-      process.env['POST_POW_TARGET_BITS'] = '1';
       process.env['ORDERING_BLOCK_POW_TARGET_BITS'] = '1';
       process.env['KARMA_DECAY_INTERVAL_BLOCKS'] = '1';
       process.env['KARMA_STALE_THRESHOLD_BLOCKS'] = '1';
@@ -306,7 +302,7 @@ describe('config', () => {
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
       // 1/256-bit units, so 23.375 bits (VALIDATION_INTERFACE →
-      // orderingPowTarget). `postPowTargetBits` above is whole bits.
+      // orderingPowTarget).
       expect(cfg.orderingBlockPowTargetBits).toBe(5984);
       expect(cfg.karmaDecayIntervalBlocks).toBe(1440);
       expect(cfg.karmaStaleThresholdBlocks).toBe(40320);

@@ -30,9 +30,7 @@ export interface Libp2pGossip {
 // Topic constants
 // ---------------------------------------------------------------------------
 
-// Reserved, never to be reused: the topic string '/dagsocial/subblock/1'. A post
-// is a transaction and propagates on `tx` with every other transaction
-// (NET_INTERFACE → Gossip Topics).
+// Tracked reservation: '/dagsocial/subblock/1' (NET_INTERFACE → Gossip Topics).
 export const TOPICS = {
   orderingBlock: '/dagsocial/ordering-block/1',
   tx: '/dagsocial/tx/1',

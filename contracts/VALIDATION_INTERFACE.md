@@ -268,17 +268,14 @@ than 256 target bits is arithmetically shiftable — `1n << 257n` is an ordinary
 shifts without consulting this domain counts `2^257` from a single header and outweighs any honest
 chain. Refusing out of domain is the bound; there is no separate range check to keep in step with it.
 
-### ~~verifyPoW~~ — DELETED (posts as transactions)
-
 **There is no post PoW.** A post is a transaction, admitted by a **stateful** check —
 the author holds the karma and really locks it — which is strictly stronger than
-proving someone burned a millisecond. `verifyPoW`, `postPowPreimage` and
-`powNonceBytes` go together; the names stay reserved.
+proving someone burned a millisecond.
 
-⚠ **`isU64Safe(nonce)` retired with it, and its argument does not generalise:** no
-surviving consensus field is a search variable an attacker varies to hit a target —
-`timestamp` and `protocolVersion` are still `vlqU` and still total by sentinel, but
-nothing downstream reads either as a consensus input.
+⚠ **No `isU64Safe` guard survives on the post path, and its argument does not
+generalise:** no surviving consensus field is a search variable an attacker varies
+to hit a target — `timestamp` and `protocolVersion` are still `vlqU` and still
+total by sentinel, but nothing downstream reads either as a consensus input.
 
 `verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
 always was. **Consensus is honestly single-phase.**
@@ -377,14 +374,11 @@ returned `string` and performed **no input check at all**, handing `header` stra
 
 ## Signature Verification
 
-### ~~verifyPostSignature~~ — DELETED (posts as transactions)
-
 **A post carries no signature of its own.** It is created by a transaction signed
 over that transaction's `TxId`, and the signing key is the author — so a post's
 authorship is verified by the transaction's signature check and nothing else.
-`signingHash` retired with this function, and **no path may reintroduce a
-post-level signature**: two signatures over one object is two places for them to
-disagree.
+**No path may reintroduce a post-level signature**: two signatures over one
+object is two places for them to disagree.
 
 The SPKI-envelope mechanics survive in the transaction signature path unchanged —
 32 raw bytes wrapped with the `302a300506032b6570032100` prefix, a `KeyObject` via
@@ -633,24 +627,15 @@ rejection, and Phase 1e's teeth demonstration asserts exact labels.
 
 Total on adversarial input, like every function here.
 
-### ~~verifySubBlockStructure~~ — DELETED (posts as transactions)
-
 **There is no sub-block to structurally verify.** A post's structural checks —
 `verifyPostFieldDomains` and the content limits — live in the post-bearing
-transaction's validation, where `verifyTxStructure` runs. The three domain
-pins this function carried (`subBlockId` hex-32, `protocolVersion` `isU64Safe`,
-`producerId` 32 bytes) describe fields that do not exist: a transaction has a
-`TxId`, its own `protocolVersion`, and a signer rather than a producer.
+transaction's validation, where `verifyTxStructure` runs.
 
-⚠ **`verifyPostFieldDomains` survives and is still needed** — the post payload is
+⚠ **`verifyPostFieldDomains` is still needed** — the post payload is
 still attacker-supplied bytes reaching an encoder, and the no-panic contract
-(M-5/M-6) is unchanged. Only its caller moves.
+(M-5/M-6) is unchanged.
 
-**Reserved, never to be reused:** `verifySubBlockStructure`, together with
-`verifyPoW` and `verifyPostSignature` (`validation/src/index.ts` and the test
-suite's reserved teeth suite state the same).
-
-⛔ **The method rule the retired records here carried survives as a rule:** a
+⛔ **A method rule:** a
 check justified by a path is a claim about the rest of the tree, and it expires
 when the tree moves — re-derive the justification, not just the check, whenever
 either side changes.
@@ -1094,16 +1079,13 @@ own.
 - Signatures verified with `crypto.verify(null, message, keyObj, sig)` and a KeyObject
   using a `KeyObject` created via `crypto.createPublicKey`
 - SPKI DER prefix for Ed25519: `302a300506032b6570032100`
-- **Two PoW nonce encodings, each specified, sharing no code path.** A *post* nonce is
-  `vlqU`, written by `powNonceBytes` in `@dagsocial/types` and by nothing in this package.
-  An *ordering-block* nonce is `encodeLE64` (`MINING_INTERFACE.md` → PoW Verification).
-  Unifying them is a protocol decision, not a tidy
-- The integer-range guard (M-6) applies to both, and **its purpose differs by encoding**: a
-  nonce or `targetBits` that is not a non-negative safe integer within `u64` yields `false`,
-  never a thrown `RangeError`. For the block nonce the guard prevents a throw from `BigInt` /
-  `writeBigUInt64LE`; for the post nonce `vlqU` cannot throw, and the guard instead prevents
-  every out-of-domain value collapsing onto `VLQ_SENTINEL` and sharing one hash. Validate
-  with `Number.isInteger` (not a loose `typeof === 'number'`, which admits `NaN` and floats)
+- **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
+  (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
+- The integer-range guard (M-6): a nonce or `targetBits` that is not a
+  non-negative safe integer within `u64` yields `false`, never a thrown
+  `RangeError` — the guard prevents a throw from `BigInt` / `writeBigUInt64LE`.
+  Validate with `Number.isInteger` (not a loose `typeof === 'number'`, which
+  admits `NaN` and floats)
 - Content limits measured in UTF-8 bytes, not characters
 - All functions are synchronous — no Promises, no callbacks
 - Protocol version `PROTOCOL_VERSION` from `@dagsocial/types`

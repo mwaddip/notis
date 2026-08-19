@@ -265,11 +265,6 @@ describe('mempool store', () => {
     expect(entries[0].expiresAtHeight).toBe(200);
   });
 
-  // ⛔ Reserved, never to be reused: the `batchId` case. A post and its karma
-  // lock were two objects that had to be evicted and re-injected together, which
-  // is what `batchId` grouped; a post is the payload of that one transaction now
-  // (MEMPOOL_INTERFACE → PoolEntry), so there is nothing left to group.
-
   it('getPendingEntries respects limit', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
 
@@ -708,10 +703,6 @@ describe('mempool store', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // removeSubBlockEntries
-  // -------------------------------------------------------------------------
-
   // The pool row is the only copy of a queued prune between `POST
   // /posts/:id/prune` and the block that carries it, and `drainMempoolPrunes`
   // is the miner's first read of it — inside `createOrderingBlock`, which no
@@ -788,10 +779,6 @@ describe('mempool store', () => {
       expect(left.map((e) => e.rootPostHash)).toEqual([ROOT_2]);
     });
   });
-
-  // ⛔ Reserved, never to be reused: the `removeSubBlockEntries` suite. There
-  // are no sub-block entries to evict — a post enters the pool as the
-  // transaction that creates it, and `finalizeBlock` clears those by rowid.
 
   // -------------------------------------------------------------------------
   // Size cap — per class. The karma-side class rejects and never evicts; the
