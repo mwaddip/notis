@@ -1398,7 +1398,8 @@ before multi-node operation rather than after it.
 ```
 
 1. **Genesis:** The genesis state seeds the system boxes (karma pool, emission,
-   treasury, faucet) and the genesis identity
+   faucet — no treasury box: it would hold 0, and it is created at the first
+   nonzero split, `genesis-state.ts`) and the genesis identity
 2. **Invite:** An inviter bonds karma naming the invitee's public key; the block's
    settlement grants the invitee's starting karma from the pool (§Invite System)
 3. **Account creation:** The granted karma box and the invitee's identity record
@@ -2122,16 +2123,14 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **Validate, don't trust** — independently recompute every self-reported
   claim. A post's parent refs and its creating transaction's signature MUST be
   verified by the local node before the post enters the store.
-  > ⚠ **VIOLATED — two write paths run ahead of verification. The rule is right; the code is
-  > wrong. Re-verified 2026-08-14.**
-  > - `insertPostPlaceholder` (`node/src/store/posts.ts`) writes a row built from a *block's*
-  >   committed post topology: empty content, a 32-zero-byte author, a 64-zero-byte signature. Nothing
-  >   in that row is author-signed, and `confirmPost` will set `status = 'confirmed'` on it —
-  >   so a confirmed row precedes any verified bytes, in two steps rather than one. The
-  >   `parent_refs` it writes are the block's, and `insertPost`'s upgrade branch does not
-  >   revisit them, so a row can hold refs the author never signed (P2-F **F6**).
-  > - `post-service.ts` calls `insertPost` **before** `validateTx` on the karma-lock
-  >   transaction, with no rollback.
+  > ⚠ **HALF RESOLVED BY STRUCTURE; the other half is a standing claim to re-verify. The rule
+  > is right.**
+  > - `insertPostPlaceholder` is **reserved** (`node/src/store/posts.ts`): a post is a
+  >   transaction, so a node holding the block body holds the content — no confirmed row
+  >   precedes verified bytes on that path, and the F6 unsigned-refs route died with it.
+  > - `post-service.ts` calling `insertPost` **before** `validateTx` on the creating
+  >   transaction, with no rollback, is this note's surviving claim; it is recorded here
+  >   unverified against the current tree.
   >
   > (A third path — `onStump` storing unauthenticated gossip stumps — is closed: no network
   > path writes `dag_stumps`; see §3.)

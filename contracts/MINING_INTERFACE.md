@@ -204,6 +204,7 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
   },
   "pruneEntries": [...],
   "utxoTxIds": ["hex(32)", ...],
+  "postIds": ["hex(32)", ...],
   "powPreimage": "hex(32)"
 }
 ```

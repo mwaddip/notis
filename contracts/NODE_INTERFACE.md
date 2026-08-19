@@ -1371,8 +1371,7 @@ inside the network's reported supply.
   P2-D removes unlike.
 - Self-consolidation (several of your own karma boxes into one) is the
   legitimate multi-input case and stays legal. The faucet grant is unaffected:
-  it is a single input. The 3-input invite cancel has exactly one karma input,
-  and the 2-input claim has none.
+  it is a single input.
 - **Credits are deliberately exempt.** They are tradeable, so multi-owner
   credit inputs are an ordinary multi-party payment, not a leak.
 
@@ -4167,9 +4166,8 @@ funnel:
 1. **Topology recording (confirm-time).** Topology rows are written from the
    block's verified post transactions: `insertBlockTopology(postId, parentRefs,
    author, height)` with `author` the creating transaction's signer and
-   `parentRefs` the signed transaction's own. Placeholder posts keep a zeroed
-   `author` column in `dag_posts` — `block_topology.author` is the consensus
-   authority for prune authorization, never `dag_posts.author`.
+   `parentRefs` the signed transaction's own. `block_topology.author` is the
+   consensus authority for prune authorization, never `dag_posts.author`.
 2. **Prune authorship binding (prune-time).** Before the prune entry's
    postId-set and Merkle checks, the block is REJECTED unless
    `getTopologyAuthor(entry.rootPostHash)` returns a non-null author equal to
