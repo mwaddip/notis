@@ -195,10 +195,10 @@ export const DIVERGENT_SCENARIOS: Scenario[] = [
   {
     // Two non-decay karma boxes at different heights for one owner.
     //
-    // Reachable: `claimInvite` mints a KarmaBox to the invitee (its inputs are
-    // the InviteBox and the BondBox, not the invitee's karma), and `faucetGrant`
-    // mints a second one to the same identity (its input is the *system* karma
-    // box). Neither spends what the recipient already holds, so both survive.
+    // Reachable: settlement karma outputs do not consolidate — an invite grant
+    // and a later like payout to the same owner both land beside existing
+    // holdings (NODE_INTERFACE → The settlement transaction, no-consolidation
+    // rule). Neither spends what the recipient already holds, so both survive.
     //
     // This is the shape where "oldest non-decay box" and "newest activity" are
     // different numbers, so a clock kept on the boxes and a clock kept on the
@@ -208,8 +208,8 @@ export const DIVERGENT_SCENARIOS: Scenario[] = [
     cfg: FAST,
     owners: ['alice'],
     steps: [
-      { at: 1, op: 'seed', owner: 'alice', amount: 50n, tag: 'invite-claim' },
-      { at: 10, op: 'seed', owner: 'alice', amount: 50n, tag: 'faucet' },
+      { at: 1, op: 'seed', owner: 'alice', amount: 50n, tag: 'first-grant' },
+      { at: 10, op: 'seed', owner: 'alice', amount: 50n, tag: 'second-grant' },
       { at: 30, op: 'decay' },
     ],
   },
