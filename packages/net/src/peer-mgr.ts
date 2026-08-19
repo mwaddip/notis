@@ -148,13 +148,11 @@ export class PeerManager {
   // -----------------------------------------------------------------------
 
   /**
-   * Record a penalty using the three-tier system.
+   * Record a penalty using the two-tier system.
    *
    * - Transient: scored (50), decays over time, peer stays in PeerDb
    *   (timeout, slow response)
    * - ProtocolViolation: permanent ban, peer removed from PeerDb
-   * - RateLimit: scored (100), decays over time, peer stays (too many
-   *   messages)
    */
   recordPenaltyKind(kind: PenaltyKind, peerId: string, reason: string): void {
     const now = Date.now();
@@ -169,9 +167,8 @@ export class PeerManager {
         this.stalledPeers.delete(peerId);
         return;
       }
-      case PenaltyKind.Transient:
-      case PenaltyKind.RateLimit: {
-        this.accrueScoredPenalty(peerId, kind === PenaltyKind.Transient ? 50 : 100, now);
+      case PenaltyKind.Transient: {
+        this.accrueScoredPenalty(peerId, 50, now);
         return;
       }
     }

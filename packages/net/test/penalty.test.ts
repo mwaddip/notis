@@ -59,39 +59,6 @@ describe('penalty attribution (using PeerManager)', () => {
     expect(mgr.isBanned('peer1')).toBe(false);
   });
 
-  it('RateLimit adds 100 points (higher than Transient)', () => {
-    mgr.addPeer(makePeer('peer1'));
-    vi.spyOn(Date, 'now').mockReturnValue(0);
-
-    mgr.recordPenaltyKind(PenaltyKind.RateLimit, 'peer1', 'too many messages');
-
-    const meta = mgr.getPeerMetadata('peer1');
-    expect(meta).not.toBeNull();
-    expect(meta!.penaltyCount).toBe(1);
-    expect(mgr.getPeerCount()).toBe(1);
-    expect(mgr.isBanned('peer1')).toBe(false);
-  });
-
-  it('Transient is lower severity than RateLimit (scores verified)', () => {
-    // Transient = 50, RateLimit = 100 per the three-tier penalty system
-    mgr.addPeer(makePeer('transientPeer'));
-    mgr.addPeer(makePeer('rateLimitPeer'));
-    vi.spyOn(Date, 'now').mockReturnValue(0);
-
-    mgr.recordPenaltyKind(PenaltyKind.Transient, 'transientPeer', 'timeout');
-    mgr.recordPenaltyKind(PenaltyKind.RateLimit, 'rateLimitPeer', 'flood');
-
-    // Both peers still tracked (below threshold of 500)
-    expect(mgr.getPeerCount()).toBe(2);
-
-    // RateLimit accrues penalties faster towards threshold (100 vs 50)
-    // Verify by getting metadata entries — penaltyCount is the same (1 each)
-    const tMeta = mgr.getPeerMetadata('transientPeer');
-    const rMeta = mgr.getPeerMetadata('rateLimitPeer');
-    expect(tMeta?.penaltyCount).toBe(1);
-    expect(rMeta?.penaltyCount).toBe(1);
-  });
-
   it('accumulating Transient penalties above break-even triggers temporal ban', () => {
     mgr.addPeer(makePeer('peer1'));
     // A Transient (50) decays away within half a safe interval, so only
@@ -122,29 +89,6 @@ describe('penalty attribution (using PeerManager)', () => {
     expect((mgr as any).peers.get('peer1').penaltyScore).toBe(100);
   });
 
-  it('kind path bans a flood too: 5 rapid RateLimit penalties (parity with recordPenalty)', () => {
-    // Nonzero timestamp for the same reason as the recordPenalty flood test.
-    mgr.addPeer(makePeer('peer1'));
-    vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    for (let i = 0; i < 5; i++) {
-      mgr.recordPenaltyKind(PenaltyKind.RateLimit, 'peer1', `flood ${i}`);
-    }
-    expect(mgr.isBanned('peer1')).toBe(true);
-    expect(mgr.getPeerCount()).toBe(0);
-  });
-
-  it('kind path decays too: two RateLimits one interval apart hold at 100, not 200', () => {
-    mgr.addPeer(makePeer('peer1'));
-    vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.recordPenaltyKind(PenaltyKind.RateLimit, 'peer1', 'first');
-    vi.spyOn(Date, 'now').mockReturnValue(config.penaltySafeIntervalMs);
-    mgr.recordPenaltyKind(PenaltyKind.RateLimit, 'peer1', 'second');
-
-    expect((mgr as any).peers.get('peer1').penaltyScore).toBe(100);
-    expect(mgr.getPeerMetadata('peer1')?.penaltyCount).toBe(2);
-    expect(mgr.isBanned('peer1')).toBe(false);
-  });
-
   it('ProtocolViolation bans instantly at zero score and regardless of decay', () => {
     // Permanent bans bypass scoring entirely — no accumulated score needed.
     mgr.addPeer(makePeer('peer1'));
@@ -156,7 +100,7 @@ describe('penalty attribution (using PeerManager)', () => {
     // A peer whose score has long since decayed to nothing is still
     // permanently banned on the spot — decay never applies to permanents.
     mgr.addPeer(makePeer('peer2'));
-    mgr.recordPenaltyKind(PenaltyKind.RateLimit, 'peer2', 'noise');
+    mgr.recordPenaltyKind(PenaltyKind.Transient, 'peer2', 'noise');
     vi.spyOn(Date, 'now').mockReturnValue(1000 * config.penaltySafeIntervalMs);
     mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer2', 'malformed later');
     expect(mgr.isBanned('peer2')).toBe(true);

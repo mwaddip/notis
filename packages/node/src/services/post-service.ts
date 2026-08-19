@@ -6,6 +6,7 @@ import type { Post, Stump, KarmaBox, UtxoTransaction, AnyBox } from '@dagsocial/
 import type { StoredPost } from '../store/posts.js';
 import type { VerifierDeps, VerificationResult } from './verifier.js';
 import { ClientError } from './client-error.js';
+import { emitPostReceived, emitPostValidated, emitPostIndexed } from '../journal.js';
 
 // ---------------------------------------------------------------------------
 // Error
@@ -105,6 +106,7 @@ export function createPost(
   }
 
   // ---- Verify the post payload (domains, content, parents, karma) ----
+  const validationStart = performance.now();
   const verifierDeps: VerifierDeps = {
     getKarmaBoxes: deps.getKarmaBoxes,
     getPost: deps.getPost,
@@ -128,6 +130,7 @@ export function createPost(
   if (!txId) {
     throw new PostServiceError('transaction validation returned no txId');
   }
+  const validationDurationMs = performance.now() - validationStart;
 
   // ---- Bind the payload's author to the karma being spent ----
   //
@@ -157,10 +160,13 @@ export function createPost(
   // rather than assumed so the rule stays stated (TYPES_INTERFACE → Hashing
   // functions).
   const postId = computePostId(txId, 0);
+  emitPostReceived(postId, 'local');
+  emitPostValidated(postId, validationDurationMs);
 
   // ---- Store the post, then the single mempool entry ----
   const rawCbor = deps.encodePost(post);
   deps.insertPost(postId, post, rawCbor);
+  emitPostIndexed(postId, post.parentRefs.length);
 
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   deps.admitTx(tx, expiresAtHeight);

@@ -46,7 +46,7 @@ export interface Peer {
 // Penalty
 // ---------------------------------------------------------------------------
 
-export type PenaltyType = 'misbehavior' | 'spam' | 'non-delivery' | 'permanent';
+export type PenaltyType = 'misbehavior' | 'permanent';
 
 export interface PenaltyRecord {
   type: PenaltyType;
@@ -77,8 +77,6 @@ export enum PenaltyKind {
   Transient = 'transient',
   /** Protocol violation — permanent ban. */
   ProtocolViolation = 'protocol_violation',
-  /** Rate limit exceeded. */
-  RateLimit = 'rate_limit',
 }
 
 // ---------------------------------------------------------------------------

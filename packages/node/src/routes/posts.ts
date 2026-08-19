@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { MAX_CONTENT_BYTES } from '@dagsocial/types';
 import type { Post } from '@dagsocial/types';
 import { createPost } from '../services/post-service.js';
 import type { PostServiceDeps } from '../services/post-service.js';
@@ -67,14 +66,6 @@ export function createRouter(deps: PostsDeps): Router {
 
     if (!post.content || !post.author) {
       res.status(400).json({ error: 400, reason: 'Missing required fields' });
-      return;
-    }
-
-    if (
-      post.content.length < 1 ||
-      post.content.length > MAX_CONTENT_BYTES
-    ) {
-      res.status(400).json({ error: 400, reason: 'Content must be 1-300 bytes' });
       return;
     }
 

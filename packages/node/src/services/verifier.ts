@@ -1,13 +1,13 @@
 import {
-  PROTOCOL_VERSION,
-  MAX_CONTENT_BYTES,
-  MAX_PARENT_REFS,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
 } from '@dagsocial/types';
 import type { Post, Stump } from '@dagsocial/types';
 import {
+  verifyContentLimits,
   verifyContentCharacters,
+  verifyParentRefsCount,
+  verifyProtocolVersion,
   verifyPostFieldDomains,
 } from '@dagsocial/validation';
 
@@ -80,26 +80,20 @@ export function verifyPost(
   const domains = verifyPostFieldDomains(post);
   if (!domains.valid) return domains;
 
-  // 1. Content: 1–300 bytes UTF-8. Reject empty.
-  const contentBytes = Buffer.byteLength(post.content, 'utf8');
-  if (contentBytes === 0) {
-    return { valid: false, error: 'Content is empty' };
-  }
-  if (contentBytes > MAX_CONTENT_BYTES) {
-    return { valid: false, error: 'Content exceeds max length' };
-  }
+  // 1. Content: 1–300 bytes UTF-8.
+  const limits = verifyContentLimits(post.content);
+  if (!limits.valid) return limits;
 
   // 1b. Character restrictions: no control, zero-width, or bidi chars.
   const charCheck = verifyContentCharacters(post.content);
   if (!charCheck.valid) return charCheck;
 
   // 2. Parent refs: 0–1.
-  if (post.parentRefs.length > MAX_PARENT_REFS) {
-    return { valid: false, error: `Too many parent refs (max ${MAX_PARENT_REFS})` };
-  }
+  const refs = verifyParentRefsCount(post.parentRefs);
+  if (!refs.valid) return refs;
 
   // 3. Protocol version.
-  if (post.protocolVersion !== PROTOCOL_VERSION) {
+  if (!verifyProtocolVersion(post.protocolVersion)) {
     return { valid: false, error: 'Unsupported protocol version' };
   }
 
