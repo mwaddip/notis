@@ -165,22 +165,21 @@ export interface DecayPlan {
  * clocks, so a block whose settlement is refused has not moved a decay clock
  * either.
  *
- * `touchedOwners` is the set of identities whose karma boxes the block's body
- * consumes — only they are squared. The caller provides them in ascending
- * hex order (ARCHITECTURE → Karma decay: "the squared set derives from block
- * content"). An identity nothing touches keeps its face values and its virtual
- * decay indefinitely.
+ * `postBodyKarma` is the post-body karma projection — for each identity the
+ * block's body touched, the karma boxes they hold AFTER the body's user
+ * transactions but BEFORE the settlement. The caller provides entries in
+ * ascending owner-hex order (ARCHITECTURE → Karma decay). The identity record
+ * is read from pre-body state (user transactions do not write it).
  */
 export function deriveKarmaDecay(
   deps: DecayDeps,
-  touchedOwners: Uint8Array[],
+  postBodyKarma: Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>,
   currentHeight: number,
   cfg: DecayCfg,
 ): DecayPlan[] {
   const plans: DecayPlan[] = [];
 
-  for (const owner of touchedOwners) {
-    const boxes = deps.getKarmaBoxes(owner);
+  for (const [, { owner, boxes }] of postBodyKarma) {
     if (boxes.length === 0) continue;
 
     const record = deps.getIdentityRecord(owner);

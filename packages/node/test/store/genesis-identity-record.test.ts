@@ -52,7 +52,7 @@ function decayDeps(s: Store) {
   };
 }
 
-function allKarmaOwners(s: Store): Uint8Array[] {
+function allKarmaPostBody(s: Store): Map<string, { owner: Uint8Array; boxes: import('@dagsocial/types').KarmaBox[] }> {
   const rows = s
     .getDb()
     .prepare(
@@ -61,7 +61,13 @@ function allKarmaOwners(s: Store): Uint8Array[] {
        ORDER BY owner`,
     )
     .all() as { owner: Buffer }[];
-  return rows.map((r) => new Uint8Array(r.owner));
+  const result = new Map<string, { owner: Uint8Array; boxes: import('@dagsocial/types').KarmaBox[] }>();
+  for (const r of rows) {
+    const owner = new Uint8Array(r.owner);
+    const hex = Buffer.from(owner).toString('hex');
+    result.set(hex, { owner, boxes: s.utxo.getKarmaBoxes(owner) });
+  }
+  return result;
 }
 
 /**
@@ -144,7 +150,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     //   never-active  (0) : floor((12 − 0) / 3) = 4 periods → burn 20
     //
     // 15 is what the box-height clock produced, `createdAtBlock` being 1.
-    const entries = s.decay.deriveKarmaDecay(decayDeps(s), allKarmaOwners(s), 12, {
+    const entries = s.decay.deriveKarmaDecay(decayDeps(s), allKarmaPostBody(s), 12, {
       staleThresholdBlocks: 11,
       decayIntervalBlocks: 3,
       decayAmount: 5n,
@@ -168,7 +174,7 @@ describe('genesis identity record (Spec G phase D)', () => {
     };
     const before = (s.utxo.getKarmaBoxes(faucetPubKey())[0] as KarmaBox).value;
 
-    expect(s.decay.deriveKarmaDecay(decayDeps(s), allKarmaOwners(s), 11, cfg)).toHaveLength(0);
+    expect(s.decay.deriveKarmaDecay(decayDeps(s), allKarmaPostBody(s), 11, cfg)).toHaveLength(0);
     expect((s.utxo.getKarmaBoxes(faucetPubKey())[0] as KarmaBox).value).toBe(before);
   });
 

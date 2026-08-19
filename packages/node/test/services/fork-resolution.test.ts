@@ -1394,7 +1394,10 @@ describe('revertBlock', () => {
     };
 
     const DECAY_HEIGHT = KARMA_STALE_THRESHOLD_BLOCKS + 100;
-    const entries = deriveKarmaDecay(deps, [identity.userId], DECAY_HEIGHT, decayCfg);
+    const ownerHex = Buffer.from(identity.userId).toString('hex');
+    const karmaBoxes = getKarmaBoxes(identity.userId);
+    const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
+    const entries = deriveKarmaDecay(deps, postBody, DECAY_HEIGHT, decayCfg);
 
     expect(entries.length).toBe(1);
 

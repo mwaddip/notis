@@ -940,7 +940,10 @@ describe('block-apply journal recording', () => {
     };
 
     const staleHeight = KARMA_STALE_THRESHOLD_BLOCKS + 100;
-    const entries: DecayPlan[] = deriveKarmaDecay(deps, [identity.userId], staleHeight, decayCfg);
+    const ownerHex = Buffer.from(identity.userId).toString('hex');
+    const karmaBoxes = deps.getKarmaBoxes(identity.userId);
+    const postBody = new Map([[ownerHex, { owner: identity.userId, boxes: karmaBoxes }]]);
+    const entries: DecayPlan[] = deriveKarmaDecay(deps, postBody, staleHeight, decayCfg);
 
     // Never-active clock ⇒ periods count from height 0:
     // owed = floor(staleHeight / interval) × amount.
@@ -1695,6 +1698,80 @@ describe('block-apply mint provenance', () => {
       // The face value is unchanged — decay is virtual.
       expect(utxo.getKarmaValue(idle.userId)).toBe(50n);
       expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
+    } finally {
+      vi.doUnmock('../../src/config.js');
+    }
+  });
+
+  it('a stale TOUCHED identity is squared: post tx applies, owner ends at effective', async () => {
+    try {
+      vi.doMock('../../src/config.js', async () => {
+        const actual = await vi.importActual<typeof import('../../src/config.js')>(
+          '../../src/config.js',
+        );
+        return {
+          ...actual,
+          config: Object.freeze({
+            ...actual.config,
+            karmaStaleThresholdBlocks: 3,
+            karmaDecayIntervalBlocks: 1,
+          }),
+        };
+      });
+      vi.resetModules();
+
+      const db = await importDb();
+      db.initDb(':memory:');
+
+      const utxo = await importUtxo();
+      const records = await import('../../src/store/identity-records.js');
+      const mempool = await import('../../src/store/mempool.js');
+      const { POST_LOCK_THREAD_COST, KARMA_DECAY_AMOUNT, KARMA_MINIMUM } =
+        await import('@dagsocial/types');
+
+      const stale = makeTestIdentity();
+      const karmaBox = makeKarmaBox(50n, stale.userId, 0);
+      utxo.insertBox(karmaBox);
+
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+      await mineNextBlock(bc);
+
+      const { getKarmaPoolBox } = await import('../../src/store/utxo.js');
+      const poolBefore = getKarmaPoolBox()!.value;
+
+      const post = makePost(stale.userId, 'stale post');
+      const postTx: UtxoTransaction = {
+        inputs: [karmaBox.id!],
+        outputs: [
+          { boxType: 'karma', value: 50n - POST_LOCK_THREAD_COST, createdAtBlock: 0, owner: stale.userId } as never,
+          { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: 0, originalValue: POST_LOCK_THREAD_COST, owner: stale.userId } as never,
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+        post,
+      };
+      signTransaction(postTx, stale.privateKey, hex(stale.userId));
+      mempool.insertUtxoTx(postTx, 1000);
+
+      const block = await mineNextBlock(bc);
+      expect(block).not.toBeNull();
+
+      const postBodyChange = 50n - POST_LOCK_THREAD_COST;
+      const periods = 4;
+      const owed = BigInt(periods) * KARMA_DECAY_AMOUNT;
+      const floor = postBodyChange < KARMA_MINIMUM ? postBodyChange : KARMA_MINIMUM;
+      const effective = (postBodyChange - owed) > floor
+        ? postBodyChange - owed : floor;
+      const burn = postBodyChange - effective;
+
+      expect(utxo.getKarmaValue(stale.userId)).toBe(effective);
+      expect(records.getIdentityRecord(stale.userId)!.lastDecayBlock).toBe(4);
+
+      const poolAfter = getKarmaPoolBox()!.value;
+      expect(poolAfter - poolBefore).toBe(burn);
     } finally {
       vi.doUnmock('../../src/config.js');
     }

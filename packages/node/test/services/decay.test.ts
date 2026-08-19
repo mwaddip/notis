@@ -189,6 +189,10 @@ describe('deriveKarmaDecay', () => {
     const consumed: { boxId: string; atHeight: number }[] = [];
     const inserted: KarmaBox[] = [];
     const key = (o: Uint8Array) => Buffer.from(o).toString('hex');
+    const postBodyKarma = new Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>();
+    for (const [k, boxes] of Array.from(boxesMap.entries()).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+      postBodyKarma.set(k, { owner: new Uint8Array(Buffer.from(k, 'hex')), boxes });
+    }
     return {
       deps: {
         getKarmaBoxes: (owner: Uint8Array) => boxesMap.get(key(owner)) ?? [],
@@ -197,9 +201,7 @@ describe('deriveKarmaDecay', () => {
           recordMap.set(key(id), r);
         },
       },
-      touchedOwners: Array.from(boxesMap.keys())
-        .sort()
-        .map((k) => new Uint8Array(Buffer.from(k, 'hex'))),
+      postBodyKarma,
       consumed,
       inserted,
       recordMap,
@@ -212,7 +214,7 @@ describe('deriveKarmaDecay', () => {
     const boxesMap = new Map<string, KarmaBox[]>([[ownerKey, boxes]]);
     const recordMap = new Map<string, IdentityRecord>();
     if (record) recordMap.set(ownerKey, record);
-    return { ...makeDeps(boxesMap, recordMap), touchedOwners: [OWNER] };
+    return makeDeps(boxesMap, recordMap);
   }
 
   // The stale-family heights, derived from the constants so the tests survive
@@ -226,12 +228,12 @@ describe('deriveKarmaDecay', () => {
     ACTIVITY_AT + KARMA_STALE_THRESHOLD_BLOCKS + CAP_INTERVALS * KARMA_DECAY_INTERVAL_BLOCKS;
 
   it('does nothing for a non-stale identity', () => {
-    const { deps, touchedOwners, consumed, inserted } = oneOwner(
+    const { deps, postBodyKarma, consumed, inserted } = oneOwner(
       [makeKarmaBox({ value: 100n })],
       clock(99999),
     );
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, 100000, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, 100000, TEST_CFG);
 
     expect(journal).toHaveLength(0);
     expect(consumed).toHaveLength(0);
@@ -241,12 +243,12 @@ describe('deriveKarmaDecay', () => {
   it('burns karma for a stale identity', () => {
     // Stale by construction of STALE_AT, and owed more than the box holds over
     // the floor — so the burn is the value-over-minimum cap.
-    const { deps, touchedOwners } = oneOwner(
+    const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 100n })],
       clock(ACTIVITY_AT),
     );
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     const entry = journal[0]!;
@@ -261,24 +263,24 @@ describe('deriveKarmaDecay', () => {
 
   it('caps burn at the KARMA_MINIMUM floor', () => {
     // Owed far more than the box holds over the floor; only the excess burns.
-    const { deps, touchedOwners } = oneOwner(
+    const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 12n })],
       clock(ACTIVITY_AT),
     );
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     expect(journal[0]!.burnAmount).toBe(12n - KARMA_MINIMUM);
   });
 
   it('does nothing when already at or below the minimum', () => {
-    const { deps, touchedOwners, consumed, inserted } = oneOwner(
+    const { deps, postBodyKarma, consumed, inserted } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 8n })],
       clock(ACTIVITY_AT),
     );
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(0);
     expect(consumed).toHaveLength(0);
@@ -288,18 +290,18 @@ describe('deriveKarmaDecay', () => {
   it('leaves the clock untouched when nothing burns', () => {
     // A stale identity sitting at the floor keeps the intervals it is owed —
     // writing `lastDecayBlock` on a zero burn would silently forgive them.
-    const { deps, touchedOwners, recordMap } = oneOwner(
+    const { deps, postBodyKarma, recordMap } = oneOwner(
       [makeKarmaBox({ id: 'old-box-1', value: 8n })],
       clock(ACTIVITY_AT),
     );
 
-    deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
   });
 
   it('consolidates multiple boxes into one', () => {
-    const { deps, touchedOwners, consumed } = oneOwner(
+    const { deps, postBodyKarma, consumed } = oneOwner(
       [
         makeKarmaBox({ id: 'box-a', value: 50n }),
         makeKarmaBox({ id: 'box-b', value: 60n }),
@@ -307,7 +309,7 @@ describe('deriveKarmaDecay', () => {
       clock(ACTIVITY_AT),
     );
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     // ⛔ **The plan NAMES both boxes; the settlement consumes them.** The
@@ -319,12 +321,12 @@ describe('deriveKarmaDecay', () => {
   });
 
   it('the new box has decayBurn: true', () => {
-    const { deps, touchedOwners, inserted } = oneOwner(
+    const { deps, postBodyKarma, inserted } = oneOwner(
       [makeKarmaBox({ id: 'old-box', value: 100n })],
       clock(ACTIVITY_AT),
     );
 
-    const plans = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const plans = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
 
     // ⚠ **`decayBurn` is the SETTLEMENT's to set now**, on the karma output it
     // emits for this plan — it is what keeps the replacement from resetting the
@@ -336,12 +338,12 @@ describe('deriveKarmaDecay', () => {
   });
 
   it('advances lastDecayBlock and preserves lastActivityBlock', () => {
-    const { deps, touchedOwners, recordMap } = oneOwner(
+    const { deps, postBodyKarma, recordMap } = oneOwner(
       [makeKarmaBox({ id: 'old-box', value: 100n })],
       clock(ACTIVITY_AT),
     );
 
-    const plans = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const plans = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
     // ⛔ **The clock is advanced by `commitDecayClocks`, after the settlement's
     // boxes are in** — so the journal's reverse replay undoes the record before
     // deleting the box that caused it.
@@ -354,12 +356,12 @@ describe('deriveKarmaDecay', () => {
     // Without `max(...)` this would re-bill every interval since ACTIVITY_AT
     // and burn down to the floor instead of one period's worth.
     const firstDecayAt = ACTIVITY_AT + KARMA_STALE_THRESHOLD_BLOCKS;
-    const { deps, touchedOwners } = oneOwner(
+    const { deps, postBodyKarma } = oneOwner(
       [makeKarmaBox({ id: 'decay-box', value: 100n, decayBurn: true })],
       clock(ACTIVITY_AT, firstDecayAt),
     );
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, firstDecayAt + KARMA_DECAY_INTERVAL_BLOCKS, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, firstDecayAt + KARMA_DECAY_INTERVAL_BLOCKS, TEST_CFG);
 
     expect(journal).toHaveLength(1);
     // One whole interval past the first decay -> exactly one period's burn.
@@ -367,9 +369,9 @@ describe('deriveKarmaDecay', () => {
   });
 
   it('creates a record for an owner that had none', () => {
-    const { deps, touchedOwners, recordMap } = oneOwner([makeKarmaBox({ id: 'old-box', value: 100n })]);
+    const { deps, postBodyKarma, recordMap } = oneOwner([makeKarmaBox({ id: 'old-box', value: 100n })]);
 
-    const journal = deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG);
+    const journal = deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG);
     commitDecayClocks(deps, journal, STALE_AT);
 
     expect(journal).toHaveLength(1);
@@ -377,9 +379,9 @@ describe('deriveKarmaDecay', () => {
   });
 
   it('skips an owner with no karma boxes without touching its clock', () => {
-    const { deps, touchedOwners, recordMap } = oneOwner([], clock(ACTIVITY_AT));
+    const { deps, postBodyKarma, recordMap } = oneOwner([], clock(ACTIVITY_AT));
 
-    expect(deriveKarmaDecay(deps, touchedOwners, STALE_AT, TEST_CFG)).toHaveLength(0);
+    expect(deriveKarmaDecay(deps, postBodyKarma, STALE_AT, TEST_CFG)).toHaveLength(0);
     expect(recordMap.get(ownerKey)).toEqual(clock(ACTIVITY_AT));
   });
 
@@ -388,7 +390,7 @@ describe('deriveKarmaDecay', () => {
       [makeKarmaBox({ id: 'old-box', value: 100n })],
       clock(ACTIVITY_AT),
     );
-    const plans = deriveKarmaDecay(deps, [], STALE_AT, TEST_CFG);
+    const plans = deriveKarmaDecay(deps, new Map(), STALE_AT, TEST_CFG);
     expect(plans).toHaveLength(0);
   });
 });

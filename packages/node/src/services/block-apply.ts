@@ -18,7 +18,7 @@ import {
 import type { DecayDeps, DecayPlan } from './decay.js';
 import { config } from '../config.js';
 import {
-  collectTouchedKarmaOwners,
+  collectPostBodyKarma,
   computeBlockReward,
   computeUtxoTxRoot,
   clearTemplate,
@@ -1046,10 +1046,13 @@ function applyMutationPhase(
   const invitedThisBlock = new Set<string>();
 
   // §9b. Decay: squared per identity on touch (ARCHITECTURE → Karma decay).
-  // Derived from PRE-BODY state after decoding the transactions — the touched
-  // set comes from the decoded queue, and the UTXO reads are pre-apply.
-  const touchedOwners = collectTouchedKarmaOwners(queue.map((q) => q.tx));
-  const decayPlans = deriveKarmaDecay(decayDeps, touchedOwners, height, {
+  // The post-body projection derives from decoded transactions + the pre-body
+  // UTXO set — both available before the apply loop. The settlement consumes
+  // the projected boxes, which are the ones that exist after the body applies.
+  const postBodyKarma = collectPostBodyKarma(
+    queue.map((q) => ({ txId: q.txId, inputs: q.tx.inputs, outputs: q.outputs })),
+  );
+  const decayPlans = deriveKarmaDecay(decayDeps, postBodyKarma, height, {
     staleThresholdBlocks: config.karmaStaleThresholdBlocks,
     decayIntervalBlocks: config.karmaDecayIntervalBlocks,
     decayAmount: config.karmaDecayAmount,

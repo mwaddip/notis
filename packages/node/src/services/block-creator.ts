@@ -402,11 +402,14 @@ export function createOrderingBlock(): OrderingBlock | null {
    * write the whole body — the users' entries then the settlement, last.
    */
   const rebuildBody = (): { valid: boolean; error?: string } => {
-    const touched = collectTouchedKarmaOwners(
-      userTxCbors.map((cbor) => decodeTx(cbor)),
-    );
+    const decoded = userTxCbors.map((cbor) => {
+      const tx = decodeTx(cbor);
+      const txId = computeTxId(tx);
+      return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
+    });
+    const postBody = collectPostBodyKarma(decoded);
     const built = buildSettlement(
-      settlementDepsWith(() => deriveKarmaDecay(decayDeps, touched, newHeight, decayConfig())),
+      settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig())),
       newHeight,
       computeBlockReward(newHeight),
       nodeConfig.creditMinerRewardDelay,
@@ -726,36 +729,69 @@ export const decayDeps: DecayDeps = {
 };
 
 /**
- * Identities whose karma boxes the block's user transactions consume.
+ * Post-body karma projection for each identity the block's body touches.
  *
- * ⛔ **The order is a consensus obligation.** Decay plans land in the
- * settlement in this order, so two nodes seeing different orderings derive
- * different transactions. Sorted ascending by raw bytes — the same total
- * order `getKarmaOwners` used to provide.
+ * ⛔ **The plan must name boxes the settlement can consume — post-body, not
+ * pre-body.** A touched identity had a body tx consume one of its pre-body
+ * karma boxes, so naming pre-body boxes in the plan double-spends. The
+ * projection removes consumed boxes and adds the body's karma change outputs.
  *
- * Reads from the PRE-BODY UTXO set: an input that is another transaction's
- * output within the same block has no pre-body box, so `getBox` returns
- * null and it is skipped. The identity is already in the set from the first
- * transaction that consumed a pre-body karma box.
+ * The identity record is NOT projected: user transactions do not write it,
+ * so the pre-body record is what the settlement reads.
+ *
+ * Both the creator and the applier call this with the same decoded txs and
+ * the same pre-body store, so both derive the same post-body set.
+ *
+ * ⛔ **Order is a consensus obligation.** Entries are sorted ascending by
+ * owner hex; `deriveKarmaDecay` emits plans in that order.
  */
-export function collectTouchedKarmaOwners(
-  txs: { inputs: string[] }[],
-): Uint8Array[] {
-  const seen = new Set<string>();
-  const result: Uint8Array[] = [];
-  for (const tx of txs) {
-    for (const inputId of tx.inputs) {
-      const box = getBox(inputId);
-      if (box?.boxType === 'karma') {
-        const ownerHex = Buffer.from((box as KarmaBox).owner).toString('hex');
-        if (!seen.has(ownerHex)) {
-          seen.add(ownerHex);
-          result.push((box as KarmaBox).owner);
+export function collectPostBodyKarma(
+  decodedTxs: { txId: string; inputs: string[]; outputs: AnyBox[] }[],
+): Map<string, { owner: Uint8Array; boxes: KarmaBox[] }> {
+  const allInputIds = new Set<string>();
+  for (const tx of decodedTxs) {
+    for (const id of tx.inputs) allInputIds.add(id);
+  }
+
+  const touchedOwnerHexes = new Set<string>();
+  const touchedOwners = new Map<string, Uint8Array>();
+
+  for (const id of allInputIds) {
+    const box = getBox(id);
+    if (box?.boxType === 'karma') {
+      const hex = Buffer.from((box as KarmaBox).owner).toString('hex');
+      if (!touchedOwnerHexes.has(hex)) {
+        touchedOwnerHexes.add(hex);
+        touchedOwners.set(hex, (box as KarmaBox).owner);
+      }
+    }
+  }
+
+  const bodyKarmaOutputs = new Map<string, KarmaBox[]>();
+  for (const tx of decodedTxs) {
+    for (const out of tx.outputs) {
+      if (out.boxType === 'karma') {
+        const k = out as KarmaBox;
+        const hex = Buffer.from(k.owner).toString('hex');
+        if (touchedOwnerHexes.has(hex)) {
+          let arr = bodyKarmaOutputs.get(hex);
+          if (!arr) { arr = []; bodyKarmaOutputs.set(hex, arr); }
+          arr.push(k);
         }
       }
     }
   }
-  result.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+
+  const sorted = [...touchedOwnerHexes].sort();
+  const result = new Map<string, { owner: Uint8Array; boxes: KarmaBox[] }>();
+  for (const hex of sorted) {
+    const preBody = getKarmaBoxes(touchedOwners.get(hex)!);
+    const surviving = preBody.filter((b) => b.id && !allInputIds.has(b.id));
+    const produced = (bodyKarmaOutputs.get(hex) ?? []).filter(
+      (b) => b.id && !allInputIds.has(b.id),
+    );
+    result.set(hex, { owner: touchedOwners.get(hex)!, boxes: [...surviving, ...produced] });
+  }
   return result;
 }
 
@@ -901,9 +937,14 @@ export function buildBlockSettlement(
   minerOwner: Uint8Array,
   pruneEntries: PruneEntry[] = [],
 ): { tx: UtxoTransaction } | { error: string } {
-  const touched = collectTouchedKarmaOwners(txCbors.map((cbor) => decodeTx(cbor)));
+  const decoded = txCbors.map((cbor) => {
+    const tx = decodeTx(cbor);
+    const txId = computeTxId(tx);
+    return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
+  });
+  const postBody = collectPostBodyKarma(decoded);
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, touched, height, decayConfig())),
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig())),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
