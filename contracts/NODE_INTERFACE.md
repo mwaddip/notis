@@ -3931,8 +3931,12 @@ phase; NET_INTERFACE is authoritative for that side.
 - Protocol version checked at verification
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit
-- Karma decay applied periodically at block application time
-- Like deduplication happens at ordering block creation time
+- Karma decay is virtual — sufficiency reads value through `effectiveKarma`; the
+  settlement squares touched identities at block application (`ARCHITECTURE` →
+  Karma decay)
+- Like deduplication is the like-record's existence at block application —
+  `hasLikeRecord` refuses the duplicate (relay admission mirrors it), and the
+  `like_records` primary key is the structural backstop
 - All state mutations flow through mempool → ordering block inclusion →
   block application. Zero direct `consumeBox`/`insertBox` calls in HTTP routes.
 - Mutating routes return `{ status: "pending", txId, expiresAtHeight }` —
