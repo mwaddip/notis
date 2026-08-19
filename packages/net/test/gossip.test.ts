@@ -429,9 +429,7 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('there is no sub-block topic to subscribe to', () => {
-    // The deletion, asserted rather than assumed: a producer still publishing on
-    // the retired topic reaches no validator here, and the topic string stays
-    // reserved (gossip.ts).
+    // Tracked reservation guard (NET_INTERFACE → Gossip Topics).
     const { topicValidators } = makeHarness(new Set([authorHex]));
     expect([...topicValidators.keys()].sort()).toEqual([TOPICS.orderingBlock, TOPICS.tx].sort());
     expect(topicValidators.has('/dagsocial/subblock/1')).toBe(false);

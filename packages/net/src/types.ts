@@ -9,17 +9,8 @@ export const MSG_SYNC_INFO = 2;
 export const MSG_INV = 3;
 export const MSG_MODIFIER_REQUEST = 4;
 export const MSG_MODIFIER_RESPONSE = 5;
-// Reserved, never to be reused: codes 6 and 7, `MSG_GET_SUB_BLOCK` and
-// `MSG_SUB_BLOCK_RESPONSE`. A message code is on the wire, so reuse would make
-// two protocols share a byte.
 export const MSG_GET_PEERS = 8;
 export const MSG_PEERS = 9;
-// Reserved, never to be reused: codes 10 and 11, `MSG_GET_POSTS` /
-// `MSG_POSTS`. Fetching a bare post by id has no verifiable answer — a post's id
-// is not a function of the post — and a block now carries its posts inline, so
-// there is nothing to fetch separately.
-// Codes 12–13 are retired — reserved, never reuse (NET_INTERFACE → Message
-// Codes). The next new message type starts at 14.
 export const MSG_GET_HEADERS = 14;
 export const MSG_HEADERS = 15;
 export const MSG_GET_BLOCKS = 16;
@@ -153,10 +144,6 @@ export interface NetConfig {
 // NetValidators — passed at construction, provided by @dagsocial/validation
 // ---------------------------------------------------------------------------
 
-// Reserved, never to be reused: `verifyPoW`, `verifyPostSignature`,
-// `verifySubBlockStructure`. The relay gate for a post is membership in the
-// karma set (`KarmaMembers` in gossip.ts) plus `verifyTxStructure`, which pins
-// the post payload's field domains.
 export interface NetValidators {
   verifyOrderingBlockPoW: (header: BlockHeader) => boolean;
   verifyProtocolVersion: (version: number) => boolean;
@@ -194,12 +181,6 @@ export interface PeerEntryMsg {
 export interface PeersMsg {
   peers: PeerEntryMsg[];
 }
-
-// ---------------------------------------------------------------------------
-// GetPosts / Posts message types
-// ---------------------------------------------------------------------------
-
-// Reserved, never to be reused: `GetPostsMsg`, `PostsEntry`, `PostsMsg`.
 
 // ---------------------------------------------------------------------------
 // GetHeaders / GetBlocks request types

@@ -165,12 +165,6 @@ function isEmptyReply(written: Uint8Array[]): boolean {
   return written.length === 1 && written[0]!.length === 0;
 }
 
-// Reserved, never to be reused: the posts-arm and sub-block serve suites. Both
-// served a post by id to a peer that held only a claim about it. A block now
-// carries its posts inside `utxoTxs`, and a bare-post-by-id fetch has no
-// verifiable answer once ids are provenance-derived — so the arms are gone and
-// message codes 6/7 and 10/11 stay reserved.
-
 describe('sync stream handler — sync dispatch failures', () => {
   it('logs a throwing handleMessage with the code and peer', async () => {
     // The worst instance of the pattern: `handleMessage` decodes the body and

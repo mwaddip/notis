@@ -80,8 +80,7 @@ describe('chain queries reject a frame bearing another code', () => {
   it('throws on a response bearing another code', async () => {
     // A `Peers` frame is the sharpest case available: it is a legitimate message
     // on this very stream, so nothing but the code check separates it from an
-    // answer. (It replaced a `Posts` frame, which no longer exists — the
-    // posts-fetch message pair is deleted and codes 10/11 are reserved.)
+    // answer.
     const wrongCode = () => makeDialStub(encodePeers(MAGIC, { peers: [] })).libp2p;
 
     await expect(requestHeaders(wrongCode(), 3, 2, PEER, makeConfig()))
