@@ -2419,7 +2419,7 @@ clock has to live in committed state (Spec G D4).
 
 ```
 IdentityRecord {
-  lastActivityBlock: number     // u32 — bumped when a non-decay karma box is created for the owner
+  lastActivityBlock: number     // u32 — starts at the claim height that creates the record; bumped when a non-decay karma box is created for the owner
   lastDecayBlock: number        // u32 — bumped when decay fires
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
@@ -2458,7 +2458,9 @@ fall under it.
 The record is a full-row upsert and the type forces every field *present*, so a
 writer passing `0` compiles and passes typecheck while erasing a probation clock
 or a like history. **Every writer other than the one that owns a field carries the
-stored value through unchanged** — `invitedAtBlock` is owned by the grant path,
+stored value through unchanged** — `invitedAtBlock` and `lastActivityBlock`'s
+**epoch** are owned by the grant path (the claim write initializes the activity
+clock to the claim height; advancement stays the store choke point's),
 `lifetimeLikesReceived` by the lifetime-counter bookkeeping.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
