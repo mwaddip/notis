@@ -10,6 +10,8 @@ import {
   emitApiListening,
   emitShutdownSignalReceived,
   emitServerShuttingDown,
+  emitPostReceived,
+  emitPostValidated,
 } from './journal.js';
 import { NetNode } from '@dagsocial/net';
 import * as validation from '@dagsocial/validation';
@@ -38,7 +40,7 @@ import {
   getOrderingBlock,
   peerStorage,
 } from './store/index.js';
-import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
+import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 
 const config = loadConfig();
@@ -163,7 +165,7 @@ async function handleOrderingBlock(block: OrderingBlock, fromPeerId: string): Pr
   await resolveFork(block, net, fromPeerId, dagService);
 }
 
-net.onTx((tx) => {
+net.onTx((tx, fromPeerId) => {
   const deps = {
     getBox,
       insertBox: () => {},
@@ -191,6 +193,7 @@ net.onTx((tx) => {
     runInTransaction: (fn: () => void) => fn(),
   };
   const currentHeight = getCurrentHeight();
+  const validationStart = performance.now();
   const result = validateTx(deps, tx, currentHeight);
   if (!result.valid) {
     // Boxes referenced by relayed txs may not have arrived yet via header sync.
@@ -202,6 +205,12 @@ net.onTx((tx) => {
       console.warn(`Relayed tx rejected: ${result.error}`);
     }
     return;
+  }
+  const validationDurationMs = performance.now() - validationStart;
+  if (tx.post && result.txId) {
+    const postId = computePostId(result.txId, 0);
+    emitPostReceived(postId, fromPeerId);
+    emitPostValidated(postId, validationDurationMs);
   }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   try {

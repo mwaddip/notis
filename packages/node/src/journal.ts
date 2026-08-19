@@ -104,10 +104,6 @@ export function emitPostIndexed(postId: string, depth: number): void {
   emitEvent({ event: 'post_indexed', level: 'INFO', post_id: postId, depth });
 }
 
-export function emitPowVerificationFailed(postId: string, reason: string): void {
-  emitEvent({ event: 'pow_verification_failed', level: 'WARN', post_id: postId, reason });
-}
-
 export function emitDagReorg(forkPoint: string, demoted: number, oldTip: string, newTip: string): void {
   emitEvent({
     event: 'dag_reorg', level: 'WARN',

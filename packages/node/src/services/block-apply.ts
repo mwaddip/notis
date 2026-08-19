@@ -91,6 +91,7 @@ import {
 } from '../store/journal.js';
 import type { BlockJournal } from '../store/journal.js';
 import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
+import { emitPostIndexed } from '../journal.js';
 import type { RecordPut } from '../state/avl-prover.js';
 import {
   encodeTx,
@@ -269,20 +270,15 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     if (prevHash === null) {
       throw new UnhashableStoredHeaderError('applyOrderingBlock', currentHeight);
     }
-    if (block.header.prevBlockHash !== prevHash) {
-      console.warn(`Rejected block height=${block.header.height}: prevBlockHash mismatch`);
-      abortBlockJournal();
-      return false;
-    }
-    if (block.header.height !== currentHeight + 1) {
-      console.warn(`Rejected block height=${block.header.height}: expected ${currentHeight + 1}`);
+    if (!validation.verifyBlockChainLink(block, prevBlock)) {
+      console.warn(`Rejected block height=${block.header.height}: chain link check failed`);
       abortBlockJournal();
       return false;
     }
   }
 
   // 2. Protocol version
-  if (block.header.protocolVersion !== PROTOCOL_VERSION) {
+  if (!validation.verifyProtocolVersion(block.header.protocolVersion)) {
     console.warn(`Rejected block height=${block.header.height}: unsupported protocol version ${block.header.protocolVersion}`);
     abortBlockJournal();
     return false;
@@ -681,6 +677,7 @@ function applyMutationPhase(
     if (!getPost(postId)) {
       try {
         insertPost(postId, post, encodePost(post));
+        emitPostIndexed(postId, post.parentRefs.length);
       } catch (err) {
         console.warn(`Failed to store post ${postId}: ${String(err)}`);
       }

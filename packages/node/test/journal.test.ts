@@ -188,15 +188,6 @@ describe('journal (initialized)', () => {
       expect(r!.depth).toBe(42);
     });
 
-    it('emitPowVerificationFailed includes post_id and reason (WARN)', async () => {
-      const { emitPowVerificationFailed } = await import('../src/journal.js');
-      emitPowVerificationFailed('abc123', 'difficulty too low');
-      const r = lastRecord();
-      expect(r!.event).toBe('pow_verification_failed');
-      expect(r!.level).toBe('WARN');
-      expect(r!.reason).toBe('difficulty too low');
-    });
-
     it('emitDagReorg includes fork point and demoted count', async () => {
       const { emitDagReorg } = await import('../src/journal.js');
       emitDagReorg('fork123', 3, 'oldTip', 'newTip');
@@ -278,7 +269,6 @@ describe('journal (initialized)', () => {
         emitPostReceived,
         emitPostValidated,
         emitPostIndexed,
-        emitPowVerificationFailed,
         emitDagReorg,
         emitValidationStuck,
         emitDagHeightDrift,
@@ -295,7 +285,6 @@ describe('journal (initialized)', () => {
         emitPostReceived('abc123', 'http');
         emitPostValidated('abc123', 2);
         emitPostIndexed('abc123', 5);
-        emitPowVerificationFailed('abc123', 'bad pow');
         emitDagReorg('fork1', 2, 'old', 'new');
         emitValidationStuck('abc123', 'stuck', 3);
         emitDagHeightDrift(5, 'drift', 10, 15);

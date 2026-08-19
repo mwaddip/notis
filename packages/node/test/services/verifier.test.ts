@@ -152,6 +152,19 @@ describe('verifyPost', () => {
   });
 
   // -----------------------------------------------------------------------
+  // 3b. Multi-byte content: over 300 UTF-8 bytes but within 300 code units
+  // -----------------------------------------------------------------------
+  it('rejects multi-byte content exceeding max UTF-8 byte length', () => {
+    const store = makeStore();
+    // 101 CJK characters: 1 UTF-16 code unit each, 3 UTF-8 bytes each = 303 bytes
+    const post = makePost({ content: '一'.repeat(101) });
+    const deps = createMockDeps(store);
+    const result = verifyPost(deps, post);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Content exceeds max length');
+  });
+
+  // -----------------------------------------------------------------------
   // 4. > 8 parent refs
   // -----------------------------------------------------------------------
   it('rejects too many parent refs', () => {
