@@ -146,8 +146,8 @@ needs nothing from its content. A signature of `(Post) => PostId` is what the ol
 content-derived id required, and reintroducing it would reintroduce the uniqueness problem
 PoW was carrying.
 
-`verifyPostId(post, expectedId)` cannot exist: once the id is not a function of the post,
-there is nothing such a signature could check.
+A post-taking id verifier cannot exist: once the id is not a function of the post,
+there is nothing a `(post, expectedId)` signature could check.
 
 ⚠ **`utf8(txId)`, not decoded bytes.** `TxId` is typed as a hex string, and this contract's
 standing rule (→ Pinned byte forms) is that a **standalone derivation** takes it as the UTF-8
@@ -170,8 +170,8 @@ post is the transaction that created it: its `TxId` is checked byte-for-byte aga
 
 Three consequences, each of which reads as a loss only if this rule is not stated:
 
-- **`verifyPostId(post, expectedId)` cannot exist.** Not "was removed" — it has no possible
-  implementation.
+- **A post-taking id verifier — any `(post, expectedId)` signature — cannot exist.** Not
+  "was removed" — it has no possible implementation.
 - **Parent refs are checked for EXISTENCE, not by hash recomputation.** A `verifyParentHash`
   that decoded the parent and re-derived its id was checking a claim the parent's own bytes
   can no longer make.
