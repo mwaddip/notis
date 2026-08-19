@@ -97,7 +97,6 @@ export {
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
-  resolvePendingTip,
   MempoolFullError,
   PendingSpendConflictError,
   TxTooLargeError,
