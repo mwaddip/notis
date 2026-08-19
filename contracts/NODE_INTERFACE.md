@@ -3687,8 +3687,7 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 > default, which is why this class keeps recurring here and cannot recur there.
 
 > ✅ **RESOLVED — the resolution of the marker above has SHIPPED. Verified 2026-08-11.** This read
-> `AHEAD OF CODE` until Phase 9; the positional bundle
-> (`docs/specs/2026-08-09-positional-wire-format.md`) is merged, so the codecs **are** positional
+> `AHEAD OF CODE` until Phase 9; the positional bundle is merged, so the codecs **are** positional
 > (see TYPES_INTERFACE → Serialization) rather than becoming so. It takes the lineage's answer
 > literally: closed formats, no maps, parse-time strictness.
 >
