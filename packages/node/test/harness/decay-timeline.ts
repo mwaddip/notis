@@ -50,14 +50,13 @@ export interface DecayCfg {
 /**
  * One thing that happens inside a block, in the order listed.
  *
- * `mint` is the production activity producer: `mintKarma` consumes every
- * existing karma box for the owner and emits one consolidated replacement, so
- * an owner normally holds exactly one. That is the shape the ledger is usually
- * in.
+ * `mint` is the production activity producer: `transferKarma` consumes the
+ * owner's existing karma boxes and emits one consolidated replacement, so an
+ * owner normally holds exactly one. That is the shape the ledger is usually in.
  *
  * `seed` inserts a karma box **without** consolidating — the shape reached when
- * an identity receives karma it did not pay for (invite claim, then a faucet
- * grant: neither transaction spends the recipient's existing karma box). A clock
+ * settlement karma outputs land beside existing holdings (an invite grant and
+ * a later payout to the same owner do not spend the recipient's karma). A clock
  * kept on the boxes has to choose between the oldest and the newest here, and
  * the committed record does not, which is why multi-box owners get their own
  * fixture group rather than being folded into the consolidated ones.

@@ -1499,12 +1499,12 @@ describe('block-apply embedded tx re-validation', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Mint provenance at the apply path (Spec G phase C1)
+// Mint provenance at the apply path
 //
 // These exercise the *wiring* rather than the encoders: which context each
-// `mintKarma`/`mintCredits` call site passes. A unit test on
-// `mint-provenance.ts` cannot see a call site that hands the wrong one over,
-// and both mistakes below are silent — a collision, not an error.
+// `transferKarma` call site passes. A unit test on `mint-provenance.ts`
+// cannot see a call site that hands the wrong one over, and both mistakes
+// below are silent — a collision, not an error.
 // ---------------------------------------------------------------------------
 
 describe('block-apply mint provenance', () => {

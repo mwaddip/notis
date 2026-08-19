@@ -544,10 +544,10 @@ describe('validateAndApplyTx', () => {
   // ---------------------------------------------------------------------------
   // 11. The invite is ONE transaction, and the bond is the request
   //
-  // ⛔ **`InviteBox`, the claim and the cancel are all deleted** (ARCHITECTURE →
-  // Invite System). What is left is `karma → karma + bond`, authorized like any
-  // other karma spend, and the block's settlement grants the invitee out of the
-  // karma pool. These pin the shape rules the arm carries on top of that.
+  // The invite is `karma → karma + bond`, authorized like any other karma
+  // spend, and the block's settlement grants the invitee out of the karma pool
+  // (ARCHITECTURE → Invite System). These pin the shape rules the arm carries
+  // on top of that.
   // ---------------------------------------------------------------------------
   describe('the invite transition', () => {
     let inviterPubKey: Uint8Array;
@@ -709,12 +709,10 @@ describe('validateAndApplyTx', () => {
   // 13. Value conservation (audit C-1, L-11)
   //
   // sum(inputs) == sum(outputs) across the transaction as a whole — one total
-  // per side, not per box type — with the three exceptions NODE_INTERFACE →
-  // `validateTx` step 5 enumerates: the like burn, the invite-claim surplus,
-  // and the zero-output vouch spend. All three move karma; a credit transaction
-  // conserves strictly and names its fee in a box (section 16). Every other
-  // mint or burn happens in a block-application path, never inside a user
-  // transaction.
+  // per side, not per box type (NODE_INTERFACE → `validateTx` step 7). A user
+  // transaction conserves unconditionally: each cost lands in a box the
+  // transaction itself outputs. Every mint or burn happens in a
+  // block-application path, never inside a user transaction.
   // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------
   // ⛔ NO BOX AND NO SIGNER IS EXEMPT FROM NON-TRANSFERABILITY.

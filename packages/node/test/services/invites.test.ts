@@ -359,10 +359,10 @@ describe('invites service', () => {
   // -----------------------------------------------------------------------
 
   it('the invite itself conserves — the grant comes from the pool', () => {
-    // ⛔ **The invite-claim surplus is GONE, and with it the last one**
-    // (NODE_INTERFACE → validateTx step 5). `FIXTURE_BOND_KARMA` is spent from
-    // the karma pool by the block's settlement transaction, so the inviter pays
-    // the bond and nothing else, and the sums balance exactly.
+    // ⛔ **Every user transaction conserves unconditionally** (NODE_INTERFACE →
+    // validateTx step 7). `FIXTURE_BOND_KARMA` is spent from the karma pool by
+    // the block's settlement transaction, so the inviter pays the bond and
+    // nothing else, and the sums balance exactly.
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
 

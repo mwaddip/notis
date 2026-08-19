@@ -253,10 +253,9 @@ const POST_CHANGE = 1n;
 /**
  * The author's outstanding accrual, read off the ledger.
  *
- * ⛔ **`IdentityRecord.likeCarry` IS DELETED, AND THE BOX IS THE CARRY.** A
- * counter existed to remember karma that did not yet exist; once the karma sits
- * in a `LikeAccrualBox` the box *is* the carry, and keeping both would be two
- * representations of one quantity free to disagree (ARCHITECTURE → Likes).
+ * ⛔ **THE BOX IS THE CARRY.** The karma sits in a `LikeAccrualBox`, so the
+ * box *is* the carry — a counter beside it would be two representations of
+ * one quantity free to disagree (ARCHITECTURE → Likes).
  *
  * ⚠ **Read AFTER the block applies**, when this block's markers are spent — a
  * marker and a carry box share a type and are told apart only by lifetime, so
@@ -384,7 +383,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Mint identity
   // -------------------------------------------------------------------------
 
-  it('one like-payout mint per author per block: two authors → two mints, with pinned mint ids', async () => {
+  it('two authors in one block receive two settlement outputs sharing one txId', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -430,7 +429,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(new Set(payouts.map((b) => b.txId)).size).toBe(1);
   });
 
-  it('likes on two posts of one author in one block consolidate into ONE mint', async () => {
+  it('likes on two posts of one author in one block produce one settlement output', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();

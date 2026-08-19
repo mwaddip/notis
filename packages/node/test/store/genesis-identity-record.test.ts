@@ -118,8 +118,8 @@ describe('genesis identity record (Spec G phase D)', () => {
     s.initDb(':memory:');
 
     s.system.ensureSystemKarmaBox(faucetPubKey(), 0);
-    // A later call (e.g. from `faucetGrant`) must not move the clock forward and
-    // hand the system a fresh staleness window.
+    // A later call must not move the clock forward and hand the system a fresh
+    // staleness window.
     s.system.ensureSystemKarmaBox(faucetPubKey(), 900);
 
     expect(s.records.getIdentityRecord(faucetPubKey())).toEqual({

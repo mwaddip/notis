@@ -17,19 +17,18 @@ import type { ScenarioCapture } from '../harness/decay-timeline.js';
  *   - the pre-swap `owedPeriods` charges from the **oldest** non-decay box;
  *   - the identity record carries the **newest** activity.
  *
- * That shape is reachable — `claimInvite` mints a KarmaBox to the invitee
- * (inputs: the InviteBox and BondBox, not the invitee's karma) and `faucetGrant`
- * mints another to the same identity (input: the *system* karma box). Neither
+ * That shape is reachable — settlement karma outputs do not consolidate, so
+ * an invite grant and a later like payout to the same owner both land beside
+ * existing holdings (NODE_INTERFACE → The settlement transaction). Neither
  * spends what the recipient already holds.
  *
  * **This is an accepted, deliberate deviation — not an incidental one.** An
  * `owedPeriods` equivalence argument would need the premise that forced
  * consolidation leaves normally one karma box (oldest == newest == last touch).
- * That premise is false: `applyTx` does not consolidate, so any transaction
- * that mints karma to an owner **without spending that owner's existing
- * karma** — the faucet grant (its only input is the *system* karma box) and the
- * invite claim (its inputs are the InviteBox and BondBox) — leaves two
- * non-decay karma boxes standing.
+ * That premise is false: the settlement emits a fresh karma output per leg
+ * rather than merging into the recipient's existing box, so any block that
+ * credits an owner who already holds karma leaves two non-decay karma boxes
+ * standing.
  *
  * Decay is therefore measured from the most recent activity rather than from
  * the oldest surviving box, which is the clock NODE_INTERFACE → "Karma decay

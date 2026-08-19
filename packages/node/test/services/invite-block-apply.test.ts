@@ -514,8 +514,9 @@ describe('the invite at block application', () => {
 
     expect(inviterKarma).toBe(0n);
     expect(utxo.getBox(bond.id!)).toBeNull();
-    // Nothing minted at all, not a zero-value box: `mintKarma` returns early at
-    // 0, so a fully-forfeit bond leaves the inviter with no karma box.
+    // Nothing minted at all, not a zero-value box: `transferKarma` skips a
+    // zero-value credit, so a fully-forfeit bond leaves the inviter with no
+    // karma box.
     expect(utxo.getKarmaBox(inviter.userId)).toBeNull();
   });
 

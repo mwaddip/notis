@@ -91,9 +91,9 @@ const HEIGHT = 700;
  * A `PostLockBox` holding exactly `amount`, inserted and returned — the source
  * a `transferKarma` call names.
  *
- * ⛔ **Every transfer needs one, and that IS the change.** A test that wants to
- * put karma somewhere must now say where it came from, which is the discipline
- * `mintKarma` had no place to express.
+ * ⛔ **Every transfer needs one.** A test that wants to put karma somewhere
+ * must say where it came from — `transferKarma` names source and destination
+ * in one call.
  */
 function sourceFor(owner: Uint8Array, amount: bigint, nonce: number): PostLockBox[] {
   const box = seedProvenance<PostLockBox>(
@@ -153,12 +153,10 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
 
   // --- the invariant the whole phase rests on ------------------------------
 
-  // Reworded at phase G2b, same invariant. The "without" arm used to be a
-  // second `mintKarma` call passing `null`; `ctx` is required now, so that arm
-  // is unreachable through the producer. It is reconstructed from the produced
-  // box instead — strip `id`/`txId`/`index` and re-derive — which asserts the
-  // same equality against the **shipped** producer rather than against a
-  // second, differently-configured call.
+  // `ctx` is required on every `transferKarma` call, so the "without" arm is
+  // reconstructed from the produced box — strip `id`/`txId`/`index` and
+  // re-derive — which asserts the same equality against the **shipped**
+  // producer rather than against a second, differently-configured call.
   it('the produced id BINDS its provenance — stripping it changes the id', async () => {
     const { initDb } = await importDbFresh();
     const { getBox } = await importUtxoFresh();
@@ -242,12 +240,9 @@ describe('the transfer primitive attaches provenance (Spec G phase C1)', () => {
   // that transaction's real `(txId, index)`; `output-shape-id-integrity` pins the
   // derivation every settlement output goes through.
 
-  // deleted rather than adapted: `mintKarma`/`mintCredits` now take a required
-  // `MintContext`, so the state it described is unreachable — and keeping it
-  // would have forced `| null` to stay alive purely to satisfy it, inverting
-  // the dependency. (The store-side half, NOT NULL on
-  // `utxo_boxes.tx_id`/`output_index`, lands at G3 with the fixture migration
-  // those columns force.)
+  // `transferKarma` requires a `MintContext` on every call, so provenance-less
+  // boxes are unreachable through the producer. The store enforces the same
+  // invariant: `utxo_boxes.tx_id`/`output_index` are NOT NULL.
 
   // --- key order: provenance appended last ---------------------------------
 
