@@ -100,8 +100,8 @@ export function emitPostValidated(postId: string, validationDurationMs: number):
   emitEvent({ event: 'post_validated', level: 'INFO', post_id: postId, validation_duration_ms: validationDurationMs });
 }
 
-export function emitPostIndexed(postId: string, depth: number): void {
-  emitEvent({ event: 'post_indexed', level: 'INFO', post_id: postId, depth });
+export function emitPostIndexed(postId: string, parentRefCount: number): void {
+  emitEvent({ event: 'post_indexed', level: 'INFO', post_id: postId, parent_ref_count: parentRefCount });
 }
 
 export function emitDagReorg(forkPoint: string, demoted: number, oldTip: string, newTip: string): void {

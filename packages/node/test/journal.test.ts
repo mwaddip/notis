@@ -180,12 +180,12 @@ describe('journal (initialized)', () => {
       expect(r!.validation_duration_ms).toBe(15);
     });
 
-    it('emitPostIndexed includes post_id and depth', async () => {
+    it('emitPostIndexed includes post_id and parent_ref_count', async () => {
       const { emitPostIndexed } = await import('../src/journal.js');
-      emitPostIndexed('abc123', 42);
+      emitPostIndexed('abc123', 1);
       const r = lastRecord();
       expect(r!.event).toBe('post_indexed');
-      expect(r!.depth).toBe(42);
+      expect(r!.parent_ref_count).toBe(1);
     });
 
     it('emitDagReorg includes fork point and demoted count', async () => {
