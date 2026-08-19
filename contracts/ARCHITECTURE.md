@@ -1069,7 +1069,9 @@ No user transaction can spend a `PostLockBox` — block application is its only 
 | `POST_LOCK_UNLOCK_PER_LIKES` | `10` | Every N lifetime likes unlocks 1 karma |
 
 All universal constants — never per-network (§Network Identity: compress time, never
-economics). Values are placeholders until the constants session pins them.
+economics). Values are placeholders until the constants session pins them — with one
+pinned exception: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is ruled at 28 days
+(user, 2026-08-19; `TYPES_INTERFACE` states the same at the profile passage).
 
 **Retired, do not rebuild:** the like box · the free-like tier (`dag_likes` rows as
 likes) · unlike and every refund path · the epoch interval. The boxType string `'like'`

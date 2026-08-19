@@ -815,7 +815,7 @@ schema for its `boxType`**:
 
 - **Key set is exact.** Required fields present, no key outside the declared
   set (`TYPES_INTERFACE` box definitions are authoritative; declared-optional
-  fields — `KarmaBox.decayBurn`, `CreditBox.lockedUntilBlock` — may be present
+  fields — `KarmaBox.nonActivity`, `CreditBox.lockedUntilBlock` — may be present
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
   > **`fee` is user-created and consumable only by block application**, which is
@@ -842,7 +842,7 @@ schema for its `boxType`**:
     is deleted with the field (TYPES_INTERFACE → PostLockBox) — the circularity,
     not a domain fix. Kept as a row because the *kind* is still part of the
     schema vocabulary.
-  - `boolean`: `decayBurn` (karma, when present).
+  - `boolean`: `nonActivity` (karma, when present).
 - **Unknown `boxType` is a reject — and the schema lookup is an own-property
   lookup** (`Object.hasOwn` or equivalent), never a bare index into the
   table: `boxType: 'constructor'` must land in the unknown-boxType reject,
@@ -2551,8 +2551,9 @@ box keyspace, which is a distinct concern from how the bytes are typed.
 #### Populating the record
 
 - **`lastActivityBlock`** — bumped at the **store choke point**, `insertBox`,
-  when the inserted box is a karma box with `decayBurn !== true` ("no unspent
-  non-decay karma box newer than the threshold" is the staleness predicate).
+  when the inserted box is a karma box with `nonActivity !== true` — the owner's
+  own spends bump; settlement outputs and vesting returns carry the flag and do
+  not.
 - **`lastDecayBlock`** — bumped when decay fires for that owner.
 - **`invitedAtBlock`** — written only by block application when an invite grant
   applies (the settlement's grant leg); every other writer carries it through.
@@ -3020,7 +3021,7 @@ redundancy is what lets a light client verify honesty rather than trust it.
 > consensus fork, from nothing but an object shape.
 >
 > **Provenance keys are therefore assigned conditionally, never as explicit
-> `undefined`** — the discipline `rowToBox` already applies to `decayBurn` and
+> `undefined`** — the discipline `rowToBox` already applies to `nonActivity` and
 > `lockedUntilBlock`. Box **ids** are not exposed to *this* hazard:
 > `canonicalBoxBytes` destructures `id`/`txId`/`index` away, so it is total
 > over both shapes. Only the AVL value is.
