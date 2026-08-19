@@ -757,12 +757,15 @@ Node start
 
 ## Peer Penalty System
 
-| Penalty type | Trigger | Score |
-|-------------|---------|-------|
-| MisbehaviorPenalty | Invalid message (fails Stage 1) | 100 |
-| SpamPenalty | Duplicate message within window | 50 |
-| NonDeliveryPenalty | Unanswered request timeout | 75 |
-| PermanentPenalty | Wrong magic bytes, incompatible version | 500 (instant ban) |
+| Penalty | Trigger | Score |
+|---------|---------|-------|
+| `misbehavior` | Invalid message — fails Stage 1: structure, protocol version, ordering-block PoW, or the karma-membership gate (`gossip.ts` call sites) | 100 |
+| `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
+| `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
+
+⚠ **Declared and never triggered:** `PenaltyKind.RateLimit` (would score 100) and
+the `PenaltyType` members `'spam'` and `'non-delivery'` — the unions are wider
+than the behavior, and no call site produces them.
 
 Accumulated score >= threshold → temporal ban for `temporalBanDuration`.
 
