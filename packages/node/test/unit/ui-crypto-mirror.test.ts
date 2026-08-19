@@ -107,7 +107,7 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 
 // ⛔ **EVERY ID BELOW MOVED WITH C1'S TRANSACTION PREIMAGE, AND THE BOX BYTES
 // DID NOT.** `txIdBytes` lost its `preimages` field (TYPES_INTERFACE → Layout —
-// UtxoTransaction: a live hazard — NODE_INTERFACE:1105), so every `TxId` moved and, through
+// UtxoTransaction: a live hazard — NODE_INTERFACE → Transaction envelope shape), so every `TxId` moved and, through
 // `computeCandidateBoxId(candidate, txId, index)`, every box id derived from
 // one. The two frozen byte vectors further down are **unchanged** — measured,
 // not assumed — which is what localises the move to the transaction preimage
@@ -864,7 +864,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('a `preimages` key is not a field, and the page must not build one', () => {
-    // ⛔ **`preimages` is a live hazard** (NODE_INTERFACE:1105, TYPES_INTERFACE →
+    // ⛔ **`preimages` is a live hazard** (NODE_INTERFACE → Transaction envelope shape, TYPES_INTERFACE →
     // Layout — UtxoTransaction). It is outside the `TxId` preimage, so a builder
     // that emitted one would produce two byte strings carrying one id — the
     // malleability the closed envelope key set refuses.
