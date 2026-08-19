@@ -885,6 +885,12 @@ function applyMutationPhase(
     vouchCooldownBlocks: config.vouchCooldownBlocks,
     inviteBondMin: config.inviteBondMin,
     inviteBondMax: config.inviteBondMax,
+    decayCfg: {
+      staleThresholdBlocks: config.karmaStaleThresholdBlocks,
+      decayIntervalBlocks: config.karmaDecayIntervalBlocks,
+      decayAmount: config.karmaDecayAmount,
+      karmaMinimum: config.karmaMinimum,
+    },
     // ⛔ The like marker's author, from `block_topology` and never
     // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
     // makes, so the marker's pin and the like-record's author cannot disagree.

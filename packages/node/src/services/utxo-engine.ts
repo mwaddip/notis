@@ -10,6 +10,8 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
+import { effectiveKarma } from './decay.js';
+import type { DecayCfg } from './decay.js';
 import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, Post } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
@@ -146,6 +148,7 @@ export interface UtxoEngineDeps {
    */
   inviteBondMin: bigint;
   inviteBondMax: bigint;
+  decayCfg: DecayCfg;
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +465,11 @@ function checkTransitions(
         // service gate — `getKarmaValue` is the confirmed-set reader every
         // validation path shares, so the predicate decides the same way on
         // every node.
-        const voucherBalance = deps.getKarmaValue(vouchOut.voucherId);
+        const voucherFace = deps.getKarmaValue(vouchOut.voucherId);
+        const voucherRecord = deps.getIdentityRecord(vouchOut.voucherId);
+        const voucherBalance = effectiveKarma(
+          voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg,
+        );
         if (voucherBalance < VOUCH_MIN_BALANCE) {
           return {
             valid: false,
