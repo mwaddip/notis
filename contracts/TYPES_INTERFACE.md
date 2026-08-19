@@ -70,9 +70,8 @@ choose their inputs' ids.
 
 ⚠ **`signature` is gone from the struct, and the post is still authenticated.**
 The creating transaction is signed over its `TxId`, and the signing key is the
-author — so a post's authorship is the transaction's authorship. `signingHash`
-retires with it; **there is no separate post signature to verify**, and no path
-should reintroduce one.
+author — so a post's authorship is the transaction's authorship. **There is no
+separate post signature to verify**, and no path should reintroduce one.
 
 ⚠ **The demo UI must build the transaction before it can name the post.** It
 already computes `TxId` locally, so optimistic display still works — but the
@@ -1386,7 +1385,7 @@ callers must remember to invoke is the shape that produced this defect class in 
 ### Totality
 
 Integer writers are **total**: a value outside the encodable domain writes an all-ones sentinel
-rather than throwing. This is load-bearing — `signingHash` is reached with malformed posts, and a
+rather than throwing. This is load-bearing — `postFieldBytes` is reached with malformed posts, and a
 throwing writer turns a malformed post into a panic, breaking the no-panic contract
 `@dagsocial/validation` asserts.
 
@@ -2480,8 +2479,6 @@ threshold / percentage / bits** constants stay `number`.
   `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `MEMPOOL_CREDIT_SHARE_PCT`.
   **`INCLUSION_BONUS_K` is the exception and is `bigint`**: it is a denominator in
   the bonus curve, which computes in base units. The exhaustive per-constant classification rides in the dispatch prompt.
-  (`LIKE_COST`, `LIKE_THRESHOLD`, `LIKE_MAX_AUTHOR_REWARD`, `LIKE_FREE_THRESHOLD` and
-  `EPOCH_BLOCKS` were deleted by P2-D.)
 
 ### Version
 

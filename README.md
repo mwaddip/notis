@@ -277,18 +277,8 @@ environment is not merely discouraged, it has no effect.
 | `ADMIN_PORT` / `ADMIN_BIND_ADDRESS` | — | Separate bind for admin endpoints |
 | `PUBLIC_URL` | `/` | Base path for the demo UI (e.g. `/testnet/` behind nginx) |
 
-> **Removed, and silently ignored if set** — delete them from any existing env
-> file: `NETWORK_MODE` (renamed to `NETWORK_TYPE`), `MINING_MODE` (the node has
-no in-process solver; a miner node serves templates),
-`ORDERING_BLOCK_INTERVAL_MS` and `ORDERING_BLOCK_MIN_SUB_BLOCKS` (there is no
-producer timer — difficulty sets the pace), `MAX_SUB_BLOCKS_PER_BLOCK` (a post
-is a transaction; there are no sub-blocks), `POST_POW_TARGET_BITS`,
-> `ORDERING_BLOCK_POW_TARGET_BITS`, `CREDIT_INITIAL_REWARD`,
-> `CREDIT_TREASURY_PCT`, `TREASURY_PUBKEY`, `KARMA_STALE_THRESHOLD_BLOCKS`,
-> `KARMA_DECAY_INTERVAL_BLOCKS`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
-> `AVL_KEY_LENGTH`, `NETWORK_MAGIC`, `EPOCH_BLOCKS` (like epochs no longer
-> exist — see *Likes and karma*), and `CHALLENGE_WINDOW_BLOCKS` (a post is a
-> transaction; there is no post-PoW challenge to expire).
+> An environment variable the table above does not name is ignored — the table
+> is the whole read surface (`NODE_INTERFACE` → Configuration).
 
 ### Demo UI
 

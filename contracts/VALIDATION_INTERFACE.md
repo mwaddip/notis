@@ -377,9 +377,8 @@ returned `string` and performed **no input check at all**, handing `header` stra
 **A post carries no signature of its own.** It is created by a transaction signed
 over that transaction's `TxId`, and the signing key is the author — so a post's
 authorship is verified by the transaction's signature check and nothing else.
-`signingHash` retired with this function, and **no path may reintroduce a
-post-level signature**: two signatures over one object is two places for them to
-disagree.
+**No path may reintroduce a post-level signature**: two signatures over one
+object is two places for them to disagree.
 
 The SPKI-envelope mechanics survive in the transaction signature path unchanged —
 32 raw bytes wrapped with the `302a300506032b6570032100` prefix, a `KeyObject` via
@@ -1080,16 +1079,13 @@ own.
 - Signatures verified with `crypto.verify(null, message, keyObj, sig)` and a KeyObject
   using a `KeyObject` created via `crypto.createPublicKey`
 - SPKI DER prefix for Ed25519: `302a300506032b6570032100`
-- **Two PoW nonce encodings, each specified, sharing no code path.** A *post* nonce is
-  `vlqU`, written by `powNonceBytes` in `@dagsocial/types` and by nothing in this package.
-  An *ordering-block* nonce is `encodeLE64` (`MINING_INTERFACE.md` → PoW Verification).
-  Unifying them is a protocol decision, not a tidy
-- The integer-range guard (M-6) applies to both, and **its purpose differs by encoding**: a
-  nonce or `targetBits` that is not a non-negative safe integer within `u64` yields `false`,
-  never a thrown `RangeError`. For the block nonce the guard prevents a throw from `BigInt` /
-  `writeBigUInt64LE`; for the post nonce `vlqU` cannot throw, and the guard instead prevents
-  every out-of-domain value collapsing onto `VLQ_SENTINEL` and sharing one hash. Validate
-  with `Number.isInteger` (not a loose `typeof === 'number'`, which admits `NaN` and floats)
+- **One PoW nonce encoding**: the ordering-block nonce is `encodeLE64`
+  (`MINING_INTERFACE.md` → PoW Verification). A post carries no nonce.
+- The integer-range guard (M-6): a nonce or `targetBits` that is not a
+  non-negative safe integer within `u64` yields `false`, never a thrown
+  `RangeError` — the guard prevents a throw from `BigInt` / `writeBigUInt64LE`.
+  Validate with `Number.isInteger` (not a loose `typeof === 'number'`, which
+  admits `NaN` and floats)
 - Content limits measured in UTF-8 bytes, not characters
 - All functions are synchronous — no Promises, no callbacks
 - Protocol version `PROTOCOL_VERSION` from `@dagsocial/types`

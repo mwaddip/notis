@@ -124,10 +124,8 @@ hasPendingVouch(voucherId: string): boolean
 ```
 
 SQL `EXISTS`/`COUNT` over the gate-metadata columns — never a bounded scan.
-The previous implementation decoded `getPendingEntries(1000)` per request, so
-any entry past row 1000 was silently invisible to the duplicate-like and
-`MAX_PENDING_INVITES` checks. These gates see every row regardless of pool
-size. Hex parameters compare against the columns exactly as stored.
+These gates see every row regardless of pool size. Hex parameters compare
+against the columns exactly as stored.
 
 ### insertMempoolPrune
 
