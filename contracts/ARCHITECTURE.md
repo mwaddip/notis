@@ -2081,14 +2081,17 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **Validate, don't trust** — independently recompute every self-reported
   claim. A post's parent refs and its creating transaction's signature MUST be
   verified by the local node before the post enters the store.
-  > ⚠ **HALF RESOLVED BY STRUCTURE; the other half is a standing claim to re-verify. The rule
-  > is right.**
-  > - The placeholder path is deleted: a post is a transaction, so a node holding the
-  >   block body holds the content — no confirmed row precedes verified bytes on that
-  >   path, and the F6 unsigned-refs route died with it.
-  > - `post-service.ts` calling `insertPost` **before** `validateTx` on the creating
-  >   transaction, with no rollback, is this note's surviving claim; it is recorded here
-  >   unverified against the current tree.
+  > ✅ **RESOLVED BY STRUCTURE on both write paths.** `dag_posts` has one production
+  > writer — `insertPost` — with two production callers.
+  > - `post-service.ts` cannot store ahead of validation, by naming: `createPost`
+  >   derives the post id from the `TxId` that `validateTx` returns
+  >   (`computePostId` takes no `Post`), so the store write has nothing to name
+  >   until the creating transaction has passed.
+  > - Block application holds the content itself: a post is a transaction, the
+  >   placeholder path is deleted, and the F6 unsigned-refs route with it. It
+  >   stores and confirms posts ahead of the embedded-transaction re-validation,
+  >   inside one synchronous SQLite transaction — every rejection path rolls the
+  >   whole phase back, so a post stored by a rejected block is never readable.
   >
   > (A third path — `onStump` storing unauthenticated gossip stumps — is closed: no network
   > path writes `dag_stumps`; see §3.)
