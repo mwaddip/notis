@@ -107,7 +107,7 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 
 // ⛔ **EVERY ID BELOW MOVED WITH C1'S TRANSACTION PREIMAGE, AND THE BOX BYTES
 // DID NOT.** `txIdBytes` lost its `preimages` field (TYPES_INTERFACE → Layout —
-// UtxoTransaction: the name is reserved), so every `TxId` moved and, through
+// UtxoTransaction: a live hazard — NODE_INTERFACE:1105), so every `TxId` moved and, through
 // `computeCandidateBoxId(candidate, txId, index)`, every box id derived from
 // one. The two frozen byte vectors further down are **unchanged** — measured,
 // not assumed — which is what localises the move to the transaction preimage
@@ -781,8 +781,8 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('the tag is what separates a bond from any other box, on both sides', () => {
-    // ⛔ **Tag 2 is unassigned and reserved, never to be reused**
-    // (TYPES_INTERFACE → InviteBox), so this compares a bond against a box type
+    // ⛔ **Tag 2 is a tracked hole** (TYPES_INTERFACE → boxType tag table,
+    // remnant-bounded), so this compares a bond against a box type
     // rather than against its neighbour. `enum8Tag` is the whole of what keeps
     // two leaves apart, and asserting it on the UI side is what stops an encoder
     // that dropped the tag from giving two boxes with the same parties one id.
@@ -864,7 +864,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('a `preimages` key is not a field, and the page must not build one', () => {
-    // ⛔ **THE NAME IS RESERVED AND NEVER TO BE REUSED** (TYPES_INTERFACE →
+    // ⛔ **`preimages` is a live hazard** (NODE_INTERFACE:1105, TYPES_INTERFACE →
     // Layout — UtxoTransaction). It is outside the `TxId` preimage, so a builder
     // that emitted one would produce two byte strings carrying one id — the
     // malleability the closed envelope key set refuses.
@@ -1190,11 +1190,6 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
 
 // ---------------------------------------------------------------------------
 // The post-id index writer
-//
-// Reserved, never to be reused: the post-PoW nonce tail and the PoW predicate
-// suites (`powNonceTail`, `postPowHash`, `powTarget`, `meetsPowTarget`). There
-// is no post PoW. What the id derivation needs from the page instead is `u32BE`,
-// and it is total on both sides for the same M-5 reason the nonce tail was.
 // ---------------------------------------------------------------------------
 
 /**
@@ -1271,11 +1266,9 @@ const AUDIT_VOCABULARY: readonly string[] = [
 ];
 
 /**
- * Scopes that construct bytes and are deliberately not mirrored — one line of reason
- * each, and none of them the post-PoW tail. An entry is an admission, not a
- * clearance: `signPost`'s own reason names a digest line this suite does not pin,
- * so read each reason for what it concedes rather than treating the list as a
- * second column of coverage.
+ * Scopes that construct bytes and are deliberately not mirrored — one line of
+ * reason each. An entry is an admission, not a clearance: read each reason for
+ * what it concedes rather than treating the list as a second column of coverage.
  */
 const AUDIT_ALLOW: Record<string, string> = {
   attachFeedHandlers:
@@ -1663,15 +1656,6 @@ describe('demo UI byte-construction completeness audit', () => {
     // An anonymous site has no stable address, so it cannot be allow-listed either.
     // The fix for one is to give it a name.
     expect(unattributed.map((f) => `${f.token}( at index.html:${f.line}`)).toEqual([]);
-  });
-
-  it('solvePoW constructs no bytes', () => {
-    // Named on purpose. It is the site this audit exists to cover, so exempting it
-    // would have been the audit's first act — the extraction is what keeps the
-    // allow-list honest rather than self-serving.
-    // `solvePoW` is gone with post PoW, so it can construct nothing.
-    expect(MIRRORED_FUNCTIONS).not.toContain('solvePoW');
-    expect(findings.filter((f) => f.scope === 'solvePoW')).toEqual([]);
   });
 
   it('the allow-list carries a reason per entry and no dead entries', () => {

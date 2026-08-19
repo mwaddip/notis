@@ -511,12 +511,6 @@ describe('posts store', () => {
     expect(limited[2]!.content).toBe('pending-2');
   });
 
-  // ⛔ Reserved, never to be reused: the placeholder-upgrade case. A post and
-  // the block that confirms it arrive together — the post is the payload of a
-  // transaction the block embeds (NODE_INTERFACE → Post transactions) — so
-  // there is no window in which a confirmed id has no content, and
-  // `insertPostPlaceholder` is gone rather than unused.
-
   // 16. insertPost stores under the id it is given
   it('insertPost stores under the id it is given', async () => {
     const { initDb, getDb } = await importDbFresh();

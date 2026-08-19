@@ -240,15 +240,6 @@ async function seedLikers(n: number, nonceBase = 0): Promise<Array<{ id: TestIde
  */
 const POST_CHANGE = 1n;
 
-// ⛔ Reserved, never to be reused: `seedPostLock`. A `PostLockBox` is minted by
-// the transaction that carries the post (NODE_INTERFACE → Post transactions) and
-// is indexed under the id that transaction gives the post, so a seeded lock
-// beside a real post tx is a second lock for one post — a state no chain can
-// reach, and one `getPostLockBox` resolves arbitrarily. `lockBoxOf(postTx)` is
-// the lock a test means; its value is the cost for the post's shape
-// (`POST_LOCK_THREAD_COST` for a thread, `POST_LOCK_REPLY_COST` for a reply),
-// which is what a fixture picks between when it needs a particular one.
-
 
 /**
  * The author's outstanding accrual, read off the ledger.
@@ -606,16 +597,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(ordering.getCurrentHeight()).toBe(2);
     expect(utxo.getBox(box.id!)).not.toBeNull();
   });
-
-  // ⛔ Reserved, never to be reused: the content-less-post like case.
-  //
-  // It credited the topology author rather than a placeholder row's ZEROED
-  // author — a distinction that existed because a block could confirm a post
-  // whose content had not arrived. **A block carries its posts**, so apply
-  // always has the content, `insertPostPlaceholder` has no producer, and there
-  // is no zeroed author for a settlement to prefer the topology one over.
-  // `block_topology` is still the authority for prune, and it is now derived
-  // from `tx.post` rather than recorded from a claim.
 
   it('a spare-signature like tx embedded directly in a block applies, with the liker = the karma input owner', async () => {
     const db = await importDb();

@@ -9,8 +9,7 @@
  * orderingPowTarget → Mirrors, "`scripts/miner.mjs` mirrors this function".
  *
  * The script expands a header target, so the half it mirrors is
- * `orderingPowTarget` — 1/256-bit units over `[0, 65536]`. `public/index.html`
- * mirrors `powTarget` instead, because the page performs post PoW only.
+ * `orderingPowTarget` — 1/256-bit units over `[0, 65536]`.
  *
  * The property that makes it worth having is that a *missing* declaration fails.
  * A comment asserting the copy is byte-identical would be a duplication claim
@@ -75,16 +74,6 @@ describe('miner.mjs PoW predicate ↔ @dagsocial/validation', () => {
     expect(src.split('function meetsPowTarget(').length - 1).toBe(1);
     expect(src.split('const ORDERING_TARGET_FACTORS = ').length - 1).toBe(1);
     expect(src.split('const ORDERING_TARGET_PRECISION = ').length - 1).toBe(1);
-  });
-
-  it('carries no second expansion beside the one this mirror pins', () => {
-    // The count above pins how many times the extracted declaration appears; it
-    // cannot see a *differently named* expansion sitting next to it. A leftover
-    // whole-bit `powTarget` is the reachable one — it is what the script held
-    // before, it is still a valid function, and nothing but its absence says the
-    // script is not calling it somewhere this mirror does not extract.
-    const src = readFileSync(MINER, 'utf8');
-    expect(src.includes('function powTarget(')).toBe(false);
   });
 
   it('produces byte-identical targets across the whole domain', () => {

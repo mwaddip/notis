@@ -30,9 +30,6 @@ export interface Config {
   nodeRole: 'server' | 'miner';
   /** Base path where the demo UI is served (e.g., "/testnet/" or "/"). */
   publicUrl: string;
-  // Reserved, never to be reused: `postPowTargetBits`, `challengeWindowBlocks`,
-  // `maxSubBlocksPerBlock`. Post PoW and its challenge handshake are gone;
-  // consensus PoW is the ordering block's alone.
   /**
    * Body bytes this node fills the blocks it **produces** to
    * (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Local, because a

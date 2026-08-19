@@ -370,9 +370,6 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
   return meta;
 }
 
-// Reserved, never to be reused: `insertSubBlock` and `removeSubBlockEntries`. A
-// post enters the pool as the transaction that creates it.
-
 /**
  * The ids of the boxes this transaction would create.
  *

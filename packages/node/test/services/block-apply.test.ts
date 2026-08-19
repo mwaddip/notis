@@ -2138,15 +2138,6 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(1);
   });
-
-  // ⛔ Reserved, never to be reused: the unseen-post placeholder case.
-  //
-  // It covered a node that confirmed a post it had no content for — the state
-  // a `SubBlockEntry` created by carrying topology without content. **That
-  // state is unreachable**: a block carries its posts inside `utxoTxs`, so a
-  // node applying a block always has the content, `insertPostPlaceholder` has
-  // no producer, and `block_topology` is derived from `tx.post` rather than
-  // recorded from a claim it cannot check.
 });
 
 // ---------------------------------------------------------------------------

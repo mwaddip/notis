@@ -752,9 +752,8 @@ describe('planPruneSettlement — refund provenance', () => {
     expect(plan.toPool).toBe(0n);
     // ⚠ **No synthetic mint id to assert.** A refund is an output of the block's
     // settlement transaction, so its provenance is that transaction's
-    // `(txId, index)` and the `prune-refund-author` reason is reserved and
-    // unused (NODE_INTERFACE → Reason and subject table). The planner writes
-    // nothing, so the ledger is untouched here.
+    // `(txId, index)`. The planner writes nothing, so the ledger is untouched
+    // here.
     expect(karmaRows(getDb())).toEqual([]);
   });
 });

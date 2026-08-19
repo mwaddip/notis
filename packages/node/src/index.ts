@@ -124,11 +124,6 @@ const dagService = new DagService();
 setDagServiceForMiner(dagService);
 
 // 3. Register Stage 2 handlers
-//
-// Reserved, never to be reused: the sub-block relay handler. A post arrives as a
-// transaction and is admitted by the transaction relay path below — one handler
-// where there were two, and the post's karma lock is verified statefully instead
-// of a PoW being re-checked.
 
 /**
  * The ordering-block boundary.
@@ -282,13 +277,6 @@ enterDiscovery(config.bootstrapPeers.length);
 // know one ever arrived, or a peer that came and went between two template
 // polls would leave the node believing it had never met anybody.
 net.onPeerActive((_peerId: string) => notePeerMet());
-
-// Reserved, never to be reused: `setSyncHandler` and `setPostsHandler`. Both
-// served a post by id to a peer that held a `SubBlockEntry` but no content. A
-// block now carries its posts inside `utxoTxs`, so a node holding the block holds
-// the content — there is no placeholder state, nothing for a content sweep to
-// resolve, and no id-to-post fetch whose answer a receiver could verify (a post's
-// id is not a function of the post).
 
 // 5. Start block creator (miner only) and HTTP server
 if (config.nodeRole === 'miner') {

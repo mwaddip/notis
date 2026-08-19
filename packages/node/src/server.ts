@@ -188,9 +188,6 @@ export function createApp(config: Config): express.Express {
 
   // ---- Routes ----
 
-  // Reserved, never to be reused: the route path `/challenge`. The PoW handshake
-  // is gone with post PoW — a post is admitted by the stateful karma lock.
-
   // Posts — /posts
   app.use(
     '/posts',

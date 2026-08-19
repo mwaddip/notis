@@ -12,13 +12,6 @@ import {
 } from '@dagsocial/validation';
 
 // ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
-
-// Reserved, never to be reused: `ChallengeRecord`. The PoW challenge handshake is
-// gone with post PoW.
-
-// ---------------------------------------------------------------------------
 // Dependency interface
 // ---------------------------------------------------------------------------
 
@@ -127,8 +120,3 @@ export function verifyPost(
 
   return { valid: true };
 }
-
-// Reserved, never to be reused: `verifyPostForRelay`. It was Stage 2 for a post
-// gossiped as a sub-block, and its distinguishing feature — skipping the
-// node-local challenge — describes a handshake that no longer exists. A post now
-// arrives as a transaction and is validated by the transaction path.
