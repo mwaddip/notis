@@ -291,7 +291,7 @@ describe('block-creator', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 2. Pending sub-block triggers block creation
+  // 2. Pending post transaction triggers block creation
   // -----------------------------------------------------------------------
 
   it('pending sub-block triggers block creation', async () => {
@@ -329,7 +329,7 @@ describe('block-creator', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 3. Block includes sub-block refs
+  // 3. Block carries post transactions
   // -----------------------------------------------------------------------
 
   it('block carries the post transactions it created posts from', async () => {
@@ -362,7 +362,7 @@ describe('block-creator', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 4. Sub-block confirmed after block creation
+  // 4. Post confirmed after block creation
   // -----------------------------------------------------------------------
 
   it('sub-block and post confirmed after block creation', async () => {
@@ -518,7 +518,7 @@ describe('block-creator', () => {
     const { encodePost, computeTxId } = await import('@dagsocial/types');
     posts.insertPost(postId, post, encodePost(post));
 
-    // Insert sub-block ID into mempool
+    // Insert post transaction into mempool
     mempool.insertUtxoTx(postTx, 1000);
 
     // Set up: standalone UTXO transaction in mempool

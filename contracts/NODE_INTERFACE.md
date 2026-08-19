@@ -2,21 +2,21 @@
 
 **Component:** `@dagsocial/node`
 **Protocol version:** 1
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-19
 
 ## Scope
 
-HTTP server exposing the DAGsocial API. Owns: PoW challenge service, post
-verifier (Stage 2 stateful validation), sub-block assembly, UTXO engine,
-like processing, invite lifecycle, ordering block creator, stump engine,
-mining subsystem, unified mempool, and persistent storage (SQLite).
+HTTP server exposing the DAGsocial API. Owns: post
+verifier (Stage 2 stateful validation), UTXO engine,
+like processing, invite creation and bond resolution, ordering block creator,
+stump engine, mining subsystem, unified mempool, and persistent storage (SQLite).
 
 Depends on:
 - `@dagsocial/types` — shared data structures and constants
 - `@dagsocial/validation` — Stage 1 stateless checks (PoW, signatures,
   structural validity)
-- `@dagsocial/net` — libp2p networking for sub-block, ordering block,
-  and UTXO transaction gossip
+- `@dagsocial/net` — libp2p networking for ordering block and UTXO
+  transaction gossip
 
 ---
 
@@ -110,13 +110,14 @@ included in an ordering block, and applied atomically when the block is
 finalized. See `MEMPOOL_INTERFACE.md` for the full contract.
 
 **Key properties:**
-- Single SQLite table `mempool` with type discriminator (`subblock` | `utxo_tx` | `prune`)
+- Single SQLite table `mempool` with type discriminator (`utxo_tx` | `prune`) —
+  `subblock_id`, `batch_id` and the `'subblock'` entry type are reserved, never
+  reused (`store/db.ts`)
 - FIFO ordering by insertion (`ORDER BY rowid ASC`)
 - TTL: 720 blocks (~12h at 60s block time)
-- Batch linking: sub-blocks and their linked UTXO payloads share a `batch_id`
 - Expired entries purged at block assembly time
 - Confirmed entries removed after block finalization
-- No replacement semantics (no fees yet)
+- No replacement semantics
   > ⚠ **"No size cap" was wrong and has been removed.** A cap exists, is documented in
   > detail in `MEMPOOL_INTERFACE.md`, and is **enforced at all three insert sites**
   > (`MAX_MEMPOOL_ENTRIES`, default `10000`). `MEMPOOL_INTERFACE.md` is authoritative for
@@ -129,7 +130,7 @@ finalized. See `MEMPOOL_INTERFACE.md` for the full contract.
 ## HTTP API
 
 Base URL: `http://{host}:{port}` (default: `localhost:3000`)
-All responses are JSON. Binary fields (public keys, signatures, challenges)
+All responses are JSON. Binary fields (public keys, signatures)
 are hex-encoded.
 
 `userId` on the wire is hex-encoded (64 hex chars). Internally `UserId` is
@@ -140,9 +141,6 @@ are hex-encoded.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | ~~`POST`~~ | ~~`/challenge`~~ | **DELETED** — the PoW handshake goes with post PoW. The `challenges` table and `challengeWindowBlocks` go with it. Route path reserved | | |
-
-Challenge is upserted — requesting a new challenge replaces any existing one
-(no 409 blocking). Challenge expires at `currentBlock + CHALLENGE_WINDOW_BLOCKS`.
 
 ### Posts
 
@@ -193,37 +191,23 @@ boundary instead of in a response body.
 
 **Post submission flow (mempool-based):**
 
-> **A post is submitted as one transaction** carrying the post payload and locking
-> the author's karma. There is no `batchId`, no challenge, and no PoW — see
-> "Post transactions" below.
+**A post is submitted as one transaction** carrying the post payload and locking
+the author's karma. There is no `batchId`, no challenge, and no PoW — the flow,
+its validation and its store writes are "Post transactions" below. The
+transaction is built and signed **client-side**; the server validates it, does
+NOT build it.
 
-1. Decode hex fields (`author`, `challenge`, `signature`) to binary; parse `karmaLockTx`
-2. Validate field presence, content length (1–300 bytes)
-3. Run `verifyPost()` — includes challenge check, PoW, signature, parent refs,
-   content limits, protocol version, karma sufficiency
-4. Compute `postId = computePostId(post)` — server-authoritative
-5. Store post (status = pending) with raw CBOR
-6. Consume challenge
-7. Assemble sub-block: `{ subBlockId: postId, post, producerId: author, protocolVersion }` (no sidecar field — P2-D)
-8. Insert both as a batch into mempool (same `batchId = postId`):
-   - `insertMempoolSubBlock(subBlock, expiresAtHeight, batchId)`
-   - `insertUtxoTx(karmaLockTx, batchId, expiresAtHeight)`
-
-The karma-lock UTXO transaction is built and signed **client-side** and sent as
-`karmaLockTx` in the request body. The server validates it, does NOT build it.
-10. Broadcast sub-block and UTXO tx to peers (fire-and-forget)
-11. Return `{ postId, status: "pending", expiresAtHeight }`
-
-⚠ **A sub-block arriving does not signal the block creator.** What goes into a block and when one is
-produced are separate questions: production is difficulty-regulated, and a rebuild mid-solve would void
-every miner's in-flight work (`MINING_INTERFACE` → GET /mining/template). The post is stored and
-servable immediately; what waits for the next block is finalization, not visibility.
+⚠ **A post transaction arriving does not signal the block creator.** What goes into a block and
+when one is produced are separate questions: production is difficulty-regulated, and a rebuild
+mid-solve would void every miner's in-flight work (`MINING_INTERFACE` → GET /mining/template).
+The post is stored and servable immediately; what waits for the next block is finalization, not
+visibility.
 
 Parent refs may point to live posts or stumps. Both are valid — the DAG
 traversal handles both transparently.
 
-Unlike the old direct-apply model, state is NOT changed immediately. The post
-and its karma lock are applied when an ordering block includes the batch.
+State is NOT changed at submission. The post and its karma lock are applied when
+an ordering block includes the transaction.
 
 ### Likes
 
@@ -242,7 +226,7 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
    `hasPendingLike` over the mempool gate metadata
 4. `validateTx` — the engine enforces the biconditional like shape (karma inputs one
    owner, exactly one karma output same owner, deficit exactly `LIKE_KARMA_COST`)
-5. Insert into mempool: `insertUtxoTx(tx, null, expiresAtHeight)` (gate metadata
+5. Insert into mempool: `insertUtxoTx(tx, expiresAtHeight)` (gate metadata
    `like_target`/`like_liker` from `likeTarget` + the signer)
 6. Return `{ status: "pending", txId, expiresAtHeight }`
 
@@ -287,87 +271,35 @@ gateway DoS for the price of one extra signature.
 |--------|------|---------|----------|--------|
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, inviteBoxId, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account |
-| `POST` | `/invites/claim` | `{ tx: UtxoTransaction }` — invitee-signed claim tx | `{ status: "pending", txId, expiresAtHeight, userId, karmaBoxId }` | 400 if no open invite names the signer, 403 if the signature is not the invitee's |
-| `POST` | `/invites/cancel` | `{ tx: UtxoTransaction }` — inviter-signed cancel tx | `{ status: "pending", txId, expiresAtHeight }` | 400 if already claimed, 403 if not the inviter |
+| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account |
 
-**There are two steps, not three, and no secret in any of them.** The invitee
-shares their public key out of band; from then on each party acts under its own
-signature. `/invites/commit` is gone with the instrument it served.
+**There is one step, and no secret in it** (`ARCHITECTURE` → Invite System). The
+invitee shares their public key out of band; the inviter submits one transaction,
+and the block's settlement grants the invitee the bond's value from the pool.
 
 **Create flow:**
 
-1. Verify the inviter holds ≥ `INVITE_BOND_KARMA` available karma. The bond is
-   the whole cost — `INVITE_KARMA_AMOUNT` is minted at claim, not paid here
-2. Verify the named `inviteePublicKey` has **no `IdentityRecord` at all**
-3. Build the transaction: consume a karma box → karma box (`balance −
-   INVITE_BOND_KARMA`) + InviteBox (value `0`) + BondBox (`INVITE_BOND_KARMA`),
-   both new boxes carrying the inviter's id and the invitee's key
-4. `insertUtxoTx(tx, null, expiresAtHeight)`; return the two box ids
+1. Verify the inviter holds ≥ **this transaction's own bond value** in available
+   karma. ⛔ **Against the bond named, never against a constant** — the inviter
+   picks it, so a fixed threshold passes someone who cannot afford the invite
+   they built, and the rejection then arrives from conservation, which is the
+   message this layer exists to replace. The bond is still the whole cost: the
+   grant comes from the pool, so the inviter never pays it
+2. Verify the named `inviteePublicKey` has **no `IdentityRecord` at all** —
+   `ARCHITECTURE → Invite System` argues why the weaker test fails.
+   ⛔ **This service-layer check is a courtesy, exactly as the vouch balance gate
+   is:** a record-existence query cannot see a **sibling transaction in the same
+   block** naming the same key. The consensus rule *"no other bond in this block
+   names this key"* (§Legal box transitions) is what closes the duplicate grant
+3. Build the transaction: karma box → karma box (`balance − bond`) + **`BondBox`
+   only**
+4. `insertUtxoTx(tx, expiresAtHeight)`; return the one box id
 
-**Claim flow:**
-
-1. Verify an open InviteBox names the signer as `inviteePublicKey`
-2. Build the transaction: consume that InviteBox → one KarmaBox, `owner =
-   inviteePublicKey`, value `INVITE_KARMA_AMOUNT`. The bond is **not** an input
-3. `validateTx` checks the claim transition's requirement against the invitee's
-   signature and the surplus against the conservation carve. Block application
-   then writes `invitedAtBlock`, which starts the probation clock. The key becomes an account
-   in the same step, which is what bars any further invite naming it
-4. `insertUtxoTx(tx, null, expiresAtHeight)`
-
-**Cancel flow:**
-
-1. Verify the invite is still open and the signer is `invite.inviterId`
-2. Build the transaction: consume the InviteBox, **no outputs**. The box holds
-   `0`, so this conserves
-3. Block application returns the paired bond to the inviter, resolved by
-   `inviteePublicKey`. The cancel transaction does not name the bond and cannot
-   spend it
-4. `insertUtxoTx(tx, null, expiresAtHeight)`
-
-**An invite has no deadline.** It stays claimable until the inviter cancels, and
-the bond stays locked for exactly that long — so `expiresAtHeight` on these
-responses is the **mempool** entry's expiry, never the invite's.
-
-> ## ⚠ AHEAD OF CODE — ONE ENDPOINT, ONE FLOW, AND A RESPONSE FIELD DISAPPEARS
->
-> **There is one step, not two** (`ARCHITECTURE` → Invite System). `POST /invites/claim` and
-> `POST /invites/cancel` are **deleted with the transactions they submit**.
->
-> | | |
-> |---|---|
-> | `POST /invites` | `{ status, txId, expiresAtHeight, bondBoxId }` — ⛔ **`inviteBoxId` goes**; it is a public response field, so this is an **API break**, not internal cleanup |
-> | `POST /invites/claim` | deleted |
-> | `POST /invites/cancel` | deleted |
->
-> **Create flow, revised:**
->
-> 1. Verify the inviter holds ≥ **this transaction's own bond value** in available karma. ⛔ **Against
->    the bond named, never against a constant** — the inviter picks it, so a fixed threshold passes
->    someone who cannot afford the invite they built, and the rejection then arrives from
->    conservation, which is the message this layer exists to replace. The bond is still the whole
->    cost: the grant comes from the pool, so the inviter never pays it.
-> 2. Verify the named `inviteePublicKey` has **no `IdentityRecord` at all** — unchanged, and
->    `ARCHITECTURE → Invite creation` still argues why the weaker test prints karma
-> 3. Build the transaction: karma box → karma box (`balance − bond`) + **`BondBox` only**
-> 4. `insertUtxoTx(tx, null, expiresAtHeight)`; return the one box id
->
-> ⛔ **THE SERVICE-LAYER CHECK IN STEP 2 IS NOW INSUFFICIENT ON ITS OWN, AND IT WAS SUFFICIENT
-> BEFORE.** A record-existence query cannot see a **sibling transaction in the same block** naming
-> the same key. With a claim, a duplicate invite was harmless — one got claimed, the other cancelled.
-> With none, both would draw a grant from the pool. The consensus rule *"no other bond in this block
-> names this key"* (§Legal box transitions) is what closes it; **this endpoint's check remains a
-> courtesy, exactly as the vouch balance gate is.**
->
-> ✅ **"An invite has no deadline" INVERTS, and `expiresAtHeight` keeps its meaning.** The bond now
-> settles `INVITE_PROBATION_BLOCKS` after creation, so nothing stays open — but `expiresAtHeight` was
-> always the mempool entry's expiry and still is. ⚠ **The sentence explaining that it is "never the
-> invite's" survives only as a statement about the mempool**, because there is no invite to contrast
-> it with.
->
-> ⚠ **Two table header rows are duplicated above this note** (a stray repeat of `| Method | Path |
-> …`). Pre-existing, noted rather than swept — it is not this unit's line to change.
+Block application writes `invitedAtBlock` at the grant, which starts the
+probation clock; the key becomes an account in the same step, which is what bars
+any further invite naming it. The bond settles `INVITE_PROBATION_BLOCKS` after
+creation, so nothing stays open. `expiresAtHeight` on the response is the
+**mempool** entry's expiry.
 
 ### Vouches
 
@@ -468,7 +400,7 @@ against live content).
 |--------|------|----------|--------|
 | `GET` | `/karma/:userId` | `{ userId: hex, total, boxes: [{ boxId, value }] }` | — |
 | `GET` | `/credits/:userId` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }] }` | — |
-| `GET` | `/invites/:userId` | `{ open: InviteBox[], bonds: BondBox[] }` | — |
+| `GET` | `/invites/:userId` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }] }` — a bond IS the open invite; there is no second list | — |
 
 Multi-box UTXO model — identities can hold multiple karma/credit boxes.
 `total` is the sum across all boxes. **`value` and `total` are decimal strings** in
@@ -662,8 +594,8 @@ defect. **It belongs to the supply set.**
 > network profile, a devnet node wanted `10` and every devnet bond commit was rejected.
 >
 > The general rule this instance is an example of: **a per-network consensus value the client must
-> reproduce is served by the node, never held as a client constant.** `/challenge` already does
-> this for `targetBits`. A client constant is a second source for a value `NETWORK_TYPE` is
+> reproduce is served by the node, never held as a client constant.** A client constant is a second
+> source for a value `NETWORK_TYPE` is
 > supposed to select alone, and it fails silently — the UI has no way to learn it guessed wrong,
 > because the rejection arrives as a generic invalid-transition error.
 >
@@ -701,34 +633,35 @@ defect. **It belongs to the supply set.**
 
 ## Verifier Contract
 
-`verifyPost(post: Post, currentBlockHeight: number): { valid: boolean; error?: string }`
+`verifyPost(deps, post: Post): { valid: boolean; error?: string }`
 
 Verification order (fail-fast):
 
-1. **Challenge** — must be active for `post.author`, not expired, matches
-   `post.challenge`. `expiresAtBlock ≥ currentBlockHeight`.
-2. **PoW** — `verifyPoW(powInput, post.powNonce, POST_POW_TARGET_BITS)` where
-   `powInput = content || author || parentRefs || challenge || protocolVersion || timestamp`
-3. **Signature** — `crypto.verify(null, signingHash(post), pubKeyObj, sigBuf)`
-   with raw Ed25519
-4. **Parent refs** — each `parentId` must exist as a confirmed post or stump
-   (skip for empty parents)
-5. **Content limit** — reject if `content.length > MAX_CONTENT_BYTES` (300) or empty
-6. **Protocol version** — reject if unsupported
-7. **Karma** — author must have a karma box with sufficient value:
-   - Threads (no parentRefs): ≥ `POST_LOCK_THREAD_COST` (5)
-   - Replies (has parentRefs): ≥ `POST_LOCK_REPLY_COST` (3)
+0. **Field domains** — `verifyPostFieldDomains`. The precondition, not a
+   courtesy: fixed-width writers throw on out-of-domain input, so the domain is
+   established before the payload can reach `computeTxId`
+1. **Content** — 1–`MAX_CONTENT_BYTES` UTF-8 bytes, non-empty; then the
+   character restrictions (no control, zero-width, or bidi characters)
+2. **Parent refs count** — at most `MAX_PARENT_REFS`
+3. **Protocol version** — strict equality with `PROTOCOL_VERSION`
+4. **Karma** — the author's **summed** karma must cover the lock: threads (no
+   parentRefs) ≥ `POST_LOCK_THREAD_COST`, replies ≥ `POST_LOCK_REPLY_COST`.
+   ⚠ An early, friendlier rejection, NOT the enforcement point — the engine's
+   post biconditional is what a block re-validates
+5. **Parent refs existence** — every referenced id resolves to a post or stump
+
+There is no challenge, no PoW and no signature check: authorship is the creating
+transaction's signature over its `TxId` ("Post transactions"), and a parent
+ref's id cannot be recomputed from the parent post — a post id is
+provenance-derived, so the store's recorded id is the only statement of it and
+existence is what remains checkable here.
 
 ### verifyPostForRelay
 
-`verifyPostForRelay(deps, post: Post, currentBlockHeight: number): { valid: boolean; error?: string }`
-
-Stage 2 validation for gossiped posts (received via libp2p). Same checks as
-`verifyPost` except the challenge check — the challenge was node-local to the
-origin node. Re-verifies: content limits, parent refs count, protocol version,
-PoW (stateless, re-verified), signature (stateless, re-verified), and parent
-ref existence. Karma is NOT checked on relay — the block producer (miner)
-already verified economic rules before creating the sub-block.
+**Reserved, never to be reused** (`services/verifier.ts` states the same at the
+definition site). There is no per-post relay validation: a post arrives as a
+transaction, and the relay gate is the cached karma-membership check — see
+"Post transactions".
 
 ---
 
@@ -1299,70 +1232,36 @@ the treasury.
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
-| KarmaBox | KarmaBox | **Like** (P2-D): `likeTarget` present ⟺ deficit exactly `LIKE_KARMA_COST` — the only legal deficit in any user tx. Exactly one karma output, same owner as all inputs; target must be a live post; `(liker, target)` not yet recorded |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. Exactly one karma output, same owner as all inputs; target live; `(liker, target)` not recorded. **Value conserved** |
 | KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author |
+| KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
+| KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
+| VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
+| VouchEscrowBox | KarmaBox | **Escrow reclaim**: exactly one escrow input, owner-signed; spendable at or after `releaseAtBlock` (§Spend timing); exactly one karma output, same owner. Value conserved. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
+| LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
+| CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
+| PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
+| BondBox | KarmaBox / — | Block application only: settlement at the probation deadline — **no user transaction can spend a `BondBox`** |
+| KarmaPoolBox | KarmaPoolBox + … | **Settlement only**, once per block — the pool's sole spender |
 
 ⚠ **"Same owner" binds the inputs to each other, not only the outputs to
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
 owner** — see "Karma transition rules" below. Consolidating several of your
-own karma boxes stays legal; that is the legitimate multi-input case.
-| KarmaBox | KarmaBox + InviteBox + BondBox | Invite create: karma outputs same owner, value conserved; `invite.value == 0`; `bond.value == INVITE_BOND_KARMA`; both new boxes carry the same `inviterId` (= the karma input owner) and the same `inviteePublicKey`; that key holds **no `IdentityRecord`** |
-| KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
-| VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
-| VouchEscrowBox | KarmaBox | **Escrow reclaim**: exactly one escrow input, owner-signed; spendable at or after `releaseAtBlock` (§Spend timing); exactly one karma output, same owner. Value conserved. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
-| InviteBox | KarmaBox | Claim: **exactly one InviteBox input**, invitee-signed; one karma output, owner = `invite.inviteePublicKey`, value == `INVITE_KARMA_AMOUNT`. The input holds `0`, so the whole output is a **surplus** — the only karma surplus any transaction may carry |
-| InviteBox | — (cancel) | **Exactly one InviteBox input**, zero outputs, inviter-signed. The box holds `0`, so this conserves; the paired bond returns to the inviter through block application, not through this transaction |
-| CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
-| PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
-| BondBox | KarmaBox / — | Block application only: settlement at the probation deadline, or return to the inviter when the paired invite is cancelled — **no user transaction can spend a `BondBox`** |
-
-> ## ⚠ AHEAD OF CODE — THE TABLE AFTER UNIT C
->
-> Six rows change and two disappear. ⛔ **Every remaining user row conserves**, so the "Condition"
-> column stops carrying deficits and surpluses altogether and states **shape** instead.
->
-> | Consumed | Created | Condition |
-> |----------|---------|-----------|
-> | KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. Exactly one karma output, same owner as all inputs; target live; `(liker, target)` not recorded. **Value conserved** |
-> | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
-> | VouchBox | VouchEscrowBox | ✅ **LANDED, with the clock moved to the cast**: `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks`, not `height + …` — the live table above is the rule |
-> | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
-> | VouchEscrowBox | KarmaBox | ✅ **LANDED, owner-reclaimed rather than settlement-swept**: the escrow is user-spendable at `releaseAtBlock` (§Spend timing) — the live table above is the rule |
-> | KarmaPoolBox | KarmaPoolBox + … | **Settlement only**, once per block — the pool's sole spender |
->
-> **Deleted rows:** `InviteBox → KarmaBox` (claim) and `InviteBox → —` (cancel). ⛔ **The invite
-> surplus was "the only karma surplus any transaction may carry"; there is now none**, and the
-> `KarmaBox → KarmaBox` like row's deficit was "the only legal deficit in any user tx"; there is now
-> none of those either. §validateTx step 7's exception list is empty.
->
-> ⚠ **"…and no other bond in this block names it" is a NEW clause and it is not cosmetic.** With no
-> claim to absorb the collision, two inviters naming one key in one block would each draw a grant
-> from the pool. The eligibility test is still **`IdentityRecord` existence, never karma-box
-> existence** — `ARCHITECTURE → Invite creation` argues why the weaker test prints karma — but a
-> record-existence test alone cannot see a sibling transaction in the same block, so the
-> within-block clause is owed on top of it.
->
-> ✅ **`isSystemBox` and the exemption above it are gone.** The like accrual marker is the **only**
-> exemption from the same-owner karma rule, and §Karma transition rules states what pins it.
+own karma boxes stays legal; that is the legitimate multi-input case. The like
+accrual marker is the **only** exemption from the same-owner karma rule, and
+§Karma transition rules states what pins it.
 
 There is **no other legal bond or invite shape**. In particular:
 
-- **An InviteBox has exactly two exits**, claim and cancel, separated by
-  which of the two keys named in the box signed. Neither takes a second
-  input: the claim needs no bond alongside it, because the karma it
-  produces is minted rather than moved.
 - **A BondBox has no user-transaction shape at all.** It is created as an
   output of invite creation, and every later movement is block application's.
-- **A karma surplus outside the claim shape is invalid**, and a claim
-  whose surplus is not exactly `INVITE_KARMA_AMOUNT` is invalid. The
-  biconditional is stated on the conservation gate, in the shape the like
-  carve already set.
+- **A karma surplus or deficit in any user transaction is invalid** —
+  §validateTx step 7's exception list is empty.
 - **A FeeBox is reachable only from the credit row.** The karma rows admit
-  the karma family alone (`karma`, `invite`, `bond`, `post_lock`, `vouch`),
-  so a fee output on a karma-side transaction is refused by that allowlist
-  rather than by a rule naming `fee` — see "Karma transition rules". A karma
-  transaction holds no credits to pay with, so the shape has nothing to
-  express.
+  the karma family alone — "Karma transition rules" holds the family's one
+  statement — so a fee output on a karma-side transaction is refused by that
+  allowlist rather than by a rule naming `fee`. A karma transaction holds no
+  credits to pay with, so the shape has nothing to express.
 
 ### Post transactions (unit 2)
 
@@ -1472,8 +1371,7 @@ inside the network's reported supply.
   P2-D removes unlike.
 - Self-consolidation (several of your own karma boxes into one) is the
   legitimate multi-input case and stays legal. The faucet grant is unaffected:
-  it is a single input. The 3-input invite cancel has exactly one karma input,
-  and the 2-input claim has none.
+  it is a single input.
 - **Credits are deliberately exempt.** They are tradeable, so multi-owner
   credit inputs are an ordinary multi-party payment, not a leak.
 
@@ -2344,16 +2242,15 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 
 1. Purge expired mempool entries (`purgeExpired(currentHeight)`)
 2. Get pending entries from mempool (`getPendingEntries(limit)`)
-3. Separate sub-blocks from standalone UTXO transactions (`batch_id IS NULL`)
-4. Decode sub-blocks from CBOR
-5. Resolve batch entries — UTXO payloads linked to sub-blocks via `batch_id`
+3.–5. *(Retired with sub-blocks: there is no batch linking and nothing to decode
+    separately — every pending entry is a standalone `utxo_tx` or `prune`.
+    Numbering kept so later step references stay stable.)*
 6.–11. *(Retired by P2-D. Standalone-like sidecar attachment (old step 6), like
     collection, like dedup and the epoch-boundary check are gone — likes are ordinary
-    mempool UTXO transactions, so they flow through steps 7–8 like any other tx; dedup is
-    the like-record's existence, enforced at apply; there is no epoch. Numbering kept so
-    later step references stay stable.)*
-7. Standalone UTXO entries → `utxoTxIds` (likes included — no sidecar diversion)
-8. Batch-linked UTXO entries → `utxoTxIds`
+    mempool UTXO transactions, so they flow through step 7 like any other tx; dedup is
+    the like-record's existence, enforced at apply; there is no epoch.)*
+7. UTXO entries → `utxoTxIds` (posts and likes included — no sidecar diversion)
+8. *(Retired with sub-blocks — folded into step 7.)*
 12. Always produce a block, whatever its coinbase comes to. An empty block below
     the emission terminus carries that height's emission; above it
     (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
@@ -2379,7 +2276,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 1. Store block in `block_ordering` table
 2. Apply coinbase — mint credits for each output
 3. Broadcast ordering block to peers
-4. Confirm sub-blocks and their posts (`confirmPost`)
+4. Confirm the block's posts (`confirmPost`, ids from its post transactions)
 5. Apply UTXO transactions. The decode pass runs first and carries its own rule —
    see "Embedded transactions: a mismatch rejects the block": a tx whose bytes
    cannot be proven to be the id declared beside them rejects the block before
@@ -2646,11 +2543,9 @@ Fresh schema — no Phase 1 migration.
 
 ### Challenges
 
-| Function | Signature |
-|----------|-----------|
-| `createChallenge(userId, challenge, expiresAtBlock)` | `(UserId, bytes, number) => void` |
-| `getActiveChallenge(userId)` | `(UserId) => { challenge, expiresAtBlock } \| null` |
-| `consumeChallenge(userId, challenge)` | `(UserId, bytes) => void` |
+**Reserved, never to be reused:** `createChallenge`, `getActiveChallenge`,
+`consumeChallenge`, and the `challenges` table — deleted with post PoW's
+challenge handshake (§Challenge (PoW) above).
 
 ### Posts DAG
 
@@ -2709,9 +2604,7 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE` |
 | `getCreditBox(owner)` | `(Uint8Array) => CreditBox \| null` — single box |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC` (the contract previously said `{ boxId, value, lockedUntilBlock? }[]`, which was never the implementation) |
-| `getOpenInvites(inviterId)` | `(UserId) => InviteBox[]` — created, neither claimed nor cancelled. An invite has no expiry, so "open" is the whole of it |
-| `getInviteFor(inviteePublicKey)` | `(UserId) => InviteBox \| null` — the at-most-one live invite naming this key |
-| `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the paired bond; the claim, cancel and settlement paths all resolve through this |
+| `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the bond naming this key; the settlement path resolves through this |
 | `getBondsInvitedAt(invitedAtBlock)` | `(number) => BondBox[]` — bonds whose invitee's record carries exactly this `invitedAtBlock`. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxes(inviterId)` | `(UserId) => BondBox[]` — active bonds |
 | `getLikersForPost(postId)` | `(string) => string[]` — hex user IDs who liked; reads `like_records` (P2-D), `ORDER BY liker_id` so the listing is a function of state, not row order (N4a ratification) |
@@ -3049,9 +2942,9 @@ that reads it reads committed state.
 | `rollbackBlockTopology(blockHeight)` | `(number) => void` |
 
 `block_topology` rows record `(post_id, parent_refs, author, block_height)` —
-all sourced from the confirming block's `SubBlockEntry` (consensus data, never
-from local DAG content). `author` is the entry's consensus-carried authorship
-claim (audit H-3); `getTopologyAuthor` returns `null` for posts no applied
+all sourced from the confirming block's post transactions (consensus data, never
+from local DAG content). `author` is the creating transaction's signer
+(audit H-3); `getTopologyAuthor` returns `null` for posts no applied
 block has confirmed. Idempotent insert (first block to confirm a postId wins);
 `rollbackBlockTopology` removes a reverted height's rows wholesale.
 
@@ -3059,8 +2952,7 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `insertMempoolSubBlock(sb, expiresAtHeight, batchId?)` | `(SubBlock, number, string?) => number` | Queue sub-block, returns rowid |
-| `insertUtxoTx(tx, batchId, expiresAtHeight)` | `(UtxoTransaction, string?, number) => number` | Queue UTXO tx, returns rowid |
+| `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
 | `insertMempoolPrune(entry, expiresAtHeight)` | `(PruneEntry, number) => number` | Queue prune entry, returns rowid |
 | `drainMempoolPrunes(limit)` | `(number) => PruneEntry[]` | Decode and return prune entries in FIFO order |
 | `removeMempoolPrunes(entryIds)` | `(string[]) => void` | Remove confirmed prune entries by rowid |
@@ -3069,13 +2961,16 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
 | `hasPendingVouch(voucherId)` | `(string) => boolean` | SQL EXISTS over gate metadata (L-4) |
-| `removeSubBlockEntries(postIds)` | `(string[]) => number` | Delete confirmed sub-block entries by id — replaces the fetch-and-find loop |
 | `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
+
+**Reserved, never to be reused** (`store/mempool.ts` states the same at the
+definition site): `insertSubBlock` / `insertMempoolSubBlock` and
+`removeSubBlockEntries`.
 
 All insert functions throw a typed `MempoolFullError` at `MAX_MEMPOOL_ENTRIES`
 (default 10000). Three callers, three behaviors: routes map it to 503; gossip
 relay handlers drop the entry and log; **reorg re-insertion**
-(`services/fork-resolution.ts`, returning reverted txs/sub-blocks/prunes to the
+(`services/fork-resolution.ts`, returning reverted txs and prunes to the
 pool) also drops-and-logs — it runs inside the chain-switch SQLite transaction,
 so an escaping error would roll back the reorg and strand the node on the
 lighter chain, turning mempool pressure into a consensus-liveness failure.
@@ -3085,11 +2980,9 @@ Full semantics in `MEMPOOL_INTERFACE.md`.
 ```
 {
   rowid: number
-  entryType: "subblock" | "utxo_tx" | "prune"
-  subblockId: string | null
-  utxoTxJson: string | null
-  pruneEntryJson: string | null
-  batchId: string | null
+  entryType: "utxo_tx" | "prune"
+  utxoTxCbor: Uint8Array | null
+  pruneEntryCbor: Uint8Array | null
   expiresAtHeight: number
   createdAt: string
 }
@@ -3913,17 +3806,6 @@ operator may safely change, and four consensus parameters were environment-tunab
 | `CREDIT_INITIAL_REWARD` | universal constant | Economics — separately, it is read and never used (A5) |
 | `AVL_KEY_LENGTH` | universal constant | Format. No network has a reason to differ |
 
-> **`POST_POW_TARGET_BITS` — A6 resolved: make it real, do not stop exposing it.** It is
-> classed `advertised` today because the challenge endpoint reports it while the verifier
-> enforces the compile-time constant, so a node can tell clients a difficulty it does not
-> enforce. Under the profile both sides read the same field and the class becomes moot.
->
-> The evidence that this is the right direction is already in the repo:
-> `test/harness/node-manager.ts:47-50` carries a comment explaining that the harness
-> **deliberately does not override** `POST_POW_TARGET_BITS`, because doing so makes the
-> challenge endpoint and the verifier disagree. That comment is a workaround for exactly
-> this defect — and it is why the harness could never get cheap post PoW.
-
 | Variable | Class | Default | Description |
 |----------|-------|---------|-------------|
 | `NETWORK_TYPE` | `network-identity` | `testnet` | **The profile selector — `mainnet` \| `testnet` \| `devnet`.** The only environment variable that may change a consensus parameter, and it changes every one of them together. An unrecognised value **throws at startup** rather than defaulting. ⚠ **It no longer gates a faucet** — whether a network seeds a faucet identity is `faucetPublicKey`'s presence in the profile, which reaches `genesisStateRoot`; `isFaucetNetwork` is deleted |
@@ -3937,13 +3819,13 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
 | `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |
-| ~~`POST_POW_TARGET_BITS`~~ | **removed** | ~~`20`~~ | → profile field `postPowTargetBits`. The `advertised` class is retired with it: the challenge endpoint and the verifier now read the same field, so a node can no longer report a difficulty it does not enforce (A6) |
+| ~~`POST_POW_TARGET_BITS`~~ | **removed** | ~~`20`~~ | Deleted with post PoW; the name and the profile field `postPowTargetBits` stay reserved (`TYPES_INTERFACE` → PoW). A6's `advertised` class died with the mechanism |
 | ~~`NETWORK_MODE`~~ | **renamed** | ~~`testnet`~~ | → `NETWORK_TYPE`. The name changes because the meaning does: it selected a faucet flag, it now selects the whole consensus parameter table |
 | ~~`MAX_SUB_BLOCKS_PER_BLOCK`~~ | **replaced** | ~~`1000`~~ | → `BLOCK_BODY_BUDGET_BYTES`. A count, named for a structure that no longer exists, capping every entry type at once. Its "CONSENSUS GAP" note is closed by `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE` → Size caps), which is enforced in structure validation |
 | `BLOCK_BODY_BUDGET_BYTES` | `local` | `MAX_BLOCK_BODY_BYTES` | Body bytes this node fills blocks **it produces** to. Genuinely local: a miner may publish smaller blocks. **Clamped to `MAX_BLOCK_BODY_BYTES`** — a node cannot raise its own consensus bound, and a value above it would build blocks every peer rejects |
 | ~~`ORDERING_BLOCK_MIN_SUB_BLOCKS`~~ | **removed** | ~~`1`~~ | Sub-block arrival no longer triggers production |
 | ~~`ORDERING_BLOCK_INTERVAL_MS`~~ | **removed** | ~~`60000`~~ | There is no producer timer. Block cadence is set by the ordering-block PoW target |
-| `CHALLENGE_WINDOW_BLOCKS` | `local` | `10` | Expiry of challenges this node issues |
+| ~~`CHALLENGE_WINDOW_BLOCKS`~~ | **removed** | ~~`10`~~ | Deleted with the challenge handshake; the name stays reserved (`TYPES_INTERFACE` → PoW) |
 | `MAX_MEMPOOL_ENTRIES` | `local` | `10000` | Mempool capacity |
 | `MAX_PEERS` | `local` | `50` | Max connected libp2p peers |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
@@ -3981,7 +3863,7 @@ Stage 2 handlers for inbound gossip messages. Startup order:
 ```
 1. initDb()
 2. Create NetNode with config + validators
-3. Register Stage 2 handlers (onSubBlock, onOrderingBlock, onTx)
+3. Register Stage 2 handlers (onOrderingBlock, onTx)
 4. Register sync handlers (setBlocksHandler, setHeadersHandler) BEFORE net.start()
 5. await net.start()          // connect to bootstrap, subscribe to topics
 6. startHttpServer()          // begin accepting API requests
@@ -3993,15 +3875,17 @@ requests. If bootstrap peers are unreachable, the node still starts (gossip
 will connect as peers become available). Sync handlers must be registered
 before `net.start()` — otherwise the initial sync burst is silently dropped.
 
-Route handlers call `net.broadcastSubBlock()`, `net.broadcastTx()`, and
-`net.broadcastOrderingBlock()` after local processing to propagate new objects
+Route handlers call `net.broadcastTx()` — and the block creator
+`net.broadcastOrderingBlock()` — after local processing to propagate new objects
 to peers. Broadcast calls are fire-and-forget — failures are logged but do
 not fail the API request.
 
 ### Relay handlers (mempool-based)
 
-- **`onSubBlock(sb)`**: validates (read-only, `verifyPostForRelay`) → inserts post,
-  creates mempool sub-block entry, re-broadcasts to other peers
+**Reserved, never to be reused: the sub-block relay handler** (`node/src/index.ts`
+states the same at the registration site). A post arrives as a transaction,
+through `onTx`.
+
 - **`onTx(tx)`**: validates (read-only, `validateTx`) → inserts into mempool via
   `insertUtxoTx`
 - **`onOrderingBlock(block)`**: structure / chain-link / PoW pre-filters → fork
@@ -4118,11 +4002,10 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 >    because the `subBlockRoot` leaf preimage is a three-field projection
 >    (`{postId, parentRefs, author}`), so committing the entry does not commit the entry object.
 
-**`subBlockRefs` is deleted from the block — done in Phase 3b, verified 2026-08-11.**
-`OrderingBlock` in `types/src/block.ts` carries `header`, `subBlockTree`, `utxoTxTree` and
-`validatorSignature`, and no refs field. The name survives in `src` only in comments explaining the
-deletion and in the two JSON routes that **derive** it via `subBlockIdsOf`, so the HTTP response
-shape is unchanged as promised below.
+**`subBlockRefs` is deleted from the block — done in Phase 3b, verified 2026-08-11 — and the
+structure it rode is gone whole.** `OrderingBlock` in `types/src/block.ts` carries `header`,
+`utxoTxTree` and `validatorSignature`; the JSON routes derive `postIds` from the block's
+post-bearing transactions (`postIdsOf`).
 
 > ⚠ **This sentence read "(AHEAD OF CODE)" in a parenthetical rather than a marker**, so a sweep
 > keyed on the `> ⚠ **NAME**` shape could not see it — the second such hiding place found in
@@ -4141,12 +4024,13 @@ That mattered because the field drove state mutation on two paths:
   unconfirmed sub-blocks network-wide without confirming them.
 - the journal's `confirmedSubBlockIds`, replayed on reorg as `unconfirmPost(id)`.
 
-The defect was an **asymmetry**: apply confirmed from `subBlockEntries` (committed) while rollback
+The defect was an **asymmetry**: apply confirmed from the committed entry list while rollback
 un-confirmed from `subBlockRefs` (uncommitted) — the inverse keyed on a different list than the
-forward operation. Both consumers now derive `subBlockEntries.map(e => e.postId)`. The two JSON
-routes that expose it derive it too, so HTTP response shape is unchanged.
+forward operation. Both directions now key on one list: the block's post ids, derived from its
+post-bearing transactions (`postIdsOf`) — recorded at apply (`recordConfirmedSubBlocks`) and
+replayed on reorg as `unconfirmPost(id)`.
 
-**Embedded transactions: a mismatch rejects the block** (AHEAD OF CODE, register row C4).
+**Embedded transactions: a mismatch rejects the block** (register row C4).
 
 > **The proof obligation.** The block's tx loop must **prove** that every declared `utxoTxId` is the
 > id of the bytes carried beside it. An arm that cannot complete that proof rejects the block. This
@@ -4235,7 +4119,7 @@ mode flag: there is no "skip the checks" parameter on the apply path.
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
 | **Validation** | chain-link, protocol version, PoW target + PoW, validator signature, Merkle roots, coinbase value + maturity, block storage, `clearTemplate` | No — the header does not exist yet |
-| **Mutation** | coinbase mint, sub-block confirmation, DAG scores, topology, prune verification + settlement, embedded UTXO txs, per-block like settlement + post-lock vesting, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
+| **Mutation** | coinbase mint, post confirmation, DAG scores, topology, prune verification + settlement, embedded UTXO txs, per-block like settlement + post-lock vesting, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
 | **Commit** | AVL feed + `stateRoot` verification + checkpoint, journal persistence | No — the speculative run reads the digest and rolls back |
 
 The mutation phase takes its height as an argument rather than reading
@@ -4272,29 +4156,19 @@ sits alongside the height-scheduled PoW-target and coinbase-maturity checks
 already enforced in this funnel, and precedes any mutation so a bad-signature
 block rolls back to a no-op.
 
-**Sub-block entry integrity + prune authorship (H-3).** `SubBlockEntry` carries
-a consensus-recorded `author` (see `TYPES_INTERFACE.md`), committed under
-`subBlockRoot`. The `'subblock'` Merkle leaf is
-`leafHash('subblock', subBlockEntryBytes(entry))` — **landed, Phase 4 (C7)**; it was
-`JSON.stringify({ postId, parentRefs, author })` in exactly that key order. The committed
-field set is the same three either way; what changed is that **field order is normative**
-rather than key order, and it is stated once, in `@dagsocial/types` (`TYPES_INTERFACE` →
-Layout — Block). Enforcement has three legs, all inside the `applyOrderingBlock` funnel:
+**Post authorship + prune authorship (H-3).** A post transaction carries the
+**whole post** in `utxoTxs` plus the author's signature over the `TxId`, so
+authorship is verified, not claimed (`TYPES_INTERFACE` → the H-3 property);
+there is no separate authorship entry for a producer to fill or a node to
+cross-check. Enforcement has two legs, both inside the `applyOrderingBlock`
+funnel:
 
-1. **Producer honesty (fill).** The block creator fills `entry.author` from the
-   resolved sub-block's post — never from a client-supplied claim.
-2. **Entry-vs-post verification (confirm-time).** For every sub-block entry
-   whose post is locally present with real content (not a placeholder), the
-   block is REJECTED unless `entry.author === post.author` **and**
-   `entry.parentRefs` equals `post.parentRefs` as an exact ordered sequence.
-   Both are `postId`-preimage fields, so any content-holding node can verify
-   the claim; content-holding honest nodes thereby keep lying entries out of
-   the canonical chain. A node lacking the content accepts the entry as
-   claimed and inherits this guarantee through PoW weight — the same trust
-   model as every other content-dependent check. (Unchecked `parentRefs`
-   would let a producer graft a victim's post under their own root and prune
-   it "as author" — the parentRefs equality closes that route.)
-3. **Prune authorship binding (prune-time).** Before the prune entry's
+1. **Topology recording (confirm-time).** Topology rows are written from the
+   block's verified post transactions: `insertBlockTopology(postId, parentRefs,
+   author, height)` with `author` the creating transaction's signer and
+   `parentRefs` the signed transaction's own. `block_topology.author` is the
+   consensus authority for prune authorization, never `dag_posts.author`.
+2. **Prune authorship binding (prune-time).** Before the prune entry's
    postId-set and Merkle checks, the block is REJECTED unless
    `getTopologyAuthor(entry.rootPostHash)` returns a non-null author equal to
    `entry.authorId`. The lookup reads only consensus-recorded data, so the
@@ -4305,20 +4179,16 @@ Layout — Block). Enforcement has three legs, all inside the `applyOrderingBloc
    is retained in the wire format and required to equal the topology author;
    the author signature check then proceeds against it as before.
 
-Topology rows are written from the (verified) entry: `insertBlockTopology(
-entry.postId, entry.parentRefs, entry.author, height)`. Placeholder posts keep
-a zeroed `author` column in `dag_posts` — `block_topology.author` is the
-consensus authority for prune authorization, never `dag_posts.author`.
-
 ### Sync handlers (pull-path)
 
 - **`setBlocksHandler(cb)`**: called by sync machine to apply blocks during sync
 - **`setHeadersHandler(getBlock)`**: serves block headers for fork resolution
-- **`setSyncHandler(cb)`**: serves sub-blocks for content-sweep (placeholder fill)
-- **`setPostsHandler(cb)`**: serves posts by ID for peer requests
 
-Additional hooks: `onSyncComplete(cb)` and `onPeerActive(cb)` trigger
-content sweep for placeholder resolution.
+**Reserved, never to be reused: `setSyncHandler` and `setPostsHandler`**
+(`node/src/index.ts` states the same at the registration site). A block carries
+its posts whole in `utxoTxs`, so there is no content-sweep and no per-post
+serve path. `onPeerActive` is wired to peer-readiness (`notePeerMet`), not to
+any sweep.
 
 The node registers no stump handlers in either direction: inbound
 `/dagsocial/stump/1` gossip is not consumed, `broadcastStump` is not called,
@@ -4345,9 +4215,9 @@ phase; NET_INTERFACE is authoritative for that side.
 - libp2p NetNode running with configured transports and subscribed to gossip
   topics
 - Connected to bootstrap peers and meshed on all subscribed topics
-- Ordering block creator running (timer + sub-block-count trigger, internal
+- Ordering block creator running (difficulty-regulated production, internal
   or external mining)
-- Sub-blocks, ordering blocks, and UTXO transactions broadcast to peers
+- Ordering blocks and UTXO transactions broadcast to peers
   after local creation
 - UTXO engine initialized with split validate/revalidate/apply API
 - Demo UI served at `/`
@@ -4362,9 +4232,7 @@ phase; NET_INTERFACE is authoritative for that side.
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit
 - Karma decay applied periodically at block application time
-- Sub-block identity IS post identity — they cannot diverge
 - Like deduplication happens at ordering block creation time
-- Challenge one-per-account: creating a new challenge consumes the old one
 - All state mutations flow through mempool → ordering block inclusion →
   block application. Zero direct `consumeBox`/`insertBox` calls in HTTP routes.
 - Mutating routes return `{ status: "pending", txId, expiresAtHeight }` —

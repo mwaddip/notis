@@ -73,7 +73,7 @@ describe('bogus vs malformed distinction', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
 
-    // Simulate a well-formed sub-block with invalid content (e.g., empty post)
+    // Simulate a well-formed message with invalid content (e.g., empty post)
     mgr.recordPenalty('misbehavior', 'peer1', 100, 'empty content');
 
     expect(mgr.isBanned('peer1')).toBe(false);

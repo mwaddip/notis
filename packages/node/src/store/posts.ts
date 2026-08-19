@@ -315,7 +315,7 @@ export function getParentRefs(postId: string): string[] {
 }
 
 // Reserved, never to be reused: `insertPostPlaceholder`. A placeholder existed
-// because a block committed a post's TOPOLOGY (`SubBlockEntry`) while its content
+// because a block committed a post's topology while its content
 // arrived separately. A post is now a transaction, so a node holding the block
 // body holds the content — there is no state in which a confirmed post has no
 // content, and nothing left for a content sweep to resolve.

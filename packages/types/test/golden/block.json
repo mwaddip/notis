@@ -15,7 +15,7 @@
         "createdAt": 1754600000000
       },
       "bytes": "01b960111111111111111111111111111111111111111111111111111111111111111133333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555b1d1f9d60380188094bdb28833",
-      "note": "NINE fields, and every position after prevBlockHash shifted down by one when subBlockRoot was removed. validatorId is b32 from BYTES; the two roots above it are b32 from HEX. powTargetBits is 12 whole bits in units of 1/256 of a bit \u2014 3072, past the one-byte VLQ boundary, so it occupies two."
+      "note": "NINE fields: protocolVersion, height, prevBlockHash, utxoTxRoot, stateRoot (b33), validatorId (b32 from BYTES; the two roots above it are b32 from HEX), powNonce, powTargetBits (12 whole bits in units of 1/256 of a bit \u2014 3072, past the one-byte VLQ boundary, so it occupies two), createdAt."
     },
     {
       "name": "blockHeader/genesis-zeros",

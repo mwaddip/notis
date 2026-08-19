@@ -19,7 +19,7 @@ import { createHash, createPublicKey, verify } from 'crypto';
 
 /**
  * Execute a prune operation: verify a client-signed PruneIntent and build a
- * PruneEntry to be included in a SubBlock.
+ * PruneEntry to be queued in the mempool.
  *
  * Verification steps:
  *  1. Post exists

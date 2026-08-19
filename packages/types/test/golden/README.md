@@ -96,9 +96,9 @@ Two rules keep that from teaching the layout wrong:
 - **A vector named `typical` is protocol-typical.** Out-of-domain and boundary cases get names that
   say so — `minimal`, `wide-numerics`, `u64-max`.
 
-`subBlockEntry/typical` and `subBlock/with-parent` are where both rules bite at once: each carries
-one `parentRef` and says why in its note, because `MAX_PARENT_REFS` is 1 and a vector named
-`typical` is where a reader goes looking for the bound.
+`post/golden` and `post/multibyte-content` are where both rules bite at once: `post/golden`
+carries one `parentRef` (the `MAX_PARENT_REFS` cap), and `post/multibyte-content` carries
+two with a note explaining the encoder has no cap — so the vector pins what it does past one.
 
 ## Adding a vector
 

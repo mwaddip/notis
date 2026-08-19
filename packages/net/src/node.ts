@@ -126,7 +126,7 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
 
 /**
  * Lazy adapter implementing SyncStore by delegating to functions that are set
- * after construction (via setSyncHandler / setHeadersHandler).
+ * after construction (via setBlocksHandler / setHeadersHandler).
  *
  * Exported for the same reason `servePeersBody` and `decodeHandshakePayload`
  * are: so tests drive **this** code rather than a copy of it. It is not part of
@@ -1078,11 +1078,9 @@ export class NetNode {
           code = framed.code;
           body = framed.body;
         } catch {
-          // An undecodable request on this protocol. The legacy text framing this
-          // arm used to carry was a sub-block id and has no successor: a post is
-          // a transaction, so it is served as part of a block body. Answering
-          // zero bytes is the arm's "I cannot answer" signal (NET_INTERFACE →
-          // Pull Requests) and attributes nothing to the peer.
+          // An undecodable request on this protocol. Answering zero bytes is
+          // the arm's "I cannot answer" signal (NET_INTERFACE → Pull Requests)
+          // and attributes nothing to the peer.
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -1150,7 +1148,7 @@ export class NetNode {
         }
       } catch (err) {
         // What is left after the two narrow spans above: stream I/O, the frame
-        // decode fallback, and the sub-block / peer-exchange serve paths. A
+        // decode fallback, and the chain-query / peer-exchange serve paths. A
         // dropped connection mid-stream is ordinary and lands here, which is
         // why this is `warn` rather than `error`.
         console.warn(`[net] sync stream handler failed for ${peerId}: ${String(err)}`);

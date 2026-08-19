@@ -44,17 +44,15 @@ Browser-based client for DAGsocial. Owns: UI (compose, feed, identity), client-s
 - Generate or import Ed25519 identity (keypair stored in browser — localStorage or IndexedDB)
 - Compose posts (300-byte limit enforced client-side before submission)
 - View feed of confirmed posts (polling or future WebSocket/SSE)
-- Full post lifecycle: slot request → Phase 1 PoW → claim → Phase 2 PoW → sign → submit
+- Full post lifecycle: build the post transaction (content + karma lock) → sign → submit
 
 ## Client-Side Operations
 
 | Operation | Algorithm | Notes |
 |-----------|-----------|-------|
 | Key generation | Web Crypto `crypto.subtle.generateKey('Ed25519')` | Public key exported as raw 32 bytes |
-| Signing | Web Crypto `crypto.subtle.sign('Ed25519')` | Raw 64-byte signature, base64-encoded on wire |
-| Phase 1 PoW | blake2b512 (blakejs or WASM) against server challenge | Target bits from `/slots/request` response |
-| Phase 2 PoW | blake2b512 against post fields | Default 8 bits |
-| Post ID | `computePostId()` — same algorithm as types package | Client MAY compute for preview, server is authoritative |
+| Signing | Web Crypto `crypto.subtle.sign('Ed25519')` | Raw 64-byte signature over the transaction's `TxId` |
+| Post ID | `computePostId(txId, index)` — same algorithm as types package | Client MAY derive for optimistic display, server is authoritative. There is no client PoW and no challenge |
 
 ## API Consumption
 
@@ -63,8 +61,6 @@ All endpoints consumed from `@dagsocial/node` HTTP API per NODE_INTERFACE.md:
 | Client Action | Endpoint |
 |---------------|----------|
 | Register identity | `POST /identity/import` |
-| Get slot challenge | `POST /slots/request` |
-| Claim slot | `POST /slots/claim` |
 | Submit post | `POST /posts` |
 | Read feed | `GET /posts?limit=30` |
 | Node status | `GET /status` |

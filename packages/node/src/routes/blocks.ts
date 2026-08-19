@@ -46,7 +46,6 @@ export interface BlocksDeps {
 
 /**
  * Convert an OrderingBlock to a JSON-safe shape.
- * Returns the nested header/subBlockTree/utxoTxTree structure.
  */
 function blockToJson(block: OrderingBlock): Record<string, unknown> {
   return {

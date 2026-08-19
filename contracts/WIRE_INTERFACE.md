@@ -57,13 +57,11 @@ mismatches.
 > layer**, not only the transport-framing package; `net` is no longer the sole dependant. No cycle is
 > introduced: this package still has zero dependencies, and that must stay true.
 >
-> **Consensus reach — this is now fact, not a warning about the future.** This package's bytes used
-> to be transport framing, where a bug produced a dropped message. As of Phase 2 its writers produce
-> **box ids, tx ids, post ids, post PoW preimages and the prune-entry Merkle leaf**. Still to come:
-> the block header and `blockHash` (Phase 3), the `subBlockRoot` / `utxoTxRoot` leaf preimages
-> (Phase 4, still `JSON.stringify` today), and the `stateRoot` (Phase 5). A change to VLQ output here
-> silently moves every id in the system. **Treat any edit to `vlq.ts`, `reader.ts` or `writer.ts` as
-> a consensus change.**
+> **Consensus reach — this is fact, not a warning about the future.** This package's writers
+> produce **box ids, tx ids, the block header and `blockHash`, and the prune-entry Merkle
+> leaf** — a bug here is a consensus fault, not a dropped message. A change to VLQ output here
+> silently moves every id in the system. **Treat any edit to `vlq.ts`, `reader.ts` or
+> `writer.ts` as a consensus change.**
 >
 > **Writers throw and that is load-bearing to preserve.** `encodeVlqU` rejects non-integers,
 > negatives, and values past `MAX_SAFE_INTEGER`. Do **not** make them total here — totality is

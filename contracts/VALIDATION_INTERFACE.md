@@ -275,42 +275,13 @@ the author holds the karma and really locks it — which is strictly stronger th
 proving someone burned a millisecond. `verifyPoW`, `postPowPreimage` and
 `powNonceBytes` go together; the names stay reserved.
 
-⚠ **`isU64Safe(nonce)` retires with it, and its argument does not generalise.** The
-guard existed because `vlqU` is total by sentinel, so every out-of-domain nonce shared
-one hash. **No surviving consensus field has that shape** — `timestamp` and
-`protocolVersion` are still `vlqU` and still total, but neither is a search variable an
-attacker varies to hit a target. **Confirm that before deleting the guard**; it is the
-one place the totality argument could still bite.
+⚠ **`isU64Safe(nonce)` retired with it, and its argument does not generalise:** no
+surviving consensus field is a search variable an attacker varies to hit a target —
+`timestamp` and `protocolVersion` are still `vlqU` and still total by sentinel, but
+nothing downstream reads either as a consensus input.
 
 `verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
-always was. **Consensus becomes honestly single-phase.**
-
-The specification below is retained until the code catches up.
-
-```
-verifyPoW(input: Uint8Array, nonce: number, targetBits: number): boolean
-```
-
-Appends the nonce using **`powNonceBytes` from `@dagsocial/types`** — `vlqU(nonce)`, the same
-tail `computePostId` appends — concatenates `input ‖ powNonceBytes(nonce)`, hashes with
-blake2b512, takes the first 32 bytes, and answers `meetsPowTarget(hash, powTarget(targetBits))` —
-`false` when `powTarget` returns `null`.
-
-**It does not encode the nonce itself.** That layout belongs to `TYPES_INTERFACE.md` →
-Serialization → "Layout — Post". A local copy here is exactly what let this function and
-`computePostId` disagree for the whole of the positional migration while every test stayed
-green (Phase 8). One writer, one layout owner.
-
-> ⚠ **`isU64Safe(nonce)` is load-bearing and is NOT redundant with the writer.** `vlqU` is
-> total by sentinel, so it cannot throw — but every out-of-domain nonce (`NaN`, `-1`, `1.5`,
-> `2⁶⁰`) takes `VLQ_SENTINEL` and therefore **one shared hash**. Under the previous
-> fixed-width tail this guard existed to stop `BigInt` / `writeBigUInt64LE` throwing; under
-> `vlqU` its purpose is collision-prevention instead. Same check, different reason — do not
-> delete it on the grounds that the writer no longer throws.
-
-Post PoW only, in both Stage 1 (gossip) and Stage 2 (node). Ordering-block PoW is
-`verifyOrderingBlockPoW` below, which appends `encodeLE64` and shares no code with this
-function — two encodings, each specified.
+always was. **Consensus is honestly single-phase.**
 
 ### verifyOrderingBlockPoW
 
@@ -323,7 +294,7 @@ as u64 LE, hashes `preimage || nonceBytes` with blake2b512, takes the first 32
 bytes, and answers `meetsPowTarget(hash, powTarget(header.powTargetBits))` —
 `false` when `powTarget` returns `null`.
 Guards its inputs (M-5 / M-6): returns `false` — never throws — if the
-header is not CBOR-encodable, or if `powNonce` / `powTargetBits` is not a
+header is not encodable, or if `powNonce` / `powTargetBits` is not a
 non-negative safe integer.
 
 Checks the solution against the header's **own** `powTargetBits` only. It does
@@ -349,13 +320,13 @@ computePowHash(header: BlockHeader): Buffer | null
 full reasoning, which applies identically here.
 
 Computes the preimage the PoW nonce hashes against: takes the header with
-`powNonce` set to `0`, CBOR-encodes it (`encodeHeader`), and returns
+`powNonce` set to `0`, encodes it (`encodeHeader`), and returns
 `blake2b512(encoded).subarray(0, 32)`. The preimage is over the **header**, not a
 separate "block body" — it covers `protocolVersion`, `height`, `prevBlockHash`,
-`subBlockRoot`, `utxoTxRoot`, `stateRoot`, `validatorId`, `powTargetBits`, and
-`createdAt`, with `powNonce` zeroed. The block *body* (sub-blocks, UTXO txs,
-coinbase outputs) is committed **transitively**: `subBlockRoot` / `utxoTxRoot` are
-Merkle roots over it and `stateRoot` is the AVL+ digest, so any body change alters
+`utxoTxRoot`, `stateRoot`, `validatorId`, `powTargetBits`, and
+`createdAt`, with `powNonce` zeroed. The block *body* (UTXO txs and prune
+entries) is committed **transitively**: `utxoTxRoot` is the
+Merkle root over it and `stateRoot` is the AVL+ digest, so any body change alters
 a root and therefore the preimage. `validatorSignature` is not a header field, so
 it never enters the preimage. Exposed to external miners (hex) at
 `GET /mining/template` as `powPreimage`.
@@ -411,7 +382,7 @@ returned `string` and performed **no input check at all**, handing `header` stra
 **A post carries no signature of its own.** It is created by a transaction signed
 over that transaction's `TxId`, and the signing key is the author — so a post's
 authorship is verified by the transaction's signature check and nothing else.
-`signingHash` retires with this function, and **no path may reintroduce a
+`signingHash` retired with this function, and **no path may reintroduce a
 post-level signature**: two signatures over one object is two places for them to
 disagree.
 
@@ -438,9 +409,8 @@ Wraps the 32-byte `header.validatorId` in an SPKI DER envelope, builds a
 `blockHash(header)` is stable before and after signing — verification recomputes
 it from the received header and checks the signature against `header.validatorId`.
 A block whose `validatorId` names a key the producer does not hold (a forged
-authorship) fails this check. Mirrors `verifyPostSignature`; like it, the caller
-supplies the public key (here the header's own `validatorId`) and the function
-performs no I/O.
+authorship) fails this check. The caller supplies the public key (the header's
+own `validatorId`) and the function performs no I/O.
 
 **No-panic (M-5).** Returns `false` — never throws — on malformed input: a
 `signature` that is not a byte view, or any header outside the domain, which
@@ -449,7 +419,7 @@ exactly the headers `verifyHeaderFieldDomains` rejects, and its non-null return
 *proves* `validatorId` is exactly 32 bytes — which is what keeps the SPKI wrap and
 `createPublicKey` ("Failed to read asymmetric key") out of reach without a
 separate length check here. A wrong-*length* signature is left to `crypto.verify`,
-which rejects it cleanly, matching `verifyPostSignature`.
+which rejects it cleanly.
 
 ---
 
@@ -559,10 +529,9 @@ verifyPostFieldDomains(post: unknown): { valid: boolean; error?: string }
 ```
 
 The **fixed-width domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
-`isSignablePost` has always made, and adds three width rules:
+`isSignablePost` has always made, and adds two width rules:
 
 - `author` is a `Uint8Array` of **exactly 32 bytes**
-- `challenge` is a `Uint8Array` of **exactly 32 bytes**
 - every `parentRefs` entry matches `/^[0-9a-f]{64}$/` — 64 **lowercase** hex
 
 **Why lowercase is load-bearing, not stylistic.** `'AB…'` and `'ab…'` hex-decode
@@ -571,18 +540,18 @@ codec boundary non-injective: two distinct in-memory posts, one preimage, one
 id. That is precisely the malleability the M-1 field encoding exists to close,
 arriving from the codec side instead of the concatenation side.
 
-**Why it exists.** The positional wire format encodes these three fields
+**Why it exists.** The positional wire format encodes these fields
 fixed-width, and fixed-width writers cannot carry a sentinel, so they throw (see
-`TYPES_INTERFACE.md` → Totality). `signingHash` is reached with malformed posts
-by design, so without this pin the migration would put a throw in a path this
-contract requires never to throw — the M-5/M-6 regression.
+`TYPES_INTERFACE.md` → Totality). The payload reaches `computeTxId` through
+`postFieldBytes`, so the domain must be established before then — without this
+pin a malformed post would put a throw in a path this contract requires never
+to throw (the M-5/M-6 regression).
 
-**This is not only tightening the already-unusable.** A post with a
-64-character *non-hex* `parentRef` passes the entire Stage-1 pipeline today —
-content, characters, ref count, version, PoW *and signature* — because the ref
-is hashed as UTF-8 text and the signature covers those same bytes. Rejecting it
-is a real behavioural change. `author` and `challenge` widths, by contrast, were
-already fatal two steps later at `verifyPostSignature`.
+**This was not only tightening the already-unusable.** A post with a
+64-character *non-hex* `parentRef` passed every then-live check, because the
+ref was hashed as UTF-8 text and the signature covered those same bytes —
+rejecting it was a real behavioural change. `author`'s width, by contrast, was
+already fatal downstream.
 
 Total on adversarial input, like every function here.
 
@@ -609,7 +578,6 @@ The domain, by field:
 | `protocolVersion` | non-negative safe integer | `vlqU` |
 | `height` | non-negative safe integer | `vlqU` |
 | `prevBlockHash` | `/^[0-9a-f]{64}$/` | `b32` |
-| `subBlockRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 | `utxoTxRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 | `stateRoot` | `/^[0-9a-f]{66}$/` — **66, not 64** (`hex(33)`) | `b33` |
 | `validatorId` | `Uint8Array`, exactly 32 bytes | `b32` |
@@ -668,92 +636,24 @@ Total on adversarial input, like every function here.
 ### ~~verifySubBlockStructure~~ — DELETED (posts as transactions)
 
 **There is no sub-block to structurally verify.** A post's structural checks —
-`verifyPostFieldDomains` and the content limits — move to the post-bearing
-transaction's validation, where `verifyTxStructure` already runs. The three domain
+`verifyPostFieldDomains` and the content limits — live in the post-bearing
+transaction's validation, where `verifyTxStructure` runs. The three domain
 pins this function carried (`subBlockId` hex-32, `protocolVersion` `isU64Safe`,
-`producerId` 32 bytes) describe fields that cease to exist: a transaction has a
+`producerId` 32 bytes) describe fields that do not exist: a transaction has a
 `TxId`, its own `protocolVersion`, and a signer rather than a producer.
 
 ⚠ **`verifyPostFieldDomains` survives and is still needed** — the post payload is
 still attacker-supplied bytes reaching an encoder, and the no-panic contract
 (M-5/M-6) is unchanged. Only its caller moves.
 
-The specification below is retained until the code catches up.
+**Reserved, never to be reused:** `verifySubBlockStructure`, together with
+`verifyPoW` and `verifyPostSignature` (`validation/src/index.ts` and the test
+suite's reserved teeth suite state the same).
 
-```
-verifySubBlockStructure(sb: SubBlock): { valid: boolean; error?: string }
-```
-
-Checks: `post` present, **`subBlockId` is 64 lowercase hex**, **`protocolVersion`
-is `isU64Safe`**, **`producerId` is exactly 32 bytes**, and
-**`verifyPostFieldDomains(sb.post)`**. Returns `{ valid, error }`. (The
-`likeBoxes` array check died with the sidecar field — P2-D.)
-
-> ✅ **RESOLVED — the three `SubBlock` domain pins have LANDED. Verified 2026-08-11.** This read
-> `AHEAD OF CODE` until Phase 9, and the code has since caught up: `verifySubBlockStructure`
-> now checks `isHex32(sb.subBlockId)`, `isU64Safe(sb.protocolVersion)` and
-> `isBytesOfLength(sb.producerId, 32)` — exactly the three declared wire domains, in that order,
-> each with a comment naming the writer it feeds.
->
-> **The record of what it was.** The function checked `subBlockId` and `producerId` for
-> **truthiness** and `protocolVersion` for `typeof === 'number'`, while all three fed throwing
-> fixed-width writers in the `SUB_BLOCK` codec — `writeHexNOrThrow(subBlockId, 32)`,
-> `writeBytesNOrThrow(producerId, 32)`, `writeVlqU(protocolVersion)`. So `subBlockId: 'x'`
-> passed every check and threw in the writer, and so did `protocolVersion: 1.5`.
->
-> Same rule Phase 1c established for the header and 1e for the ordering block, applied to the
-> struct **both phases skipped**. The LEDGER's Gate B recorded the unpinned rows clustering in
-> `CoinbaseOutput` and `SubBlock`, "the two structs 1e and 1f never covered". The
-> `CoinbaseOutput` four were closed by **#32**; **these three are now closed too**, which
-> retires that Gate B cluster entirely and closes the `SubBlock` half of carried register #1.
->
-> ⚠ **`Post.powNonce` and `Post.signature` are a different question and are NOT
-> part of this obligation.** Neither appears in `verifyPostFieldDomains`, yet
-> `POST.write` ends `writeVlqU(p.powNonce)` and
-> `writeBytesNOrThrow(p.signature, 64)`. Both domains are established only
-> *downstream* — `verifyPoW` checks `isU64Safe(nonce)` internally, and
-> `verifyPostSignature` deliberately leaves a wrong-**length** signature to
-> `crypto.verify` (`:367-369`, and that is the right call for verification). So
-> the open question is **reachability, not absence**: is there any path that
-> encodes a post before the downstream check runs? That is the §2.5 shape, and it
-> must be answered by tracing rather than assumed either way.
-
-> ⚠ **The justification that stood here was one phase out of date — corrected
-> 2026-08-10.** It read: the domain check is here because this is the shared gate
-> the relay path passes through, `runStage1SubBlock` before the PoW preimage.
-> **That was written when `decodeSubBlock` was `decode(bytes) as SubBlock`.**
-> Since Phase 3b, `gossip.ts:78` decodes through `decodeStruct` *before*
-> `runStage1SubBlock` runs, and the positional reader establishes every domain on
-> the way in — `readHexN` yields lowercase hex, `readBytesN` yields exactly 32
-> bytes or throws, `readVlqU` yields a non-negative safe integer or throws. **No
-> out-of-domain sub-block can arrive over gossip at all**; it dies in the decoder.
-> These checks reject nothing on that path.
->
-> **That relocates their teeth rather than removing them.** They are the stated
-> rejection for any path that builds a `SubBlock` *without* the decoder.
->
-> ✅ **The unvalidated serve path this note named is CLOSED. Verified 2026-08-11.** It read:
-> *"`net/src/node.ts:951` and `:960` take `getSubBlock`'s return — typed `unknown` — cast it
-> `as SubBlock`, and hand it straight to `encodeSubBlock` with no validation of any kind."*
-> Both serve arms — the legacy text protocol and the framed `MSG_GET_SUB_BLOCK` — now call
-> **`encodeServableSubBlock(subBlock, this.validators, id)`**, which takes `unknown` and runs
-> the validator before encoding; a row we hold but cannot encode is answered exactly like a row
-> we do not hold. `getSubBlock` still returns `unknown`, and that is now harmless because the
-> cast no longer happens. **Carried register #22 is closed, including its rider** —
-> `encodeSubBlock` occurs 0 times in `net/src/sync.ts`, so the dead import is gone too.
->
-> ⚠ **This note's own closing lesson fired on this note.** It ended: *"a reachability argument
-> is a claim about the rest of the tree, and this one expired when the tree moved under it… a
-> check justified by a path can outlive the path."* Written about the *gossip* justification,
-> it then applied verbatim to the **replacement** justification in the very next paragraph: the
-> serve path was hardened and the note went on citing it as unguarded. **The lesson was correct,
-> general, and not applied to the sentence sitting beside it.** All three line pins had rotted
-> as well — `:951` and `:960` now land on `stream.sink` and `code = framed.code`.
-
-> ⚠ **It does NOT yet close the node's two verifier functions or the content
-> sweep.** `verifyPost`, `verifyPostForRelay` and `content-sweep.ts:92` reach
-> the preimage without passing through either entry point — booked to Phase 1d.
-> See `TYPES_INTERFACE.md` → Totality, obligation 2.
+⛔ **The method rule the retired records here carried survives as a rule:** a
+check justified by a path is a claim about the rest of the tree, and it expires
+when the tree moves — re-derive the justification, not just the check, whenever
+either side changes.
 
 ### verifyTxStructure
 
@@ -865,65 +765,45 @@ constant of its own**, and a bound with no subject here would be the first.
 
 ### verifyOrderingBlockStructure
 
-> **The block has one body.** Every clause naming `subBlockRoot`, `subBlockTree`,
-> `subBlockRefs` or `subBlockEntries` goes; `pruneEntries` are checked where they now
-> live, inside `UtxoTxTree`. ⛔ **The header is nine positional fields, not ten** — see
-> `TYPES_INTERFACE` → Layout — Block, and note that every position after 3 shifts down.
-
 ```
 verifyOrderingBlockStructure(block: OrderingBlock): { valid: boolean; error?: string }
 ```
 
-Checks: `prevBlockHash` present and non-empty, `subBlockRefs` is an array,
-`subBlockEntries` is an array aligned 1:1 with `subBlockRefs` where every entry
-has a 64-char `postId`, a `parentRefs` array of ≤ `MAX_PARENT_REFS` 64-char strings, and a
-64-char `author` (the consensus-carried authorship claim, audit H-3),
-`validatorSignature` is 64 bytes, `height` ≥ 1, `protocolVersion` is a number,
-`powNonce` is a non-negative number,
-`powTargetBits` ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` (2304), `coinbaseOutputs` is
-an array with each output having a 32-byte `owner`, a `bigint` `value` in
-`[0, BOX_VALUE_BOUND)` (TYPES_INTERFACE → "Box value domain"), a `lockedUntilBlock` that is `isU64Safe` **and** ≥ `block.height`,
-and an `isTreasury` that is a `boolean`. Each `utxoTxs` element is a byte view
-**of at most `MAX_TX_BYTES`**. Last, the encoded body is at most `MAX_BLOCK_BODY_BYTES`.
+**The block has one body**, and the header is **nine positional fields**
+(`TYPES_INTERFACE` → Layout — Block). Checks, in order: the block is an object
+with a `header`; every header field's domain via `verifyHeaderFieldDomains` —
+delegated to the one statement of those domains, re-labelled with this
+function's messages. Every `utxoTxTree.pruneEntries` element: `rootPostHash`
+hex-32, `subtreePostIds` an array of hex-32, `subtreeMerkleRoot` 32 bytes,
+`authorId` 32 bytes, `authorSignature` 64 bytes, `trigger`
+`'author' | 'storage_prune'` — byte fields by `isBytes`, never a bare
+`.length`, because a stored row put back through a cast can carry any type and
+a length check passes what the hash calls throw on. `validatorSignature` is 64
+bytes (`isBytes`, same rule). Then the two semantic floors a domain check
+cannot know: `height ≥ 1`, and `powTargetBits ≥
+ORDERING_BLOCK_POW_TARGET_FLOOR` (2304) — the gossip pre-filter against a
+trivially cheap target. `utxoTxTree.utxoTxIds` is a **non-empty** array of
+hex-32 — non-empty because **the settlement transaction is the LAST entry**,
+and non-emptiness is the whole of what this package can state about that rule:
+position decides identity, and the byte-identical-derivation half is node's
+(`NODE_INTERFACE` → Determinism is this mechanism's whole risk). `utxoTxs`
+aligns 1:1 with `utxoTxIds`, each element a byte view of at most
+`MAX_TX_BYTES`. Last, the encoded body is at most `MAX_BLOCK_BODY_BYTES`.
 
-> ⚠ **The coinbase value bound lives HERE, not in node — corrected 2026-08-10.** ⛔ **The NUMBER
-> is neither this file's nor node's: it is `BOX_VALUE_BOUND` in `@dagsocial/types` (TYPES_INTERFACE
-> → "Box value domain"), imported by both.** What lives here is the coinbase's *obligation to check
-> it*. This
-> passage used to route it to node's apply-time `checkOutputValues` "matching the
-> loose-structural / tight-apply split". **That function is retired**
-> (`utxo-engine.ts:606`), and its successor — the field-type table's `u64` spec —
-> covers transaction **output boxes** only, never `CoinbaseOutput`. So no `u64`
-> bound on a coinbase `value` existed anywhere in the repo: the contract named an
-> owner that had stopped existing, and the split it appealed to had no tight half.
-> Third contract-vs-code divergence found in this file, all three by reading the
-> code beside the claim rather than by a sweep.
->
-> The four pins above are not a policy tightening; they are the **declared wire
-> domains** of `TYPES_INTERFACE` → Layout — Block (`vlqU64` is u64, `u8(isTreasury)`
-> is `writeBool` over a boolean, `lp` is bytes). Spec §2.5 assigns exactly this to
-> this package: the encoder's domain is established upstream so a throw is
-> unreachable and a bad value produces a **stated rejection**. Two of the four
-> also close a measured remote fail-stop — see
-> `prompts/node-fail-stop-reachability-measure-REPORT.md`.
-
-> ## ✅ RESOLVED — `coinbaseOutputs` HAS LEFT THE BODY, AND THE GAP ABOVE CLOSED BY CONSTRUCTION
+> ## ✅ RESOLVED — `coinbaseOutputs` HAS LEFT THE BODY, AND THE GAP CLOSED BY CONSTRUCTION
 >
 > ✅ **Landed 2026-08-17/18**: C1 removed the field from `UtxoTxTree` and C2 removed the structural
-> checks here, so the body carries three arrays and this paragraph no longer has a
-> `coinbaseOutputs` clause. ⚠ **The settlement transaction that receives those outputs is still
-> ahead of code in `node`** — this package's obligation (`utxoTxIds.length >= 1`) is met; nothing
-> yet builds the transaction that makes the length meaningful.
+> checks here, so the body carries three arrays and this paragraph has no
+> `coinbaseOutputs` clause. The settlement transaction that receives those outputs ships;
+> this package's obligation (`utxoTxIds.length >= 1`) is its half of that rule.
 >
 > ⛔ **This block read `⚠ AHEAD OF CODE` after both halves had landed**, which is the second decay
 > trigger — implementation strands a **claim** while every name in it still resolves, so no
 > deletion-grep reaches it (`TYPES_INTERFACE` → How a dispatch decays this contract).
 >
-> ✅ **THE DEFECT THIS NOTE RECORDS STOPS BEING POSSIBLE.** The correction above exists because
-> *"no `u64` bound on a coinbase `value` existed anywhere in the repo"* — the field-type table covers
-> transaction **output boxes** and never `CoinbaseOutput`. Once a coinbase output **is** a transaction
-> output box, it inherits that table by being one. ⛔ **The bound stops being a second statement that
-> can rot out of step with the first**, which is the class of defect this file has now found three
+> ✅ **A coinbase output IS a transaction output box, so it inherits the field-type table's
+> `u64` bound by being one.** ⛔ **The bound is not a second statement that
+> can rot out of step with the first**, which is the class of defect this file has found three
 > times.
 >
 > ⚠ **All four pins leave this package, and none is dropped.** `value`, `owner` and `isTreasury` go
@@ -1032,12 +912,12 @@ wire-format bundle; the first (`verifyTxStructure` documented as checking `likeT
 not) was **closed 2026-08-09** — see that function above. Both were found by reading the code beside
 the claim rather than by any sweep, which is the argument for the standing contract-vs-code audit.
 
-**The header-field checks in this function** (`prevBlockHash`, `subBlockRoot`, `utxoTxRoot`,
-`stateRoot`, `validatorId`, `height`, `protocolVersion`, `powNonce`, `powTargetBits`) are
+**The header-field checks in this function** (`prevBlockHash`, `utxoTxRoot`,
+`stateRoot`, `validatorId`, `height`, `protocolVersion`, `powNonce`, `powTargetBits`, `createdAt`) are
 **delegated to `verifyHeaderFieldDomains`** (Phase 1f), which is the single statement of that
 domain. The error labels this function emits did not change — that is why the predicate returns a
 reason rather than a boolean, and Phase 1e's teeth demonstration asserts those strings exactly. The
-block-level checks (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `coinbaseOutputs`,
+block-level checks (`pruneEntries`, `utxoTxIds`, `utxoTxs` alignment and weight,
 `validatorSignature`) stay here: they are not header fields and no header predicate can see them.
 
 > ⚠ **FALSE — the shrink this marker predicted is REFUTED, not delivered. Verified 2026-08-11.**
@@ -1070,10 +950,8 @@ block-level checks (entry alignment, `pruneEntries`, `utxoTxIds`, `utxoTxs`, `co
 >
 > | Check | Why the codec can't |
 > |---|---|
-> | `parentRefs.length ≤ MAX_PARENT_REFS` | it is a protocol rule, not a shape |
 > | `height ≥ 1` | genesis is a semantic floor |
 > | `powTargetBits ≥ ORDERING_BLOCK_POW_TARGET_FLOOR` | a policy floor |
-> | `lockedUntilBlock ≥ block.height` | cross-field, needs the header |
 > | `utxoTxIds.length === utxoTxs.length` | two independently-counted arrays |
 > | **`Number.isSafeInteger(height)`** | see below — this one gets *more* important |
 >
@@ -1130,14 +1008,14 @@ rejected before phase N+1 executes.
 
 **Phase 1 — Structural (cheapest):**
 - Post deserializes without error
-- All required fields present
+- Field domains (`verifyPostFieldDomains`)
 - `protocolVersion` is supported
-- `content.length` within [1, MAX_CONTENT_BYTES]
+- `content` within [1, MAX_CONTENT_BYTES] UTF-8 bytes
 - `parentRefs.length` within [0, MAX_PARENT_REFS]
 
 **Phase 2 — Cryptographic (cheap):**
-- `verifyPostSignature(post)` passes
-- `verifyPoW(post, targetBits)` passes
+- The creating transaction's signature over its `TxId` verifies (node's
+  `validateTx`) — a post has no signature and no PoW of its own
 
 **Phase 3 — DAG integrity (moderate):**
 - Every `parentRefs[i]` exists in local DAG or unconfirmed pool
@@ -1161,53 +1039,30 @@ Queries serve the DAG tip. Phase completion gates nothing a reader can observe.
 
 ```
 Stage 1 (@dagsocial/net — topic validators, before mesh forwarding)
-  ├── verifySubBlockStructure
-  ├── verifyContentLimits
-  ├── verifyContentCharacters
-  ├── verifyParentRefsCount
-  ├── verifyProtocolVersion
-  ├── verifyPoW
-  └── (signature deferred to Stage 2 — requires DB lookup for public key)
+  ├── tx topic     → verifyTxStructure
+  └── block topic  → verifyOrderingBlockStructure (+ chain-link / PoW pre-filters)
 
-Stage 2 (@dagsocial/node — on* callbacks, after gossip receipt)
-  ├── All Stage 1 checks re-run (defense in depth)   [⚠ FALSE — see below]
-  ├── verifyPostSignature (now with public key from identity store)
-  ├── Parent ref existence (DB lookup)
-  └── Karma sufficiency (UTXO state)
+Stage 2 (@dagsocial/node — after receipt)
+  ├── onTx         → validateTx (authorization, transitions, conservation — NODE_INTERFACE)
+  ├── POST /posts  → verifyPost (field domains, content, refs, version, karma)
+  └── Block receipt (applyOrderingBlock — the funnel every apply path passes
+        through: gossip, sync, reorg — so no path can skip it)
+        ├── verifyOrderingBlockStructure
+        ├── chain-link check — inline: prevBlockHash against blockHash(prev
+        │     header) + height increment. `verifyBlockChainLink` the export has
+        │     zero production callers (its section below says so)
+        ├── verifyOrderingBlockPoW
+        ├── verifyValidatorSignature (blockHash(header) signed with validatorId's key)
+        └── State application (UTXO, post confirmation, mempool cleanup)
 ```
 
-> ⚠ **"All Stage 1 checks re-run" is FALSE, and the way it is false is the dangerous part.**
-> Stage 2 does not call the Stage 1 functions. It **reimplements three of the six inline**,
-> at inconsistent strictness — including a content-length check measured in **UTF-16 code
-> units against a byte constant** (`MAX_CONTENT_BYTES` is 300 **UTF-8 bytes**), so any
-> non-ASCII post is measured wrongly at the API boundary.
->
-> The defect is not the missing re-run — it is that a reimplementation looks like defence in
-> depth while being a **second implementation of a validity rule**, i.e. a mirror. Two
-> copies of a rule diverge; that is what mirrors do. **Stage 2 must call the same exported
-> functions Stage 1 calls**, so there is one implementation of each check.
->
-> Related and unresolved: every numeric bound in `verifyOrderingBlockStructure` is
-> `typeof === 'number'` plus a comparison, so `NaN`, `±Infinity` and floats pass the
-> structure gate. `@dagsocial/net` already compensates for this **at its call site rather
-> than at the gate**, and neither contract records that arrangement — so "fixing" either
-> side in isolation breaks the other.
+⛔ **One implementation per rule.** A stage that reimplements a check inline
+builds a mirror, and two copies of a rule diverge — that is what mirrors do.
+Stage 2 calls the same exported functions Stage 1 calls wherever both stages
+state one rule.
 
-```
-
-Block receipt (@dagsocial/node)
-  ├── verifyOrderingBlockStructure
-  ├── verifyBlockChainLink (against previous block)
-  ├── verifyOrderingBlockPoW
-  ├── verifyValidatorSignature (blockHash(header) signed with validatorId's key)
-  │     — enforced inside applyOrderingBlock, the funnel every apply path
-  │       (gossip, sync, reorg) passes through, so no path can skip it
-  └── State application (UTXO, sub-block confirmation, mempool cleanup)
-```
-
-PoW is verified in both stages for posts — Stage 1 blocks invalid-PoW spam from
-propagating; Stage 2 re-verifies for defense in depth. Ordering block PoW is
-verified at receipt time only.
+Ordering block PoW is verified at receipt time; a post carries no PoW of its
+own.
 
 ---
 
@@ -1240,7 +1095,7 @@ verified at receipt time only.
 ## Invariants
 - All hashing uses `blake2b512.digest().subarray(0, 32)` — Node.js v22
   lacks blake2b256
-- Signatures verified with `crypto.verify(null, signingHash, keyObj, sig)`
+- Signatures verified with `crypto.verify(null, message, keyObj, sig)` and a KeyObject
   using a `KeyObject` created via `crypto.createPublicKey`
 - SPKI DER prefix for Ed25519: `302a300506032b6570032100`
 - **Two PoW nonce encodings, each specified, sharing no code path.** A *post* nonce is
@@ -1260,4 +1115,4 @@ verified at receipt time only.
   (`computePowHash`) is the encoded header with `powNonce` zeroed; the canonical
   `blockHash` is the encoded header with the solved `powNonce`. Neither includes
   `validatorSignature` — it is not a header field. The body binds via the header's
-  `subBlockRoot` / `utxoTxRoot` / `stateRoot`.
+  `utxoTxRoot` / `stateRoot`.

@@ -16,11 +16,12 @@ context — read it and the linked docs before touching code.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
-ledger** (karma + credits), bound by **stumps**. Consensus is PoW — user sub-blocks + validator ordering
-blocks, gossiped and synced peer-to-peer. TypeScript, pnpm workspaces, Node ≥ 22.
+ledger** (karma + credits), bound by **stumps**. Consensus is single-phase PoW — validator-produced
+ordering blocks, gossiped and synced peer-to-peer; posts and likes ride them as ordinary
+transactions. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/net`)
-The **libp2p networking layer**: gossip (sub-blocks, ordering blocks, UTXO txs, stumps, peers), the framed
+The **libp2p networking layer**: gossip (ordering blocks, UTXO txs), the framed
 stream sync protocol (SyncInfo/Inv/Modifier), peer management + PeerDb, and handshake. Two-stage validation:
 Stage 1 (stateless, via `@dagsocial/validation`) runs **before relay**; Stage 2 (stateful) runs in the node.
 

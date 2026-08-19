@@ -99,7 +99,7 @@ Additions to the existing `OrderingBlock` type:
 ### Block hash and PoW preimage (header model)
 
 The block hash is `blockHash(header)` — the header alone commits to the whole
-block transitively (`subBlockRoot` / `utxoTxRoot` / `stateRoot`), see
+block transitively (`utxoTxRoot` / `stateRoot`), see
 `TYPES_INTERFACE.md`. PoW is likewise header-only:
 
 ```
@@ -182,8 +182,8 @@ credentials → 401, before any handler logic (including `?miner=`).
 
 ### GET /mining/template
 
-Returns the current block template. The block creator assembles this on a timer
-(60s default) and whenever a sub-block arrives.
+Returns the current block template. The block creator assembles one at startup
+and rebuilds it whenever the tip moves.
 
 `?miner=<hex(32)>` (authenticated, optional): sets the coinbase payout pubkey
 used for subsequently assembled templates. Invalid hex → 400. Because auth
@@ -196,20 +196,15 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
     "protocolVersion": 1,
     "height": 123,
     "prevBlockHash": "hex(32)",
-    "subBlockRoot": "hex(32)",
     "utxoTxRoot": "hex(32)",
     "stateRoot": "hex(32)",
     "validatorId": "hex(32)",
     "powTargetBits": 20,
     "createdAt": 1234567890000
   },
-  // ⚠ subBlockRoot / subBlockRefs / subBlockEntries below are RETIRED — a post is a
-  // transaction and rides utxoTxIds. Left in this example pending the sub-block sweep,
-  // which is not unit C's; the body itself is utxoTxIds / utxoTxs / pruneEntries.
-  "subBlockRefs": ["hex(32)", ...],
-  "subBlockEntries": [{ "postId": "hex(32)", "parentRefs": ["hex(32)"], "author": "hex(32)" }, ...],
   "pruneEntries": [...],
   "utxoTxIds": ["hex(32)", ...],
+  "postIds": ["hex(32)", ...],
   "powPreimage": "hex(32)"
 }
 ```
@@ -219,9 +214,9 @@ the fixed 32-byte preimage the miner hashes with the nonce. The miner never
 touches CBOR.
 
 **A miner node always holds a template.** It builds one at startup and rebuilds it whenever the tip
-moves — its own block finalizing, a peer's block applying, or a reorg committing. **Sub-block arrival
-does not rebuild it**: what goes into a block and when one is produced are separate questions, and a
-rebuild mid-solve would void every miner's in-flight work.
+moves — its own block finalizing, a peer's block applying, or a reorg committing. **A transaction
+arriving does not rebuild it**: what goes into a block and when one is produced are separate
+questions, and a rebuild mid-solve would void every miner's in-flight work.
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below — that is

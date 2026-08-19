@@ -739,8 +739,6 @@ export class SyncMachine {
    * included, so an oversized block still moves rather than wedging sync.
    */
   private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
-    // We serve ordering blocks only. Sub-block serving uses a separate protocol
-    // stream (see sync.ts).
     if (req.typeId !== MODIFIER_ORDERING_BLOCK) return;
 
     const heightOf = this.blockIdIndex();

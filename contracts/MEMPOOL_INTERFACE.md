@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node` (store subsystem)
 **Protocol version:** 1
-**Last updated:** 2026-07-29
+**Last updated:** 2026-08-19
 
 ## Scope
 
@@ -11,8 +11,7 @@ Nothing applies UTXO state immediately — every mutation is queued as a pool
 entry, included in an ordering block, and applied atomically when the block
 lands. The mempool is a store subsystem, not a separate process or package.
 
-Located at `packages/node/src/store/mempool.ts`. Replaces the old `sub_blocks`
-table (removed).
+Located at `packages/node/src/store/mempool.ts`.
 
 ---
 
@@ -22,21 +21,28 @@ Single SQLite table:
 
 ```sql
 CREATE TABLE mempool (
-    entry_type        TEXT NOT NULL CHECK (entry_type IN ('subblock', 'utxo_tx', 'prune')),
-    subblock_cbor     BLOB,            -- CBOR-encoded SubBlock (null for non-subblock)
-    utxo_tx_cbor      BLOB,            -- CBOR-encoded UtxoTransaction (null for non-utxo_tx)
-    prune_entry_cbor  BLOB,            -- CBOR-encoded PruneEntry (null for non-prune)
-    batch_id          TEXT,            -- Links sub-block + UTXO payloads from same operation
+    rowid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_type        TEXT NOT NULL CHECK (entry_type IN ('utxo_tx', 'prune')),
+    utxo_tx_cbor      BLOB,            -- encoded UtxoTransaction (null for non-utxo_tx)
+    prune_entry_cbor  BLOB,            -- encoded PruneEntry (null for non-prune)
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    tx_id             TEXT             -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
+    like_target TEXT, like_liker TEXT,          -- gate metadata (below)
+    invite_inviter TEXT, vouch_voucher TEXT,    -- gate metadata (below)
+    tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
+    tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
+    tx_id TEXT                                  -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
 ```
 
-No separate `id` column — the SQLite `rowid` is the canonical identifier for
-entries.
+**Reserved, never to be reused** (`store/db.ts` states the same at the schema):
+`subblock_id`, `batch_id`, and the entry type `'subblock'`. A post is a
+transaction, so the post/lock pair `batch_id` existed to regroup is a single
+object.
+
+The SQLite `rowid` is the canonical identifier for entries.
 
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
 no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
@@ -51,20 +57,11 @@ took.
 ### PoolEntry (in-memory representation)
 
 ```typescript
-> **The mempool holds one entry type: transactions.** A post is a transaction, so
-> the post/lock pair that `batch_id` existed to regroup is a single object and the
-> column goes with it. Elsewhere in this file the mempool is described as storing
-> sub-block CBOR — it never did; the column was `subblock_id TEXT` and content
-> lived in the DAG store. **Where those descriptions conflict with this interface,
-> this wins.**
-
 interface PoolEntry {
   rowid: number;
-  entryType: 'subblock' | 'utxo_tx' | 'prune';
-  subblockId: string | null;      // postId — sub-block content lives in the DAG store
+  entryType: 'utxo_tx' | 'prune';
   utxoTxCbor: Uint8Array | null;
   pruneEntryCbor: Uint8Array | null;
-  batchId: string | null;
   expiresAtHeight: number;
   createdAt: string;
 }
@@ -86,30 +83,21 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 |---|---|---|
 | `like_target` | `likeTarget` set (P2-D — the like tx field, not a box) | `likeTarget` (hex) |
 | `like_liker` | `likeTarget` set AND `tx.signatures` has exactly one key | that key (hex). **Any other key count → NULL** — an unpaired row matches no `hasPendingLike` query. First-key-wins was rejected: a spare signature could pin a victim's `(liker, target)` pair and DoS their like at the gateway |
-| `invite_inviter` | an `invite` output | `inviterId` (hex) |
+| `invite_inviter` | a `bond` output | `inviterId` (hex) — **the bond is what names an inviter**, one transaction per invite |
 | `vouch_voucher` | a `vouch` output | `voucherId` (hex) |
 
 ---
 
 ## API Surface
 
-### insertMempoolSubBlock
-
-```
-insertMempoolSubBlock(sb: SubBlock, expiresAtHeight: number, batchId?: string | null): number
-```
-
-Encodes the sub-block as CBOR and inserts a `subblock` entry. Returns the
-SQLite `rowid` of the new row.
-
-- `batchId` is optional. When set (e.g., to `postId`), links this sub-block
-  to UTXO transactions in the same batch.
-- `expiresAtHeight` is typically `currentHeight + 720` (~12h at 60s blocks).
+**Reserved, never to be reused** (`store/mempool.ts` states the same at the
+definition site): `insertSubBlock` / `insertMempoolSubBlock` and
+`removeSubBlockEntries`.
 
 ### insertUtxoTx
 
 ```
-insertUtxoTx(tx: UtxoTransaction, batchId: string | null, expiresAtHeight: number): number
+insertUtxoTx(tx: UtxoTransaction, expiresAtHeight: number): number
 ```
 
 Encodes the UTXO transaction as CBOR and inserts a `utxo_tx` entry, populating
@@ -134,8 +122,6 @@ switch and strands the node on the lighter chain. `TxTooLargeError` is dropped a
 `MempoolFullError` already is. A transaction that rode in a block cannot exceed the bound — validation
 refuses those — so the path should never trip it, and it is defended anyway.
 
-- `batchId` is null for standalone transactions (likes, invites, faucet).
-  Set to a post ID for batch-linked transactions (karma-lock on post creation).
 - `expiresAtHeight` is the block height at which the entry becomes invalid.
 
 ### Correctness gates (audit M-8)
@@ -151,17 +137,6 @@ The previous implementation decoded `getPendingEntries(1000)` per request, so
 any entry past row 1000 was silently invisible to the duplicate-like and
 `MAX_PENDING_INVITES` checks. These gates see every row regardless of pool
 size. Hex parameters compare against the columns exactly as stored.
-
-### removeSubBlockEntries
-
-```
-removeSubBlockEntries(postIds: string[]): number
-```
-
-Deletes `subblock` entries whose `subblock_id` is in `postIds`; returns the
-count. Used by block application to clear confirmed sub-blocks — replaces the
-former fetch-1000-and-find loop, which stopped removing entries past row 1000
-(bookkeeping only; no consensus behavior change).
 
 ### insertMempoolPrune
 
@@ -198,8 +173,8 @@ getPendingEntries(limit: number, afterRowid?: number): PoolEntry[]
 
 Returns pending entries in FIFO order (`ORDER BY rowid ASC`), up to `limit`,
 starting after `afterRowid` (default `0` — from the beginning). All entries are
-returned — `subblock`, `utxo_tx`, and `prune` types. The caller (block creator)
-is responsible for decoding and organizing entries by type and batch.
+returned — `utxo_tx` and `prune`. The caller (block creator)
+is responsible for decoding and organizing entries by type.
 
 Entries are NOT filtered by expiry here — the caller calls `purgeExpired`
 first before fetching.
@@ -258,56 +233,43 @@ Batch cleanup happens through `removeEntry` per rowid.
 ## Lifecycle
 
 ```
-                   ┌──────────────┐
-                   │  API Route   │
-                   │  (POST /posts,│
-                   │   /likes,     │
-                   │   /invites,   │
-                   │   /faucet)    │
-                   └──────┬───────┘
-                          │ insertMempoolSubBlock / insertUtxoTx
-                          ▼
-                   ┌──────────────┐
-                   │   Mempool    │  ← entries sit here, unconfirmed
-                   │  (SQLite)    │
-                   └──────┬───────┘
-                          │
-            ┌─────────────┼─────────────┐
-            │             │             │
-            ▼             ▼             ▼
-      ┌──────────┐ ┌──────────┐ ┌──────────┐
-      │  Timer   │ │  Sub-blk │ │ External │
-      │  fires   │ │  counter │ │  miner   │
-      │ (60s)    │ │ >= min   │ │ submits  │
-      └────┬─────┘ └────┬─────┘ └────┬─────┘
-           │            │            │
-           └────────────┼────────────┘
-                        │ createOrderingBlock()
-                        ▼
-                 ┌──────────────┐
-                 │ 1. purgeExpired │
-                 │ 2. getPending   │
-                 │ 3. Assemble     │
-                 │    block        │
-                 │ 4. Mine / sign  │
-                 └──────┬───────┘
-                        │ finalizeBlock()
-                        ▼
-                 ┌──────────────┐
-                 │ 1. Store block│
-                 │ 2. Apply UTXO │
-                 │ 3. Confirm    │
-                 │    posts      │
-                 │ 4. removeEntry│
-                 │    per rowid  │
-                 └──────────────┘
+   ┌────────────────────────────┐   ┌──────────────────┐
+   │  API routes (POST /posts,  │   │  Gossip relay    │
+   │  /likes, /invites,         │   │  (onTx) — and    │
+   │  /vouches, /credits/…)     │   │  prune intents   │
+   └─────────────┬──────────────┘   └────────┬─────────┘
+                 │ insertUtxoTx              │ insertUtxoTx / insertMempoolPrune
+                 ▼                           ▼
+                ┌─────────────────────────────┐
+                │        Mempool (SQLite)     │  ← entries sit here, unconfirmed
+                └──────────────┬──────────────┘
+                               │ createOrderingBlock() — internal miner
+                               │ solves, or an external miner submits
+                               │ (production is difficulty-regulated;
+                               │ nothing in the pool triggers it)
+                               ▼
+                 ┌───────────────────────────┐
+                 │ 1. purgeExpired           │
+                 │ 2. fill to the byte budget│
+                 │ 3. assemble body +        │
+                 │    settlement transaction │
+                 │ 4. mine / sign            │
+                 └─────────────┬─────────────┘
+                               │ finalizeBlock()
+                               ▼
+                 ┌───────────────────────────┐
+                 │ 1. store block            │
+                 │ 2. apply (embedded txs,   │
+                 │    posts confirmed)       │
+                 │ 3. removeEntry per rowid  │
+                 └───────────────────────────┘
 ```
 
 ### Entry states
 
 | State | How entered | How exited |
 |-------|------------|------------|
-| **Pending** | `insertMempoolSubBlock` / `insertUtxoTx` | Included in block → `removeEntry`; or `purgeExpired` |
+| **Pending** | `insertUtxoTx` / `insertMempoolPrune` | Included in block → `removeEntry`; or `purgeExpired` |
 | **Confirmed** | Block finalization (`removeEntry`) | Gone from mempool; state now in ledger |
 | **Expired** | `purgeExpired` during block assembly | Gone from mempool; state never applied |
 
@@ -321,30 +283,21 @@ Batch cleanup happens through `removeEntry` per rowid.
 
 ---
 
-## Batch Linking
+## No batch linking
 
-Operations that produce multiple pool entries (sub-block + UTXO payloads) are
-linked via `batch_id`. This ensures the block creator processes them atomically.
+**Every entry stands alone.** A post is one transaction carrying its payload and
+its karma lock, so nothing produces multiple pool entries that must travel
+together; `batch_id` is reserved (schema note above).
 
-### Current batch-linked operations
-
-| Operation | Sub-block | UTXO payloads | batch_id |
-|-----------|-----------|---------------|----------|
-| `POST /posts` | 1 sub-block | 1 karma-lock tx | `postId` |
-
-The block creator resolves batches during assembly: for each batch_id, it
-includes the sub-block and all linked UTXO entries in the same block.
-
-### Standalone (non-batched) operations
-
-| Operation | Pool entry type | batch_id |
-|-----------|----------------|----------|
-| `POST /likes` (locked) | `utxo_tx` | null |
-| `POST /likes/remove` | `utxo_tx` | null |
-| `POST /invites` | `utxo_tx` | null |
-| `POST /faucet` | `utxo_tx` | null |
-| Relay: inbound sub-block | `subblock` | null |
-| Relay: inbound UTXO tx | `utxo_tx` | null |
+| Operation | Pool entry type |
+|-----------|----------------|
+| `POST /posts` | `utxo_tx` |
+| `POST /likes` | `utxo_tx` |
+| `POST /invites` | `utxo_tx` |
+| `POST /vouches` · `DELETE /vouches/:targetId` | `utxo_tx` |
+| `POST /credits/transfer` | `utxo_tx` |
+| Relay: inbound UTXO tx (`onTx`) | `utxo_tx` |
+| Prune intent (`POST /posts/:id/prune`) | `prune` |
 
 ---
 
@@ -356,11 +309,7 @@ pending entries:
 1. Calls `purgeExpired(currentHeight)` — drops stale entries
 2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`
 3. Separates entries by `entryType`:
-   - `subblock` entries → decoded, included as `subBlockRefs`
-   - `utxo_tx` entries with `batch_id = null` → either attached to matching
-     sub-blocks (likes by targetPostId) or listed as standalone `utxoTxIds`
-   - `utxo_tx` entries with `batch_id ≠ null` → resolved against their batch's
-     sub-block, included as `utxoTxIds`
+   - `utxo_tx` entries → `utxoTxIds` / `utxoTxs`
    - `prune` entries → decoded via `drainMempoolPrunes`, included as
      `pruneEntries`
 4. Tracks `confirmedRowids` (set of rowids included in the block)
@@ -378,7 +327,7 @@ as working software.
 
 **The budget is not spent in SQL, and that is deliberate.** A query can weigh
 `length(utxo_tx_cbor)` and nothing else — not the 32-byte `utxoTxIds` entry, not the `lp` prefix, not
-the four array count prefixes, not the reserve. Budgeting there would need a padding constant, which
+the array count prefixes, not the reserve. Budgeting there would need a padding constant, which
 is the arbitrary number moved one level down where no test can see it.
 
 **How the accumulator and the authoritative measure reconcile:**
@@ -393,8 +342,10 @@ is the arbitrary number moved one level down where no test can see it.
 ⛔ **The sizer has the last word, so no body exceeds the budget.** An accumulator that is nearly right
 plus a final exact measurement is a different guarantee from an accumulator trusted outright.
 
-The budget is spent in this order: `pruneEntries` and `coinbaseOutputs` first — both mandatory, and
-neither the miner's to trim — then transactions with what remains.
+The budget is spent in this order: `pruneEntries` and the settlement transaction's
+footprint first — both mandatory, and neither the miner's to trim — then transactions
+with what remains. The settlement's size depends on what the fill selected, so the
+trim loop re-derives it per iteration rather than measuring it once.
 
 > ## ⚠ AHEAD OF CODE — THE SETTLEMENT TRANSACTION REPLACES `coinbaseOutputs` HERE, AND IT IS NOT A FIXED RESERVATION
 >
@@ -470,8 +421,9 @@ like every other transaction.
 
 Inbound relay handlers insert into the mempool rather than applying state:
 
-- **`onSubBlock(sb)`**: validate (read-only) → `insertMempoolSubBlock(sb, expiresAtHeight)`
-- **`onTx(tx)`**: `validateTx` (read-only) → `insertUtxoTx(tx, null, expiresAtHeight)`
+- **`onTx(tx)`**: `validateTx` (read-only) → `insertUtxoTx(tx, expiresAtHeight)`.
+  There is no sub-block relay handler — a post arrives as a transaction through
+  `onTx` (`NODE_INTERFACE` → Relay handlers).
 
 State is applied later when an ordering block containing these entries is
 received and applied.
@@ -483,7 +435,7 @@ When an ordering block is received from gossip:
 1. Full validation (structure, chain-link, PoW, signature)
 2. For each `utxoTxId`: decode from mempool or reconstruct, call
    `revalidateTxInContext` (liveness only), then `applyTx`
-3. Confirm sub-blocks and their posts
+3. Confirm the block's posts (ids from its post transactions)
 4. Remove confirmed entries from mempool
 
 ---
@@ -502,11 +454,11 @@ Three insert callers, three behaviors:
 | Caller | At the cap |
 |---|---|
 | HTTP routes | **503** with a generic body (`{ error: 'mempool full' }`) |
-| Gossip relay (`onTx` / `onSubBlock`) | drop the entry, log, never throw |
+| Gossip relay (`onTx`) | drop the entry, log, never throw |
 | **Reorg re-insertion** (`services/fork-resolution.ts`) | drop, log, continue |
 
 The reorg caller is not optional politeness: re-insertion of reverted
-txs/sub-blocks/prunes runs *inside* the chain-switch SQLite transaction, so an
+txs and prunes runs *inside* the chain-switch SQLite transaction, so an
 escaping `MempoolFullError` would roll back the switch and strand the node on
 the lighter chain — mempool pressure escalated into a consensus-liveness
 failure.
@@ -583,10 +535,8 @@ decodes CBOR when assembling blocks.
 
 ### No separate tables
 
-A single table with a type discriminator rather than separate `sub_blocks`
-and `utxo_txs` tables. This gives unified FIFO ordering, simpler expiry,
-and simpler batch resolution (shared `batch_id` column). The old `sub_blocks`
-table was removed during the mempool migration.
+A single table with a type discriminator rather than one table per entry type.
+This gives unified FIFO ordering and simpler expiry.
 
 ---
 
@@ -596,8 +546,6 @@ table was removed during the mempool migration.
   `insertBox` calls in HTTP routes or relay handlers
 - Mempool entries are CBOR blobs — the store layer does not parse them
 - Expiry is checked at block assembly time, not on a background timer
-- Batch-linked entries share a `batch_id` and are included atomically in
-  the same ordering block
 - Confirmed entries are removed by rowid after block finalization
 - FIFO ordering within the karma-side class; fee-rate ordering within the credit
   class

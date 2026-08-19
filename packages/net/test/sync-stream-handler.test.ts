@@ -165,11 +165,6 @@ function isEmptyReply(written: Uint8Array[]): boolean {
   return written.length === 1 && written[0]!.length === 0;
 }
 
-/** The single-byte not-found marker both sub-block arms answer with. */
-function isNotFound(body: Uint8Array): boolean {
-  return body.length === 1 && body[0] === 0x00;
-}
-
 // Reserved, never to be reused: the posts-arm and sub-block serve suites. Both
 // served a post by id to a peer that held only a claim about it. A block now
 // carries its posts inside `utxoTxs`, and a bare-post-by-id fetch has no

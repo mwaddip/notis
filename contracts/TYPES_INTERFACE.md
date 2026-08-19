@@ -102,10 +102,9 @@ integers ≤ 2⁵³−1) encodes to a sentinel rather than throwing. This keeps 
 panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-5/M-6). A
 mirror implementation must reproduce this, not reintroduce a throw.
 
-⚠ **The `isU64Safe(nonce)` guard in `verifyPoW` retires with post PoW**, and the totality
-argument it supported goes with it. **No surviving field takes an out-of-domain sentinel that
-consensus then reads** — check that before deleting the guard, because the sentinel behaviour
-of `vlqU` is unchanged for `timestamp` and `protocolVersion`.
+⚠ **No surviving field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s
+sentinel behaviour is unchanged for `timestamp` and `protocolVersion`; neither is a consensus
+input.
 
 `computePostId` prefixes `POST_ID_DOMAIN` so a post id can never collide with a box id or a
 tx id derived from the same provenance — the domain tag is the whole of that separation, and
@@ -114,8 +113,7 @@ it is the same discipline `computeBoxId` and `computeMintTxId` already follow.
 **This encoding is protocol-breaking and unversioned.** It changes every post
 hash and must be byte-identical in `@dagsocial/types` **and** the demo-UI JS
 (`packages/node/public/index.html`). `PROTOCOL_VERSION` stays `1`; both devnet
-DBs are wiped on deploy — no legacy-post path. A **golden test vector** (a fixed
-`Post` → its exact `signingHash` and `postId` hex) is frozen in the types tests
+DBs are wiped on deploy — no legacy-post path. A **golden test vector** is frozen in the types tests
 and reproduced by the UI mirror; it is the cross-implementation anchor.
 
 ### Profile posts
@@ -219,20 +217,18 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 > `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
 > **Four are retired and every one of their strings stays reserved**, because a future domain
 > reusing one would collide with historical leaf meanings: `likebox` and `epoch` (P2-D),
-> `subblock` (a post is a transaction, so it rides `utxotx`), and `coinbase` (⚠ **AHEAD OF
-> CODE** — coinbase outputs become outputs of the settlement transaction).
+> `subblock` (a post is a transaction, so it rides `utxotx`), and `coinbase` (coinbase
+> outputs are outputs of the settlement transaction).
 >
-> ⛔ **This sentence said "five live domains" and named `subblock` among them while
-> §OrderingBlock already reserved it as retired — a contradiction inside one contract, corrected
-> 2026-08-17.** A live/retired list restated in two places is the drift class this file names
-> everywhere else; **there is one list and it is here.**
+> ⛔ **A live/retired list restated in two places is the drift class this file names
+> everywhere else; there is one list and it is here.**
 > **Adding a leaf domain that begins with a non-printable byte silently reopens
 > leaf/internal-node confusion.** No test enforces
 > this; it is a contract and review rule, recorded here because it previously existed only
 > as a comment in `merkle.ts`.
 
 This is **protocol-breaking** — it changes every Merkle root
-(`subBlockRoot`, `utxoTxRoot`), unversioned, devnet DBs wiped on deploy. No demo-UI
+(`utxoTxRoot` included), unversioned, devnet DBs wiped on deploy. No demo-UI
 mirror (the UI computes no roots). Node re-derives all roots through `types`, so
 producer and verifier stay consistent automatically.
 
@@ -1114,22 +1110,6 @@ Stump {
 
 ## Block Types (`block.ts`)
 
-### Sub-block
-
-```
-SubBlock {
-  subBlockId: PostId             // = post.postId (the post IS the sub-block)
-  post: Post                     // The post (with PoW = sub-block proof)
-  producerId: UserId             // = post.author
-  protocolVersion: number        // 1
-}
-```
-
-Sub-blocks are user-produced. A sub-block carries exactly one post and nothing
-else — the `likeBoxes` sidecar field died with `LikeBox` (P2-D; likes are
-ordinary UTXO transactions). Sub-block identity IS post identity — they are the
-same object.
-
 ### Block header
 
 ```
@@ -1160,7 +1140,7 @@ offset rather than discover it. The field is domain-pinned as `isU64Safe` and va
 
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
-> code. **The header is ten fields.** Read this before proposing it a third time.
+> code. **The header is nine fields.** Read this before proposing it a third time.
 >
 > The argument for it was legibility: id derivation is network-agnostic by decision (§Domain
 > tags are network-agnostic), so a header field would be the only consensus-visible network
@@ -1203,12 +1183,12 @@ The header is what gets hashed. `blockHash(header) = blake2b512(encodeHeader(hea
 (hex) is both the block's canonical hash — the next block's `prevBlockHash` — and the
 message the validator signs. The PoW preimage is the same encoding with `powNonce`
 zeroed (`computePowHash`). Both functions live in `@dagsocial/validation`. The body is
-bound into the header transitively through `subBlockRoot` / `utxoTxRoot` / `stateRoot`,
+bound into the header transitively through `utxoTxRoot` / `stateRoot`,
 so the header alone commits to the whole block.
 
 ### Ordering block
 
-Validator-produced, and a **nested** structure — a header plus two body trees and a
+Validator-produced, and a **nested** structure — a header plus one body tree and a
 signature. There is no flat `hash` field (the hash is derived on demand via
 `blockHash(header)`), and `height` / `powNonce` / `validatorId` / `prevBlockHash` live
 on `header`, not on the block.
@@ -1224,68 +1204,42 @@ UtxoTxTree {
   utxoTxIds: TxId[]                  // UTXO transaction IDs (likes and POSTS included)
   utxoTxs: Uint8Array[]              // CBOR-encoded UtxoTransactions, aligned with utxoTxIds
   pruneEntries: PruneEntry[]         // prune entries committed in this block
-  coinbaseOutputs: CoinbaseOutput[]  // block reward distribution
 }
 ```
 
 ⛔ **One committed list, not two.** A post is a transaction, so it rides `utxoTxIds`
-alongside likes and every other transaction, and `subBlockTree` has nothing left to
-carry. `pruneEntries` moves here rather than keeping a section of its own —
+alongside likes and every other transaction; there is no second tree. `pruneEntries`
+lives here rather than keeping a section of its own —
 `utxoTxRoot` commits both, and the leaf domains (`leafHash`'s first argument) are what
 keep a prune leaf from colliding with a transaction leaf.
 
-> ## ✅ RESOLVED in `types` (C1, 2026-08-17) — `coinbaseOutputs` IS GONE AND `utxoTxRoot` LOST A LEAF CLASS
->
-> ⚠ **The settlement transaction that replaces it is still ahead of code in `node`**, so the body
-> is three arrays and nothing yet fills the role the fourth played.
->
-> Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any other
-> (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction). ⛔ **Coinbase
-> outputs become its outputs**, so `CoinbaseOutput` stops being a block-body concept and the struct
-> becomes three fields:
->
-> ```
-> UtxoTxTree {
->   utxoTxIds: TxId[]
->   utxoTxs: Uint8Array[]
->   pruneEntries: PruneEntry[]
-> }
-> ```
->
-> ⛔ **THE `'coinbase'` LEAF DOMAIN IS RESERVED, NEVER TO BE REUSED** — the rule `'like'` and
-> `'subblock'` already carry. A later leaf class wearing it would make historical roots ambiguous
-> against new ones, and a root is the one thing that cannot be re-derived to settle the question.
->
-> ⚠ **This is the same renumbering hazard §Layout — Block states, one level down.** The body layout
-> is positional (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)` ‖
-> `arr(coinbaseOutputs)`), so dropping the last array is a deletion **in place** here and does not
-> shift the three before it — but `utxoTxTreeByteLength` computes the same number a second way and
-> **must lose the term in the same change**, or two ways of computing one length diverge with no
-> compiler signal.
->
-> ⚠ **The producer's byte budget has to absorb a body-dependent tail.** `MAX_BLOCK_BODY_BYTES` is
-> consensus and the settlement's size grows with what the fill selected, so the reservation that
-> currently seeds the budget with the largest possible coinbase no longer bounds it. ✅ **The existing
-> trim loop generalises** — trimming a transaction shrinks the settlement too, monotonically, so the
-> loop converges — **provided the settlement is rebuilt on each iteration** rather than measured once.
+Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any
+other (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction);
+coinbase outputs are **its outputs**, so no block-body field carries the reward. The
+`'coinbase'` and `'subblock'` leaf domains are retired — **§Merkle primitives holds the one
+live/retired list.**
 
-**`SubBlockEntry` is deleted, and its H-3 property survives strictly stronger.** That
-struct existed to carry `{postId, parentRefs, author}` in the block so a node syncing
-from ordering blocks alone — never seeing content — could still record an identical
-author per post, which is what makes prune authorship checkable without DAG content.
-A post transaction carries the **whole post** in `utxoTxs` plus the author's signature
-over the `TxId`, so such a node now holds more than the claim: it holds the thing the
-claim was about, and can verify it rather than trust it.
+⚠ **The body layout is positional** (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖
+`arr(pruneEntries)`), and `utxoTxTreeByteLength` computes the same length a second way and
+gates `MAX_BLOCK_BODY_BYTES` — a body-layout change edits both computations or neither, and
+`serialization.ts` states the pairing at both sites.
 
-⚠ **That guarantee rests on `utxoTxs` reaching every node that previously relied on
-`subBlockRoot`.** `utxoTxIds` alone is not enough — the ids do not contain the post.
-**Any sync path that delivers ids without bodies regresses H-3**, and this is the one
-thing to verify before the sub-block structures are deleted.
+**The H-3 property — prune authorship checkable without DAG content — holds through the
+body itself.** A post transaction carries the **whole post** in `utxoTxs` plus the
+author's signature over the `TxId`, so a node syncing from ordering blocks alone holds
+the thing an authorship claim would be about, and verifies it rather than trusts it.
 
-**Reserved, never to be reused:** the struct names `SubBlockTree` and `SubBlockEntry`,
-the header field name `subBlockRoot`, the body field `subBlockRefs`, and the Merkle leaf
-domain `'subblock'` — a leaf domain is inside a consensus preimage, so reuse would make
-two different trees share a byte string.
+⚠ **That guarantee rests on `utxoTxs` reaching every syncing node.** `utxoTxIds` alone
+is not enough — the ids do not contain the post. **Any sync path that delivers ids
+without bodies regresses H-3.**
+
+**Reserved, never to be reused** (`types/src/index.ts` states the same list at the
+export surface): the struct names `SubBlock`, `SubBlockTree`, `SubBlockEntry` and
+`CoinbaseOutput`, the functions `subBlockEntryBytes`, `subBlockFromPost` and
+`coinbaseOutputBytes`, the header field name `subBlockRoot`, and the body fields
+`subBlockRefs` and `coinbaseOutputs`. A retired consensus name returning with a
+different meaning makes historical bytes ambiguous against new ones; the leaf-domain
+half of the rule is §Merkle primitives'.
 
 `likeBoxIds` and `epochTallyResults` were deleted by P2-D: likes ride `utxoTxIds` like
 every other transaction, and per-block settlement is **derived state** computed identically
@@ -1504,12 +1458,13 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > `checkOutputShape` at `validateTx` step 4, later. Booked to Phase 6.
 >
 > **2. `b32` on the post path — PARTIAL, and it inverted the migration order.**
-> Under the new layout `author` and `challenge` are `b32` and `parentRefs` is `arr(refs, b32)` —
-> three of `postFieldBytes`' six fields. Under the old dialect this could not bite: everything was
-> length-prefixed, so any width encoded faithfully and injectively.
+> Under the new layout `author` and `challenge` were `b32` and `parentRefs` `arr(refs, b32)` —
+> three of `postFieldBytes`' then-six fields. Under the old dialect this could not bite: everything
+> was length-prefixed, so any width encoded faithfully and injectively.
 >
-> **The enumeration is `postFieldBytes`' four entry points — `signingHash`, `postPowPreimage`,
-> `computePostId` and `verifyPostId` — reaching it from 15 production call sites.** (An earlier
+> **The enumeration was `postFieldBytes`' four then-entry points — `signingHash`,
+> `postPowPreimage`, `computePostId` and `verifyPostId` (all four deleted, names reserved) —
+> reaching it from 15 production call sites.** (An earlier
 > draft of this block said "eight further sites"; that was main's count, and it was wrong. It also
 > missed `verifyPostId` as an entry point altogether, and `store/posts.ts:82` `insertPost`, which is
 > the store-admission write that the whole downstream classification depends on.)
@@ -1519,10 +1474,10 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > sites. The chain is non-circular only because three gates sit upstream of it.
 >
 > **Closed by Phase 1c** (`5c0bf71`): `verifyPostFieldDomains` in `@dagsocial/validation` pins
-> `author`/`challenge` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex. Lowercase is
+> `author` at 32 bytes and every `parentRefs` entry at 64 **lowercase** hex. Lowercase is
 > load-bearing — `'AB…'` and `'ab…'` hex-decode to identical bytes, so accepting both would make the
 > codec boundary non-injective. It is reached from `isSignablePost` and from
-> `verifySubBlockStructure`.
+> `verifyTxStructure`.
 >
 > ⚠ **The gossip-relay justification that stood here was one phase stale — corrected 2026-08-10,
 > the same correction `VALIDATION_INTERFACE §verifySubBlockStructure` already carried.** It said
@@ -1547,25 +1502,26 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 
 ### Layout — Post
 
-`postFieldBytes` excludes `powNonce` (the miner varies it) and `signature` (never in any preimage).
+The struct is five fields; there is no `powNonce`, `challenge` or `signature` in it at all
+(§Post identity — identity is provenance-derived, authentication is the creating
+transaction's signature).
 
 | # | Field | Encoding |
 |---|---|---|
 | 1 | `content` | `lpUtf8` |
-| 2 | `author` | `b32` |
-| 3 | `parentRefs` | `arr(refs, b32)` |
-| 4 | `challenge` | `b32` |
-| 5 | `protocolVersion` | `vlqU` |
-| 6 | `timestamp` | `vlqU` |
+| 2 | `author` | `b32` (bytes writer) |
+| 3 | `parentRefs` | `arr(refs, b32)` (hex writer) |
+| 4 | `protocolVersion` | `vlqU` |
+| 5 | `timestamp` | `vlqU` |
 
-- `postPowPreimage` = `postFieldBytes`; the PoW hash appends `vlqU(powNonce)`.
-- `computePostId` = `blake2b512(POST_ID_DOMAIN ‖ postFieldBytes ‖ vlqU(powNonce))[0..32]`.
-- Wire codec `encodePost` = fields 1–6 ‖ `vlqU(powNonce)` ‖ `b64(signature)`.
+- `postFieldBytes` is these five fields in this order, and is the post's **payload inside its
+  creating transaction** — it enters that transaction's `TxId` (§Canonical field encoding).
+- Wire codec `encodePost` **delegates**: `write` is one `writeBytes(postFieldBytes(p))` and
+  `read` is the adjacent `readPostFields`, so the standalone wire form and the in-transaction
+  payload are the same bytes with one statement of the layout.
 
-The prior encoding was already positional and injective (audit M-1); this changes its *dialect*
-(fixed-width LE → VLQ, hex-text refs → raw bytes), not its coverage. **Post ids and PoW preimages
-move**; the frozen golden vectors reset to the new format and keep their role as the
-cross-implementation anchor.
+The encoding is positional and injective (audit M-1); the frozen golden vectors are the
+cross-implementation anchor, reproduced by the demo-UI mirror.
 
 ### Layout — Stump / PruneEntry
 
@@ -1930,12 +1886,12 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 | 8 | `powTargetBits` | `vlqU` |
 | 9 | `createdAt` | `vlqU` |
 
-⛔ **Nine fields, and every position after 3 SHIFTS DOWN BY ONE.** This is a positional
-layout with no keys, so dropping `subBlockRoot` is not a deletion in place — it renumbers
-`utxoTxRoot` through `createdAt`. A reader that skips the field but keeps the old offsets
-decodes `stateRoot` out of `utxoTxRoot`'s bytes and every later field one slot late, which
-is a silent wrong `blockHash` rather than a decode error. **The count and the numbering
-must move together in this table, in the BlockHeader definition above, and in the codec.**
+⛔ **Nine fields, and a positional layout with no keys — removing a field is never a
+deletion in place; it renumbers everything after it.** (`subBlockRoot`'s removal renumbered
+`utxoTxRoot` through `createdAt`: a reader keeping the old offsets decodes `stateRoot` out
+of `utxoTxRoot`'s bytes and every later field one slot late — a silent wrong `blockHash`,
+not a decode error.) **The count and the numbering must move together in this table, in the
+BlockHeader definition above, and in the codec.**
 
 **⚠ This table was wrong in both directions, and the second correction was itself reversed.** Read
 all three notes together — the method lesson in the middle one is the durable part and it survives
@@ -1949,7 +1905,7 @@ genesis or retrofit is a hard fork, but an always-empty digest produces exactly 
 field produces, so it captured nothing of that window. The shape it copied is also not what Ergo's
 own verifier anchors to — `@ergots/nipopow`'s `checkInterlinksProof` verifies against an
 interlinks-only root, explicitly *not* `header.extensionRoot`. **A field that commits to nothing is
-the mirror image of `subBlockRefs`, which this same unit deletes for being uncommitted.** C11 returns
+the mirror image of `subBlockRefs`, deleted for being uncommitted.** C11 returns
 to the P2-C register undone; re-derive it when there is a design to commit to.
 
 **`networkType` was added 2026-08-09 and REJECTED 2026-08-10 — see the BlockHeader definition above
@@ -1979,52 +1935,32 @@ authority alone.
 throwing-writer obligation is now larger in proportion, not smaller.** The withdrawn `networkType`
 row was the header's only `enum8` — a **total** writer whose presence was explicitly argued to add
 nothing to that obligation. Removing it removes the one row that was already discharged. What is left
-is **five throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
+is **four throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
 first grouped them as one, which is the `bond.inviteePublicKey` failure committed inside the note
 warning about it:**
 
 | Rows | In-memory type | Writer |
 |---|---|---|
-| `prevBlockHash`, `subBlockRoot`, `utxoTxRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
+| `prevBlockHash`, `utxoTxRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
 | **`validatorId`** | **`Uint8Array`** (`UserId`) | **`writeBytesNOrThrow(…, 32)`** |
 | `stateRoot` | `string` (hex) | `writeHexNOrThrow(…, 33)` |
 
-**`validatorId` written off its table-neighbours throws on EVERY block.** The same split runs
-through the other structs: `CoinbaseOutput.owner` and `SubBlock.producerId` are **bytes**, while
-`SubBlockEntry.author` is **hex** — and all four are described in prose as "a 32-byte public key".
-Two further rows say `vlqU`/`u8` in the layout while the field is `bigint`/`boolean`, needing
-`writeVlqU64OrThrow` and `writeBool`. **`b32` in a layout table names a width, not an input type.**
-Found by the 3b executor, 2026-08-10.
+**`validatorId` written off its table-neighbours throws on EVERY block.** **`b32` in a
+layout table names a width, not an input type.** Found by the 3b executor, 2026-08-10.
 
-The five `vlqU` rows are total *by sentinel* and
-therefore **collide rather than throw** — the `createdAt` failure mode Phase 1f closed, and the
-reason a panic-shaped search is not sufficient here. **Phase 3 must still run the writer-versus-schema-type
-table against the block structs before pinning any width**, exactly as stated at the end of
-Layout — Boxes.
+The five `vlqU` rows are total *by sentinel* and therefore **collide rather than throw** —
+the reason a panic-shaped search is not sufficient here.
 
 `blockHash` = `blake2b512(headerBytes)[0..32]`; `computePowHash` is the same with `powNonce = 0`.
 
-**SubBlockEntry:** `b32(postId)` ‖ `arr(parentRefs, b32)` ‖ `b32(author)`
-**SubBlockTree:** `arr(subBlockEntries)` ‖ `arr(pruneEntries)` — **`subBlockRefs` is deleted**; it was
-uncommitted, redundant with `subBlockEntries`, and drove state mutation (see NODE_INTERFACE)
-**CoinbaseOutput:** `b32(owner)` ‖ **`vlqU64(value)`** ‖ `vlqU(lockedUntilBlock)` ‖ `u8(isTreasury)`
 **UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`
 
-> ⚠ **This line said `arr(coinbaseOutputs)` and omitted `pruneEntries` — wrong in both directions,
-> corrected 2026-08-18.** The normative statement is §OrderingBlock; **this is a restatement, and a
+> ⚠ The normative statement is §Ordering block; **this is a restatement, and a
 > restatement is what decays while the thing it restates stays right.**
-**SubBlock:** `b32(subBlockId)` ‖ `postBytes` ‖ `b32(producerId)` ‖ `vlqU(protocolVersion)`
-**OrderingBlock:** `lp(header)` ‖ `lp(subBlockTree)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`
+**OrderingBlock:** `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)`
 
 The ordering-block framing replaces `u32BE` length prefixes with `vlqU`. The boundary check runs at
 the outer level and at each nested `lp` section.
-
-⚠ **`CoinbaseOutput.value` is `vlqU64`, not `vlqU` — corrected 2026-08-10, the same correction the
-box `value` row took the same day (see Layout — Boxes).** The field is `bigint`, so the writer is
-`writeVlqU64OrThrow`, which **throws**; `vlqU` is total by sentinel. The bytes agree for every
-in-domain value, so the row is a **domain** statement, not a byte one. Flagged by the 3b executor in
-`serialization.ts`'s own docstring and left uncorrected here until now — a contract-vs-code
-divergence of exactly the class the queued audit exists to find.
 
 ### Layout — Merkle leaf preimages are the struct's own wire bytes
 
@@ -2039,19 +1975,9 @@ are.
 `writePruneEntry` **delegates** to it rather than restating the layout, so the tree codec and the
 Merkle leaf cannot drift apart.
 
-> ⛔ **THIS TABLE HELD TWO MORE ROWS AND BOTH SYMBOLS ARE GONE. Corrected 2026-08-17.**
-> `subBlockEntryBytes` and `coinbaseOutputBytes` were listed with full byte layouts, against
-> `SubBlockEntry` and `CoinbaseOutput` — neither type exists, and neither function has a definition
-> anywhere in `src`. The prose above them named `computeSubBlockRoot`, which does not exist either,
-> and `subBlockRoot`, which is not a header field.
->
-> ⚠ **A stale EXPORT row is worse than stale prose**, and this is the section that proves it: a
-> reader following `src/index.ts`'s pointer here found a table naming two functions they could not
-> import, with byte layouts for structs they could not construct. **Prose invites judgement; a
-> signature invites a call.**
->
-> ⛔ **THE DECAY CAME FROM A DISPATCH THAT COULD NOT FIX IT** — see §How a dispatch decays this
-> contract, below.
+> ⚠ **A stale EXPORT row is worse than stale prose:** a reader following `src/index.ts`'s
+> pointer here finds signatures to call, not claims to judge. **Prose invites judgement; a
+> signature invites a call.** (§How a dispatch decays this contract, below.)
 
 > ⚠ **`parentRefs` carries 0–`MAX_PARENT_REFS` (currently 1) entries at validation; the writer is
 > uncapped by design.** The domain sits upstream of the encoder (spec §2.5), never inside it —
@@ -2060,28 +1986,27 @@ Merkle leaf cannot drift apart.
 > domain, not the consensus-valid one, and already carries deliberately out-of-domain vectors for
 > exactly this reason.
 >
-> Added 2026-08-10 because the rule existed only inside one `post.json` note, where nothing reading
-> the layout would ever find it — and a vector named `subBlockEntry/typical` had drifted to a count
-> of `02` with a note that never mentioned the cap. `test/golden/README.md` now carries the same
-> sentence, so the two cannot drift.
+> `test/golden/README.md` carries the same sentence, so the two cannot drift.
 
-**This is `serializePruneEntry` generalised, not a new pattern.** `writePruneEntry` has delegated
-since Phase 2, and the source states the rule: *an entry's wire form and its committed form must be
-the same bytes; two statements of one layout is the drift class this format exists to close.* The
-`prune` leaf already had it; the other two leaf types get it here. The alternative — `node` writing
-its own `ByteWriter` calls in `block-creator.ts` — puts a second statement of each layout in a
-second package, with **no compiler signal on divergence and no round-trip able to see it**: a
-consistent transposition round-trips perfectly (Phase 5 measured this), so only a golden comparing
-the two byte strings across the package boundary would ever catch it.
+**The rule the section states:** *an entry's wire form and its committed form must be the same
+bytes; two statements of one layout is the drift class this format exists to close.* The `'prune'`
+leaf delegates through `serializePruneEntry`. A `'utxotx'` leaf's preimage is
+`leafHash('utxotx', id)` — **the id, never the transaction encoding**, the same 32 bytes the
+body's `utxoTxIds` entry carries — which is what keeps `utxoTxRoot` byte-identical across
+wire-codec changes (`serialization.ts` states the pair beside the codec). The alternative —
+`node` writing its own `ByteWriter` calls in `block-creator.ts` — puts a second statement of a
+layout in a second package, with **no compiler signal on divergence and no round-trip able to see
+it**: a consistent transposition round-trips perfectly (Phase 5 measured this), so only a golden
+comparing the two byte strings across the package boundary would ever catch it.
 
-⚠ **The `leafHash` domain tag stays outside.** These functions return the entry bytes alone;
-`leafHash('subblock' | 'coinbase', bytes)` supplies the tag. That is what makes the wire form and
-the preimage byte-identical rather than merely parallel.
+⚠ **The `leafHash` domain tag stays outside the preimage.** `leafHash('prune' | 'utxotx', bytes)`
+supplies the tag; the preimage is the entry's own bytes alone. That is what makes the prune leaf's
+wire form and preimage byte-identical rather than merely parallel.
 
 ⚠ **No `...FromBytes` pair is added, and that does not breach the pairing rule under Layout —
 Boxes.** What that rule forbids is one layout whose writer and reader live in **different packages**
-and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `readSubBlockEntry` and
-`readCoinbaseOutput` already live here beside these writers, and the tree round-trip exercises them.
+and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `readPruneEntry`
+lives beside `writePruneEntry` in `serialization.ts`, and the tree round-trip exercises the pair.
 Nothing crosses a package boundary unpaired.
 
 ### Re-pinning a frozen vector when a preimage changes
@@ -2237,24 +2162,21 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodePost(bytes)` | `(Uint8Array) => Post` | CBOR decode |
 | `encodeStump(stump)` | `(Stump) => Uint8Array` | CBOR encode |
 | `decodeStump(bytes)` | `(Uint8Array) => Stump` | CBOR decode |
-| `encodeSubBlock(sb)` | `(SubBlock) => Uint8Array` | CBOR encode |
-| `decodeSubBlock(bytes)` | `(Uint8Array) => SubBlock` | CBOR decode |
 | `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | CBOR encode — the input to `blockHash` / `computePowHash` |
 | `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | CBOR decode |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | CBOR encode (body section) |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | CBOR decode |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
 | `serializePruneEntry(e)` | `(PruneEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'prune'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
-| `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Length-prefixed wire framing: `u32BE(len)‖headerCbor ‖ … ‖ validatorSignature(64)` |
+| `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Positional wire framing: `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)` — see Layout — Block |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
 | `decodeTx(bytes)` | `(Uint8Array) => UtxoTransaction` | Inverse of `encodeTx` |
 
-> ⛔ **FOUR ROWS DELETED HERE, all naming symbols with no definition in `src`. Corrected
-> 2026-08-17:** `encodeSubBlockTree`, `decodeSubBlockTree`, `subBlockEntryBytes`,
-> `coinbaseOutputBytes`. ⚠ **`encodeTx` / `decodeTx` still said "CBOR encode" / "CBOR decode"**
-> after the codec went positional — the disclaimer above this table was corrected first and the rows
-> were not, which left the table technically readable and practically wrong.
+> ⛔ **Reserved, never to be reused — export names with no definition in `src`:**
+> `encodeSubBlock`, `decodeSubBlock`, `encodeSubBlockTree`, `decodeSubBlockTree`,
+> `subBlockEntryBytes`, `coinbaseOutputBytes`. A row here is a signature a reader will call
+> (§How a dispatch decays this contract, below).
 
 ### How a dispatch decays this contract, and why nothing catches it
 
@@ -2446,7 +2368,7 @@ export interface NetworkProfile {
 
   // Difficulty
   readonly orderingBlockPowTargetBits: number;
-  readonly postPowTargetBits: number;
+  // `postPowTargetBits` is reserved, never to be reused (§PoW constants)
 
   // Block-denominated durations
   readonly karmaDecayIntervalBlocks: number;
@@ -2682,10 +2604,9 @@ and only the origination comparison fails.
 ### PoW
 
 ```typescript
-// POST_POW_TARGET_BITS is DELETED with post PoW; the name and the profile field
-// `postPowTargetBits` stay reserved. Ordering-block PoW is unaffected — it is the
-// consensus PoW and always was.
-export const CHALLENGE_WINDOW_BLOCKS = 10;     // Blocks before challenge expires
+// POST_POW_TARGET_BITS is DELETED with post PoW; the name, the profile field
+// `postPowTargetBits`, and `CHALLENGE_WINDOW_BLOCKS` stay reserved. Ordering-block
+// PoW is unaffected — it is the consensus PoW and always was.
 ```
 
 ### Karma
@@ -2851,8 +2772,7 @@ on which devnet does not follow the constant**, and the divergence is load-beari
 incidental.
 
 ⚠ **Both are in units of 1/256 of a bit** — `VALIDATION_INTERFACE → orderingPowTarget`. Divide by 256
-to read them as whole bits. **`POST_POW_TARGET_BITS` above is NOT in these units**: post PoW is fixed
-difficulty, is never retargeted, and keeps whole bits.
+to read them as whole bits.
 
 **The floor is nine bits rather than the four it was, and that is not a rescale.** `blockWork` stops
 resolving below 2180 — a 1/256-bit step there buys zero additional work — so a chain admitted beneath
@@ -2925,5 +2845,4 @@ above it.
   so it CBOR-encodes as a uint64 (`0x1b`); no float math anywhere in consensus
   value arithmetic
 - Post identity includes PoW nonce; signing hash excludes it
-- Sub-block identity IS post identity (they are the same object)
 - `UserId` IS the 32-byte Ed25519 public key — no hashing, no separate account concept

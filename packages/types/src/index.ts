@@ -140,9 +140,11 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry, PruneTrigger 
 // caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
 //
 // Reserved, never to be reused: the struct names `SubBlock`, `SubBlockTree`,
-// `SubBlockEntry` and `CoinbaseOutput`, the functions `subBlockEntryBytes`,
-// `subBlockFromPost` and `coinbaseOutputBytes`, the header field `subBlockRoot`,
-// the body fields `subBlockRefs` and `coinbaseOutputs`, and the leaf domains
+// `SubBlockEntry` and `CoinbaseOutput`, the functions `encodeSubBlock`,
+// `decodeSubBlock`, `encodeSubBlockTree`, `decodeSubBlockTree`,
+// `subBlockEntryBytes`, `subBlockFromPost` and `coinbaseOutputBytes`, the
+// header field `subBlockRoot`, the body fields `subBlockRefs` and
+// `coinbaseOutputs`, and the leaf domains
 // `'subblock'` and `'coinbase'` — a leaf domain sits inside a consensus
 // preimage, so reuse would make two different trees share a byte string.
 // Coinbase outputs are outputs of the block's settlement transaction now, so
