@@ -213,8 +213,6 @@ export { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
 export {
   encodePost,
   decodePost,
-  encodeStump,
-  decodeStump,
   encodeHeader,
   decodeHeader,
   encodeUtxoTxTree,

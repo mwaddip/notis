@@ -22,8 +22,6 @@ import { CodecError } from '../src/codec.js';
 import {
   encodePost,
   decodePost,
-  encodeStump,
-  decodeStump,
   encodeHeader,
   decodeHeader,
   encodeUtxoTxTree,
@@ -35,7 +33,7 @@ import {
 } from '../src/serialization.js';
 import { postFieldBytes, type Post } from '../src/post.js';
 import { computeTxId } from '../src/utxo.js';
-import type { PruneEntry, Stump } from '../src/stump.js';
+import type { PruneEntry } from '../src/stump.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -62,18 +60,6 @@ function makePost(): Post {
     author: userA,
     protocolVersion: 2,
     timestamp: 1700000000000,
-  };
-}
-
-function makeStump(): Stump {
-  return {
-    rootPostHash: 'a'.repeat(64),
-    authorId: userB,
-    replyCount: 7,
-    upvoteCount: 12,
-    trigger: 'author',
-    protocolVersion: 2,
-    compactedAtBlockHeight: 500,
   };
 }
 
@@ -212,10 +198,6 @@ describe('positional serialization', () => {
 
     it('OrderingBlock', () => {
       expect(decodeOrderingBlock(encodeOrderingBlock(makeOrderingBlock()))).toEqual(makeOrderingBlock());
-    });
-
-    it('Stump — still cbor-x, and nothing in this phase moved it', () => {
-      expect(decodeStump(encodeStump(makeStump()))).toEqual(makeStump());
     });
 
     it('UtxoTransaction — positional; the tree carries it as opaque lp bytes', () => {

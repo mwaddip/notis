@@ -1,6 +1,5 @@
 /**
- * The wire codecs — positional for every block struct, `cbor-x` for the two
- * that no block embeds.
+ * The positional wire codecs — every struct paired encoder/decoder.
  *
  * Contract: `contracts/TYPES_INTERFACE.md` → Serialization → Layout — Block.
  *
@@ -27,23 +26,8 @@
  * the wire form and the committed form one statement instead of two. **It may
  * not grow a field writer of its own** — a reviewer can check that at a glance,
  * which is the point of the shape.
- *
- * ## What is `cbor-x`, and why that is not an oversight
- *
- * `encodeStump`, and nothing else. No block struct embeds a `Stump` —
- * `UtxoTxTree` commits `PruneEntry`, whose preimage is positional — so it is not
- * a consensus preimage and no committed root covers it.
- *
- * ⚠ **`TYPES_INTERFACE` → Layout — Stump specifies a positional form for `Stump`
- * that this file does not implement** — an open gap, flagged rather than closed
- * here, because closing it moves bytes.
- *
- * ✅ **`encodeTx` is positional**, so the codec a post's payload crosses the wire
- * under and the one its `TxId` preimage is taken over are **one layout, not two
- * dialects** — `writeTxIdFields` (`utxo.ts`) is the single statement both reach.
  */
 
-import { encode, decode } from 'cbor-x';
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   type StructCodec,
@@ -66,7 +50,7 @@ import {
 } from './codec.js';
 import { postFieldBytes, readPostFields, type Post } from './post.js';
 import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
-import { TRIGGER, serializePruneEntry, type PruneEntry, type Stump } from './stump.js';
+import { TRIGGER, serializePruneEntry, type PruneEntry } from './stump.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -121,23 +105,6 @@ export function encodePost(post: Post): Uint8Array {
 
 export function decodePost(bytes: Uint8Array): Post {
   return decodeStruct(POST, bytes);
-}
-
-// ---------------------------------------------------------------------------
-// Stump — cbor-x
-// ---------------------------------------------------------------------------
-//
-// No block struct embeds a `Stump`: `utxoTxTree` commits `PruneEntry`, whose
-// preimage is positional. `TYPES_INTERFACE` → Layout — Stump specifies a
-// positional form for `Stump` too, and this codec does not implement it — an
-// open gap, flagged rather than closed here, because closing it moves bytes.
-
-export function encodeStump(stump: Stump): Uint8Array {
-  return encode(stump) as unknown as Uint8Array;
-}
-
-export function decodeStump(bytes: Uint8Array): Stump {
-  return decode(Buffer.from(bytes)) as Stump;
 }
 
 // ---------------------------------------------------------------------------

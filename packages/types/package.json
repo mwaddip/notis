@@ -18,8 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@dagsocial/wire": "workspace:*",
-    "cbor-x": "^1.6.0"
+    "@dagsocial/wire": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
