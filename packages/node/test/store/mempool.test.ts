@@ -346,6 +346,8 @@ describe('mempool store', () => {
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
 
+    // Insertion order, across both entry types — `getPendingEntries` is FIFO by
+    // rowid and does not group by kind.
     const types = entries.map((e) => e.entryType);
     expect(types).toEqual(['prune', 'utxo_tx', 'prune']);
     // A prune row's blob is read by drainMempoolPrunes, not the DTO
