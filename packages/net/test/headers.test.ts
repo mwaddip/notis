@@ -366,9 +366,9 @@ describe('chain response framing', () => {
     expect(decodeBlocks(body.subarray(0, body.length - 1), 1)).toBeNull();
   });
 
-  it('rejects the old cbor-x dialect outright', () => {
-    // The format this replaced. A peer still speaking it is not "mostly right":
-    // there is no shared prefix to misinterpret, so it is refused whole.
+  it('rejects a cbor-x body outright', () => {
+    // No shared prefix with the positional layout to misinterpret: a cbor-x
+    // body is refused whole.
     const blocks = [makeMockOrderingBlock(1, '00'.repeat(32))];
     expect(decodeBlocks(new Uint8Array(encode({ blocks })), 5)).toBeNull();
     expect(
