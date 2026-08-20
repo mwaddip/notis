@@ -240,7 +240,8 @@ why it is stated with its date and its runtime.
 >
 > ⚠ **A second instance was live outside that domain until 2026-08-12.** `net`'s store walk shifted
 > without consulting the domain at all, so a stored header claiming **257** bits contributed `2^257` and
-> was published to peers as `SyncInfo.tipCumulativeWork`. Summing `blockWork` closes that one. Whether
+> was published to peers as `SyncInfo.tipCumulativeWork` (a field since removed — nothing compared
+> it). Summing `blockWork` closes that one. Whether
 > such a header can reach the store is a `node` question — `verifyHeaderFieldDomains` pins
 > `powTargetBits` as `isU64Safe` only, with no upper bound.
 
@@ -261,11 +262,12 @@ a domain check.** The encodable domain is `isU64Safe`, so `powTargetBits` still 
 outside the domain is a routine input on that path, not an anomaly, and refusing the whole segment over
 one would hand a peer a way to void the comparison.
 
-**`blockWork`'s `null` is what bounds a claimed target, and the bound is consensus-visible.** The store
-walk publishes its total as `SyncInfo.tipCumulativeWork`, which peers compare. A header claiming more
-than 256 target bits is arithmetically shiftable — `1n << 257n` is an ordinary BigInt — so a sum that
-shifts without consulting this domain counts `2^257` from a single header and outweighs any honest
-chain. Refusing out of domain is the bound; there is no separate range check to keep in step with it.
+**`blockWork`'s `null` is what bounds a claimed target, and the bound is consensus-visible.** Fork
+choice sums `blockWork` over the verified segment it is handed (`NODE_INTERFACE → Fork choice decides
+on verified headers`). A header claiming more than 256 target bits is arithmetically shiftable —
+`1n << 257n` is an ordinary BigInt — so a sum that shifts without consulting this domain counts `2^257`
+from a single header and outweighs any honest chain. Refusing out of domain is the bound; there is no
+separate range check to keep in step with it.
 
 **There is no post PoW.** A post is a transaction, admitted by a **stateful** check —
 the author holds the karma and really locks it — which is strictly stronger than

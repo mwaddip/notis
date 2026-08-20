@@ -360,10 +360,15 @@ All messages are CBOR-encoded bodies wrapped in frames.
 {
   tipHeight: number
   tipBlockId: string              // hex
-  tipCumulativeWork: bigint       // total PoW accumulated (fork choice)
   anchors: { height: number, blockId: string }[]
 }
 ```
+
+The receiver reads `tipHeight` — the whole of the sync decision — and `anchors.length`, as a
+cap. `tipBlockId` and the anchors' contents are carried for the header store and compared by
+nothing today. No cumulative-work field is carried: the sync decision is `tipHeight`'s alone,
+and fork choice compares work over the verified segment it is handed (`NODE_INTERFACE → Fork
+choice decides on verified headers`), never over a peer's claim about its own chain.
 
 Anchors at heights `[tipHeight, tipHeight - 16, tipHeight - 128, tipHeight - 512]`
 (fewer if chain is shorter). They let the receiver find the best common point.

@@ -56,14 +56,17 @@ interface PoolEntry {
   rowid: number;
   entryType: 'utxo_tx' | 'prune';
   utxoTxCbor: Uint8Array | null;
-  pruneEntryCbor: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
 }
 ```
 
-Entries are decoded from CBOR on read by the consumer (block creator or relay
-handler). The store does not decode payloads on read; on **insert** of a
+`PoolEntry` carries the `utxo_tx` payload only. A `prune` row appears in the
+listing with `utxoTxCbor: null`; its `prune_entry_cbor` is read by
+`drainMempoolPrunes` straight from the row, so the DTO loads no blob that
+nothing consumes. The `utxo_tx` payload is decoded from CBOR on read by the
+consumer (block creator or relay handler). The store does not decode payloads
+on read; on **insert** of a
 `utxo_tx` it walks the (already-decoded) transaction's outputs once to
 populate the gate-metadata columns below — the single chokepoint every
 insertion path (HTTP routes and gossip relay alike) goes through, which is

@@ -1261,37 +1261,31 @@ separate keys if desired.
 
 ## Genesis
 
-> ⚠ **PARTLY IMPLEMENTED — the karma seeding runs; dissolution does not.**
-> `seedGenesisCommittee` creates one karma box per `genesisCommitteeKeys` entry, **drawn out of
-> the pool** (`genesis-committee` mints, store seeding — there is no genesis ordering block).
-> All three network profiles carry an **empty** committee today, so the grant loop runs zero
-> times, and **nothing fails loudly if a chain starts with an empty committee**. **Committee
-> credit boxes are unseeded**: `genesisCreditsPerMember` rides every profile and no seeder
-> reads it. **Dissolution is unimplemented**: `BOOTSTRAP_PERIOD_BLOCKS` /
-> `bootstrapPeriodBlocks` have no reader anywhere in `node/src`.
+> ⚠ **PARTLY IMPLEMENTED — the karma seeding runs; the committee's purpose is a statement, not a
+> mechanism.** `seedGenesisCommittee` creates one karma box per `genesisCommitteeKeys` entry,
+> **drawn out of the pool** (`genesis-committee` mints, store seeding — there is no genesis
+> ordering block). All three network profiles carry an **empty** committee today, so the grant
+> loop runs zero times, and **nothing fails loudly if a chain starts with an empty committee**.
 >
 > **Genesis is where an unset consensus parameter is least recoverable** — it is baked into
 > the first block and every state root after it. Before any launch: decide the committee
 > set, decide whether an empty committee is a startup failure, and pin both. This belongs
 > with the constants-pinning session, not to be defaulted into.
 
-Bootstrap uses a **two-phase genesis committee** model:
+Bootstrap uses a **genesis committee**: genesis seeding creates one karma box per genesis
+committee key, **drawn out of the pool**, and the committee's sole purpose is to invite the first
+cohort of users and bootstrap ordering block production.
 
-1. Genesis seeding creates one karma box per genesis committee key, **drawn out
-   of the pool**, and — design ahead of code — one credit box per member
-2. The committee's sole purpose: invite the first cohort of users and
-   bootstrap ordering block production
-3. After `BOOTSTRAP_PERIOD_BLOCKS` — design ahead of code — all remaining
-   genesis committee karma returns to the pool and genesis committee credit
-   boxes are distributed to early validators (proportional to blocks produced)
-4. The committee dissolves — no permanent genesis class
+**A committee credit grant and a committee dissolution period are not part of the design as it
+stands.** Their parameters — `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` and
+`BOOTSTRAP_PERIOD_BLOCKS` / `bootstrapPeriodBlocks` — were removed 2026-08-21 (user ruling): no
+seeder read the one and no dissolution read the other, and a parameter nothing reads cannot be
+relied on. A mechanism that needs either brings its own parameter with its own reader.
 
 | Parameter | Description |
 |-----------|-------------|
 | `GENESIS_COMMITTEE_KEYS` | List of public keys in the genesis committee |
 | `GENESIS_KARMA_PER_MEMBER` | Initial karma per committee member |
-| `GENESIS_CREDITS_PER_MEMBER` | Initial credits per committee member |
-| `BOOTSTRAP_PERIOD_BLOCKS` | Blocks before committee dissolution |
 
 ---
 
@@ -1448,12 +1442,11 @@ not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wir
 >
 > **Method, so this is refutable:** every `readonly` field name was extracted from
 > `types/src/network.ts` and each tested for a `profile.<field>` read in `node/src/config.ts`.
-> Every real field is read from the profile except four — `bootstrapPeriodBlocks`,
-> `genesisCommitteeKeys`, `genesisKarmaPerMember`, `genesisCreditsPerMember` — which have **no
-> reader anywhere in `node/src` at all**. That is *unbuilt*, not *bypassed*: they serve the
-> committee machinery §Genesis marks `NOT IMPLEMENTED`. A field nothing reads cannot diverge
-> from the profile; it equally cannot be relied on. Carried register #19 tracks them, and this
-> pass reproduced its four independently.
+> Every field is read from the profile — `genesisCommitteeKeys` and `genesisKarmaPerMember` by
+> `services/genesis-state.ts` rather than `config.ts`, to seed the committee out of the pool —
+> since the two fields nothing read (`bootstrapPeriodBlocks`, `genesisCreditsPerMember`) were
+> removed 2026-08-21 (§Genesis). A field nothing reads cannot diverge from the profile; it
+> equally cannot be relied on, which is why those two went.
 >
 > **Built.** `NETWORK_TYPE` selects a `NetworkProfile` that carries the wire magic and every
 > consensus parameter together; an unrecognised value throws at startup. `NetConfig.magic` is
@@ -1518,9 +1511,9 @@ not be independently readable.
 **Per-network — the timescale, difficulty, genesis and cap axes:**
 `ORDERING_BLOCK_POW_TARGET_BITS` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
-`CREDIT_MINER_REWARD_DELAY` · `BOOTSTRAP_PERIOD_BLOCKS` · `CREDIT_FIXED_RATE_BLOCKS` ·
+`CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`GENESIS_CREDITS_PER_MEMBER` · `genesisProofPayload` · `genesisStateRoot` ·
+`genesisProofPayload` · `genesisStateRoot` ·
 `inviteBondMin` · `inviteBondMax` · `faucetPublicKey`
 
 The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
@@ -1951,11 +1944,11 @@ forever. A node rejects objects with an unsupported protocol version.
   > a read**: the citation was carried forward while the cited text moved underneath it. Both are
   > now `RESOLVED`.
   >
-  > **Residue, and it is a different class.** Four profile fields have no reader anywhere in
-  > `packages/node`: `bootstrapPeriodBlocks`, `genesisCommitteeKeys`, `genesisKarmaPerMember`,
-  > `genesisCreditsPerMember`. `GENESIS_COMMITTEE_KEYS` is empty on all three profiles, so the
-  > committee machinery the other three serve is **unbuilt** rather than bypassed — see §Genesis.
-  > A field nothing reads cannot diverge; it equally cannot be relied on.
+  > **Residue, and it is a different class.** `genesisCommitteeKeys` and `genesisKarmaPerMember`
+  > are read by `services/genesis-state.ts` to seed the committee; `GENESIS_COMMITTEE_KEYS` is
+  > empty on all three profiles, so that loop runs zero times — see §Genesis. The two profile
+  > fields nothing read (`bootstrapPeriodBlocks`, `genesisCreditsPerMember`) were removed
+  > 2026-08-21. A field nothing reads cannot diverge; it equally cannot be relied on.
   >
   > ⚠ **The lesson outlives the defect, so it stays: the count here read "three" for several
   > hours.** It was derived from `MINING_INTERFACE`'s configuration table, which holds *mining*
