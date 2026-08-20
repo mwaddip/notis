@@ -1916,12 +1916,13 @@ describe('reorg abort', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — resolveFork: never reorg to a shorter chain
+// Tests — resolveFork: the reorg applies exactly the verified chain it scored
 //
-// NODE_INTERFACE → AVL+ State Root → "Never reorg to a shorter chain".
-// `reorg()` applies exactly what it is handed, so the resulting tip is checked
-// at the decision, not at the mechanism — a peer's answer is the one input the
-// work comparison never saw.
+// NODE_INTERFACE → AVL+ State Root → "A reorg applies exactly the verified
+// chain it scored, or nothing"; → Fork choice decides on verified headers,
+// steps 8–10. The block answer is checked at the decision (count against the
+// verified segment, per-block hash identity), not at the mechanism — `reorg()`
+// applies exactly what it is handed.
 // ---------------------------------------------------------------------------
 
 type ForkScenario = {
