@@ -125,9 +125,9 @@ setDagServiceForMiner(dagService);
 // 3. Register Stage 2 handlers
 
 // Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
-// Relay handlers / Sync handlers). The fail-stop boundary is the
-// `.catch(failStopIfCorruptChain)` on the launched resolution promise inside
-// `handleOrderingBlock`, not an unhandled rejection from an async handler.
+// Relay handlers / Sync handlers). The `.catch(failStopIfCorruptChain)` on
+// the launched resolution promise is the fail-stop boundary; nothing awaits
+// the resolution, so no other path carries a corrupt-state error out.
 net.onOrderingBlock((block, fromPeerId) => {
   try {
     handleOrderingBlock(block, fromPeerId, net, dagService);
