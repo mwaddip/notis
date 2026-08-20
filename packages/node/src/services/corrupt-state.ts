@@ -202,6 +202,26 @@ export class DivergedStateTreeError extends CorruptChainStateError {
 }
 
 /**
+ * A block the apply funnel rejected during a reorg (NODE_INTERFACE → Fork
+ * choice decides on verified headers, step 11). Distinct from
+ * `CorruptChainStateError`: a rejected peer block is a peer's fault and does
+ * not warrant fail-stop.
+ */
+export class ReorgBlockRejectedError extends Error {
+  constructor(
+    readonly height: number,
+    readonly hash: string,
+    reason?: string,
+  ) {
+    super(
+      `reorg rejected block at height ${height} (${hash})` +
+      (reason ? `: ${reason}` : ''),
+    );
+    this.name = 'ReorgBlockRejectedError';
+  }
+}
+
+/**
  * The boundary. Diagnostic first, death second; everything else re-thrown
  * unchanged, so no other error changes shape by passing through here.
  *

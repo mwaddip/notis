@@ -19,10 +19,9 @@ import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
-import { applyOrderingBlock } from './services/block-apply.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
-import { extendsOurTip, resolveFork } from './services/fork-resolution.js';
+import { handleOrderingBlock } from './services/handle-block.js';
 import { failStopIfCorruptChain } from './services/corrupt-state.js';
 import {
   getKarmaBox,
@@ -125,40 +124,17 @@ setDagServiceForMiner(dagService);
 
 // 3. Register Stage 2 handlers
 
-/**
- * The ordering-block boundary.
- *
- * Being unable to hash our own stored chain is fatal, and this is where that is
- * *decided* rather than inherited. Without it the outcome would be whatever
- * `@dagsocial/net` happens to do with a rejected promise from its handler —
- * today `for (const cb of handlers) cb(block)` with nothing awaiting, so the
- * rejection goes unhandled and Node ends the process. That is the right end by
- * the wrong mechanism: this handler is `async`, which is the only reason the
- * rejection escapes gossip's empty dispatch catch at all (`net/gossip.ts:184`),
- * and the day `net` awaits its handlers the fail-stop would silently become a
- * swallow with nothing to say so.
- */
-net.onOrderingBlock(async (block, fromPeerId) => {
+// Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
+// Relay handlers / Sync handlers). The `.catch(failStopIfCorruptChain)` on
+// the launched resolution promise is the fail-stop boundary; nothing awaits
+// the resolution, so no other path carries a corrupt-state error out.
+net.onOrderingBlock((block, fromPeerId) => {
   try {
-    await handleOrderingBlock(block, fromPeerId);
+    handleOrderingBlock(block, fromPeerId, net, dagService);
   } catch (err) {
     failStopIfCorruptChain(err);
   }
 });
-
-async function handleOrderingBlock(block: OrderingBlock, fromPeerId: string): Promise<void> {
-  const currentHeight = getCurrentHeight();
-
-  // Genesis or extends our tip: apply normally
-  if (currentHeight === 0 || extendsOurTip(block)) {
-    applyOrderingBlock(block, dagService);
-    return;
-  }
-
-  // The relaying peer is the counterparty fork resolution asks (NET_INTERFACE →
-  // Pull Requests).
-  await resolveFork(block, net, fromPeerId, dagService);
-}
 
 net.onTx((tx, fromPeerId) => {
   const deps = {
@@ -234,21 +210,9 @@ net.onTx((tx, fromPeerId) => {
   console.log(`Relayed tx queued in mempool: ${result.txId}`);
 });
 
-  // Register blocks handler — bridges sync machine's pull path
-  // (ModifierResponse) to the node's applyOrderingBlock pipeline.
-  //
-  // Same boundary as the gossip handler above, and this path needs it more: net
-  // calls this inside `appendBlocks`, whose catch logs any throw as
-  // `failed to decode block` and then applies the *next* block in the batch
-  // (`net/src/node.ts:255-260`). A corrupt chain would be reported as a codec
-  // problem and the sync would keep going over it.
-  net.setBlocksHandler((block) => {
-    try {
-      applyOrderingBlock(block, dagService);
-    } catch (err) {
-      failStopIfCorruptChain(err);
-    }
-  });
+  net.setBlocksHandler((block, fromPeerId) =>
+    handleOrderingBlock(block, fromPeerId, net, dagService),
+  );
   net.setHeadersHandler(getOrderingBlock);
 
 // 4. Start net

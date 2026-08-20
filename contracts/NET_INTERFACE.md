@@ -761,6 +761,14 @@ Node start
 | `misbehavior` | Invalid message — fails Stage 1: structure, protocol version, ordering-block PoW, or the karma-membership gate (`gossip.ts` call sites) | 100 |
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
+| `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel | 100 |
+| `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment (non-delivery) | 50 |
+
+**`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
+into this system: it records the named tier against the peer with the reason string and nothing
+else — accrual, decay and the ban threshold below apply unchanged, and a peer the manager does not
+know is a no-op (the counterparty comes off the Active list; an unknown one is a disconnect race,
+not a target). It is the producing call site of the two fork-resolution rows.
 
 The table is the whole system: every `PenaltyType` and `PenaltyKind` member has
 a producing call site.
@@ -1059,9 +1067,18 @@ membership test is the thing standing between a relayed hint and a counterparty 
 | `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
 
 ⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
-code or a malformed body — `requestBlocks`' result goes straight to
-`reorg(forkHeight, newBlocks)`, so an empty array would truncate our own chain
-rather than fail to extend it.
+code or a malformed body — a decoded-but-empty answer is a statement ("no blocks"),
+a throw is not, and the caller must be able to tell them apart. `requestBlocks`'
+result reaches `reorg(forkHeight, newBlocks)` only after node has checked it
+against the verified header segment — one block per header, each hashing to the
+verified hash at its height (NODE_INTERFACE → Fork choice decides on verified
+headers); a short or substituted answer is refused there and penalised through
+`penalizePeer` (Peer Penalty System).
+
+**Fork resolution asks for a segment, not a tip.** `requestHeaders(start, MAX_REORG_DEPTH · 2)`
+from the triggering block's height down is scored as a verified prefix of the peer's chain; the
+block range then requested is `forkHeight + 1 … forkHeight + n` for the `n` headers that verified,
+never a height the peer claimed.
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
@@ -1073,7 +1090,7 @@ offer.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `setBlocksHandler(cb)` | `((block: OrderingBlock) => void) => void` | Handler for blocks received during sync |
+| `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return |
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16). Returns the whole block, not the header: one provider serves both responses — `Headers` reads `.header`, `Blocks` returns the block |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired when sync finishes |
 | `onPeerActive(cb)` | `((peerId: string) => void) => void` | Fired when a peer becomes active |

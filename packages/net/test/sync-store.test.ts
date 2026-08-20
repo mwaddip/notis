@@ -365,11 +365,13 @@ describe('NetNode.setHeadersHandler wiring', () => {
 // ---------------------------------------------------------------------------
 
 /** A store whose block handler records what it is given, and can be made to throw. */
-function storeApplying(onBlock: (b: OrderingBlock) => void): LazySyncStore {
+function storeApplying(onBlock: (b: OrderingBlock, fromPeerId: string) => boolean): LazySyncStore {
   const store = new LazySyncStore(validators);
   store.setBlocksHandler(onBlock);
   return store;
 }
+
+const TEST_PEER = 'test-peer';
 
 const GOOD_1 = encodeOrderingBlock(makeBlock(makeHeader({ height: 1 })));
 const GOOD_2 = encodeOrderingBlock(makeBlock(makeHeader({ height: 2 })));
@@ -378,9 +380,9 @@ const UNDECODABLE = new Uint8Array([0xff, 0xff, 0xff, 0xff]);
 describe('LazySyncStore.appendBlocks', () => {
   it('applies every block in a good batch, in order', () => {
     const seen: number[] = [];
-    const store = storeApplying((b) => seen.push(b.header.height));
+    const store = storeApplying((b) => { seen.push(b.header.height); return true; });
 
-    store.appendBlocks([GOOD_1, GOOD_2]);
+    store.appendBlocks([GOOD_1, GOOD_2], TEST_PEER);
 
     expect(seen).toEqual([1, 2]);
   });
@@ -391,9 +393,9 @@ describe('LazySyncStore.appendBlocks', () => {
     // `continue`s rather than stopping the batch.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const seen: number[] = [];
-    const store = storeApplying((b) => seen.push(b.header.height));
+    const store = storeApplying((b) => { seen.push(b.header.height); return true; });
 
-    store.appendBlocks([GOOD_1, UNDECODABLE, GOOD_2]);
+    store.appendBlocks([GOOD_1, UNDECODABLE, GOOD_2], TEST_PEER);
 
     expect(seen).toEqual([1, 2]);
     expect(warn).toHaveBeenCalledWith(
@@ -408,11 +410,11 @@ describe('LazySyncStore.appendBlocks', () => {
     // wearing a wire-format label, sending whoever reads the log to the wrong
     // package.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const store = storeApplying(() => {
+    const store = storeApplying((): boolean => {
       throw new Error('apply exploded');
     });
 
-    expect(() => store.appendBlocks([GOOD_1])).toThrow('apply exploded');
+    expect(() => store.appendBlocks([GOOD_1], TEST_PEER)).toThrow('apply exploded');
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -422,26 +424,57 @@ describe('LazySyncStore.appendBlocks', () => {
     // Blocks are chain-linked; continuing past a failure applies the successor
     // of a block that did not land.
     const seen: number[] = [];
-    const store = storeApplying((b) => {
+    const store = storeApplying((b): boolean => {
       if (b.header.height === 1) throw new Error('apply exploded');
       seen.push(b.header.height);
+      return true;
     });
 
-    expect(() => store.appendBlocks([GOOD_1, GOOD_2])).toThrow('apply exploded');
+    expect(() => store.appendBlocks([GOOD_1, GOOD_2], TEST_PEER)).toThrow('apply exploded');
     expect(seen).toEqual([]); // block 2 was never attempted
   });
 
   it('ignores entries that are not byte arrays', () => {
     const seen: number[] = [];
-    const store = storeApplying((b) => seen.push(b.header.height));
+    const store = storeApplying((b) => { seen.push(b.header.height); return true; });
 
-    store.appendBlocks(['nope', 42, null, undefined, {}, GOOD_1]);
+    store.appendBlocks(['nope', 42, null, undefined, {}, GOOD_1], TEST_PEER);
 
     expect(seen).toEqual([1]);
   });
 
   it('does nothing when no blocks handler is registered', () => {
-    expect(() => new LazySyncStore(validators).appendBlocks([GOOD_1])).not.toThrow();
+    expect(() => new LazySyncStore(validators).appendBlocks([GOOD_1], TEST_PEER)).not.toThrow();
+  });
+
+  it('passes the peer id to the handler', () => {
+    const received: string[] = [];
+    const store = storeApplying((_b, peerId) => { received.push(peerId); return true; });
+
+    store.appendBlocks([GOOD_1, GOOD_2], 'counterparty-x');
+
+    expect(received).toEqual(['counterparty-x', 'counterparty-x']);
+  });
+
+  it('stops the batch at the first false return', () => {
+    const seen: number[] = [];
+    const store = storeApplying((b) => {
+      seen.push(b.header.height);
+      return b.header.height !== 1;
+    });
+
+    store.appendBlocks([GOOD_1, GOOD_2], TEST_PEER);
+
+    expect(seen).toEqual([1]);
+  });
+
+  it('calls the handler for all blocks when every return is true', () => {
+    const seen: number[] = [];
+    const store = storeApplying((b) => { seen.push(b.header.height); return true; });
+
+    store.appendBlocks([GOOD_1, GOOD_2], TEST_PEER);
+
+    expect(seen).toEqual([1, 2]);
   });
 });
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PeerManager } from '../src/peer-mgr.js';
+import { NetNode } from '../src/node.js';
 import { PenaltyKind, PeerState } from '../src/types.js';
-import type { NetConfig, Peer } from '../src/types.js';
+import type { NetConfig, NetValidators, Peer } from '../src/types.js';
 
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return {
@@ -117,5 +118,80 @@ describe('penalty attribution (using PeerManager)', () => {
     mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'ghost2', '??');
     // Should not throw, no peers tracked
     expect(mgr.getPeerCount()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NetNode.penalizePeer — node's one call into the penalty system
+// ---------------------------------------------------------------------------
+
+const stubValidators: NetValidators = {
+  verifyOrderingBlockPoW: () => true,
+  verifyProtocolVersion: () => true,
+  verifyContentLimits: () => ({ valid: true }),
+  verifyParentRefsCount: () => ({ valid: true }),
+  verifyTxStructure: () => ({ valid: true }),
+  verifyOrderingBlockStructure: () => ({ valid: true }),
+};
+
+describe('NetNode.penalizePeer', () => {
+  function setup() {
+    const config = makeConfig();
+    const net = new NetNode(config, stubValidators);
+    const peerMgr: PeerManager = (net as any).peerMgr;
+    peerMgr.addPeer(makePeer('peer1'));
+    return { net, peerMgr, config };
+  }
+
+  it('misbehavior records 100 against the peer', () => {
+    const { net, peerMgr } = setup();
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+
+    net.penalizePeer('peer1', 'misbehavior', 'bad headers');
+
+    const meta = peerMgr.getPeerMetadata('peer1');
+    expect(meta).not.toBeNull();
+    expect(meta!.penaltyCount).toBe(1);
+    expect((peerMgr as any).peers.get('peer1').penaltyScore).toBe(100);
+  });
+
+  it('transient records 50 against the peer', () => {
+    const { net, peerMgr } = setup();
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+
+    net.penalizePeer('peer1', 'transient', 'short answer');
+
+    const meta = peerMgr.getPeerMetadata('peer1');
+    expect(meta).not.toBeNull();
+    expect(meta!.penaltyCount).toBe(1);
+    expect((peerMgr as any).peers.get('peer1').penaltyScore).toBe(50);
+  });
+
+  it('misbehavior reaches the manager with the stated reason', () => {
+    const { net, peerMgr } = setup();
+    const spy = vi.spyOn(peerMgr, 'recordPenalty');
+
+    net.penalizePeer('peer1', 'misbehavior', 'identity mismatch');
+
+    expect(spy).toHaveBeenCalledWith('misbehavior', 'peer1', 100, 'identity mismatch');
+  });
+
+  it('transient reaches the manager with the stated reason', () => {
+    const { net, peerMgr } = setup();
+    const spy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    net.penalizePeer('peer1', 'transient', 'non-delivery');
+
+    expect(spy).toHaveBeenCalledWith(PenaltyKind.Transient, 'peer1', 'non-delivery');
+  });
+
+  it('no-ops for an unknown peer', () => {
+    const { net, peerMgr } = setup();
+
+    net.penalizePeer('ghost', 'misbehavior', 'no such peer');
+    net.penalizePeer('ghost', 'transient', 'no such peer');
+
+    expect(peerMgr.getPeerCount()).toBe(1);
+    expect(peerMgr.isBanned('ghost')).toBe(false);
   });
 });

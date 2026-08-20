@@ -1,8 +1,9 @@
-import { blockHash, cumulativeWork } from '@dagsocial/validation';
+import { blockHash, cumulativeWork, verifyHeaderChain } from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock, PruneEntry } from '@dagsocial/types';
 import {
   decodeTx,
   MAX_REORG_DEPTH,
+  GENESIS_PREV_BLOCK_HASH,
   MEMPOOL_EXPIRY_BLOCKS,
   computePruneEntryId,
 } from '@dagsocial/types';
@@ -24,6 +25,8 @@ import {
   MempoolFullError,
   PendingSpendConflictError,
   TxTooLargeError,
+  insertRefusedHeader,
+  anyRefusedHeader,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
@@ -37,7 +40,9 @@ import {
   CorruptChainStateError,
   MissingStoredBlockError,
   UnhashableStoredHeaderError,
+  ReorgBlockRejectedError,
 } from './corrupt-state.js';
+import { expectedTarget } from './difficulty.js';
 import type { DagService } from './dag-service.js';
 
 /**
@@ -435,7 +440,8 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
   // Phase 3: apply new chain
   for (const block of newBlocks) {
     if (!applyOrderingBlock(block, dagService)) {
-      throw new Error(`reorg failed: block at height ${block.header.height} rejected`);
+      const hash = blockHash(block.header) ?? 'unhashable';
+      throw new ReorgBlockRejectedError(block.header.height, hash);
     }
   }
     })();
@@ -474,20 +480,15 @@ export interface ForkResolutionNet {
   getConnectedPeers(): string[];
   requestHeaders(startHeight: number, maxCount: number, peerId: string): Promise<BlockHeader[]>;
   requestBlocks(startHeight: number, endHeight: number, peerId: string): Promise<OrderingBlock[]>;
+  penalizePeer(peerId: string, kind: 'misbehavior' | 'transient', reason: string): void;
 }
 
 /**
  * Decide a fork against one peer and, if their chain wins, switch to it.
  *
- * Entered when a gossiped block neither is genesis nor extends our tip. Every
- * fork-choice rule lives here — common-ancestor depth, the cumulative-work
- * comparison, the tip-changed re-read, and the shorter-chain refusal — while
- * `reorg` below stays the mechanism that carries out a decision already made.
- *
- * `fromPeerId` is the peer that relayed the competing block (NET_INTERFACE →
- * Inbound Processing), which is therefore a peer that holds the chain the block
- * belongs to. It is the counterparty when the Active list agrees; the selection
- * is at the `peers.includes` line below.
+ * The decision order follows NODE_INTERFACE → Fork choice decides on verified
+ * headers, step by step. `reorg` is the mechanism that carries out a decision
+ * already made.
  */
 export async function resolveFork(
   block: OrderingBlock,
@@ -502,28 +503,16 @@ export async function resolveFork(
     `competing block height=${block.header.height}`,
   );
 
-  // Active peers only — the same list the readiness gate reads, for the same
-  // reason (see `ForkResolutionNet`). A handshake-failed peer must not be picked
-  // as the counterparty whose chain this node might adopt.
+  // 1. Counterparty — Active peers only (see `ForkResolutionNet`).
   const peers = net.getConnectedPeers();
   if (peers.length === 0) {
     console.warn('Fork resolution failed: no connected peers');
     return;
   }
-  // Ask the peer that relayed the block: it holds the competing chain, where
-  // any other connected peer may hold nothing about it — and at this call site
-  // "knows nothing about this fork" and "has no reorg to offer" are the same
-  // answer, an empty header list (NET_INTERFACE → Pull Requests).
-  //
-  // The gossip source is filtered **through** the Active list, never around it:
-  // membership is the whole guarantee stated on `ForkResolutionNet`, and this
-  // selection admits nothing that list does not already admit. Any
-  // `fromPeerId` outside it — a relay that has since disconnected among them —
-  // takes the fallback.
   const peerId = peers.includes(fromPeerId) ? fromPeerId : peers[0]!;
 
   try {
-    // Request headers from competing tip going backward (newest-first)
+    // 2. Their headers, newest-first.
     const theirHeaders = await net.requestHeaders(
       block.header.height,
       MAX_REORG_DEPTH * 2,
@@ -540,6 +529,7 @@ export async function resolveFork(
       return;
     }
 
+    // 3. The fork point.
     const forkHeight = findForkPoint(ourTip.header, theirHeaders);
     if (forkHeight === null) {
       console.warn(
@@ -548,22 +538,54 @@ export async function resolveFork(
       return;
     }
 
-    // Build our chain headers from fork+1 to current tip.
-    //
-    // Every height in this range must hold a block. `findForkPoint` answers
-    // either a height out of our own hash map or `GENESIS_HEIGHT`, which is
-    // **not** in that map — height 0 holds no block, so the walk records no hash
-    // for it. Both answers leave this range inside our chain: a mapped height is
-    // one we hold, and 0 starts the range at 1, our first block. The block at
-    // `currentHeight` was just read above, the store is contiguous between them,
-    // and nothing awaits between that read and this loop, so it cannot move
-    // underneath us.
-    //
-    // Skipping a missing one is the worst available handling, because of which
-    // way it errs: `ourHeaders` feeds `cumulativeWork(ourHeaders)`, so a skipped
-    // block *understates our own chain's work* and tips `theirWork > ourWork`
-    // toward abandoning our chain — silently, on a comparison we got wrong in
-    // the one direction that costs us the chain rather than the reorg.
+    // 4. Anchor and chronological segment above the fork.
+    let anchorPrevBlockHash: string;
+    if (forkHeight === 0) {
+      anchorPrevBlockHash = GENESIS_PREV_BLOCK_HASH;
+    } else {
+      const forkBlock = getOrderingBlock(forkHeight);
+      if (!forkBlock) throw new MissingStoredBlockError('resolveFork anchor', forkHeight);
+      anchorPrevBlockHash = ourChainHash(forkBlock.header, 'resolveFork anchor');
+    }
+    const anchor = { prevBlockHash: anchorPrevBlockHash, height: forkHeight };
+    const segment = theirHeaders
+      .filter((h) => h.height > forkHeight)
+      .reverse();
+
+    // 5. Verification (VALIDATION_INTERFACE → verifyHeaderChain).
+    const verdict = verifyHeaderChain(segment, anchor, expectedTarget);
+    if (!verdict.ok) {
+      const isWindowMiss = verdict.index === 0
+        && verdict.reason === 'height'
+        && forkHeight === 0;
+      if (isWindowMiss) {
+        console.warn(
+          `Fork resolution: window miss — segment starts above a genesis-rooted ` +
+          `fork (index=${verdict.index}, reason=${verdict.reason}), no penalty`,
+        );
+      } else {
+        console.warn(
+          `Fork resolution: header verification failed ` +
+          `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId}`,
+        );
+        net.penalizePeer(peerId, 'misbehavior', `header verification: ${verdict.reason} at index ${verdict.index}`);
+      }
+      return;
+    }
+
+    const hashes = verdict.hashes;
+
+    // 6. Memory — any verified hash already refused.
+    if (anyRefusedHeader(hashes)) {
+      console.warn(
+        `Fork resolution: segment contains a previously refused header, ` +
+        `penalising peer ${peerId}`,
+      );
+      net.penalizePeer(peerId, 'misbehavior', 'served a chain containing a refused header');
+      return;
+    }
+
+    // 7. Work — strictly greater wins; ties keep the incumbent.
     const ourHeaders: BlockHeader[] = [];
     for (let h = forkHeight + 1; h <= currentHeight; h++) {
       const b = getOrderingBlock(h);
@@ -571,36 +593,29 @@ export async function resolveFork(
       ourHeaders.push(b.header);
     }
 
-    // Extract competing chain headers above fork point (theirHeaders is newest-first)
-    const theirChainHeaders = theirHeaders
-      .filter((h) => h.height > forkHeight)
-      .reverse(); // chronological order for cumulativeWork
-
     const ourWork = cumulativeWork(ourHeaders);
-    const theirWork = cumulativeWork(theirChainHeaders);
-
-    if (theirWork <= ourWork) {
+    if (verdict.work <= ourWork) {
       console.log(
         `Fork resolution: our chain has more or equal work ` +
-        `(ours=${ourWork}, theirs=${theirWork}), ignoring`,
+        `(ours=${ourWork}, theirs=${verdict.work}), ignoring`,
       );
       return;
     }
 
     console.log(
       `Fork resolution: competing chain has more work ` +
-      `(ours=${ourWork}, theirs=${theirWork}), reorging...`,
+      `(ours=${ourWork}, theirs=${verdict.work}), reorging...`,
     );
 
-    // Request blocks from fork+1 to competing tip
-    const theirTipHeight = theirHeaders[0]!.height;
+    // 8. Their blocks — range from the verified segment, not a peer-claimed tip.
+    const n = segment.length;
     const newBlocks = await net.requestBlocks(
       forkHeight + 1,
-      theirTipHeight,
+      forkHeight + n,
       peerId,
     );
 
-    // Re-check tip — our chain may have advanced during the async requests
+    // 9. Tip re-read — our chain may have advanced during the async requests.
     const heightNow = getCurrentHeight();
     if (heightNow !== currentHeight) {
       console.warn(
@@ -610,29 +625,39 @@ export async function resolveFork(
       return;
     }
 
-    // NODE_INTERFACE → AVL+ State Root → "Never reorg to a shorter chain". The
-    // predicate is the resulting tip, not `newBlocks.length`: any answer short
-    // of the range asked for lands it at or below where it started.
-    //
-    // `heightNow` is what `reorg` will read — nothing awaits between here and
-    // the call, so the comparison cannot go stale.
-    const newTipHeight = forkHeight + newBlocks.length;
-    if (newTipHeight <= heightNow) {
+    // 10. Identity — count and per-block hash match.
+    if (newBlocks.length !== n) {
       console.warn(
-        `Fork resolution: peer ${peerId} answered ${newBlocks.length} block(s) for ` +
-        `heights ${forkHeight + 1}..${theirTipHeight}, which would leave the tip at ` +
-        `${newTipHeight} (now ${heightNow}), aborting reorg`,
+        `Fork resolution: peer ${peerId} answered ${newBlocks.length} block(s) ` +
+        `for ${n} expected, penalising (transient)`,
       );
+      net.penalizePeer(peerId, 'transient', `short block answer: ${newBlocks.length}/${n}`);
       return;
     }
+    for (let i = 0; i < n; i++) {
+      const deliveredHash = blockHash(newBlocks[i]!.header);
+      if (deliveredHash !== hashes[i]) {
+        console.warn(
+          `Fork resolution: block at index ${i} hash mismatch ` +
+          `(expected=${hashes[i]!.slice(0, 16)}..., got=${deliveredHash?.slice(0, 16) ?? 'null'}...), ` +
+          `penalising peer ${peerId} (misbehavior)`,
+        );
+        net.penalizePeer(peerId, 'misbehavior', `block identity mismatch at index ${i}`);
+        return;
+      }
+    }
 
+    // 11. The switch — nothing awaits between the re-read and this call.
     reorg(forkHeight, newBlocks, dagService);
-    console.log(`Reorg complete: new tip at height=${newTipHeight}`);
+    console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
   } catch (err) {
-    // This catch is for the peer and the network — a request that timed out, a
-    // response that would not decode, a reorg the apply path refused. Failing to
-    // hash our *own* chain is none of those, and warning about it here would put
-    // the boundary's decision back in the hands of whichever line noticed first.
+    // 12. The mark — after the rollback, in its own write.
+    if (err instanceof ReorgBlockRejectedError) {
+      insertRefusedHeader(err.hash, err.height, getCurrentHeight());
+      net.penalizePeer(peerId, 'misbehavior', `reorg rejected block at height ${err.height}`);
+      console.warn(`Fork resolution: reorg rejected block at height ${err.height} (${err.hash}), marked and penalised`);
+      return;
+    }
     if (err instanceof CorruptChainStateError) throw err;
     console.warn(`Fork resolution error: ${String(err)}`);
   }

@@ -5,6 +5,7 @@ import {
 } from 'crypto';
 import {
   PROTOCOL_VERSION,
+  GENESIS_PREV_BLOCK_HASH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   EMPTY_STATE_ROOT,
@@ -570,7 +571,7 @@ export function createOrderingBlock(): OrderingBlock | null {
   }
   const prevBlockHash = prevBlock
     ? blockHash(prevBlock.header)
-    : '0000000000000000000000000000000000000000000000000000000000000000';
+    : GENESIS_PREV_BLOCK_HASH;
   if (prevBlockHash === null) {
     failStopIfCorruptChain(
       new UnhashableStoredHeaderError('createOrderingBlock', currentHeight),

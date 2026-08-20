@@ -186,6 +186,15 @@ const MIGRATIONS = [
     protocol_version  INTEGER NOT NULL,
     capabilities      TEXT NOT NULL    -- JSON array of message codes
   )`,
+
+  // Refused headers — the chain-selection memory (NODE_INTERFACE → Refused
+  // headers). One row per block whose header passed verification and whose body
+  // the apply funnel rejected during a reorg.
+  `CREATE TABLE IF NOT EXISTS refused_headers (
+    hash        TEXT PRIMARY KEY,
+    height      INTEGER NOT NULL,
+    refused_at  INTEGER NOT NULL
+  )`,
 ];
 
 function migrateAvlTree(database: Database.Database): void {

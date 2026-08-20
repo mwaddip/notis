@@ -2737,6 +2737,35 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `getCurrentHeight()` | `() => number` |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
 
+### Refused headers
+
+The chain-selection memory (`Fork choice decides on verified headers`, step 12): one row per block
+that fork resolution applied under verified headers and the funnel rejected.
+
+```sql
+CREATE TABLE refused_headers (
+    hash        TEXT PRIMARY KEY,   -- blockHash of the rejected block's header
+    height      INTEGER NOT NULL,   -- its height
+    refused_at  INTEGER NOT NULL    -- our tip height when it was refused
+);
+```
+
+| Function | Signature |
+|----------|-----------|
+| `insertRefusedHeader(hash, height, refusedAt)` | `(string, number, number) => void` — idempotent on `hash` |
+| `anyRefusedHeader(hashes)` | `(string[]) => boolean` — true iff any hash is marked |
+| `purgeRefusedHeaders(belowHeight)` | `(number) => void` — called beside `purgeOldJournals`, same bound: `height − MAX_REORG_DEPTH` |
+
+**One row suffices for a whole continuation.** A segment starts at a fork point *on our chain* and
+the refused block is not on our chain, so if the refused block is an ancestor of a segment's tip it
+sits inside that segment at its own height — `anyRefusedHeader` over the verified hashes is complete
+for continuations without storing descendants. **The purge is safe for the same reason:** a refused
+height below `tip − MAX_REORG_DEPTH` cannot appear in any segment `findForkPoint` can anchor.
+
+**The mark is written outside the reorg transaction**, after it has rolled back — a write inside it
+would roll back with it. It persists across restarts and is removed only by the purge; a deploy's
+database wipe removes it with everything else.
+
 ### Block Journal
 
 The journal is the single source of truth for undoing a block and for feeding
@@ -2950,24 +2979,16 @@ also identity records (see "Two entity kinds" below).
   rolls the DB (including AVL storage rows) back wholesale, and the reorg's
   catch restores the in-memory prover to the pre-reorg digest — the per-block
   funnel restore only covers the failing block, not the applied prefix
-- **A reorg must never leave us worse off than it found us.** `reorg()` reverts above `forkHeight`
-  and then applies exactly what it is handed, so an **empty** `newBlocks` truncates our own chain
-  to the fork point inside a committed transaction, and a short-but-nonempty answer truncates it
-  partway. `net` bounds the response count but never *requires* one, and a peer that serves headers
-  claiming more work then answers the block request with a short list is not sending malformed
-  bytes — nothing upstream can tell it from a peer that legitimately has nothing. The check belongs
-  at the caller, the only site that knows what the reorg was *for* and which peer to name.
-
-  ⚠ **The criterion is WORK; the implemented check is HEIGHT, and that is a proxy with an
-  expiry.** Fork choice selects on `cumulativeWork`, so the honest rule is *the resulting chain
-  must carry strictly more work than the one it replaces*. `forkHeight + newBlocks.length >
-  currentHeight` is equivalent **only because `expectedTarget` is a network constant today**, which
-  makes every block worth the same work. ⚠ **The deferred difficulty retarget breaks the
-  equivalence**: under a variable target a shorter chain can carry more work, and this check would
-  then reject a legitimate reorg — silently, with no compiler signal, in the forever-rejecting
-  direction that looks like a quiet network. **Whoever lands retargeting must revisit this bullet
-  and the check together.** Raised by the implementing session, 2026-08-10; see also the carried
-  `cumulativeWork` item, which is the same height-versus-work seam from the other side.
+- **A reorg applies exactly the verified chain it scored, or nothing.** `reorg()` reverts above
+  `forkHeight` and applies exactly what it is handed, so the caller — the only site that knows what
+  the reorg was *for* and which peer to name — admits nothing to it that was not scored: the block
+  answer must hold one block per verified header and every block's header must hash to the verified
+  hash at its height (`Fork choice decides on verified headers`, below). `net` bounds the response
+  count but never *requires* one, and a short or substituted answer is not malformed bytes — nothing
+  upstream can tell it from a peer that legitimately has nothing — so the check is the caller's.
+  The criterion is **work**, compared over headers that have passed the header-level rules; no height
+  comparison stands in for it, so a retarget changes the schedule the verifier is handed and nothing
+  about this rule.
 
 #### Two entity kinds (Spec G phase B)
 
@@ -3372,6 +3393,76 @@ over an existing one — but that is an argument about the rest of the tree, and
 `LIMIT 1` names no row if it ever expires. **No index on `box_type`**: the function has two callers
 and runs once per process, and an index there would tax every `insertBox` on the apply path.
 
+### Fork choice decides on verified headers
+
+**Every rule that decides a reorg lives in `resolveFork`; `reorg` is the mechanism that carries
+out a decision already made.** The decision, in order — each step that ends the resolution ends it
+with the chain untouched:
+
+1. **Counterparty.** The peer that relayed or served the block, if it is Active; else the head of
+   the Active list (NET_INTERFACE → Pull Requests).
+2. **Their headers.** `requestHeaders(block.height, MAX_REORG_DEPTH · 2)`, newest-first. No
+   headers → no decision, no penalty: "has nothing" is legitimate.
+3. **The fork point.** `findForkPoint` — refuse-whole on an unhashable entry, `GENESIS_HEIGHT` when
+   the chains share only the genesis state, `null` when the divergence is deeper than
+   `MAX_REORG_DEPTH`. `null` → no decision, no penalty: a deep fork is indistinguishable from an
+   honest peer.
+4. **The anchor and the segment.** Anchor = `{ prevBlockHash, height: f }` where `prevBlockHash` is
+   the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`; segment = their headers
+   above `f`, chronological.
+5. **Verification.** `verifyHeaderChain(segment, anchor, expectedTarget)` (VALIDATION_INTERFACE →
+   verifyHeaderChain). A refusal is classified: `index 0` · `reason 'height'` · `f === 0` is a
+   **window miss** — their chain stands more than `MAX_REORG_DEPTH · 2` above a genesis-rooted fork
+   and the request, not the answer, was short; no penalty, and the pull path retries from our
+   tip + 1. Every other `(index, reason)` is a served chain that is not one: refuse and penalise
+   (NET_INTERFACE → Peer Penalty System, `misbehavior`).
+6. **Memory.** Any verified hash present in `refused_headers` (Store Interface → Refused headers)
+   refuses the segment and penalises (`misbehavior`) — before any work is compared or block
+   fetched.
+7. **Work.** `verdict.work <= cumulativeWork(ours above f)` → keep ours. Strictly greater wins; a
+   tie keeps the incumbent.
+8. **Their blocks.** `requestBlocks(f + 1, f + n)` for `n = segment.length` — the range is the
+   verified segment's, never a peer-claimed tip height.
+9. **Tip re-read.** Our tip moved during the awaits → abort, no penalty.
+10. **Identity.** Fewer than `n` blocks → refuse, penalise `transient` (non-delivery). Any block whose
+    header hash is not `hashes[i]` → refuse, penalise `misbehavior`. Nothing is reverted before
+    this step.
+11. **The switch.** `reorg(f, blocks)`, atomic: on a rejected block it throws
+    `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover
+    is restored.
+12. **The mark.** `resolveFork` catches that error and, **after** the rollback, records the rejected
+    block's hash in `refused_headers` in its own write, and penalises `misbehavior`. A mark written
+    inside the reorg transaction would roll back with it.
+
+**What is remembered, and what is not.** Header-stage refusals (steps 5, 6, 10) are cheap to
+re-check and are remembered nowhere — the peer is penalised and the segment is gone. A body-stage
+rejection (step 11) is the expensive case and the one remembered: verified headers over an invalid
+body. **The mark records a consensus rejection and nothing else** — a rejection that depends on
+local configuration or policy must not mark, because a persisted mark is only as right as the node
+that wrote it; the schedule is checked at step 5 precisely so that a wrong-profile node never
+reaches step 11. "Depends on" is about the verdict, not about enforcement: the funnel's one
+configuration-gated check — `stateRoot` under `VERIFY_STATE_ROOT` — switches whether *this* node
+enforces a consensus rule, not what the rule says, so a node that enforces it marks a chain whose
+root is wrong for every node, and a node that does not never reaches the mark. Every other
+rejection in the funnel is consensus-determined outright.
+
+**Both entries converge.** Gossip receipt and pull-sync both reach `handleOrderingBlock(block,
+fromPeerId)`: a block already held (our block at its height hashes to its header) is a **no-op** —
+neither applied nor resolved; a block that extends our tip, or arrives at height 0, is applied;
+anything else enters `resolveFork` with the delivering peer as counterparty. The pull handler's
+return is the batch's **continue** signal — `true` for applied or already held, `false` for rejected
+or for a non-extending block — and `net` stops the batch at the first `false` (NET_INTERFACE → Sync
+Handler Registration). A pull trigger therefore always sits at our tip + 1, where the
+`MAX_REORG_DEPTH · 2` window always reaches an anchor within `MAX_REORG_DEPTH`.
+
+**Concurrency.** Resolutions may overlap — gossip already allows it, and the pull path adds
+triggers, not a class. Two resolutions serialise at step 9: `reorg` is synchronous and nothing awaits
+between the re-read and the call, so the second always sees the first's height and aborts.
+
+**Apply stays the authority.** `reorg` runs every block through `applyOrderingBlock`, so the
+header-level rules run twice — once over the segment, once in the funnel. The funnel is unchanged
+and remains the single consensus gate (`Ordering block apply-time authorization`).
+
 ### Fork resolution bottoms out at the genesis state
 
 **Reaching height 0 in the ancestor walk IS a common ancestor**, at depth = our height.
@@ -3379,7 +3470,9 @@ and runs once per process, and an index there would tax every `insertBox` on the
 that share no block. Heights still start at 1, so height 0 holds no block and no hash — what it
 holds is the genesis *state*, which every node on a network shares byte for byte because the
 section above makes any other one fail-stop. There is nothing for a peer to lie about: a
-height-1 block has its `prevBlockHash` checked as all-zeros before it can be stored, and that
+height-1 block has its `prevBlockHash` checked against `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE
+→ Genesis parent hash) before it can be stored — the same value a fork at 0 hands
+`verifyHeaderChain` as its anchor — and that
 check is on every path into the store, and what makes "every path" true is stated on
 `createOrderingBlock` in `node/src/store/ordering.ts`: one writer, called from `applyBlockBody`
 downstream of the chain-link gate in the same function. All four callers of `applyOrderingBlock`
@@ -3608,13 +3701,15 @@ not fail the API request.
 
 - **`onTx(tx)`**: validates (read-only, `validateTx`) → inserts into mempool via
   `insertUtxoTx`
-- **`onOrderingBlock(block)`**: structure / chain-link / PoW pre-filters → fork
-  detection & resolution → `applyOrderingBlock` → confirms posts → removes
-  confirmed entries from mempool. The authoritative consensus checks — including
-  **validator-signature verification (H-1)** — are enforced *inside*
+- **`onOrderingBlock(block, fromPeerId)`**: structure / PoW pre-filters (net) →
+  `handleOrderingBlock` — already held → no-op; extends our tip or height 0 →
+  `applyOrderingBlock` → confirms posts → removes confirmed entries from mempool;
+  otherwise → `resolveFork` (AVL+ State Root → "Fork choice decides on verified
+  headers"). The pull path reaches the **same** `handleOrderingBlock` through
+  `setBlocksHandler`; `reorg` applies directly. The authoritative consensus checks
+  — including **validator-signature verification (H-1)** — are enforced *inside*
   `applyOrderingBlock` (see "Ordering block apply-time authorization" below), so
-  the sync and reorg paths, which never pass through this gossip callback, are
-  covered by the same gate.
+  all three paths end at the same gate.
 
 ### Ordering block apply-time authorization
 
@@ -3900,7 +3995,12 @@ funnel:
 
 ### Sync handlers (pull-path)
 
-- **`setBlocksHandler(cb)`**: called by sync machine to apply blocks during sync
+- **`setBlocksHandler((block, fromPeerId) => boolean)`**: the sync machine's pull path into
+  `handleOrderingBlock` — the same entry gossip uses (Relay handlers, above). The return is the
+  batch's **continue** signal: `true` for a block applied or already held, `false` for a block
+  rejected or for a non-extending block, which launches `resolveFork` with `fromPeerId` as the
+  counterparty; `net` stops the batch at the first `false` (NET_INTERFACE → Sync Handler
+  Registration)
 - **`setHeadersHandler(getBlock)`**: serves block headers for fork resolution
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and

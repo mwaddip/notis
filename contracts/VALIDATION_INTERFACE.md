@@ -164,10 +164,12 @@ cumulativeWork(headers: BlockHeader[]): bigint
 ```
 
 How much work a header claims, and how much a sequence of them claims together. `blockWork` is
-**`2^256 / (target + 1)`**, where `target` is the expansion of the header's `powTargetBits`.
+**`2^256 / (target + 1)`**, where `target` is the expansion of the header's `powTargetBits` —
+`orderingPowTarget`'s **1/256-bit** unit, domain `[0, 65536]`.
 
-> ⚠ **AHEAD OF CODE.** `targetBits` here is `orderingPowTarget`'s **1/256-bit** unit and the domain is
-> `[0, 65536]`; the code still reads whole bits over `[0, 256]`. Both land on this branch.
+**Fork choice does not hand a peer's headers to `cumulativeWork` directly.** It obtains a segment's
+work from `verifyHeaderChain` (below), which sums only a segment that has passed every header-level
+rule; `cumulativeWork` stays total because it is the primitive, and a primitive states its domain once.
 
 **The identity is exact at every whole-bit target, and inclusivity is what makes it so.** `target + 1`
 is precisely `R`, which at `scaledBits = 256n` is `2^(256 − n)`, so the quotient is `2^n` with no
@@ -981,6 +983,49 @@ signatures, or UTXO state transitions.
 This is the sanctioned chain-link check: `applyOrderingBlock` calls it for
 every non-genesis block (the genesis case has no previous block to link to).
 
+### verifyHeaderChain
+
+```
+verifyHeaderChain(
+  headers: BlockHeader[],                 // chronological; expected to start at anchor.height + 1
+  anchor: { prevBlockHash: string; height: number },
+  scheduledTarget: (height: number) => number,
+): { ok: true; work: bigint; hashes: string[] }
+ | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' }
+```
+
+**The header-level rules a chain must pass before any of its work counts**, applied to every header
+in order. For header `i`: `blockHash(header) !== null` (`domain` — the whole
+`verifyHeaderFieldDomains` domain, stated once by the hash) · `verifyProtocolVersion` (`version`) ·
+`height === anchor.height + 1 + i` (`height`) · `prevBlockHash` equals `anchor.prevBlockHash` for
+`i = 0` and `hashes[i − 1]` after (`link`) · `powTargetBits === scheduledTarget(height)` (`target`) ·
+`verifyOrderingBlockPoW(header)` (`pow`). The first failure answers `{ ok: false, index, reason }`
+for the whole segment — **refuse-whole, never skip**: skipping would let the peer choose which of its
+headers count, and a header that cannot be interpreted decides nothing. Nothing partial is exposed.
+
+On success, `work` is `cumulativeWork(headers)` — every header has passed `target` and `pow`, so no
+term is `null` — and `hashes[i]` is `blockHash(headers[i])`. An empty segment is `{ ok: true, work:
+0n, hashes: [] }`: a segment that adds nothing to the anchor carries no work. A non-array `headers`
+is read as the empty segment — the same verdict, and it grants nothing: zero work never exceeds the
+incumbent's and an empty `hashes` admits no block.
+
+**The anchor is the fork point.** Its `prevBlockHash` is the hash of the block the segment must
+build on — for a fork at `GENESIS_HEIGHT` it is `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE → Genesis
+parent hash), the same value apply's genesis branch checks a height-1 block against.
+
+**The schedule is injected, not imported.** This package is stateless and owns no
+`expectedTarget`; the caller passes the network's schedule. A retarget therefore changes the
+caller's function and nothing here — the retarget seam is the parameter.
+
+**These are exactly the header-level checks of the apply funnel** (`applyOrderingBlock`: structure's
+header domain and version, chain link, scheduled target, PoW), run once over a peer's segment before
+it is scored and again by apply when it is applied. The validator signature is **not** among them:
+`validatorSignature` rides the block, not the header, so it stays a body-stage check.
+
+**M-5 applies.** Malformed input — non-object headers, a `NaN` height, an out-of-domain target —
+answers `ok: false`; the function never throws. `NODE_INTERFACE → Fork choice decides on verified
+headers` states how the caller classifies a refusal (window miss versus misbehaviour).
+
 ---
 
 ## Phased Validation Pipeline
@@ -1027,6 +1072,10 @@ Stage 1 (@dagsocial/net — topic validators, before mesh forwarding)
 Stage 2 (@dagsocial/node — after receipt)
   ├── onTx         → validateTx (authorization, transitions, conservation — NODE_INTERFACE)
   ├── POST /posts  → verifyPost (field domains, content, refs, version, karma)
+  ├── Fork resolution (resolveFork — a received block that extends nothing)
+  │     └── verifyHeaderChain over the peer's segment, before any work is
+  │           compared or any block fetched (NODE_INTERFACE → Fork choice
+  │           decides on verified headers)
   └── Block receipt (applyOrderingBlock — the funnel every apply path passes
         through: gossip, sync, reorg — so no path can skip it)
         ├── verifyOrderingBlockStructure
