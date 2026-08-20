@@ -473,20 +473,26 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32),
   };
 
-  /**
-   * One candidate per box type the rule must not touch. Named for what the list
-   * is rather than how long it is, so a new box type does not make the name
-   * false.
-   */
-  const NON_PROOF_OUTPUTS: [string, AnyBoxCandidate][] = [
-    ['karma', karmaOut],
-    ['credit', { boxType: 'credit', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) }],
-    ['bond', { boxType: 'bond', value: 5n, createdAtBlock: 0, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) }],
-    ['post_lock', { boxType: 'post_lock', value: 5n, createdAtBlock: 0, originalValue: 5n, owner: new Uint8Array(32) }],
-    ['vouch', { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) }],
-    ['like_accrual', { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32) }],
-    ['vouch_escrow', { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0, owner: new Uint8Array(32), releaseAtBlock: 42 }],
-  ];
+  // One candidate per non-genesis_proof box type. Keyed on the union so the
+  // compiler refuses a missing row (TYPES_INTERFACE → Layout — Boxes). Whether
+  // a user transaction may *create* emission/treasury/fee/karma_pool is node's
+  // question; this rule must pass every one of them.
+  const NON_PROOF_OUTPUTS: Record<
+    Exclude<AnyBoxCandidate['boxType'], 'genesis_proof'>,
+    AnyBoxCandidate
+  > = {
+    karma: karmaOut,
+    credit: { boxType: 'credit', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) },
+    bond: { boxType: 'bond', value: 5n, createdAtBlock: 0, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) },
+    post_lock: { boxType: 'post_lock', value: 5n, createdAtBlock: 0, originalValue: 5n, owner: new Uint8Array(32) },
+    vouch: { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) },
+    like_accrual: { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32) },
+    vouch_escrow: { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0, owner: new Uint8Array(32), releaseAtBlock: 42 },
+    emission: { boxType: 'emission', value: 100n, createdAtBlock: 0 },
+    treasury: { boxType: 'treasury', value: 100n, createdAtBlock: 0 },
+    fee: { boxType: 'fee', value: 100n, createdAtBlock: 0 },
+    karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: 0 },
+  };
 
   it('rejects a transaction that outputs a genesis_proof box', () => {
     expect(verifyTxStructure(txWith([proofOut(new Uint8Array([1]))]))).toEqual({
@@ -526,7 +532,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     expect(verifyTxStructure(tx)).toEqual({ valid: false, error: REASON });
   });
 
-  it.each(NON_PROOF_OUTPUTS)('leaves a %s output alone', (_label, out) => {
+  it.each(Object.entries(NON_PROOF_OUTPUTS))('leaves a %s output alone', (_label, out) => {
     expect(verifyTxStructure(txWith([out]))).toEqual({ valid: true });
   });
 
