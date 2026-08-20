@@ -2216,11 +2216,9 @@ Six rules govern it:
    pnpm -r test` is the gate before any commit or PR — **the build is a separate obligation, not a
    side effect of testing.**
 4. **Spawned processes are exempt and still need a real build.** A vitest alias exists only inside
-   the vitest process. `packages/node/test/e2e/*` spawns `dist/index.js` as a child process, so any
-   run including that suite requires a genuine build first. Node's `globalSetup` build therefore
-   stays, **gated on the resolved exclude list**: it skips while `'test/e2e/**'` sits in
-   `config.exclude`, and re-arms by itself when the post-P2-D rewrite removes that exclusion. The
-   gate fails safe — an exclude string it does not recognise builds rather than skips.
+   the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
+   artefact, so it needs a genuine build first and no alias reaches it. No suite in the tree spawns
+   one; the rule binds any that does.
 5. **Test trees are typechecked — all five packages, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero
@@ -2228,11 +2226,6 @@ Six rules govern it:
    box literals to `CandidateOf<>` drove the count UP (409 → 424), because node's fixtures are
    stored boxes and transaction candidates wearing one shape, told apart only per site by asking
    what reads the value.
-   **`packages/node/test/e2e/**` is the one piece of code in the repo that is NOT typechecked, and
-   that is a choice rather than an oversight.** It is excluded in both `tsconfig.test.json` and
-   `vitest.config.ts`, for the same reason in both: the suite is parked until its post-P2-D rewrite
-   (rule 4), so paying down type debt there would be paying it against code slated to be replaced.
-   When that rewrite lands, both exclusions come off together.
    What the wired trees caught immediately, none of it visible before: a mock summing karma as a JS
    number behind a `bigint` interface whose value the route renders with `.toString()` (wrong output
    past 2^53); fixtures seeding boxes whose `stored.id !== computeBoxId(stored)`, violating the
@@ -2243,13 +2236,12 @@ Six rules govern it:
    `pnpm -r typecheck` covers what the suites actually execute — an unchecked test tree is exactly
    where a new *required* field (e.g. `UtxoDeps.networkType`) hides as a runtime surprise, and where
    mocks of deleted fields rot silently (a header test once mocked a deleted struct's field for
-   units after the struct died). Three constraints, all measured 2026-08-08: the config extends `tsconfig.base.json`
+   units after the struct died). Two constraints, both measured 2026-08-08: the config extends `tsconfig.base.json`
    **directly**, not the package `tsconfig.json` — `extends` cannot *unset* the inherited
    `rootDir: "src"`, and the cross-package `paths` files below then violate it (TS6059); it declares
    `paths` mapping `@dagsocial/*` to `../<pkg>/src/index.ts`, mirroring the vitest alias above —
    without it `tsc` follows `exports` to `dist` types and re-opens the stale-`dist` class this
-   section exists to kill; and node's parked `test/e2e/**` stays excluded until its post-P2-D
-   rewrite. Baseline debt when this rule was written: **455 errors** (types 18 · wire 1 ·
+   section exists to kill. Baseline debt when this rule was written: **455 errors** (types 18 · wire 1 ·
    validation 6 · net 21 · node 409), **all now zero**.
    **No `types: ["vitest/globals"]` entry is needed** — but not for the reason first recorded
    here. The original claim, "no test file uses bare vitest globals", is **false**:

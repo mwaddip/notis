@@ -315,7 +315,7 @@ to duplicate it; the duplicate drifted, the contract doesn't.)
 
 ```bash
 pnpm build          # Build all 5 packages
-pnpm test           # Every package's suite (test/e2e/** is excluded — see its README)
+pnpm test           # Every package's suite
 pnpm typecheck      # Type-check all packages, src and test trees
 ```
 

@@ -588,8 +588,7 @@ defect. **It belongs to the supply set.**
 > ✅ **`networkMode` → `networkType` landed in P2-A phase 4**, in the same commit as the demo
 > UI change because renaming a response field is a breaking API change. `totalKarma` and
 > `totalCredits` are **decimal strings**, not numbers — they are `bigint` server-side and
-> JSON has no such type. The parked e2e harness's `waitForReady` picks up the new name when
-> it is rewritten (`test/e2e/README.md`).
+> JSON has no such type.
 >
 > ✅ **`identityCount` is gone, 2026-08-07.** The demo UI used to render `s.identityCount` in
 > its status bar — a field this endpoint has never emitted — so a live node showed
