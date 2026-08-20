@@ -79,6 +79,7 @@ import {
   getBondFor,
   getBondsInvitedAt,
   getPostLockBox,
+  purgeRefusedHeaders,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -99,6 +100,7 @@ import {
   decodeTx,
   encodePost,
   MAX_REORG_DEPTH,
+  GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
@@ -240,7 +242,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // 1. Chain-link check
   if (currentHeight === 0) {
     // Genesis: prevBlockHash must be all zeros
-    if (block.header.prevBlockHash !== '0000000000000000000000000000000000000000000000000000000000000000') {
+    if (block.header.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) {
       console.warn(`Rejected block height=${block.header.height}: genesis prevBlockHash mismatch`);
       abortBlockJournal();
       return false;
@@ -391,6 +393,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // without a journal — so it tracks the depth `findForkPoint` can walk back
   // to rather than restating the number.
   purgeOldJournals(block.header.height - MAX_REORG_DEPTH);
+  purgeRefusedHeaders(block.header.height - MAX_REORG_DEPTH);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is

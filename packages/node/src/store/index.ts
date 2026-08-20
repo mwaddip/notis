@@ -127,3 +127,9 @@ export {
   deleteIdentityRecord,
 } from './identity-records.js';
 export type { IdentityRecord } from './identity-records.js';
+
+export {
+  insertRefusedHeader,
+  anyRefusedHeader,
+  purgeRefusedHeaders,
+} from './refused-headers.js';

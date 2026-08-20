@@ -9,12 +9,14 @@ import {
 import {
   computePostId,
   MAX_REORG_DEPTH,
+  GENESIS_PREV_BLOCK_HASH,
+  EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
   ReaderError,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
-import { blockHash, cumulativeWork } from '@dagsocial/validation';
+import { blockHash, cumulativeWork, verifyHeaderChain } from '@dagsocial/validation';
 import type {
   Post,
   KarmaBox,
@@ -179,6 +181,25 @@ async function importCorruptState() {
       height: number,
       cause: unknown,
     ) => Error;
+  };
+}
+
+async function importHandleBlock() {
+  return (await import('../../src/services/handle-block.js')) as unknown as {
+    handleOrderingBlock: (
+      block: OrderingBlock,
+      fromPeerId: string,
+      net: ForkResolutionNet,
+      dagService?: unknown,
+    ) => boolean;
+  };
+}
+
+async function importRefusedHeaders() {
+  return (await import('../../src/store/refused-headers.js')) as {
+    insertRefusedHeader: (hash: string, height: number, refusedAt: number) => void;
+    anyRefusedHeader: (hashes: string[]) => boolean;
+    purgeRefusedHeaders: (belowHeight: number) => void;
   };
 }
 
@@ -1876,7 +1897,7 @@ describe('reorg abort', () => {
 
     const forkResolution = await importForkResolution();
     expect(() => forkResolution.reorg(1, [goodB2, badB3])).toThrow(
-      'reorg failed: block at height 3 rejected',
+      'reorg rejected block at height 3',
     );
 
     // Chain and DB: byte-for-byte the pre-reorg state (SQLite rollback).
@@ -1982,12 +2003,15 @@ function stubNet(
 ): ForkResolutionNet & {
   blockRequests: Array<{ startHeight: number; endHeight: number }>;
   askedPeers: string[];
+  penalties: Array<{ peerId: string; kind: string; reason: string }>;
 } {
   const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
   const askedPeers: string[] = [];
+  const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
   return {
     blockRequests,
     askedPeers,
+    penalties,
     getConnectedPeers: () => connected,
     requestHeaders: async (_startHeight: number, _maxCount: number, peerId: string) => {
       askedPeers.push(peerId);
@@ -1998,10 +2022,13 @@ function stubNet(
       blockRequests.push({ startHeight, endHeight });
       return answer;
     },
+    penalizePeer: (peerId: string, kind: string, reason: string) => {
+      penalties.push({ peerId, kind, reason });
+    },
   };
 }
 
-describe('resolveFork — never reorg to a shorter chain', () => {
+describe('resolveFork — the reorg applies exactly the verified chain it scored', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(async () => {
     try {
@@ -2012,19 +2039,18 @@ describe('resolveFork — never reorg to a shorter chain', () => {
     vi.resetModules();
   });
 
-  it('an empty block response does not truncate our chain to the fork point', async () => {
+  it('an empty block response refuses with a transient penalty', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const net = stubNet(scenario.theirHeaders, []);
     await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-withholding');
 
-    // The peer was asked for the whole range above the fork — the reorg was
-    // refused on its answer, not skipped earlier in fork choice.
     expect(net.blockRequests).toEqual([{ startHeight: 2, endHeight: 4 }]);
 
     expect(ordering.getCurrentHeight()).toBe(3);
@@ -2032,29 +2058,24 @@ describe('resolveFork — never reorg to a shorter chain', () => {
       expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
     }
 
-    // A stated refusal, naming the peer.
-    expect(
-      warn.mock.calls.some(
-        ([msg]) => typeof msg === 'string'
-          && msg.includes('peer-withholding')
-          && msg.includes('aborting reorg'),
-      ),
-    ).toBe(true);
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'transient' }),
+    ]);
   });
 
-  it('a short-but-nonempty response does not lower our tip', async () => {
+  it('a short-but-nonempty response refuses with a transient penalty', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // One block for a three-block range: nothing is empty, and the tip would
-    // still land at 2 against the 3 it started at.
+    const net = stubNet(scenario.theirHeaders, [scenario.theirBlocks[0]!]);
     await forkResolution.resolveFork(
       scenario.competingBlock,
-      stubNet(scenario.theirHeaders, [scenario.theirBlocks[0]!]),
+      net,
       'peer-withholding',
     );
 
@@ -2062,6 +2083,10 @@ describe('resolveFork — never reorg to a shorter chain', () => {
     for (const h of [1, 2, 3]) {
       expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
     }
+
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'transient' }),
+    ]);
   });
 
   it('a genuinely longer chain still replaces ours', async () => {
@@ -2326,5 +2351,625 @@ describe('reorg — a missing AVL version at the fork height', () => {
     const { ordering, forkResolution } = await chainOnAProver();
     expect(() => forkResolution.reorg(0, [])).not.toThrow();
     expect(ordering.getCurrentHeight()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Identity mismatch — chain A's headers scored, chain B's blocks delivered
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — identity mismatch', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('headers of chain A scored, valid blocks of chain B delivered → refused, misbehavior', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Height 1 — shared
+    await mineNextBlock(bc);
+
+    // Chain A: three blocks at heights 2..4
+    const chainABlocks: OrderingBlock[] = [];
+    for (const h of [2, 3, 4]) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      chainABlocks.push(b);
+    }
+    // Revert chain A
+    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+
+    // Chain B: three blocks at the same heights, different content
+    const chainBBlocks: OrderingBlock[] = [];
+    for (const h of [2, 3, 4]) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      chainBBlocks.push(b);
+    }
+    // Revert chain B, rebuild our chain (2 blocks)
+    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Serve chain A's headers but chain B's blocks
+    const chainAHeaders = [...chainABlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    const net = stubNet(chainAHeaders, chainBBlocks);
+    await forkResolution.resolveFork(chainABlocks[2]!, net, 'peer-mixed');
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #5(b) pinned closed — headers claiming a target above the schedule
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — #5(b) pinned closed', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('headers claiming a wrong target are refused at verification, no block request', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Build fake headers at height 2..4 with a wrong powTargetBits
+    const fakeHeaders: BlockHeader[] = [];
+    for (let h = 4; h >= 2; h--) {
+      fakeHeaders.push({
+        height: h,
+        prevBlockHash: '00'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: 9999,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 0,
+        validatorId: new Uint8Array(32),
+      });
+    }
+    // Include the shared block at height 1 for the fork point
+    fakeHeaders.push(ordering.getOrderingBlock(1)!.header);
+
+    const net = stubNet(fakeHeaders, []);
+    await forkResolution.resolveFork(
+      { header: fakeHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-fake-target',
+    );
+
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tampered headers — one tampered header per reason
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — tampered headers refused before any block request', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('window miss (f=0, segment starting above height 1) → refused, no penalty', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Build a short chain (height 1 only)
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Peer headers are at very high heights (no overlap except genesis)
+    // This makes findForkPoint return GENESIS_HEIGHT (0), and the segment
+    // starts at height > 1, which is a window miss.
+    const farHeaders: BlockHeader[] = [];
+    for (let h = 50; h >= 42; h--) {
+      farHeaders.push({
+        height: h,
+        prevBlockHash: '00'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: testConfig.orderingBlockPowTargetBits,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 0,
+        validatorId: new Uint8Array(32),
+      });
+    }
+
+    const net = stubNet(farHeaders, []);
+    await forkResolution.resolveFork(
+      { header: farHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-window',
+    );
+
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Work rule — equal work keeps ours, strictly more → reorg
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — work rule', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('equal work keeps our chain — ties keep the incumbent', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Height 1 — shared
+    await mineNextBlock(bc);
+
+    // Build one competing block at height 2 (same work as ours)
+    const theirBlock = await makeApplicableBlock({ height: 2 });
+    expect(applyOrderingBlock(theirBlock)).toBe(true);
+    forkResolution.revertBlock(2);
+
+    // Mine our own height 2
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const theirHeaders = [theirBlock.header, ordering.getOrderingBlock(1)!.header];
+    const net = stubNet(theirHeaders, [theirBlock]);
+    await forkResolution.resolveFork(theirBlock, net, 'peer-equal');
+
+    // Our chain unchanged — equal work, incumbent wins
+    expect(ordering.getCurrentHeight()).toBe(2);
+    expect(net.blockRequests).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Refused headers — the memory: body-stage refusal → mark → refused again
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — refused headers', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a header-stage refusal writes no mark', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const rh = await importRefusedHeaders();
+    const forkResolution = await importForkResolution();
+    const ordering = await importOrdering();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+
+    // Serve headers with a bad target — verification fails (header-stage)
+    const badHeaders: BlockHeader[] = [
+      {
+        height: 2,
+        prevBlockHash: '00'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: 9999,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 0,
+        validatorId: new Uint8Array(32),
+      },
+      ordering.getOrderingBlock(1)!.header,
+    ];
+
+    const net = stubNet(badHeaders, []);
+    await forkResolution.resolveFork(
+      { header: badHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-bad-target',
+    );
+
+    // No mark written for a header-stage refusal
+    const hash = blockHash(badHeaders[0]!);
+    if (hash) expect(rh.anyRefusedHeader([hash])).toBe(false);
+  });
+
+  it('purge on apply removes marks below tip − MAX_REORG_DEPTH', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const rh = await importRefusedHeaders();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Seed a refused header at a low height
+    rh.insertRefusedHeader('old-hash', 1, 5);
+    expect(rh.anyRefusedHeader(['old-hash'])).toBe(true);
+
+    // Mine enough blocks so that height 1 is below tip − MAX_REORG_DEPTH
+    for (let i = 0; i < MAX_REORG_DEPTH + 2; i++) {
+      await mineNextBlock(bc);
+    }
+
+    // The purge ran at each apply — the mark is gone
+    expect(rh.anyRefusedHeader(['old-hash'])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Entry — handleOrderingBlock
+// ---------------------------------------------------------------------------
+
+describe('handleOrderingBlock — entry', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('an extending block applies and returns true', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const handleBlock = await importHandleBlock();
+    const ordering = await importOrdering();
+
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    const nextBlock = await makeApplicableBlock({ height: 2 });
+    const net = stubNet([], []);
+    const result = handleBlock.handleOrderingBlock(nextBlock, 'peer-a', net);
+
+    expect(result).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(2);
+  });
+
+  it('a block already held is a no-op — no apply, no header request, returns true', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const handleBlock = await importHandleBlock();
+    const ordering = await importOrdering();
+
+    await mineNextBlock(bc);
+    const held = ordering.getOrderingBlock(1)!;
+
+    const net = stubNet([], []);
+    const result = handleBlock.handleOrderingBlock(held, 'peer-a', net);
+
+    expect(result).toBe(true);
+    // No header request
+    expect(net.askedPeers).toEqual([]);
+    // Height unchanged — no apply
+    expect(ordering.getCurrentHeight()).toBe(1);
+  });
+
+  it('a non-extending pulled block returns false and triggers resolution', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const handleBlock = await importHandleBlock();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const net = stubNet(scenario.theirHeaders, scenario.theirBlocks);
+    const result = handleBlock.handleOrderingBlock(
+      scenario.competingBlock,
+      'peer-a',
+      net,
+    );
+
+    expect(result).toBe(false);
+
+    // Wait for the launched resolution to complete
+    await vi.waitFor(() => {
+      expect(net.askedPeers.length).toBeGreaterThan(0);
+    }, { timeout: 5000 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tampered headers — one per reason, refused before any block request,
+// misbehaviour.
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — one tampered header per reason', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  async function setupChainOfThree() {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+    return { bc, ordering, forkResolution };
+  }
+
+  function headersWithTampered(
+    ordering: Awaited<ReturnType<typeof importOrdering>>,
+    tamper: (h: BlockHeader) => BlockHeader,
+  ): BlockHeader[] {
+    const shared = ordering.getOrderingBlock(1)!.header;
+    const legit = ordering.getOrderingBlock(2)!.header;
+    const tampered = tamper({ ...legit });
+    return [tampered, shared];
+  }
+
+  it('wrong version → refused, misbehaviour, no block request', async () => {
+    const { ordering, forkResolution } = await setupChainOfThree();
+    const headers = headersWithTampered(ordering, (h) => {
+      h.protocolVersion = 999;
+      return h;
+    });
+    const net = stubNet(headers, []);
+    await forkResolution.resolveFork(
+      { header: headers[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net, 'peer-tamper',
+    );
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'misbehavior' })]);
+  });
+
+  it('height gap → refused, misbehaviour, no block request', async () => {
+    const { ordering, forkResolution } = await setupChainOfThree();
+    const headers = headersWithTampered(ordering, (h) => {
+      h.height = 5;
+      return h;
+    });
+    const net = stubNet(headers, []);
+    await forkResolution.resolveFork(
+      { header: headers[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net, 'peer-tamper',
+    );
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'misbehavior' })]);
+  });
+
+  it('wrong prevBlockHash (link) → refused, misbehaviour, no block request', async () => {
+    const { ordering, forkResolution } = await setupChainOfThree();
+    const headers = headersWithTampered(ordering, (h) => {
+      h.prevBlockHash = 'ff'.repeat(32);
+      return h;
+    });
+    const net = stubNet(headers, []);
+    await forkResolution.resolveFork(
+      { header: headers[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net, 'peer-tamper',
+    );
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'misbehavior' })]);
+  });
+
+  it('wrong target → refused, misbehaviour, no block request', async () => {
+    const { ordering, forkResolution } = await setupChainOfThree();
+    const headers = headersWithTampered(ordering, (h) => {
+      h.powTargetBits = 9999;
+      return h;
+    });
+    const net = stubNet(headers, []);
+    await forkResolution.resolveFork(
+      { header: headers[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net, 'peer-tamper',
+    );
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'misbehavior' })]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Body-stage mark round trip — the load-bearing refused-headers test
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — body-stage refusal → mark → re-serve → continuation → unrelated', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('full mark lifecycle: forge → mark → re-serve refused → continuation refused → unrelated adopted', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const rh = await importRefusedHeaders();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Shared height 1
+    await mineNextBlock(bc);
+
+    // Build the forged chain: valid headers (real PoW), forged validator
+    // signature on the last block. Apply the first two honestly, then build
+    // a third with forged signature.
+    const forger = makeTestIdentity();
+    const forgedBlocks: OrderingBlock[] = [];
+    for (const h of [2, 3]) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      forgedBlocks.push(b);
+    }
+    // Height 4: forged signature — validatorId is the miner's, signature is the forger's
+    const forgedB4 = await makeApplicableBlock({ height: 4, signWith: forger.privateKey });
+    forgedBlocks.push(forgedB4);
+
+    // Revert the honest ones and rebuild our chain (height 2-3)
+    for (let h = 3; h > 1; h--) forkResolution.revertBlock(h);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    const forgedHeaders = [...forgedBlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+
+    // Save pre-reorg state
+    const preHashes = [1, 2, 3].map(
+      (h) => blockHash(ordering.getOrderingBlock(h)!.header)!,
+    );
+
+    // --- Step 1: first serve — reorg attempted, rolled back, mark written ---
+    const net1 = stubNet(forgedHeaders, forgedBlocks);
+    await forkResolution.resolveFork(forgedBlocks[2]!, net1, 'peer-forger');
+
+    // Chain and prover at pre-reorg state
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(preHashes[h - 1]);
+    }
+
+    // Mark present for the forged block's hash
+    const forgedHash = blockHash(forgedB4.header)!;
+    expect(rh.anyRefusedHeader([forgedHash])).toBe(true);
+
+    // Misbehaviour recorded
+    expect(net1.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+
+    // --- Step 2: same chain served again → refused at memory step, no block request ---
+    const net2 = stubNet(forgedHeaders, forgedBlocks);
+    await forkResolution.resolveFork(forgedBlocks[2]!, net2, 'peer-forger');
+
+    expect(net2.blockRequests).toEqual([]);
+    expect(net2.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // --- Step 3: continuation (same chain + one more block) → refused ---
+    // Add a hypothetical height-5 header to the forged chain
+    const continuationHeaders = [
+      {
+        height: 5,
+        prevBlockHash: forgedHash,
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: testConfig.orderingBlockPowTargetBits,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 0,
+        validatorId: new Uint8Array(32),
+      } as BlockHeader,
+      ...forgedHeaders,
+    ];
+    const net3 = stubNet(continuationHeaders, []);
+    await forkResolution.resolveFork(
+      { header: continuationHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [], pruneEntries: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net3, 'peer-forger',
+    );
+
+    // Refused at the memory step (the forged hash is an ancestor)
+    expect(net3.blockRequests).toEqual([]);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // --- Step 4: unrelated valid heavier chain from the same peer → adopted ---
+    // Build an honest, heavier chain
+    for (let h = 3; h > 1; h--) forkResolution.revertBlock(h);
+    const honestBlocks: OrderingBlock[] = [];
+    for (const h of [2, 3, 4]) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      honestBlocks.push(b);
+    }
+    // Revert and restore our chain
+    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    const honestHeaders = [...honestBlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    const net4 = stubNet(honestHeaders, honestBlocks);
+    await forkResolution.resolveFork(honestBlocks[2]!, net4, 'peer-forger');
+
+    // Adopted — heights 2-4 are now the honest blocks
+    expect(ordering.getCurrentHeight()).toBe(4);
+    for (const [i, block] of honestBlocks.entries()) {
+      expect(blockHash(ordering.getOrderingBlock(i + 2)!.header)).toBe(blockHash(block.header));
+    }
   });
 });
