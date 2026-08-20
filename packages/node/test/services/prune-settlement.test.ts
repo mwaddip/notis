@@ -887,7 +887,7 @@ describe('prune settlement stump insert (P2-F F1)', () => {
 
     // ⛔ Height 1 carries both post TRANSACTIONS. A block carries its posts as
     // embedded transactions, so applying it stores the content and derives
-    // `block_topology` from `tx.post` (NODE_INTERFACE → Post confirmation).
+    // `block_topology` from `tx.post` (NODE_INTERFACE → Block Topology).
     const confirmBlock = await makeApplicableBlock({
       utxoTxs: [root.tx, reply.tx],
     });

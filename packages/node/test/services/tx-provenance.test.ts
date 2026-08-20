@@ -185,7 +185,7 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     // any key added or reordered changes the id, so the store path adds nothing.
     // The settled height reaches the `created_at_block` column via the open
     // journal — the only place `insertBox` can get it
-    // (NODE_INTERFACE → Box materialization).
+    // (NODE_INTERFACE → `created_at_block` is a store column, never a consensus input).
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
