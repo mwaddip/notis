@@ -142,7 +142,6 @@ type _AssertBoxTypesMatch =
       ? true
       : never
     : never;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _boxTypeCheck: _AssertBoxTypesMatch = true;
 
 /**

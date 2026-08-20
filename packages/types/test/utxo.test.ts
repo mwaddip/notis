@@ -1541,12 +1541,17 @@ describe('boxRecordFromBytes', () => {
 
   for (const [label, candidate] of ALL_BOX_TYPE_PAIRS) {
     it(`round-trips ${label}`, () => {
+      // The candidate goes in whole and comes back whole — every field is
+      // compared, with nothing dropped from either side of the expectation.
       const decoded = boxRecordFromBytes(boxRecordBytes(candidate, GOLDEN_TX_ID, 3));
       expect(decoded).toEqual({ candidate, txId: GOLDEN_TX_ID, index: 3 });
     });
   }
 
   it('re-encoding a decoded record reproduces the bytes exactly', () => {
+    // The other direction of the same claim, at byte level. `toEqual` on the
+    // value could pass while a field the reader ignores rides along in the
+    // bytes; this cannot.
     for (const [, candidate] of ALL_BOX_TYPE_PAIRS) {
       const bytes = boxRecordBytes(candidate, GOLDEN_TX_ID, 3);
       const back = boxRecordFromBytes(bytes);
