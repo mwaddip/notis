@@ -29,7 +29,7 @@ import {
   encodeUtxoTxTree,
   decodeUtxoTxTree,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxBase, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
 
 /**
  * The height every fixture in this file is built at, and `ac 02` wherever a
@@ -179,13 +179,34 @@ describe('boxes', () => {
       expect(computeBoxId(withId)).toBe(computeBoxId(box));
     });
 
-    it('works for all box types', () => {
-      expect(() => computeBoxId(makeCreditBox())).not.toThrow();
-      expect(() => computeBoxId(makeBondBox())).not.toThrow();
-      expect(() => computeBoxId(makeVouchBox())).not.toThrow();
-      expect(() => computeBoxId(makeLikeAccrualBox())).not.toThrow();
-      expect(() => computeBoxId(makeVouchEscrowBox())).not.toThrow();
-    });
+    // Keyed on the union so the compiler catches a missing arm
+    // (TYPES_INTERFACE → What a new box type costs).
+    const BOX_FOR_ID = {
+      karma: makeKarmaBox(),
+      credit: makeCreditBox(),
+      genesis_proof: {
+        boxType: 'genesis_proof', value: 0n, createdAtBlock: FIXTURE_HEIGHT,
+        payload: new Uint8Array([1, 2, 3]), txId: FIXTURE_TX_ID, index: 10,
+      },
+      bond: makeBondBox(),
+      post_lock: {
+        boxType: 'post_lock', value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n,
+        owner, txId: FIXTURE_TX_ID, index: 7,
+      },
+      vouch: makeVouchBox(),
+      vouch_escrow: makeVouchEscrowBox(),
+      like_accrual: makeLikeAccrualBox(),
+      emission: { boxType: 'emission', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 11 },
+      treasury: { boxType: 'treasury', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 12 },
+      fee: { boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 13 },
+      karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 14 },
+    } satisfies Record<BoxCandidate['boxType'], unknown>;
+
+    for (const [boxType, box] of Object.entries(BOX_FOR_ID)) {
+      it(`works for ${boxType}`, () => {
+        expect(() => computeBoxId(box as Omit<BoxBase, 'id'>)).not.toThrow();
+      });
+    }
 
     it('computeBoxId differs when nonActivity differs', () => {
       const box1 = makeKarmaBox({ value: 100n });
@@ -1458,73 +1479,75 @@ describe('boxRecordBytes', () => {
  */
 describe('boxRecordFromBytes', () => {
   /**
-   * One candidate per box type, each exercising a field the others do not.
-   *
-   * Named for what the list IS rather than for how long it is — a count in the
-   * name is false the first time a box type is added, and the name is not what
-   * the compiler checks.
+   * One or more candidates per box type, each exercising a field the others do
+   * not. Keyed on the union so the compiler catches a missing arm
+   * (TYPES_INTERFACE → What a new box type costs).
    */
-  const ALL_BOX_TYPES: [string, AnyBoxCandidate][] = [
-    ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
-    ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, nonActivity: true }],
-    ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
-    ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
+  const ALL_BOX_TYPES = {
+    karma: [
+      ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
+      ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, nonActivity: true }],
+    ],
+    credit: [
+      ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
+      ['credit (opt present)', { ...GOLDEN_CREDIT_CANDIDATE, lockedUntilBlock: 4096 }],
+    ],
     // The same trailing fields under two tags, at values the other never
     // carries. Both rows are here because the pair is one layout with two tags:
     // a reader that walked the vouch arm as a bond would round-trip fine on the
     // fields and fail only on the discriminant.
-    ['bond', {
-      boxType: 'bond', value: 20n, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter,
+    bond: [['bond', {
+      boxType: 'bond' as const, value: 20n, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
-    }],
-    ['post_lock', {
-      boxType: 'post_lock', value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n, owner,
-    }],
-    ['vouch', {
-      boxType: 'vouch', value: 1n, createdAtBlock: FIXTURE_HEIGHT,
+    }]],
+    post_lock: [['post_lock', {
+      boxType: 'post_lock' as const, value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n, owner,
+    }]],
+    vouch: [['vouch', {
+      boxType: 'vouch' as const, value: 1n, createdAtBlock: FIXTURE_HEIGHT,
       voucherId: owner, targetId: inviter,
-    }],
+    }]],
     // The escrow the unvouch outputs, and the marker the like outputs. The
     // escrow is the only arm mixing a `b32` with a bare `vlqU`; the marker is
     // the only one whose tail is a single `b32`, so a reader expecting a field
     // after the key fails on it and on nothing else.
-    ['vouch_escrow', {
-      boxType: 'vouch_escrow', value: 3n, createdAtBlock: FIXTURE_HEIGHT, owner,
+    vouch_escrow: [['vouch_escrow', {
+      boxType: 'vouch_escrow' as const, value: 3n, createdAtBlock: FIXTURE_HEIGHT, owner,
       releaseAtBlock: 1_060,
-    }],
-    ['like_accrual', {
-      boxType: 'like_accrual', value: LIKE_KARMA_COST,
+    }]],
+    like_accrual: [['like_accrual', {
+      boxType: 'like_accrual' as const, value: LIKE_KARMA_COST,
       createdAtBlock: FIXTURE_HEIGHT, author: inviter,
-    }],
-    ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
-    ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
+    }]],
+    genesis_proof: [
+      ['genesis_proof', makeProofCandidate(PROOF_PAYLOAD)],
+      ['genesis_proof (empty payload)', makeProofCandidate(new Uint8Array(0))],
+    ],
     // The empty-tail rows. A reader that assumed at least one field followed
     // the shared prefix would fail here and nowhere else — every other row
     // above walks a tail, so nothing in this list exercises a box that ends at
     // the prefix except these four.
-    ['emission', EMISSION_CANDIDATE],
-    ['treasury', TREASURY_CANDIDATE],
-    ['fee', FEE_CANDIDATE],
+    emission: [['emission', EMISSION_CANDIDATE]],
+    treasury: [['treasury', TREASURY_CANDIDATE]],
+    fee: [['fee', FEE_CANDIDATE]],
     // At its genesis value rather than at the shared 100: the pool's ordinary
     // state is `BOX_VALUE_BOUND - 1` (TYPES_INTERFACE → KarmaPoolBox), so the
     // row that round-trips is the one carrying the nine-byte value.
-    ['karma_pool', { boxType: 'karma_pool', value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT }],
-  ];
+    karma_pool: [['karma_pool', { boxType: 'karma_pool' as const, value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT }]],
+  } satisfies Record<BoxCandidate['boxType'], readonly (readonly [string, AnyBoxCandidate])[]>;
 
-  for (const [label, candidate] of ALL_BOX_TYPES) {
+  const ALL_BOX_TYPE_PAIRS: [string, AnyBoxCandidate][] =
+    Object.values(ALL_BOX_TYPES).flat() as [string, AnyBoxCandidate][];
+
+  for (const [label, candidate] of ALL_BOX_TYPE_PAIRS) {
     it(`round-trips ${label}`, () => {
-      // The candidate goes in whole and comes back whole — every field is
-      // compared, with nothing dropped from either side of the expectation.
       const decoded = boxRecordFromBytes(boxRecordBytes(candidate, GOLDEN_TX_ID, 3));
       expect(decoded).toEqual({ candidate, txId: GOLDEN_TX_ID, index: 3 });
     });
   }
 
   it('re-encoding a decoded record reproduces the bytes exactly', () => {
-    // The other direction of the same claim, at byte level. `toEqual` on the
-    // value could pass while a field the reader ignores rides along in the
-    // bytes; this cannot.
-    for (const [, candidate] of ALL_BOX_TYPES) {
+    for (const [, candidate] of ALL_BOX_TYPE_PAIRS) {
       const bytes = boxRecordBytes(candidate, GOLDEN_TX_ID, 3);
       const back = boxRecordFromBytes(bytes);
       expect(Buffer.from(boxRecordBytes(back.candidate as BoxCandidate, back.txId, back.index)))

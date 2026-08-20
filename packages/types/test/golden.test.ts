@@ -23,6 +23,7 @@ import {
 } from './golden/harness.js';
 import './golden/probe.js';   // registers the `probe` struct codec
 import './golden/structs.js'; // registers `postFields` / `boxContent` / `pruneEntry`
+import { BOX_TAG_BY_TYPE } from './golden/structs.js';
 
 // ---------------------------------------------------------------------------
 // The corpus
@@ -67,6 +68,28 @@ function runVectors(file: string, vectors: GoldenVector[]): void {
 for (const file of FILES) {
   runVectors(file, loadVectors(file));
 }
+
+// ---------------------------------------------------------------------------
+// Box-type coverage — every box type has at least one vector in boxes.json
+// (TYPES_INTERFACE → Layout — Boxes, "independent in its numbers, not in its
+// coverage").
+// ---------------------------------------------------------------------------
+
+describe('boxes.json — box-type coverage', () => {
+  const vectors = loadVectors('boxes.json');
+  const covered = new Set(
+    vectors
+      .filter((v) => v.codec === 'boxContent')
+      .map((v) => (v.value as { boxType: string }).boxType),
+  );
+  const required = Object.keys(BOX_TAG_BY_TYPE) as (keyof typeof BOX_TAG_BY_TYPE)[];
+
+  it('carries at least one vector per box type', () => {
+    for (const boxType of required) {
+      expect(covered, `missing vector for boxType '${boxType}'`).toContain(boxType);
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Rejections — the corpus's other half
