@@ -644,13 +644,14 @@ describe('positional serialization', () => {
   // Two-sided movement pins
   // -------------------------------------------------------------------------
 
-  describe('movement pins — every byte moved, and to exactly here', () => {
+  describe('movement pins — each format has exactly one encoding', () => {
     /**
      * Consensus pin for the post encoding format.
      *
-     * Three recorded values of this fixture's id — one per format the layout
-     * has had. The test asserts the current one (`POST_TX_ID`) and keeps the
-     * other two so a silent revisit of an earlier shape fails.
+     * Four recorded values of this fixture's id — three earlier layouts and
+     * the current one. The test asserts the current (`POST_TX_ID`) and that the
+     * id matches none of the earlier three, so a silent revisit of any earlier
+     * shape fails.
      */
     const PRE_T2B_ID = '586ff286a6309e50e07f429cff6bccb026ccf3d6e1b67b7036e654c8c2a487cc';
     const CBOR_ID = '9a1155ead5ddfb05d495a34df1f4be31482e2df4f9094925ba135b4679e0d114';
@@ -666,9 +667,9 @@ describe('positional serialization', () => {
       type: 'regular' as const,
     };
 
-    it('Post: the sub-block wrapper is dead and the post itself is the pin', () => {
-      // ⛔ Three recorded values of this fixture's id, one per format the
-      // layout has had. This pins the five-field post layout
+    it('Post: the five-field post layout pins to POST_TX_ID', () => {
+      // ⛔ Four recorded values of this fixture's id — three earlier layouts
+      // and the current one. This pins the five-field post layout
       // (TYPES_INTERFACE → Layout — Post).
       const bytes = encodePost(PINNED_POST);
       // The key name cannot appear: there are no key names.
@@ -681,12 +682,12 @@ describe('positional serialization', () => {
       expect(id).toBe(POST_TX_ID);
     });
 
-    it('BlockHeader: the blockHash preimage moved, and shrank', () => {
-      // ⛔ NINE fields. 140 positional bytes: five VLQ
-      // integers (1+1+1+2+6) plus 32+32+33+32 raw bytes, exactly 32 fewer than
-      // the ten-field form's 172. A reader that dropped the field but kept the
-      // old offsets would still be 140 bytes and would hash differently, which
-      // is why the hash is pinned beside the length rather than instead of it.
+    it('BlockHeader: nine fields, 140 positional bytes', () => {
+      // ⛔ Nine fields, 140 positional bytes: five VLQ
+      // integers (1+1+1+2+6) plus 32+32+33+32 raw bytes. A reader with the
+      // right length and wrong offsets is still 140 bytes and hashes
+      // differently, which is why the hash is pinned beside the length rather
+      // than instead of it.
       const bytes = encodeHeader(makeBlockHeader());
       expect(bytes.length).toBe(140);
       expect(hash(bytes)).toBe('63e9132c42173752a8449618d5371b6aafafdb7cc8e1df4e243814a9fc837a07');
