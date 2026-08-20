@@ -2303,8 +2303,6 @@ makes of the competing peer (`MAX_REORG_DEPTH · 2`), the block-journal retentio
 Interface → Refused headers), and the load-time refusal of a `MAX_PROOF_HISTORY` beneath it
 (`config.ts`). **Journal retention is the hard bound on how deep a reorg can physically go; the
 fork walk is policy**, and nothing requires the two to stay equal.
-⚠ AHEAD OF CODE on branch `fork-choice-verified-headers` for the purge bound — landed by the node
-dispatch, which removes this sentence; the types dispatch's census confirms or corrects the list.
 
 ⚠ **`net`'s `msg-guards.ts` is not a consumer**, though it reads like one. It mentions
 `MAX_REORG_DEPTH * 2` as *what fork resolution asks for*; the cap it actually enforces is
@@ -2322,9 +2320,10 @@ constant in this package.
 export const GENESIS_PREV_BLOCK_HASH = '00'.repeat(32);
 ```
 
-The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex characters. Two consumers,
+The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex characters. Three consumers,
 one meaning — the apply funnel's genesis branch compares a height-1 block's `prevBlockHash` against
-it (NODE_INTERFACE → Ordering block apply-time authorization), and fork resolution hands it to
+it (NODE_INTERFACE → Ordering block apply-time authorization), the block creator writes it into a
+height-1 template (MINING_INTERFACE → GET /mining/template), and fork resolution hands it to
 `verifyHeaderChain` as the anchor for a fork at `GENESIS_HEIGHT` (NODE_INTERFACE → Fork choice
 decides on verified headers). Heights start at 1, so no header is ever hashed to this value; it is a
 sentinel by construction, not a digest. ⚠ `store/mempool.ts`'s `PROBE_TX_ID` is the same bytes with

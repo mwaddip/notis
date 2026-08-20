@@ -2739,9 +2739,6 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 
 ### Refused headers
 
-> ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — landed by the node dispatch, which
-> removes this line.
-
 The chain-selection memory (`Fork choice decides on verified headers`, step 12): one row per block
 that fork resolution applied under verified headers and the funnel rejected.
 
@@ -2992,8 +2989,6 @@ also identity records (see "Two entity kinds" below).
   The criterion is **work**, compared over headers that have passed the header-level rules; no height
   comparison stands in for it, so a retarget changes the schedule the verifier is handed and nothing
   about this rule.
-  > ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — landed by the node dispatch,
-  > which removes this line.
 
 #### Two entity kinds (Spec G phase B)
 
@@ -3400,9 +3395,6 @@ and runs once per process, and an index there would tax every `insertBox` on the
 
 ### Fork choice decides on verified headers
 
-> ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — landed by the node dispatch, which
-> removes this line.
-
 **Every rule that decides a reorg lives in `resolveFork`; `reorg` is the mechanism that carries
 out a decision already made.** The decision, in order — each step that ends the resolution ends it
 with the chain untouched:
@@ -3448,7 +3440,11 @@ rejection (step 11) is the expensive case and the one remembered: verified heade
 body. **The mark records a consensus rejection and nothing else** — a rejection that depends on
 local configuration or policy must not mark, because a persisted mark is only as right as the node
 that wrote it; the schedule is checked at step 5 precisely so that a wrong-profile node never
-reaches step 11.
+reaches step 11. "Depends on" is about the verdict, not about enforcement: the funnel's one
+configuration-gated check — `stateRoot` under `VERIFY_STATE_ROOT` — switches whether *this* node
+enforces a consensus rule, not what the rule says, so a node that enforces it marks a chain whose
+root is wrong for every node, and a node that does not never reaches the mark. Every other
+rejection in the funnel is consensus-determined outright.
 
 **Both entries converge.** Gossip receipt and pull-sync both reach `handleOrderingBlock(block,
 fromPeerId)`: a block already held (our block at its height hashes to its header) is a **no-op** —

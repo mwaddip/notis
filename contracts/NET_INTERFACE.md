@@ -1078,8 +1078,7 @@ headers); a short or substituted answer is refused there and penalised through
 **Fork resolution asks for a segment, not a tip.** `requestHeaders(start, MAX_REORG_DEPTH · 2)`
 from the triggering block's height down is scored as a verified prefix of the peer's chain; the
 block range then requested is `forkHeight + 1 … forkHeight + n` for the `n` headers that verified,
-never a height the peer claimed. ⚠ AHEAD OF CODE on branch `fork-choice-verified-headers` —
-landed by the node dispatch, which removes this sentence.
+never a height the peer claimed.
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
