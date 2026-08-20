@@ -463,6 +463,18 @@
       "bytes": "06"
     },
     {
+      "name": "enum8/postType-regular",
+      "codec": { "enum8": "postType" },
+      "value": "regular",
+      "bytes": "00"
+    },
+    {
+      "name": "enum8/postType-profile",
+      "codec": { "enum8": "postType" },
+      "value": "profile",
+      "bytes": "01"
+    },
+    {
       "name": "enum8/sentinel-unknown-value",
       "codec": { "enum8": "mintReason" },
       "value": "nonsense",

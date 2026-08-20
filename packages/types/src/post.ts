@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   u32BE,
+  enum8,
   readArr,
   readBytesN,
   readHexN,
@@ -18,12 +19,16 @@ import type { TxId } from './utxo.js';
 
 export type PostId = string;
 
+export type PostType = 'regular' | 'profile';
+
+export const POST_TYPE = enum8<PostType>('postType', { regular: 0, profile: 1 });
+
 export interface Post {
   content: string;              // 1–MAX_CONTENT_BYTES UTF-8
   author: UserId;               // 32-byte Ed25519 public key
   parentRefs: PostId[];         // 0–MAX_PARENT_REFS
   protocolVersion: number;
-  timestamp: number;            // Unix ms
+  type: PostType;               // enum8 — TYPES_INTERFACE → Post typing and profiles
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +81,7 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *   | 2 | author          | b32   (bytes)  |
  *   | 3 | parentRefs      | arr(refs, b32) |
  *   | 4 | protocolVersion | vlqU           |
- *   | 5 | timestamp       | vlqU           |
+ *   | 5 | type            | enum8(POST_TYPE) |
  *
  * **Field order IS the specification** (TYPES_INTERFACE → Primitives):
  * reordering it is a
@@ -91,18 +96,19 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *
  * Split, deliberately (TYPES_INTERFACE → Totality):
  *
- * - `lpUtf8`, `vlqU` are **total**. A value outside the encodable domain takes
- *   the all-ones sentinel instead of throwing, because the encodable domain
- *   (non-negative safe integers, real byte lengths) is narrower than the u64
- *   wire domain, so the sentinel is unreachable from a well-formed field.
- *   That is what keeps `NaN`/`-1`/`1.5` timestamps out of a panic — audits
- *   M-5/M-6, and the property the no-panic contract in
- *   `@dagsocial/validation` rests on.
+ * - `lpUtf8`, `vlqU` are **total**. `vlqU`'s sentinel guards
+ *   `protocolVersion` alone, and an out-of-domain version encodes to a value
+ *   the strict-equality version check refuses — the sentinel never reaches a
+ *   rule as a meaning. Audits M-5/M-6, and the property the no-panic contract
+ *   in `@dagsocial/validation` rests on.
  * - `b32` — `author`, every `parentRefs` entry — **throws**. A fixed-width
  *   field's wire domain *is* its encodable domain, so it has no unreachable
  *   sentinel; padding or truncating a 31-byte author to 32 would map it onto a
  *   **well-formed post's** encoding, a consensus-level collision strictly worse
  *   than the panic it avoids.
+ * - `enum8` — `type` — **throws** on an unknown key (TYPES_INTERFACE →
+ *   Canonical field encoding). Its domain is established upstream by
+ *   `verifyPostFieldDomains`.
  *
  * The throwing fields therefore have their domain established upstream:
  * `verifyPostFieldDomains` in `@dagsocial/validation` pins `author` at 32 bytes
@@ -117,7 +123,7 @@ export function postFieldBytes(post: Post): Uint8Array {
   writeBytesNOrThrow(w, post.author, 32);
   writeArr(w, post.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
   writeVlqU(w, post.protocolVersion);
-  writeVlqU(w, post.timestamp);
+  POST_TYPE.write(w, post.type);
   return w.toBytes();
 }
 
@@ -143,7 +149,7 @@ export function readPostFields(r: ByteReader): Post {
     author: readBytesN(r, 32),
     parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
     protocolVersion: readVlqU(r),
-    timestamp: readVlqU(r),
+    type: POST_TYPE.read(r),
   };
 }
 
@@ -180,30 +186,3 @@ export function computePostId(txId: TxId, index: number): PostId {
     .toString('hex');
 }
 
-// ---------------------------------------------------------------------------
-// Profile post discriminators
-// ---------------------------------------------------------------------------
-
-/**
- * Try to extract a profile type discriminator from post content.
- * Returns null for regular posts (content is plain text, not JSON).
- */
-export function getPostDiscriminator(content: string): string | null {
-  try {
-    const parsed = JSON.parse(content);
-    if (typeof parsed === 'object' && parsed !== null && typeof parsed.type === 'string') {
-      return parsed.type;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Build profile post content JSON. Embed the type discriminator and any
- * additional fields. The receiver extracts the type via getPostDiscriminator.
- */
-export function buildProfileContent(type: string, extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({ type, ...extra });
-}

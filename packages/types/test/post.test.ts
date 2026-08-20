@@ -3,8 +3,7 @@ import { createHash } from 'crypto';
 import {
   computePostId,
   postFieldBytes,
-  getPostDiscriminator,
-  buildProfileContent,
+  POST_TYPE,
 } from '../src/post.js';
 import { computeTxId } from '../src/utxo.js';
 import type { UtxoTransaction } from '../src/utxo.js';
@@ -41,7 +40,7 @@ const post: Post = {
   author: new Uint8Array(32).fill(0x11),
   parentRefs: [],
   protocolVersion: 2,
-  timestamp: 1700000000000,
+  type: 'regular',
 };
 
 const TX_A = 'aa'.repeat(32);
@@ -170,7 +169,7 @@ function legacyPostId(p: Post): string {
   h.update(p.author);
   for (const ref of p.parentRefs) h.update(ref);
   h.update(String(p.protocolVersion));
-  h.update(String(p.timestamp));
+  h.update(p.type);
   return h.digest().subarray(0, 32).toString('hex');
 }
 
@@ -203,9 +202,9 @@ function payload(p: Post): string {
  * `arr(refs, b32)` (TYPES_INTERFACE → Layout — Post).
  *
  * Adjacent fields carry **distinct non-zero values** — `author` is `00..1f`,
- * the ref is `11…`, `protocolVersion` is 1 and the timestamp is wide — because
- * an all-zeros vector cannot detect a field-order swap, and field order *is* the
- * specification here.
+ * the ref is `11…`, `protocolVersion` is 1 and `type` is `'regular'` (tag 0)
+ * — because an all-zeros vector cannot detect a field-order swap, and field
+ * order *is* the specification here.
  */
 const GOLDEN_AUTHOR = new Uint8Array(32);
 for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
@@ -218,7 +217,7 @@ const GOLDEN_POST: Post = {
   author: GOLDEN_AUTHOR,
   parentRefs: [GOLDEN_REF],
   protocolVersion: 1,
-  timestamp: 1767225600000, // > 2^32 — six VLQ bytes
+  type: 'regular',
 };
 
 /**
@@ -233,14 +232,14 @@ const GOLDEN_PREIMAGE =
   '01' +                                                     // arr count = 1
   '1111111111111111111111111111111111111111111111111111111111111111' + // b32 ref, RAW
   '01' +                                                     // vlqU protocolVersion
-  '80d0eab6b733';                                            // vlqU timestamp
+  '00';                                                      // enum8 type = regular
 
 describe('canonical field encoding (M-1)', () => {
   it('golden vector: preimage is the exact positional layout', () => {
     const pre = postFieldBytes(GOLDEN_POST);
     expect(Buffer.from(pre).toString('hex')).toBe(GOLDEN_PREIMAGE);
-    //  1 + 27 content, 32 author, 1 + 32 refs, 1 version, 6 ts
-    expect(pre.length).toBe(28 + 32 + 33 + 1 + 6);
+    //  1 + 27 content, 32 author, 1 + 32 refs, 1 version, 1 type
+    expect(pre.length).toBe(28 + 32 + 33 + 1 + 1);
   });
 
   it('an id crosses the preimage as 32 RAW bytes, not as 64 hex characters', () => {
@@ -259,18 +258,18 @@ describe('canonical field encoding (M-1)', () => {
     );
   });
 
-  it('the M-1 collision pair still yields distinct ids — preserved, not introduced', () => {
+  it('injectivity holds across distinct protocolVersions', () => {
     // The defect audit M-1 closed. `postFieldBytes` is injective by
-    // construction — every variable-length field is length-prefixed and the ref
-    // array is counted (TYPES_INTERFACE → Canonical field encoding) — so this
-    // assertion guards the property against a dialect change rather than
-    // recording its arrival.
-    const a: Post = { ...GOLDEN_POST, protocolVersion: 5, timestamp: 23 };
-    const b: Post = { ...GOLDEN_POST, protocolVersion: 52, timestamp: 3 };
+    // construction — every variable-length field is length-prefixed, the ref
+    // array is counted, and the trailing `type` is a fixed-width enum8
+    // (TYPES_INTERFACE → Canonical field encoding). With only one VLQ field
+    // remaining in the post (`protocolVersion`), the `(a=5, b=23)` collision
+    // pair that M-1 closed is no longer constructible within the post struct
+    // — but the encoding still distinguishes distinct versions, which is the
+    // injectivity property at the tail.
+    const a: Post = { ...GOLDEN_POST, protocolVersion: 5 };
+    const b: Post = { ...GOLDEN_POST, protocolVersion: 52 };
     expect(payload(a)).not.toBe(payload(b));
-    // Vacuity check: this pair DOES collide under the undelimited
-    // concatenation `legacyPostId` above models.
-    expect(legacyPostId(a)).toBe(legacyPostId(b));
   });
 
   it('a parentRef outside the b32 domain has NO encoding — the ambiguity is unconstructible', () => {
@@ -338,53 +337,27 @@ describe('canonical field encoding (M-1)', () => {
     expect(computePostId(TX_A, 0)).not.toBe(untagged);
   });
 
-  it('never throws on out-of-domain numerics (validation no-panic contract)', () => {
-    // `@dagsocial/validation`'s isSignablePost admits any `typeof === 'number'`,
-    // so these reach the encoder. BigInt/writeBigUInt64LE would throw here.
+  it('never throws on out-of-domain protocolVersion (validation no-panic contract)', () => {
     for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, 2 ** 64, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(() => payload({ ...GOLDEN_POST, timestamp: bad })).not.toThrow();
       expect(() => payload({ ...GOLDEN_POST, protocolVersion: bad })).not.toThrow();
     }
   });
 
-  it('an out-of-domain numeric cannot impersonate a valid one', () => {
-    // The all-ones sentinel is unreachable from a non-negative safe integer.
-    const valid = payload({ ...GOLDEN_POST, timestamp: 0 });
+  it('an out-of-domain protocolVersion cannot impersonate a valid one', () => {
+    const valid = payload({ ...GOLDEN_POST, protocolVersion: 0 });
     for (const bad of [NaN, Infinity, -1, 1.5]) {
-      expect(payload({ ...GOLDEN_POST, timestamp: bad })).not.toBe(valid);
+      expect(payload({ ...GOLDEN_POST, protocolVersion: bad })).not.toBe(valid);
     }
   });
-});
 
-describe('profile discriminators', () => {
-  it('getPostDiscriminator returns null for plain text', () => {
-    expect(getPostDiscriminator('hello world')).toBeNull();
+  it('type distinguishes regular from profile', () => {
+    const reg = payload({ ...GOLDEN_POST, type: 'regular' });
+    const prof = payload({ ...GOLDEN_POST, type: 'profile' });
+    expect(reg).not.toBe(prof);
   });
 
-  it('getPostDiscriminator returns null for JSON without type', () => {
-    expect(getPostDiscriminator('{"foo":"bar"}')).toBeNull();
-  });
-
-  it('getPostDiscriminator returns null for invalid JSON', () => {
-    expect(getPostDiscriminator('{broken')).toBeNull();
-  });
-
-  it('getPostDiscriminator returns type for profile JSON', () => {
-    expect(getPostDiscriminator('{"type":"bio","text":"hello"}')).toBe('bio');
-  });
-
-  it('getPostDiscriminator returns type for username_claim', () => {
-    expect(getPostDiscriminator('{"type":"username_claim","claim":"@alice"}')).toBe('username_claim');
-  });
-
-  it('buildProfileContent embeds type in JSON', () => {
-    const content = buildProfileContent('bio', { text: 'hello' });
-    expect(JSON.parse(content)).toEqual({ type: 'bio', text: 'hello' });
-  });
-
-  it('buildProfileContent with no extra fields', () => {
-    const content = buildProfileContent('profile');
-    expect(JSON.parse(content)).toEqual({ type: 'profile' });
+  it('POST_TYPE enum8 exposes the expected tag table', () => {
+    expect(POST_TYPE.name).toBe('postType');
   });
 });
 

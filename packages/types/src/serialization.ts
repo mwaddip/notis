@@ -72,10 +72,10 @@ import type {
  *
  * ## Totality
  *
- * `content` (`lpUtf8`), `protocolVersion` and `timestamp` (`vlqU`) are total by
- * sentinel. `author` and every `parentRefs` entry are fixed-width and throw, and
- * their domain is `verifyPostFieldDomains` (`@dagsocial/validation`) — 32 bytes
- * and 64 lowercase hex.
+ * `content` (`lpUtf8`) and `protocolVersion` (`vlqU`) are total by sentinel.
+ * `author` and every `parentRefs` entry are fixed-width and throw, and `type`
+ * (`enum8`) throws on an unknown key — all three have their domain established
+ * by `verifyPostFieldDomains` (`@dagsocial/validation`).
  *
  * ⛔ **Both throwing rows are now reachable from `computeTxId`**, because
  * `txIdBytes` writes `postFieldBytes` for a post-bearing transaction. The

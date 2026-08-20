@@ -74,8 +74,8 @@ export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 //
 // `postFieldBytes` is a preimage layout other packages build against, and a
 // second statement of it is free to drift.
-export { postFieldBytes, computePostId, getPostDiscriminator, buildProfileContent } from './post.js';
-export type { Post, PostId } from './post.js';
+export { postFieldBytes, computePostId, POST_TYPE } from './post.js';
+export type { Post, PostId, PostType } from './post.js';
 
 // UTXO
 //
