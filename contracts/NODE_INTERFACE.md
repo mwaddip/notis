@@ -924,15 +924,17 @@ tree collapse into clean rejections:
 > **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
 > deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
 > one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
-> a boundary edit to be fatal"*. There are now **four** subclasses, and that test's design intent has
-> been vindicated twice: the third and fourth cases each needed **zero** boundary edits.
+> a boundary edit to be fatal"*. Six subclasses, and every boundary is fatal for all of them with no
+> boundary edit.
 >
 > | Subclass | Raised when | Raising site |
 > |---|---|---|
 > | `UnhashableStoredHeaderError` | a header already in our store cannot be hashed | ⚠ **now dead `src`** — see below |
-> | `MissingStoredBlockError` | a block the chain refers to is absent from the store | store |
+> | `MissingStoredBlockError` | a block the chain refers to is absent from the store | `services/block-apply.ts`, `services/fork-resolution.ts`, `services/block-creator.ts` |
 > | `UnreadableStoredBlockError` | a stored block's bytes will not decode | `store/ordering.ts` → `rowToOrderingBlock` |
-> | **`DivergedStateTreeError`** | **the AVL+ tree refuses an operation the UTXO store implies must succeed** | **`state/avl-prover.ts`** |
+> | `DivergedStateTreeError` | the AVL+ tree refuses an operation the UTXO store implies must succeed | `state/avl-prover.ts` |
+> | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − MAX_REORG_DEPTH`, the fork walk's lowest non-genesis answer is `tip − MAX_REORG_DEPTH + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ MAX_REORG_DEPTH` | `services/fork-resolution.ts` → `revertBlock` |
+> | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < MAX_REORG_DEPTH` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 >
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
@@ -983,12 +985,22 @@ tree collapse into clean rejections:
 > narrowing to a class would leave a `TypeError` from a decoder bug misfiled as an arriving block's
 > rejection.
 >
-> **Reach is the live argument, not the halt.** `getOrderingBlock` has **six** callers and only
-> apply's read passes through a catch that could promote anything. `extendsOurTip` runs on the gossip
-> path *before* apply and outside `handleOrderingBlock`'s inner try — a bare `ReaderError` there fails
-> `failStopIfCorruptChain`'s `instanceof`, is re-thrown from an async handler, and ends the process as
-> an **unhandled rejection**: no FATAL line, no site, no height. That is the "right end by the wrong
-> mechanism" this file condemns elsewhere. A fix at the funnel would never have touched it.
+> **Reach is the live argument, not the halt.** `rowToOrderingBlock` is the one decoder of
+> `ordering_blocks`, and its callers are every consumer of the chain: both block entries
+> (`handleOrderingBlock`'s held check and `extendsOurTip`, then `applyOrderingBlock`'s chain-link
+> read), fork resolution (`findForkPoint`, `revertBlock`, `resolveFork`'s anchor and work walk), the
+> block creator's tip read, the two `/blocks` routes, and the provider handed to
+> `net.setHeadersHandler`, through which every handshake, every `SyncInfo` and every served chain
+> query decodes stored rows. Only apply's read passes through a catch that could promote anything;
+> the store frame names the fault so that all of them raise one class — and **every outer frame is a
+> boundary**: the gossip and the pull registrations of `handleOrderingBlock` both wrap it in
+> `failStopIfCorruptChain` (Relay handlers; Sync handlers); the launched `resolveFork` promise carries
+> `.catch(failStopIfCorruptChain)`; `finalizeBlock` wraps the mined-block apply; `createOrderingBlock`
+> calls the boundary directly; and the provider handed to `setHeadersHandler` and the
+> `getOrderingBlock` the blocks routes are given wrap the store read, so a corrupt row met while
+> serving stops the node instead of failing every handshake and query as a peer's fault. A frame that
+> merely contains — net's dispatch catches, Express's default 500 — is never the outer frame of a
+> store read.
 >
 > ✅ **`UnhashableStoredHeaderError` is unreachable from the store as of Phase 3b.** Every value
 > `readVlqU` / `readHexN` / `readBytesN` can produce is already inside `verifyHeaderFieldDomains`, so
@@ -2849,7 +2861,9 @@ catch turns that into a block rejection).
 | `deleteBlockJournal(height)` | `(number) => void` |
 | `purgeOldJournals(belowHeight)` | `(number) => void` |
 
-**Rollback (`revertBlock`).** Refuses to run while a block journal is open.
+**Rollback (`revertBlock`).** Refuses to run while a block journal is open. A
+journal absent for a height inside retention is `MissingJournalError` —
+fail-stop, never a refused reorg ("What the funnel's totality catch is FOR").
 Replays `mutations` in reverse order — `box`/`insert` → `deleteBox(boxId)`,
 `box`/`remove` → `unconsumeBox(boxId)`, `record` → `putIdentityRecord` with
 `replaced` when present, otherwise `deleteIdentityRecord` — then the
@@ -3586,9 +3600,11 @@ Always returns 200. Response shape:
 **`MAX_PROOF_HISTORY` may not sit below `MAX_REORG_DEPTH`, and `loadConfig` refuses at load rather
 than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while the
 fork walk reaches back a fixed `MAX_REORG_DEPTH` and can answer height 0, so a smaller retention
-window prunes inside the window the walk still answers within: `reorg` finds no version at its fork
-height and aborts with the node still on its own chain. The check is a negated `>=`, so `NaN` —
-what `parseInt` answers for a non-numeric env value — is refused rather than admitted.
+window would prune inside the window the walk still answers within. The check is a negated `>=`, so
+`NaN` — what `parseInt` answers for a non-numeric env value — is refused rather than admitted. With
+the floor held at load, `reorg` finding no version at or before a fork height the walk answers within
+is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
+FOR"), never a quiet abort that leaves the node on the lighter chain.
 
 All config via environment variables with defaults.
 
@@ -3709,7 +3725,10 @@ not fail the API request.
   `setBlocksHandler`; `reorg` applies directly. The authoritative consensus checks
   — including **validator-signature verification (H-1)** — are enforced *inside*
   `applyOrderingBlock` (see "Ordering block apply-time authorization" below), so
-  all three paths end at the same gate.
+  all three paths end at the same gate. Both registrations — this one and
+  `setBlocksHandler`'s — wrap the call in `failStopIfCorruptChain`: the apply
+  funnel re-throws `CorruptChainStateError`, and the registration is its outer
+  frame ("What the funnel's totality catch is FOR").
 
 ### Ordering block apply-time authorization
 
@@ -4000,8 +4019,15 @@ funnel:
   batch's **continue** signal: `true` for a block applied or already held, `false` for a block
   rejected or for a non-extending block, which launches `resolveFork` with `fromPeerId` as the
   counterparty; `net` stops the batch at the first `false` (NET_INTERFACE → Sync Handler
-  Registration)
-- **`setHeadersHandler(getBlock)`**: serves block headers for fork resolution
+  Registration). The registration wraps the call in `failStopIfCorruptChain`, exactly as the
+  gossip registration does — `net` contains a handler throw to one logged message, and that frame
+  must never be the outer one for a corrupt-state error
+- **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — headers for
+  fork resolution, bodies for served chain queries, the tip for every handshake and `SyncInfo`. The
+  provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
+  not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
+  handshake and query as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
+  are given the same wrapped read
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness

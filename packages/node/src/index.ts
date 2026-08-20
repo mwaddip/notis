@@ -21,8 +21,8 @@ import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
-import { handleOrderingBlock } from './services/handle-block.js';
-import { failStopIfCorruptChain } from './services/corrupt-state.js';
+import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
+import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -125,9 +125,9 @@ setDagServiceForMiner(dagService);
 // 3. Register Stage 2 handlers
 
 // Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
-// Relay handlers / Sync handlers). The `.catch(failStopIfCorruptChain)` on
-// the launched resolution promise is the fail-stop boundary; nothing awaits
-// the resolution, so no other path carries a corrupt-state error out.
+// Relay handlers / Sync handlers). Each registration wraps the call in
+// `failStopIfCorruptChain`; the launched `resolveFork` promise carries its
+// own `.catch(failStopIfCorruptChain)`.
 net.onOrderingBlock((block, fromPeerId) => {
   try {
     handleOrderingBlock(block, fromPeerId, net, dagService);
@@ -210,10 +210,14 @@ net.onTx((tx, fromPeerId) => {
   console.log(`Relayed tx queued in mempool: ${result.txId}`);
 });
 
-  net.setBlocksHandler((block, fromPeerId) =>
-    handleOrderingBlock(block, fromPeerId, net, dagService),
-  );
-  net.setHeadersHandler(getOrderingBlock);
+net.setBlocksHandler(pullBlocksHandler(net, dagService));
+
+// The provider `net` reads stored blocks through (NODE_INTERFACE → Sync
+// handlers). `guardStoreRead` wraps the read in `failStopIfCorruptChain`: a
+// stored row that does not decode stops the node rather than failing every
+// handshake and query as a peer's fault inside `net`'s contained catches.
+const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
+net.setHeadersHandler(guardedGetOrderingBlock);
 
 // 4. Start net
 //

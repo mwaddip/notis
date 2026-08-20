@@ -8,6 +8,7 @@ import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import * as store from './store/index.js';
+import { guardStoreRead } from './services/corrupt-state.js';
 import { verifyPost } from './services/verifier.js';
 import { getCurrentTemplate, submitMinedBlock, setMinerPubkey, decayConfig } from './services/block-creator.js';
 import { isPeerReady } from './services/peer-readiness.js';
@@ -328,7 +329,7 @@ export function createApp(config: Config): express.Express {
   app.use(
     '/',
     blockRoutes({
-      getOrderingBlock: store.getOrderingBlock,
+      getOrderingBlock: guardStoreRead(store.getOrderingBlock),
       getCurrentHeight: store.getCurrentHeight,
       getPostCount: () =>
         (

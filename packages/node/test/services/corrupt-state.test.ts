@@ -2,8 +2,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   UnhashableStoredHeaderError,
   MissingStoredBlockError,
+  MissingJournalError,
+  MissingStateVersionError,
   CorruptChainStateError,
   failStopIfCorruptChain,
+  guardStoreRead,
 } from '../../src/services/corrupt-state.js';
 
 // ---------------------------------------------------------------------------
@@ -97,5 +100,61 @@ describe('failStopIfCorruptChain', () => {
     expect(exited).toEqual([1]);
     expect(errors[0]).toContain('fork resolution');
     expect(errors[0]).toContain('not contiguous');
+  });
+
+  it('a third kind must not need a boundary edit to be fatal — journal and version', () => {
+    const journal = new MissingJournalError('revertBlock', 5);
+    expect(journal.site).toBe('revertBlock');
+    expect(journal.height).toBe(5);
+    expect(journal.name).toBe('MissingJournalError');
+    expect(journal).toBeInstanceOf(CorruptChainStateError);
+
+    const version = new MissingStateVersionError('reorg', 0);
+    expect(version.site).toBe('reorg');
+    expect(version.height).toBe(0);
+    expect(version.name).toBe('MissingStateVersionError');
+    expect(version).toBeInstanceOf(CorruptChainStateError);
+
+    // All six members are fatal through the same boundary, keyed on the base
+    // class. No boundary edit required for these two.
+    const exited: number[] = [];
+    vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exited.push(code ?? 0);
+      throw new Error('process.exit');
+    }) as never);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => failStopIfCorruptChain(journal)).toThrow('process.exit');
+    expect(() => failStopIfCorruptChain(version)).toThrow('process.exit');
+    expect(exited).toEqual([1, 1]);
+  });
+
+  it('guardStoreRead wraps a family error into a fail-stop', () => {
+    vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const poison = (h: number) => {
+      throw new MissingStoredBlockError('test', h);
+    };
+    const guarded = guardStoreRead(poison);
+    expect(() => guarded(3)).toThrow('process.exit');
+  });
+
+  it('guardStoreRead passes non-family errors through unchanged', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as never);
+
+    const boom = new TypeError('unrelated');
+    const guarded = guardStoreRead(() => { throw boom; });
+    expect(() => guarded()).toThrow(boom);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('guardStoreRead returns the original value on a clean read', () => {
+    const guarded = guardStoreRead((x: number) => x * 2);
+    expect(guarded(5)).toBe(10);
   });
 });

@@ -81,17 +81,11 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  * that arm was built and run, and the test pinning the producer-bytes direction
  * passed under it.
  *
- * The live reason, as opposed to that latent one, is reach. `getOrderingBlock`
- * is read by `extendsOurTip`, `findForkPoint`, `revertBlock`, the block creator
- * and two routes as well as by apply, and only apply's read passes through a
- * catch that could promote anything. `extendsOurTip` in particular runs on the
- * gossip path *before* apply and outside `handleOrderingBlock`'s inner try, so
- * a bare `ReaderError` there reaches `failStopIfCorruptChain`, fails its
- * `instanceof`, and is re-thrown out of an `async` handler to end the process
- * as an unhandled rejection — no FATAL line, no site, no height, and the death
- * decided by the runtime rather than by us, which is exactly what the header of
- * this file says it must not be. Naming the fault where the row is read covers
- * every one of those callers at once.
+ * The live reason, as opposed to that latent one, is reach. The store frame
+ * names the fault so every reader raises one class, and every outer frame —
+ * both registrations, the launched `resolveFork` promise, `finalizeBlock`,
+ * the block creator, and the guarded provider and routes — is a boundary
+ * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
 export class UnreadableStoredBlockError extends CorruptChainStateError {
   constructor(site: string, height: number, cause: unknown) {
@@ -202,6 +196,49 @@ export class DivergedStateTreeError extends CorruptChainStateError {
 }
 
 /**
+ * A block journal inside retention is absent (NODE_INTERFACE → Rollback).
+ *
+ * `purgeOldJournals` deletes strictly below `tip − MAX_REORG_DEPTH`.
+ * `findForkPoint`'s lowest non-genesis answer is `tip − MAX_REORG_DEPTH + 1`,
+ * and `reorg` reverts starting one above the fork point, so every height
+ * `revertBlock` can be asked for is ≥ `tip − MAX_REORG_DEPTH + 2` — inside
+ * retention. When `findForkPoint` reaches genesis (`tip ≤ MAX_REORG_DEPTH`),
+ * the purge argument is ≤ 0 and nothing is deleted.
+ *
+ * A missing journal is therefore a row the store lost, not a retention gap.
+ */
+export class MissingJournalError extends CorruptChainStateError {
+  constructor(site: string, height: number) {
+    super(
+      site,
+      height,
+      `no block journal at height ${height} — inside retention ` +
+      `(purgeOldJournals deletes strictly below tip − MAX_REORG_DEPTH)`,
+    );
+  }
+}
+
+/**
+ * No AVL version at or before a fork height the walk answers within
+ * (NODE_INTERFACE → Configuration).
+ *
+ * `loadConfig` refuses `MAX_PROOF_HISTORY < MAX_REORG_DEPTH`, so a missing
+ * version is a row the store lost — reachable only through a `Config`
+ * assembled without `loadConfig` (tests), or through store corruption.
+ */
+export class MissingStateVersionError extends CorruptChainStateError {
+  constructor(site: string, height: number) {
+    super(
+      site,
+      height,
+      `no AVL version at or before fork height ${height} — ` +
+      `loadConfig refuses MAX_PROOF_HISTORY < MAX_REORG_DEPTH, ` +
+      `so a missing version is a row the store lost`,
+    );
+  }
+}
+
+/**
  * A block the apply funnel rejected during a reorg (NODE_INTERFACE → Fork
  * choice decides on verified headers, step 11). Distinct from
  * `CorruptChainStateError`: a rejected peer block is a peer's fault and does
@@ -226,16 +263,13 @@ export class ReorgBlockRejectedError extends Error {
  * unchanged, so no other error changes shape by passing through here.
  *
  * Call it from the outermost frame of every path that can reach
- * `applyOrderingBlock` or fork resolution — and from a frame the runtime cannot
- * quietly reinterpret. Each of those paths otherwise ends somewhere that
- * swallows: `@dagsocial/net`'s `appendBlocks` catch logs a throw from the sync
- * handler as *"failed to decode block"* and applies the next block anyway
- * (`net/src/node.ts:255-260`), its gossip dispatch catch is empty
- * (`net/src/gossip.ts:184`), and Express turns a throw in a route handler into a
- * 500 while the node carries on. Where nothing swallows it, an uncaught throw
- * ends the process anyway — but by the runtime's default rather than by our
- * decision, which is the same right answer for a reason that could change under
- * us without a word.
+ * `applyOrderingBlock`, fork resolution, or a stored-block read — and from a
+ * frame the runtime cannot quietly reinterpret. The contained frames that would
+ * otherwise swallow a family member are `net`'s sync-machine dispatch catches
+ * (NET_INTERFACE → Sync State Machine) and Express's default 500
+ * handler. Where nothing swallows it, an uncaught throw ends the process
+ * anyway — but by the runtime's default rather than by our decision, which is
+ * the same right answer for a reason that could change under us without a word.
  *
  * Never returns: it exits, or it re-throws.
  */
@@ -256,4 +290,22 @@ export function failStopIfCorruptChain(err: unknown): never {
     process.exit(1);
   }
   throw err;
+}
+
+/**
+ * Wraps a store read so a `CorruptChainStateError` stops the node instead of
+ * reaching a contained frame (NODE_INTERFACE → Sync handlers). A non-family
+ * throw passes through unchanged — the caller's existing error handling is
+ * preserved.
+ */
+export function guardStoreRead<A extends unknown[], R>(
+  fn: (...args: A) => R,
+): (...args: A) => R {
+  return (...args: A): R => {
+    try {
+      return fn(...args);
+    } catch (err) {
+      failStopIfCorruptChain(err);
+    }
+  };
 }
