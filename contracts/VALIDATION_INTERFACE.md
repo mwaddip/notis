@@ -767,10 +767,16 @@ verifyOrderingBlockStructure(block: OrderingBlock): { valid: boolean; error?: st
 with a `header`; every header field's domain via `verifyHeaderFieldDomains` —
 delegated to the one statement of those domains, re-labelled with this
 function's messages. Every `utxoTxTree.pruneEntries` element: `rootPostHash`
-hex-32, `subtreePostIds` an array of hex-32, `subtreeMerkleRoot` 32 bytes,
-`authorId` 32 bytes, `authorSignature` 64 bytes — byte fields by `isBytes`, never a bare
-`.length`, because a stored row put back through a cast can carry any type and
-a length check passes what the hash calls throw on. `validatorSignature` is 64
+hex-32, `subtreePostIds` an array of hex-32 **with no repeated id** (a list whose
+length exceeds its set size is refused — the apply-time set compare and the
+Merkle root over the raw list would both admit a repeat, and a repeated id
+inflates the stump's `replyCount` and names one lock box twice),
+`subtreeMerkleRoot` 32 bytes, `authorId` 32 bytes, `authorSignature` 64 bytes —
+byte fields by `isBytes`, never a bare `.length`, because a stored row put back
+through a cast can carry any type and a length check passes what the hash calls
+throw on.
+⚠ AHEAD OF CODE on branch prune-duplicate-post-ids — the no-repeated-id rule lands with the validation dispatch.
+`validatorSignature` is 64
 bytes (`isBytes`, same rule). Then the two semantic floors a domain check
 cannot know: `height ≥ 1`, and `powTargetBits ≥
 ORDERING_BLOCK_POW_TARGET_FLOOR` (2304) — the gossip pre-filter against a
@@ -838,7 +844,8 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
 
 Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
-`rootPostHash`, a `subtreePostIds` array of 64-char strings, a 32-byte
+`rootPostHash`, a `subtreePostIds` array of 64-char strings **with no repeated id**
+(length equals set size), a 32-byte
 `subtreeMerkleRoot`, a 32-byte `authorId`, and a 64-byte `authorSignature`. Byte-length fields must
 be `Uint8Array`, not merely length-bearing — a CBOR payload can put any type
 in any field, and the consumers of these fields call `Buffer.from(...)` and

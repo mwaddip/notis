@@ -338,11 +338,17 @@ invites, vouches, credits, faucet, prune).
    signs `blake2b512(rootPostHash || subtreeMerkleRoot).subarray(0,32)`
    with Ed25519 key
 2. Node verifies: post exists and is live, author matches, signature valid,
-   subtreePostIds match actual reply tree, Merkle root matches postId list
+   subtreePostIds match actual reply tree **and carry no repeated id** (length
+   equals set size — 400; the set compare alone admits `[A, A, B]` against
+   `{A, B}`), Merkle root matches postId list
+   ⚠ AHEAD OF CODE on branch prune-duplicate-post-ids — `executePrune`'s no-repeated-id refusal lands with the node dispatch.
 3. Node builds PruneEntry, enqueues in mempool. Nothing is broadcast at
    this point — the prune propagates inside the ordering block that carries
    it, and each node derives its own stump at settlement (see below)
-4. At block application: verify authorship binding (`entry.authorId` equals
+4. At block application: a repeated id never reaches this step —
+   `verifyOrderingBlockStructure` refuses it at the gossip topic validator and at
+   the top of `applyOrderingBlock` (VALIDATION_INTERFACE →
+   verifyOrderingBlockStructure); then verify authorship binding (`entry.authorId` equals
    the `block_topology`-recorded author of `rootPostHash`; reject the block if
    no topology row exists — an unconfirmed root is not prunable), verify
    signature, verify topology via block_topology CTE, verify Merkle root,
