@@ -2318,9 +2318,6 @@ constant in this package.
 
 ### Genesis parent hash
 
-> ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — landed by the types dispatch,
-> which removes this line.
-
 ```typescript
 export const GENESIS_PREV_BLOCK_HASH = '00'.repeat(32);
 ```
