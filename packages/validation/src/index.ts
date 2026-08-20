@@ -15,10 +15,13 @@ export {
   verifyTxStructure,
   verifyOrderingBlockStructure,
   verifyBlockChainLink,
+  verifyHeaderChain,
   verifyOrderingBlockPoW,
   blockHash,
   computePowHash,
   ed25519PublicKeyToKeyObject,
   isValidVouchTarget,
 } from './verify.js';
+
+export type { HeaderChainVerdict } from './verify.js';
 

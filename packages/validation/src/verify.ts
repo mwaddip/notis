@@ -950,3 +950,73 @@ export function verifyBlockChainLink(
     block.header.height === prevBlock.header.height + 1
   );
 }
+
+// ---------------------------------------------------------------------------
+// verifyHeaderChain — VALIDATION_INTERFACE → verifyHeaderChain
+// ---------------------------------------------------------------------------
+
+/**
+ * The header-level rules a chain segment must pass before any of its work
+ * counts. Discriminated on `ok`; callers read success first.
+ */
+export type HeaderChainVerdict =
+  | { ok: true; work: bigint; hashes: string[] }
+  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' };
+
+/**
+ * Verify a contiguous header segment against an anchor and a target schedule.
+ * VALIDATION_INTERFACE → verifyHeaderChain.
+ */
+export function verifyHeaderChain(
+  headers: BlockHeader[],
+  anchor: { prevBlockHash: string; height: number },
+  scheduledTarget: (height: number) => number,
+): HeaderChainVerdict {
+  if (!Array.isArray(headers) || headers.length === 0) {
+    return { ok: true, work: 0n, hashes: [] };
+  }
+
+  const hashes: string[] = [];
+
+  for (let i = 0; i < headers.length; i++) {
+    const header = headers[i]!;
+
+    // 1. Domain — blockHash returns null on exactly the headers
+    //    verifyHeaderFieldDomains rejects; a non-object header fails here.
+    const hash = blockHash(header);
+    if (hash === null) {
+      return { ok: false, index: i, reason: 'domain' };
+    }
+
+    // 2. Protocol version
+    if (!verifyProtocolVersion(header.protocolVersion)) {
+      return { ok: false, index: i, reason: 'version' };
+    }
+
+    // 3. Height — contiguous from anchor
+    const expectedHeight = anchor.height + 1 + i;
+    if (header.height !== expectedHeight) {
+      return { ok: false, index: i, reason: 'height' };
+    }
+
+    // 4. Link — prevBlockHash against anchor at i=0, hashes[i-1] after
+    const expectedPrev = i === 0 ? anchor.prevBlockHash : hashes[i - 1]!;
+    if (header.prevBlockHash !== expectedPrev) {
+      return { ok: false, index: i, reason: 'link' };
+    }
+
+    // 5. Target — powTargetBits must equal the schedule for this height
+    if (header.powTargetBits !== scheduledTarget(expectedHeight)) {
+      return { ok: false, index: i, reason: 'target' };
+    }
+
+    // 6. PoW — the solution must meet the header's own target
+    if (!verifyOrderingBlockPoW(header)) {
+      return { ok: false, index: i, reason: 'pow' };
+    }
+
+    hashes.push(hash);
+  }
+
+  return { ok: true, work: cumulativeWork(headers), hashes };
+}
