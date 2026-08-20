@@ -341,7 +341,6 @@ invites, vouches, credits, faucet, prune).
    subtreePostIds match actual reply tree **and carry no repeated id** (length
    equals set size — 400; the set compare alone admits `[A, A, B]` against
    `{A, B}`), Merkle root matches postId list
-   ⚠ AHEAD OF CODE on branch prune-duplicate-post-ids — `executePrune`'s no-repeated-id refusal lands with the node dispatch.
 3. Node builds PruneEntry, enqueues in mempool. Nothing is broadcast at
    this point — the prune propagates inside the ordering block that carries
    it, and each node derives its own stump at settlement (see below)

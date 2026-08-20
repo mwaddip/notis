@@ -775,7 +775,6 @@ inflates the stump's `replyCount` and names one lock box twice),
 byte fields by `isBytes`, never a bare `.length`, because a stored row put back
 through a cast can carry any type and a length check passes what the hash calls
 throw on.
-⚠ AHEAD OF CODE on branch prune-duplicate-post-ids — the no-repeated-id rule lands with the validation dispatch.
 `validatorSignature` is 64
 bytes (`isBytes`, same rule). Then the two semantic floors a domain check
 cannot know: `height ≥ 1`, and `powTargetBits ≥
