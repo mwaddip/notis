@@ -181,16 +181,11 @@ describe('transaction output provenance (Spec G phase C3)', () => {
   });
 
   it('applyTx stores the materialized box unchanged, and the height goes to the column', async () => {
-    // Was "applyTx rewrites createdAtBlock without displacing provenance".
-    // There is no rewrite any more: that rewrite WAS M-11 — it moved the box's
-    // height while leaving the id committed to the client's declared one — and
-    // phase G3b closes it by deleting the field rather than by rewriting it.
-    //
-    // Two things replace the old assertion. The stored box must be byte-identical
-    // to what `materializeOutput` produced, because any key added or reordered on
-    // the way in now changes the id. And the settled height must still reach the
-    // `created_at_block` store column, taken from the open journal — the only
-    // place `insertBox` can now get it (checklist item 7).
+    // The stored box is byte-identical to what `materializeOutput` produced:
+    // any key added or reordered changes the id, so the store path adds nothing.
+    // The settled height reaches the `created_at_block` column via the open
+    // journal — the only place `insertBox` can get it
+    // (NODE_INTERFACE → Box materialization).
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');

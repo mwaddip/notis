@@ -442,10 +442,9 @@ describe('block-creator', () => {
 
     bc.startBlockCreator(testConfig);
 
-    // Drive the real creator+apply across the retired 60-block epoch
-    // boundary. Under the retired trigger the tally rode the block after a
-    // currentHeight % 60 === 0 chain tip (height 61), so cover both readings
-    // of "the boundary": 60 and 61.
+    // Heights 59, 60, 61: 60 is the round multiple, 61 the block after.
+    // The body carries the same three keys (`pruneEntries`, `utxoTxIds`,
+    // `utxoTxs`) at each — no height-dependent structural variation.
     for (let i = 0; i < 61; i++) {
       expect(await mineNextBlock(bc)).not.toBeNull();
     }
@@ -643,8 +642,9 @@ describe('block-creator', () => {
   // -----------------------------------------------------------------------
 
   it('a miner node holds a template for the next height the moment a block is applied', async () => {
-    // Production is difficulty-regulated: there is no interval to wait out, so
-    // a miner polling GET /mining/template is never told to come back later.
+    // Production is difficulty-regulated: there is no interval to wait out,
+    // so the node holds a template from the moment it starts. Serving is
+    // separate (the peer-readiness gate can withhold it).
     // MINING_INTERFACE → Template and submit.
     const db = await importDb();
     db.initDb(':memory:');
