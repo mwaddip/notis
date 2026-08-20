@@ -936,8 +936,6 @@ tree collapse into clean rejections:
 > | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − MAX_REORG_DEPTH`, the fork walk's lowest non-genesis answer is `tip − MAX_REORG_DEPTH + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ MAX_REORG_DEPTH` | `services/fork-resolution.ts` → `revertBlock` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < MAX_REORG_DEPTH` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 >
-> ⚠ AHEAD OF CODE on branch fail-stop-boundaries — `MissingJournalError` and `MissingStateVersionError` land with the node dispatch; both sites throw a plain `Error` that `resolveFork` logs as "Fork resolution error".
->
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
 >
@@ -1003,8 +1001,6 @@ tree collapse into clean rejections:
 > serving stops the node instead of failing every handshake and query as a peer's fault. A frame that
 > merely contains — net's dispatch catches, Express's default 500 — is never the outer frame of a
 > store read.
->
-> ⚠ AHEAD OF CODE on branch fail-stop-boundaries — the pull registration's wrap, the `setHeadersHandler` provider wrap and the blocks-route wrap land with the node dispatch.
 >
 > ✅ **`UnhashableStoredHeaderError` is unreachable from the store as of Phase 3b.** Every value
 > `readVlqU` / `readHexN` / `readBytesN` can produce is already inside `verifyHeaderFieldDomains`, so
@@ -2868,7 +2864,6 @@ catch turns that into a block rejection).
 **Rollback (`revertBlock`).** Refuses to run while a block journal is open. A
 journal absent for a height inside retention is `MissingJournalError` —
 fail-stop, never a refused reorg ("What the funnel's totality catch is FOR").
-⚠ AHEAD OF CODE on branch fail-stop-boundaries — `MissingJournalError` lands with the node dispatch.
 Replays `mutations` in reverse order — `box`/`insert` → `deleteBox(boxId)`,
 `box`/`remove` → `unconsumeBox(boxId)`, `record` → `putIdentityRecord` with
 `replaced` when present, otherwise `deleteIdentityRecord` — then the
@@ -3610,7 +3605,6 @@ window would prune inside the window the walk still answers within. The check is
 the floor held at load, `reorg` finding no version at or before a fork height the walk answers within
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
 FOR"), never a quiet abort that leaves the node on the lighter chain.
-⚠ AHEAD OF CODE on branch fail-stop-boundaries — `MissingStateVersionError` lands with the node dispatch.
 
 All config via environment variables with defaults.
 
@@ -3735,7 +3729,6 @@ not fail the API request.
   `setBlocksHandler`'s — wrap the call in `failStopIfCorruptChain`: the apply
   funnel re-throws `CorruptChainStateError`, and the registration is its outer
   frame ("What the funnel's totality catch is FOR").
-  ⚠ AHEAD OF CODE on branch fail-stop-boundaries — the pull registration's wrap lands with the node dispatch.
 
 ### Ordering block apply-time authorization
 
@@ -4035,8 +4028,6 @@ funnel:
   not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
   handshake and query as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
   are given the same wrapped read
-
-⚠ AHEAD OF CODE on branch fail-stop-boundaries — the blocks-handler wrap, the provider wrap and the routes' wrapped read land with the node dispatch.
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness
