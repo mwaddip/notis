@@ -2296,10 +2296,15 @@ merely that the heading still exists.
 export const MAX_REORG_DEPTH = 20;
 ```
 
-How far back a reorg reaches. Universal, not per-network. Its consumers are all in
-`@dagsocial/node`: the fork-walk bound, the block-journal retention window, and the load-time
-refusal of a `MAX_PROOF_HISTORY` beneath it. **Journal retention is the hard bound on how deep a
-reorg can physically go; the fork walk is policy**, and nothing requires the two to stay equal.
+How far back a reorg reaches. Universal, not per-network. Its load-bearing consumers are all in
+`@dagsocial/node`: the fork-walk bound (`findForkPoint`), the header request size fork resolution
+makes of the competing peer (`MAX_REORG_DEPTH · 2`), the block-journal retention window
+(`purgeOldJournals`), the refused-headers purge bound (`purgeRefusedHeaders`, NODE_INTERFACE → Store
+Interface → Refused headers), and the load-time refusal of a `MAX_PROOF_HISTORY` beneath it
+(`config.ts`). **Journal retention is the hard bound on how deep a reorg can physically go; the
+fork walk is policy**, and nothing requires the two to stay equal.
+⚠ AHEAD OF CODE on branch `fork-choice-verified-headers` for the purge bound — landed by the node
+dispatch, which removes this sentence; the types dispatch's census confirms or corrects the list.
 
 ⚠ **`net`'s `msg-guards.ts` is not a consumer**, though it reads like one. It mentions
 `MAX_REORG_DEPTH * 2` as *what fork resolution asks for*; the cap it actually enforces is
@@ -2310,6 +2315,23 @@ conflates a caller's request size with the bound applied to it.
 `services/fork-resolution.ts` imports `config` itself, so a constant declared there is unreachable
 from config load without a cycle. A load-time rule keyed on this value is only expressible with the
 constant in this package.
+
+### Genesis parent hash
+
+> ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — landed by the types dispatch,
+> which removes this line.
+
+```typescript
+export const GENESIS_PREV_BLOCK_HASH = '00'.repeat(32);
+```
+
+The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex characters. Two consumers,
+one meaning — the apply funnel's genesis branch compares a height-1 block's `prevBlockHash` against
+it (NODE_INTERFACE → Ordering block apply-time authorization), and fork resolution hands it to
+`verifyHeaderChain` as the anchor for a fork at `GENESIS_HEIGHT` (NODE_INTERFACE → Fork choice
+decides on verified headers). Heights start at 1, so no header is ever hashed to this value; it is a
+sentinel by construction, not a digest. ⚠ `store/mempool.ts`'s `PROBE_TX_ID` is the same bytes with
+a different meaning and is **not** this constant.
 
 ### Network profiles
 
