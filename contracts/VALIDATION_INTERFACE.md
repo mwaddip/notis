@@ -523,8 +523,8 @@ about a path that cannot happen.
 verifyPostFieldDomains(post: unknown): { valid: boolean; error?: string }
 ```
 
-The **throwing-writer domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
-`isSignablePost` has always made, plus the rules for the fields whose writers throw:
+The **field-domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
+`isSignablePost` has always made, plus the domain rules `postFieldBytes` relies on:
 
 - `author` is a `Uint8Array` of **exactly 32 bytes**
 - every `parentRefs` entry matches `/^[0-9a-f]{64}$/` — 64 **lowercase** hex
@@ -537,9 +537,12 @@ codec boundary non-injective: two distinct in-memory posts, one preimage, one
 id. That is precisely the malleability the M-1 field encoding exists to close,
 arriving from the codec side instead of the concatenation side.
 
-**Why it exists.** The positional wire format encodes these fields through throwing
-writers — fixed-width `b32` cannot carry a sentinel, and `enum8` refuses anything off its
-table (see `TYPES_INTERFACE.md` → Totality). The payload reaches `computeTxId` through
+**Why it exists.** `author` and the refs take fixed-width `b32` writers, which cannot carry
+a sentinel and therefore **throw**; `type` takes `enum8`, whose writer is **total** — an
+off-table value writes the reserved `0xff` sentinel (see `TYPES_INTERFACE.md` → Totality).
+The pin does both jobs: it keeps the throwing writers unreachable by malformed input, and
+it keeps the sentinel path closed so two distinct malformed posts cannot share one
+encoding. The payload reaches `computeTxId` through
 `postFieldBytes`, so the domain must be established before then — without this
 pin a malformed post would put a throw in a path this contract requires never
 to throw (the M-5/M-6 regression).

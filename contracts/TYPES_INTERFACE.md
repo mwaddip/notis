@@ -102,10 +102,14 @@ panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-
 mirror implementation must reproduce this, not reintroduce a throw.
 
 ⚠ **No field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s sentinel
-guards `protocolVersion` alone, and an out-of-domain version encodes to a value the
+guards `protocolVersion`, and an out-of-domain version encodes to a value the
 strict-equality version check refuses — the sentinel never reaches a rule as a meaning.
-`type` takes a **throwing** writer (`enum8`, → Layout — Post), like the `b32` fields: its
-domain is established upstream by `verifyPostFieldDomains`.
+`type`'s writer (`enum8`, → Layout — Post) is **total the same way, at byte width**: an
+off-table value takes the reserved `0xff` sentinel, which no table may claim and which the
+decode boundary refuses as `invalid-tag`. `verifyPostFieldDomains`' membership rule keeps
+that sentinel path unreachable from validated input — without it, two distinct malformed
+posts would share one encoding, the collision class the `isU64Safe` pins close for the
+numerics.
 
 `computePostId` prefixes `POST_ID_DOMAIN` so a post id can never collide with a box id or a
 tx id derived from the same provenance — the domain tag is the whole of that separation, and
