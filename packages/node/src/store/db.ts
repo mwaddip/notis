@@ -133,7 +133,10 @@ const MIGRATIONS = [
     invite_inviter TEXT,
     vouch_voucher TEXT,
     tx_fee INTEGER,
-    tx_bytes INTEGER
+    tx_bytes INTEGER,
+    tx_inputs TEXT,
+    tx_output_ids TEXT,
+    tx_id TEXT
   )`,
 
   // System config (persistent node-level keypairs, etc.)
@@ -237,46 +240,6 @@ function migrateBlockTopology(database: Database.Database): void {
   `);
 }
 
-function migrateVerifiablePrune(database: Database.Database): void {
-  // Check if migration already applied (prune_entry_cbor column exists in mempool)
-  const cols = database.prepare("PRAGMA table_info('mempool')").all() as Array<{ name: string }>;
-  if (cols.some(c => c.name === 'prune_entry_cbor')) return;
-
-  console.warn('migrateVerifiablePrune: applying one-time mempool and dag_stumps schema migration');
-
-  // Drop and recreate mempool with prune_entry_cbor, entry_type 'prune' instead of 'stump'
-  database.exec(`
-    DROP TABLE IF EXISTS mempool;
-    CREATE TABLE mempool (
-      rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-      entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
-      utxo_tx_cbor BLOB,
-      prune_entry_cbor BLOB,
-      expires_at_height INTEGER NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      like_target TEXT,
-      like_liker TEXT,
-      invite_inviter TEXT,
-      vouch_voucher TEXT
-    );
-  `);
-
-  // Drop and recreate dag_stumps with simplified schema
-  // Removed columns: subtree_merkle_root, prune_signature, karma_deltas
-  database.exec(`
-    DROP TABLE IF EXISTS dag_stumps;
-    CREATE TABLE dag_stumps (
-      id TEXT PRIMARY KEY,
-      root_post_hash TEXT NOT NULL,
-      author_id BLOB NOT NULL,
-      reply_count INTEGER NOT NULL,
-      upvote_count INTEGER NOT NULL,
-      protocol_version INTEGER NOT NULL,
-      compacted_at_block_height INTEGER NOT NULL
-    );
-  `);
-}
-
 /**
  * The columns a pooled transaction's own fields are lifted into at insert —
  * `tx_inputs`, the box ids it spends; `tx_output_ids`, the ids of the boxes it
@@ -286,19 +249,14 @@ function migrateVerifiablePrune(database: Database.Database): void {
  * principle as the like/invite/vouch gate columns above — the queries stay
  * plain SQL over every row rather than a decode-scan of the first N.
  *
- * **The ALTER pass is what reaches an EXISTING database; the base `CREATE TABLE`
- * is what a fresh one gets.** Both are needed and neither is redundant:
- * `initDb` runs `MIGRATIONS` before any `migrate*` function, and the base
- * mempool table already carries `prune_entry_cbor` — the very column
- * `migrateVerifiablePrune` tests before deciding to act — so on a fresh database
- * that migration returns early and the base table is the one that **survives**.
- * It drops and recreates only on a database predating that column. A column
- * added to the base table alone would therefore never reach an existing
- * database, and one added to the ALTER pass alone leaves a fresh schema that
- * does not describe itself.
+ * **The base `CREATE TABLE` is what a fresh database gets; the ALTER pass is
+ * what reaches an existing one.** Both are needed and neither is redundant: a
+ * column added to the base table alone never reaches an existing database, and
+ * one added to the ALTER pass alone leaves a fresh schema that does not
+ * describe itself.
  *
  * Each column is guarded on its own, so a database that gained one before the
- * other still gains the one it lacks — and so the pass is a no-op on the fresh
+ * other still gains the one it lacks — and so the pass is a no-op on a fresh
  * database whose base table already declared them.
  *
  * Rows written before a column existed hold NULL, and `json_each` reads NULL as
@@ -428,7 +386,6 @@ export function initDb(path: string): void {
   }
   migrateAvlTree(db);
   migrateBlockTopology(db);
-  migrateVerifiablePrune(db);
   migrateMempoolTxColumns(db);
   migrateDropValidationCounters(db);
   createMempoolGateIndexes(db);

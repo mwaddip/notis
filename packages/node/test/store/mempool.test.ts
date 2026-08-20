@@ -346,10 +346,12 @@ describe('mempool store', () => {
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
 
-    // Insertion order, across both entry types — `getPendingEntries` is FIFO by
-    // rowid and does not group by kind.
     const types = entries.map((e) => e.entryType);
     expect(types).toEqual(['prune', 'utxo_tx', 'prune']);
+    // A prune row's blob is read by drainMempoolPrunes, not the DTO
+    // (MEMPOOL_INTERFACE → PoolEntry).
+    expect(entries[0].utxoTxCbor).toBeNull();
+    expect(entries[1].utxoTxCbor).toBeInstanceOf(Uint8Array);
   });
 
   it('getPendingEntries returns empty array when mempool is empty', async () => {
@@ -388,16 +390,13 @@ describe('mempool store', () => {
     expect(typeof entries[0].createdAt).toBe('string');
   });
 
-  it('utxo_tx entry has pruneEntryCbor null and utxoTxCbor set', async () => {
+  it('utxo_tx entry carries utxoTxCbor as a Uint8Array', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = { inputs: [BOX_99], outputs: [], signatures: {}, protocolVersion: 1 };
     insertUtxoTx(tx as any, 300);
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
     expect(entries[0].entryType).toBe('utxo_tx');
-    // The payload columns are exclusive: a row carries the CBOR its entry type
-    // names and null in the other (MEMPOOL_INTERFACE → PoolEntry).
-    expect(entries[0].pruneEntryCbor).toBeNull();
     expect(entries[0].utxoTxCbor).toBeInstanceOf(Uint8Array);
   });
 

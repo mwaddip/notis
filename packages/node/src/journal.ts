@@ -112,25 +112,8 @@ export function emitDagReorg(forkPoint: string, demoted: number, oldTip: string,
 }
 
 // ---------------------------------------------------------------------------
-// Convenience emitters for anomaly events
-// ---------------------------------------------------------------------------
-
-export function emitValidationStuck(postId: string, reason: string, attemptCount: number): void {
-  emitEvent({
-    event: 'validation_stuck', level: 'WARN',
-    post_id: postId, reason, attempt_count: attemptCount,
-  });
-}
-
-export function emitDagHeightDrift(gap: number, mode: string, oldHeight: number, newHeight: number): void {
-  emitEvent({
-    event: 'dag_height_drift', level: 'WARN',
-    gap, mode, old_height: oldHeight, new_height: newHeight,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Convenience emitters for peer events
+// Convenience emitters for peer events (JOURNAL_EVENTS → Peer Events —
+// NOT IMPLEMENTED; wrappers ahead of wiring)
 // ---------------------------------------------------------------------------
 
 export function emitPeerConnected(peerId: string, direction: 'inbound' | 'outbound'): void {
