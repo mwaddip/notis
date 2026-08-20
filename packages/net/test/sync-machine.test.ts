@@ -617,6 +617,34 @@ describe('SyncMachine', () => {
       expect(machine.getState().phase).toBe('syncing');
     });
 
+    it('a batch that does not advance height makes no progress (M-10)', () => {
+      // Simulates a handler returning false: appendBlocks runs but
+      // chainHeight stays at 0, so no progress is recorded.
+      const { machine } = makeMachine({
+        store: {
+          chainHeight: () => 0,
+          appendBlocks: () => {},
+        },
+      });
+      peerActive(machine, 'peer1', 100);
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+
+      const body = new Uint8Array(
+        encode({
+          typeId: MODIFIER_ORDERING_BLOCK,
+          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
+        }),
+      );
+      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
+      machine.flush();
+
+      vi.advanceTimersByTime(61_000);
+      machine.onTimerTick();
+
+      expect(machine.getState().phase).toBe('idle');
+      expect(machine.getState().stalledPeers.has('peer1')).toBe(true);
+    });
+
     it('sends periodic SyncInfo when not idle', () => {
       const { machine, sent } = makeMachine({ store: { chainHeight: () => 0 } });
       peerActive(machine, 'peer1', 100);

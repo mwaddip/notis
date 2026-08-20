@@ -60,6 +60,7 @@ import {
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 type TxCallback = (tx: UtxoTransaction, fromPeerId: string) => void;
+type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
  * Return the libp2p node cast to the Libp2pGossip interface expected by the
@@ -137,7 +138,7 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
  */
 export class LazySyncStore implements SyncStore {
   private _getOrderingBlock: ((height: number) => unknown | null) | null = null;
-  private _blocksHandler: ((block: OrderingBlock) => void) | null = null;
+  private _blocksHandler: BlocksHandlerFn | null = null;
 
   /** Validators reach this class for one reason: `serializeOrderingBlock` serves a stored row. */
   constructor(private readonly validators: NetValidators) {}
@@ -146,7 +147,7 @@ export class LazySyncStore implements SyncStore {
     this._getOrderingBlock = fn;
   }
 
-  setBlocksHandler(fn: (block: OrderingBlock) => void): void {
+  setBlocksHandler(fn: BlocksHandlerFn): void {
     this._blocksHandler = fn;
   }
 
@@ -257,7 +258,7 @@ export class LazySyncStore implements SyncStore {
     // owns persistence.
   }
 
-  appendBlocks(_blocks: unknown[]): void {
+  appendBlocks(_blocks: unknown[], peerId: string): void {
     if (!this._blocksHandler) return;
     for (const raw of _blocks) {
       if (!(raw instanceof Uint8Array)) continue;
@@ -294,7 +295,8 @@ export class LazySyncStore implements SyncStore {
       // invariant, already built there and covering both drain paths (the
       // background loop and `flush()`). Stopping the rest of the batch is then
       // a consequence of a stated design rather than of where a brace sits.
-      this._blocksHandler(block);
+      const ok = this._blocksHandler(block, peerId);
+      if (!ok) break;
     }
   }
 
@@ -1430,12 +1432,26 @@ export class NetNode {
   }
 
   /**
-   * Register a handler for blocks received via the sync machine's pull path
-   * (ModifierResponse during header-first sync). The node layer decodes and
-   * applies blocks to state — this bridges the sync machine's receive side
-   * to the node's applyOrderingBlock pipeline.
+   * Node's one call into the penalty system (NET_INTERFACE → Peer Penalty
+   * System). Records the named tier against the peer with the reason string;
+   * accrual, decay and the ban threshold apply unchanged.
    */
-  setBlocksHandler(handler: (block: OrderingBlock) => void): void {
+  penalizePeer(peerId: string, kind: 'misbehavior' | 'transient', reason: string): void {
+    if (kind === 'misbehavior') {
+      this.peerMgr.recordPenalty('misbehavior', peerId, 100, reason);
+    } else {
+      this.peerMgr.recordPenaltyKind(PenaltyKind.Transient, peerId, reason);
+    }
+  }
+
+  /**
+   * Register a handler for blocks received via the sync machine's pull path
+   * (ModifierResponse during header-first sync). The handler's return is the
+   * batch's continue signal: `true` for a block the handler applied or already
+   * held, `false` for one it rejected. `appendBlocks` stops the batch at the
+   * first `false` (NET_INTERFACE → Sync Handler Registration).
+   */
+  setBlocksHandler(handler: BlocksHandlerFn): void {
     this.syncStore.setBlocksHandler(handler);
   }
 

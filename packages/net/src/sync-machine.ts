@@ -42,7 +42,7 @@ export interface SyncStore {
   /** Persist received headers. */
   appendHeaders(headers: unknown[]): void;
   /** Persist received full blocks. */
-  appendBlocks(blocks: unknown[]): void;
+  appendBlocks(blocks: unknown[], peerId: string): void;
   /** Mark a height as fully validated (headers + body + signatures). */
   setValidatedHeight(height: number): void;
   /** Flush pending writes to durable storage. */
@@ -797,7 +797,7 @@ export class SyncMachine {
     if (blocks.length === 0) return;
 
     const heightBefore = this.store.chainHeight();
-    this.store.appendBlocks(blocks);
+    this.store.appendBlocks(blocks, peerId);
     const newHeight = this.store.chainHeight();
 
     // Stall progress = chain height (audit M-10): the stall clock advances
