@@ -14,6 +14,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_REORG_DEPTH,
+  GENESIS_PREV_BLOCK_HASH,
   NETWORK_PROFILES,
   COINBASE_TREASURY_PCT,
   COINBASE_MINER_FLOOR_PCT,
@@ -112,6 +113,23 @@ describe('MAX_REORG_DEPTH', () => {
     for (const profile of Object.values(NETWORK_PROFILES)) {
       expect(Object.hasOwn(profile, 'maxReorgDepth')).toBe(false);
     }
+  });
+});
+
+/**
+ * The genesis anchor — the `prevBlockHash` a height-1 block carries.
+ *
+ * TYPES_INTERFACE → Genesis parent hash. Heights start at 1, so no header
+ * hashes to this value; it is a sentinel by construction.
+ */
+describe('GENESIS_PREV_BLOCK_HASH', () => {
+  it('is 64 hex zero characters', () => {
+    expect(GENESIS_PREV_BLOCK_HASH).toBe('0'.repeat(64));
+    expect(GENESIS_PREV_BLOCK_HASH).toHaveLength(64);
+  });
+
+  it('is a string, not bytes', () => {
+    expect(typeof GENESIS_PREV_BLOCK_HASH).toBe('string');
   });
 });
 

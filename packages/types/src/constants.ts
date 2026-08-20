@@ -278,28 +278,28 @@ export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;
 /**
  * How far back a reorg reaches.
  *
- * **One number doing three jobs in `@dagsocial/node`, with nothing requiring
- * them to stay equal.** It bounds the fork walk (`findForkPoint` searches at
- * most this many blocks back from our own tip), it sizes the header request
- * fork resolution makes of the competing peer (`MAX_REORG_DEPTH * 2`), and it
- * sets the block-journal retention window
- * (`purgeOldJournals(height - MAX_REORG_DEPTH)`). **Journal retention is the
- * hard bound on how deep a reorg can physically go; the fork walk is policy** —
- * past the retention window the journals are gone and no fork-walk bound
- * reaches them.
+ * TYPES_INTERFACE → Chain reorganisation lists the load-bearing consumers and
+ * their roles. **Journal retention is the hard bound on how deep a reorg can
+ * physically go; the fork walk is policy** — past the retention window the
+ * journals are gone and no fork-walk bound reaches them.
  *
- * It is universal rather than per-network for the reason every other constant
- * outside `NetworkProfile` is (TYPES_INTERFACE → Network profiles): a network
- * that compressed it would be a place devnet behaves unlike mainnet.
- *
- * **It lives in this package rather than in node because node's `config.ts`
- * cannot reach a constant declared in `services/fork-resolution.ts`** — that
- * module imports `config` itself, so the edge would close a cycle and drag the
- * store, state and apply graph into config load. A load-time rule keyed on this
- * value, such as refusing a `MAX_PROOF_HISTORY` beneath it, is only expressible
- * with the constant here.
+ * It lives in this package rather than in node because node's `config.ts`
+ * cannot reach a constant declared in `services/fork-resolution.ts` — that
+ * module imports `config` itself, so the edge would close a cycle.
  */
 export const MAX_REORG_DEPTH = 20;
+
+/**
+ * The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex
+ * characters. Heights start at 1, so no header is ever hashed to this value;
+ * it is a sentinel by construction, not a digest.
+ *
+ * TYPES_INTERFACE → Genesis parent hash.
+ *
+ * ⚠ `store/mempool.ts`'s `PROBE_TX_ID` is the same bytes with a different
+ * meaning and is **not** this constant.
+ */
+export const GENESIS_PREV_BLOCK_HASH = '00'.repeat(32);
 
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */
