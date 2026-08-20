@@ -25,6 +25,7 @@ import { PROTOCOL_VERSION,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  BOX_TYPE_TAGS,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -52,11 +53,10 @@ import { config } from '../../src/config.js';
 /**
  * One case per box type. `signer` is the key the type's transitions require, or
  * `null` when no transition admits the type as an input at all — the two
- * variants the authorization table holds, and between them they must cover every
- * box type.
+ * variants the authorization table holds, and between them they cover every
+ * box type (TYPES_INTERFACE → What a new box type costs).
  */
 interface Case {
-  boxType: AnyBox['boxType'];
   /** The box, minus provenance. */
   box: (holder: TestIdentity, other: TestIdentity) => Record<string, unknown>;
   /** Outputs of a spend that conserves and matches the schema. */
@@ -71,30 +71,25 @@ const karmaOut = (owner: Uint8Array, value: bigint): AnyBoxCandidate =>
 const creditOut = (owner: Uint8Array, value: bigint): AnyBoxCandidate =>
   ({ boxType: 'credit', value, createdAtBlock: 0, owner }) as unknown as AnyBoxCandidate;
 
-const CASES: readonly Case[] = [
-  // Rows naming no signer require the owner's signature.
-  {
-    boxType: 'karma',
+const CASES: Record<AnyBox['boxType'], Case> = {
+  karma: {
     box: (h) => ({ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: h.userId }),
     outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: 'holder',
   },
-  {
-    boxType: 'credit',
+  credit: {
     box: (h) => ({ boxType: 'credit', value: 10n, createdAtBlock: 0, owner: h.userId }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: 'holder',
   },
   // *voucher-signed* — and a VouchBox carries no `owner` at all, so the key the
   // row means is the only key field it has.
-  {
-    boxType: 'vouch',
+  vouch: {
     box: (h, o) => ({
       boxType: 'vouch', value: 1n, voucherId: h.userId, targetId: o.userId,
       createdAtBlock: 0,
     }),
-    // ⛔ **An escrow output, because the unvouch conserves now.** The stake
-    // moves into a box the voucher's own transaction creates
+    // The stake moves into a box the voucher's own transaction creates
     // (ARCHITECTURE → Vouch boxes); a zero-output spend is a whole-input
     // deficit and is refused before authorization is reached.
     outputs: (h) => [{
@@ -106,9 +101,18 @@ const CASES: readonly Case[] = [
     } as never],
     signer: 'holder',
   },
-  // No transition admits any of these as an input.
-  {
-    boxType: 'bond',
+  // Owner-signed: the voucher reclaims their escrow once SPEND_TIMING allows
+  // it. `releaseAtBlock: 5` is at or below the spend height (10), so the
+  // timing gate does not interfere — the authorization verdict alone is tested.
+  vouch_escrow: {
+    box: (h) => ({
+      boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0,
+      owner: h.userId, releaseAtBlock: 5,
+    }),
+    outputs: (h) => [karmaOut(h.userId, 1n)],
+    signer: 'holder',
+  },
+  bond: {
     box: (h, o) => ({
       boxType: 'bond', value: 25n, inviterId: h.userId, inviteePublicKey: o.userId,
       createdAtBlock: 0,
@@ -116,8 +120,7 @@ const CASES: readonly Case[] = [
     outputs: (h) => [karmaOut(h.userId, 25n)],
     signer: null,
   },
-  {
-    boxType: 'post_lock',
+  post_lock: {
     box: (h) => ({
       boxType: 'post_lock', value: 10n, originalValue: 10n, owner: h.userId,
       createdAtBlock: 0,
@@ -125,32 +128,27 @@ const CASES: readonly Case[] = [
     outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: null,
   },
-  {
-    boxType: 'fee',
+  fee: {
     box: () => ({ boxType: 'fee', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: null,
   },
-  {
-    boxType: 'emission',
+  emission: {
     box: () => ({ boxType: 'emission', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: null,
   },
-  {
-    boxType: 'treasury',
+  treasury: {
     box: () => ({ boxType: 'treasury', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [creditOut(h.userId, 10n)],
     signer: null,
   },
-  {
-    boxType: 'karma_pool',
+  karma_pool: {
     box: () => ({ boxType: 'karma_pool', value: 10n, createdAtBlock: 0 }),
     outputs: (h) => [karmaOut(h.userId, 10n)],
     signer: null,
   },
-  {
-    boxType: 'genesis_proof',
+  genesis_proof: {
     box: () => ({
       boxType: 'genesis_proof', value: 0n, payload: new Uint8Array([0xaa]),
       createdAtBlock: 0,
@@ -158,7 +156,17 @@ const CASES: readonly Case[] = [
     outputs: () => [],
     signer: null,
   },
-];
+  // `BLOCK_APPLICATION_ONLY` — only the settlement transaction consumes
+  // markers (TYPES_INTERFACE → LikeAccrualBox). `author` is attribution, not
+  // authorization.
+  like_accrual: {
+    box: (h) => ({
+      boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: h.userId,
+    }),
+    outputs: (h) => [karmaOut(h.userId, 1n)],
+    signer: null,
+  },
+};
 
 describe('authorization is a property of the transition', () => {
   let deps: UtxoEngineDeps;
@@ -206,7 +214,9 @@ describe('authorization is a property of the transition', () => {
    */
   let nonce = 0;
 
-  function spendOf(c: Case): UtxoTransaction {
+  const ENTRIES = Object.entries(CASES) as [AnyBox['boxType'], Case][];
+
+  function spendOf(boxType: AnyBox['boxType'], c: Case): UtxoTransaction {
     const box = seedProvenance<AnyBox>(c.box(holder, other), 1, nonce++);
     storeInsertBox(box);
     return {
@@ -222,31 +232,20 @@ describe('authorization is a property of the transition', () => {
   // signature-requiring or admitted by no transition, and `AUTHORIZATION`'s
   // `Record` over `AnyBox['boxType']` makes omitting one a compile error; this is
   // the runtime half: every type reaches a verdict, none reaches an "unknown"
-  // arm, and none throws.
-  //
-  // ⚠ **`like_accrual` and `vouch_escrow` are absent, and it is still not an
-  // omission.** Both are created now, but ⛔ **no user transition admits either
-  // as an INPUT** — only the block's settlement transaction consumes them
-  // (TYPES_INTERFACE → LikeAccrualBox; NODE_INTERFACE → The settlement
-  // transaction) — so neither can be spent by a transaction this table governs
-  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox). Their entry in
-  // `AUTHORIZATION` is `BLOCK_APPLICATION_ONLY` and is asserted by the compiler.
+  // arm, and none throws. `CASES` is keyed on the union so the compiler catches
+  // a missing type (TYPES_INTERFACE → What a new box type costs).
   // -------------------------------------------------------------------------
   describe('every box type is either signature-requiring or admitted by no transition', () => {
     it('covers every box type in `AnyBox`', () => {
-      // The case list is the claim. A box type absent from it would leave its
-      // authorization unasserted while every test below still passed.
-      const covered = new Set(CASES.map((c) => c.boxType));
-      expect(covered.size).toBe(CASES.length);
-      expect([...covered].sort()).toEqual([
-        'bond', 'credit', 'emission', 'fee', 'genesis_proof',
-        'karma', 'karma_pool', 'post_lock', 'treasury', 'vouch',
-      ]);
+      const covered = Object.keys(CASES);
+      expect([...covered].sort()).toEqual(
+        (Object.keys(BOX_TYPE_TAGS) as string[]).sort(),
+      );
     });
 
-    for (const c of CASES) {
-      it(`${c.boxType}: unsigned is refused, with a verdict rather than a throw`, () => {
-        const result = validateTx(deps, spendOf(c), 10);
+    for (const [boxType, c] of ENTRIES) {
+      it(`${boxType}: unsigned is refused, with a verdict rather than a throw`, () => {
+        const result = validateTx(deps, spendOf(boxType, c), 10);
         expect(result.valid).toBe(false);
         expect(result.error).toBeTypeOf('string');
       });
@@ -258,29 +257,29 @@ describe('authorization is a property of the transition', () => {
   // names authorizes, and no other key does.
   // -------------------------------------------------------------------------
   describe('a transition that requires a signature is satisfied by exactly the key it names', () => {
-    const signing = CASES.filter((c) => c.signer !== null);
+    const signing = ENTRIES.filter(([, c]) => c.signer !== null);
 
-    for (const c of signing) {
-      it(`${c.boxType}: the named key authorizes the spend`, () => {
-        const tx = spendOf(c);
+    for (const [boxType, c] of signing) {
+      it(`${boxType}: the named key authorizes the spend`, () => {
+        const tx = spendOf(boxType, c);
         signTransaction(tx, holder.privateKey, toHex(holder.userId));
 
         const result = validateTx(deps, tx, 10);
         expect(result.valid, result.error).toBe(true);
       });
 
-      it(`${c.boxType}: a stranger's signature does not`, () => {
-        const tx = spendOf(c);
+      it(`${boxType}: a stranger's signature does not`, () => {
+        const tx = spendOf(boxType, c);
         signTransaction(tx, stranger.privateKey, toHex(stranger.userId));
 
         expect(validateTx(deps, tx, 10).valid).toBe(false);
       });
 
-      it(`${c.boxType}: the other key the transaction mentions does not either`, () => {
+      it(`${boxType}: the other key the transaction mentions does not either`, () => {
         // `other` is the vouch target and the invite's invitee — a key the box
         // itself names, which is the near miss a stranger does not test. For
         // karma and credit it is simply a second real key.
-        const tx = spendOf(c);
+        const tx = spendOf(boxType, c);
         signTransaction(tx, other.privateKey, toHex(other.userId));
 
         expect(validateTx(deps, tx, 10).valid).toBe(false);
@@ -290,28 +289,26 @@ describe('authorization is a property of the transition', () => {
 
   // -------------------------------------------------------------------------
   // The no-transition half: a signature is not a way in, so it does not matter
-  // whose it is. `fee`, `emission` and `treasury` reach a transaction's input
-  // position for the first time here — `bond`, `post_lock` and `genesis_proof`
-  // each have their own suite.
+  // whose it is.
   //
   // Two negative assertions, and each excludes a different wrong gate. Not a
   // signature complaint, because producing a signature is free and a rule
   // wanting a different one would be satisfiable. And not the transition
-  // table's wording either — its arms would refuse all six on their own, as
-  // the deliberate second layer, so without this the case would pass with
-  // authorization deleted.
+  // table's wording either — its arms would refuse every barred type on their
+  // own, as the deliberate second layer, so without this the case would pass
+  // with authorization deleted.
   // -------------------------------------------------------------------------
   describe('a type no transition admits is refused whoever signed', () => {
-    const barred = CASES.filter((c) => c.signer === null);
+    const barred = ENTRIES.filter(([, c]) => c.signer === null);
 
-    for (const c of barred) {
-      it(`${c.boxType}: refused unsigned, and refused signed by every key involved`, () => {
+    for (const [boxType, c] of barred) {
+      it(`${boxType}: refused unsigned, and refused signed by every key involved`, () => {
         for (const id of [null, holder, other, stranger]) {
-          const tx = spendOf(c);
+          const tx = spendOf(boxType, c);
           if (id !== null) signTransaction(tx, id.privateKey, toHex(id.userId));
 
           const result = validateTx(deps, tx, 10);
-          expect(result.valid, `${c.boxType} signed by ${id === null ? 'nobody' : toHex(id.userId).slice(0, 8)}`)
+          expect(result.valid, `${boxType} signed by ${id === null ? 'nobody' : toHex(id.userId).slice(0, 8)}`)
             .toBe(false);
           expect(result.error).not.toMatch(/signature|signed by/i);
           expect(result.error).not.toMatch(/Unknown box type|not user transactions/);

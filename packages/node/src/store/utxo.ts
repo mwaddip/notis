@@ -955,8 +955,10 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
       extraData = {};
       break;
     }
-    default:
-      throw new Error(`Unknown box type: ${(box as AnyBox).boxType}`);
+    default: {
+      const _exhaustive: never = box;
+      throw new Error(`Unknown box type: ${(_exhaustive as AnyBox).boxType}`);
+    }
   }
 
   // Plain INSERT, deliberately not INSERT OR REPLACE: an id collision hits the
