@@ -148,7 +148,7 @@ describe('provider boundary (real wiring)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Route boundary — the blocks router factory with a guarded poisoned read
+// Route boundary — the real router with a guarded poisoned read
 // ---------------------------------------------------------------------------
 
 describe('route boundary (real wiring)', () => {
@@ -158,7 +158,7 @@ describe('route boundary (real wiring)', () => {
     vi.resetModules();
   });
 
-  it('GET /blocks/1 with a guarded poisoned read fires exit', async () => {
+  it('GET /blocks/1 through the real router fires exit', async () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
@@ -172,10 +172,42 @@ describe('route boundary (real wiring)', () => {
     const { guardStoreRead } = await import(
       '../../src/services/corrupt-state.js'
     );
-    const guarded = guardStoreRead(ordering.getOrderingBlock);
+    const { createRouter } = await import('../../src/routes/blocks.js');
+    const { default: express } = await import('express');
+    const http = await import('http');
 
-    // The property is the wrap through the real route, not Express's 500.
-    expect(() => guarded(1)).toThrow('process.exit');
+    const app = express();
+    app.use(createRouter({
+      getOrderingBlock: guardStoreRead(ordering.getOrderingBlock),
+      getCurrentHeight: ordering.getCurrentHeight,
+      getPostCount: () => 0,
+      getPendingPostCount: () => 0,
+      getTotalKarma: () => 0n,
+      getLiquidKarma: () => 0n,
+      getTotalCredits: () => 0n,
+      networkType: 'testnet',
+      inviteProbationBlocks: 43200,
+      vouchCooldownBlocks: 60,
+    }));
+
+    await new Promise<void>((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const req = http.request(
+          { hostname: 'localhost', port: addr.port, path: '/blocks/1', method: 'GET' },
+          (res) => {
+            let d = '';
+            res.on('data', (c) => (d += c));
+            res.on('end', () => {
+              server.close();
+              resolve();
+            });
+          },
+        );
+        req.end();
+      });
+    });
+
     expect(exit).toHaveBeenCalledWith(1);
   });
 });

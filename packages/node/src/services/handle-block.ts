@@ -39,9 +39,8 @@ export function handleOrderingBlock(
 }
 
 /**
- * The pull registration's wrapped handler (NODE_INTERFACE → Sync handlers).
- * `index.ts` passes this to `net.setBlocksHandler` so the boundary is
- * testable without re-implementing the wrap in a test double.
+ * The pull registration's wrapped handler, passed by `index.ts` to
+ * `net.setBlocksHandler` (NODE_INTERFACE → Sync handlers).
  */
 export function pullBlocksHandler(
   net: ForkResolutionNet,
