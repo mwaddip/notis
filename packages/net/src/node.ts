@@ -1446,7 +1446,7 @@ export class NetNode {
 
   /**
    * Register a handler for blocks received via the sync machine's pull path
-   * (ModifierResponse during header-first sync). The handler's return is the
+   * (ModifierResponse during sync). The handler's return is the
    * batch's continue signal: `true` for a block the handler applied or already
    * held, `false` for one it rejected. `appendBlocks` stops the batch at the
    * first `false` (NET_INTERFACE → Sync Handler Registration).
