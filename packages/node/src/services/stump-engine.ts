@@ -73,6 +73,15 @@ export function executePrune(intent: PruneIntent): PruneEntry {
     throw Object.assign(new Error('Invalid prune signature'), { statusCode: 403 });
   }
 
+  // NODE_INTERFACE → Prune flow step 2: a list whose length differs from its
+  // set size carries a repeat; the set compare alone admits it.
+  if (intent.subtreePostIds.length !== new Set(intent.subtreePostIds).size) {
+    throw Object.assign(
+      new Error('subtreePostIds carries a repeated id'),
+      { statusCode: 400 },
+    );
+  }
+
   // 5. Verify subtreePostIds match the actual reply tree
   const descendants = getSubtree(intent.rootPostHash);
   const expectedIds = new Set([

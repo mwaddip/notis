@@ -2149,6 +2149,40 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Structure gate — a prune entry with a repeated subtreePostId
+  // -----------------------------------------------------------------------
+
+  it('rejects a block whose prune entry carries a repeated subtreePostId', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { tx: postTx, postId } = await seedPostTx(author, 'target post');
+
+    const blockApply = await importBlockApply();
+
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    // [postId, postId] — the repeat is caught by verifyOrderingBlockStructure
+    // at the top of applyOrderingBlock, before any mutation.
+    const repeatedEntry = makePruneEntry(postId, [postId, postId], author);
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [repeatedEntry],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(false);
+
+    const { getStump } = (await import('../../src/store/stumps.js')) as {
+      getStump: (id: string) => unknown;
+    };
+    expect(getStump(postId)).toBeNull();
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(1);
+  });
+
+  // -----------------------------------------------------------------------
   // Entry-vs-post verification — content-holders keep lying entries out
   // -----------------------------------------------------------------------
 

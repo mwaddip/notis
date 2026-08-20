@@ -158,6 +158,18 @@ describe('pruning routes', () => {
     expect(res.status).toBe(403);
   });
 
+  it('POST /posts/:id/prune returns 400 when executePrune throws repeated-id', async () => {
+    const res = await request(TEST_POST_HASH, validBody(), () => {
+      throw Object.assign(
+        new Error('subtreePostIds carries a repeated id'),
+        { statusCode: 400 },
+      );
+    });
+    expect(res.status).toBe(400);
+    const body = res.data as Record<string, unknown>;
+    expect(body.error).toBe('subtreePostIds carries a repeated id');
+  });
+
   it('POST /posts/:id/prune returns 500 for unexpected errors', async () => {
     const res = await request(TEST_POST_HASH, validBody(), () => {
       throw new Error('unexpected');
