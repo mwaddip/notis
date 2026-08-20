@@ -207,6 +207,8 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
 the fixed 32-byte preimage the miner hashes with the nonce. The miner never
 touches CBOR.
 
+#### Template and submit
+
 **A miner node always holds a template.** It builds one at startup and rebuilds it whenever the tip
 moves — its own block finalizing, a peer's block applying, or a reorg committing. **A transaction
 arriving does not rebuild it**: what goes into a block and when one is produced are separate
