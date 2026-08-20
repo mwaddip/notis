@@ -2,17 +2,21 @@
 
 **Version:** 1.0
 **Stability:** stable
-**Last verified against code:** 2026-08-06
+**Last verified against code:** 2026-08-20
 
-> ⚠ **PARTIAL — most of this document describes events nothing emits. Re-derived 2026-08-14.**
-> **20 events are declared below, and 3 have no emitter in any package's `src`:**
-> `migration_started`, `migration_complete`, `sync_complete`.
+> ⚠ **PARTIAL — 19 events are declared below and 11 are emitted. Re-derived 2026-08-20.** Every
+> emitter is a `journal.ts` wrapper around `emitEvent`, and an event is emitted when its wrapper is
+> called from `src`. **Emitted (11):** `server_starting`, `server_ready`, `shutdown_signal_received`,
+> `server_shutting_down`, `db_open_started`, `db_open_complete`, `api_listening`, `post_received`,
+> `post_validated`, `post_indexed`, `dag_reorg`. **Declared with a wrapper nothing in `src` calls (5):**
+> `validation_stuck`, `dag_height_drift`, `peer_connected`, `peer_disconnected`, `peer_penalised` — the
+> wrappers are exercised by `test/journal.test.ts` alone. **Declared with no wrapper (3):**
+> `sync_complete`, `migration_started`, `migration_complete`. "Stability: stable" refers to the
+> *format contract* for events that are emitted; it is not a claim that an event exists.
 >
-> The other 14 names occur somewhere in `src`, but **occurring is not emitting** — a name can
-> appear in a type or a comment, and **how many of the 14 reach `emitEvent` has never been
-> derived.** Treat every event here as unimplemented unless you have found its emitter.
-> "Stability: stable" refers to the *format contract* for events that are emitted; it is not a
-> claim that the events exist.
+> ⚠ **`validation_stuck` and `dag_height_drift` describe triggers the node does not have.** No
+> validation sweep exists for a post to fail in, and two stores disagreeing about height is the
+> fail-stop family's case (`NODE_INTERFACE` → the `CorruptChainStateError` family), not a WARN event.
 >
 > ⚠ **`migration_started` / `migration_complete` cannot be emitted as declared.** They carry
 > `from_version` and `to_version`, and there is no stored schema version to read: the five
@@ -22,6 +26,11 @@
 > ⚠ **`sync_complete` is not `@dagsocial/node`'s to emit alone.** `SyncMachine.onSynced` is
 > public, but `NetNode` registers the callback internally and exposes no passthrough, so this
 > needs a `@dagsocial/net` change first.
+>
+> ⚠ **`peer_connected` / `peer_disconnected` / `peer_penalised` have the same shape.** `NetNode`
+> handles libp2p's `peer:connect` / `peer:disconnect` internally and `penalizePeer` is its own method;
+> none is exposed to the node, so the `journal.ts` wrappers have nothing to hook. A net passthrough
+> comes first, then node wiring.
 
 > ⚠ **Two different things share the word "journal" and this document covers only one.**
 > **This file** = the JSON-line **observability event log**. **`BlockJournal` / `BoxMutation`**

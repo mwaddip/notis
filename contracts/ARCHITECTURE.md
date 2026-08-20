@@ -19,7 +19,6 @@ judge the claim's age without `git blame`. **An undated marker is an unverified 
 |---|---|
 | `> ⚠ NOT IMPLEMENTED` | Intended design. Not built. **Is** meant to be built |
 | `> ⚠ PARTIAL` | Some of it runs. The marker must say which part |
-| `> ⚠ NEVER BUILT — NOT PLANNED` | Was documented, never built, and there is no intent to build it. Kept so nobody re-adds it believing it was an oversight |
 | `> ⚠ VIOLATED` | The rule is **correct** and the code breaks it. **Never weaken the rule to match the code** |
 | `> ⚠ FALSE` | The text **was never true**. It does not state a rule the code should meet. **Correct or delete the text — never change code to satisfy it** |
 | `> ⚠ UNENFORCED` | The rule is stated and **nothing checks it**. No violating code path is claimed; if one is, that is `VIOLATED` |
@@ -1204,13 +1203,16 @@ is byte-identical from creation to the block that consumes it.
 
 > ✅ **The role framing is stated below as what the code has.** "Validator" is a mode a node
 > runs in, not a separate class of participant with its own lifecycle: `NODE_ROLE` is parsed
-> in `node/src/config.ts` and gates whether `MINING_SECRET` is required. The **validator
+> in `node/src/config.ts`, gates whether `MINING_SECRET` is required, and selects the mining
+> wiring (`index.ts` and `server.ts` branch on `config.nodeRole === 'miner'`). The **validator
 > signature** on ordering blocks is real and load-bearing — verified on every apply path
 > (audit H-1).
 >
-> ⚠ **The remainder of this section is 2026-07-20 text that predates the implementation.**
-> Selection and the responsibilities below match the code; anything else here should be
-> checked against `MINING_INTERFACE.md` and `block-creator.ts` before it is relied on.
+> ✅ **The remainder of this section is verified against the code, 2026-08-20.** Responsibilities,
+> Selection, Rewards and Separation match `block-creator.ts`, `settlement.ts` and
+> `MINING_INTERFACE → Emission Schedule`: the body is UTXO transactions and prune entries, the
+> reward is the settlement transaction's output from the emission box, selection is PoW alone, and
+> prune authorisation is the root author's signature.
 
 A validator is a node producing ordering blocks by solving their Proof of Work.
 It is a role a node plays, not a separate class of participant — the same key
@@ -2034,12 +2036,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   >   relocated from that description. **Unknown, not holding** — re-derive before relying on
   >   either answer.
   >
-  > ⚠ **The clause says `as`-cast rather than "truncating cast", and the difference is the
+  > **The clause says `as`-cast rather than "truncating cast", and the difference is the
   > whole point.** A TypeScript `as` does not truncate: it erases at compile time and asserts a
   > type nothing checked, producing no runtime error at all. That is a *larger* hazard than a
   > truncating numeric cast, and a rule phrased against truncation does not catch it.
   >
-  > ⚠ **"Untrusted" is load-bearing.** The fail-stop family deliberately ends the process, but
+  > **"Untrusted" is load-bearing.** The fail-stop family deliberately ends the process, but
   > only on this node's own state — its stored bytes, or two of its own stores disagreeing. See
   > `NODE_INTERFACE` and `node/src/services/corrupt-state.ts`. That is not an exception to this
   > bullet; it is a different subject.
@@ -2180,8 +2182,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   states what it assumes of its caller. Elsewhere the types are the contract.
   > ✅ **Deliberately narrow, and the broad form is not what this asks for.** A precondition
   > block on every public function in `store/` and `services/` is not enforced and would not
-  > be: there are 172 exported functions across those two directories, and exactly one file in
-  > `packages/node/src` contains the word "Precondition". A mandate nothing meets reads as
+  > be: there are 195 `export function`s across those two directories (measured 2026-08-20), and no
+  > file in `packages/node/src` contains the word "Precondition". A mandate nothing meets reads as
   > satisfied because nobody checks it.
   >
   > The narrow form is checkable by reading the fail-stop sites, and it is met today by the

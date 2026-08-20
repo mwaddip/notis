@@ -72,9 +72,6 @@ declaration fails, which is the property it exists for.
 
 ### orderingPowTarget
 
-> ⚠ **AHEAD OF CODE.** This section states the rule; the function does not exist yet. It lands on this
-> branch. Until it does, `verifyOrderingBlockPoW` and `blockWork` read `powTargetBits` as whole bits.
-
 ```
 orderingPowTarget(scaledBits: number): Uint8Array | null
 ```
@@ -913,13 +910,8 @@ reason rather than a boolean, and Phase 1e's teeth demonstration asserts those s
 block-level checks (`pruneEntries`, `utxoTxIds`, `utxoTxs` alignment and weight,
 `validatorSignature`) stay here: they are not header fields and no header predicate can see them.
 
-> ⚠ **FALSE — the shrink this marker predicted is REFUTED, not delivered. Verified 2026-08-11.**
-> It read `AHEAD OF CODE` until Phase 9. **It is not being retired as "done": its premise was
-> never true**, and recording it as completed would write a false history of why this function
-> looks the way it does.
->
-> **The premise was that the positional decoder makes field-presence and type checks dead code.
-> That holds for one of three production callers:**
+> **The type and presence checks here are not subsumed by the positional codec**, because the codec's
+> guarantee reaches one of this function's three production callers:
 >
 > | Caller | Upstream | Codec guarantee? |
 > |---|---|---|
@@ -927,52 +919,21 @@ block-level checks (`pruneEntries`, `utxoTxIds`, `utxoTxs` alignment and weight,
 > | `net/src/serve-encode.ts` | **store read** — `encodeServable` does a bare `value as T` | **none** |
 > | `node/src/services/block-apply.ts` | gossip, sync, `fork-resolution`, **and `block-creator`'s locally-mined block built in-process** | none for our own block |
 >
-> `serve-encode.ts`'s own failure message is `stored row is out of domain`. **Those type checks
-> are the only gate on two of the three paths**, because store corruption can put any type in
-> any field — so deleting them as "subsumed by the codec" would remove the only check standing
-> between a corrupt row and a peer.
+> `serve-encode.ts`'s own failure message is `stored row is out of domain`. **These checks are the only
+> gate on two of the three paths**, because store corruption can put any type in any field — a check
+> deleted as "subsumed by the codec" removes the only thing standing between a corrupt row and a peer.
 >
-> **The shrink that was real already happened, incrementally and elsewhere.** Phase 1f moved
-> every header field check into `HEADER_DOMAIN` / `firstHeaderDomainFailure`; Phase 3b deleted
-> the `subBlockRefs` presence and alignment checks along with the field. What remains *is*
-> already "what the codec cannot guarantee" — it merely also coincides with what the store path
-> needs.
->
-> **The table below is kept, because it is correct about what this function must never lose.**
-> What survives, and a codec cannot know:
+> **What a codec cannot know, and this function must never lose:**
 >
 > | Check | Why the codec can't |
 > |---|---|
 > | `height ≥ 1` | genesis is a semantic floor |
 > | `powTargetBits ≥ ORDERING_BLOCK_POW_TARGET_FLOOR` | a policy floor |
 > | `utxoTxIds.length === utxoTxs.length` | two independently-counted arrays |
-> | **`Number.isSafeInteger(height)`** | see below — this one gets *more* important |
->
-> **The safe-integer check must not be deleted as redundant.** Today it lives in net's gossip
-> validator as an add-on (audit M-6) because the structural bound `height ≥ 1` admits NaN and floats.
-> Under VLQ the hazard changes shape but grows: `vlqU` decodes the full u64 range, so a height above
-> 2^53 is *well-formed* at the codec layer and silently loses precision the moment it becomes a JS
-> `number`. Every VLQ-sourced value that reaches `number` needs this bound, and it belongs here
-> rather than only in net — the sync path does not pass through the gossip validator.
->
-> Checks that die because the codec subsumes them: non-negative `value` and `powNonce` (`vlqU` is
-> unsigned by construction), `protocolVersion is a number`, every byte-length assertion, and the
-> `subBlockRefs`/`subBlockEntries` alignment — the latter because `subBlockRefs` no longer exists
-> (see `NODE_INTERFACE.md`).
+> | `Number.isSafeInteger(height)` (`HEADER_DOMAIN` → `isU64Safe`) | `vlqU` decodes the full u64 range, so a height above 2^53 is *well-formed* at the codec layer and loses precision the moment it becomes a JS `number`; every VLQ-sourced value that reaches `number` needs this bound, and the sync path does not pass through the gossip validator |
 >
 > **Deleting checks needs the care of adding them.** Use the established deletion proof: exhaustive
 > grep-to-zero plus diff purity, mutation only where behaviour changes.
->
-> ⚠ **Phase 8 must ADD as well as shrink, and the plan does not currently say so.** Flagged by Phase
-> 1c. This function checks `postId`, each `parentRefs` entry, and `author` with `.length !== 64` and
-> **no hex-alphabet check** (`verify.ts:361-377`). Under the new layout those strings become
-> hex→bytes inputs at the codec boundary, so a 64-character *non-hex* `postId` throws exactly the
-> way a post's `parentRef` would — the defect Phase 1c just closed for posts, reappearing on the
-> ordering-block path.
->
-> A pure shrink phase would therefore *acquire* it. The alphabet checks must land before, or with,
-> the codec migration of the block structs — not after. Same reasoning as
-> `TYPES_INTERFACE.md` → Totality, obligation 2; same failure mode; different entry path.
 
 ### verifyBlockChainLink
 
