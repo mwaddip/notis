@@ -342,8 +342,9 @@ Concatenates all accumulated chunks into a single `Uint8Array` and returns it.
 > this must be fixed first."*
 >
 > **VLQ bytes are now inside consensus preimages.** `types/src/post.ts` writes
-> `protocolVersion` and `timestamp` through `writeVlqU` into `postFieldBytes`, and the post id
-> and PoW preimage both end in `vlqU(powNonce)`; `types/src/utxo.ts` imports the same writers.
+> `protocolVersion` through `writeVlqU` into `postFieldBytes`, which enters the creating
+> transaction's `TxId`; the block-header layout carries five `vlqU` fields; and
+> `types/src/utxo.ts` imports the same writers.
 > Every committed byte moved onto this package in the positional bundle — that is what made it
 > the base codec layer, as §Consensus dependency above says.
 >

@@ -277,7 +277,7 @@ Post {
   author: UserId               // 32 raw bytes — see the representation rule below
   parentRefs: PostId[]         // 0–MAX_PARENT_REFS per post
   protocolVersion: number
-  timestamp: number
+  type: PostType               // 'regular' | 'profile' — TYPES_INTERFACE → Post typing
 }
 
 PostId = computePostId(txId, index) — provenance-derived from the creating
@@ -845,9 +845,8 @@ on the ledger.
 >   be released by pruning the claim"). That page is normally authoritative; here it is
 >   stale and needs correcting. See the Phase 1 plan's `docs/site/` disclosure item.
 > - **Profiles are NOT superseded — they stay DAG-native** (user, 2026-08-06: "a profile
->   would indeed be a *self post*"). Only usernames leave the post model. **The `Post.type`
->   dependency therefore does not disappear, it relocates:** see §Profile root below, which
->   keys on `type: "profile"`.
+>   would indeed be a *self post*"). Only usernames leave the post model. **`Post.type`
+>   exists and profiles key on it:** see §Profiles below.
 
 Usernames are DAG-native objects using a **first-claim-wins** model:
 
@@ -862,57 +861,30 @@ Usernames are DAG-native objects using a **first-claim-wins** model:
 No expiry. No renewal. The name claim is a post like any other — it can be
 pruned by its author, and pruning it releases the name.
 
-### Profile root
+### Profiles
 
-> ⚠ **NOT IMPLEMENTED — intended design, zero code. Verified 2026-08-11.** Profiles **stay
-> DAG-native**: a profile is a *self post* (user, 2026-08-06), unlike usernames, which became a
-> UTXO asset.
->
-> **Blocking dependency, live here:** the marker post below carries `type: "profile"`, and
-> **`Post` has no `type` field** — nor any other discriminator (`types/src/post.ts`, `Post` is
-> five fields: content, author, parentRefs, protocolVersion, timestamp). So profiles cannot be
-> built until post typing exists, and adding a field to `Post` enters `postFieldBytes`, which
-> enters the creating transaction's `TxId` — and a post's provenance-derived id moves with it.
-> That makes it a protocol-breaking change that should ride with another id-moving change
-> rather than go alone.
->
-> This dependency was originally recorded against usernames and is void there — a UTXO asset
-> is not a post. It applies to profiles instead. **Any alternative discriminator (a reserved
-> parent ref, a content convention) would avoid the id move and is worth considering before
-> committing to a `type` field.**
+A profile is a **single post bound to its author**: `type: 'profile'` (TYPES_INTERFACE →
+Post typing and profiles), whose `content` is a structured document (≤ `MAX_CONTENT_BYTES`)
+that clients interpret. Consensus records it and never parses it.
 
-An account may post a **profile root** — a special marker post:
+The profile of identity X is the **latest confirmed `profile` post authored by X** — latest
+in committed order (block height, then position in block). Editing a profile is posting a
+new one; latest-wins supersedes the old, and pruning it is optional hygiene. Profile posts
+are ordinary DAG posts: carried by ordinary post transactions, prunable by their author,
+recorded like any post.
 
-```
-Post {
-  content: ""                  // Empty
-  author: UserId
-  parentRefs: []               // Genesis — no parents
-  type: "profile"              // Profile root marker
-  ...
-}
-```
+There is no profile-root anchor, no typed child posts and no DAG walk. `display_name` is a
+profile-document field or the username's concern; avatars are not a post type.
 
-The profile root acts as an anchor. Child posts (with `parentRefs: [profileRootId]`)
-carry profile fields:
-
-- **Bio:** A post with `type: "bio"` and content = bio text
-- **Display name:** A post with `type: "display_name"` and content = display name
-- **Avatar:** A post with `type: "avatar"` referencing a content hash
-
-The resolver collects the most recent child post of each type under the
-profile root. Editing a field = new child post of that type (the old one
-remains in the DAG but the resolver takes the newest).
-
-Profile roots and their children are normal posts — they can be pruned by
-their author.
+> **AHEAD OF CODE — a per-identity profile route/index is follow-on work.** The node serves
+> profile posts as ordinary posts; the latest-wins resolution above is a client/indexer
+> rule, and nothing in consensus depends on it.
 
 ### Identity resolution
 
 ```
-userId → walk DAG for active username claim
-       → walk DAG for profile root
-       → walk DAG for latest bio/display_name/avatar child posts
+userId → latest confirmed `profile` post by this author (client rule — §Profiles)
+       → username (§Usernames)
        → read karma balance from UTXO set
        → read credit balance from UTXO set
 ```
@@ -2197,18 +2169,12 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > `contracts/`, so it is a session-context convention rather than a contract one.
 
 ### Data integrity
-- **Timestamps are untrusted** — timing-sensitive logic uses DAG depth or
-  local wall clock, never a remote post's self-reported timestamp.
-  > ⚠ **FALSE — and the invariant's own escape clause is the deeper problem. Verified
-  > 2026-08-11.** Live violations: `store/posts.ts:242` orders feeds by
-  > `ORDER BY timestamp DESC` on the self-reported value; `getPendingPosts` (`posts.ts:256`)
-  > orders on the same untrusted column — **`ASC`, not `DESC` as this marker previously
-  > said**; `sqlite-store.ts:37` writes `Date.now()` into the column that is **inside
-  > `computePostId`**; the demo UI ranks its feed by `post.timestamp`.
-  > **"or local wall clock" contradicts the project's own rule that on-chain time is block
-  > height.** A *local* wall clock is precisely what makes two nodes disagree. That clause
-  > should be struck, not merely qualified — it licenses the failure mode it exists to
-  > prevent.
+- **A post carries no timestamp; on-chain time is block height.** Confirmed posts order by
+  the committed order — `(block height, position in block)`; a pending post orders by local
+  arrival, a stated node-local convenience (NODE_INTERFACE → Posts). The one wall-clock
+  field in consensus is the block header's `createdAt`: producer-set, domain-checked, read
+  by no rule — a client wanting a display time reads the post's confirming block's
+  `createdAt`.
 - **Preconditions documented where violating one is unrecoverable** — a function
   that can fail-stop the process, or that is the sole writer of consensus state,
   states what it assumes of its caller. Elsewhere the types are the contract.

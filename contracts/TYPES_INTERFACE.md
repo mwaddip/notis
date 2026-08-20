@@ -43,7 +43,7 @@ Post {
   author: UserId               // 32-byte Ed25519 public key (Uint8Array)
   parentRefs: PostId[]         // 0–MAX_PARENT_REFS
   protocolVersion: number      // 1
-  timestamp: number            // Unix ms
+  type: PostType               // 'regular' | 'profile' — enum8 on the wire
 }
 
 PostId = blake2b512(POST_ID_DOMAIN || utf8(txId) || u32BE(index))
@@ -101,9 +101,11 @@ integers ≤ 2⁵³−1) encodes to a sentinel rather than throwing. This keeps 
 panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-5/M-6). A
 mirror implementation must reproduce this, not reintroduce a throw.
 
-⚠ **No surviving field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s
-sentinel behaviour is unchanged for `timestamp` and `protocolVersion`; neither is a consensus
-input.
+⚠ **No field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s sentinel
+guards `protocolVersion` alone, and an out-of-domain version encodes to a value the
+strict-equality version check refuses — the sentinel never reaches a rule as a meaning.
+`type` takes a **throwing** writer (`enum8`, → Layout — Post), like the `b32` fields: its
+domain is established upstream by `verifyPostFieldDomains`.
 
 `computePostId` prefixes `POST_ID_DOMAIN` so a post id can never collide with a box id or a
 tx id derived from the same provenance — the domain tag is the whole of that separation, and
@@ -115,29 +117,31 @@ hash and must be byte-identical in `@dagsocial/types` **and** the demo-UI JS
 DBs are wiped on deploy — no legacy-post path. A **golden test vector** is frozen in the types tests
 and reproduced by the UI mirror; it is the cross-implementation anchor.
 
-### Profile posts
+### Post typing and profiles
 
-Special `type` field for posts that carry identity metadata. The type
-discriminator is embedded in `content` as a JSON object:
+`Post.type` is the discriminator: `PostType = 'regular' | 'profile'`, an `enum8` over the
+closed table `POST_TYPE = { regular: 0, profile: 1 }` (→ Layout — Post). The closed set is
+the point — every future post kind is a deliberate protocol decision, never a client
+convention. Consensus checks membership (`verifyPostFieldDomains`) and reads nothing else
+from it; there is no content sniffing anywhere.
 
-```
-ProfileRoot = Post with content { type: "profile" }
-BioPost     = Post with content { type: "bio", ... }
-NamePost    = Post with content { type: "display_name", ... }
-AvatarPost  = Post with content { type: "avatar", ... }
-UsernameClaim = Post with content { type: "username_claim", claim: "@alice" }
-```
+**A profile is one post, bound to its author.** A `type: 'profile'` post's `content`
+(≤ `MAX_CONTENT_BYTES`) is a structured document clients interpret — consensus records it
+and never parses it. The profile of an identity is the **latest confirmed `profile` post by
+that author** in committed order; editing is posting a new one (latest-wins supersedes), and
+pruning the old is optional hygiene. The type field is what keeps structured content
+unambiguous: a `regular` post whose text looks like a profile document is just text.
+
+Usernames are not a post type — they leave the post model for the UTXO ledger
+(ARCHITECTURE → Usernames) — and `display_name` is a profile-document field or the
+username's concern; avatars and polls are not post types.
 
 ### Hashing functions
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| Export | Signature | Description |
-|--------|-----------|-------------|
 | `postFieldBytes(post)` | `(Post) => Uint8Array` | The canonical length-prefixed encoding (see above). The post's **payload inside its creating transaction**, so it enters that transaction's `TxId`. |
 | `computePostId(txId, index)` | `(TxId, number) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| utf8(txId) \|\| u32BE(index)).subarray(0,32).toString('hex')` — **provenance-derived**, taking no `Post` at all |
-| `getPostDiscriminator(content)` | `(string) => string \| null` | Parse JSON content and extract `type` field, or null |
-| `buildProfileContent(type, extra)` | `(string, Record?) => string` | Build JSON content string with type discriminator |
 
 ⛔ **`computePostId` takes two arguments and neither is a `Post`.** That is the point, and it
 is the shape `computeBoxId` already has: *"Any need for a second argument means the box is
@@ -1444,9 +1448,10 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 
 ### Layout — Post
 
-The struct is five fields; there is no `powNonce`, `challenge` or `signature` in it at all
-(§Post identity — identity is provenance-derived, authentication is the creating
-transaction's signature).
+The struct is five fields; there is no `powNonce`, `challenge`, `signature` or `timestamp`
+in it at all (§Post identity — identity is provenance-derived, authentication is the
+creating transaction's signature; on-chain time is block height, and a post's display time
+is its confirming block's `createdAt`, NODE_INTERFACE → Posts).
 
 | # | Field | Encoding |
 |---|---|---|
@@ -1454,7 +1459,7 @@ transaction's signature).
 | 2 | `author` | `b32` (bytes writer) |
 | 3 | `parentRefs` | `arr(refs, b32)` (hex writer) |
 | 4 | `protocolVersion` | `vlqU` |
-| 5 | `timestamp` | `vlqU` |
+| 5 | `type` | `enum8` — the `POST_TYPE` table, `{ regular: 0, profile: 1 }` |
 
 - `postFieldBytes` is these five fields in this order, and is the post's **payload inside its
   creating transaction** — it enters that transaction's `TxId` (§Canonical field encoding).
