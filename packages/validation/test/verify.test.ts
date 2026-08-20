@@ -1355,7 +1355,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
         author: new Uint8Array(32).fill(7),
         parentRefs,
         protocolVersion: 1,
-        timestamp: 1_700_000_000_000,
+        type: 'regular' as const,
       },
     });
 
@@ -1822,7 +1822,7 @@ describe('no-panic on malformed input (M-5)', () => {
     author: kp.publicKey,
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: 1_700_000_000_000,
+    type: 'regular' as const,
   });
 
   const makeHeader = (over: Partial<BlockHeader> = {}): BlockHeader => ({
@@ -1900,7 +1900,7 @@ describe('no-panic on malformed input (M-5)', () => {
       expect(() => verifyTxStructure(withPost({ ...goodPost, author: bad }) as any)).not.toThrow();
       expect(() => verifyTxStructure(withPost({ ...goodPost, parentRefs: bad }) as any)).not.toThrow();
       expect(() => verifyTxStructure(withPost({ ...goodPost, protocolVersion: bad }) as any)).not.toThrow();
-      expect(() => verifyTxStructure(withPost({ ...goodPost, timestamp: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodPost, type: bad }) as any)).not.toThrow();
     }
   });
 
@@ -2075,11 +2075,12 @@ describe('no-panic on malformed input (M-5)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Numeric guard on the signable-post fields (M-6 follow-up to the P1 encoder)
+// Numeric guard on protocolVersion and type membership (M-6 follow-up)
 // ---------------------------------------------------------------------------
 
-describe('integer guards on protocolVersion and timestamp (M-6)', () => {
-  // ⛔ `verifyPostFieldDomains` enforces the numeric domain, reached through
+describe('integer guard on protocolVersion and type membership (M-6)', () => {
+  // ⛔ `verifyPostFieldDomains` enforces the numeric domain on
+  // `protocolVersion` and the membership domain on `type`, reached through
   // `verifyTxStructure`'s post clause, protecting the same encoder:
   // `postFieldBytes` is inside the `computeTxId` preimage.
 
@@ -2089,7 +2090,7 @@ describe('integer guards on protocolVersion and timestamp (M-6)', () => {
     author: new Uint8Array(32).fill(7),
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: 1_700_000_000_000,
+    type: 'regular' as const,
     ...over,
   });
 
@@ -2110,14 +2111,6 @@ describe('integer guards on protocolVersion and timestamp (M-6)', () => {
     ['past MAX_SAFE_INTEGER', Number.MAX_SAFE_INTEGER + 1],
   ];
 
-  it.each(OUT_OF_DOMAIN)('rejects a %s timestamp without throwing', (_label, value) => {
-    let result: { valid: boolean } | undefined;
-    expect(() => {
-      result = verifyTxStructure(postTx(goodPost({ timestamp: value })));
-    }).not.toThrow();
-    expect(result!.valid).toBe(false);
-  });
-
   it.each(OUT_OF_DOMAIN)('rejects a %s protocolVersion without throwing', (_label, value) => {
     let result: { valid: boolean } | undefined;
     expect(() => {
@@ -2126,26 +2119,22 @@ describe('integer guards on protocolVersion and timestamp (M-6)', () => {
     expect(result!.valid).toBe(false);
   });
 
-  it('keeps the encoder sentinel out of reach: NaN and -1 no longer share a verdict path', () => {
-    // ⛔ Assert the MECHANISM, not only the verdict. Both values encode to the
-    // same all-ones sentinel in `postFieldBytes` — asserted here, because that
-    // collision is the whole reason the guard exists — so without the guard a
-    // transaction over one would hash identically to a transaction over the
-    // other. Both are rejected before that encoder is reached.
-    const withNaN = goodPost({ timestamp: NaN });
-    const withNegative = goodPost({ timestamp: -1 });
-    expect(postFieldBytes(withNaN)).toEqual(postFieldBytes(withNegative));
-    expect(verifyTxStructure(postTx(withNaN)).valid).toBe(false);
-    expect(verifyTxStructure(postTx(withNegative)).valid).toBe(false);
+  it('rejects an off-table type', () => {
+    const result = verifyPostFieldDomains(goodPost({ type: 'poll' as any }));
+    expect(result).toEqual({ valid: false, error: 'Post type must be a member of POST_TYPE' });
+  });
+
+  it('rejects a non-string type without throwing', () => {
+    for (const bad of [42, null, undefined, true, Symbol('x')]) {
+      expect(() => verifyPostFieldDomains(goodPost({ type: bad as any }))).not.toThrow();
+      expect(verifyPostFieldDomains(goodPost({ type: bad as any })).valid).toBe(false);
+    }
   });
 
   it('accepts a well-formed post (guard does not regress the happy path)', () => {
     expect(verifyTxStructure(postTx(goodPost())).valid).toBe(true);
-    // Boundary values inside the domain still pass.
-    expect(verifyTxStructure(postTx(goodPost({ timestamp: 0 }))).valid).toBe(true);
-    expect(
-      verifyTxStructure(postTx(goodPost({ timestamp: Number.MAX_SAFE_INTEGER }))).valid,
-    ).toBe(true);
+    expect(verifyTxStructure(postTx(goodPost({ type: 'regular' as const }))).valid).toBe(true);
+    expect(verifyTxStructure(postTx(goodPost({ type: 'profile' as const }))).valid).toBe(true);
     expect(verifyTxStructure(postTx(goodPost({ protocolVersion: 0 }))).valid).toBe(true);
   });
 });
@@ -2173,7 +2162,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     author: kp.publicKey,
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: 1_700_000_000_000,
+    type: 'regular' as const,
     ...over,
   });
 
@@ -3068,7 +3057,7 @@ describe('verifyTxStructure — the transaction weight bound', () => {
         author: new Uint8Array(32).fill(7),
         parentRefs: [],
         protocolVersion: 1,
-        timestamp: 1_700_000_000_000,
+        type: 'regular' as const,
       },
     });
     for (let n = Math.ceil(target / 32); n >= 0; n--) {
