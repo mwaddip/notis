@@ -217,15 +217,17 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   genesisStateRoot: 'd5c1520829489cec74dfbf680da01a21c74add478656ac377f5cfefd6adfc00e03',
 } satisfies NetworkProfile);
 
-// devnet: compressed timescale, same economics. The two values marked (harness) are the
-// ones the parked e2e harness ran on (packages/node/test/harness/node-manager.ts).
+// devnet: compressed timescale, same economics. `karmaDecayIntervalBlocks` (3) and
+// `karmaStaleThresholdBlocks` (500) are short-run values that make decay observable
+// inside a short devnet run — an interval of 3 blocks fires decay quickly; stale after
+// 500 keeps staleness reachable within a test suite.
 // The remaining durations are compressed roughly two orders of magnitude,
 // preserving mainnet's orderings (bootstrap < stale threshold < probation,
 // epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
 // that is not timescale; see orderingBlockPowTargetBits below.
 //
 // ⚠ **A ratio is not a derivation once the neighbour a value must clear is itself
-// unprincipled.** `karmaStaleThresholdBlocks` is harness-pinned rather than derived, so a
+// unprincipled.** `karmaStaleThresholdBlocks` is chosen directly rather than derived, so a
 // probation length picked by dividing mainnet's lands wherever the arithmetic falls —
 // which is why `inviteProbationBlocks` below states the PROPERTY it has to hold and not
 // the ratio that happens to produce it.
@@ -246,8 +248,8 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // hashrate, never from this number. TYPES_INTERFACE → Ordering block PoW.
   orderingBlockPowTargetBits: 3072,
 
-  karmaDecayIntervalBlocks: 3, // (harness)
-  karmaStaleThresholdBlocks: 500, // (harness)
+  karmaDecayIntervalBlocks: 3,
+  karmaStaleThresholdBlocks: 500,
   vouchCooldownBlocks: 3, // shortest wait that still spans block boundaries
   // **Above `karmaStaleThresholdBlocks`, so decay fires during probation as it does on
   // mainnet** (43200 > 40320). Not a ratio: what has to hold is that a devnet run can

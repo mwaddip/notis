@@ -378,13 +378,11 @@ export function decodeOrderingBlock(bytes: Uint8Array): OrderingBlock {
  * is that pair plus the signature array — so the wire form and the `TxId`
  * preimage share one writer rather than agreeing by inspection.
  *
- * ✅ **THIS MOVES NO COMMITTED HASH.** `computeTxId` walks the same
- * `writeTxIdFields`, and `computeUtxoTxRoot`'s leaves are `leafHash('utxotx',
- * id)` — the id, never the encoding — so every box id, transaction id,
- * `utxoTxRoot` and `stateRoot` is byte-identical across the change from `cbor-x`.
- * What moves is the **wire**: peers must agree on this codec to decode a body at
- * all, and `utxoTxTreeByteLength` gates `MAX_BLOCK_BODY_BYTES`, so they must agree
- * in order to agree on whether a block fits.
+ * ✅ **Box ids, tx ids, `utxoTxRoot` and `stateRoot` do not depend on this codec.**
+ * `computeTxId` walks `writeTxIdFields` and `computeUtxoTxRoot` hashes
+ * `leafHash('utxotx', id)` — the id, never the body encoding. What the codec
+ * decides is the wire bytes peers must agree on and the `utxoTxTreeByteLength`
+ * that gates `MAX_BLOCK_BODY_BYTES`.
  *
  * **Signatures are the only field this layout adds to the preimage**, and they
  * are correctly absent from it: they are Ed25519 *over* the `TxId`, so hashing

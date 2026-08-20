@@ -475,10 +475,9 @@ describe('positional serialization', () => {
 
   describe('unknown keys are unrepresentable (spec §1.1)', () => {
     it('header junk does not survive an encode/decode', () => {
-      // Measured on the pre-migration tree: header junk moved `blockHash` and
-      // the block was still accepted, because `computePowHash` spreads the
-      // header and cbor carried the extra keys into the preimage. Unbounded
-      // header bloat, signed by the validator that added it.
+      // A header with extra keys encodes to the same bytes as one without —
+      // the positional layout carries no key names, so nothing outside the
+      // declared fields reaches `computePowHash`'s preimage.
       const junk = { ...makeBlockHeader(), evil: true, moreEvil: 'x'.repeat(200) };
       expect(hex(encodeHeader(junk as BlockHeader))).toBe(hex(encodeHeader(makeBlockHeader())));
       expect(decodeHeader(encodeHeader(junk as BlockHeader))).toEqual(makeBlockHeader());
@@ -647,13 +646,11 @@ describe('positional serialization', () => {
 
   describe('movement pins — every byte moved, and to exactly here', () => {
     /**
-     * The T2b pin, carried forward through its second format change.
+     * Consensus pin for the post encoding format.
      *
-     * `PRE_T2B_ID` was the shape with a `likeBoxes: []` sidecar; `CBOR_ID` was
-     * the shape after that field was deleted, on `cbor-x`. `POSITIONAL_ID` is
-     * this phase. Keeping all three is what makes the sequence auditable: each
-     * pair of adjacent values is one recorded, intentional consensus break, and
-     * a future reader can see that no shape was ever silently revisited.
+     * Three recorded values of this fixture's id — one per format the layout
+     * has had. The test asserts the current one (`POST_TX_ID`) and keeps the
+     * other two so a silent revisit of an earlier shape fails.
      */
     const PRE_T2B_ID = '586ff286a6309e50e07f429cff6bccb026ccf3d6e1b67b7036e654c8c2a487cc';
     const CBOR_ID = '9a1155ead5ddfb05d495a34df1f4be31482e2df4f9094925ba135b4679e0d114';
@@ -670,9 +667,8 @@ describe('positional serialization', () => {
     };
 
     it('Post: the sub-block wrapper is dead and the post itself is the pin', () => {
-      // ⛔ The sequence continues rather than restarting. Each adjacent pair is
-      // one recorded, intentional consensus break: cbor → positional →
-      // posts-as-transactions. This pins the five-field post layout
+      // ⛔ Three recorded values of this fixture's id, one per format the
+      // layout has had. This pins the five-field post layout
       // (TYPES_INTERFACE → Layout — Post).
       const bytes = encodePost(PINNED_POST);
       // The key name cannot appear: there are no key names.
