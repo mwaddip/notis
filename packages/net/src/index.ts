@@ -46,7 +46,6 @@ export {
   isStringArray,
   isBoundedIntArray,
   isBytes,
-  isWorkString,
   MAX_ADVERTISED_HEIGHT,
   MAX_TYPE_ID,
   MAX_UINT32,

@@ -22,7 +22,6 @@ describe('sync codec', () => {
     const info = {
       tipHeight: 42,
       tipBlockId: 'abc123',
-      tipCumulativeWork: '1000000',
       anchors: [{ height: 42, blockId: 'abc123' }],
     };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
@@ -100,7 +99,6 @@ describe('sync codec decode boundary', () => {
     const valid = {
       tipHeight: 10,
       tipBlockId: 'abc',
-      tipCumulativeWork: '99',
       anchors: [{ height: 5, blockId: 'def' }],
     };
 
@@ -132,11 +130,6 @@ describe('sync codec decode boundary', () => {
 
     it('rejects an anchor that is not a map', () => {
       expect(decodeSyncInfo(body({ ...valid, anchors: ['nope'] }))).toBeNull();
-    });
-
-    it('rejects a non-numeric cumulative work string', () => {
-      expect(decodeSyncInfo(body({ ...valid, tipCumulativeWork: 'lots' }))).toBeNull();
-      expect(decodeSyncInfo(body({ ...valid, tipCumulativeWork: 99 }))).toBeNull();
     });
 
     it('ignores unknown extra fields', () => {

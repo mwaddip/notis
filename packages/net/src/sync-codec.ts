@@ -32,7 +32,6 @@ import {
   isHeight,
   isStringArray,
   isBytes,
-  isWorkString,
   MAX_TYPE_ID,
   MAX_CAPABILITY_CODE,
   MAX_CHAIN_RESPONSE_ITEMS,
@@ -86,7 +85,6 @@ export function decodeSyncInfo(body: Uint8Array): SyncInfo | null {
   if (!isRecord(v)) return null;
   if (!isHeight(v.tipHeight)) return null;
   if (typeof v.tipBlockId !== 'string') return null;
-  if (!isWorkString(v.tipCumulativeWork)) return null;
   if (!Array.isArray(v.anchors)) return null;
 
   const anchors: { height: number; blockId: string }[] = [];
@@ -98,7 +96,6 @@ export function decodeSyncInfo(body: Uint8Array): SyncInfo | null {
   return {
     tipHeight: v.tipHeight,
     tipBlockId: v.tipBlockId,
-    tipCumulativeWork: v.tipCumulativeWork,
     anchors,
   };
 }

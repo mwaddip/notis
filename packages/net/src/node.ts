@@ -10,7 +10,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
 import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock } from '@dagsocial/types';
-import { blockHash, blockWork } from '@dagsocial/validation';
+import { blockHash } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -200,40 +200,6 @@ export class LazySyncStore implements SyncStore {
     let h = 1;
     while (this._getOrderingBlock(h)) h++;
     return h - 1;
-  }
-
-  /**
-   * This chain's work: `blockWork` summed over the stored headers.
-   *
-   * A header `blockWork` refuses contributes nothing and the walk continues
-   * (VALIDATION_INTERFACE → blockWork / cumulativeWork). The sum is published
-   * as `SyncInfo.tipCumulativeWork` and compared by fork choice, so one
-   * unaccountable stored header must cost one header rather than the total.
-   *
-   * The `typeof` guard is the one thing this method decides for itself:
-   * `header` is untyped storage, and a non-`number` would reach `blockWork`'s
-   * `number` parameter only by a cast that hides it.
-   *
-   * Distinct from validation's free `cumulativeWork`, which is handed headers
-   * and totals those. This walks the store and answers for the whole chain;
-   * the two share `blockWork` and nothing else.
-   */
-  cumulativeWork(): bigint {
-    if (!this._getOrderingBlock) return 0n;
-    let work = 0n;
-    const h = this.chainHeight();
-    for (let i = 1; i <= h; i++) {
-      const block = this._getOrderingBlock(i);
-      if (block && typeof block === 'object' && 'header' in block) {
-        const header = (block as { header: Record<string, unknown> }).header;
-        const bits = header['powTargetBits'];
-        if (typeof bits === 'number') {
-          const w = blockWork(bits);
-          if (w !== null) work += w;
-        }
-      }
-    }
-    return work;
   }
 
   getAnchors(): { height: number; blockId: string }[] {
