@@ -2746,7 +2746,6 @@ Full semantics in `MEMPOOL_INTERFACE.md`.
   rowid: number
   entryType: "utxo_tx" | "prune"
   utxoTxCbor: Uint8Array | null
-  pruneEntryCbor: Uint8Array | null
   expiresAtHeight: number
   createdAt: string
 }
@@ -3306,7 +3305,7 @@ CREATE TABLE dag_meta (
 There is no `schema_version` key, no counter compiled into the binary, and nothing reads a
 store's age to decide whether to run.
 
-⚠ **`store/db.ts` does hold five functions named `migrate*`, and they are not what this section
+⚠ **`store/db.ts` does hold four functions named `migrate*`, and they are not what this section
 denies.** They run unconditionally on every `initDb`, in a fixed order, each deciding for itself
 whether it has work by inspecting the shape it would change — no version, no sentinel keys, no
 ordering contract, nothing to skip and nothing to resume. What does not exist is a **versioned**

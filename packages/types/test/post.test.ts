@@ -22,8 +22,6 @@ import {
   INVITE_BOND_VEST_PER_LIKES,
   GENESIS_COMMITTEE_KEYS,
   GENESIS_KARMA_PER_MEMBER,
-  GENESIS_CREDITS_PER_MEMBER,
-  BOOTSTRAP_PERIOD_BLOCKS,
   CREDIT_FIXED_RATE_BLOCKS,
   CREDIT_INITIAL_REWARD,
   CREDIT_EPOCH_BLOCKS,
@@ -396,8 +394,6 @@ describe('constants', () => {
   it('genesis constants are defined', () => {
     expect(GENESIS_COMMITTEE_KEYS).toEqual([]);
     expect(GENESIS_KARMA_PER_MEMBER).toBe(1000n);
-    expect(GENESIS_CREDITS_PER_MEMBER).toBe(10000n * 10n ** 8n);  // credits ×10^8 base units
-    expect(BOOTSTRAP_PERIOD_BLOCKS).toBe(10000);
   });
 
   it('validator constants are defined', () => {

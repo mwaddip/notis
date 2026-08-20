@@ -199,28 +199,6 @@ describe('journal (initialized)', () => {
     });
   });
 
-  describe('anomaly events', () => {
-    it('emitValidationStuck includes post_id, reason, and attempt count', async () => {
-      const { emitValidationStuck } = await import('../src/journal.js');
-      emitValidationStuck('abc123', 'timeout', 5);
-      const r = lastRecord();
-      expect(r!.event).toBe('validation_stuck');
-      expect(r!.level).toBe('WARN');
-      expect(r!.reason).toBe('timeout');
-      expect(r!.attempt_count).toBe(5);
-    });
-
-    it('emitDagHeightDrift includes gap, mode, and old/new heights', async () => {
-      const { emitDagHeightDrift } = await import('../src/journal.js');
-      emitDagHeightDrift(10, 'stalled', 100, 110);
-      const r = lastRecord();
-      expect(r!.event).toBe('dag_height_drift');
-      expect(r!.level).toBe('WARN');
-      expect(r!.gap).toBe(10);
-      expect(r!.mode).toBe('stalled');
-    });
-  });
-
   describe('peer events', () => {
     it('emitPeerConnected includes peer_id and direction', async () => {
       const { emitPeerConnected } = await import('../src/journal.js');
@@ -270,8 +248,6 @@ describe('journal (initialized)', () => {
         emitPostValidated,
         emitPostIndexed,
         emitDagReorg,
-        emitValidationStuck,
-        emitDagHeightDrift,
         emitPeerConnected,
         emitPeerDisconnected,
         emitPeerPenalised,
@@ -286,8 +262,6 @@ describe('journal (initialized)', () => {
         emitPostValidated('abc123', 2);
         emitPostIndexed('abc123', 5);
         emitDagReorg('fork1', 2, 'old', 'new');
-        emitValidationStuck('abc123', 'stuck', 3);
-        emitDagHeightDrift(5, 'drift', 10, 15);
         emitPeerConnected('peer1', 'outbound');
         emitPeerDisconnected('peer1', 'timeout');
         emitPeerPenalised('peer1', 'invalid_pow', 'difficulty too low');

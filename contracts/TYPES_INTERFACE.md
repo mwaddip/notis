@@ -2378,7 +2378,6 @@ export interface NetworkProfile {
   readonly vouchCooldownBlocks: number;
   readonly inviteProbationBlocks: number;
   readonly creditMinerRewardDelay: number;
-  readonly bootstrapPeriodBlocks: number;
 
   // Emission schedule
   readonly creditFixedRateBlocks: number;
@@ -2387,7 +2386,6 @@ export interface NetworkProfile {
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
-  readonly genesisCreditsPerMember: bigint;
   readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
   readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
 }
@@ -2501,8 +2499,7 @@ header `networkType` field was rejected 2026-08-10 (see the Block header section
 Constants split by kind: **amount** constants are `bigint`; **count / block /
 threshold / percentage / bits** constants stay `number`.
 - **Credit amounts → `bigint`, rescaled ×10⁸** (base units of 10⁻⁸ credit):
-  `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`,
-  `GENESIS_CREDITS_PER_MEMBER`, and the node/UI faucet credit amounts.
+  `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`, and the node/UI faucet credit amounts.
 - **Karma amounts → `bigint` literals, NOT rescaled** (karma is indivisible):
   `KARMA_POSTING_MINIMUM`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
   `POST_LOCK_THREAD_COST`, `POST_LOCK_REPLY_COST`, `LIKE_KARMA_COST`,
@@ -2701,9 +2698,12 @@ export const VOUCH_COOLDOWN_BLOCKS = 60;           // consensus — blocks befor
 ```typescript
 export const GENESIS_COMMITTEE_KEYS: string[] = [];        // consensus — TBD at genesis
 export const GENESIS_KARMA_PER_MEMBER = 1000n;             // consensus
-export const GENESIS_CREDITS_PER_MEMBER = 10000n * 10n ** 8n;  // consensus — 10000 credits in base units
-export const BOOTSTRAP_PERIOD_BLOCKS = 10000;              // consensus — blocks before committee dissolution
 ```
+
+A committee credit grant and a committee dissolution period have no constant and no profile field:
+nothing read `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` or `BOOTSTRAP_PERIOD_BLOCKS` /
+`bootstrapPeriodBlocks`, and a parameter nothing reads cannot be relied on (ARCHITECTURE → Genesis).
+A mechanism that needs either brings its own parameter with its own reader.
 
 ### Mempool and encoding
 

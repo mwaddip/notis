@@ -36,12 +36,6 @@ export const MAX_UINT32 = 0xffff_ffff;
 /** Largest protocol version / capability code accepted in a handshake. */
 export const MAX_CAPABILITY_CODE = 65_535;
 
-/**
- * Cumulative work travels as a decimal bigint string. 80 digits is far past any
- * plausible chain total and keeps `BigInt(...)` on the consuming side total.
- */
-const WORK_STRING_RE = /^[0-9]{1,80}$/;
-
 // ---------------------------------------------------------------------------
 // Resource limits (untrusted counts and sizes)
 //
@@ -153,7 +147,3 @@ export function isBytes(v: unknown): v is Uint8Array {
   return v instanceof Uint8Array;
 }
 
-/** True for a decimal-digit string that `BigInt()` can parse. */
-export function isWorkString(v: unknown): v is string {
-  return typeof v === 'string' && WORK_STRING_RE.test(v);
-}

@@ -167,17 +167,15 @@ export class TxTooLargeError extends ClientError {
 }
 
 /**
- * ⛔ **Two entry types, and `batchId` is gone with the pair it regrouped**
- * (MEMPOOL_INTERFACE → PoolEntry). A post and its karma lock were two objects
- * that had to be evicted and re-injected together, which is what `batchId`
- * expressed; a post is now the payload of the lock transaction, so there is one
- * object and nothing to group.
+ * In-memory representation of a pending pool entry (MEMPOOL_INTERFACE →
+ * PoolEntry). Carries the `utxo_tx` payload only; a `prune` row's blob is
+ * read by `drainMempoolPrunes` straight from the row, so the DTO loads no
+ * blob that nothing consumes.
  */
 export interface PoolEntry {
   rowid: number;
   entryType: 'utxo_tx' | 'prune';
   utxoTxCbor: Uint8Array | null;
-  pruneEntryCbor: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
 }
@@ -186,7 +184,6 @@ interface MempoolRow {
   rowid: number;
   entry_type: string;
   utxo_tx_cbor: Buffer | null;
-  prune_entry_cbor: Buffer | null;
   expires_at_height: number;
   created_at: string;
 }
@@ -196,7 +193,6 @@ function rowToEntry(row: MempoolRow): PoolEntry {
     rowid: row.rowid,
     entryType: row.entry_type as 'utxo_tx' | 'prune',
     utxoTxCbor: row.utxo_tx_cbor ? new Uint8Array(row.utxo_tx_cbor) : null,
-    pruneEntryCbor: row.prune_entry_cbor ? new Uint8Array(row.prune_entry_cbor) : null,
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
   };
@@ -573,7 +569,7 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
 export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
   const db = getDb();
   const rows = db.prepare(
-    `SELECT rowid, entry_type, utxo_tx_cbor, prune_entry_cbor,
+    `SELECT rowid, entry_type, utxo_tx_cbor,
             expires_at_height, created_at
      FROM mempool
      WHERE rowid > ?
@@ -595,7 +591,7 @@ export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
  */
 const PENDING_PAGE_SIZE = 256;
 
-const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_cbor, prune_entry_cbor,
+const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_cbor,
                        expires_at_height, created_at`;
 
 /**

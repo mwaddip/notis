@@ -26,7 +26,6 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
     getOrderingBlockHeader: () => null,
     getOrderingBlockId: () => null,
     chainHeight: () => 0,
-    cumulativeWork: () => 0n,
     getAnchors: () => [],
     appendHeaders: () => {},
     appendBlocks: () => {},
@@ -179,7 +178,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -213,7 +211,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
@@ -230,7 +227,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 5,
         tipBlockId: 'xyz',
-        tipCumulativeWork: '500',
         anchors: [],
       });
       expect(sent.length).toBe(1);
@@ -247,7 +243,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -261,7 +256,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -273,7 +267,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('idle');
@@ -286,7 +279,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -295,7 +287,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer2', {
         tipHeight: 300,
         tipBlockId: 'def',
-        tipCumulativeWork: '2000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
@@ -308,7 +299,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().stalledPeers.has('peer1')).toBe(false);
@@ -673,7 +663,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -733,7 +722,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-        tipCumulativeWork: '1000',
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -797,11 +785,10 @@ describe('SyncMachine', () => {
   // -----------------------------------------------------------------------
 
   describe('sendSyncInfo content', () => {
-    it('includes tip height, cumulative work, and anchors', () => {
+    it('includes tip height, block id, and anchors', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 42,
-          cumulativeWork: () => 1000n,
           getOrderingBlockId: (h: number) => (h === 42 ? 'tip42' : null),
           getAnchors: () => [{ height: 0, blockId: 'genesis' }],
         },
@@ -978,7 +965,6 @@ describe('SyncMachine', () => {
       machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array(encode({
         tipHeight: -1_000_000_000,
         tipBlockId: 'x',
-        tipCumulativeWork: '1',
         anchors: [],
       })));
       machine.flush();
@@ -998,7 +984,6 @@ describe('SyncMachine', () => {
       machine.handleMessage('peer1', MSG_SYNC_INFO, new Uint8Array(encode({
         tipHeight: 5,
         tipBlockId: 'x',
-        tipCumulativeWork: '1',
         anchors: [],
       })));
       machine.flush();
@@ -1228,7 +1213,6 @@ describe('SyncMachine', () => {
       machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array(encode({
         tipHeight: 5,
         tipBlockId: 'x',
-        tipCumulativeWork: '1',
         anchors: Array.from({ length: MAX_INV_IDS + 1 }, (_, i) => ({ height: i, blockId: `a${i}` })),
       })));
       machine.flush();

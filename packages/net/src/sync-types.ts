@@ -1,7 +1,6 @@
 export interface SyncInfo {
   tipHeight: number;
   tipBlockId: string;
-  tipCumulativeWork: string; // bigint serialized as string in CBOR
   anchors: { height: number; blockId: string }[];
 }
 
