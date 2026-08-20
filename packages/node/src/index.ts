@@ -21,7 +21,7 @@ import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { DagService } from './services/dag-service.js';
-import { handleOrderingBlock } from './services/handle-block.js';
+import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
 import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
 import {
   getKarmaBox,
@@ -210,13 +210,7 @@ net.onTx((tx, fromPeerId) => {
   console.log(`Relayed tx queued in mempool: ${result.txId}`);
 });
 
-net.setBlocksHandler((block, fromPeerId) => {
-  try {
-    return handleOrderingBlock(block, fromPeerId, net, dagService);
-  } catch (err) {
-    failStopIfCorruptChain(err);
-  }
-});
+net.setBlocksHandler(pullBlocksHandler(net, dagService));
 
 // The provider `net` reads stored blocks through (NODE_INTERFACE → Sync
 // handlers). `guardStoreRead` wraps the read in `failStopIfCorruptChain`: a

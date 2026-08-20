@@ -1001,14 +1001,11 @@ describe('a stored header that cannot be hashed', () => {
   // a `CorruptChainStateError`, which the funnel's existing arm already carries
   // and the boundary already fail-stops on. No new escape from the catch.
   //
-  // The load-bearing difference is **reach**, and the first test below is where
-  // it shows: `extendsOurTip` reads the same row on the gossip path *before*
-  // apply and outside `handleOrderingBlock`'s inner try, so an arm in the
-  // funnel's catch never sees it — a bare `ReaderError` there fails
-  // `failStopIfCorruptChain`'s `instanceof` and ends the process as an
-  // unhandled rejection instead, with no FATAL line and no site or height.
-  // Five other callers (`findForkPoint`, `revertBlock`, the block creator, two
-  // routes) are outside that catch as well.
+  // The load-bearing difference is **reach**: the store frame names the fault
+  // so every reader raises one class, and every outer frame — both
+  // registrations, the launched `resolveFork` promise, `finalizeBlock`, the
+  // block creator, and the guarded provider and routes — is a boundary
+  // (NODE_INTERFACE → "Reach is the live argument, not the halt").
   //
   // Reachability, stated so the severity is not overread: a header can only
   // reach the store outside the domain if it bypassed `verifyHeaderFieldDomains`
@@ -1253,14 +1250,20 @@ describe('revertBlock', () => {
     expect(ordering.getOrderingBlock(1)).toBeNull();
   });
 
-  it('throws when no journal exists for height', async () => {
+  it('a missing journal is a MissingJournalError', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const forkResolution = await importForkResolution();
-    expect(() => forkResolution.revertBlock(99)).toThrow(
-      'No journal for height 99',
-    );
+    const { MissingJournalError, CorruptChainStateError } =
+      await import('../../src/services/corrupt-state.js');
+
+    let caught: unknown;
+    try { forkResolution.revertBlock(99); } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(MissingJournalError);
+    expect(caught).toBeInstanceOf(CorruptChainStateError);
+    expect((caught as InstanceType<typeof MissingJournalError>).site).toBe('revertBlock');
+    expect((caught as InstanceType<typeof MissingJournalError>).height).toBe(99);
   });
 
   it('reverts UTXO transactions: outputs deleted, inputs unspent', async () => {
@@ -2346,6 +2349,62 @@ describe('reorg — a missing AVL version at the fork height', () => {
     const { ordering, forkResolution } = await chainOnAProver();
     expect(() => forkResolution.reorg(0, [])).not.toThrow();
     expect(ordering.getCurrentHeight()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reorg — a missing block journal at a revertable height
+// ---------------------------------------------------------------------------
+
+describe('reorg — a missing block journal', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a deleted journal is a fail-stop, and chain/DB/prover are at the pre-reorg state', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const proverMod = await import('../../src/state/avl-prover.js');
+    proverMod.createAvlProver();
+    const genesis = await import('../../src/services/genesis-state.js');
+    genesis.seedGenesisState();
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    for (let i = 0; i < 3; i++) {
+      await mineNextBlock(bc);
+    }
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(3);
+    const before = Buffer.from(proverMod.getAvlProver().prover.digest()!).toString('hex');
+    const hashes = [1, 2, 3].map((h) => blockHash(ordering.getOrderingBlock(h)!.header));
+
+    const journalStore = await importJournalStore();
+    journalStore.deleteBlockJournal(3);
+
+    const forkResolution = await importForkResolution();
+    const { MissingJournalError, CorruptChainStateError } =
+      await import('../../src/services/corrupt-state.js');
+
+    let caught: unknown;
+    try { forkResolution.reorg(1, []); } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(MissingJournalError);
+    expect(caught).toBeInstanceOf(CorruptChainStateError);
+    expect((caught as InstanceType<typeof MissingJournalError>).site).toBe('revertBlock');
+    expect((caught as InstanceType<typeof MissingJournalError>).height).toBe(3);
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(hashes[h - 1]);
+    }
+    expect(Buffer.from(proverMod.getAvlProver().prover.digest()!).toString('hex')).toBe(before);
   });
 });
 

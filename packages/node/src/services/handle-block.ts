@@ -37,3 +37,21 @@ export function handleOrderingBlock(
   resolveFork(block, net, fromPeerId, dagService).catch(failStopIfCorruptChain);
   return false;
 }
+
+/**
+ * The pull registration's wrapped handler (NODE_INTERFACE → Sync handlers).
+ * `index.ts` passes this to `net.setBlocksHandler` so the boundary is
+ * testable without re-implementing the wrap in a test double.
+ */
+export function pullBlocksHandler(
+  net: ForkResolutionNet,
+  dagService?: DagService,
+): (block: OrderingBlock, fromPeerId: string) => boolean {
+  return (block, fromPeerId) => {
+    try {
+      return handleOrderingBlock(block, fromPeerId, net, dagService);
+    } catch (err) {
+      failStopIfCorruptChain(err);
+    }
+  };
+}

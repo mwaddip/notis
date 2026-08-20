@@ -81,17 +81,11 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
  * that arm was built and run, and the test pinning the producer-bytes direction
  * passed under it.
  *
- * The live reason, as opposed to that latent one, is reach. `getOrderingBlock`
- * is read by `extendsOurTip`, `findForkPoint`, `revertBlock`, the block creator
- * and two routes as well as by apply, and only apply's read passes through a
- * catch that could promote anything. `extendsOurTip` in particular runs on the
- * gossip path *before* apply and outside `handleOrderingBlock`'s inner try, so
- * a bare `ReaderError` there reaches `failStopIfCorruptChain`, fails its
- * `instanceof`, and is re-thrown out of an `async` handler to end the process
- * as an unhandled rejection — no FATAL line, no site, no height, and the death
- * decided by the runtime rather than by us, which is exactly what the header of
- * this file says it must not be. Naming the fault where the row is read covers
- * every one of those callers at once.
+ * The live reason, as opposed to that latent one, is reach. The store frame
+ * names the fault so every reader raises one class, and every outer frame —
+ * both registrations, the launched `resolveFork` promise, `finalizeBlock`,
+ * the block creator, and the guarded provider and routes — is a boundary
+ * (NODE_INTERFACE → "Reach is the live argument, not the halt").
  */
 export class UnreadableStoredBlockError extends CorruptChainStateError {
   constructor(site: string, height: number, cause: unknown) {

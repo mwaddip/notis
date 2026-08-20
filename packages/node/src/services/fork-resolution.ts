@@ -29,7 +29,6 @@ import {
   anyRefusedHeader,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
-import { config } from '../config.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
