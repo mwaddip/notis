@@ -591,10 +591,8 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
   });
 
   it('the M-1 collision pair is distinct in the UI too', () => {
-    // The original pair tested undelimited VLQ adjacency; the last VLQ slot is
-    // now a fixed-width enum8, so the collision shape no longer applies to the
-    // last two fields. The surviving test: two posts differing only by type
-    // produce distinct encodings on both sides.
+    // Slot 4 is the sole VLQ; slot 5 is a fixed-width enum8. Two posts
+    // differing only by type produce distinct encodings on both sides.
     const a = { ...GOLDEN_POST, type: 'regular' as const };
     const b = { ...GOLDEN_POST, type: 'profile' as const };
     expect(hexOf(uiPayload(a))).not.toBe(hexOf(uiPayload(b)));
