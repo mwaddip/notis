@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import type { Post, PostId, Stump } from '@dagsocial/types';
+import type { Post, PostId, PostType, Stump } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -11,10 +11,11 @@ interface PostRow {
   author: Buffer;             // 32-byte Ed25519 public key
   parent_refs: string;        // JSON array
   protocol_version: number;
-  timestamp: number;
+  type: string;               // PostType stored as text
   raw_cbor: Buffer;
   status: string;
   block_height: number | null;
+  block_index: number | null;
 }
 
 interface StumpRow {
@@ -57,6 +58,8 @@ export type PostStatus = 'pending' | 'confirmed' | 'pruned';
 export interface StoredPost extends Post {
   id: PostId;
   status: PostStatus;
+  blockHeight: number | null;
+  blockIndex: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,8 +73,10 @@ function rowToPost(row: PostRow): StoredPost {
     author: new Uint8Array(row.author),
     parentRefs: JSON.parse(row.parent_refs) as string[],
     protocolVersion: row.protocol_version,
-    timestamp: row.timestamp,
+    type: row.type as PostType,
     status: row.status as PostStatus,
+    blockHeight: row.block_height,
+    blockIndex: row.block_index,
   };
 }
 
@@ -109,7 +114,7 @@ export function insertPost(postId: PostId, post: Post, rawCbor: Uint8Array): voi
     db.prepare(
       `INSERT INTO dag_posts
          (id, content, author, parent_refs,
-          protocol_version, timestamp, raw_cbor, status)
+          protocol_version, type, raw_cbor, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
     ).run(
       postId,
@@ -117,7 +122,7 @@ export function insertPost(postId: PostId, post: Post, rawCbor: Uint8Array): voi
       Buffer.from(post.author),
       JSON.stringify(post.parentRefs),
       post.protocolVersion,
-      post.timestamp,
+      post.type,
       Buffer.from(rawCbor),
     );
 
@@ -211,7 +216,11 @@ export function queryPosts(opts: {
     params.push(Buffer.from(opts.author));
   }
 
-  sql += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  sql += ` ORDER BY
+    CASE WHEN block_height IS NULL THEN 0 ELSE 1 END,
+    CASE WHEN block_height IS NULL THEN rowid ELSE NULL END DESC,
+    block_height DESC, block_index DESC
+    LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
   const rows = db.prepare(sql).all(...params) as PostRow[];
@@ -225,31 +234,31 @@ export function getPendingPosts(limit: number): StoredPost[] {
   const db = getDb();
   const rows = db
     .prepare(
-      "SELECT * FROM dag_posts WHERE status = 'pending' ORDER BY timestamp ASC LIMIT ?",
+      "SELECT * FROM dag_posts WHERE status = 'pending' ORDER BY rowid ASC LIMIT ?",
     )
     .all(limit) as PostRow[];
   return rows.map(rowToPost);
 }
 
 /**
- * Mark a post as confirmed at a given block height.
+ * Mark a post as confirmed at a given block height and position.
  */
-export function confirmPost(postId: string, blockHeight: number): void {
+export function confirmPost(postId: string, blockHeight: number, blockIndex: number): void {
   getDb()
     .prepare(
-      "UPDATE dag_posts SET status = 'confirmed', block_height = ? WHERE id = ?",
+      "UPDATE dag_posts SET status = 'confirmed', block_height = ?, block_index = ? WHERE id = ?",
     )
-    .run(blockHeight, postId);
+    .run(blockHeight, blockIndex, postId);
 }
 
 /**
  * Reverse a confirmPost by setting status back to 'pending'
- * and clearing block_height.
+ * and clearing block_height and block_index.
  */
 export function unconfirmPost(subBlockId: string): void {
   getDb()
     .prepare(
-      "UPDATE dag_posts SET status = 'pending', block_height = NULL WHERE id = ?",
+      "UPDATE dag_posts SET status = 'pending', block_height = NULL, block_index = NULL WHERE id = ?",
     )
     .run(subBlockId);
 }

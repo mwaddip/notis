@@ -54,6 +54,7 @@ export {
 export {
   createOrderingBlock,
   getOrderingBlock,
+  getBlockCreatedAt,
   getCurrentHeight,
   deleteOrderingBlock,
 } from './ordering.js';

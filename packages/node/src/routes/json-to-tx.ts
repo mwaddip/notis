@@ -1,5 +1,5 @@
 import { BOX_VALUE_BOUND, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { AnyBox, Post, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, Post, PostType, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
 /**
@@ -126,7 +126,7 @@ function jsonToPost(raw: unknown): Post {
     author,
     parentRefs: (p.parentRefs ?? []) as string[],
     protocolVersion: (p.protocolVersion as number) ?? PROTOCOL_VERSION,
-    timestamp: p.timestamp as number,
+    type: ((p.type as string) ?? 'regular') as PostType,
   };
 }
 

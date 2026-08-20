@@ -75,7 +75,7 @@ describe('verifier', () => {
       author: userId,
       parentRefs: [],
       protocolVersion: PROTOCOL_VERSION,
-      timestamp: 1700000000000,
+      type: 'regular',
       ...overrides,
     };
   }
@@ -118,7 +118,7 @@ describe('verifier', () => {
     store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
     const post = makePost();
     expect(Object.keys(post).sort()).toEqual(
-      ['author', 'content', 'parentRefs', 'protocolVersion', 'timestamp'],
+      ['author', 'content', 'parentRefs', 'protocolVersion', 'type'],
     );
 
     const result = verifyPost(createMockDeps(store), post);

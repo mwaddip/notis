@@ -186,7 +186,7 @@ describe('likes routes', () => {
       author: authorId,
       parentRefs: [],
       protocolVersion: PROTOCOL_VERSION,
-      timestamp: Date.now(),
+      type: 'regular',
     };
     postId = fixturePostId(post);
     insertPost(fixturePostId(post), post, new Uint8Array(16));

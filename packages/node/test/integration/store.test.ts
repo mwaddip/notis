@@ -29,7 +29,7 @@ function makePost(overrides: Partial<Post> = {}): Post {
     author: uid('author-integration'),
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: Date.now(),
+    type: 'regular',
     ...overrides,
   };
 }
@@ -70,8 +70,8 @@ describe('posts store (integration)', () => {
   });
 
   it('queryPosts returns live posts ordered newest first', () => {
-    const post1 = makePost({ content: 'older', timestamp: 1000 });
-    const post2 = makePost({ content: 'newer', timestamp: 2000 });
+    const post1 = makePost({ content: 'older' });
+    const post2 = makePost({ content: 'newer' });
     insertPost(fixturePostId(post1), post1, bytes(8));
     insertPost(fixturePostId(post2), post2, bytes(8));
 
@@ -108,7 +108,7 @@ describe('posts store (integration)', () => {
     expect(pendingIds).toContain(postId);
 
     // Confirm
-    confirmPost(postId, 5);
+    confirmPost(postId, 5, 0);
 
     // No longer pending
     const afterConfirm = getPendingPosts(100);

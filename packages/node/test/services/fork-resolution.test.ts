@@ -102,7 +102,7 @@ async function importBlockCreatorRoots() {
 async function importPosts() {
   return (await import('../../src/store/posts.js')) as {
     insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
-    confirmPost: (postId: string, blockHeight: number) => void;
+    confirmPost: (postId: string, blockHeight: number, blockIndex: number) => void;
     getPost: (id: string) => StoredPost | Stump | null;
   };
 }

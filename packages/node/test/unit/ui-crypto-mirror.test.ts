@@ -63,7 +63,7 @@ const GOLDEN_POST: Post = {
   author: GOLDEN_AUTHOR,
   parentRefs: [GOLDEN_REF],
   protocolVersion: 1,
-  timestamp: 1767225600000, // > 2^32 — six VLQ bytes
+  type: 'regular',
 };
 
 /** The txId a post id is derived from. Any 64-hex value; this one is distinctive. */
@@ -393,7 +393,7 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 
 /** Consts the mirror lifts. A top-level one may itself construct bytes. */
 const MIRRORED_CONSTS = [
-  'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS',
+  'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS', 'POST_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
   'INVITE_BOND_DEFAULT',
@@ -423,7 +423,7 @@ interface KarmaView { total: bigint; boxes: Array<{ boxId: string; value: bigint
 interface UiCrypto {
   postFieldBytes: (
     content: string, author: Uint8Array | string, parentRefs: string[],
-    protocolVersion: number, timestamp: number,
+    protocolVersion: number, type: string,
   ) => Uint8Array;
   computePostId: (txId: string, index: number) => string;
   u32BE: (n: number) => Uint8Array;
@@ -511,7 +511,7 @@ const ui = loadUiCrypto();
 /** The UI's payload encoder, called the way the page calls it. */
 function uiPayload(post: Post): Uint8Array {
   return ui.postFieldBytes(
-    post.content, post.author, post.parentRefs, post.protocolVersion, post.timestamp,
+    post.content, post.author, post.parentRefs, post.protocolVersion, post.type,
   );
 }
 
@@ -546,7 +546,7 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     // The posting flow passes the identity's hex straight through.
     const asHex = ui.postFieldBytes(
       GOLDEN_POST.content, Buffer.from(GOLDEN_POST.author).toString('hex'),
-      GOLDEN_POST.parentRefs, GOLDEN_POST.protocolVersion, GOLDEN_POST.timestamp,
+      GOLDEN_POST.parentRefs, GOLDEN_POST.protocolVersion, GOLDEN_POST.type,
     );
     expect(hexOf(asHex)).toBe(hexOf(postFieldBytes(GOLDEN_POST)));
   });
@@ -559,8 +559,8 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
       { ...GOLDEN_POST, content: 'a', parentRefs: [] },
       { ...GOLDEN_POST, content: '', parentRefs: [] },
       { ...GOLDEN_POST, content: '🙂 multi-byte ✓ ünïcode', parentRefs: ['ab'.repeat(32)] },
-      { ...GOLDEN_POST, protocolVersion: 0, timestamp: 0 },
-      { ...GOLDEN_POST, protocolVersion: 52, timestamp: Number.MAX_SAFE_INTEGER },
+      { ...GOLDEN_POST, protocolVersion: 0 },
+      { ...GOLDEN_POST, protocolVersion: 52, type: 'profile' as const },
       // At the cap. The encoder itself has no opinion on the count — the cap is
       // validation's — so this pins the count prefix, not the rule.
       {
@@ -591,12 +591,12 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
   });
 
   it('the M-1 collision pair is distinct in the UI too', () => {
-    // The pair moved from (powNonce, timestamp) to (protocolVersion, timestamp)
-    // — the field died, the collision shape did not. Compared as PAYLOAD bytes,
-    // because that is where injectivity now matters: these bytes go inside the
-    // `TxId`, so a collision here collides two transactions.
-    const a = { ...GOLDEN_POST, protocolVersion: 5, timestamp: 23 };
-    const b = { ...GOLDEN_POST, protocolVersion: 52, timestamp: 3 };
+    // The original pair tested undelimited VLQ adjacency; the last VLQ slot is
+    // now a fixed-width enum8, so the collision shape no longer applies to the
+    // last two fields. The surviving test: two posts differing only by type
+    // produce distinct encodings on both sides.
+    const a = { ...GOLDEN_POST, type: 'regular' as const };
+    const b = { ...GOLDEN_POST, type: 'profile' as const };
     expect(hexOf(uiPayload(a))).not.toBe(hexOf(uiPayload(b)));
     expect(hexOf(uiPayload(a))).toBe(hexOf(postFieldBytes(a)));
     expect(hexOf(uiPayload(b))).toBe(hexOf(postFieldBytes(b)));

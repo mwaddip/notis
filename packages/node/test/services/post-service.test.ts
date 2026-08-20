@@ -27,7 +27,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
     },
     // `(id) => StoredPost | Stump | null`. These tests only need presence, so
     // return a real stored post — carrying the `id` the store now supplies.
-    getPost: (id: string) => ({ ...makePost({ content: 'hello' }), id, status: 'confirmed' as const }),
+    getPost: (id: string) => ({ ...makePost({ content: 'hello' }), id, status: 'confirmed' as const, blockHeight: null, blockIndex: null }),
     encodePost: () => new Uint8Array(10),
     insertPost: () => {},
     getCurrentHeight: () => 100,
@@ -53,7 +53,7 @@ function makePost(overrides?: Partial<Post>): Post {
     author: new Uint8Array(32),
     parentRefs: [],
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: 1_700_000_000_000,
+    type: 'regular',
     ...overrides,
   };
 }

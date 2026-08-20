@@ -52,7 +52,7 @@ function makePost(overrides: Partial<Post> = {}): Post {
     author: uid('alice123'),
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: 1700000000000,
+    type: 'regular',
     ...overrides,
   };
 }
@@ -92,7 +92,6 @@ describe('posts store', () => {
     const post = makePost({
       content: 'round-trip test',
       parentRefs: [],
-      timestamp: 1700000000001,
     });
     const rawCbor = new Uint8Array([10, 20, 30]);
 
@@ -110,14 +109,14 @@ describe('posts store', () => {
     expect(retrieved.author).toEqual(uid('alice123'));
     expect(retrieved.parentRefs).toEqual([]);
     expect(retrieved.protocolVersion).toBe(1);
-    expect(retrieved.timestamp).toBe(1700000000001);
+    expect(retrieved.type).toBe('regular');
     // `Post` has exactly five fields (TYPES_INTERFACE → Layout — Post), all
-    // five asserted above; the store adds `id` and `status`, which are row
-    // columns and not part of the post. Asserting the whole key set is what
-    // makes this a round-trip rather than a sample: a field that stopped
-    // surviving CBOR would otherwise pass unnoticed.
+    // five asserted above; the store adds `id`, `status`, `blockHeight` and
+    // `blockIndex`, which are row columns and not part of the post. Asserting
+    // the whole key set is what makes this a round-trip rather than a sample:
+    // a field that stopped surviving CBOR would otherwise pass unnoticed.
     expect(Object.keys(retrieved).sort()).toEqual(
-      ['author', 'content', 'id', 'parentRefs', 'protocolVersion', 'status', 'timestamp'],
+      ['author', 'blockHeight', 'blockIndex', 'content', 'id', 'parentRefs', 'protocolVersion', 'status', 'type'],
     );
   });
 
@@ -180,8 +179,8 @@ describe('posts store', () => {
 
     initDb(':memory:');
 
-    const alicePost = makePost({ author: uid('alice'), content: 'alice post', timestamp: 100 });
-    const bobPost = makePost({ author: uid('bob'), content: 'bob post', timestamp: 200 });
+    const alicePost = makePost({ author: uid('alice'), content: 'alice post' });
+    const bobPost = makePost({ author: uid('bob'), content: 'bob post' });
 
     insertPost(fixturePostId(alicePost), alicePost, bytes(8));
     insertPost(fixturePostId(bobPost), bobPost, bytes(8));
@@ -205,12 +204,8 @@ describe('posts store', () => {
 
     initDb(':memory:');
 
-    // Insert 5 posts with staggered timestamps
     for (let i = 0; i < 5; i++) {
-      const post = makePost({
-        content: `post-${i}`,
-        timestamp: 1000 + i,
-      });
+      const post = makePost({ content: `post-${i}` });
       insertPost(fixturePostId(post), post, bytes(8));
     }
 
@@ -236,6 +231,34 @@ describe('posts store', () => {
     expect(page3[0]!.content).toBe('post-0');
   });
 
+  // 5b. queryPosts orders pending above confirmed, confirmed by committed position
+  it('queryPosts: pending above confirmed, confirmed by (block_height, block_index)', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPosts } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    // Two confirmed posts at different positions in block 10
+    const early = makePost({ content: 'early' });
+    const late = makePost({ content: 'late' });
+    insertPost(fixturePostId(early), early, bytes(8));
+    insertPost(fixturePostId(late), late, bytes(8));
+    confirmPost(fixturePostId(early), 10, 0);
+    confirmPost(fixturePostId(late), 10, 1);
+
+    // One pending post
+    const pend = makePost({ content: 'pending' });
+    insertPost(fixturePostId(pend), pend, bytes(8));
+
+    const all = queryPosts({});
+    expect(all).toHaveLength(3);
+    // Pending first
+    expect(all[0]!.content).toBe('pending');
+    // Then confirmed newest-first: block_index 1 before 0
+    expect(all[1]!.content).toBe('late');
+    expect(all[2]!.content).toBe('early');
+  });
+
   // 6. queryPosts excludes pruned posts
   it('queryPosts excludes pruned posts', async () => {
     const { initDb } = await importDbFresh();
@@ -245,7 +268,7 @@ describe('posts store', () => {
 
     initDb(':memory:');
 
-    const post = makePost({ content: 'doomed', timestamp: 100 });
+    const post = makePost({ content: 'doomed' });
     insertPost(fixturePostId(post), post, bytes(8));
 
     // Before pruning, query returns the post
@@ -268,9 +291,9 @@ describe('posts store', () => {
 
     initDb(':memory:');
 
-    insertPost(fixturePostId(makePost({ content: 'oldest', timestamp: 100 })), makePost({ content: 'oldest', timestamp: 100 }), bytes(8));
-    insertPost(fixturePostId(makePost({ content: 'middle', timestamp: 200 })), makePost({ content: 'middle', timestamp: 200 }), bytes(8));
-    insertPost(fixturePostId(makePost({ content: 'newest', timestamp: 300 })), makePost({ content: 'newest', timestamp: 300 }), bytes(8));
+    insertPost(fixturePostId(makePost({ content: 'oldest' })), makePost({ content: 'oldest' }), bytes(8));
+    insertPost(fixturePostId(makePost({ content: 'middle' })), makePost({ content: 'middle' }), bytes(8));
+    insertPost(fixturePostId(makePost({ content: 'newest' })), makePost({ content: 'newest' }), bytes(8));
 
     const pending = getPendingPosts(10);
     expect(pending).toHaveLength(3);
@@ -279,11 +302,10 @@ describe('posts store', () => {
     expect(pending[2]!.content).toBe('newest');
   });
 
-  // 8. confirmPost updates status and blockHeight
-  it('confirmPost updates status and blockHeight', async () => {
+  // 8. confirmPost updates status, blockHeight and blockIndex
+  it('confirmPost updates status, blockHeight and blockIndex', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost, confirmPost, getPendingPosts } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
 
@@ -294,18 +316,19 @@ describe('posts store', () => {
     // Still pending before confirm
     expect(getPendingPosts(10)).toHaveLength(1);
 
-    confirmPost(postId, 42);
+    confirmPost(postId, 42, 3);
 
     // No longer pending after confirm
     expect(getPendingPosts(10)).toHaveLength(0);
 
     // Verify in DB directly
     const row = getDb()
-      .prepare('SELECT status, block_height FROM dag_posts WHERE id = ?')
-      .get(postId) as { status: string; block_height: number } | undefined;
+      .prepare('SELECT status, block_height, block_index FROM dag_posts WHERE id = ?')
+      .get(postId) as { status: string; block_height: number; block_index: number } | undefined;
     expect(row).toBeDefined();
     expect(row!.status).toBe('confirmed');
     expect(row!.block_height).toBe(42);
+    expect(row!.block_index).toBe(3);
   });
 
   // 9. getParentRefs returns array of parent IDs
@@ -498,7 +521,7 @@ describe('posts store', () => {
     initDb(':memory:');
 
     for (let i = 0; i < 5; i++) {
-      insertPost(fixturePostId(makePost({ content: `pending-${i}`, timestamp: 100 + i })), makePost({ content: `pending-${i}`, timestamp: 100 + i }), bytes(8));
+      insertPost(fixturePostId(makePost({ content: `pending-${i}` })), makePost({ content: `pending-${i}` }), bytes(8));
     }
 
     const limited = getPendingPosts(3);
@@ -521,7 +544,7 @@ describe('posts store', () => {
       author: new Uint8Array(32).fill(9),
       parentRefs: [],
       protocolVersion: 1,
-      timestamp: 1700000000000,
+      type: 'regular',
     };
     // ⛔ The id is a PARAMETER, not something the store derives. A post id comes
     // from the creating transaction's provenance (TYPES_INTERFACE → Hashing
