@@ -2164,14 +2164,25 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
-    // [postId, postId] — the repeat is caught by verifyOrderingBlockStructure
-    // at the top of applyOrderingBlock, before any mutation.
     const repeatedEntry = makePruneEntry(postId, [postId, postId], author);
     const pruneBlock = await makeApplicableBlock({
       height: 2,
       pruneEntries: [repeatedEntry],
     });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(false);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes('Rejected block: invalid structure') &&
+          w.includes('carries a repeated id'),
+      ),
+      `expected structure-gate reason in warnings, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     const { getStump } = (await import('../../src/store/stumps.js')) as {
       getStump: (id: string) => unknown;
@@ -2180,6 +2191,29 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
 
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(1);
+  });
+
+  it('accepts the same prune when subtreePostIds carries no repeat (control)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { tx: postTx, postId } = await seedPostTx(author, 'target post');
+
+    const blockApply = await importBlockApply();
+
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    const cleanEntry = makePruneEntry(postId, [postId], author);
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [cleanEntry],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
   });
 
   // -----------------------------------------------------------------------
