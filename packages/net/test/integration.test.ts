@@ -152,7 +152,7 @@ describe('Two-node integration', () => {
       author: kp.publicKey,
       parentRefs: [],
       protocolVersion: 1,
-      timestamp: Date.now(),
+      type: 'regular' as const,
     };
     const tx: UtxoTransaction = {
       inputs: ['aa'.repeat(32)],
@@ -254,7 +254,7 @@ describe('Two-node integration', () => {
         author,
         parentRefs: [],
         protocolVersion: 1,
-        timestamp: 1_722_470_400_000,
+        type: 'regular' as const,
       },
     } as unknown as UtxoTransaction;
 
