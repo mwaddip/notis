@@ -166,7 +166,7 @@ describe('NETWORK_PROFILES', () => {
     }
   });
 
-  it('devnet runs the parked e2e harness values', () => {
+  it('devnet decay interval is 3 and stale threshold is 500', () => {
     const devnet = NETWORK_PROFILES.devnet;
     expect(devnet.karmaDecayIntervalBlocks).toBe(3);
     expect(devnet.karmaStaleThresholdBlocks).toBe(500);

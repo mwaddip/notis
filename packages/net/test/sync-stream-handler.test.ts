@@ -82,7 +82,7 @@ type StreamHandler = (arg: {
  * and a 25s integration test for what is a pure control-flow question. The
  * alternative is extracting the 110-line handler body into a module-level
  * function, which is this file's stated idiom but a far larger change than the
- * logging fix under test. If these casts ever break, that extraction is the fix.
+ * logging spans under test. If these casts ever break, that extraction is the fix.
  */
 function makeHandlerHarness(opts: {
   headersHandler?: (height: number) => OrderingBlock | null;
@@ -169,7 +169,8 @@ describe('sync stream handler — sync dispatch failures', () => {
   it('logs a throwing handleMessage with the code and peer', async () => {
     // The worst instance of the pattern: `handleMessage` decodes the body and
     // applies the inbound caps, so a throw here is a bug in net's own guard
-    // layer — and it produced an empty frame and total silence.
+    // layer — the handler logs it at `error` with the message code and replies
+    // empty.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const { send } = makeHandlerHarness({
       syncMachine: {
@@ -192,8 +193,9 @@ describe('sync stream handler — sync dispatch failures', () => {
     errSpy.mockRestore();
   });
 
-  it('still dispatches normally when handleMessage does not throw', async () => {
-    // Positive control: the narrowed spans did not break routing.
+  it('dispatches to handleMessage when it does not throw', async () => {
+    // Positive control: the per-owner span structure does not interfere with
+    // dispatch — `handleMessage` receives the code and body.
     const seen: Array<{ code: number; len: number }> = [];
     const { send } = makeHandlerHarness({
       syncMachine: {

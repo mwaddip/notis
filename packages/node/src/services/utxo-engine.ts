@@ -1195,17 +1195,17 @@ const OUTPUT_SHAPE: Record<
       inviterId: 'bytes32',
       inviteePublicKey: 'bytes32',
     }),
+    // Reserved, never to be reused: `targetPostId`. A lock carries no such
+    // field — a post's id comes from the transaction that creates the lock, so
+    // the field would have to be known before the `TxId` that produces it
+    // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
+    // held by the store.
     post_lock: shape({
       boxType: null,
       value: 'u64',
       createdAtBlock: 'uint',
       originalValue: 'u64',
       owner: 'bytes32',
-      // Reserved, never to be reused: `targetPostId`. A lock carries no such
-      // field — a post's id comes from the transaction that creates the lock, so
-      // the field would have to be known before the `TxId` that produces it
-      // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
-      // held by the store.
     }),
     vouch: shape({
       boxType: null,

@@ -164,9 +164,9 @@ export function startBlockCreator(cfg: Config): void {
   validatorId = validatorPubKey;
 
   // A miner node holds a template from the moment it starts, and one per height
-  // thereafter: production is regulated by difficulty, so a miner polling
-  // `GET /mining/template` is never told to come back later
-  // (MINING_INTERFACE → Template and submit).
+  // thereafter: production is regulated by difficulty, not by an interval
+  // (MINING_INTERFACE → Template and submit). Serving is separate — the
+  // peer-readiness gate withholds it until peers are met.
   createOrderingBlock();
 }
 

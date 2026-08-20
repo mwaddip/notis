@@ -885,10 +885,9 @@ describe('prune settlement stump insert (P2-F F1)', () => {
 
     const blockApply = await importBlockApply();
 
-    // ⛔ Height 1 carries both post TRANSACTIONS. There is no content-less
-    // variant of this any more: a block carries its posts, so a node applying it
-    // holds the content and `block_topology` is derived from `tx.post` rather
-    // than recorded from a claim.
+    // ⛔ Height 1 carries both post TRANSACTIONS. A block carries its posts as
+    // embedded transactions, so applying it stores the content and derives
+    // `block_topology` from `tx.post` (NODE_INTERFACE → Block Topology).
     const confirmBlock = await makeApplicableBlock({
       utxoTxs: [root.tx, reply.tx],
     });
