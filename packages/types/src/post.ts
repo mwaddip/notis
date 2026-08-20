@@ -106,11 +106,13 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *   sentinel; padding or truncating a 31-byte author to 32 would map it onto a
  *   **well-formed post's** encoding, a consensus-level collision strictly worse
  *   than the panic it avoids.
- * - `enum8` — `type` — **throws** on an unknown key (TYPES_INTERFACE →
- *   Canonical field encoding). Its domain is established upstream by
- *   `verifyPostFieldDomains`.
+ * - `enum8` — `type` — **total** at byte width: an off-table value takes
+ *   the reserved 0xff sentinel, refused at decode as invalid-tag
+ *   (TYPES_INTERFACE → Canonical field encoding). `verifyPostFieldDomains`'
+ *   membership rule keeps the sentinel path unreachable, so two malformed
+ *   posts cannot share an encoding.
  *
- * The throwing fields therefore have their domain established upstream:
+ * The non-total fields (`b32`) therefore have their domain established upstream:
  * `verifyPostFieldDomains` in `@dagsocial/validation` pins `author` at 32 bytes
  * and every ref at 64 **lowercase** hex characters, and `verifyTxStructure`
  * calls it for a post-bearing transaction. Lowercase is load-bearing:
