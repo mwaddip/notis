@@ -178,7 +178,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -212,7 +211,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
@@ -245,7 +243,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -259,7 +256,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -271,7 +267,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('idle');
@@ -284,7 +279,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -305,7 +299,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().stalledPeers.has('peer1')).toBe(false);
@@ -670,7 +663,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -730,7 +722,6 @@ describe('SyncMachine', () => {
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
         tipBlockId: 'abc',
-
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -974,7 +965,6 @@ describe('SyncMachine', () => {
       machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array(encode({
         tipHeight: -1_000_000_000,
         tipBlockId: 'x',
-
         anchors: [],
       })));
       machine.flush();
@@ -994,7 +984,6 @@ describe('SyncMachine', () => {
       machine.handleMessage('peer1', MSG_SYNC_INFO, new Uint8Array(encode({
         tipHeight: 5,
         tipBlockId: 'x',
-
         anchors: [],
       })));
       machine.flush();
@@ -1224,7 +1213,6 @@ describe('SyncMachine', () => {
       machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array(encode({
         tipHeight: 5,
         tipBlockId: 'x',
-
         anchors: Array.from({ length: MAX_INV_IDS + 1 }, (_, i) => ({ height: i, blockId: `a${i}` })),
       })));
       machine.flush();
