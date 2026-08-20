@@ -2316,18 +2316,22 @@ describe('reorg — a missing AVL version at the fork height', () => {
     };
   }
 
-  it('refuses the reorg and leaves our chain and our prover where they were', async () => {
+  it('the missing version is a fail-stop', async () => {
     const { ordering, handle, forkResolution, root } = await chainOnAProver();
     const before = root();
     const hashes = [1, 2, 3].map((h) => blockHash(ordering.getOrderingBlock(h)!.header));
 
-    // What `checkpointProver`'s pruning leaves behind when MAX_PROOF_HISTORY is
-    // below MAX_REORG_DEPTH: the fork point is still an answer the walk can
-    // give, and its version is gone.
     handle.storage.deleteVersionAtHeight(0);
 
-    expect(() => forkResolution.reorg(0, []))
-      .toThrow(/no AVL version at or before it/i);
+    const { MissingStateVersionError, CorruptChainStateError } =
+      await import('../../src/services/corrupt-state.js');
+
+    let caught: unknown;
+    try { forkResolution.reorg(0, []); } catch (err) { caught = err; }
+    expect(caught).toBeInstanceOf(MissingStateVersionError);
+    expect(caught).toBeInstanceOf(CorruptChainStateError);
+    expect((caught as InstanceType<typeof MissingStateVersionError>).site).toBe('reorg');
+    expect((caught as InstanceType<typeof MissingStateVersionError>).height).toBe(0);
 
     // The transaction rolled back and the in-memory prover went back with it,
     // so the node still holds a chain whose root it can compute.
@@ -2336,16 +2340,6 @@ describe('reorg — a missing AVL version at the fork height', () => {
       expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(hashes[h - 1]);
     }
     expect(root()).toBe(before);
-  });
-
-  it('names both numbers, because their relationship is the fault', async () => {
-    const { handle, forkResolution } = await chainOnAProver();
-    handle.storage.deleteVersionAtHeight(0);
-
-    let message = '';
-    try { forkResolution.reorg(0, []); } catch (err) { message = String(err); }
-    expect(message).toMatch(/MAX_PROOF_HISTORY/);
-    expect(message).toMatch(/MAX_REORG_DEPTH/);
   });
 
   it('control: the same reorg runs with the version in place', async () => {

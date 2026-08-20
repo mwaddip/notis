@@ -12,9 +12,11 @@ import { failStopIfCorruptChain } from './corrupt-state.js';
  * handlers / Sync handlers).
  *
  * Returns `true` for applied or already held, `false` for rejected or for a
- * non-extending block that enters fork resolution. Nothing awaits the
- * resolution; the `.catch(failStopIfCorruptChain)` on the launched promise is
- * the fail-stop boundary, so no other path carries a corrupt-state error out.
+ * non-extending block that enters fork resolution. The synchronous path can
+ * raise a `CorruptChainStateError` (`getOrderingBlock`, `extendsOurTip`,
+ * `applyOrderingBlock`'s re-thrown class); each registration wraps the call
+ * in `failStopIfCorruptChain`. The launched `resolveFork` promise carries
+ * its own `.catch(failStopIfCorruptChain)`.
  */
 export function handleOrderingBlock(
   block: OrderingBlock,

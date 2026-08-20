@@ -39,6 +39,8 @@ import { rebuildTemplate } from './block-creator.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
+  MissingJournalError,
+  MissingStateVersionError,
   UnhashableStoredHeaderError,
   ReorgBlockRejectedError,
 } from './corrupt-state.js';
@@ -221,7 +223,7 @@ export function revertBlock(height: number): PruneEntry[] {
   }
   const journal = getBlockJournal(height);
   if (!journal) {
-    throw new Error(`No journal for height ${height} — cannot revert`);
+    throw new MissingJournalError('revertBlock', height);
   }
 
   // Collect prune entries before the block is deleted
@@ -391,21 +393,14 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
   // back and the catch below restores the in-memory digest: the node keeps the
   // chain it had, which is a chain whose root it can still compute.
   //
-  // ⚠ **Reachable by configuration, not only by corruption.** `MAX_PROOF_HISTORY`
-  // is env-tunable and `checkpointProver` prunes versions below
-  // `height - maxProofHistory`, while `MAX_REORG_DEPTH` is fixed — so a value
-  // under 20 prunes inside the window the fork walk still answers within, and
-  // `findForkPoint` reaching the genesis state makes height 0 one of the answers
-  // it can give. The message names the two numbers because their relationship is
-  // the fault.
+  // Reachable through a `Config` assembled without `loadConfig` (tests);
+  // otherwise a row the store lost. `loadConfig` refuses
+  // `MAX_PROOF_HISTORY < MAX_REORG_DEPTH` at load (NODE_INTERFACE →
+  // Configuration).
   if (avlHandle) {
     const version = avlHandle.storage.versionAtOrBeforeHeight(forkHeight);
     if (!version) {
-      throw new Error(
-        `reorg to fork height ${forkHeight}: no AVL version at or before it. ` +
-        `MAX_PROOF_HISTORY=${config.maxProofHistory} prunes versions this reorg ` +
-        `needs — it must not be below MAX_REORG_DEPTH=${MAX_REORG_DEPTH}.`,
-      );
+      throw new MissingStateVersionError('reorg', forkHeight);
     }
     avlHandle.prover.rollback(version);
   }
