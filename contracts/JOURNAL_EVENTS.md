@@ -4,33 +4,14 @@
 **Stability:** stable
 **Last verified against code:** 2026-08-20
 
-> ⚠ **PARTIAL — 19 events are declared below and 11 are emitted. Re-derived 2026-08-20.** Every
-> emitter is a `journal.ts` wrapper around `emitEvent`, and an event is emitted when its wrapper is
-> called from `src`. **Emitted (11):** `server_starting`, `server_ready`, `shutdown_signal_received`,
-> `server_shutting_down`, `db_open_started`, `db_open_complete`, `api_listening`, `post_received`,
-> `post_validated`, `post_indexed`, `dag_reorg`. **Declared with a wrapper nothing in `src` calls (5):**
-> `validation_stuck`, `dag_height_drift`, `peer_connected`, `peer_disconnected`, `peer_penalised` — the
-> wrappers are exercised by `test/journal.test.ts` alone. **Declared with no wrapper (3):**
-> `sync_complete`, `migration_started`, `migration_complete`. "Stability: stable" refers to the
+> ⚠ **PARTIAL — 15 events are declared below; 11 are emitted and 4 are NOT IMPLEMENTED. Re-derived
+> 2026-08-20.** Every emitter is a `journal.ts` wrapper around `emitEvent`, and an event is emitted
+> when its wrapper is called from `src`. **Emitted (11):** `server_starting`, `server_ready`,
+> `shutdown_signal_received`, `server_shutting_down`, `db_open_started`, `db_open_complete`,
+> `api_listening`, `post_received`, `post_validated`, `post_indexed`, `dag_reorg`. **Not implemented
+> (4):** `sync_complete`, `peer_connected`, `peer_disconnected`, `peer_penalised` — all four wait on
+> one `@dagsocial/net` passthrough, stated at their sections. "Stability: stable" refers to the
 > *format contract* for events that are emitted; it is not a claim that an event exists.
->
-> ⚠ **`validation_stuck` and `dag_height_drift` describe triggers the node does not have.** No
-> validation sweep exists for a post to fail in, and two stores disagreeing about height is the
-> fail-stop family's case (`NODE_INTERFACE` → the `CorruptChainStateError` family), not a WARN event.
->
-> ⚠ **`migration_started` / `migration_complete` cannot be emitted as declared.** They carry
-> `from_version` and `to_version`, and there is no stored schema version to read: the five
-> `migrate*` passes in `node/src/store/db.ts` run unconditionally, with no number selecting
-> which. **The field lists are the open question, not the emitters.**
->
-> ⚠ **`sync_complete` is not `@dagsocial/node`'s to emit alone.** `SyncMachine.onSynced` is
-> public, but `NetNode` registers the callback internally and exposes no passthrough, so this
-> needs a `@dagsocial/net` change first.
->
-> ⚠ **`peer_connected` / `peer_disconnected` / `peer_penalised` have the same shape.** `NetNode`
-> handles libp2p's `peer:connect` / `peer:disconnect` internally and `penalizePeer` is its own method;
-> none is exposed to the node, so the `journal.ts` wrappers have nothing to hook. A net passthrough
-> comes first, then node wiring.
 
 > ⚠ **Two different things share the word "journal" and this document covers only one.**
 > **This file** = the JSON-line **observability event log**. **`BlockJournal` / `BoxMutation`**
@@ -141,21 +122,12 @@ a field.
   `new_tip` (string)
 **Emitted:** After canonical branch switch completes.
 
-## Anomaly Events
-
-### validation_stuck
-**Level:** WARN
-**Fields:** `post_id` (string), `reason` (string), `attempt_count` (number)
-**Emitted:** When the same post fails validation for 5+ consecutive sweeps.
-
-### dag_height_drift
-**Level:** WARN
-**Fields:** `gap` (number), `mode` (string), `old_height` (number),
-  `new_height` (number)
-**Emitted:** At most once at startup when databases disagree on validated
-  height. Absence = databases agreed.
-
 ## Peer Events
+
+> ⚠ **NOT IMPLEMENTED — verified 2026-08-20.** The three `journal.ts` wrappers exist and are called by
+> `test/journal.test.ts` alone: `NetNode` handles libp2p's `peer:connect` / `peer:disconnect`
+> internally and `penalizePeer` is its own method, none exposed to the node, so there is nothing for
+> them to hook. A `@dagsocial/net` passthrough comes first, then node wiring.
 
 ### peer_connected
 **Level:** INFO
@@ -174,23 +146,15 @@ a field.
 
 ## Sync Events
 
+> ⚠ **NOT IMPLEMENTED — verified 2026-08-20.** No wrapper and no emitter. `SyncMachine.onSynced` is
+> public, but `NetNode` registers the callback internally and exposes no passthrough — the same
+> `@dagsocial/net` change the peer events wait on.
+
 ### sync_complete
 **Level:** INFO
 **Fields:** `tip_height` (number), `duration_ms` (number)
 **Emitted:** First time `synced() == true` after startup or after dropping
   out of sync.
-
-## Migration Events
-
-### migration_started
-**Level:** INFO
-**Fields:** `name` (string), `from_version` (number), `to_version` (number)
-**Emitted:** Before migration N begins.
-
-### migration_complete
-**Level:** INFO
-**Fields:** `name` (string), `duration_ms` (number), `rows_affected` (number)
-**Emitted:** After migration N commits.
 
 ## What this contract is NOT
 
