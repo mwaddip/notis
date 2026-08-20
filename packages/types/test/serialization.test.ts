@@ -658,7 +658,7 @@ describe('positional serialization', () => {
     const PRE_T2B_ID = '586ff286a6309e50e07f429cff6bccb026ccf3d6e1b67b7036e654c8c2a487cc';
     const CBOR_ID = '9a1155ead5ddfb05d495a34df1f4be31482e2df4f9094925ba135b4679e0d114';
     const POSITIONAL_ID = '60ccc4811541897d5bfca53ccf1155ebe198efb16ee635fc9f181432ec90ba32';
-    /** Post type replaces timestamp: the five-field layout with enum8 in slot 5. */
+    /** Five-field post layout with enum8 type in slot 5. */
     const POST_TX_ID = 'c9b8df33651e39890a403a732683910b32cafb2427ae3662c39365f5a9da2858';
 
     const PINNED_POST: Post = {

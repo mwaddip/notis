@@ -259,14 +259,12 @@ describe('canonical field encoding (M-1)', () => {
   });
 
   it('injectivity holds across distinct protocolVersions', () => {
-    // The defect audit M-1 closed. `postFieldBytes` is injective by
-    // construction — every variable-length field is length-prefixed, the ref
-    // array is counted, and the trailing `type` is a fixed-width enum8
-    // (TYPES_INTERFACE → Canonical field encoding). With only one VLQ field
-    // remaining in the post (`protocolVersion`), the `(a=5, b=23)` collision
-    // pair that M-1 closed is no longer constructible within the post struct
-    // — but the encoding still distinguishes distinct versions, which is the
-    // injectivity property at the tail.
+    // `postFieldBytes` is injective by construction — every variable-length
+    // field is length-prefixed, the ref array is counted, and the trailing
+    // `type` is a fixed-width enum8 (TYPES_INTERFACE → Canonical field
+    // encoding). `protocolVersion` is the sole VLQ field, so a two-VLQ
+    // concatenation collision (the M-1 defect class) is structurally absent.
+    // Distinct versions encode distinctly.
     const a: Post = { ...GOLDEN_POST, protocolVersion: 5 };
     const b: Post = { ...GOLDEN_POST, protocolVersion: 52 };
     expect(payload(a)).not.toBe(payload(b));
