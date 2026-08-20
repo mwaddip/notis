@@ -764,13 +764,11 @@ Node start
 | `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel | 100 |
 | `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment (non-delivery) | 50 |
 
-> ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — the two fork-resolution rows and
-> `penalizePeer` land with the net dispatch, which removes this line.
-
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
-into this system: it records the named tier against an Active peer with the reason string and
-nothing else — accrual, decay and the ban threshold below apply unchanged. It is the producing call
-site of the two fork-resolution rows.
+into this system: it records the named tier against the peer with the reason string and nothing
+else — accrual, decay and the ban threshold below apply unchanged, and a peer the manager does not
+know is a no-op (the counterparty comes off the Active list; an unknown one is a disconnect race,
+not a target). It is the producing call site of the two fork-resolution rows.
 
 The table is the whole system: every `PenaltyType` and `PenaltyKind` member has
 a producing call site.
@@ -1093,7 +1091,7 @@ offer.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return. ⚠ AHEAD OF CODE on branch `fork-choice-verified-headers` — landed by the net dispatch, which removes this sentence |
+| `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return |
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16). Returns the whole block, not the header: one provider serves both responses — `Headers` reads `.header`, `Blocks` returns the block |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired when sync finishes |
 | `onPeerActive(cb)` | `((peerId: string) => void) => void` | Fired when a peer becomes active |
