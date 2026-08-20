@@ -985,9 +985,6 @@ every non-genesis block (the genesis case has no previous block to link to).
 
 ### verifyHeaderChain
 
-> ⚠ **AHEAD OF CODE on branch `fork-choice-verified-headers`** — landed by the validation dispatch,
-> which removes this line.
-
 ```
 verifyHeaderChain(
   headers: BlockHeader[],                 // chronological; expected to start at anchor.height + 1
@@ -1008,7 +1005,9 @@ headers count, and a header that cannot be interpreted decides nothing. Nothing 
 
 On success, `work` is `cumulativeWork(headers)` — every header has passed `target` and `pow`, so no
 term is `null` — and `hashes[i]` is `blockHash(headers[i])`. An empty segment is `{ ok: true, work:
-0n, hashes: [] }`: a segment that adds nothing to the anchor carries no work.
+0n, hashes: [] }`: a segment that adds nothing to the anchor carries no work. A non-array `headers`
+is read as the empty segment — the same verdict, and it grants nothing: zero work never exceeds the
+incumbent's and an empty `hashes` admits no block.
 
 **The anchor is the fork point.** Its `prevBlockHash` is the hash of the block the segment must
 build on — for a fork at `GENESIS_HEIGHT` it is `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE → Genesis
