@@ -1357,8 +1357,8 @@ inside the network's reported supply.
   severe class, and unlike the unlike-path instance it does **not** close when
   P2-D removes unlike.
 - Self-consolidation (several of your own karma boxes into one) is the
-  legitimate multi-input case and stays legal. The faucet grant is unaffected:
-  it is a single input.
+  legitimate multi-input case and stays legal. The faucet's invite (`tools/faucet`,
+  `karma → karma + bond`) is unaffected: every karma input it spends is its own.
 - **Credits are deliberately exempt.** They are tradeable, so multi-owner
   credit inputs are an ordinary multi-party payment, not a leak.
 
