@@ -713,6 +713,12 @@ export function verifyOrderingBlockStructure(
         };
       }
     }
+    if (entry.subtreePostIds.length !== new Set(entry.subtreePostIds).size) {
+      return {
+        valid: false,
+        error: 'Ordering block pruneEntry subtreePostIds carries a repeated id',
+      };
+    }
     if (!isBytes(entry.subtreeMerkleRoot) || entry.subtreeMerkleRoot.length !== 32) {
       return { valid: false, error: 'Ordering block pruneEntry has invalid subtreeMerkleRoot' };
     }

@@ -941,6 +941,43 @@ describe('verifyOrderingBlockStructure', () => {
       expect(() => verifyOrderingBlockStructure(blockWithPrune(shape.over))).not.toThrow();
     }
   });
+
+  // --- subtreePostIds distinctness -------------------------------------------
+
+  it('rejects a prune entry whose subtreePostIds carries a repeated id', () => {
+    const A = 'aa'.repeat(32);
+    const B = 'bb'.repeat(32);
+    const block = blockWithPrune({ subtreePostIds: [A, A, B] });
+    const result = verifyOrderingBlockStructure(block);
+    expect(result).toEqual({
+      valid: false,
+      error: 'Ordering block pruneEntry subtreePostIds carries a repeated id',
+    });
+
+    const clean = blockWithPrune({ subtreePostIds: [A, B] });
+    expect(verifyOrderingBlockStructure(clean)).toEqual({ valid: true });
+  });
+
+  it('finds a repeated id in the second prune entry', () => {
+    const A = 'cc'.repeat(32);
+    const B = 'dd'.repeat(32);
+    const block = makeValidBlock();
+    block.utxoTxTree.pruneEntries = [
+      makeValidPruneEntry(),
+      { ...makeValidPruneEntry(), subtreePostIds: [A, A, B] } as unknown as PruneEntry,
+    ];
+    const result = verifyOrderingBlockStructure(block);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('carries a repeated id');
+  });
+
+  it('rejects a non-hex element before detecting a repeat', () => {
+    const A = 'aa'.repeat(32);
+    const block = blockWithPrune({ subtreePostIds: [42, A, A] });
+    const result = verifyOrderingBlockStructure(block);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
+  });
 });
 
 // ---------------------------------------------------------------------------

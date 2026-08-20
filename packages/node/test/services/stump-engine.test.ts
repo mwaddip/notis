@@ -383,4 +383,56 @@ describe('stump-engine', () => {
     const entry = executePrune(intentB);
     expect(entry.rootPostHash).toBe(rootB);
   });
+
+  // -----------------------------------------------------------------------
+  // 11. executePrune refuses subtreePostIds with a repeated id (400)
+  // -----------------------------------------------------------------------
+  it('executePrune refuses subtreePostIds with a repeated id', () => {
+    // Root post with one reply — the real subtree is {root, reply}.
+    const rootPost = makePost('Root', authorId, []);
+    const rootId = insertTestPost(rootPost);
+
+    const reply = makePost('Reply', authorId, [rootId]);
+    const replyId = insertTestPost(reply);
+
+    // Build a valid intent, then tamper: duplicate root in the list.
+    // [rootId, rootId, replyId] has length 3 but set size 2 — the repeat
+    // should be caught before the set compare (which would pass it).
+    const intent = signPruneIntent(rootId, authorId, authorPrivKey);
+    intent.subtreePostIds = [rootId, rootId, replyId];
+
+    let thrown: (Error & { statusCode?: number }) | null = null;
+    try {
+      executePrune(intent);
+    } catch (e) {
+      thrown = e as Error & { statusCode?: number };
+    }
+    expect(thrown).not.toBeNull();
+    expect(thrown!.message).toBe('subtreePostIds carries a repeated id');
+    expect(thrown!.statusCode).toBe(400);
+
+    // Mempool pin: the refusal fires before insertMempoolPrune, so no prune
+    // entry reaches the pool.
+    const db = getDb();
+    const poolCount = db
+      .prepare(`SELECT count(*) AS cnt FROM mempool WHERE entry_type = 'prune'`)
+      .get() as { cnt: number };
+    expect(poolCount.cnt).toBe(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // 12. Control: the same subtree without the repeat proceeds
+  // -----------------------------------------------------------------------
+  it('executePrune proceeds when subtreePostIds carries no repeat (control)', () => {
+    const rootPost = makePost('Root', authorId, []);
+    const rootId = insertTestPost(rootPost);
+
+    const reply = makePost('Reply', authorId, [rootId]);
+    insertTestPost(reply);
+
+    const intent = signPruneIntent(rootId, authorId, authorPrivKey);
+    const entry = executePrune(intent);
+    expect(entry.rootPostHash).toBe(rootId);
+    expect(entry.subtreePostIds).toContain(rootId);
+  });
 });
