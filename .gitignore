@@ -11,3 +11,6 @@ AUDIT-*.md
 docs/specs/
 prompts/
 *.deb
+
+# Plan and design scaffolding — local working layer, never tracked
+docs/superpowers/
