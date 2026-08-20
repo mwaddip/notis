@@ -72,12 +72,15 @@ import type {
  *
  * ## Totality
  *
- * `content` (`lpUtf8`), `protocolVersion` and `timestamp` (`vlqU`) are total by
- * sentinel. `author` and every `parentRefs` entry are fixed-width and throw, and
- * their domain is `verifyPostFieldDomains` (`@dagsocial/validation`) — 32 bytes
- * and 64 lowercase hex.
+ * `content` (`lpUtf8`) and `protocolVersion` (`vlqU`) are total by sentinel.
+ * `author` and every `parentRefs` entry are fixed-width (`b32`) and throw;
+ * `type` (`enum8`) sentinels to 0xff, refused at decode as invalid-tag
+ * (TYPES_INTERFACE → Canonical field encoding). All three have their domain
+ * established by `verifyPostFieldDomains` (`@dagsocial/validation`) — `b32`
+ * stays unreachable because its writers throw, `enum8` because the membership
+ * rule keeps the sentinel path closed.
  *
- * ⛔ **Both throwing rows are now reachable from `computeTxId`**, because
+ * ⛔ **The throwing rows (`b32`) are reachable from `computeTxId`**, because
  * `txIdBytes` writes `postFieldBytes` for a post-bearing transaction. The
  * obligation `verifyPostFieldDomains` discharges therefore extends to every path
  * that hashes such a transaction — `validateTx` runs it before the id is taken,

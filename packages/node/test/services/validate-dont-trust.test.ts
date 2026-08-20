@@ -52,8 +52,10 @@ function makeStoredParent(id: string): StoredPost {
     author: new Uint8Array(32),
     parentRefs: [],
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: 0,
+    type: 'regular',
     status: 'confirmed',
+    blockHeight: null,
+    blockIndex: null,
   };
 }
 
@@ -99,7 +101,7 @@ function makePost(overrides?: Partial<Post>): Post {
     author: new Uint8Array(32),
     parentRefs: [],
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: 1_700_000_000_000,
+    type: 'regular',
     ...overrides,
   };
 }

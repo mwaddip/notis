@@ -17,6 +17,7 @@ import {
   insertStump,
   pruneSubtree,
   confirmPost,
+  getBlockCreatedAt,
 } from '../../src/store/index.js';
 import { FeedService } from '../../src/services/feed-service.js';
 import type { PostJson } from '../../src/services/feed-service.js';
@@ -57,7 +58,7 @@ function makePost(
     author,
     parentRefs,
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: Date.now(),
+    type: 'regular',
   };
 }
 
@@ -114,6 +115,7 @@ describe('feed-service', () => {
       getLikersForPost,
       getAncestors,
       getSubtree,
+      getBlockCreatedAt,
     });
   });
 
@@ -211,7 +213,7 @@ describe('feed-service', () => {
     // "serves a constant that happens to look plausible".
     expect(asRecord(feedService.getPost(liveRootId))['status']).toBe('pending');
 
-    confirmPost(liveRootId, 42);
+    confirmPost(liveRootId, 42, 0);
     expect(asRecord(feedService.getPost(liveRootId))['status']).toBe('confirmed');
   });
 
@@ -220,7 +222,7 @@ describe('feed-service', () => {
     // `queryPosts`, and the thread's ancestors and descendants. Each maps rows
     // through `rowToPost` independently, so a path that dropped the column
     // would be invisible to a test that only exercised one of them.
-    confirmPost(liveRootId, 42);
+    confirmPost(liveRootId, 42, 0);
 
     const listed = feedService.queryPosts({ author: authorId });
     expect(listed.find((p) => p.id === liveRootId)!.status).toBe('confirmed');

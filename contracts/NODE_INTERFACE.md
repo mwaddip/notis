@@ -122,9 +122,18 @@ are hex-encoded.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | Post fields (hex) + `karmaLockTx` (JSON-serialized UtxoTransaction) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 on validation failure |
-| `GET` | `/posts/:id` | — | `PostJson` (`id`, `status`, `likeCount`, `likers`) or `StumpJson` (below) | 404 |
+| `GET` | `/posts/:id` | — | `PostJson` (`id`, `status`, `likeCount`, `likers`, `blockHeight`, `blockIndex`, `blockCreatedAt`) or `StumpJson` (below) | 404 |
 | `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson` or `StumpJson` | 404 |
-| `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (`id`, `status`, `likeCount`, `likers`, live only, no stumps) | — |
+| `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (same shape, live only, no stumps; ordering below) | — |
+
+**PostJson time and order (decided 2026-08-20).** A post has no timestamp
+(TYPES_INTERFACE → Layout — Post). `PostJson` carries the post's `type` with the rest of its
+fields, plus three node-local columns: `blockHeight` and `blockIndex` — the confirming block
+and the post's committed position in it — and `blockCreatedAt`, the confirming block
+**header's** `createdAt`, joined from the store (`ordering_blocks.created_at` holds exactly
+that value). All three are `null` while the post is pending; clients render the pending
+state, not a time. Feed order: confirmed posts by `(blockHeight, blockIndex)` — the
+committed order, newest first; pending posts above them, by arrival.
 
 **Stump JSON shape (decided 2026-08-08).** A pruned root stays a 200 on
 `GET /posts/:id` — a stump is real, renderable tombstone data, not an absence.
@@ -2056,7 +2065,8 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 
 1. Store block in `block_ordering` table
 2. Broadcast ordering block to peers
-3. Confirm the block's posts (`confirmPost`, ids from its post transactions)
+3. Confirm the block's posts (`confirmPost` with height and committed position, ids from
+   its post transactions)
 4. Apply UTXO transactions — the settlement, as the last entry in `utxoTxIds`,
    applies here like every other, and its outputs are where the coinbase's
    credits, the protocol-box successors and every pool-touching effect land.
@@ -2299,13 +2309,13 @@ Fresh schema — no Phase 1 migration.
 
 | Function | Signature |
 |----------|-----------|
-| `insertPost(post, rawCbor)` | `(Post, Buffer) => void` — status = pending |
+| `insertPost(postId, post, rawCbor)` | `(PostId, Post, Uint8Array) => void` — status = pending; the id comes from the creating transaction |
 | `getPost(id)` | `(string) => StoredPost \| Stump \| null` |
 | `getPostRaw(id)` | `(string) => Uint8Array \| null` — raw CBOR for hash verification |
-| `queryPosts({ author?, limit, offset })` | `(QueryOpts) => StoredPost[]` — live only, newest first |
-| `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first |
-| `confirmPost(postId, blockHeight)` | `(string, number) => void` |
-| `unconfirmPost(subBlockId)` | `(string) => void` — for fork rollbacks |
+| `queryPosts({ author?, limit, offset })` | `(QueryOpts) => StoredPost[]` — live only, newest first in committed order; pending above confirmed, by arrival |
+| `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first, by arrival |
+| `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
+| `unconfirmPost(subBlockId)` | `(string) => void` — for fork rollbacks; clears height and position |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
 | `getAncestors(postId)` | `(string) => StoredPost[]` — walk up parent chain, genesis → parent |
 | `getSubtree(postId)` | `(string) => StoredPost[]` — all descendants (recursive CTE) |

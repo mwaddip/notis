@@ -658,7 +658,8 @@ function applyMutationPhase(
   //
   // A post absent locally is simply inserted: the body is right here. There is no
   // placeholder state and nothing for a content sweep to resolve.
-  for (const { postId, post } of blockPosts) {
+  for (let idx = 0; idx < blockPosts.length; idx++) {
+    const { postId, post } = blockPosts[idx]!;
     if (!getPost(postId)) {
       try {
         insertPost(postId, post, encodePost(post));
@@ -668,7 +669,7 @@ function applyMutationPhase(
       }
     }
     try {
-      confirmPost(postId, height);
+      confirmPost(postId, height, idx);
     } catch (err) {
       console.warn(`Failed to confirm post ${postId}: ${String(err)}`);
     }

@@ -1,4 +1,4 @@
-import type { Stump } from '@dagsocial/types';
+import type { PostType, Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost } from '../store/posts.js';
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,7 @@ export interface FeedServiceDeps {
   getLikersForPost: (postId: string) => string[];
   getAncestors: (postId: string) => StoredPost[];
   getSubtree: (postId: string) => StoredPost[];
+  getBlockCreatedAt: (height: number) => number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,8 +40,11 @@ export interface PostJson {
   author: string;
   parentRefs: string[];
   protocolVersion: number;
-  timestamp: number;
+  type: PostType;
   status: PostStatus;
+  blockHeight: number | null;
+  blockIndex: number | null;
+  blockCreatedAt: number | null;
   likeCount: number;
   likers: string[];
 }
@@ -89,6 +93,7 @@ export function postToJson(
   post: StoredPost,
   likeCount: number,
   likers: string[],
+  blockCreatedAt: number | null,
 ): PostJson {
   return {
     id: post.id,
@@ -96,8 +101,11 @@ export function postToJson(
     author: Buffer.from(post.author).toString('hex'),
     parentRefs: post.parentRefs,
     protocolVersion: post.protocolVersion,
-    timestamp: post.timestamp,
+    type: post.type,
     status: post.status,
+    blockHeight: post.blockHeight,
+    blockIndex: post.blockIndex,
+    blockCreatedAt,
     likeCount,
     likers,
   };
@@ -144,6 +152,11 @@ function isStump(result: StoredPost | Stump): result is Stump {
 export class FeedService {
   constructor(private deps: FeedServiceDeps) {}
 
+  private blockCreatedAtFor(post: StoredPost): number | null {
+    if (post.blockHeight === null) return null;
+    return this.deps.getBlockCreatedAt(post.blockHeight);
+  }
+
   /**
    * Retrieve a single post by ID. Returns null if not found.
    * A pruned root comes back as `StumpJson`, a 200 either way.
@@ -155,7 +168,7 @@ export class FeedService {
 
     const likeCount = this.deps.getLikeRecordCount(id);
     const likers = this.deps.getLikersForPost(id);
-    return postToJson(result, likeCount, likers);
+    return postToJson(result, likeCount, likers, this.blockCreatedAtFor(result));
   }
 
   /**
@@ -173,7 +186,7 @@ export class FeedService {
       const postId = post.id;
       const likeCount = this.deps.getLikeRecordCount(postId);
       const likers = this.deps.getLikersForPost(postId);
-      return postToJson(post, likeCount, likers);
+      return postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));
     });
   }
 
@@ -194,7 +207,7 @@ export class FeedService {
     const post = result;
     const likeCount = this.deps.getLikeRecordCount(id);
     const likers = this.deps.getLikersForPost(id);
-    const postJson = postToJson(post, likeCount, likers);
+    const postJson = postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));
 
     // Ancestors: walk up the parent chain (genesis → immediate parent)
     const ancestorPosts = this.deps.getAncestors(id);
@@ -202,7 +215,7 @@ export class FeedService {
       const pid = p.id;
       const c = this.deps.getLikeRecordCount(pid);
       const l = this.deps.getLikersForPost(pid);
-      return postToJson(p, c, l);
+      return postToJson(p, c, l, this.blockCreatedAtFor(p));
     });
 
     // Descendants: full reply subtree below the target
@@ -211,7 +224,7 @@ export class FeedService {
       const pid = p.id;
       const c = this.deps.getLikeRecordCount(pid);
       const l = this.deps.getLikersForPost(pid);
-      return postToJson(p, c, l);
+      return postToJson(p, c, l, this.blockCreatedAtFor(p));
     });
 
     return { post: postJson, ancestors, descendants };

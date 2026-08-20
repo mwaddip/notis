@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for postFieldBytes \u2014 the post payload inside its creating transaction's TxId preimage (TYPES_INTERFACE -> Layout - Post). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical. A post id is NOT derived from these bytes \u2014 it comes from the creating transaction.",
+  "$description": "Struct-level golden vectors for postFieldBytes — the post payload inside its creating transaction's TxId preimage (TYPES_INTERFACE -> Layout - Post). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical. A post id is NOT derived from these bytes — it comes from the creating transaction.",
   "vectors": [
     {
       "name": "post/minimal",
@@ -10,38 +10,38 @@
         "author": "0000000000000000000000000000000000000000000000000000000000000000",
         "parentRefs": [],
         "protocolVersion": 0,
-        "timestamp": 0
+        "type": "regular"
       },
       "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000",
-      "note": "36 bytes: 1 + 0 content, 32 author, 1 count, 1 version, 1 timestamp. The struct's own shape, with every field at its zero value \u2014 so the byte COUNT is what this pins, and nothing else can. Content and protocolVersion sit below their protocol minimums; the ENCODER has no such rule, and putting one here would make this file a second statement of a validation rule."
+      "note": "36 bytes: 1 + 0 content, 32 author, 1 count, 1 version, 1 type. The struct's own shape, with every field at its zero value — so the byte COUNT is what this pins, and nothing else can. Content and protocolVersion sit below their protocol minimums; the ENCODER has no such rule, and putting one here would make this file a second statement of a validation rule."
     },
     {
       "name": "post/golden",
       "codec": "postFields",
       "value": {
-        "content": "dagsocial golden vector \u2713",
+        "content": "dagsocial golden vector ✓",
         "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "parentRefs": [
           "1111111111111111111111111111111111111111111111111111111111111111"
         ],
         "protocolVersion": 1,
-        "timestamp": 1767225600000
+        "type": "regular"
       },
-      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0111111111111111111111111111111111111111111111111111111111111111110180d0eab6b733",
-      "note": "100 bytes, and THE cross-implementation anchor: the demo UI's hand-written mirror is asserted byte-identical to it. Adjacent fields hold distinct non-zero values (author 00..1f, ref 11..), because a transposition of two same-width fields is invisible at zeros."
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0111111111111111111111111111111111111111111111111111111111111111110100",
+      "note": "95 bytes, and THE cross-implementation anchor: the demo UI's hand-written mirror is asserted byte-identical to it. Adjacent fields hold distinct non-zero values (author 00..1f, ref 11..), because a transposition of two same-width fields is invisible at zeros."
     },
     {
       "name": "post/no-refs",
       "codec": "postFields",
       "value": {
-        "content": "dagsocial golden vector \u2713",
+        "content": "dagsocial golden vector ✓",
         "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "parentRefs": [],
         "protocolVersion": 1,
-        "timestamp": 1767225600000
+        "type": "regular"
       },
-      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f000180d0eab6b733",
-      "note": "post/golden with the ref removed: exactly 32 bytes shorter. A ref costs the 32 raw bytes it names and nothing else \u2014 no length prefix, no second hexing \u2014 so the delta is the ref itself."
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f000100",
+      "note": "post/golden with the ref removed: exactly 32 bytes shorter. A ref costs the 32 raw bytes it names and nothing else — no length prefix, no second hexing — so the delta is the ref itself."
     },
     {
       "name": "post/wide-numerics",
@@ -51,26 +51,26 @@
         "author": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "parentRefs": [],
         "protocolVersion": 9007199254740991,
-        "timestamp": 9007199254740991
+        "type": "regular"
       },
-      "bytes": "0178ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff0fffffffffffffff0f",
-      "note": "Both vlqU fields at MAX_SAFE_INTEGER \u2014 eight bytes each, the top of the encodable number domain. One byte more and readVlqU raises vlq-overflow, which is exactly what keeps the ten-byte all-ones sentinel from ever decoding back into a plausible value."
+      "bytes": "0178ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff0f00",
+      "note": "protocolVersion at MAX_SAFE_INTEGER — eight bytes, the top of the encodable number domain. One byte more and readVlqU raises vlq-overflow, which is exactly what keeps the ten-byte all-ones sentinel from ever decoding back into a plausible value. type is enum8, fixed at one byte."
     },
     {
       "name": "post/multibyte-content",
       "codec": "postFields",
       "value": {
-        "content": "h\u00e9llo \u65e5\u672c \ud83d\ude00",
+        "content": "héllo 日本 😀",
         "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "parentRefs": [
           "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
           "0000000000000000000000000000000000000000000000000000000000000000"
         ],
         "protocolVersion": 1,
-        "timestamp": 128
+        "type": "profile"
       },
-      "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000000000000000000000000000000000000000000000000000000000000000018001",
-      "note": "lpUtf8 counts BYTES, not characters: 11 characters encode as 0x12 = 18 bytes. Two refs so the array's count byte is not stuck at 0 or 1 (the ENCODER has no cap \u2014 MAX_PARENT_REFS is a validation rule, and putting it inside the writer would be a guard added to compensate for a domain, which the format forbids). timestamp 128 is the two-byte VLQ boundary."
+      "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000101",
+      "note": "lpUtf8 counts BYTES, not characters: 11 characters encode as 0x12 = 18 bytes. Two refs so the array's count byte is not stuck at 0 or 1 (the ENCODER has no cap — MAX_PARENT_REFS is a validation rule, and putting it inside the writer would be a guard added to compensate for a domain, which the format forbids). type is 'profile' (tag 1) — exercises the non-zero tag."
     }
   ],
   "rejects": [
@@ -86,7 +86,7 @@
       "codec": "postFields",
       "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000ff",
       "failure": "trailing-bytes",
-      "note": "post/minimal with one byte appended. The struct is fully satisfied before the input runs out \u2014 step 2."
+      "note": "post/minimal with one byte appended. The struct is fully satisfied before the input runs out — step 2."
     },
     {
       "name": "post/truncated-author",
@@ -96,11 +96,18 @@
       "note": "Empty content and then 19 of the author's 32 bytes. Wire's own rejection, not a boundary-check one: a fixed-width read that runs off the end."
     },
     {
-      "name": "post/timestamp-past-safe-integer",
+      "name": "post/unknown-type-tag",
       "codec": "postFields",
-      "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffff01",
-      "code": "vlq-overflow",
-      "note": "The timestamp written as u64-max \u2014 the ten bytes a malformed number field takes on the ENCODE side. It must not decode back into anything, which is the property that makes the sentinel unreachable from a well-formed post rather than merely unlikely."
+      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000002",
+      "code": "invalid-tag",
+      "note": "post/minimal with the type byte set to 0x02 — an unassigned tag. enum8 refuses an unknown tag rather than decoding it to a neighbour."
+    },
+    {
+      "name": "post/type-sentinel",
+      "codec": "postFields",
+      "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000ff",
+      "code": "invalid-tag",
+      "note": "post/minimal with the type byte set to 0xff — the encode-side sentinel. It must not decode back into a value, so the sentinel is unreachable from a well-formed post."
     }
   ]
 }

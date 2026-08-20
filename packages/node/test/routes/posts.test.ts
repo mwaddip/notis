@@ -11,7 +11,7 @@ import http from 'http';
 import { createHash, generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, getPostRaw, queryPosts, getAncestors, getSubtree } from '../../src/store/posts.js';
-import { getCurrentHeight } from '../../src/store/ordering.js';
+import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -41,6 +41,7 @@ import type {
   AnyBox,
   CandidateOf,
   KarmaBox,
+  Post,
   PostLockBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -84,6 +85,7 @@ async function request(
       getLikersForPost,
       getAncestors,
       getSubtree,
+      getBlockCreatedAt,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
@@ -207,7 +209,7 @@ describe('posts routes', () => {
           author: 'not-hex!!@@',
           parentRefs: [],
           protocolVersion: 1,
-          timestamp: Date.now(),
+          type: 'regular',
         },
       },
     });
@@ -257,8 +259,6 @@ describe('posts routes', () => {
     // Setup: challenge
     const challengeBytes = new Uint8Array(Buffer.from('cc'.repeat(32), 'hex'));
 
-    const timestamp = Date.now();
-
     // Build karma-lock tx
     const newKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
@@ -286,7 +286,7 @@ describe('posts routes', () => {
       author: userIdHex,
       parentRefs: [] as string[],
       protocolVersion: PROTOCOL_VERSION,
-      timestamp,
+      type: 'regular' as const,
     };
 
     const postTx: UtxoTransaction = {
@@ -363,12 +363,12 @@ describe('posts routes', () => {
       const keys = generateKeyPairSync('ed25519');
       stumpAuthor = rawPublicKey(keys.publicKey);
 
-      const root = {
+      const root: Post = {
         content: 'doomed root',
         author: stumpAuthor,
-        parentRefs: [] as string[],
+        parentRefs: [],
         protocolVersion: PROTOCOL_VERSION,
-        timestamp: 1_700_000_000_000,
+        type: 'regular',
       };
       const { computePostId } = await import('@dagsocial/types');
       prunedRootId = fixturePostId(root);

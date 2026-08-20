@@ -79,7 +79,7 @@ function createTestPost(authorId: Uint8Array): string {
     author: authorId,
     parentRefs: [],
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: Date.now(),
+    type: 'regular',
   };
   const postId = fixturePostId(post);
   insertPost(fixturePostId(post), post, encodePost(post));

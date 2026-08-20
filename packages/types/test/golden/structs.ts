@@ -34,7 +34,7 @@ import {
   readVlqU,
   readVlqU64,
 } from '../../src/codec.js';
-import { postFieldBytes, type Post } from '../../src/post.js';
+import { postFieldBytes, POST_TYPE, type Post } from '../../src/post.js';
 import { serializePruneEntry, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
 import {
@@ -72,7 +72,7 @@ const postFieldsCodec: ValueCodec<PostFields> = {
       author: hex(j.author as string),
       parentRefs: j.parentRefs as string[],
       protocolVersion: j.protocolVersion as number,
-      timestamp: j.timestamp as number,
+      type: j.type as 'regular' | 'profile',
     };
   },
 
@@ -88,7 +88,7 @@ const postFieldsCodec: ValueCodec<PostFields> = {
       author: readBytesN(r, 32),
       parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
       protocolVersion: readVlqU(r),
-      timestamp: readVlqU(r),
+      type: POST_TYPE.read(r),
     };
   },
 };

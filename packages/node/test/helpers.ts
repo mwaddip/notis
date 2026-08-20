@@ -104,7 +104,7 @@ export function makePost(authorId: Uint8Array, content = 'test post'): Post {
     author: authorId,
     parentRefs: [],
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: Date.now(),
+    type: 'regular',
   };
 }
 

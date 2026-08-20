@@ -137,6 +137,18 @@ export function deleteOrderingBlock(height: number): void {
  * Return the current chain height (max height in ordering_blocks).
  * Returns 0 if no blocks exist yet.
  */
+/**
+ * Return the block header's `createdAt` for a given height, or null if no
+ * block exists there. The column stores the header value directly
+ * (`storeOrderingBlock` writes `block.header.createdAt`).
+ */
+export function getBlockCreatedAt(height: number): number | null {
+  const row = getDb()
+    .prepare('SELECT created_at FROM ordering_blocks WHERE height = ?')
+    .get(height) as { created_at: number } | undefined;
+  return row?.created_at ?? null;
+}
+
 export function getCurrentHeight(): number {
   const db = getDb();
   const row = db

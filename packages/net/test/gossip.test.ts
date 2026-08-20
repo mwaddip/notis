@@ -277,7 +277,7 @@ describe('tx topic validator — the post membership gate', () => {
     author,
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: 1_722_470_400_000,
+    type: 'regular' as const,
     ...over,
   });
 

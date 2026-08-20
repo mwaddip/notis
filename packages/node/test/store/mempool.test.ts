@@ -1021,7 +1021,7 @@ describe('mempool store', () => {
           author: new Uint8Array(32).fill(0x33),
           parentRefs: [],
           protocolVersion: PROTOCOL_VERSION,
-          timestamp: 1_700_000_000_000,
+          type: 'regular',
         },
       });
       let inputs = 0;

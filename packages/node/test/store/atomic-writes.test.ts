@@ -26,7 +26,7 @@ async function importPostsFresh() {
   return mod as {
     insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
     getPost: (id: string) => Post | Stump | null;
-    confirmPost: (postId: string, blockHeight: number) => void;
+    confirmPost: (postId: string, blockHeight: number, blockIndex: number) => void;
     getParentRefs: (postId: string) => string[];
     pruneSubtree: (rootPostId: string) => void;
   };
@@ -53,7 +53,7 @@ function makePost(overrides: Partial<Post> = {}): Post {
     author: uid('tester'),
     parentRefs: [],
     protocolVersion: 1,
-    timestamp: 1700000000000,
+    type: 'regular',
     ...overrides,
   };
 }
@@ -137,7 +137,7 @@ describe('atomic writes', () => {
       db.prepare(
         `INSERT INTO dag_posts
            (id, content, author, parent_refs,
-            protocol_version, timestamp, raw_cbor, status)
+            protocol_version, type, raw_cbor, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
       ).run(
         postId,
@@ -145,7 +145,7 @@ describe('atomic writes', () => {
         Buffer.from(post.author),
         JSON.stringify(post.parentRefs),
         post.protocolVersion,
-        post.timestamp,
+        post.type,
         Buffer.from(new Uint8Array([9])),
       );
 
@@ -184,7 +184,7 @@ describe('atomic writes', () => {
         db.prepare(
           `INSERT INTO dag_posts
              (id, content, author, parent_refs,
-              protocol_version, timestamp, raw_cbor, status)
+              protocol_version, type, raw_cbor, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
         ).run(
           postId,
@@ -192,7 +192,7 @@ describe('atomic writes', () => {
           Buffer.from(post.author),
           JSON.stringify(post.parentRefs),
           post.protocolVersion,
-          post.timestamp,
+          post.type,
           Buffer.from(new Uint8Array([1])),
         );
 
@@ -301,10 +301,9 @@ describe('atomic writes', () => {
   // confirmPost (single-table — included for completeness)
   // -----------------------------------------------------------------------
 
-  it('confirmPost updates status and block_height in a single statement', async () => {
+  it('confirmPost updates status, block_height and block_index', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost, confirmPost } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
     const db = getDb();
@@ -314,20 +313,20 @@ describe('atomic writes', () => {
     insertPost(fixturePostId(post), post, rawCbor);
     const postId = fixturePostId(post);
 
-    confirmPost(postId, 42);
+    confirmPost(postId, 42, 5);
 
     const row = db.prepare(
-      'SELECT status, block_height FROM dag_posts WHERE id = ?',
-    ).get(postId) as { status: string; block_height: number } | undefined;
+      'SELECT status, block_height, block_index FROM dag_posts WHERE id = ?',
+    ).get(postId) as { status: string; block_height: number; block_index: number } | undefined;
     expect(row).toBeDefined();
     expect(row!.status).toBe('confirmed');
     expect(row!.block_height).toBe(42);
+    expect(row!.block_index).toBe(5);
   });
 
-  it('unconfirmPost reverts status to pending and clears block_height', async () => {
+  it('unconfirmPost reverts status to pending and clears block_height and block_index', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost, confirmPost } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
     const db = getDb();
@@ -337,16 +336,16 @@ describe('atomic writes', () => {
     insertPost(fixturePostId(post), post, rawCbor);
     const postId = fixturePostId(post);
 
-    confirmPost(postId, 7);
-    // Need to import unconfirmPost dynamically since it's not in importPostsFresh
+    confirmPost(postId, 7, 2);
     const postsMod = await import('../../src/store/posts.js');
     (postsMod as { unconfirmPost: (id: string) => void }).unconfirmPost(postId);
 
     const row = db.prepare(
-      'SELECT status, block_height FROM dag_posts WHERE id = ?',
-    ).get(postId) as { status: string; block_height: number | null } | undefined;
+      'SELECT status, block_height, block_index FROM dag_posts WHERE id = ?',
+    ).get(postId) as { status: string; block_height: number | null; block_index: number | null } | undefined;
     expect(row).toBeDefined();
     expect(row!.status).toBe('pending');
     expect(row!.block_height).toBeNull();
+    expect(row!.block_index).toBeNull();
   });
 });

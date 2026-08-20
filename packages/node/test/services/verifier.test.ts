@@ -91,7 +91,7 @@ describe('verifyPost', () => {
       author: userId,
       parentRefs: [],
       protocolVersion: PROTOCOL_VERSION,
-      timestamp: 1700000000000,
+      type: 'regular',
       ...overrides,
     };
   }

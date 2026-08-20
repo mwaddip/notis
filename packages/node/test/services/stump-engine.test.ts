@@ -50,7 +50,7 @@ function makePost(
     author,
     parentRefs,
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: Date.now(),
+    type: 'regular',
     ...overrides,
   };
 }

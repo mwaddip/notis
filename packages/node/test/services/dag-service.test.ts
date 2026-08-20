@@ -26,7 +26,7 @@ function insertPost(id: string, parentIds: string[]): void {
   db.prepare(
     `INSERT OR REPLACE INTO dag_posts
      (id, content, author, parent_refs,
-      protocol_version, timestamp, raw_cbor, status)
+      protocol_version, type, raw_cbor, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
   ).run(
     id,
@@ -34,7 +34,7 @@ function insertPost(id: string, parentIds: string[]): void {
     Buffer.alloc(32),
     JSON.stringify(parentIds),
     1,
-    Date.now(),
+    'regular',
     Buffer.from([1, 2, 3]),
   );
 

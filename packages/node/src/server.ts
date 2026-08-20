@@ -206,6 +206,7 @@ export function createApp(config: Config): express.Express {
       getLikersForPost: store.getLikersForPost,
       getAncestors: store.getAncestors,
       getSubtree: store.getSubtree,
+      getBlockCreatedAt: store.getBlockCreatedAt,
       getTopologyAuthor: store.getTopologyAuthor,
       admitTx,
       validateTx: (tx, currentBlockHeight) =>

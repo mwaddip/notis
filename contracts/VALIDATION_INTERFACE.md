@@ -272,10 +272,11 @@ chain. Refusing out of domain is the bound; there is no separate range check to 
 the author holds the karma and really locks it — which is strictly stronger than
 proving someone burned a millisecond.
 
-⚠ **No `isU64Safe` guard survives on the post path, and its argument does not
-generalise:** no surviving consensus field is a search variable an attacker varies
-to hit a target — `timestamp` and `protocolVersion` are still `vlqU` and still
-total by sentinel, but nothing downstream reads either as a consensus input.
+⚠ **The one `isU64Safe` pin on the post path guards `protocolVersion`, and it is not a
+search-variable guard:** no consensus field of a post is a variable an attacker varies to
+hit a target — `protocolVersion` is `vlqU` and total by sentinel, and an out-of-domain
+version encodes to a value the strict-equality version check refuses, so the sentinel never
+reaches a rule as a meaning.
 
 `verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
 always was. **Consensus is honestly single-phase.**
@@ -522,11 +523,13 @@ about a path that cannot happen.
 verifyPostFieldDomains(post: unknown): { valid: boolean; error?: string }
 ```
 
-The **fixed-width domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
-`isSignablePost` has always made, and adds two width rules:
+The **field-domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
+`isSignablePost` has always made, plus the domain rules `postFieldBytes` relies on:
 
 - `author` is a `Uint8Array` of **exactly 32 bytes**
 - every `parentRefs` entry matches `/^[0-9a-f]{64}$/` — 64 **lowercase** hex
+- `type` is a member of the `POST_TYPE` table — `'regular' | 'profile'`
+  (TYPES_INTERFACE → Post typing and profiles)
 
 **Why lowercase is load-bearing, not stylistic.** `'AB…'` and `'ab…'` hex-decode
 to the same 32 bytes. Accepting both would make the hex→bytes conversion at the
@@ -534,9 +537,12 @@ codec boundary non-injective: two distinct in-memory posts, one preimage, one
 id. That is precisely the malleability the M-1 field encoding exists to close,
 arriving from the codec side instead of the concatenation side.
 
-**Why it exists.** The positional wire format encodes these fields
-fixed-width, and fixed-width writers cannot carry a sentinel, so they throw (see
-`TYPES_INTERFACE.md` → Totality). The payload reaches `computeTxId` through
+**Why it exists.** `author` and the refs take fixed-width `b32` writers, which cannot carry
+a sentinel and therefore **throw**; `type` takes `enum8`, whose writer is **total** — an
+off-table value writes the reserved `0xff` sentinel (see `TYPES_INTERFACE.md` → Totality).
+The pin does both jobs: it keeps the throwing writers unreachable by malformed input, and
+it keeps the sentinel path closed so two distinct malformed posts cannot share one
+encoding. The payload reaches `computeTxId` through
 `postFieldBytes`, so the domain must be established before then — without this
 pin a malformed post would put a throw in a path this contract requires never
 to throw (the M-5/M-6 regression).

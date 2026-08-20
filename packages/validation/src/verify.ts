@@ -161,7 +161,7 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
  * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
  * `author` throws on `.length`, an `author` that is not a byte view
  * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
- * `protocolVersion` / `timestamp` throws in `TextEncoder.encode` / `String()`.
+ * `protocolVersion` throws in `TextEncoder.encode` / `String()`.
  *
  * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. A loose
  * check admits `NaN` / `Infinity` / negative / fractional values, which the
@@ -181,7 +181,7 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
  *
  * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
  * 31-byte one cannot verify a signature), every `parentRef` is a `computePostId`
- * output, a timestamp is a non-negative safe integer, and `protocolVersion` must
+ * output, `type` is a member of `POST_TYPE`, and `protocolVersion` must
  * equal `PROTOCOL_VERSION` to pass Stage 1 at all.
  */
 export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: string } {
@@ -203,8 +203,8 @@ export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: st
   if (!isU64Safe(post.protocolVersion)) {
     return { valid: false, error: 'Post protocolVersion must be a non-negative safe integer' };
   }
-  if (!isU64Safe(post.timestamp)) {
-    return { valid: false, error: 'Post timestamp must be a non-negative safe integer' };
+  if (post.type !== 'regular' && post.type !== 'profile') {
+    return { valid: false, error: 'Post type must be a member of POST_TYPE' };
   }
   return { valid: true };
 }

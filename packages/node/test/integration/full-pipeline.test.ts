@@ -134,6 +134,7 @@ async function importOrdering() {
   return (await import('../../src/store/ordering.js')) as {
     getCurrentHeight: () => number;
     getOrderingBlock: (height: number) => unknown;
+    getBlockCreatedAt: (height: number) => number | null;
   };
 }
 
@@ -183,7 +184,7 @@ function makePost(authorId: Uint8Array, content = 'test post'): Post {
     author: authorId,
     parentRefs: [],
     protocolVersion: PROTOCOL_VERSION,
-    timestamp: Date.now(),
+    type: 'regular',
   };
 }
 
@@ -400,6 +401,7 @@ describe('full-pipeline', () => {
     // Apply wrote the record; the API's likeCount and likers must come from it.
     const f = await importFeedReadPath();
     expect(f.hasLikeRecord(postId, liker.userId)).toBe(true);
+    const ordering = await importOrdering();
     const feed = new f.FeedService({
       getPost: posts.getPost,
       queryPosts: f.queryPosts,
@@ -407,6 +409,7 @@ describe('full-pipeline', () => {
       getLikersForPost: f.getLikersForPost,
       getAncestors: f.getAncestors,
       getSubtree: f.getSubtree,
+      getBlockCreatedAt: ordering.getBlockCreatedAt,
     });
     const postJson = feed.getPost(postId) as { likeCount: number; likers: string[] };
     expect(postJson.likeCount).toBe(1);

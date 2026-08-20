@@ -514,7 +514,7 @@ function vlqBigInt(value) {
  * vlqU(x) from a `number`. Total: sentinel, never throws.
  *
  * Arithmetic rather than bitwise, matching wire: `%`/`Math.floor` stay exact
- * past 2³², where `&`/`>>>` would truncate every timestamp.
+ * past 2³², where `&`/`>>>` would truncate.
  */
 function vlqU(value) {
   if (!isEncodableVlqU(value)) return vlqBigInt(VLQ_SENTINEL);
@@ -630,12 +630,14 @@ function enum8Tag(table, value) {
   return new Uint8Array([has ? table[value] : 0xff]);
 }
 
+const POST_TYPE_TAGS = { regular: 0, profile: 1 };
+
 /**
  * postFieldBytes — the canonical, injective encoding shared by the signing
  * hash, the PoW preimage, and the post id:
  *
  *   lpUtf8(content) ‖ b32(author) ‖ arr(parentRefs, b32)
- *     ‖ vlqU(protocolVersion) ‖ vlqU(timestamp)
+ *     ‖ vlqU(protocolVersion) ‖ enum8(type)
  *
  * Field order IS the specification — reordering it is a consensus change with
  * no signal, so the calls below are laid out to be read line-by-line against
@@ -650,16 +652,13 @@ function enum8Tag(table, value) {
  * field carries its own length or count, so no two distinct posts concatenate
  * to the same bytes; a parent ref crosses as the 32 raw bytes it names.
  */
-function postFieldBytes(content, authorBytes, parentRefs, protocolVersion, timestamp) {
+function postFieldBytes(content, authorBytes, parentRefs, protocolVersion, type) {
   return concatUint8Arrays([
     lpUtf8(content),
-    // `b32Either`, because the page's identity carries `author` as hex text
-    // while a decoded post carries bytes. Both produce the same 32 bytes, which
-    // is what keeps the two entry points on one encoding rather than two.
     b32Either(authorBytes, 32),
     arr(parentRefs, (ref) => b32Hex(ref, 32)),
     vlqU(protocolVersion),
-    vlqU(timestamp),
+    enum8Tag(POST_TYPE_TAGS, type),
   ]);
 }
 
@@ -851,7 +850,7 @@ function computeTxId(tx) {
       typeof post.author === 'string' ? hex2buf(post.author) : post.author,
       post.parentRefs,
       post.protocolVersion,
-      post.timestamp,
+      post.type,
     )),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
@@ -1626,7 +1625,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       author: userId,
       parentRefs,
       protocolVersion: PROTOCOL_VERSION,
-      timestamp: Date.now(),
+      type: 'regular',
     };
 
     // 5. Build and sign ONE transaction carrying that payload
@@ -1925,7 +1924,9 @@ function renderPost(p, id, depth, highlighted = false) {
   const deleteBtn = isOwn
     ? `<button class="like-btn delete-btn" data-post-id="${id}" style="color:var(--clay)">&#10005; Delete</button>`
     : '';
-  const { relative, absolute } = formatRelativeTime(p.timestamp);
+  const { relative, absolute } = p.blockCreatedAt != null
+    ? formatRelativeTime(p.blockCreatedAt)
+    : { relative: 'pending', absolute: 'Not yet confirmed' };
   const hlClass = highlighted ? ' post-highlighted' : '';
   return `
     <div class="post${hlClass}" data-post-id="${id}" style="margin-left:${indent}px;border-left:${depth > 0 ? '2px solid var(--border)' : 'none'};padding-left:${depth > 0 ? '10px' : '12px'}">
@@ -1948,10 +1949,25 @@ function renderPost(p, id, depth, highlighted = false) {
 }
 
 function renderThread(roots, postMap, children, depth) {
-  const sorted = [...roots].sort((a, b) => b.timestamp - a.timestamp);
+  const sorted = [...roots].sort((a, b) => {
+    const aP = a.blockHeight == null ? 0 : 1;
+    const bP = b.blockHeight == null ? 0 : 1;
+    if (aP !== bP) return aP - bP;
+    if (a.blockHeight != null && b.blockHeight != null) {
+      if (a.blockHeight !== b.blockHeight) return b.blockHeight - a.blockHeight;
+      return (b.blockIndex ?? 0) - (a.blockIndex ?? 0);
+    }
+    return 0;
+  });
   return sorted.map(p => {
     const id = p.id;
-    const childPosts = (children.get(id) || []).sort((a, b) => a.timestamp - b.timestamp);
+    const childPosts = (children.get(id) || []).sort((a, b) => {
+      if (a.blockHeight != null && b.blockHeight != null) {
+        if (a.blockHeight !== b.blockHeight) return a.blockHeight - b.blockHeight;
+        return (a.blockIndex ?? 0) - (b.blockIndex ?? 0);
+      }
+      return 0;
+    });
     return renderPost(p, id, depth) + renderThread(childPosts, postMap, children, depth + 1);
   }).join('');
 }

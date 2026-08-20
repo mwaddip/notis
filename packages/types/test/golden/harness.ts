@@ -206,8 +206,12 @@ export const MINT_REASON = enum8<'postlock-unlock' | 'postlock-remainder' | 'gen
   'genesis-committee': 13,
 });
 
+/** The `PostType` tag table (`post.ts`). */
+export const POST_TYPE_ENUM = enum8<'regular' | 'profile'>('postType', { regular: 0, profile: 1 });
+
 const ENUM_TABLES: Record<string, ReturnType<typeof enum8>> = {
   mintReason: MINT_REASON as ReturnType<typeof enum8>,
+  postType: POST_TYPE_ENUM as ReturnType<typeof enum8>,
 };
 
 const LEAF_CODECS: Record<string, ValueCodec<never>> = {

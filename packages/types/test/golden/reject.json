@@ -91,6 +91,13 @@
       "code": "invalid-tag",
       "note": "The encode-side sentinel must not decode back into a value — otherwise a malformed round trip would look clean."
     },
+    {
+      "name": "tag/postType-unknown",
+      "codec": { "enum8": "postType" },
+      "bytes": "02",
+      "code": "invalid-tag",
+      "note": "Tag 2 is not in the postType table. The closed set is the point — every future post kind is a deliberate protocol decision."
+    },
 
     {
       "name": "truncated/b32-one-byte-short",
