@@ -27,12 +27,10 @@ const REQUIRED_PROFILE_FIELDS = [
   'vouchCooldownBlocks',
   'inviteProbationBlocks',
   'creditMinerRewardDelay',
-  'bootstrapPeriodBlocks',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
   'genesisCommitteeKeys',
   'genesisKarmaPerMember',
-  'genesisCreditsPerMember',
   'inviteBondMin',
   'inviteBondMax',
   'genesisProofPayload',
@@ -189,7 +187,6 @@ describe('NETWORK_PROFILES', () => {
     expect(devnet.vouchCooldownBlocks).toBe(3);
     expect(devnet.inviteProbationBlocks).toBe(540);
     expect(devnet.creditMinerRewardDelay).toBe(10);
-    expect(devnet.bootstrapPeriodBlocks).toBe(100);
     expect(devnet.creditFixedRateBlocks).toBe(1000);
     expect(devnet.creditEpochBlocks).toBe(100);
 
@@ -197,7 +194,6 @@ describe('NETWORK_PROFILES', () => {
     // checked rather than assumed: a compression that quietly reorders the
     // windows fails here and not on the network it would have broken.
     for (const p of [mainnet, devnet]) {
-      expect(p.bootstrapPeriodBlocks).toBeLessThan(p.karmaStaleThresholdBlocks);
       expect(p.creditEpochBlocks).toBeLessThan(p.creditFixedRateBlocks);
     }
   });
@@ -219,17 +215,16 @@ describe('NETWORK_PROFILES', () => {
     }
   });
 
-  it('devnet does not compress the genesis allocations', () => {
+  it('devnet does not compress the genesis karma allocation', () => {
     const { mainnet, devnet } = NETWORK_PROFILES;
     expect(devnet.genesisKarmaPerMember).toBe(mainnet.genesisKarmaPerMember);
-    expect(devnet.genesisCreditsPerMember).toBe(mainnet.genesisCreditsPerMember);
   });
 
   // The `genesis_proof` box's payload — the only field that differs across the
   // three genesis box sets, and therefore the only reason their state roots
-  // differ. `genesisKarmaPerMember` and `genesisCreditsPerMember` are shared by
-  // all three (the test above pins that), so distinctness here is not one
-  // property among several: it is the whole of network identity at genesis.
+  // differ. `genesisKarmaPerMember` is shared by all three (the test above
+  // pins that), so distinctness here is not one property among several: it is
+  // the whole of network identity at genesis.
   it('every profile carries a genesis proof payload, and no two share one', () => {
     const payloads = Object.values(NETWORK_PROFILES).map((p) => p.genesisProofPayload);
     for (const payload of payloads) {

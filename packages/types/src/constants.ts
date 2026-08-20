@@ -174,9 +174,6 @@ export const INVITE_BOND_VEST_PER_LIKES = 3;
 // Genesis
 export const GENESIS_COMMITTEE_KEYS: string[] = []; // → profile: genesisCommitteeKeys
 export const GENESIS_KARMA_PER_MEMBER = 1000n; // → profile: genesisKarmaPerMember
-export const GENESIS_CREDITS_PER_MEMBER = 10000n * 10n ** 8n;  // 10000 credits in base units → profile: genesisCreditsPerMember
-export const BOOTSTRAP_PERIOD_BLOCKS = 10000;  // Blocks before committee dissolution → profile: bootstrapPeriodBlocks
-
 // Credit emission (Ergo-style linear decay) — amounts in base units of 10^-8 credit
 export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;    // ~2 years at 60s blocks → profile: creditFixedRateBlocks
 export const CREDIT_INITIAL_REWARD = 100n * 10n ** 8n; // 100 credits per block in fixed-rate period

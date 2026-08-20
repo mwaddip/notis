@@ -21,11 +21,9 @@ import {
   VOUCH_COOLDOWN_BLOCKS,
   INVITE_PROBATION_BLOCKS,
   CREDIT_MINER_REWARD_DELAY,
-  BOOTSTRAP_PERIOD_BLOCKS,
   CREDIT_FIXED_RATE_BLOCKS,
   CREDIT_EPOCH_BLOCKS,
   GENESIS_KARMA_PER_MEMBER,
-  GENESIS_CREDITS_PER_MEMBER,
   INVITE_BOND_MIN,
   INVITE_BOND_MAX,
 } from './constants.js';
@@ -45,7 +43,6 @@ export interface NetworkProfile {
   readonly vouchCooldownBlocks: number;
   readonly inviteProbationBlocks: number;
   readonly creditMinerRewardDelay: number;
-  readonly bootstrapPeriodBlocks: number;
 
   // Emission schedule
   readonly creditFixedRateBlocks: number;
@@ -54,7 +51,6 @@ export interface NetworkProfile {
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
-  readonly genesisCreditsPerMember: bigint;
   /**
    * The faucet identity's Ed25519 public key, 64 hex chars, or **absent**.
    *
@@ -158,14 +154,12 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   vouchCooldownBlocks: VOUCH_COOLDOWN_BLOCKS,
   inviteProbationBlocks: INVITE_PROBATION_BLOCKS,
   creditMinerRewardDelay: CREDIT_MINER_REWARD_DELAY,
-  bootstrapPeriodBlocks: BOOTSTRAP_PERIOD_BLOCKS,
 
   creditFixedRateBlocks: CREDIT_FIXED_RATE_BLOCKS,
   creditEpochBlocks: CREDIT_EPOCH_BLOCKS,
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
-  genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
 
   // ⚠ PLACEHOLDER WEIGHTS. Mainnet's numbers are testnet's output; these hold
   // the shape until there is evidence to set them from. **No `faucetPublicKey`**
@@ -222,8 +216,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 // inside a short devnet run — an interval of 3 blocks fires decay quickly; stale after
 // 500 keeps staleness reachable within a test suite.
 // The remaining durations are compressed roughly two orders of magnitude,
-// preserving mainnet's orderings (bootstrap < stale threshold < probation,
-// epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
+// preserving mainnet's orderings (epoch < fixed-rate period). Ordering difficulty is compressed too, and for a reason
 // that is not timescale; see orderingBlockPowTargetBits below.
 //
 // ⚠ **A ratio is not a derivation once the neighbour a value must clear is itself
@@ -261,7 +254,6 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // probation deadline or forfeits a bond that had vested.
   inviteProbationBlocks: 540,
   creditMinerRewardDelay: 10, // small enough to spend, large enough to observe immaturity
-  bootstrapPeriodBlocks: 100, // 10000 ÷ 100
 
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable
   creditEpochBlocks: 100, // keeps fixed-rate ≈ 10 × epoch (mainnet: ≈ 8×)
@@ -278,7 +270,6 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
-  genesisCreditsPerMember: GENESIS_CREDITS_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
   // Three things separate this root from testnet's, not one: the proof box's
