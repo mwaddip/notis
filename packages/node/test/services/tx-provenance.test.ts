@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeBoxId } from '@dagsocial/types';
-import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, PostLockBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 /**
@@ -145,29 +145,57 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { materializeOutput } = await import('../../src/services/utxo-engine.js');
     initDb(':memory:');
 
-    // `post_lock` is deliberately absent: it carries a producer-vs-`rowToBox`
-    // field order divergence (`originalValue` and `createdAtBlock` swapped), so
-    // byte identity does not hold for it.
-    const candidates: AnyBoxCandidate[] = [
-      {
+    // Keyed on the union so a new type is a compile error rather than a
+    // silent omission (TYPES_INTERFACE → What a new box type costs).
+    // `genesis_proof` is excluded: it appears in no transaction, user or
+    // settlement (NODE_INTERFACE → Genesis proof boxes are never in a
+    // transaction). Per-type lists so optional-field variants are covered.
+    const candidates: Record<Exclude<AnyBoxCandidate['boxType'], 'genesis_proof'>, readonly AnyBoxCandidate[]> = {
+      karma: [{
         boxType: 'karma', value: 5n, createdAtBlock: 0, owner: user(0xe1),
-      } satisfies CandidateOf<KarmaBox>,
-      creditCandidate(7n, user(0xe2)),
-      {
-        boxType: 'credit', value: 8n, createdAtBlock: 0, owner: user(0xe3),
-        lockedUntilBlock: 900,
-      } satisfies CandidateOf<CreditBox>,
-      {
+      } satisfies CandidateOf<KarmaBox>],
+      credit: [
+        creditCandidate(7n, user(0xe2)),
+        {
+          boxType: 'credit', value: 8n, createdAtBlock: 0, owner: user(0xe3),
+          lockedUntilBlock: 900,
+        } satisfies CandidateOf<CreditBox>,
+      ],
+      bond: [{
         boxType: 'bond', value: 3n, createdAtBlock: 0, inviterId: user(0xe7),
         inviteePublicKey: user(0xe8),
-      },
-      {
+      } satisfies CandidateOf<BondBox>],
+      post_lock: [{
+        boxType: 'post_lock', value: 5n, createdAtBlock: 0,
+        originalValue: 10n, owner: user(0xeb),
+      } satisfies CandidateOf<PostLockBox>],
+      vouch: [{
         boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: user(0xe9),
         targetId: user(0xea),
-      },
-    ] as AnyBox[];
+      } satisfies CandidateOf<VouchBox>],
+      vouch_escrow: [{
+        boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0,
+        owner: user(0xec), releaseAtBlock: 100,
+      } satisfies CandidateOf<VouchEscrowBox>],
+      like_accrual: [{
+        boxType: 'like_accrual', value: 1n, createdAtBlock: 0,
+        author: user(0xed),
+      } satisfies CandidateOf<LikeAccrualBox>],
+      emission: [{
+        boxType: 'emission', value: 100n, createdAtBlock: 0,
+      } satisfies CandidateOf<EmissionBox>],
+      treasury: [{
+        boxType: 'treasury', value: 50n, createdAtBlock: 0,
+      } satisfies CandidateOf<TreasuryBox>],
+      fee: [{
+        boxType: 'fee', value: 2n, createdAtBlock: 0,
+      } satisfies CandidateOf<FeeBox>],
+      karma_pool: [{
+        boxType: 'karma_pool', value: 500n, createdAtBlock: 0,
+      } satisfies CandidateOf<KarmaPoolBox>],
+    };
 
-    candidates.forEach((candidate, index) => {
+    Object.values(candidates).flat().forEach((candidate, index) => {
       const produced = materializeOutput(candidate, TX_ID, index);
       const keys = Object.keys(produced).filter((k) => k !== 'id');
       expect(keys.slice(-2)).toEqual(['txId', 'index']);

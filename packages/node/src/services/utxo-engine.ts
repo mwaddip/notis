@@ -27,41 +27,52 @@ import { ed25519PublicKeyToKeyObject, verifyPostFieldDomains, verifyProtocolVers
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
 
-// ---------------------------------------------------------------------------
-// The karma transition set
-// ---------------------------------------------------------------------------
-
-/**
- * The box types a karma spend may create. The karma transition arm below admits
- * exactly these as its outputs and refuses every other type, which is what keeps
- * a `fee` output off the karma side with no clause naming `fee`.
- *
- * ⛔ **Not the set `/status` sums into `totalKarma`** — that is
- * `KARMA_SUPPLY_TYPES` in `karma-supply.ts`, and no set here is defined as,
- * spread from or derived from another (NODE_INTERFACE → "Three karma sets, and
- * none derives from another"). This one answers whether a karma spend may create
- * the type; that one whether the type's value is karma in existence; the
- * conservation set whether it belongs to the total that never changes. A
- * karma-bearing type is added to each separately.
- *
- * ⚠ **The three coincide here only by accident of the current type list.**
- * `karma_pool` already answers them differently — transition no, supply no,
- * conservation yes — which is what makes the separation load-bearing rather
- * than tidy.
- */
 // A vouch output's `createdAtBlock` may not lag the carrying block by more
 // than this many heights. Without a lower bound a client sets
 // `createdAtBlock = 0` and the escrow releases at `0 + cooldown`, which is
 // effectively immediate on any chain past that height.
 const VOUCH_CAST_HEIGHT_WINDOW = 5;
 
-export const KARMA_TRANSITION_TYPES = [
-  'karma',
-  'bond',
-  'post_lock',
-  'vouch',
-  'like_accrual',
-] as const;
+// ---------------------------------------------------------------------------
+// The karma transition set
+// ---------------------------------------------------------------------------
+
+/**
+ * The karma transition verdict table — one row per box type, answering whether a
+ * karma spend may create this type. The karma transition arm admits exactly the
+ * true rows as its outputs and refuses every other type, which is what keeps a
+ * `fee` output off the karma side with no clause naming `fee`.
+ *
+ * Not the set `/status` sums into `totalKarma` — that is `KARMA_SUPPLY_TYPES` in
+ * `karma-supply.ts`, and no set here is defined as, spread from or derived from
+ * another (NODE_INTERFACE → Three karma sets, and none derives from another).
+ * This one answers whether a karma spend may create the type; that one whether
+ * the type's value is karma in existence; the conservation set whether it belongs
+ * to the total that never changes.
+ */
+const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
+  karma: true,
+  bond: true,
+  post_lock: true,
+  vouch: true,
+  like_accrual: true,
+  credit: false,
+  emission: false,
+  treasury: false,
+  fee: false,
+  genesis_proof: false,
+  karma_pool: false,
+  vouch_escrow: false,
+};
+
+/**
+ * The box types a karma spend may create — derived from
+ * `KARMA_TRANSITION_VERDICT`'s true rows, in declaration order.
+ */
+export const KARMA_TRANSITION_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.freeze(
+  (Object.keys(KARMA_TRANSITION_VERDICT) as AnyBox['boxType'][])
+    .filter((k) => KARMA_TRANSITION_VERDICT[k]),
+);
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -1130,22 +1141,8 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
  */
 type OutputBoxType = Exclude<AnyBox['boxType'], 'genesis_proof'>;
 
-/**
- * The three a **user** transaction may not create, refused under their own
- * names by `checkOutputShape`.
- *
- * They are the settlement transaction's alone at both ends — it is the only
- * spender of the pool and the emission box, and the only producer of all three
- * successors (NODE_INTERFACE → the settlement transaction). ⚠ The `Exclude`
- * above is compile-time; this set is what an attacker-supplied string reaches,
- * so a type in one and not the other is diagnosed as unknown rather than as
- * barred.
- */
-const PROTOCOL_OUTPUT_TYPES: ReadonlySet<string> = new Set<string>([
-  'emission',
-  'treasury',
-  'karma_pool',
-]);
+// `PROTOCOL_OUTPUT_TYPES` is derived from `OUTPUT_SHAPE`'s `creator` field
+// after the IIFE below.
 
 /**
  * Closed key set and per-field runtime types per boxType, in candidate form —
@@ -1157,19 +1154,21 @@ const PROTOCOL_OUTPUT_TYPES: ReadonlySet<string> = new Set<string>([
  * `boxType` carries a `null` spec: the discriminant is pinned by the
  * own-property table lookup itself, which is stricter than any type check.
  */
-const OUTPUT_SHAPE: Record<
-  OutputBoxType,
-  {
-    required: readonly string[];
-    optional: readonly string[];
-    allowed: ReadonlySet<string>;
-    types: Readonly<Record<string, FieldType>>;
-  }
-> = (() => {
+interface OutputShapeEntry {
+  readonly creator: 'user' | 'settlement';
+  readonly required: readonly string[];
+  readonly optional: readonly string[];
+  readonly allowed: ReadonlySet<string>;
+  readonly types: Readonly<Record<string, FieldType>>;
+}
+
+const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
   const shape = (
+    creator: 'user' | 'settlement',
     required: Readonly<Record<string, FieldType | null>>,
     optional: Readonly<Record<string, FieldType>> = {},
-  ) => ({
+  ): OutputShapeEntry => ({
+    creator,
     required: Object.keys(required),
     optional: Object.keys(optional),
     allowed: new Set([...Object.keys(required), ...Object.keys(optional)]),
@@ -1180,15 +1179,15 @@ const OUTPUT_SHAPE: Record<
     ),
   });
   return {
-    karma: shape(
+    karma: shape('user',
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
       { nonActivity: 'boolean' },
     ),
-    credit: shape(
+    credit: shape('user',
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
       { lockedUntilBlock: 'uint' },
     ),
-    bond: shape({
+    bond: shape('user', {
       boxType: null,
       value: 'u64',
       createdAtBlock: 'uint',
@@ -1200,14 +1199,14 @@ const OUTPUT_SHAPE: Record<
     // the field would have to be known before the `TxId` that produces it
     // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
     // held by the store.
-    post_lock: shape({
+    post_lock: shape('user', {
       boxType: null,
       value: 'u64',
       createdAtBlock: 'uint',
       originalValue: 'u64',
       owner: 'bytes32',
     }),
-    vouch: shape({
+    vouch: shape('user', {
       boxType: null,
       value: 'u64',
       createdAtBlock: 'uint',
@@ -1220,16 +1219,9 @@ const OUTPUT_SHAPE: Record<
     // fields, because there is no tail for one to sit in. That a user-created
     // box is consumed only by block application is the shape `bond` and
     // `post_lock` already have (NODE_INTERFACE → Output shape).
-    fee: shape({ boxType: null, value: 'u64', createdAtBlock: 'uint' }),
-    // ⚠ **A row here says the field types are pinned, never that a transition
-    // creates one.** No transition arm admits either type as an output today:
-    // `KARMA_TRANSITION_TYPES` is an allowlist that excludes both and the credit
-    // arm admits only `credit` and `fee`, so a transaction naming one is refused
-    // at step 9 with the shape already checked. The settlement transaction
-    // creates both and it does not pass through this table
-    // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
-    like_accrual: shape({ boxType: null, value: 'u64', createdAtBlock: 'uint', author: 'bytes32' }),
-    vouch_escrow: shape({
+    fee: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
+    like_accrual: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', author: 'bytes32' }),
+    vouch_escrow: shape('user', {
       boxType: null,
       value: 'u64',
       createdAtBlock: 'uint',
@@ -1238,14 +1230,25 @@ const OUTPUT_SHAPE: Record<
     }),
     // The three protocol boxes. Each names no owner and carries no per-type
     // trailing field — block application is their only spender and their only
-    // producer, so there is no key for a field to name (TYPES_INTERFACE →
-    // EmissionBox / TreasuryBox / KarmaPoolBox). They are reachable only through
-    // `checkSettlementOutputShape`; `checkOutputShape` refuses all three by name.
-    emission: shape({ boxType: null, value: 'u64', createdAtBlock: 'uint' }),
-    treasury: shape({ boxType: null, value: 'u64', createdAtBlock: 'uint' }),
-    karma_pool: shape({ boxType: null, value: 'u64', createdAtBlock: 'uint' }),
+    // producer (TYPES_INTERFACE → EmissionBox / TreasuryBox / KarmaPoolBox).
+    // `checkOutputShape` refuses all three by name; `checkSettlementOutputShape`
+    // admits them.
+    emission: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
+    treasury: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
+    karma_pool: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
   };
 })();
+
+/**
+ * The box types a **user** transaction may not create — derived from
+ * `OUTPUT_SHAPE`'s `creator` field, so the type-level exclusion and the
+ * runtime refusal cannot disagree. A `Set<string>` because the
+ * attacker-supplied `boxType` is a string.
+ */
+const PROTOCOL_OUTPUT_TYPES: ReadonlySet<string> = new Set<string>(
+  (Object.keys(OUTPUT_SHAPE) as OutputBoxType[])
+    .filter((k) => OUTPUT_SHAPE[k].creator === 'settlement'),
+);
 
 /**
  * Output shape — the closed per-boxType schema (field-type pin,
@@ -1277,8 +1280,8 @@ const OUTPUT_SHAPE: Record<
  *   `checkSettlementOutputShape`. The named arm is what keeps the *diagnosis*
  *   true, since an assigned tag refused by protocol rule is not an unknown one.
  *   ⚠ `OutputBoxType`'s `Exclude` is compile-time and covers `genesis_proof`
- *   alone; `PROTOCOL_OUTPUT_TYPES` is what an attacker-supplied string reaches,
- *   so a type in one and not the other is diagnosed as unknown.
+ *   alone; `PROTOCOL_OUTPUT_TYPES` is derived from `OUTPUT_SHAPE`'s `creator`
+ *   column, so the two cannot disagree.
  *
  * Client-supplied `id`/`txId`/`index` keys are skipped rather than rejected:
  * they are structurally outside every committed byte (no layout declares them;

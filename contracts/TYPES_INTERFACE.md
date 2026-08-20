@@ -1520,7 +1520,12 @@ runtime strip somebody must remember:
 **derive** the first unassigned tag rather than writing a number down. No other package may declare
 it. **The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
 construction; the golden corpus's reverse tag table is a deliberate independent restatement rather
-than a copy.
+than a copy. **Independent in its numbers, not in its coverage**: the corpus restates every tag by
+hand and imports neither `BOX_TYPE_TAGS` nor the codec, but its type-to-tag table is
+`satisfies Record<BoxContent['boxType'], number>`, its own `BoxContent['boxType']` union is asserted
+equal to `BoxCandidate['boxType']` at the type level, and `golden.test.ts` asserts that `boxes.json`
+carries at least one vector per box type. A box type added to `utxo.ts` without a corpus arm, a tag
+row or a vector is therefore a compile or test failure, not a corpus that silently cannot read it.
 
 A wrong tag moves every box id and every `stateRoot` covering it — loudly, and everywhere.
 `BOX_TYPE_TAGS` gets no compile-time check for **uniqueness** — a duplicate tag is an `enum8`
@@ -1653,17 +1658,27 @@ from this table — a use that reads every cell as an instruction rather than as
 
 > ## ⛔ WHAT A NEW BOX TYPE COSTS, AND WHY A GREP FOR THE TYPE MISSES THE WORST SITE
 >
-> A box type is enumerated in hand-kept places across three packages and **the compiler links none
-> of them.** Measured 2026-08-18 for `like_accrual` and `vouch_escrow`:
+> A box type is enumerated in hand-kept places across three packages, and **the compiler links them
+> only where the enumeration is keyed on the union.** Measured 2026-08-18 for `like_accrual` and
+> `vouch_escrow`; the gate column re-measured 2026-08-20:
 >
-> | | |
-> |---|---|
-> | `types/src/utxo.ts` | the interface, `BOX_TYPE_TAGS`, the codec arm |
-> | `types/test/golden/structs.ts` | the corpus's **deliberately independent** reverse table |
-> | `node/src/services/utxo-engine.ts` | the output shape schema and the transition sets |
-> | `node/src/store/utxo.ts` | the row mapping |
-> | `node/src/karma-supply.ts` | ⚠ **three karma sets, and none derives from another** |
-> | `node/public/index.html` | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file** |
+> | | | Gate |
+> |---|---|---|
+> | `types/src/utxo.ts` | the interface, `BOX_TYPE_TAGS`, the codec arm | `satisfies Record<BoxCandidate['boxType'], number>`; the codec `switch` returns on every arm |
+> | `types/test/golden/structs.ts` | the corpus's **deliberately independent** reverse table | coverage-gated — §Layout — Boxes, "independent in its numbers, not in its coverage" |
+> | `node/src/services/utxo-engine.ts` | the output shape schema, `SPEND_TIMING`, `AUTHORIZATION`, the transition set, the protocol-output set | the first three are `Record<…['boxType'], …>`; the two sets are verdict tables (NODE_INTERFACE → Three karma sets, and none derives from another) |
+> | `node/src/store/utxo.ts` | the row mapping | the write `switch` is exhaustive by a `never` default; the read `switch` is over a string column and is covered by the provenance round-trip's total table instead |
+> | `node/src/karma-supply.ts` | the supply set | a verdict table (NODE_INTERFACE → Three karma sets, and none derives from another) |
+> | `node/public/index.html` | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file directly** | `ui-crypto-mirror.test.ts` pins both against the package, keyed on the union |
+>
+> ⛔ **THE RULE, FOR EVERY PACKAGE: AN ENUMERATION OVER BOX TYPES IS KEYED ON THE UNION, NEVER
+> WRITTEN AS AN ARRAY.** `Record<AnyBox['boxType'], …>` for a total table; an `Exclude<…>`-typed key
+> set where an exclusion is deliberate, so the exclusion is in the type rather than an omitted row;
+> the array a reader needs derived from the table's keys. **A test whose title or comment claims to
+> cover every box type enumerates the same way** — an array of the union is satisfied by any subset
+> of it, so such a test stays green while its title is false. The two enumerations that cannot be
+> typed — the demo UI's browser JS and the store's read `switch` over a string column — are each
+> covered by a keyed test instead, as the table says.
 >
 > ⛔ **AND ONE MORE THAT A SEARCH FOR THE TYPE CANNOT FIND.** `node/src/routes/json-to-tx.ts`'s
 > `BINARY_BOX_FIELDS` is keyed on the **field name**, not the box type — so `grep like_accrual`

@@ -511,7 +511,7 @@ endpoint semantics in `MINING_INTERFACE.md`.
 |---|---|---|
 | the **transition** set | may a karma spend create this box type? | `utxo-engine.ts`'s karma transition arm |
 | the **supply** set | does this box type's value count as karma that **exists**? | `getTotalKarma` |
-| the **conservation** set | does this box type participate in the total that **never changes**? | the axiom's check (ARCHITECTURE → The conservation axiom) |
+| the **conservation** set | does this box type participate in the total that **never changes**? | `conservation-axiom.test.ts`'s classification, which asserts the axiom's sum over an applied chain (ARCHITECTURE → The conservation axiom) |
 
 ⛔ **`karma_pool` IS THE FIRST TYPE WHOSE ANSWERS DIFFER, AND IT IS WHY THE THIRD SET EXISTS.**
 Transition **no**, supply **no**, conservation **yes**. Every earlier case had the answers coincide,
@@ -525,10 +525,11 @@ every commit" is NOT the axiom's check** — it is true only while nothing can n
 stops being true the moment anything legitimately does. **Do not use the supply accrual to assert
 conservation.**
 
-⛔ **NEITHER SET MAY BE DEFINED AS THE OTHER, OR DERIVED FROM IT.** They hold the same members
-today, and they hold them **for two different reasons** — every karma-bearing type currently happens
-also to be one a user transaction may create. That coincidence is a fact about the present type
-list, not a rule, and a single shared constant encodes it as though it were one.
+⛔ **NO SET MAY BE DEFINED AS ANOTHER, OR DERIVED FROM IT.** Two types already answer the three
+questions differently — `karma_pool` (transition **no** · supply **no** · conservation **yes**) and
+`vouch_escrow` (**no** · **yes** · **yes**: it is created by spending a `VouchBox`, never a karma
+box) — and where two sets do share a member they share it **for different reasons**. A shared
+constant would encode the overlap as though it were a rule.
 
 ⛔ **A KARMA-BEARING TYPE CAN BELONG TO NEITHER SET, AND `karma_pool` IS ONE.** The karma supply
 pool holds the karma not in circulation and is spent **only by the block's settlement
@@ -538,11 +539,20 @@ transition set; and its value must **never** reach `totalKarma`, which reports c
 would otherwise overstate it by the entire uncirculated supply — that puts it outside the supply
 set.
 
-⚠ **Membership is therefore three-way, not two.** "Which of the two lists?" is the wrong question to
-ask of a new box type. The right one is asked twice, independently: *may a karma spend create it?*
-and *does its value count as karma that exists?* — and **both answers may be no.** That is exactly
-what a single shared list could not express, and it is the reason the two exist even while their
-members coincide.
+⚠ **Membership is therefore three-way, not two.** "Which list?" is the wrong question to ask of a
+new box type. The right one is asked three times, independently: *may a karma spend create it?*,
+*does its value count as karma that exists?* and *does it belong to the total that never changes?*
+— and **every answer may be no.** That is exactly what a single shared list could not express.
+
+⛔ **EACH SET IS A TOTAL VERDICT TABLE, NEVER A BARE LIST.** A set is stated as
+`Record<AnyBox['boxType'], boolean>` — one row per box type, every row written by hand — and the
+array its readers consume (the karma arm's allow-list, `getTotalKarma`'s `IN` list) is **derived
+from the rows that answer yes**, in declaration order. So a new box type is a **compile error at
+every set** until each has been given its verdict, instead of a silent omission: an array of the
+union is satisfied by any subset of it and tracks the set only by hand. The tables answer different
+questions, so deriving each array from its own table is not a derivation of one set from another.
+The general form of the rule — every enumeration over box types, in every package — is
+`TYPES_INTERFACE → What a new box type costs`.
 
 ✅ **The credit ledger already works this way, and it is the precedent.** The credit transition arm
 names its allowed outputs **inline** (`credit` or `fee`), and `getTotalCredits` keys on `credit`

@@ -133,28 +133,48 @@ export type BoxContent =
   | { boxType: 'fee'; value: bigint; createdAtBlock: number }
   | { boxType: 'karma_pool'; value: bigint; createdAtBlock: number };
 
+// TYPES_INTERFACE → Layout — Boxes, "independent in its numbers, not in its
+// coverage": the corpus's BoxContent['boxType'] and production's
+// BoxCandidate['boxType'] must be the same union in both directions.
+type _AssertBoxTypesMatch =
+  BoxContent['boxType'] extends BoxCandidate['boxType']
+    ? BoxCandidate['boxType'] extends BoxContent['boxType']
+      ? true
+      : never
+    : never;
+const _boxTypeCheck: _AssertBoxTypesMatch = true;
+
 /**
- * The tag table, restated from the contract so a renumber fails here too.
+ * The type→tag table, restated from the contract so a renumber fails here too
+ * (TYPES_INTERFACE → What a new box type costs). `satisfies` gates coverage: a
+ * box type added to the union without a row here is a compile error.
  *
- * **2 is absent deliberately** — it held `invite`, the number is reserved rather
- * than reassigned, and this reader must have no arm for it. A reverse table with
- * a hole is what makes "an unassigned tag inside the range has no decoding"
- * checkable from the independent side.
+ * **Tag 2 has no type** — it held `invite`, the number is reserved rather than
+ * reassigned. The derived reverse lookup preserves the hole: a tag inside the
+ * range with no type has no decoding, which is checkable from the independent
+ * side.
  */
-const BOX_TYPE_BY_TAG: Record<number, BoxContent['boxType']> = {
-  0: 'karma',
-  1: 'credit',
-  3: 'genesis_proof',
-  4: 'bond',
-  5: 'post_lock',
-  6: 'vouch',
-  7: 'emission',
-  8: 'treasury',
-  9: 'fee',
-  10: 'karma_pool',
-  11: 'like_accrual',
-  12: 'vouch_escrow',
-};
+export const BOX_TAG_BY_TYPE = {
+  karma: 0,
+  credit: 1,
+  genesis_proof: 3,
+  bond: 4,
+  post_lock: 5,
+  vouch: 6,
+  emission: 7,
+  treasury: 8,
+  fee: 9,
+  karma_pool: 10,
+  like_accrual: 11,
+  vouch_escrow: 12,
+} as const satisfies Record<BoxContent['boxType'], number>;
+
+/** Reverse lookup derived from `BOX_TAG_BY_TYPE` — `read()` uses this. */
+const BOX_TYPE_BY_TAG: ReadonlyMap<number, BoxContent['boxType']> = new Map(
+  (Object.entries(BOX_TAG_BY_TYPE) as [BoxContent['boxType'], number][]).map(
+    ([type, tag]) => [tag, type],
+  ),
+);
 
 const boxContentCodec: ValueCodec<BoxContent> = {
   parse(json: unknown): BoxContent {
@@ -238,7 +258,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
   // Independent reader — TYPES_INTERFACE → Layout — Boxes, in order.
   read(r: ByteReader): BoxContent {
     const tag = r.readU8();
-    const boxType = BOX_TYPE_BY_TAG[tag];
+    const boxType = BOX_TYPE_BY_TAG.get(tag);
     if (boxType === undefined) throw new Error(`boxContent: unknown boxType tag ${tag}`);
     const value = readVlqU64(r);
     // The prefix's third field, read off the layout table's own row —
