@@ -1,3 +1,4 @@
+// ARCHITECTURE → Build and test resolution, rule 4.
 import { readdirSync, statSync } from 'fs';
 import { join, resolve } from 'path';
 
