@@ -2212,8 +2212,14 @@ Six rules govern it:
    side effect of testing.**
 4. **Spawned processes are exempt and still need a real build.** A vitest alias exists only inside
    the vitest process. A suite that spawns `dist/index.js` as a child process runs the built
-   artefact, so it needs a genuine build first and no alias reaches it. No suite in the tree spawns
-   one; the rule binds any that does.
+   artefact, so it needs a genuine build first and no alias reaches it. **One suite does:
+   `tools/e2e` (`@dagsocial/e2e`) spawns `packages/node/dist/index.js` for every node of its mesh,
+   and that process loads `types`, `wire`, `validation` and `net` from their `dist` in turn** (the
+   node bundle externalises its workspace dependencies). It refuses to run when any of those five
+   `dist/index.js` is missing or older than the newest file under that package's `src/`, naming the
+   package — a stale build is a refusal, never a run against old code that reports green. The gate
+   order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
+   suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
 5. **Test trees are typechecked — all five packages, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero
