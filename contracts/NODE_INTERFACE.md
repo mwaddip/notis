@@ -3623,11 +3623,6 @@ A second Express server on `127.0.0.1:ADMIN_PORT` (default 3001). Never
 binds to a non-loopback address — a non-loopback bind logs a WARN at
 startup.
 
-> ⚠ **AHEAD OF CODE** — the field set and semantics below are the rule on the `health-metrics` branch;
-> the node commits that implement them (`metrics.ts`, the journal-wrapper counts, the tip push, the PoW
-> wrapper, the HTTP middleware) and the `@dagsocial/net` passthrough they read follow on the same branch.
-> The tag comes off when they land.
-
 **Every value is in-memory; `/health` and `/stats` never query the database.** The admin router is a
 reader of two things: the node's **metrics** (`node/src/metrics.ts` — one module, written at four seams,
 below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INTERFACE → API).
