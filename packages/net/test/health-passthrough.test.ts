@@ -13,7 +13,7 @@ import { NetNode } from '../src/node.js';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import { buildHandshakeFrame } from '../src/handshake.js';
-import { MSG_SYNC_INFO } from '../src/types.js';
+import { MSG_SYNC_INFO, PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
@@ -267,6 +267,54 @@ describe('onPeerPenalised', () => {
     expect(events).toHaveLength(1);
     expect(events[0]!.kind).toBe('transient');
     expect(events[0]!.detail).toBe('slow response');
+  });
+
+  it('fires on a direct peerMgr.recordPenaltyKind call (funnel coverage)', () => {
+    const net = new NetNode(makeConfig(), validators);
+    const peerId = 'funnel-peer';
+    const internals = net as unknown as { peerMgr: PeerManager };
+
+    internals.peerMgr.addPeer({
+      id: peerId,
+      multiaddrs: [],
+      protocols: [],
+      connectedAt: Date.now(),
+    });
+
+    const events: Array<{ id: string; kind: string; detail: string | null }> = [];
+    net.onPeerPenalised((id, k, d) => events.push({ id, kind: k, detail: d }));
+
+    internals.peerMgr.recordPenaltyKind(
+      PenaltyKind.Transient, peerId, 'direct call',
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.id).toBe(peerId);
+    expect(events[0]!.kind).toBe('transient');
+    expect(events[0]!.detail).toBe('direct call');
+  });
+
+  it('fires on a direct peerMgr.recordPenalty call (funnel coverage)', () => {
+    const net = new NetNode(makeConfig(), validators);
+    const peerId = 'funnel-peer-2';
+    const internals = net as unknown as { peerMgr: PeerManager };
+
+    internals.peerMgr.addPeer({
+      id: peerId,
+      multiaddrs: [],
+      protocols: [],
+      connectedAt: Date.now(),
+    });
+
+    const events: Array<{ id: string; kind: string; detail: string | null }> = [];
+    net.onPeerPenalised((id, k, d) => events.push({ id, kind: k, detail: d }));
+
+    internals.peerMgr.recordPenalty('misbehavior', peerId, 100, 'direct misbehavior');
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.id).toBe(peerId);
+    expect(events[0]!.kind).toBe('misbehavior');
+    expect(events[0]!.detail).toBe('direct misbehavior');
   });
 
   it('fires on handshake rejection penalty', async () => {

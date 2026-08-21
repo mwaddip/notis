@@ -561,6 +561,13 @@ export class NetNode {
     this.peerMgr = new PeerManager(config, {
       onBan: (address) => this.peerDb?.ban(address),
       onUnban: (address) => this.peerDb?.unban(address),
+      onPenalty: (peerId, kind, detail) => {
+        for (const cb of this.peerPenalisedHandlers) {
+          try { cb(peerId, kind, detail); } catch (err) {
+            console.warn(`[net] peerPenalised handler error: ${String(err)}`);
+          }
+        }
+      },
     });
   }
 
@@ -619,7 +626,6 @@ export class NetNode {
       (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
       (peerId: string, reason: string) => {
         this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
-        this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, reason);
       },
     );
     this.syncMachine.start();
@@ -860,7 +866,6 @@ export class NetNode {
             peerId,
             'handshake stream exceeds byte cap',
           );
-          this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'handshake stream exceeds byte cap');
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -892,7 +897,6 @@ export class NetNode {
             peerId,
             `handshake: ${result.error}`,
           );
-          this.notifyPenalised(peerId, hsPenKind, `handshake: ${result.error}`);
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -1006,7 +1010,6 @@ export class NetNode {
             peerId,
             `malformed chain query (code ${code})`,
           );
-          this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, `malformed chain query (code ${code})`);
           await replyEmpty();
           return;
         }
@@ -1044,7 +1047,6 @@ export class NetNode {
             peerId,
             'sync stream exceeds byte cap',
           );
-          this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'sync stream exceeds byte cap');
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -1084,11 +1086,7 @@ export class NetNode {
               ?? null,
             magic,
           });
-          if (response) {
-            await stream.sink([response]);
-          } else {
-            this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'malformed GetPeers');
-          }
+          if (response) await stream.sink([response]);
           return;
         }
 
@@ -1189,7 +1187,6 @@ export class NetNode {
           peerId,
           'handshake stream exceeds byte cap',
         );
-        this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'handshake stream exceeds byte cap');
         return {
           ok: false,
           error: 'handshake response exceeds byte cap',
@@ -1228,7 +1225,6 @@ export class NetNode {
           peerId,
           `handshake: ${result.error}`,
         );
-        this.notifyPenalised(peerId, outHsPenKind, `handshake: ${result.error}`);
         return result;
       }
       console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
@@ -1339,14 +1335,6 @@ export class NetNode {
     this.peerPenalisedHandlers.push(cb);
   }
 
-  private notifyPenalised(peerId: string, kind: string, detail: string | null): void {
-    for (const cb of this.peerPenalisedHandlers) {
-      try { cb(peerId, kind, detail); } catch (err) {
-        console.warn(`[net] peerPenalised handler error: ${String(err)}`);
-      }
-    }
-  }
-
   // -----------------------------------------------------------------------
   // Sync — outbound requests
   // -----------------------------------------------------------------------
@@ -1400,9 +1388,7 @@ export class NetNode {
         magic,
         nowMs: Date.now(),
       });
-      if (usable === null) {
-        this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'malformed Peers response');
-      } else if (usable > 0) {
+      if (usable !== null && usable > 0) {
         console.log(`[net] Peers from ${peerId}: recorded ${usable} address(es)`);
       }
     } catch (err) {
@@ -1452,7 +1438,6 @@ export class NetNode {
     } else {
       this.peerMgr.recordPenaltyKind(PenaltyKind.Transient, peerId, reason);
     }
-    this.notifyPenalised(peerId, kind, reason);
   }
 
   /**
