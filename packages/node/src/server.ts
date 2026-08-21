@@ -22,6 +22,8 @@ import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
 import { createAdminRouter } from './routes/admin.js';
+import { noteHttpRequest } from './metrics.js';
+import { getNet } from './services/net-instance.js';
 import { registerProofEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
 import type { Config } from './config.js';
@@ -33,7 +35,10 @@ import type { Server } from 'http';
 
 export function createAdminApp(config: Config): Server {
   const adminApp = express();
-  adminApp.use(createAdminRouter());
+  adminApp.use(createAdminRouter({
+    getConnectedPeers: () => getNet()?.getConnectedPeers() ?? [],
+    syncPhase: () => getNet()?.syncPhase() ?? 'idle',
+  }));
 
   // WARN if not loopback
   if (config.adminBindAddress !== '127.0.0.1' && config.adminBindAddress !== '::1') {
@@ -60,6 +65,11 @@ export function createApp(config: Config): express.Express {
   // ---- Middleware ----
 
   app.use(express.json({ limit: '1mb' }));
+
+  app.use((_req, _res, next) => {
+    noteHttpRequest();
+    next();
+  });
 
   // Demo UI
   const publicDir = new URL('../public', import.meta.url).pathname;
