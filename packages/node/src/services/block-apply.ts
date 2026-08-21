@@ -639,7 +639,7 @@ function applyMutationPhase(
   // body can create one (an unvouch of a long-held vouch), and a post-body
   // read would see it on one side only
   // (NODE_INTERFACE → The settlement transaction).
-  // `decayPlans` is assigned after the decode loop at §9b; `escrows` now.
+  // Both are assigned at §9b, after decoding and before the apply loop.
 
   // Every post id the block commits to, independent of per-post confirm
   // outcomes — same semantics as the confirm loop in §7, which tolerates

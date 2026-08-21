@@ -377,6 +377,17 @@ function derive(
     poolSink += bond.value - vested;
   }
 
+  // 3d. The escrow returns (NODE_INTERFACE → The settlement transaction).
+  // Value moves box to box — no pool leg: the escrow's value returns to its
+  // owner as karma, the shape of a bond's vested part.
+  const escrows = deps.getEscrowsReleasableAt(height);
+  const escrowReturns: Array<{ owner: Uint8Array; value: bigint }> = [];
+  for (const escrow of escrows) {
+    if (!escrow.id) return { error: 'vouch escrow box carries no id' };
+    inputs.push(escrow.id);
+    escrowReturns.push({ owner: escrow.owner, value: escrow.value });
+  }
+
   // 3e. Decay. ⛔ **The burn's sink is the pool** (ARCHITECTURE → The
   // conservation axiom: "burn" means *move back to the supply pool*). The
   // mechanism is untouched — the same eager per-identity pass, staleness
@@ -464,6 +475,9 @@ function derive(
     if (settled.vested > 0n) {
       outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, nonActivity: true, createdAtBlock: height });
     }
+  }
+  for (const ret of escrowReturns) {
+    outputs.push({ boxType: 'karma', value: ret.value, owner: ret.owner, nonActivity: true, createdAtBlock: height });
   }
   for (const plan of decayPlans) {
     if (plan.newValue > 0n) {

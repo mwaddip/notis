@@ -92,7 +92,7 @@ interface VouchExtra {
 
 interface VouchEscrowExtra {
   owner: string;           // hex-encoded pubkey — the voucher; where the karma returns
-  releaseAtBlock: number;  // vouch cast height + VOUCH_COOLDOWN_BLOCKS
+  releaseAtBlock: number;  // vouch cast height + vouchCooldownBlocks
 }
 
 /**
