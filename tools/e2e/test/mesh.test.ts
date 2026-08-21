@@ -134,8 +134,13 @@ describe('mesh', () => {
       expect(isPost(p!)).toBe(true);
       if (isPost(p!)) {
         expect(p.status).toBe('confirmed');
-        const first = threadPosts[0]!;
-        if (isPost(first)) expect(p.blockHeight).toBe(first.blockHeight);
+      }
+    }
+    const firstThread = threadPosts[0]!;
+    expect(isPost(firstThread)).toBe(true);
+    if (isPost(firstThread)) {
+      for (const p of threadPosts) {
+        if (isPost(p!)) expect(p.blockHeight).toBe(firstThread.blockHeight);
       }
     }
 
@@ -144,6 +149,7 @@ describe('mesh', () => {
     );
     for (const p of replyPosts) {
       expect(p).not.toBeNull();
+      expect(isPost(p!)).toBe(true);
       if (isPost(p!)) expect(p.status).toBe('confirmed');
     }
 

@@ -11,6 +11,7 @@ import {
   postPrune,
   getKarma,
   getPost,
+  getBlock,
   getBlockCurrent,
   NodeError,
   isPost,
@@ -98,6 +99,17 @@ describe('prune', () => {
       expect(rootPost).not.toBeNull();
       expect('kind' in rootPost!).toBe(true);
       expect((rootPost as StumpResponse).kind).toBe('stump');
+    }
+
+    // ---- the block carries the prune entry ----
+    const pruneHeight = (await getBlockCurrent(miner)).height;
+    for (const node of mesh.nodes) {
+      const block = await getBlock(node, pruneHeight);
+      expect(block).not.toBeNull();
+      const tree = (block as Record<string, unknown>)['utxoTxTree'] as {
+        pruneEntries: unknown[];
+      };
+      expect(tree.pruneEntries.length).toBeGreaterThanOrEqual(1);
     }
 
     // ---- pruned replies: pin what the node returns ----

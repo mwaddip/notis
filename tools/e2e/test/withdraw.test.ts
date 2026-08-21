@@ -134,9 +134,8 @@ describe('withdraw', () => {
     await mine(miner, mesh.miningSecret, status.vouchCooldownBlocks + 1);
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // The engine validates VouchEscrowBox → KarmaBox (utxo-engine.ts:700) but no
-    // HTTP route feeds such a transaction. The POST /credits/transfer route is the
-    // closest generic tx endpoint; pin its refusal.
+    // NODE_INTERFACE → Vouch transition rules: VouchEscrowBox → KarmaBox is a
+    // valid engine transition but no HTTP route feeds such a transaction.
     const escrowBoxId = unvouch.outputs[0]!.boxId;
     const reclaimTx = signAndRender(voucher, {
       inputs: [escrowBoxId],
@@ -166,8 +165,10 @@ describe('withdraw', () => {
       expect.fail('reclaim through /credits/transfer should have been refused');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
-      // pin the status — the route refuses because the input is not a credit box
-      expect((err as NodeError).status).toBeGreaterThanOrEqual(400);
+      expect((err as NodeError).status).toBe(400);
+      expect((err as NodeError).body['error']).toBe(
+        'credit transfer outputs must all be CreditBoxes',
+      );
     }
 
     // ---- voucher karma: decreased by 1 (vouch cost), NOT restored ----
