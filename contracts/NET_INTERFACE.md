@@ -1100,8 +1100,8 @@ offer.
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16). Returns the whole block, not the header: one provider serves both responses — `Headers` reads `.header`, `Blocks` returns the block |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. ⚠ `direction` is AHEAD OF CODE until the net commit on the `health-metrics` branch lands |
-| `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`); `reason` is libp2p's, `''` when it reports none. ⚠ AHEAD OF CODE (same commit) |
-| `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired wherever a penalty is recorded (`PeerManager.recordPenaltyKind`, including through `penalizePeer`). ⚠ AHEAD OF CODE (same commit) |
+| `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. ⚠ AHEAD OF CODE (same commit) |
+| `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its two penalty entries, `recordPenalty` and `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyType` / `PenaltyKind` string as recorded, `detail` the reason. ⚠ AHEAD OF CODE (same commit) |
 
 **These four are what JOURNAL_EVENTS → Peer Events / Sync Events and NODE_INTERFACE → Admin Listener read** —
 `peer_connected` from `onPeerActive`, `peer_disconnected`, `peer_penalised`, `sync_complete` from `onSyncComplete`;
