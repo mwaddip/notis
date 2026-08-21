@@ -92,7 +92,7 @@ interface VouchExtra {
 
 interface VouchEscrowExtra {
   owner: string;           // hex-encoded pubkey — the voucher; where the karma returns
-  releaseAtBlock: number;  // unvouch height + VOUCH_COOLDOWN_BLOCKS
+  releaseAtBlock: number;  // vouch cast height + VOUCH_COOLDOWN_BLOCKS
 }
 
 /**
@@ -705,6 +705,27 @@ export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
     )
     .get(pubkeyToHex(voucherId));
   return row !== undefined;
+}
+
+/**
+ * Every unspent escrow at or past its release height, ascending box id.
+ *
+ * Consensus input: the settlement's escrow leg
+ * (NODE_INTERFACE → The settlement transaction). Read from pre-body state
+ * on both sides; the caller captures the list before the apply loop.
+ */
+export function getVouchEscrowsReleasableAt(height: number): VouchEscrowBox[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'vouch_escrow'
+         AND spent_at_block IS NULL
+         AND json_extract(extra_data, '$.releaseAtBlock') <= ?
+       ORDER BY id`,
+    )
+    .safeIntegers()
+    .all(height) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
 
 /**

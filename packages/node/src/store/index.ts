@@ -29,6 +29,7 @@ export {
   getBondsInvitedAt,
   getBondBoxes,
   getVouchEscrowsFor,
+  getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
   getLikeCarryBox,
   getUnspentPostLockBoxes,

@@ -59,7 +59,7 @@ import { deriveKarmaDecay } from './decay.js';
 import { planPruneSettlement } from './settle-prune-utxo.js';
 import type { PruneEntry } from '@dagsocial/types';
 import type { DecayCfg, DecayDeps, DecayPlan } from './decay.js';
-import type { KarmaBox } from '@dagsocial/types';
+import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
 import {
   MissingStoredBlockError,
@@ -82,6 +82,7 @@ import {
   getBondsInvitedAt,
   getEmissionBox,
   getIdentityRecord,
+  getVouchEscrowsReleasableAt,
   getKarmaBoxes,
   getLikeCarryBox,
   getTreasuryBox,
@@ -422,8 +423,9 @@ export function createOrderingBlock(): OrderingBlock | null {
         return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
       });
       const postBody = collectPostBodyKarma(decoded);
+      const escrows = getVouchEscrowsReleasableAt(newHeight);
       const built = buildSettlement(
-        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig())),
+        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows),
         newHeight,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
@@ -849,8 +851,15 @@ export function decayConfig(): {
  * `plans` is a thunk because the caller has already derived the decay pass:
  * `checkSettlement` reads it, and so does the clock commit afterwards, and two
  * scans of the identity set that must agree is exactly what one scan avoids.
+ *
+ * `escrows` is a captured list: the escrow leg reads pre-body state, so both
+ * sides snapshot the releasable set before the apply loop and hand it in
+ * (NODE_INTERFACE → The settlement transaction).
  */
-export function settlementDepsWith(plans: () => DecayPlan[]): SettlementDeps {
+export function settlementDepsWith(
+  plans: () => DecayPlan[],
+  escrows: VouchEscrowBox[],
+): SettlementDeps {
   return {
     getEmissionBox,
     getTreasuryBox,
@@ -868,6 +877,7 @@ export function settlementDepsWith(plans: () => DecayPlan[]): SettlementDeps {
       const invitedAt = h - nodeConfig.inviteProbationBlocks;
       return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt);
     },
+    getEscrowsReleasableAt: () => escrows,
     // ⚠ **The count comes from the identity record, never from a scan of
     // `like_records`.** Those records die with the post on prune, so a count
     // derived from them would let a third party lower it: an invitee who replies
@@ -971,8 +981,9 @@ export function buildBlockSettlement(
     return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
   });
   const postBody = collectPostBodyKarma(decoded);
+  const escrows = getVouchEscrowsReleasableAt(height);
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig())),
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,

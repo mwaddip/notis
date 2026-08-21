@@ -80,6 +80,7 @@ import {
   getBondFor,
   getBondsInvitedAt,
   getPostLockBox,
+  getVouchEscrowsReleasableAt,
   purgeRefusedHeaders,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
@@ -631,10 +632,14 @@ function applyMutationPhase(
   // by §5 and consumed by §11a — the settlement pays every leg.
   const prunePlans: PruneSettlement[] = [];
 
-  // ⛔ **DECAY IS DERIVED FROM PRE-BODY STATE, AND IT HAS TO BE.** Computed
-  // after decoding (the touched set comes from the decoded transactions'
-  // inputs) but before the apply loop, so the UTXO state is pre-body.
-  // `decayPlans` is declared here and assigned after the decode loop at §9b.
+  // ⛔ **DECAY AND ESCROWS ARE DERIVED FROM PRE-BODY STATE, AND THEY HAVE
+  // TO BE.** Decay is computed after decoding (the touched set comes from the
+  // decoded transactions' inputs) but before the apply loop, so the UTXO
+  // state is pre-body. Escrows are captured here for the same reason: the
+  // body can create one (an unvouch of a long-held vouch), and a post-body
+  // read would see it on one side only
+  // (NODE_INTERFACE → The settlement transaction).
+  // `decayPlans` is assigned after the decode loop at §9b; `escrows` now.
 
   // Every post id the block commits to, independent of per-post confirm
   // outcomes — same semantics as the confirm loop in §7, which tolerates
@@ -1061,8 +1066,10 @@ function applyMutationPhase(
   // key, sized by whatever bond the second inviter chose.
   const invitedThisBlock = new Set<string>();
 
-  // §9b. Decay: squared per identity on touch (ARCHITECTURE → Karma decay).
-  // The post-body projection derives from decoded transactions + the pre-body
+  // §9b. Pre-body captures: decay and escrows.
+  //
+  // Decay: squared per identity on touch (ARCHITECTURE → Karma decay). The
+  // post-body projection derives from decoded transactions + the pre-body
   // UTXO set — both available before the apply loop. The settlement consumes
   // the projected boxes, which are the ones that exist after the body applies.
   const postBodyKarma = collectPostBodyKarma(
@@ -1074,6 +1081,9 @@ function applyMutationPhase(
     decayAmount: config.karmaDecayAmount,
     karmaMinimum: config.karmaMinimum,
   });
+  // Escrows: captured before the apply loop so the body's own unvouch does
+  // not appear in the settlement's input list on one side only.
+  const escrows = getVouchEscrowsReleasableAt(height);
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1281,7 +1291,7 @@ function applyMutationPhase(
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans),
+    settlementDepsWith(() => decayPlans, escrows),
     height,
     emission,
     config.creditMinerRewardDelay,
