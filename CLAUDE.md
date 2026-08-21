@@ -17,7 +17,7 @@ Repo directory is `dagsocial`; the project is Notis.
 
 ```bash
 pnpm build                          # Build all five packages
-pnpm test                           # Run all tests
+pnpm test                           # Run all tests — includes tools/e2e, which spawns BUILT nodes: build first
 pnpm typecheck                      # src AND test trees, both configs
 node packages/node/dist/index.js    # Start a node on :3000
 ```
@@ -30,7 +30,8 @@ pnpm -r build && pnpm -r typecheck && pnpm -r test
 ```
 
 Run the last two **per package**: `pnpm -r test` fails fast and hides everything after a red package.
-See ARCHITECTURE → "Build and test resolution".
+**The build step is load-bearing, not advisory:** `tools/e2e` spawns `packages/node/dist/index.js` and
+refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build and test resolution".
 
 ## Architecture
 
@@ -41,6 +42,12 @@ Five packages, in dependency order:
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/net` — libp2p + Gossipsub relay, header-first sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
+
+Two tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
+
+- `@dagsocial/faucet` — an ordinary-key service that invites and sends credits through the node's HTTP API.
+- `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
+  HTTP; mines on demand, paces on block height. A client of the contracts, with none of its own.
 
 Future: `@dagsocial/web` (React client).
 
