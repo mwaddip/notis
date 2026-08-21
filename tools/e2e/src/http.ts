@@ -95,11 +95,23 @@ export async function getCredits(
   } | null;
 }
 
+export interface PostResponse {
+  id: string;
+  content: string;
+  author: string;
+  parentRefs: string[];
+  status: string;
+  blockHeight: number | null;
+  likeCount: number;
+  likers: string[];
+  confirmedAuthor: string | null;
+}
+
 export async function getPost(
   node: NodeProcess,
   postId: string,
-): Promise<Record<string, unknown> | null> {
-  return jsonGet(node, `/posts/${postId}`);
+): Promise<PostResponse | null> {
+  return jsonGet(node, `/posts/${postId}`) as Promise<PostResponse | null>;
 }
 
 export async function getBlock(

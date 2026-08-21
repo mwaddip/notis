@@ -41,26 +41,23 @@ function txToJson(tx: UtxoTransaction): Record<string, unknown> {
     result['likeTarget'] = tx.likeTarget;
   }
   if (tx.post !== undefined) {
-    result['post'] = {
-      content: tx.post.content,
-      author: Buffer.from(tx.post.author).toString('hex'),
-      parentRefs: tx.post.parentRefs,
-      protocolVersion: tx.post.protocolVersion,
-      type: tx.post.type,
-    };
+    result['post'] = convertValue(tx.post);
   }
   return result;
 }
 
+function convertValue(value: unknown): unknown {
+  if (value instanceof Uint8Array) return Buffer.from(value).toString('hex');
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(convertValue);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, convertValue(v)]),
+    );
+  }
+  return value;
+}
+
 function boxToJson(box: AnyBoxCandidate): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(box).map(([key, value]) => [
-      key,
-      value instanceof Uint8Array
-        ? Buffer.from(value).toString('hex')
-        : typeof value === 'bigint'
-          ? value.toString()
-          : value,
-    ]),
-  );
+  return convertValue(box) as Record<string, unknown>;
 }

@@ -88,6 +88,22 @@ async function mineOne(node: NodeProcess, miningSecret: string): Promise<void> {
   }
 }
 
+export async function confirm(
+  observe: () => Promise<boolean>,
+  miner: NodeProcess,
+  miningSecret: string,
+  maxBlocks = 3,
+): Promise<void> {
+  for (let i = 0; i < maxBlocks; i++) {
+    await mineOne(miner, miningSecret);
+    if (await observe()) return;
+  }
+  const tail = miner.logs.slice(-20).join('\n');
+  throw new Error(
+    `Observation not confirmed after ${maxBlocks} blocks on :${miner.httpPort}\n${tail}`,
+  );
+}
+
 export async function waitHeight(
   nodes: NodeProcess[],
   height: number,

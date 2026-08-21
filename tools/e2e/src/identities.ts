@@ -18,6 +18,8 @@ export function fresh(): Identity {
   };
 }
 
+// Devnet-only, public by design (ARCHITECTURE → Genesis). Testnet's faucet key
+// guards a balance testers depend on and is never in this tree.
 const DEVNET_FAUCET_PKCS8_HEX =
   '302e020100300506032b6570042204204504541a393fe199a143e47fbf10cb32ef7ef349eecd2f0997a310487b03abf4';
 
