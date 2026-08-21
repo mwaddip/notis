@@ -14,8 +14,8 @@
  *
  * | | |
  * |---|---|
- * | Consumes | the emission box (when this height releases), the treasury box (when this block accrues to it), the karma pool box (when this block draws from it), and every `FeeBox` the body's transactions created |
- * | Emits | the successors of those three, the coinbase's credit outputs, and one karma grant per `BondBox` the body created |
+ * | Consumes | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every credited author · the `BondBox` of every bond settling at this height · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state · the karma boxes decay charges and the locks a prune entry names |
+ * | Emits | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond · each released escrow's value back to its owner · like payouts and carry successors · decay replacements · prune refunds |
  *
  * ⛔ **A PROTOCOL BOX IS CONSUMED EXACTLY WHEN THIS BLOCK'S EFFECTS TOUCH IT.**
  * The emission box already carries that rule — above the terminus nothing is
@@ -86,6 +86,7 @@ import type {
   KarmaPoolBox,
   LikeAccrualBox,
   TreasuryBox,
+  VouchEscrowBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 import { splitCoinbase } from './coinbase-split.js';
@@ -162,6 +163,8 @@ export interface SettlementDeps {
   getLikeCarryBox: (author: Uint8Array, exclude: Set<string>) => LikeAccrualBox | null;
   /** Bonds whose probation deadline is this height, ascending box id. */
   getBondsSettlingAt: (height: number) => BondBox[];
+  /** Unspent escrows at or past `releaseAtBlock`, ascending box id, pre-body. */
+  getEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;
   /** What every stale identity owes, in the decay pass's stated owner order. */
@@ -201,8 +204,8 @@ interface DerivedSettlement {
    *
    * ⚠ **This is stricter than matching the output MULTISET**, and the extra
    * strictness is load-bearing now rather than tidy. A settlement emits many
-   * karma outputs — grants, payouts, vested bonds, decay
-   * replacements, prune refunds — and two of them can name one owner in one
+   * karma outputs — grants, payouts, vested bonds, escrow returns,
+   * decay replacements, prune refunds — and two of them can name one owner in one
    * block, so a content match has no single answer to give.
    */
   derivedOutputs: AnyBoxCandidate[];
@@ -374,6 +377,17 @@ function derive(
     poolSink += bond.value - vested;
   }
 
+  // 3d. The escrow returns (NODE_INTERFACE → The settlement transaction, the
+  // PRE-BODY paragraph). Value moves box to box — no pool leg. A zero-value
+  // escrow is consumed but emits no karma output, like every sibling karma leg.
+  const escrows = deps.getEscrowsReleasableAt(height);
+  const escrowReturns: Array<{ owner: Uint8Array; value: bigint }> = [];
+  for (const escrow of escrows) {
+    if (!escrow.id) return { error: 'vouch escrow box carries no id' };
+    inputs.push(escrow.id);
+    escrowReturns.push({ owner: escrow.owner, value: escrow.value });
+  }
+
   // 3e. Decay. ⛔ **The burn's sink is the pool** (ARCHITECTURE → The
   // conservation axiom: "burn" means *move back to the supply pool*). The
   // mechanism is untouched — the same eager per-identity pass, staleness
@@ -460,6 +474,11 @@ function derive(
   for (const settled of bondSettlements) {
     if (settled.vested > 0n) {
       outputs.push({ boxType: 'karma', value: settled.vested, owner: settled.inviter, nonActivity: true, createdAtBlock: height });
+    }
+  }
+  for (const ret of escrowReturns) {
+    if (ret.value > 0n) {
+      outputs.push({ boxType: 'karma', value: ret.value, owner: ret.owner, nonActivity: true, createdAtBlock: height });
     }
   }
   for (const plan of decayPlans) {

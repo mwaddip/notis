@@ -101,16 +101,15 @@ const CASES: Record<AnyBox['boxType'], Case> = {
     } as never],
     signer: 'holder',
   },
-  // Owner-signed: the voucher reclaims their escrow once SPEND_TIMING allows
-  // it. `releaseAtBlock: 5` is at or below the spend height (10), so the
-  // timing gate does not interfere — the authorization verdict alone is tested.
+  // `BLOCK_APPLICATION_ONLY` — the settlement returns the stake
+  // (NODE_INTERFACE → Legal box transitions).
   vouch_escrow: {
     box: (h) => ({
       boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0,
       owner: h.userId, releaseAtBlock: 5,
     }),
     outputs: (h) => [karmaOut(h.userId, 1n)],
-    signer: 'holder',
+    signer: null,
   },
   bond: {
     box: (h, o) => ({

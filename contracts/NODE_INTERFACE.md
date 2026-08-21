@@ -800,23 +800,21 @@ the box's unlock height or declares it always spendable. Typed over every
 obligation `AUTHORIZATION` carries for the signer and the schema for output
 shape.
 
-⛔ **It is a table because its members read DIFFERENT fields** —
-`credit.lockedUntilBlock` and `vouch_escrow.releaseAtBlock` — so a check keyed
-on one field name silently admits the other. The property is *"this type has an
-unlock height"*, never *"this field is present"*.
-
-The two entries with a clock:
+⛔ **It is a table, keyed on the type, because the property is *"this type has
+an unlock height"* and never *"this field is present"*** — a check keyed on one
+field name silently admits a type whose clock lives under another. The entry
+with a clock today:
 
 | Type | Unlock height | Absent means |
 |---|---|---|
 | `credit` | `lockedUntilBlock` | spendable — most credit boxes carry no lock; only the coinbase's do |
-| `vouch_escrow` | `releaseAtBlock` | — (the field is required) |
 
-Every other type is always spendable *at this gate*: most timed boxes
-(`bond`, `post_lock`, `emission`, `treasury`, `karma_pool`, `like_accrual`)
-are `BLOCK_APPLICATION_ONLY`, so their timing is enforced by no user
-transaction being able to name them at all. This table exists for the types
-that must be **user-spendable and carry a clock**.
+Every other type is always spendable *at this gate*: the timed boxes
+(`bond`, `post_lock`, `emission`, `treasury`, `karma_pool`, `like_accrual`,
+`vouch_escrow`) are `BLOCK_APPLICATION_ONLY`, so their timing is enforced by no
+user transaction being able to name them at all — `vouch_escrow.releaseAtBlock`
+is read by the settlement leg that returns it, not by this gate. This table
+exists for the types that must be **user-spendable and carry a clock**.
 
 **Checked once per input at `validateTx` step 3**, after liveness (its only
 precondition) and before authorization: timing is cheaper than signature
@@ -1272,7 +1270,7 @@ the treasury.
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
-| VouchEscrowBox | KarmaBox | **Escrow reclaim**: exactly one escrow input, owner-signed; spendable at or after `releaseAtBlock` (§Spend timing); exactly one karma output, same owner. Value conserved. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
+| VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
 | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
 | CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
 | PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
@@ -1466,17 +1464,19 @@ inside the network's reported supply.
   phase. `castVouch` never compared the signer to `voucherId` either, so it
   was reachable through the front door as well as through a block.
 - **The escrow records the actual staked value**, never the constant, and the
-  reclaim returns exactly that. With the cast pin the two always agree —
+  settlement returns exactly that. With the cast pin the two always agree —
   recording the real value is what makes the round trip conservation-
   structural rather than true by coincidence.
 - **A vouch cast is invalid while any unspent escrow names the voucher** —
   `hasActiveVouchEscrow`, keyed on the voucher alone because the escrow
   carries no target. This is what rate-limits **re-vouching** even though
-  **stopping** is instant: the escrow cannot be reclaimed before
-  `releaseAtBlock` and a new cast is barred while it stands, so the cycle
-  rate is capped at one vouch per cooldown window however briefly each vouch
-  is held. Without the gate a voucher cycles cast → withdraw → cast and
-  accumulates escrows at 1 karma each — cheap UTXO-set bloat.
+  **stopping** is instant: the escrow stands until the settlement at
+  `releaseAtBlock` spends it, and a new cast is barred while it stands, so the
+  cycle rate is capped at one vouch per cooldown window however briefly each
+  vouch is held — and the gate clears on its own, the settlement's spend being
+  what `hasActiveVouchEscrow` stops seeing. Without the gate a voucher cycles
+  cast → withdraw → cast and accumulates escrows at 1 karma each — cheap
+  UTXO-set bloat.
 - **The cast height is pinned inside a window.** `createdAtBlock` may not
   exceed the carrying height (step 6, universal) and may not lag it by more
   than `VOUCH_CAST_HEIGHT_WINDOW` (5) blocks. The escrow's release derives
@@ -1494,14 +1494,16 @@ inside the network's reported supply.
   cast needs a window, because this derivation reads the consumed box alone
   and never the carrying height — the pin leaves an unvouch valid in every
   block. A vouch held longer than one cooldown yields an escrow born past its
-  release height, immediately reclaimable: the commitment was served during
-  the endorsement.
+  release height; the next block's settlement returns it — the commitment was
+  served during the endorsement.
 - **The escrow is committed state, and nothing node-local remembers
   anything.** It sits in the UTXO set and therefore in the `stateRoot`, so a
   node holds the obligation itself rather than a root it cannot interpret.
-  The reclaim is an ordinary owner-signed transaction gated by §Spend timing;
-  no block-application step touches a standing escrow, and no settlement leg
-  releases one.
+  The return is a settlement leg (§The settlement transaction): every unspent
+  escrow with `releaseAtBlock <= height`, read from pre-body state in ascending
+  box id, is an input of the block's settlement and its value a karma output to
+  `owner`. No user transaction spends an escrow — `vouch_escrow` is block
+  application's, like `bond`.
 - **Self-vouch stays service-layer policy, not consensus.** At consensus a
   self-vouch is a value-neutral round trip of the actor's own karma, and vouch
   *score* is interpretation-layer (the node records; clients rank). Recorded
@@ -1908,12 +1910,20 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every author the block credits · the `BondBox` of every bond settling at this height · the karma boxes decay charges and the locks a prune entry names |
-| **Emits** | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond, back to its inviter · like payouts and carry successors · decay replacements · prune refunds |
+| **Consumes** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every author the block credits · the `BondBox` of every bond settling at this height · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state · the karma boxes decay charges and the locks a prune entry names |
+| **Emits** | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · like payouts and carry successors · decay replacements · prune refunds |
 
-⚠ **A `VouchEscrowBox` is deliberately NOT here.** Its owner reclaims it by ordinary
-transaction once `releaseAtBlock` passes (`OWNER_SIGNATURE`, `SPEND_TIMING`'s `vouch_escrow`
-entry) — no per-block step touches it.
+⚠ **The escrow leg reads PRE-BODY state, and returns at or past `releaseAtBlock`, not at it.**
+The settlement of height `h` consumes every unspent `VouchEscrowBox` with `releaseAtBlock <= h` that
+exists in the state the block builds on, ascending box id, and emits each one's value to its `owner`
+as karma (`nonActivity: true`) — emitting nothing for a value of zero, like every karma leg, so a
+zero-value escrow is consumed without an output (unreachable on a valid chain: the cast pins every
+stake at `VOUCH_KARMA_AMOUNT`). The body can *create* an escrow — an unvouch of a vouch held longer
+than one cooldown yields one already past release — and that escrow is not in pre-body state, so it
+returns at `h + 1`; `<=` is what makes the leg total rather than height-exact. The list is captured
+before the apply loop on both sides, like decay (below), and handed to the derivation — a store read
+taken at the check, after the body applied, would see the body's own escrow on one side only. No
+user transaction spends an escrow (`BLOCK_APPLICATION_ONLY`).
 
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
@@ -2731,14 +2741,15 @@ needs a test.
 **There is no vouch-cooldown store machinery.** An unvouched stake waits in a
 `VouchEscrowBox` — an ordinary box in the UTXO set and therefore in the
 `stateRoot` — created as the unvouch transaction's output and consumed by the
-owner's own reclaim transaction (§Vouch transition rules). The escrow's create
-and spend are journalled by `insertBox` / `consumeBox` like any other box;
-no bespoke side-records exist.
+settlement of the first block at or past `releaseAtBlock` (§The settlement
+transaction). The escrow's create and spend are journalled by `insertBox` /
+`consumeBox` like any other box; no bespoke side-records exist.
 
 | Function | Signature |
 |----------|-----------|
 | `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`. **Consensus input**: the cast gate (§Vouch transition rules) |
 | `getVouchEscrowsFor(voucherId)` | `(UserId) => VouchEscrowBox[]` — the API's cooldown listing (`GET /vouches?voucher=X&cooldowns=1`) |
+| `getVouchEscrowsReleasableAt(height)` | `(number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending box id**. **Consensus input**: the settlement's escrow leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
 
 ⛔ **A block-application effect keyed on node-local SQL that no committed root
 covers is a fork waiting to happen** (§the settlement transaction's determinism

@@ -686,8 +686,9 @@ VouchBox extends BoxBase {
 ### VouchEscrowBox
 
 Where an unvouched stake waits out its cooldown. The unvouch transaction
-outputs it; the voucher reclaims it by their own signed transaction at or after
-`releaseAtBlock` (NODE_INTERFACE → Vouch transition rules, §Spend timing).
+outputs it; the settlement of the first block at or past `releaseAtBlock`
+returns its value to `owner` as karma — block application is its only spender
+(NODE_INTERFACE → Vouch transition rules, The settlement transaction).
 
 ```
 VouchEscrowBox extends BoxBase {

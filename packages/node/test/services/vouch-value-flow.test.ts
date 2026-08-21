@@ -222,17 +222,17 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     // The escrow's `releaseAtBlock` is `vouch.createdAtBlock + cooldown`.
     expect(rows[0]!.releaseAtBlock).toBe(config.vouchCooldownBlocks);
 
-    // Mine to maturity.
+    // Mine to maturity — the settlement consumes the zero-value escrow.
     for (let h = 2; h <= config.vouchCooldownBlocks; h++) {
       expect(await mineNextBlock(bc)).not.toBeNull();
     }
     const ordering = await importOrdering();
     expect(ordering.getCurrentHeight()).toBe(config.vouchCooldownBlocks);
 
-    // The escrow survives — the settlement no longer sweeps it. The owner
-    // reclaims it via a user transaction.
+    // The settlement consumed the zero-value escrow and emitted no karma
+    // output (the > 0n guard every sibling karma leg carries).
+    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
     expect(sumKarma(utxo.getKarmaBoxes(voucher.userId))).toBe(0n);
-    expect(escrows.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
   });
 
   it('V2 consequence: a block embedding a foreign-voucherId cast is rejected whole', async () => {

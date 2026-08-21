@@ -986,7 +986,7 @@ describe('block-apply journal recording', () => {
   // 12. The escrow release journals through the box primitives (H-7 retired)
   // -----------------------------------------------------------------------
 
-  it('the settlement does not sweep a matured escrow — the owner reclaims it', async () => {
+  it('the settlement returns a matured escrow as karma', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -1013,9 +1013,9 @@ describe('block-apply journal recording', () => {
     bc.startBlockCreator(testConfig);
     await mineNextBlock(bc);
 
-    // The escrow SURVIVES the height it used to be swept at — the settlement
-    // no longer releases it.
-    expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
+    // The settlement consumed the escrow and returned its value as karma.
+    expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n + 7n);
   });
 });
 
@@ -1599,7 +1599,6 @@ describe('block-apply mint provenance', () => {
 
       const utxo = await importUtxo();
       const journalStore = await importJournalStore();
-      const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
       const idle = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
       utxo.insertBox(
@@ -1631,14 +1630,22 @@ describe('block-apply mint provenance', () => {
         .map((m) => m.box as AnyBox)
         .filter((b) => b.boxType === 'karma' && hex((b as KarmaBox).owner) === ownerHex);
 
-      // No touch, no squaring — face stays.
-      expect(karmaMints.length).toBe(0);
+      // The only karma mint is the escrow return (nonActivity: true).
+      // No decay leg fired — face stays.
+      expect(karmaMints.length).toBe(1);
+      expect((karmaMints[0] as KarmaBox).nonActivity).toBe(true);
+      expect((karmaMints[0] as KarmaBox).value).toBe(VOUCH_KARMA_AMOUNT);
 
-      // The karma box is still live at its face value.
-      expect(utxo.getKarmaValue(idle.userId)).toBe(50n);
+      // The karma box is live at face + the returned escrow.
+      expect(utxo.getKarmaValue(idle.userId)).toBe(50n + VOUCH_KARMA_AMOUNT);
 
-      // The escrow is still live.
-      expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
+      // The escrow was consumed by the settlement.
+      expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
+
+      // ⛔ The hazard: the returned karma must NOT have moved lastActivityBlock.
+      const records = await import('../../src/store/identity-records.js');
+      const record = records.getIdentityRecord(idle.userId);
+      expect(record?.lastActivityBlock ?? 0).toBe(0);
     } finally {
       vi.doUnmock('../../src/config.js');
     }
@@ -1668,7 +1675,7 @@ describe('block-apply mint provenance', () => {
 
       const utxo = await importUtxo();
       const records = await import('../../src/store/identity-records.js');
-      const { VOUCH_KARMA_AMOUNT } = await import('@dagsocial/types');
+
 
       const idle = makeTestIdentity();
       utxo.insertBox(makeKarmaBox(50n, idle.userId, 0));
@@ -1694,10 +1701,13 @@ describe('block-apply mint provenance', () => {
       // No touch: the record is unchanged from genesis seeding.
       const record = records.getIdentityRecord(idle.userId);
       expect(record?.lastDecayBlock ?? 0).toBe(0);
+      // ⛔ The hazard: lastActivityBlock must not have moved from the escrow return.
+      expect(record?.lastActivityBlock ?? 0).toBe(0);
 
-      // The face value is unchanged — decay is virtual.
-      expect(utxo.getKarmaValue(idle.userId)).toBe(50n);
-      expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(true);
+      // Face + the returned escrow — decay is virtual, no squaring fired.
+
+      expect(utxo.getKarmaValue(idle.userId)).toBe(50n + VOUCH_KARMA_AMOUNT);
+      expect(utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow')).toBe(false);
     } finally {
       vi.doUnmock('../../src/config.js');
     }

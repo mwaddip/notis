@@ -85,6 +85,7 @@ function settle(
       // rather than a silent extra output.
       getLikeCarryBox: () => null,
       getBondsSettlingAt: () => [],
+      getEscrowsReleasableAt: () => [],
       getLifetimeLikes: () => 0n,
       getDecayPlans: () => [],
     },
