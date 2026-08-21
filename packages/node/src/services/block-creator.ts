@@ -70,7 +70,7 @@ import {
   iteratePendingEntries,
   purgeExpired,
   removeEntry,
-  drainMempoolPrunes,
+  selectMempoolPrunes,
   entryByteCost,
 } from '../store/mempool.js';
 import {
@@ -353,16 +353,16 @@ export function createOrderingBlock(): OrderingBlock | null {
   // 1. Purge expired mempool entries
   purgeExpired(currentHeight);
 
-  // 2. The prune entries, which the drain reads off the pool alone. The
-  //    settlement cannot be built here: it consumes the fee boxes the body
-  //    creates and pays a coinbase scaled by the actors the body carries, so it
-  //    depends on what the fill selects — and it is itself part of the body the
-  //    fill is spending. ⛔ **It has no bounded worst case to reserve**
-  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here), so
-  //    instead each entry's `entryByteCost` carries its own marginal cost to it
-  //    and the sizer below has the last word.
+  // 2. The prune entries, read off the pool without removing them — a prune
+  //    row leaves the pool the way a transaction row does: by `removeEntry`
+  //    when the body finalizes or is rejected, or by `removeMempoolPrunes`
+  //    when an applied block confirms it (MEMPOOL_INTERFACE →
+  //    selectMempoolPrunes). The prune rowids are pushed into `includedRowids`
+  //    so that `confirmedRowids` tracks every row the template carries.
   const MAX_PRUNES_PER_BLOCK = 32;
-  const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
+  const pruneSelected = selectMempoolPrunes(MAX_PRUNES_PER_BLOCK);
+  const pruneEntries = pruneSelected.map((s) => s.entry);
+  const pruneRowids = pruneSelected.map((s) => s.rowid);
 
   // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
   //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
@@ -548,8 +548,10 @@ export function createOrderingBlock(): OrderingBlock | null {
   //     produced either way, because the chain advancing is not conditional on
   //     income.
 
-  // 12. Track confirmed rowids for finalizeBlock cleanup
-  confirmedRowids = new Set<number>(includedRowids);
+  // 12. Track confirmed rowids for finalizeBlock cleanup — every row the
+  //     template carries, transaction and prune rows alike (MEMPOOL_INTERFACE →
+  //     Block Creator Integration step 4).
+  confirmedRowids = new Set<number>([...pruneRowids, ...includedRowids]);
 
   // 14. Difficulty — fixed by the height schedule, and enforced at apply
   const powTargetBits = expectedTarget(newHeight);

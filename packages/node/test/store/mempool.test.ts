@@ -28,7 +28,7 @@ async function importMempoolFresh() {
     getBoxWithPending: (boxId: string) => { id?: string } | null;
     PendingSpendConflictError: new (boxId: string) => Error;
     insertMempoolPrune: (entry: any, expiresAtHeight: number) => number;
-    drainMempoolPrunes: (limit: number) => any[];
+    selectMempoolPrunes: (limit: number) => Array<{ rowid: number; entry: any }>;
     removeMempoolPrunes: (entryIds: string[]) => void;
   };
 }
@@ -350,7 +350,7 @@ describe('mempool store', () => {
     // rowid and does not group by kind.
     const types = entries.map((e) => e.entryType);
     expect(types).toEqual(['prune', 'utxo_tx', 'prune']);
-    // A prune row's blob is read by drainMempoolPrunes, not the DTO
+    // A prune row's blob is read by selectMempoolPrunes, not the DTO
     // (MEMPOOL_INTERFACE → PoolEntry).
     expect(entries[0].utxoTxCbor).toBeNull();
     expect(entries[1].utxoTxCbor).toBeInstanceOf(Uint8Array);
@@ -704,44 +704,47 @@ describe('mempool store', () => {
   });
 
   // The pool row is the only copy of a queued prune between `POST
-  // /posts/:id/prune` and the block that carries it, and `drainMempoolPrunes`
+  // /posts/:id/prune` and the block that carries it, and `selectMempoolPrunes`
   // is the miner's first read of it — inside `createOrderingBlock`, which no
   // frame wraps in a try/catch. A prune test that stops at the insert leaves
   // the writer and the reader free to speak different codecs, so what this
   // needs to assert is the PAIR.
   describe('prune entry round-trip', () => {
-    it('drains back exactly what was inserted', async () => {
+    it('reads back exactly what was inserted, without removing the row', async () => {
       const mem = await importMempoolFresh();
       const entry = pruneEntry(ROOT_1);
 
       mem.insertMempoolPrune(entry, 100);
-      const drained = mem.drainMempoolPrunes(32);
+      const selected = mem.selectMempoolPrunes(32);
 
-      expect(drained).toHaveLength(1);
-      expect(drained[0].rootPostHash).toBe(entry.rootPostHash);
-      expect(drained[0].subtreePostIds).toEqual(entry.subtreePostIds);
+      expect(selected).toHaveLength(1);
+      const got = selected[0]!.entry;
+      expect(got.rootPostHash).toBe(entry.rootPostHash);
+      expect(got.subtreePostIds).toEqual(entry.subtreePostIds);
       // `applyMutationPhase` tests `authorId instanceof Uint8Array` before it
       // hexes the claimed author, and hands all three byte fields to
       // `Buffer.from` / `createHash().update()`.
-      expect(drained[0].authorId).toBeInstanceOf(Uint8Array);
-      expect(Buffer.from(drained[0].authorId)).toEqual(Buffer.from(entry.authorId));
-      expect(Buffer.from(drained[0].subtreeMerkleRoot)).toEqual(
+      expect(got.authorId).toBeInstanceOf(Uint8Array);
+      expect(Buffer.from(got.authorId)).toEqual(Buffer.from(entry.authorId));
+      expect(Buffer.from(got.subtreeMerkleRoot)).toEqual(
         Buffer.from(entry.subtreeMerkleRoot),
       );
-      expect(Buffer.from(drained[0].authorSignature)).toEqual(
+      expect(Buffer.from(got.authorSignature)).toEqual(
         Buffer.from(entry.authorSignature),
       );
+      // The rows stay — `selectMempoolPrunes` is a read, not a drain.
+      expect(mem.getPendingEntries(10)).toHaveLength(1);
     });
 
-    it('drains in insertion order and empties the pool', async () => {
+    it('reads in insertion order and the rows remain in the pool', async () => {
       const mem = await importMempoolFresh();
       mem.insertMempoolPrune(pruneEntry(ROOT_1), 100);
       mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
 
-      const drained = mem.drainMempoolPrunes(32);
+      const selected = mem.selectMempoolPrunes(32);
 
-      expect(drained.map((e) => e.rootPostHash)).toEqual([ROOT_1, ROOT_2]);
-      expect(mem.getPendingEntries(10)).toHaveLength(0);
+      expect(selected.map((s) => s.entry.rootPostHash)).toEqual([ROOT_1, ROOT_2]);
+      expect(mem.getPendingEntries(10)).toHaveLength(2);
     });
 
     it('an unreadable row is dropped without taking its readable siblings with it', async () => {
@@ -754,18 +757,28 @@ describe('mempool store', () => {
         .run(Buffer.from([0xff, 0xff, 0xff]), poisoned);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      const drained = mem.drainMempoolPrunes(32);
+      const selected = mem.selectMempoolPrunes(32);
 
-      // The readable sibling survives. A drain that failed the whole batch on
-      // one bad blob would stop the miner producing for as long as any row it
-      // cannot read stays in front of it.
-      expect(drained.map((e) => e.rootPostHash)).toEqual([ROOT_2]);
-      expect(mem.getPendingEntries(10)).toHaveLength(0);
+      expect(selected.map((s) => s.entry.rootPostHash)).toEqual([ROOT_2]);
       expect(errors).toHaveBeenCalledOnce();
       errors.mockRestore();
     });
 
-    it('removeMempoolPrunes matches the id computed from a stored row', async () => {
+    it('insertMempoolPrune writes prune_entry_id equal to computePruneEntryId(entry)', async () => {
+      const mem = await importMempoolFresh();
+      const { getDb } = await importDbFresh();
+      const { computePruneEntryId } = await import('@dagsocial/types');
+      const entry = pruneEntry(ROOT_1);
+
+      mem.insertMempoolPrune(entry, 100);
+
+      const row = getDb()
+        .prepare('SELECT prune_entry_id FROM mempool WHERE entry_type = ?')
+        .get('prune') as { prune_entry_id: string };
+      expect(row.prune_entry_id).toBe(computePruneEntryId(entry));
+    });
+
+    it('removeMempoolPrunes deletes by prune_entry_id and leaves the others', async () => {
       const mem = await importMempoolFresh();
       const { computePruneEntryId } = await import('@dagsocial/types');
       const entry = pruneEntry(ROOT_1);
@@ -774,8 +787,27 @@ describe('mempool store', () => {
 
       mem.removeMempoolPrunes([computePruneEntryId(entry)]);
 
-      const left = mem.drainMempoolPrunes(32);
-      expect(left.map((e) => e.rootPostHash)).toEqual([ROOT_2]);
+      const left = mem.selectMempoolPrunes(32);
+      expect(left.map((s) => s.entry.rootPostHash)).toEqual([ROOT_2]);
+    });
+
+    it('removeMempoolPrunes is indexed — idx_mempool_prune_entry_id', async () => {
+      const mem = await importMempoolFresh();
+      const { getDb } = await importDbFresh();
+      const { computePruneEntryId } = await import('@dagsocial/types');
+      const entry = pruneEntry(ROOT_1);
+      mem.insertMempoolPrune(entry, 100);
+      const entryId = computePruneEntryId(entry);
+
+      // MEMPOOL_INTERFACE → "Confirmed-entry cleanup reaches every row, and
+      // it is a lookup rather than a scan"
+      const plan = getDb()
+        .prepare('EXPLAIN QUERY PLAN DELETE FROM mempool WHERE prune_entry_id IN (?)')
+        .all(entryId) as Array<{ detail: string }>;
+      const usesIndex = plan.some((row) =>
+        row.detail.includes('idx_mempool_prune_entry_id'),
+      );
+      expect(usesIndex).toBe(true);
     });
   });
 
