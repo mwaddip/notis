@@ -187,6 +187,16 @@ export async function postCreditTransfer(
   return data as { status: string; txId: string };
 }
 
+export async function adminGet(
+  node: NodeProcess,
+  path: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`http://127.0.0.1:${node.adminPort}${path}`);
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) throw new NodeError(res.status, data);
+  return data;
+}
+
 export async function getStatus(
   node: NodeProcess,
 ): Promise<{ vouchCooldownBlocks: number; blockHeight: number }> {
