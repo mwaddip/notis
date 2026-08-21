@@ -28,6 +28,8 @@ export interface NodeProcess {
   p2pPort: number;
   url: string;
   logs: string[];
+  linesSeen: number;
+  linesSince(n: number): string[];
   kill(): void;
 }
 
@@ -54,6 +56,7 @@ export function spawnNode(opts: NodeProcessOptions): NodeProcess {
   });
 
   const logs: string[] = [];
+  let linesSeen = 0;
   let partial = '';
 
   function onData(chunk: Buffer): void {
@@ -63,8 +66,15 @@ export function spawnNode(opts: NodeProcessOptions): NodeProcess {
     for (const line of lines) {
       if (line.length === 0) continue;
       logs.push(line);
+      linesSeen++;
       if (logs.length > LOG_RING_SIZE) logs.shift();
     }
+  }
+
+  function linesSince(n: number): string[] {
+    const available = linesSeen - n;
+    if (available <= 0) return [];
+    return logs.slice(-Math.min(available, logs.length));
   }
 
   child.stdout!.on('data', onData);
@@ -77,6 +87,10 @@ export function spawnNode(opts: NodeProcessOptions): NodeProcess {
     p2pPort: p2p,
     url: `http://127.0.0.1:${http}`,
     logs,
+    get linesSeen() {
+      return linesSeen;
+    },
+    linesSince,
     kill() {
       child.kill('SIGTERM');
     },

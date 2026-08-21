@@ -93,16 +93,15 @@ describe('fork', () => {
     // A stays at its own height — it cannot reorg to D's chain (depth > MAX_REORG_DEPTH).
     // Mine on E to gossip D's chain to A, triggering fork resolution; pace on
     // D reaching the mined height rather than a wall-clock wait.
-    const logBaselineA = nodeA.logs.length;
+    const logBaselineA = nodeA.linesSeen;
     await mine(nodeE, mesh.miningSecret, 2);
     await waitHeight([nodeD], dTarget + 2, 30_000);
     const tipAFinal = await getBlockCurrent(nodeA);
     expect(tipAFinal.height).toBe(tipABeforeBridge.height);
 
-    // Pin the exact refusal (fork-resolution.ts:530), searching only lines
-    // added after E mined — case 1's successful "Fork resolution: competing
-    // chain has more work" lines are still in the ring buffer.
-    const newLogs = nodeA.logs.slice(logBaselineA);
+    // Pin the exact refusal, searching only lines added after E mined —
+    // case 1's successful reorg lines are still in the ring buffer.
+    const newLogs = nodeA.linesSince(logBaselineA);
     const noAncestorLog = newLogs.some((line) =>
       line.includes('Fork resolution failed: no common ancestor within'),
     );
