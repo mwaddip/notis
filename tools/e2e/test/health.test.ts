@@ -85,9 +85,10 @@ describe('health', () => {
       expect(h['journalEventsVersion']).toBe('1.0');
     }
 
-    // H2: pin what peers_connected reports on the miner (node 0)
+    // H2: the miner (node 0) is the bootstrap target — every non-zero
+    // node dials it, so its peer count is exactly nodeCount − 1.
     const minerHealth = await adminGet(miner, '/health');
-    const minerPeers = minerHealth['peers_connected'] as number;
+    expect(minerHealth['peers_connected']).toBe(mesh.nodes.length - 1);
 
     // ---- /stats shape before any post ----
     for (const node of mesh.nodes) {
@@ -174,10 +175,5 @@ describe('health', () => {
       expect(c['http_requests_total']).toBeGreaterThanOrEqual(1);
     }
 
-    // ---- H2 report: pin the miner's peer count ----
-    // The mesh is bootstrap-first (every non-zero node dials node 0).
-    // The actual topology depends on gossipsub peer exchange — pin what
-    // we measured rather than assuming full mesh.
-    expect(minerPeers).toBeGreaterThanOrEqual(2);
   });
 });
