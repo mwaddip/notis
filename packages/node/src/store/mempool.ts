@@ -791,10 +791,12 @@ function decodePruneRow(row: { rowid: number; prune_entry_cbor: Buffer }): Prune
 
 /**
  * Up to `limit` prune rows in FIFO order, decoded and paired with their rowid.
- * The read removes nothing — a prune row leaves the pool the way a transaction
- * row does: `removeEntry(rowid)` when a body this node built carried it,
- * `removeMempoolPrunes` when an applied block confirms it, or `purgeExpired`
- * (MEMPOOL_INTERFACE → selectMempoolPrunes).
+ * Readable rows are returned without removing them — a prune row leaves the
+ * pool the way a transaction row does: `removeEntry(rowid)` when a body this
+ * node built carried it, `removeMempoolPrunes` when an applied block confirms
+ * it, or `purgeExpired` (MEMPOOL_INTERFACE → selectMempoolPrunes). A row this
+ * node cannot decode is dropped at the read and reported; its readable siblings
+ * are returned.
  */
 export function selectMempoolPrunes(limit: number): Array<{ rowid: number; entry: PruneEntry }> {
   const db = getDb();
@@ -805,9 +807,19 @@ export function selectMempoolPrunes(limit: number): Array<{ rowid: number; entry
   ).all(limit) as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
 
   const result: Array<{ rowid: number; entry: PruneEntry }> = [];
+  const toDrop: number[] = [];
   for (const row of rows) {
     const entry = decodePruneRow(row);
-    if (entry !== null) result.push({ rowid: row.rowid, entry });
+    if (entry !== null) {
+      result.push({ rowid: row.rowid, entry });
+    } else {
+      toDrop.push(row.rowid);
+    }
+  }
+  if (toDrop.length > 0) {
+    db.prepare(
+      `DELETE FROM mempool WHERE rowid IN (${toDrop.map(() => '?').join(',')})`,
+    ).run(...toDrop);
   }
   return result;
 }

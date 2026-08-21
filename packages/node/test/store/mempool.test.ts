@@ -759,7 +759,12 @@ describe('mempool store', () => {
 
       const selected = mem.selectMempoolPrunes(32);
 
+      // The readable sibling survives. A read that failed the whole batch on
+      // one bad blob would stop the miner producing for as long as any row it
+      // cannot read sat in front of it.
       expect(selected.map((s) => s.entry.rootPostHash)).toEqual([ROOT_2]);
+      // The poisoned row is gone; the readable sibling remains.
+      expect(mem.getPendingEntries(10)).toHaveLength(1);
       expect(errors).toHaveBeenCalledOnce();
       errors.mockRestore();
     });

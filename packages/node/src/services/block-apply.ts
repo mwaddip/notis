@@ -63,6 +63,7 @@ import {
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
   removeUtxoTxEntry,
+  removeMempoolPrunes,
   insertBlockTopology,
   getSubtreeTopology,
   deleteLikeRecordsForPosts,
@@ -106,6 +107,7 @@ import {
   LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
+  computePruneEntryId,
   leafHash,
   buildMerkleRoot,
   hexToBuf,
@@ -853,6 +855,16 @@ function applyMutationPhase(
       console.warn(`Failed to prune DAG subtree for ${entry.rootPostHash}: ${String(err)}`);
       // Non-fatal — DAG content may not be present
     }
+  }
+
+  // 8d. Remove confirmed prune entries from the local mempool — the prune-row
+  // twin of `removeUtxoTxEntry` at §11 (MEMPOOL_INTERFACE →
+  // "Confirmed-entry cleanup reaches every row, and it is a lookup rather
+  // than a scan").
+  if (block.utxoTxTree.pruneEntries.length > 0) {
+    removeMempoolPrunes(
+      block.utxoTxTree.pruneEntries.map((e) => computePruneEntryId(e)),
+    );
   }
 
   // 11. Apply UTXO transactions from the block.
