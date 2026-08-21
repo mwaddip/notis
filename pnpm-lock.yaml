@@ -169,6 +169,25 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@22.20.1)
 
+  tools/e2e:
+    dependencies:
+      '@dagsocial/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@dagsocial/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@22.20.1)
+
   tools/faucet:
     dependencies:
       '@dagsocial/types':
