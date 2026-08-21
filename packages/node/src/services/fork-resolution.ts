@@ -34,6 +34,7 @@ import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-recor
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlock } from './block-apply.js';
+import { noteTip } from '../metrics.js';
 import { rebuildTemplate } from './block-creator.js';
 import {
   CorruptChainStateError,
@@ -447,6 +448,9 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
     restoreProver();
     throw err;
   }
+
+  // NODE_INTERFACE → Admin Listener: the tip the reorg left.
+  noteTip(forkHeight + newBlocks.length);
 
   // A reorg is one tip move, however many blocks it applies. The per-block
   // rebuild inside `applyOrderingBlock` stands down while nested in the

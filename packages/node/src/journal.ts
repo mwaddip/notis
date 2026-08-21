@@ -2,8 +2,9 @@
 // Structured journal events — JSON-line output to stdout
 //
 // One JSON object per line: { event, level, timestamp, ...fields }
-// No external dependencies — uses a lightweight JSON.stringify wrapper.
 // ---------------------------------------------------------------------------
+
+import { notePostReceived, notePostValidated } from './metrics.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,10 +94,12 @@ export function emitApiListening(bindAddress: string, port: number): void {
 // ---------------------------------------------------------------------------
 
 export function emitPostReceived(postId: string, source: string): void {
+  notePostReceived();
   emitEvent({ event: 'post_received', level: 'INFO', post_id: postId, source });
 }
 
 export function emitPostValidated(postId: string, validationDurationMs: number): void {
+  notePostValidated();
   emitEvent({ event: 'post_validated', level: 'INFO', post_id: postId, validation_duration_ms: validationDurationMs });
 }
 
@@ -126,4 +129,14 @@ export function emitPeerDisconnected(peerId: string, reason: string): void {
 
 export function emitPeerPenalised(peerId: string, kind: string, detail: string | null): void {
   emitEvent({ event: 'peer_penalised', level: 'WARN', peer_id: peerId, kind, detail });
+}
+
+// ---------------------------------------------------------------------------
+// Convenience emitter for sync events (JOURNAL_EVENTS → sync_complete)
+// ---------------------------------------------------------------------------
+
+// duration_ms: since process start for the first sync_complete, since the
+// previous sync_complete after. The caller computes the duration.
+export function emitSyncComplete(tipHeight: number, durationMs: number): void {
+  emitEvent({ event: 'sync_complete', level: 'INFO', tip_height: tipHeight, duration_ms: durationMs });
 }

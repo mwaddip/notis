@@ -1,3 +1,6 @@
+// NODE_INTERFACE → Admin Listener: the in-memory metrics seam.
+// Written at four sites (journal wrappers, block-apply tip push, counted PoW
+// wrapper, HTTP middleware); read by routes/admin.ts. Nothing else writes it.
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type { BlockHeader } from '@dagsocial/types';
 

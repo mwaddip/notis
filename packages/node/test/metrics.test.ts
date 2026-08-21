@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   noteTip,
   notePostReceived,
@@ -96,26 +96,59 @@ describe('metrics', () => {
     expect(c.httpRequestsTotal).toBe(0);
   });
 
-  it('countedVerifyOrderingBlockPoW delegates and counts', () => {
-    const fakeHeader = {
+  describe('countedVerifyOrderingBlockPoW', () => {
+    const baseHeader = {
       height: 1,
       prevBlockHash: '00'.repeat(32),
       utxoTxRoot: '00'.repeat(32),
       stateRoot: '00'.repeat(33),
       createdAt: 0,
-      powNonce: 0,
-      powTargetBits: 0,
       validatorId: new Uint8Array(32),
       protocolVersion: 1,
     };
-    const result = countedVerifyOrderingBlockPoW(fakeHeader);
-    expect(typeof result).toBe('boolean');
-    const c = getCounters();
-    expect(c.powVerificationsTotal).toBe(1);
-    if (result) {
-      expect(c.powVerificationFailuresTotal).toBe(0);
-    } else {
+
+    it('counts a failing header', () => {
+      const header = { ...baseHeader, powNonce: 0, powTargetBits: 65535 };
+      const result = countedVerifyOrderingBlockPoW(header);
+      expect(result).toBe(false);
+      const c = getCounters();
+      expect(c.powVerificationsTotal).toBe(1);
       expect(c.powVerificationFailuresTotal).toBe(1);
-    }
+    });
+
+    it('counts a passing header', () => {
+      const header = { ...baseHeader, powNonce: 0, powTargetBits: 1 };
+      const result = countedVerifyOrderingBlockPoW(header);
+      expect(result).toBe(true);
+      const c = getCounters();
+      expect(c.powVerificationsTotal).toBe(1);
+      expect(c.powVerificationFailuresTotal).toBe(0);
+    });
+  });
+
+  describe('journal wrappers increment counters', () => {
+    beforeEach(() => {
+      vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    });
+
+    it('emitPostReceived increments postsReceivedTotal', async () => {
+      const { initJournal, emitPostReceived } = await import('../src/journal.js');
+      initJournal();
+      expect(getCounters().postsReceivedTotal).toBe(0);
+      emitPostReceived('aabb', 'local');
+      expect(getCounters().postsReceivedTotal).toBe(1);
+      emitPostReceived('ccdd', 'peer123');
+      expect(getCounters().postsReceivedTotal).toBe(2);
+      vi.restoreAllMocks();
+    });
+
+    it('emitPostValidated increments postsValidatedTotal', async () => {
+      const { initJournal, emitPostValidated } = await import('../src/journal.js');
+      initJournal();
+      expect(getCounters().postsValidatedTotal).toBe(0);
+      emitPostValidated('aabb', 5);
+      expect(getCounters().postsValidatedTotal).toBe(1);
+      vi.restoreAllMocks();
+    });
   });
 });

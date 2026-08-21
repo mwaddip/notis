@@ -1,3 +1,4 @@
+// NODE_INTERFACE → Admin Listener: a pure reader of metrics.ts and injected net deps.
 import { Router } from 'express';
 import {
   getDagTipHeight,
