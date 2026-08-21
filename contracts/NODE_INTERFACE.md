@@ -2057,7 +2057,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 ### Block creation (mempool-based)
 
 1. Purge expired mempool entries (`purgeExpired(currentHeight)`)
-2. Get pending entries from mempool (`getPendingEntries(limit)`)
+2. Read the pool — transactions through `iteratePendingEntries`, karma class first
+   (MEMPOOL_INTERFACE → Ordering), prune entries through `selectMempoolPrunes`; the
+   read removes nothing
 3.–5. *(Retired with sub-blocks: there is no batch linking and nothing to decode
     separately — every pending entry is a standalone `utxo_tx` or `prune`.
     Numbering kept so later step references stay stable.)*
@@ -2072,16 +2074,21 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
     carries **no coinbase outputs at all** — no output may hold `value === 0`.
     ⚠ **One exception, and only one (P2-B phase 1c): a body its own mutation
-    phase rejects.** See step 15b — the creator produces nothing and evicts
-    the included mempool entries. Mining over a body the node itself will not
-    apply wastes PoW on a block that cannot be accepted anywhere.
-13. Track confirmed mempool rowids for cleanup
+    phase rejects.** See step 15b — the creator evicts every row the body
+    carried and builds again from what remains, until it holds a template or a
+    body carrying no row is rejected (`MINING_INTERFACE → Template and submit`).
+    Mining over a body the node itself will not apply wastes PoW on a block
+    that cannot be accepted anywhere.
+13. Track the rowids the template carries — transaction and prune rows — for cleanup
 14. Build coinbase outputs — the **miner's slice only**. The treasury's accrues to the
     `TreasuryBox` and the released emission comes out of the `EmissionBox`; both
     successors are derived here too, and neither rides in the block
 15. Adjust difficulty at epoch boundaries (credit epochs, not like epochs)
 15b. Compute `stateRoot` — the **post-block** digest (see "Post-block
-    stateRoot" below). Never the creator's current (pre-block) digest.
+    stateRoot" below). Never the creator's current (pre-block) digest. A
+    `body-rejected` speculation evicts the body's rows (step 13) and returns to
+    step 1; a rejected body that carried no row is terminal, and the build ends
+    holding no template (`MINING_INTERFACE → Template and submit`).
 16. Build block template (powNonce=0, empty signature)
 17. **Internal mode:** mine PoW, sign the header hash (`blockHash(header)`), finalize
 18. **External mode:** store template for `GET /mining/template`,
@@ -2722,8 +2729,8 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 |----------|-----------|-------------|
 | `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
 | `insertMempoolPrune(entry, expiresAtHeight)` | `(PruneEntry, number) => number` | Queue prune entry, returns rowid |
-| `drainMempoolPrunes(limit)` | `(number) => PruneEntry[]` | Decode and return prune entries in FIFO order |
-| `removeMempoolPrunes(entryIds)` | `(string[]) => void` | Remove confirmed prune entries by rowid |
+| `selectMempoolPrunes(limit)` | `(number) => Array<{ rowid: number; entry: PruneEntry }>` | Decode and return prune rows in FIFO order, removing nothing |
+| `removeMempoolPrunes(entryIds)` | `(string[]) => void` | Remove prune rows by entry id — indexed on `prune_entry_id` |
 | `getPendingEntries(limit)` | `(number) => PoolEntry[]` | FIFO-ordered pending entries |
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
