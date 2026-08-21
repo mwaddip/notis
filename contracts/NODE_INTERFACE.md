@@ -1916,7 +1916,9 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 ⚠ **The escrow leg reads PRE-BODY state, and returns at or past `releaseAtBlock`, not at it.**
 The settlement of height `h` consumes every unspent `VouchEscrowBox` with `releaseAtBlock <= h` that
 exists in the state the block builds on, ascending box id, and emits each one's value to its `owner`
-as karma (`nonActivity: true`). The body can *create* an escrow — an unvouch of a vouch held longer
+as karma (`nonActivity: true`) — emitting nothing for a value of zero, like every karma leg, so a
+zero-value escrow is consumed without an output (unreachable on a valid chain: the cast pins every
+stake at `VOUCH_KARMA_AMOUNT`). The body can *create* an escrow — an unvouch of a vouch held longer
 than one cooldown yields one already past release — and that escrow is not in pre-body state, so it
 returns at `h + 1`; `<=` is what makes the leg total rather than height-exact. The list is captured
 before the apply loop on both sides, like decay (below), and handed to the derivation — a store read
