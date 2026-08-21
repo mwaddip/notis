@@ -33,7 +33,7 @@ describe('withdraw', () => {
     await mesh?.teardown();
   });
 
-  it('row b-withdraw: vouch, unvouch, escrow, reclaim has no route (H-J1-1)', async () => {
+  it('row b-withdraw: vouch, unvouch, the settlement returns the escrow at releaseAtBlock', async () => {
     mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 3 });
     const miner = mesh.nodes[0]!;
 
@@ -107,7 +107,7 @@ describe('withdraw', () => {
       status.blockHeight,
       status.vouchCooldownBlocks,
     );
-    const unvouchRes = await deleteVouch(miner, target.publicKeyHex, unvouch.json);
+    await deleteVouch(miner, target.publicKeyHex, unvouch.json);
 
     await confirm(
       async () => {
@@ -129,15 +129,60 @@ describe('withdraw', () => {
       expect(BigInt(cd.cooldowns[0]!.value)).toBe(1n);
     }
 
-    // ---- H-J1-1: no route accepts the reclaim ----
-    // Mine past releaseAtBlock to ensure the escrow is unlocked
+    // ---- NODE_INTERFACE → The settlement transaction:
+    // the settlement consumes every escrow at or past releaseAtBlock ----
     await mine(miner, mesh.miningSecret, status.vouchCooldownBlocks + 1);
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // NODE_INTERFACE → Vouch transition rules: VouchEscrowBox → KarmaBox is a
-    // valid engine transition but no HTTP route feeds such a transaction.
+    // ---- NODE_INTERFACE → Vouch transition rules:
+    // the escrow is consumed and the voucher's karma is restored ----
+    for (const node of mesh.nodes) {
+      const cd = (await getVouches(node, `voucher=${voucher.publicKeyHex}&cooldowns=1`)) as {
+        cooldowns: unknown[];
+      };
+      expect(cd.cooldowns).toHaveLength(0);
+    }
+
+    for (const node of mesh.nodes) {
+      const vk = (await getKarma(node, voucher.publicKeyHex))!;
+      expect(BigInt(vk.total)).toBe(voucherKarmaBefore);
+    }
+
+    // ---- NODE_INTERFACE → Vouch transition rules:
+    // the hasActiveVouchEscrow gate clears through the settlement ----
+    const voucherKAfterReturn = (await getKarma(miner, voucher.publicKeyHex))!;
+    const recast = buildVouchTx(
+      voucher,
+      karmaBoxes(voucherKAfterReturn),
+      target,
+      voucherKAfterReturn.height,
+    );
+    await postVouch(miner, recast.json);
+
+    await confirm(
+      async () => {
+        const v = (await getVouches(miner, `voucher=${voucher.publicKeyHex}`)) as {
+          count: number;
+        };
+        return v.count > 0;
+      },
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    for (const node of mesh.nodes) {
+      const v = (await getVouches(node, `voucher=${voucher.publicKeyHex}`)) as {
+        vouches: { voucherId: string }[];
+        count: number;
+      };
+      expect(v.count).toBe(1);
+      expect(v.vouches[0]!.voucherId).toBe(voucher.publicKeyHex);
+    }
+
+    // ---- NODE_INTERFACE → Legal box transitions:
+    // no user transaction spends a VouchEscrowBox ----
     const escrowBoxId = unvouch.outputs[0]!.boxId;
-    const reclaimTx = signAndRender(voucher, {
+    const probeTx = signAndRender(voucher, {
       inputs: [escrowBoxId],
       outputs: [
         {
@@ -155,26 +200,20 @@ describe('withdraw', () => {
       await fetch(`${miner.url}/credits/transfer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tx: reclaimTx.json }),
+        body: JSON.stringify({ tx: probeTx.json }),
       }).then(async (res) => {
         if (!res.ok) {
           const data = (await res.json()) as Record<string, unknown>;
           throw new NodeError(res.status, data);
         }
       });
-      expect.fail('reclaim through /credits/transfer should have been refused');
+      expect.fail('a user transaction spending an escrow should have been refused');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
       expect((err as NodeError).status).toBe(400);
       expect((err as NodeError).body['error']).toBe(
         'credit transfer outputs must all be CreditBoxes',
       );
-    }
-
-    // ---- voucher karma: decreased by 1 (vouch cost), NOT restored ----
-    for (const node of mesh.nodes) {
-      const vk = (await getKarma(node, voucher.publicKeyHex))!;
-      expect(BigInt(vk.total)).toBe(voucherKarmaBefore - 1n);
     }
   });
 });
