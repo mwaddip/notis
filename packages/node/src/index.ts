@@ -12,6 +12,10 @@ import {
   emitServerShuttingDown,
   emitPostReceived,
   emitPostValidated,
+  emitPeerConnected,
+  emitPeerDisconnected,
+  emitPeerPenalised,
+  emitSyncComplete,
 } from './journal.js';
 import { NetNode } from '@dagsocial/net';
 import * as validation from '@dagsocial/validation';
@@ -251,7 +255,23 @@ enterDiscovery(config.bootstrapPeers.length);
 // net publishes no disconnect callback — but it must not depend on looking to
 // know one ever arrived, or a peer that came and went between two template
 // polls would leave the node believing it had never met anybody.
-net.onPeerActive((_peerId: string) => notePeerMet());
+net.onPeerActive((peerId: string, direction: 'inbound' | 'outbound') => {
+  notePeerMet();
+  emitPeerConnected(peerId, direction);
+});
+net.onPeerDisconnected((peerId: string, reason: string) => {
+  emitPeerDisconnected(peerId, reason);
+});
+net.onPeerPenalised((peerId: string, kind: string, detail: string | null) => {
+  emitPeerPenalised(peerId, kind, detail);
+});
+
+let lastSyncCompleteAt = startTime;
+net.onSyncComplete(() => {
+  const now = Date.now();
+  emitSyncComplete(getCurrentHeight(), now - lastSyncCompleteAt);
+  lastSyncCompleteAt = now;
+});
 
 // 5. Start block creator (miner only) and HTTP server
 if (config.nodeRole === 'miner') {

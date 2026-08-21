@@ -1916,6 +1916,30 @@ describe('reorg abort', () => {
     expect(postDigest).not.toBeNull();
     expect(Buffer.from(postDigest!).equals(Buffer.from(preDigest))).toBe(true);
   });
+
+  it('failed mid-reorg apply leaves dagTipHeight at the pre-reorg tip', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    await activateProverOverStore();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    await mineNextBlock(bc);
+    const goodB2 = await makeApplicableBlock({ height: 2 });
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+
+    const metrics = await import('../../src/metrics.js');
+    expect(metrics.getDagTipHeight()).toBe(3);
+
+    const badB3 = await makeApplicableBlock({ height: 3 });
+    const forkResolution = await importForkResolution();
+    expect(() => forkResolution.reorg(1, [goodB2, badB3])).toThrow(
+      'reorg rejected block at height 3',
+    );
+
+    expect(metrics.getDagTipHeight()).toBe(3);
+  });
 });
 
 // ---------------------------------------------------------------------------

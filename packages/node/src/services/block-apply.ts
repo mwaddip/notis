@@ -229,9 +229,12 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
   //
   // Only once the write is committed. Nested inside `reorg`'s transaction this
   // block is not the tip yet, and a template derived there describes a chain a
-  // failed reorg rolls back; `reorg` rebuilds once, after its own commit.
-  if (!getDb().inTransaction) rebuildTemplate();
-  noteTip(block.header.height);
+  // failed reorg rolls back; `reorg` rebuilds once, after its own commit, and
+  // the tip metric moves with it (NODE_INTERFACE → Admin Listener).
+  if (!getDb().inTransaction) {
+    rebuildTemplate();
+    noteTip(block.header.height);
+  }
   return applied;
 }
 

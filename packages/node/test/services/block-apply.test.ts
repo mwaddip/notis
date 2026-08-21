@@ -2608,5 +2608,18 @@ describe('block-apply funnel totality', () => {
     // is keyed rather than a sweep.
     expect(after).toHaveLength(DEPTH);
   });
+
+  it('successful apply pushes dagTipHeight', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const metrics = await import('../../src/metrics.js');
+    expect(metrics.getDagTipHeight()).toBe(0);
+    await mineNextBlock(bc);
+    expect(metrics.getDagTipHeight()).toBe(1);
+    await mineNextBlock(bc);
+    expect(metrics.getDagTipHeight()).toBe(2);
+  });
 });
 
