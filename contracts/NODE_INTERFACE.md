@@ -121,10 +121,38 @@ are hex-encoded.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts` | Post fields (hex) + `karmaLockTx` (JSON-serialized UtxoTransaction) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 on validation failure |
-| `GET` | `/posts/:id` | — | `PostJson` (`id`, `status`, `likeCount`, `likers`, `blockHeight`, `blockIndex`, `blockCreatedAt`) or `StumpJson` (below) | 404 |
+| `POST` | `/posts` | `{ tx: UtxoTransaction }` — client-built, client-signed post tx, `tx.post` set ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx` or `tx.post` is missing or malformed, the payload fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
+| `GET` | `/posts/:id` | — | `PostJson` or `StumpJson` (both below), **plus `confirmedAuthor`** | 404 |
 | `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson` or `StumpJson` | 404 |
 | `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (same shape, live only, no stumps; ordering below) | — |
+
+**PostJson shape.** The post's own fields, hex where they are bytes, plus what the node knows
+about it:
+
+```
+PostJson = {
+  id: postId,                  // 64-hex
+  content: string,
+  author: hex(authorId),       // 32-byte Ed25519 key as hex
+  parentRefs: postId[],
+  protocolVersion: number,
+  type: PostType,              // TYPES_INTERFACE → Layout — Post
+  status: PostStatus,          // 'pending' | 'confirmed' | 'pruned' — Store Interface → Posts DAG
+  blockHeight: number | null,  // the three node-local columns — "PostJson time and order" below
+  blockIndex: number | null,
+  blockCreatedAt: number | null,
+  likeCount: number,
+  likers: hex[]                // liker ids, ascending
+}
+```
+
+**`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
+author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a
+distinct field from `author` on purpose — `author` is the DAG's, content a node may hold, may have
+pruned, or may never have received, while `confirmedAuthor` is derived from block data alone and
+is identical on every node — and it is **the only key a like may earmark karma to** ("Karma
+transition rules"). A stump carries it too: topology survives pruning. `GET /posts/:id/thread`
+and the listing do not carry it.
 
 **PostJson time and order (decided 2026-08-20).** A post has no timestamp
 (TYPES_INTERFACE → Layout — Post). `PostJson` carries the post's `type` with the rest of its
@@ -324,7 +352,7 @@ with the mapped status (400/404/409). Any other thrown error returns a
 server-side with full detail — `err.message` from unexpected errors never
 reaches a response. `MempoolFullError` maps to 503 with a generic
 "mempool full" body. Applies to all tx-submitting routes (posts, likes,
-invites, vouches, credits, faucet, prune).
+invites, vouches, credits, prune).
 
 ### Pruning
 
@@ -383,9 +411,9 @@ against live content).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId` | `{ userId: hex, total, boxes: [{ boxId, value }] }` | — |
-| `GET` | `/credits/:userId` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }] }` | — |
-| `GET` | `/invites/:userId` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }] }` — a bond IS the open invite; there is no second list | — |
+| `GET` | `/karma/:userId` | `{ userId: hex, total, boxes: [{ boxId, value }], lastActivityBlock, lastDecayBlock, height }` | 400 if `userId` is not 64 chars; 404 when the user holds no karma box |
+| `GET` | `/credits/:userId` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }] }` | 400 if `userId` is not 64 chars; 404 when the user holds no credit box |
+| `GET` | `/invites/:userId` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }] }` — a bond IS the open invite; there is no second list | 400 if `userId` is not 64 chars; an inviter holding no bond answers `{ bonds: [] }` |
 
 Multi-box UTXO model — identities can hold multiple karma/credit boxes.
 `total` is the sum across all boxes. **`value` and `total` are decimal strings** in
@@ -393,12 +421,16 @@ the JSON (box values are `bigint`; JSON cannot carry one) — clients parse them
 `BigInt(...)`. Applies to every response carrying a `value`/`total` (`/karma`,
 `/credits`, `/status` totals, mining template, etc.). See "Values are BigInt (P0)".
 
-### Credits (testnet)
+`/karma/:userId` carries three plain numbers beside the boxes: `lastActivityBlock` and
+`lastDecayBlock` are the owner's identity-record clocks (`0` where no record exists), and `height`
+is the chain height at the time of the response — the inputs of the decay a client previews
+("Karma decay (virtual, squared on touch)").
+
+### Credits
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed | `{ status: "pending", txId, expiresAtHeight }` | 400 on invalid tx or signature |
-| `POST` | `/credits/faucet` | `{ to: hex }` | `{ amount, txId }` | 403 if not testnet, 409 if already funded |
 
 **A credit transfer is a transaction, and it settles when it is mined**
 (P2-B phase 3). The client builds and signs it; the node decodes it with
@@ -497,11 +529,17 @@ endpoint semantics in `MINING_INTERFACE.md`.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks }` |
+| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
 > other ledger and `genesis_proof` holds no value on either.
+
+> `vouchCooldownBlocks` is served because a client must **reproduce** it: an unvouch outputs a
+> `VouchEscrowBox` whose `releaseAtBlock` the engine pins as `vouch.createdAtBlock +
+> vouchCooldownBlocks` ("Vouch transition rules"). `inviteProbationBlocks` is the probation window
+> the settlement dates from `IdentityRecord.invitedAtBlock` ("Bond transition rules"). Both are
+> per-network values, plain numbers, served rather than held as client constants.
 
 #### Three karma sets, and none derives from another
 
