@@ -13,7 +13,7 @@ import {
   getPost,
   getBlockCurrent,
   NodeError,
-  type PostResponse,
+  isPost,
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
 
@@ -119,7 +119,7 @@ describe('mesh', () => {
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
-        return p !== null && p.status === 'confirmed';
+        return p !== null && isPost(p) && p.status === 'confirmed';
       },
       miner,
       mesh.miningSecret,
@@ -130,22 +130,29 @@ describe('mesh', () => {
       mesh.nodes.map((n) => getPost(n, threadRes.postId)),
     );
     for (const p of threadPosts) {
-      expect(p!.status).toBe('confirmed');
-      expect(p!.blockHeight).toBe(threadPosts[0]!.blockHeight);
+      expect(p).not.toBeNull();
+      expect(isPost(p!)).toBe(true);
+      if (isPost(p!)) {
+        expect(p.status).toBe('confirmed');
+        const first = threadPosts[0]!;
+        if (isPost(first)) expect(p.blockHeight).toBe(first.blockHeight);
+      }
     }
 
     const replyPosts = await Promise.all(
       mesh.nodes.map((n) => getPost(n, replyRes.postId)),
     );
     for (const p of replyPosts) {
-      expect(p!.status).toBe('confirmed');
+      expect(p).not.toBeNull();
+      if (isPost(p!)) expect(p.status).toBe('confirmed');
     }
 
     // ---- one like: likeCount 1, liker karma −1, author karma unchanged ----
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
     const bobKarmaBefore = BigInt(bobK.total);
     const threadForLike = (await getPost(miner, threadRes.postId))!;
-    const authorHex = threadForLike.confirmedAuthor!;
+    expect(isPost(threadForLike)).toBe(true);
+    const authorHex = isPost(threadForLike) ? threadForLike.confirmedAuthor! : '';
 
     const like = buildLikeTx(
       bob,
@@ -159,7 +166,7 @@ describe('mesh', () => {
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
-        return p !== null && p.likeCount === 1;
+        return p !== null && isPost(p) && p.likeCount === 1;
       },
       miner,
       mesh.miningSecret,
@@ -170,7 +177,8 @@ describe('mesh', () => {
     const aliceKarmaExpected = bondAmount - 5n - 3n;
     for (const node of mesh.nodes) {
       const p = (await getPost(node, threadRes.postId))!;
-      expect(p.likeCount).toBe(1);
+      expect(isPost(p)).toBe(true);
+      if (isPost(p)) expect(p.likeCount).toBe(1);
 
       const bk = (await getKarma(node, bob.publicKeyHex))!;
       expect(BigInt(bk.total)).toBe(bobKarmaBefore - 1n);

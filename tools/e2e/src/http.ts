@@ -107,11 +107,23 @@ export interface PostResponse {
   confirmedAuthor: string | null;
 }
 
+export interface StumpResponse {
+  kind: 'stump';
+  id: string;
+  author: string;
+  replyCount: number;
+  upvoteCount: number;
+}
+
+export function isPost(p: PostResponse | StumpResponse): p is PostResponse {
+  return !('kind' in p);
+}
+
 export async function getPost(
   node: NodeProcess,
   postId: string,
-): Promise<PostResponse | null> {
-  return jsonGet(node, `/posts/${postId}`) as Promise<PostResponse | null>;
+): Promise<PostResponse | StumpResponse | null> {
+  return jsonGet(node, `/posts/${postId}`) as Promise<PostResponse | StumpResponse | null>;
 }
 
 export async function getBlock(
@@ -128,9 +140,56 @@ export async function getBlockCurrent(
   return data as { height: number; hash: string | null };
 }
 
+export async function postVouch(
+  node: NodeProcess,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; expiresAtHeight: number }> {
+  const data = await jsonPost(node, '/vouches', { tx: txJson });
+  return data as { status: string; txId: string; expiresAtHeight: number };
+}
+
+export async function deleteVouch(
+  node: NodeProcess,
+  targetId: string,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; karmaReturnsAtBlock: number }> {
+  const res = await fetch(`${node.url}/vouches/${targetId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tx: txJson }),
+  });
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) throw new NodeError(res.status, data);
+  return data as { status: string; txId: string; karmaReturnsAtBlock: number };
+}
+
+export async function getVouches(
+  node: NodeProcess,
+  query: string,
+): Promise<Record<string, unknown>> {
+  const data = await jsonGet(node, `/vouches?${query}`);
+  return data!;
+}
+
+export async function postPrune(
+  node: NodeProcess,
+  postId: string,
+  body: object,
+): Promise<Record<string, unknown>> {
+  return jsonPost(node, `/posts/${postId}/prune`, body);
+}
+
+export async function postCreditTransfer(
+  node: NodeProcess,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string }> {
+  const data = await jsonPost(node, '/credits/transfer', { tx: txJson });
+  return data as { status: string; txId: string };
+}
+
 export async function getStatus(
   node: NodeProcess,
-): Promise<Record<string, unknown>> {
+): Promise<{ vouchCooldownBlocks: number; blockHeight: number }> {
   const data = await jsonGet(node, '/status');
-  return data!;
+  return data as { vouchCooldownBlocks: number; blockHeight: number };
 }
