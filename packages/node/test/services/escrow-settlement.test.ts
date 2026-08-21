@@ -385,18 +385,23 @@ describe('escrow settlement leg', () => {
   });
 
   // §4.7 (f): after the return, hasActiveVouchEscrow is false and a recast
-  // by the voucher is accepted.
+  // by the voucher is accepted. The cast needs VOUCH_MIN_BALANCE (11n), so
+  // the fixture seeds enough karma that the returned escrow brings the total
+  // above the threshold.
   it('(f) after the escrow returns, hasActiveVouchEscrow clears and a recast is accepted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
+    const { VOUCH_MIN_BALANCE } = await import('@dagsocial/types');
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
     const target2 = makeTestIdentity();
 
-    const karma = makeKarmaBox(VOUCH_KARMA_AMOUNT * 2n, voucher.userId, 0);
+    // Seed karma above VOUCH_MIN_BALANCE so the voucher can cast twice.
+    const seedKarma = VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT;
+    const karma = makeKarmaBox(seedKarma, voucher.userId, 0);
     utxo.insertBox(karma);
 
     // First vouch and unvouch.
@@ -418,11 +423,44 @@ describe('escrow settlement leg', () => {
     }
     expect(utxo.hasActiveVouchEscrow(voucher.userId)).toBe(false);
 
-    // A new vouch cast by the same voucher is now accepted — the gate cleared.
-    const newKarma = utxo.getKarmaBoxes(voucher.userId);
-    expect(newKarma.length).toBeGreaterThanOrEqual(1);
-    const totalKarma = newKarma.reduce((sum, b) => sum + b.value, 0n);
-    expect(totalKarma).toBeGreaterThanOrEqual(VOUCH_KARMA_AMOUNT);
+    // Build the recast: karma → karma-change + VouchBox targeting target2.
+    const karmaBoxes = utxo.getKarmaBoxes(voucher.userId);
+    const karmaForCast = karmaBoxes.find((b) => b.value >= VOUCH_MIN_BALANCE);
+    expect(karmaForCast).toBeDefined();
+    const castHeight = config.vouchCooldownBlocks + 1;
+    const castTx: UtxoTransaction = {
+      inputs: [karmaForCast!.id!],
+      outputs: [
+        {
+          boxType: 'karma' as const,
+          value: karmaForCast!.value - VOUCH_KARMA_AMOUNT,
+          createdAtBlock: castHeight,
+          owner: voucher.userId,
+        },
+        {
+          boxType: 'vouch' as const,
+          value: VOUCH_KARMA_AMOUNT,
+          createdAtBlock: castHeight,
+          voucherId: voucher.userId,
+          targetId: target2.userId,
+        } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(castTx, voucher.privateKey, hex(voucher.userId));
+    mempool.insertUtxoTx(castTx, 100000);
+
+    // Mine the recast — if it applies, the cast was accepted.
+    const recastBlock = await mineNextBlock(bc);
+    expect(recastBlock).not.toBeNull();
+
+    // The new VouchBox exists.
+    const boxes = utxo.getUnspentBoxes();
+    const newVouch = boxes.find(
+      (b) => b.boxType === 'vouch' && Buffer.from((b as VouchBox).targetId).equals(Buffer.from(target2.userId)),
+    );
+    expect(newVouch).toBeDefined();
   });
 
   // §4.7 (g): a user transaction spending an escrow is refused.

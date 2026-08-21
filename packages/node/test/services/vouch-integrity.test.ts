@@ -304,9 +304,9 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   // -------------------------------------------------------------------------
   // V3 — an unreleased escrow blocks re-vouching. `hasActiveVouchEscrow`
-  // queries for unspent `vouch_escrow` boxes owned by the voucher; the escrow
-  // persists until owner-reclaimed, so the vouch cycle is capped at one per
-  // cooldown window.
+  // queries for unspent `vouch_escrow` boxes owned by the voucher; the
+  // settlement consumes it at the first block at or past `releaseAtBlock`,
+  // so the vouch cycle is capped at one per cooldown window.
   // -------------------------------------------------------------------------
 
   it('V3: rejects a cast while the voucher holds an unreleased escrow', () => {

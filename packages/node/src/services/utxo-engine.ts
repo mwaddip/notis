@@ -1440,10 +1440,9 @@ function checkValueConservation(
  * When a box of this type may be spent — the third table keyed on `boxType`,
  * beside `AUTHORIZATION` and `OUTPUT_SHAPE`.
  *
- * Its members read DIFFERENT fields — `credit.lockedUntilBlock` and
- * `vouch_escrow.releaseAtBlock` — so a check keyed on one field name silently
- * admits the other. The property is "this type has an unlock height", not
- * "this field is present".
+ * One entry carries a clock (`credit.lockedUntilBlock`); every other type is
+ * `ALWAYS_SPENDABLE` — the timed boxes are `BLOCK_APPLICATION_ONLY`, so their
+ * timing is the settlement's (NODE_INTERFACE → Spend timing).
  *
  * Typed over every `boxType`, so a new type fails to compile until its timing
  * is stated — the obligation `AUTHORIZATION` carries for the signer and
@@ -1668,8 +1667,7 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
  * 1. No duplicate input IDs
  * 2. All inputs exist and are unspent
  * 3. Spend timing — no input is spent before the unlock height its type
- *    states. The two members read different fields
- *    (`credit.lockedUntilBlock`, `vouch_escrow.releaseAtBlock`).
+ *    states (`credit.lockedUntilBlock`; one entry with a clock).
  * 4. All inputs have the same boxType
  * 5. Output shape — every output is a non-null object matching the closed
  *    per-boxType schema: exact key set, and every field's runtime type
