@@ -3623,16 +3623,22 @@ A second Express server on `127.0.0.1:ADMIN_PORT` (default 3001). Never
 binds to a non-loopback address — a non-loopback bind logs a WARN at
 startup.
 
+> ⚠ **AHEAD OF CODE** — the field set and semantics below are the rule on the `health-metrics` branch;
+> the node commits that implement them (`metrics.ts`, the journal-wrapper counts, the tip push, the PoW
+> wrapper, the HTTP middleware) and the `@dagsocial/net` passthrough they read follow on the same branch.
+> The tag comes off when they land.
+
+**Every value is in-memory; `/health` and `/stats` never query the database.** The admin router is a
+reader of two things: the node's **metrics** (`node/src/metrics.ts` — one module, written at four seams,
+below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INTERFACE → API).
+
 **Endpoints:**
 
-`GET /health` — in-memory metrics only. Never queries the database.
-Always returns 200. Response shape:
+`GET /health` — always 200. Response shape:
 ```json
 {
   "status": "ok",
   "dag_tip_height": 12345,
-  "validated_height": 12344,
-  "indexed_height": 12345,
   "peers_connected": 8,
   "last_post_received_ms_ago": 234,
   "syncing": false,
@@ -3642,25 +3648,47 @@ Always returns 200. Response shape:
 }
 ```
 
-`GET /stats` — cumulative counters with `since` (process start):
+| Field | Is | Written |
+|---|---|---|
+| `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`); `0` before the first |
+| `peers_connected` | `net.getConnectedPeers().length` — Active peers | read at request time |
+| `last_post_received_ms_ago` | milliseconds since the last `post_received` journal event, any source; **`null`** until the first | the `emitPostReceived` wrapper stamps the time |
+| `syncing` | `net.syncPhase() === 'syncing'` | read at request time |
+| `uptime_seconds` | seconds since process start | — |
+| `apiVersion`, `journalEventsVersion` | `"1.0"` | static |
+
+`GET /stats` — cumulative counters since process start (`since`, epoch seconds):
 ```json
 {
   "since": 1751400000,
   "statsVersion": "1.0",
   "counters": {
-    "posts_created_total": 5432,
+    "posts_received_total": 5432,
     "posts_validated_total": 5430,
     "pow_verifications_total": 6100,
     "pow_verification_failures_total": 2,
-    "peer_messages_in_total": 89000,
-    "peer_messages_out_total": 92000,
-    "peer_bytes_in_total": 125000000,
-    "peer_bytes_out_total": 131000000,
-    "http_requests_total": 12000,
-    "unknown_message_types_total": 0
+    "http_requests_total": 12000
   }
 }
 ```
+
+| Counter | Counts |
+|---|---|
+| `posts_received_total` | `post_received` journal events, any source (JOURNAL_EVENTS → post_received) |
+| `posts_validated_total` | `post_validated` journal events |
+| `pow_verifications_total` | every `verifyOrderingBlockPoW` the node runs on **received** work — net's relay check (through the validators object node supplies to `NetNode`) and block application's — never the miner's check of its own template |
+| `pow_verification_failures_total` | those of the above that returned `false` |
+| `http_requests_total` | every request the **public** app receives (an express middleware ahead of the routes); the admin app's own requests are not counted |
+
+**The seam.** Counters count journal events where an event exists — the `journal.ts` wrapper is the one
+place an event is emitted (JOURNAL_EVENTS), so it is the one place its counter moves; the tip, the PoW
+outcomes and the HTTP requests have no event and are noted at their single sites. Counters are
+process-lifetime, never persisted: a restart resets them and `since`.
+
+**Not served, by ruling (user, 2026-08-22):** `validated_height` and `indexed_height` — the node owns one
+height, the applied tip — and `peer_messages_in_total`, `peer_messages_out_total`, `peer_bytes_in_total`,
+`peer_bytes_out_total`, `unknown_message_types_total` — `@dagsocial/net` keeps no traffic accounting, and
+none is added.
 
 ---
 
