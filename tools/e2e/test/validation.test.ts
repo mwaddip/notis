@@ -95,17 +95,27 @@ describe('validation', () => {
     await mine(node1!, mesh.miningSecret, 5);
     await waitHeight(mesh.nodes, (await getBlockCurrent(node1!)).height);
 
-    let confirmedCount = 0;
+    const postStatuses: { id: string; n1: string | null; n2: string | null }[] = [];
     for (const postId of submitted) {
       const p1 = await getPost(node1!, postId);
       const p2 = await getPost(node2!, postId);
-      if (p1 !== null && isPost(p1) && p1.status === 'confirmed') confirmedCount++;
-      if (p2 !== null && isPost(p2) && p2.status === 'confirmed') {
-        expect(isPost(p1!)).toBe(true);
-        if (isPost(p1!)) expect(p1.status).toBe('confirmed');
-      }
+      const s1 = p1 !== null && isPost(p1) ? p1.status : null;
+      const s2 = p2 !== null && isPost(p2) ? p2.status : null;
+      postStatuses.push({ id: postId, n1: s1, n2: s2 });
     }
-    expect(confirmedCount).toBeLessThanOrEqual(1);
+
+    const confirmed = postStatuses.filter((s) => s.n1 === 'confirmed');
+    expect(confirmed.length).toBe(1);
+
+    for (const s of confirmed) {
+      expect(s.n2).toBe('confirmed');
+    }
+
+    const losers = postStatuses.filter((s) => s.n1 !== 'confirmed');
+    for (const s of losers) {
+      expect(s.n1).not.toBe('confirmed');
+      expect(s.n2).not.toBe('confirmed');
+    }
 
     // ---- tips identical ----
     const finalTips = await Promise.all(mesh.nodes.map(getBlockCurrent));
