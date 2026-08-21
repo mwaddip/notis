@@ -70,7 +70,7 @@ import {
   iteratePendingEntries,
   purgeExpired,
   removeEntry,
-  drainMempoolPrunes,
+  selectMempoolPrunes,
   entryByteCost,
 } from '../store/mempool.js';
 import {
@@ -350,303 +350,330 @@ export function createOrderingBlock(): OrderingBlock | null {
   const currentHeight = getCurrentHeight();
   const newHeight = currentHeight + 1;
 
-  // 1. Purge expired mempool entries
-  purgeExpired(currentHeight);
+  // A body-rejected build repeats until it holds a template or a body
+  // carrying no pool row is rejected. Every repetition strictly shrinks the
+  // pool, which is what bounds the loop (MINING_INTERFACE → Template and
+  // submit).
+  for (;;) {
+    // 1. Purge expired mempool entries
+    purgeExpired(currentHeight);
 
-  // 2. The prune entries, which the drain reads off the pool alone. The
-  //    settlement cannot be built here: it consumes the fee boxes the body
-  //    creates and pays a coinbase scaled by the actors the body carries, so it
-  //    depends on what the fill selects — and it is itself part of the body the
-  //    fill is spending. ⛔ **It has no bounded worst case to reserve**
-  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here), so
-  //    instead each entry's `entryByteCost` carries its own marginal cost to it
-  //    and the sizer below has the last word.
-  const MAX_PRUNES_PER_BLOCK = 32;
-  const pruneEntries = drainMempoolPrunes(MAX_PRUNES_PER_BLOCK);
+    // 2. The prune entries, read off the pool without removing them — a prune
+    //    row leaves the pool the way a transaction row does: by `removeEntry`
+    //    when the body finalizes or is rejected, or by `removeMempoolPrunes`
+    //    when an applied block confirms it (MEMPOOL_INTERFACE →
+    //    selectMempoolPrunes). The prune rowids are pushed into `includedRowids`
+    //    so that `confirmedRowids` tracks every row the template carries.
+    //
+    //    The settlement cannot be built here: it consumes the fee boxes the body
+    //    creates and pays a coinbase scaled by the actors the body carries, so it
+    //    depends on what the fill selects — and it is itself part of the body the
+    //    fill is spending. ⛔ **It has no bounded worst case to reserve**
+    //    (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
+    //    count), so instead each entry's `entryByteCost` carries its own marginal
+    //    cost to it and the sizer below has the last word.
+    const MAX_PRUNES_PER_BLOCK = 32;
+    const pruneSelected = selectMempoolPrunes(MAX_PRUNES_PER_BLOCK);
+    const pruneEntries = pruneSelected.map((s) => s.entry);
+    const pruneRowids = pruneSelected.map((s) => s.rowid);
 
-  // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
-  //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
-  //    the clamp stands here as well as at load: `loadConfig` guards the
-  //    environment, and this guards every `Config` assembled without it
-  //    (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Nothing is
-  //    enforced here beyond the fill — an oversized block is refused by
-  //    `verifyOrderingBlockStructure`, on this node and on every peer.
-  const budget = Math.min(config.blockBodyBudgetBytes, MAX_BLOCK_BODY_BYTES);
+    // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
+    //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
+    //    the clamp stands here as well as at load: `loadConfig` guards the
+    //    environment, and this guards every `Config` assembled without it
+    //    (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Nothing is
+    //    enforced here beyond the fill — an oversized block is refused by
+    //    `verifyOrderingBlockStructure`, on this node and on every peer.
+    const budget = Math.min(config.blockBodyBudgetBytes, MAX_BLOCK_BODY_BYTES);
 
-  // 4. One entry type carries user work: transactions. A post is one of them
-  //    (NODE_INTERFACE → Post transactions), so there is no second list to
-  //    resolve, no batch to regroup, and no entry whose content might not have
-  //    arrived — the payload is inside the transaction.
-  //
-  //    Bodies ride in `utxoTxs` in the same order as `utxoTxIds` — the
-  //    alignment `verifyOrderingBlockStructure` checks, and the reason a
-  //    syncing node holds the whole post rather than a claim about it (audit
-  //    H-3). The ids are derived from the bytes that ride beside them rather
-  //    than read off the pool row, because that derivation is the property
-  //    block application re-checks and rejects on.
-  //
-  //    ⚠ **These two hold the USER transactions, and the tree holds the body.**
-  //    The settlement is appended to the tree by `rebuildBody` rather than
-  //    pushed here, so the fill and the trim both operate on the list they
-  //    select from and never on the tail they do not own.
-  const userTxIds: string[] = [];
-  const userTxCbors: Uint8Array[] = [];
-  const includedRowids: number[] = [];
-  const utxoTxTree: UtxoTxTree = {
-    utxoTxIds: [],
-    utxoTxs: [],
-    pruneEntries,
-  };
+    // 4. One entry type carries user work: transactions. A post is one of them
+    //    (NODE_INTERFACE → Post transactions), so there is no second list to
+    //    resolve, no batch to regroup, and no entry whose content might not have
+    //    arrived — the payload is inside the transaction.
+    //
+    //    Bodies ride in `utxoTxs` in the same order as `utxoTxIds` — the
+    //    alignment `verifyOrderingBlockStructure` checks, and the reason a
+    //    syncing node holds the whole post rather than a claim about it (audit
+    //    H-3). The ids are derived from the bytes that ride beside them rather
+    //    than read off the pool row, because that derivation is the property
+    //    block application re-checks and rejects on.
+    //
+    //    ⚠ **These two hold the USER transactions, and the tree holds the body.**
+    //    The settlement is appended to the tree by `rebuildBody` rather than
+    //    pushed here, so the fill and the trim both operate on the list they
+    //    select from and never on the tail they do not own.
+    const userTxIds: string[] = [];
+    const userTxCbors: Uint8Array[] = [];
+    const includedRowids: number[] = [];
+    const utxoTxTree: UtxoTxTree = {
+      utxoTxIds: [],
+      utxoTxs: [],
+      pruneEntries,
+    };
 
-  /**
-   * Re-derive the settlement from the user transactions currently selected and
-   * write the whole body — the users' entries then the settlement, last.
-   */
-  const rebuildBody = (): { valid: boolean; error?: string } => {
-    const decoded = userTxCbors.map((cbor) => {
-      const tx = decodeTx(cbor);
-      const txId = computeTxId(tx);
-      return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
-    });
-    const postBody = collectPostBodyKarma(decoded);
-    const built = buildSettlement(
-      settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig())),
-      newHeight,
-      computeBlockReward(newHeight),
-      nodeConfig.creditMinerRewardDelay,
-      predictSettlementBody(userTxCbors, validatorId, pruneEntries),
-      currentMinerPubkey ?? validatorId,
-    );
-    if ('error' in built) return { valid: false, error: built.error };
-    utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
-    utxoTxTree.utxoTxs = [...userTxCbors, encodeTx(built.tx)];
-    return { valid: true };
-  };
-
-  // 5. Spend what the mandatory sections left. Karma-side entries are offered
-  //    the budget first, then credit entries in descending fee rate
-  //    (MEMPOOL_INTERFACE → Ordering). Within each class the first transaction
-  //    that does not fit ends that class's fill: reaching past it for a smaller
-  //    one behind it is a priority rule the pool's order already settled.
-  //
-  //    ⚠ **This order is a node's own assembly preference and no validator
-  //    enforces it.** It is the reference implementation of the coinbase's
-  //    inclusion bonus, not a rule: a miner who rewrites this loop to fill
-  //    credits first forfeits the quarter of the block's income that scales
-  //    with karma-side actors, which is what makes including them rational
-  //    rather than altruistic. A *consensus* rule removing that revenue would
-  //    make inclusion free; an incentive paying for it makes inclusion
-  //    profitable, and only the second survives a miner who re-implements this.
-  //
-  //    ⛔ **The pool's stored `tx_fee` orders this loop and never feeds the
-  //    coinbase.** `predictSettlementBody` below resolves every input itself,
-  //    because the applier computes the block's fees from its own resolution of
-  //    the body — a stored fee that has gone stale, or the zero an unpriceable
-  //    entry carries, would make this node emit a coinbase its own applier
-  //    rejects. Ordering by a stale number costs nothing; summing one costs the
-  //    block.
-  //
-  //    ⛔ **An invitee may be named ONCE per block.** A second bond for the same
-  //    key makes the whole body inapplicable (`block-apply` §11), so a fill that
-  //    selected both would produce nothing at all. Skipping the second is an
-  //    assembly preference like the karma-first ordering, not a consensus rule.
-  //
-  //    ⛔ **The accumulator is SEEDED with the settlement an empty body
-  //    produces.** Its baseline — the emission and treasury successors and the
-  //    coinbase — is there whatever the fill selects, and
-  //    `entryByteCost` carries only each entry's MARGINAL growth on top
-  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here). Left
-  //    out, the accumulator under-counts by the whole settlement and the trim
-  //    loop stops running at most once.
-  //
-  //    ⚠ **A chain that cannot back even the empty settlement produces
-  //    nothing**, and says so here rather than after a wasted fill.
-  const seeded = rebuildBody();
-  if (!seeded.valid) {
-    console.warn(`Not producing block at height ${newHeight}: ${seeded.error}`);
-    currentTemplate = null;
-    confirmedRowids = new Set();
-    return null;
-  }
-  let spent = utxoTxTreeByteLength(utxoTxTree);
-  const invitedThisBlock = new Set<string>();
-  const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
-    for (const entry of iteratePendingEntries({ klass })) {
-      if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
-      const tx = decodeTx(entry.utxoTxCbor);
-      const txId = computeTxId(tx);
-      const invitee = bondInviteeOf(
-        tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
+    /**
+     * Re-derive the settlement from the user transactions currently selected and
+     * write the whole body — the users' entries then the settlement, last.
+     */
+    const rebuildBody = (): { valid: boolean; error?: string } => {
+      const decoded = userTxCbors.map((cbor) => {
+        const tx = decodeTx(cbor);
+        const txId = computeTxId(tx);
+        return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
+      });
+      const postBody = collectPostBodyKarma(decoded);
+      const built = buildSettlement(
+        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig())),
+        newHeight,
+        computeBlockReward(newHeight),
+        nodeConfig.creditMinerRewardDelay,
+        predictSettlementBody(userTxCbors, validatorId, pruneEntries),
+        currentMinerPubkey ?? validatorId,
       );
-      if (invitee !== null) {
-        const inviteeHex = Buffer.from(invitee).toString('hex');
-        if (invitedThisBlock.has(inviteeHex)) continue;
-        invitedThisBlock.add(inviteeHex);
-      }
-      const cost = entryByteCost(entry.utxoTxCbor);
-      if (spent + cost > budget) return;
-      spent += cost;
-      userTxIds.push(txId);
-      userTxCbors.push(entry.utxoTxCbor);
-      includedRowids.push(entry.rowid);
-    }
-  };
-  offerBudgetTo('karma');
-  offerBudgetTo('credit');
+      if ('error' in built) return { valid: false, error: built.error };
+      utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
+      utxoTxTree.utxoTxs = [...userTxCbors, encodeTx(built.tx)];
+      return { valid: true };
+    };
 
-  // 6. The settlement, from the transactions the fill actually selected, and
-  //    appended as the body's LAST entry — which is the whole of how every node
-  //    identifies it (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
-  //
-  //    ⛔ **Only the producer can build it**, since only they know the block's
-  //    contents — the position the coinbase already occupied. A chain that
-  //    cannot back it (no emission box at a height that releases, a pool short
-  //    of the grants the body owes) yields no block: mining a body this node's
-  //    own applier refuses spends PoW on a block no peer accepts.
-  const settled = rebuildBody();
-  if (!settled.valid) {
-    console.warn(`Not producing block at height ${newHeight}: ${settled.error}`);
-    currentTemplate = null;
-    confirmedRowids = new Set();
-    return null;
-  }
-
-  // 7. The sizer has the last word. `spent` is exact per entry — its own
-  //    encoding plus its marginal cost to the settlement — and blind to the two
-  //    array count prefixes, which widen with the entry COUNT rather than with
-  //    any one entry, so the assembled body can measure a few bytes above what
-  //    the accumulator tracked. What `utxoTxTreeByteLength` returns over the
-  //    finished tree is the number `verifyOrderingBlockStructure` measures, and
-  //    a body above the budget is one every peer refuses.
-  //
-  //    ⛔ **The settlement is REBUILT on each iteration**, not measured once
-  //    (MEMPOOL_INTERFACE → the settlement transaction replaces `coinbaseOutputs` here).
-  //    Popping is still monotone: removing a transaction removes its fee, its
-  //    actor and its bond, so the income can only fall, the settlement's input
-  //    and output counts can only fall, and the body shrinks. The split moves
-  //    value between the miner and the treasury without changing their total,
-  //    so it cannot widen the encoding on its own.
-  //
-  //    ⚠ **The pop takes a USER entry**, never the settlement: a body with no
-  //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
-  while (userTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
-    userTxIds.pop();
-    userTxCbors.pop();
-    includedRowids.pop();
-    const retrimmed = rebuildBody();
-    if (!retrimmed.valid) {
-      console.warn(`Not producing block at height ${newHeight}: ${retrimmed.error}`);
+    // 5. Spend what the mandatory sections left. Karma-side entries are offered
+    //    the budget first, then credit entries in descending fee rate
+    //    (MEMPOOL_INTERFACE → Ordering). Within each class the first transaction
+    //    that does not fit ends that class's fill: reaching past it for a smaller
+    //    one behind it is a priority rule the pool's order already settled.
+    //
+    //    ⚠ **This order is a node's own assembly preference and no validator
+    //    enforces it.** It is the reference implementation of the coinbase's
+    //    inclusion bonus, not a rule: a miner who rewrites this loop to fill
+    //    credits first forfeits the quarter of the block's income that scales
+    //    with karma-side actors, which is what makes including them rational
+    //    rather than altruistic. A *consensus* rule removing that revenue would
+    //    make inclusion free; an incentive paying for it makes inclusion
+    //    profitable, and only the second survives a miner who re-implements this.
+    //
+    //    ⛔ **The pool's stored `tx_fee` orders this loop and never feeds the
+    //    coinbase.** `predictSettlementBody` below resolves every input itself,
+    //    because the applier computes the block's fees from its own resolution of
+    //    the body — a stored fee that has gone stale, or the zero an unpriceable
+    //    entry carries, would make this node emit a coinbase its own applier
+    //    rejects. Ordering by a stale number costs nothing; summing one costs the
+    //    block.
+    //
+    //    ⛔ **An invitee may be named ONCE per block.** A second bond for the same
+    //    key makes the whole body inapplicable (`block-apply` §11), so a fill that
+    //    selected both would produce nothing at all. Skipping the second is an
+    //    assembly preference like the karma-first ordering, not a consensus rule.
+    //
+    //    ⛔ **The accumulator is SEEDED with the settlement an empty body
+    //    produces.** Its baseline — the emission and treasury successors and the
+    //    coinbase — is there whatever the fill selects, and
+    //    `entryByteCost` carries only each entry's MARGINAL growth on top
+    //    (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
+    //    count). Left out, the accumulator under-counts by the whole settlement
+    //    and the trim loop stops running at most once.
+    //
+    //    ⚠ **A chain that cannot back even the empty settlement produces
+    //    nothing**, and says so here rather than after a wasted fill.
+    const seeded = rebuildBody();
+    if (!seeded.valid) {
+      console.warn(`Not producing block at height ${newHeight}: ${seeded.error}`);
       currentTemplate = null;
       confirmedRowids = new Set();
       return null;
     }
-  }
+    let spent = utxoTxTreeByteLength(utxoTxTree);
+    const invitedThisBlock = new Set<string>();
+    const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
+      for (const entry of iteratePendingEntries({ klass })) {
+        if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
+        const tx = decodeTx(entry.utxoTxCbor);
+        const txId = computeTxId(tx);
+        const invitee = bondInviteeOf(
+          tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
+        );
+        if (invitee !== null) {
+          const inviteeHex = Buffer.from(invitee).toString('hex');
+          if (invitedThisBlock.has(inviteeHex)) continue;
+          invitedThisBlock.add(inviteeHex);
+        }
+        const cost = entryByteCost(entry.utxoTxCbor);
+        if (spent + cost > budget) return;
+        spent += cost;
+        userTxIds.push(txId);
+        userTxCbors.push(entry.utxoTxCbor);
+        includedRowids.push(entry.rowid);
+      }
+    };
+    offerBudgetTo('karma');
+    offerBudgetTo('credit');
 
-  // 11. Always produce a block — a block with no user work still pays its
-  //     miner the scheduled emission. Above the terminus it pays nothing, and
-  //     the settlement there carries no credit output at all; the block is
-  //     produced either way, because the chain advancing is not conditional on
-  //     income.
-
-  // 12. Track confirmed rowids for finalizeBlock cleanup
-  confirmedRowids = new Set<number>(includedRowids);
-
-  // 14. Difficulty — fixed by the height schedule, and enforced at apply
-  const powTargetBits = expectedTarget(newHeight);
-
-  // 16. Previous block hash. `prevBlock` is our own stored tip: `currentHeight`
-  // is `MAX(height)` over the same table, so on a non-empty chain the row is
-  // there by construction, and its header passed the apply gate on the way in.
-  // Either failure means the store is no longer what this node wrote.
-  //
-  // Both go to the boundary rather than declining to produce. Declining is the
-  // producer's mirror of blaming an arriving block for our own store — and the
-  // tip moving is the only rebuild trigger, so a node that declines here holds
-  // no template, produces nothing, and is handed no second attempt: a node that
-  // never produces while staying up is indistinguishable from an idle miner —
-  // the same silence, from the other end of the same fault.
-  const prevBlock = currentHeight > 0 ? getOrderingBlock(currentHeight) : null;
-  if (currentHeight > 0 && !prevBlock) {
-    failStopIfCorruptChain(new MissingStoredBlockError('createOrderingBlock', currentHeight));
-  }
-  const prevBlockHash = prevBlock
-    ? blockHash(prevBlock.header)
-    : GENESIS_PREV_BLOCK_HASH;
-  if (prevBlockHash === null) {
-    failStopIfCorruptChain(
-      new UnhashableStoredHeaderError('createOrderingBlock', currentHeight),
-    );
-  }
-
-  // 18. Compute the Merkle root
-  const utxoTxRoot = computeUtxoTxRoot(utxoTxTree);
-
-  // 19. Build header template (powNonce=0). `stateRoot` is a placeholder here
-  // and is replaced in 19b — the speculative run needs a whole candidate block,
-  // and the mutation phase reads neither the nonce nor the signature.
-  const headerTemplate: BlockHeader = {
-    protocolVersion: PROTOCOL_VERSION,
-    height: newHeight,
-    prevBlockHash,
-    utxoTxRoot,
-    stateRoot: EMPTY_STATE_ROOT,
-    validatorId,
-    powNonce: 0,
-    powTargetBits,
-    createdAt: Date.now(),
-  };
-  const candidate: OrderingBlock = {
-    header: headerTemplate,
-    utxoTxTree,
-    validatorSignature: new Uint8Array(64),
-  };
-
-  // 19b. Compute the POST-block state root (H-6) — the digest this block's own
-  // body produces, obtained by running that body through the apply path's
-  // mutation phase and rolling everything back. Never the current (pre-block)
-  // digest: apply compares against the post-mutation digest, so a pre-block
-  // root can never verify. PoW covers the header, so this must be known before
-  // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
-  // since production initializes one at startup, and a peer running with
-  // VERIFY_STATE_ROOT on rejects such a block, which is correct.
-  const speculation = computePostBlockStateRoot(candidate, newHeight);
-
-  // 19c. A body the mutation phase rejected must not be mined or templated:
-  // the PoW would be spent on a block this node's own apply — and
-  // every peer's — rejects. Reachable with unmutated code: a pooled tx whose
-  // validity reads third-party state (a bond settlement's threshold leg) goes
-  // stale in the pool while its inputs stay live. Evict what the body included
-  // — the same cleanup a rejected finalize runs — or every later rebuild
-  // reassembles this exact body: purgeExpired cannot break that loop, because
-  // it keys on a chain height that stops advancing.
-  if (speculation.kind === 'body-rejected') {
-    // States the verdict, not the cause: `body-rejected` also carries the
-    // speculation's unclaimed throws, which that arm logs itself. Naming the
-    // mutation phase here would assert a diagnosis this frame does not have.
-    console.warn(
-      `Not producing block at height ${newHeight}: speculation returned ` +
-      `body-rejected; evicting ${confirmedRowids.size} mempool entries`,
-    );
-    for (const rowid of confirmedRowids) {
-      removeEntry(rowid);
+    // 6. The settlement, from the transactions the fill actually selected, and
+    //    appended as the body's LAST entry — which is the whole of how every node
+    //    identifies it (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
+    //
+    //    ⛔ **Only the producer can build it**, since only they know the block's
+    //    contents — the position the coinbase already occupied. A chain that
+    //    cannot back it (no emission box at a height that releases, a pool short
+    //    of the grants the body owes) yields no block: mining a body this node's
+    //    own applier refuses spends PoW on a block no peer accepts.
+    const settled = rebuildBody();
+    if (!settled.valid) {
+      console.warn(`Not producing block at height ${newHeight}: ${settled.error}`);
+      currentTemplate = null;
+      confirmedRowids = new Set();
+      return null;
     }
-    currentTemplate = null;
-    confirmedRowids = new Set();
+
+    // 7. The sizer has the last word. `spent` is exact per entry — its own
+    //    encoding plus its marginal cost to the settlement — and blind to the two
+    //    array count prefixes, which widen with the entry COUNT rather than with
+    //    any one entry, so the assembled body can measure a few bytes above what
+    //    the accumulator tracked. What `utxoTxTreeByteLength` returns over the
+    //    finished tree is the number `verifyOrderingBlockStructure` measures, and
+    //    a body above the budget is one every peer refuses.
+    //
+    //    ⛔ **The settlement is REBUILT on each iteration**, not measured once
+    //    (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
+    //    count). Popping is still monotone: removing a transaction removes its
+    //    fee, its actor and its bond, so the income can only fall, the
+    //    settlement's input and output counts can only fall, and the body shrinks.
+    //    The split moves value between the miner and the treasury without changing
+    //    their total, so it cannot widen the encoding on its own.
+    //
+    //    ⚠ **The pop takes a USER entry**, never the settlement: a body with no
+    //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
+    while (userTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
+      userTxIds.pop();
+      userTxCbors.pop();
+      includedRowids.pop();
+      const retrimmed = rebuildBody();
+      if (!retrimmed.valid) {
+        console.warn(`Not producing block at height ${newHeight}: ${retrimmed.error}`);
+        currentTemplate = null;
+        confirmedRowids = new Set();
+        return null;
+      }
+    }
+
+    // 11. Always produce a block — a block with no user work still pays its
+    //     miner the scheduled emission. Above the terminus it pays nothing, and
+    //     the settlement there carries no credit output at all; the block is
+    //     produced either way, because the chain advancing is not conditional on
+    //     income.
+
+    // 12. Track confirmed rowids for finalizeBlock cleanup — every row the
+    //     template carries, transaction and prune rows alike (MEMPOOL_INTERFACE →
+    //     Block Creator Integration step 4).
+    confirmedRowids = new Set<number>([...pruneRowids, ...includedRowids]);
+
+    // 14. Difficulty — fixed by the height schedule, and enforced at apply
+    const powTargetBits = expectedTarget(newHeight);
+
+    // 16. Previous block hash. `prevBlock` is our own stored tip: `currentHeight`
+    // is `MAX(height)` over the same table, so on a non-empty chain the row is
+    // there by construction, and its header passed the apply gate on the way in.
+    // Either failure means the store is no longer what this node wrote.
+    //
+    // Both go to the boundary rather than declining to produce. Declining is the
+    // producer's mirror of blaming an arriving block for our own store — and the
+    // tip moving is the only rebuild trigger, so a node that declines here holds
+    // no template, produces nothing, and is handed no second attempt: a node that
+    // never produces while staying up is indistinguishable from an idle miner —
+    // the same silence, from the other end of the same fault.
+    const prevBlock = currentHeight > 0 ? getOrderingBlock(currentHeight) : null;
+    if (currentHeight > 0 && !prevBlock) {
+      failStopIfCorruptChain(new MissingStoredBlockError('createOrderingBlock', currentHeight));
+    }
+    const prevBlockHash = prevBlock
+      ? blockHash(prevBlock.header)
+      : GENESIS_PREV_BLOCK_HASH;
+    if (prevBlockHash === null) {
+      failStopIfCorruptChain(
+        new UnhashableStoredHeaderError('createOrderingBlock', currentHeight),
+      );
+    }
+
+    // 18. Compute the Merkle root
+    const utxoTxRoot = computeUtxoTxRoot(utxoTxTree);
+
+    // 19. Build header template (powNonce=0). `stateRoot` is a placeholder here
+    // and is replaced in 19b — the speculative run needs a whole candidate block,
+    // and the mutation phase reads neither the nonce nor the signature.
+    const headerTemplate: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: newHeight,
+      prevBlockHash,
+      utxoTxRoot,
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId,
+      powNonce: 0,
+      powTargetBits,
+      createdAt: Date.now(),
+    };
+    const candidate: OrderingBlock = {
+      header: headerTemplate,
+      utxoTxTree,
+      validatorSignature: new Uint8Array(64),
+    };
+
+    // 19b. Compute the POST-block state root (H-6) — the digest this block's own
+    // body produces, obtained by running that body through the apply path's
+    // mutation phase and rolling everything back. Never the current (pre-block)
+    // digest: apply compares against the post-mutation digest, so a pre-block
+    // root can never verify. PoW covers the header, so this must be known before
+    // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
+    // since production initializes one at startup, and a peer running with
+    // VERIFY_STATE_ROOT on rejects such a block, which is correct.
+    const speculation = computePostBlockStateRoot(candidate, newHeight);
+
+    // 19c. A body the mutation phase rejected is evicted and the build repeats
+    // from purgeExpired, until the body holds or no pool row remains to evict
+    // (MINING_INTERFACE → Template and submit). Reachable with unmutated code:
+    // a pooled tx whose validity reads third-party state (a bond settlement's
+    // threshold leg) goes stale in the pool while its inputs stay live. Evict
+    // what the body included — the same cleanup a rejected finalize runs — or
+    // every later rebuild reassembles this exact body: purgeExpired cannot break
+    // that loop, because it keys on a chain height that stops advancing. A
+    // rejected body that carried no pool row is terminal: the chain state cannot
+    // back even the empty body, or a defect is throwing, and no repetition
+    // changes either.
+    if (speculation.kind === 'body-rejected') {
+      if (confirmedRowids.size === 0) {
+        console.warn(
+          `Not producing block at height ${newHeight}: speculation returned ` +
+          `body-rejected on a body with no pool rows`,
+        );
+        currentTemplate = null;
+        confirmedRowids = new Set();
+        return null;
+      }
+      // States the verdict, not the cause: `body-rejected` also carries the
+      // speculation's unclaimed throws, which that arm logs itself. Naming the
+      // mutation phase here would assert a diagnosis this frame does not have.
+      console.warn(
+        `Block at height ${newHeight}: speculation returned body-rejected; ` +
+        `evicting ${confirmedRowids.size} mempool entries and rebuilding`,
+      );
+      for (const rowid of confirmedRowids) {
+        removeEntry(rowid);
+      }
+      confirmedRowids = new Set();
+      continue;
+    }
+
+    headerTemplate.stateRoot =
+      speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT;
+
+    // 21. Store the full block template (header + bodies) for the miner. Its
+    // stateRoot is this height's post-block digest, so the template stops being
+    // submittable once a competing block moves the pre-state — which is exactly
+    // what clearTemplate() on apply guarantees.
+    //
+    // This is where a produced block ends on this side: the nonce arrives from
+    // `POST /mining/submit`, and `submitMinedBlock` is what finalizes.
+    currentTemplate = candidate;
     return null;
   }
-
-  headerTemplate.stateRoot =
-    speculation.kind === 'computed' ? speculation.stateRoot : EMPTY_STATE_ROOT;
-
-  // 21. Store the full block template (header + bodies) for the miner. Its
-  // stateRoot is this height's post-block digest, so the template stops being
-  // submittable once a competing block moves the pre-state — which is exactly
-  // what clearTemplate() on apply guarantees.
-  //
-  // This is where a produced block ends on this side: the nonce arrives from
-  // `POST /mining/submit`, and `submitMinedBlock` is what finalizes.
-  currentTemplate = candidate;
-  return null;
 }
 
 // ---------------------------------------------------------------------------

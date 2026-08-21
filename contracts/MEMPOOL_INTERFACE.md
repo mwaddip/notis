@@ -31,10 +31,12 @@ CREATE TABLE mempool (
     invite_inviter TEXT, vouch_voucher TEXT,    -- gate metadata (below)
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
-    tx_id TEXT                                  -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
+    tx_id TEXT,                                 -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
+    prune_entry_id TEXT                         -- prune only: the entry's own id (confirmed-entry cleanup)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mempool_prune_entry_id ON mempool(prune_entry_id) WHERE prune_entry_id IS NOT NULL;
 ```
 
 The SQLite `rowid` is the canonical identifier for entries.
@@ -48,6 +50,12 @@ not indexed.
 ⚠ **Rows written before the column existed carry `NULL` and no cleanup matches them.** They leave the
 pool by `purgeExpired` at their expiry height, which is the same path an unconfirmed entry always
 took.
+
+**`prune_entry_id` is the same mechanism for `prune` rows** — written at insert from
+`computePruneEntryId(entry)`, partially indexed, and the key by which an applied block's prune entries
+are removed from the pool (`removeMempoolPrunes`). The two columns are disjoint by `entry_type`:
+neither row kind writes the other's. The same ⚠ applies — a prune row written before the column
+existed carries `NULL`, matches no cleanup, and leaves by `purgeExpired`.
 
 ### PoolEntry (in-memory representation)
 
@@ -63,7 +71,7 @@ interface PoolEntry {
 
 `PoolEntry` carries the `utxo_tx` payload only. A `prune` row appears in the
 listing with `utxoTxCbor: null`; its `prune_entry_cbor` is read by
-`drainMempoolPrunes` straight from the row, so the DTO loads no blob that
+`selectMempoolPrunes` straight from the row, so the DTO loads no blob that
 nothing consumes. The `utxo_tx` payload is decoded from CBOR on read by the
 consumer (block creator or relay handler). The store does not decode payloads
 on read; on **insert** of a
@@ -136,17 +144,23 @@ against the columns exactly as stored.
 insertMempoolPrune(entry: PruneEntry, expiresAtHeight: number): number
 ```
 
-Encodes the PruneEntry as CBOR and inserts a `prune` entry. Returns the
+Encodes the PruneEntry as CBOR and inserts a `prune` row, writing `prune_entry_id`
+(`computePruneEntryId(entry)`) beside it for confirmed-entry cleanup. Returns the
 SQLite `rowid`.
 
-### drainMempoolPrunes
+### selectMempoolPrunes
 
 ```
-drainMempoolPrunes(limit: number): PruneEntry[]
+selectMempoolPrunes(limit: number): Array<{ rowid: number; entry: PruneEntry }>
 ```
 
-Decodes and returns prune entries in FIFO order (`ORDER BY rowid ASC`), up
-to `limit`. Returns decoded PruneEntry objects (not raw CBOR).
+Decodes and returns up to `limit` prune rows in FIFO order (`ORDER BY rowid ASC`), **without
+removing them** — the creator's read, and a read only. A prune row leaves the pool the way a
+transaction row does and by no other path: `removeEntry(rowid)` when a body this node built carried
+it, finalized or rejected (*Block Creator Integration*); `removeMempoolPrunes` when an applied block
+confirms it; `purgeExpired` at its expiry. A row this node cannot decode is dropped at the read and
+reported — a blob the writer cannot have produced is not an entry — and its readable siblings are
+returned.
 
 ### removeMempoolPrunes
 
@@ -154,8 +168,11 @@ to `limit`. Returns decoded PruneEntry objects (not raw CBOR).
 removeMempoolPrunes(entryIds: string[]): void
 ```
 
-Deletes prune entries by rowid. Called during block finalization for each
-confirmed prune entry.
+Deletes the prune rows whose `prune_entry_id` is in `entryIds` — an indexed delete, the prune-row
+twin of `removeUtxoTxEntry`, never a scan. Called by block application for every prune entry an
+applied block carries (a peer's block, or this node's own, where `finalizeBlock`'s cleanup by rowid
+usually reaches the row first — double removal is harmless), and by `reorg` before it re-inserts the
+prune entries of reverted blocks.
 
 ### getPendingEntries
 
@@ -245,7 +262,10 @@ Batch cleanup happens through `removeEntry` per rowid.
                  │ 2. fill to the byte budget│
                  │ 3. assemble body +        │
                  │    settlement transaction │
-                 │ 4. mine / sign            │
+                 │ 4. speculate the body;    │
+                 │    rejected → removeEntry │
+                 │    per rowid, back to 1   │
+                 │ 5. mine / sign            │
                  └─────────────┬─────────────┘
                                │ finalizeBlock()
                                ▼
@@ -261,8 +281,9 @@ Batch cleanup happens through `removeEntry` per rowid.
 
 | State | How entered | How exited |
 |-------|------------|------------|
-| **Pending** | `insertUtxoTx` / `insertMempoolPrune` | Included in block → `removeEntry`; or `purgeExpired` |
-| **Confirmed** | Block finalization (`removeEntry`) | Gone from mempool; state now in ledger |
+| **Pending** | `insertUtxoTx` / `insertMempoolPrune` | Carried by a body this node built → `removeEntry` (finalized or rejected); confirmed by an applied block → `removeUtxoTxEntry` / `removeMempoolPrunes`; or `purgeExpired` |
+| **Confirmed** | Block finalization (`removeEntry`), or an applied block's cleanup (`removeUtxoTxEntry` / `removeMempoolPrunes`) | Gone from mempool; state now in ledger |
+| **Evicted** | A body this node built was rejected — at speculation or at finalize (`removeEntry` per rowid) | Gone from mempool; state never applied |
 | **Expired** | `purgeExpired` during block assembly | Gone from mempool; state never applied |
 
 ### Expiry
@@ -302,11 +323,16 @@ pending entries:
 2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`
 3. Separates entries by `entryType`:
    - `utxo_tx` entries → `utxoTxIds` / `utxoTxs`
-   - `prune` entries → decoded via `drainMempoolPrunes`, included as
-     `pruneEntries`
-4. Tracks `confirmedRowids` (set of rowids included in the block)
-5. After block finalization: `removeEntry(rowid)` for each confirmed rowid,
-   `removeMempoolPrunes(entryIds)` for confirmed prune entries
+   - `prune` entries → read via `selectMempoolPrunes`, included as
+     `pruneEntries`; the read removes nothing
+4. Tracks `confirmedRowids` — **every** row the template carries, transaction
+   and prune rows alike
+5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
+   body the mutation phase rejects is evicted the same way**, and the creator
+   fills again from what remains (`MINING_INTERFACE → Template and submit`);
+   a rejected body that carried no row ends the build. Rows a *peer's* block
+   confirms are reached by that block's application (`removeUtxoTxEntry` /
+   `removeMempoolPrunes`), not by this step
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
@@ -355,7 +381,9 @@ iteration rather than measured once.
 
 **Two paths clear a confirmed entry.** A block this node produced is cleaned by rowid
 (`confirmedRowids`, step 5), which reaches every included entry wherever it sits. A block arriving
-**from a peer** is cleaned by `removeUtxoTxEntry(txId)` — an indexed delete on `tx_id`.
+**from a peer** is cleaned by `removeUtxoTxEntry(txId)` — an indexed delete on `tx_id` — and by
+`removeMempoolPrunes(entryIds)` — an indexed delete on `prune_entry_id`; both keys are written at
+insert.
 
 **The rule is that cleanup reaches every row**, whatever its depth. An entry left behind holds a
 slot, and the creator later rebuilds it into a block that apply refuses as inapplicable; the chain
@@ -409,7 +437,8 @@ When an ordering block is received from gossip:
 2. For each `utxoTxId`: decode from mempool or reconstruct, call
    `revalidateTxInContext` (liveness only), then `applyTx`
 3. Confirm the block's posts (ids from its post transactions)
-4. Remove confirmed entries from mempool
+4. Remove confirmed entries from mempool — transactions by `tx_id`, prune entries by
+   `prune_entry_id`
 
 ---
 

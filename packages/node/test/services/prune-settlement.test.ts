@@ -1103,4 +1103,77 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
     );
     expect(restored).toEqual(expected);
   });
+
+  // MEMPOOL_INTERFACE → "Confirmed-entry cleanup reaches every row, and it is
+  // a lookup rather than a scan": an applied block's prune entries are removed
+  // from the local mempool by `removeMempoolPrunes`, the prune-row twin of
+  // `removeUtxoTxEntry`.
+  it('an applied block removes its prune entries from the local mempool', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'prune root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'prune reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const confirmBlock = await makeApplicableBlock({
+      utxoTxs: [root.tx, reply.tx],
+    });
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    const entry = makePruneEntry(rootId, [rootId, replyId], author);
+
+    const mempool = (await import('../../src/store/mempool.js')) as {
+      insertMempoolPrune: (e: import('@dagsocial/types').PruneEntry, h: number) => number;
+      selectMempoolPrunes: (limit: number) => Array<{ rowid: number; entry: any }>;
+    };
+    mempool.insertMempoolPrune(entry, 1000);
+    expect(mempool.selectMempoolPrunes(32)).toHaveLength(1);
+
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [entry],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+    expect(mempool.selectMempoolPrunes(32)).toHaveLength(0);
+  });
+
+  it('an applied block whose prune entry is not pooled leaves the pool untouched', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'prune root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'prune reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const confirmBlock = await makeApplicableBlock({
+      utxoTxs: [root.tx, reply.tx],
+    });
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    const mempool = (await import('../../src/store/mempool.js')) as {
+      insertMempoolPrune: (e: import('@dagsocial/types').PruneEntry, h: number) => number;
+      selectMempoolPrunes: (limit: number) => Array<{ rowid: number; entry: any }>;
+    };
+
+    const other = makeTestIdentity();
+    const otherRoot = 'cc'.repeat(32);
+    const otherEntry = makePruneEntry(otherRoot, [otherRoot], other);
+    mempool.insertMempoolPrune(otherEntry, 1000);
+    expect(mempool.selectMempoolPrunes(32)).toHaveLength(1);
+
+    const entry = makePruneEntry(rootId, [rootId, replyId], author);
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [entry],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+    expect(mempool.selectMempoolPrunes(32)).toHaveLength(1);
+  });
 });

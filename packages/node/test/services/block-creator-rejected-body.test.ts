@@ -21,19 +21,22 @@ import type { TestIdentity } from '../helpers.js';
 import {
   makeApplicableBlock,
   makeKarmaBox,
+  makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
   seedProvenance,
   signTransaction,
+  solveHeaderPow,
   type Stored,
   activateProverOverStore,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------
-// P2-B phase 1c — the creator must not mine a body its own mutation phase
-// rejected.
+// A body-rejected build repeats until it holds a template; a rejected body
+// that carried no pool row is terminal (MINING_INTERFACE → Template and
+// submit).
 //
 // The reachable scenario is a stale mempool entry: a vouch cast that was valid
 // at pool entry (voucher at or above VOUCH_MIN_BALANCE) turns invalid while
@@ -45,14 +48,6 @@ import { config } from '../../src/config.js';
 // The vehicle has to be a rule whose verdict can move without touching the
 // transaction's inputs, and the minimum-balance gate is one: it reads the
 // voucher's summed karma, which any other spend changes.
-//
-// The pre-fix twin of the first test passed on unmodified HEAD (2026-08-07):
-// createOrderingBlock() solved real PoW over a header carrying
-// EMPTY_STATE_ROOT while this node held a live prover — the `?? EMPTY_STATE_
-// ROOT` fallback conflated "no prover" with "body rejected" — and the node's
-// own apply then rejected that block at embedded-tx re-validation. Work
-// wasted, height skipped; finalizeBlock's cleanup evicted the entry, so the
-// next interval self-healed.
 // ---------------------------------------------------------------------------
 
 // Every field below is kept verbatim; `makeTestConfig` fills only the thirteen
@@ -94,7 +89,8 @@ async function importBlockCreator() {
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
     insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
-    getPendingEntries: (limit: number) => Array<{ rowid: number }>;
+    insertMempoolPrune: (entry: import('@dagsocial/types').PruneEntry, expiresAtHeight: number) => number;
+    getPendingEntries: (limit: number) => Array<{ rowid: number; entryType: string }>;
   };
 }
 
@@ -245,36 +241,40 @@ describe('block creator vs a body its own mutation phase rejects', () => {
       // Module might not have been imported
     }
     vi.doUnmock('../../src/state/avl-prover.js');
+    vi.doUnmock('../../src/services/block-apply.js');
     vi.resetModules();
   });
 
-  it('produces nothing on a rejected body, evicts it, and self-heals next attempt', async () => {
+  it('startBlockCreator evicts the stale entry, rebuilds, and holds a template', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
     const { utxo, mempool, voucher, spent } = await seedStaleVouchCast();
 
-    // Real prover over the committed unspent set — production wiring. This is
-    // what makes EMPTY_STATE_ROOT impossible to reach benignly: with a prover
-    // live, only the body-rejected arm could ever have produced it.
     const handle = await activateProver();
     const preDigest = Buffer.from(handle.prover.digest()!).toString('hex');
 
     const ordering = await importOrdering();
     const bc = await importBlockCreator();
 
-    // Starting the creator builds the first template, and this body is one its
-    // own mutation phase rejects.
+    // startBlockCreator alone — no createOrderingBlock(), no mineNextBlock.
     bc.startBlockCreator(testConfig);
 
-    // No template, so nothing to mine: not stored, no PoW spent, prover
-    // untouched.
-    expect(bc.getCurrentTemplate()).toBeNull();
-    expect(ordering.getCurrentHeight()).toBe(0);
-    expect(ordering.getOrderingBlock(1)).toBeNull();
-    expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
+    // The creator holds a template: the stale body was rejected, its rows
+    // evicted, and the rebuild produced a clean template.
+    const tpl = bc.getCurrentTemplate();
+    expect(tpl).not.toBeNull();
+    expect(tpl!.header.stateRoot).not.toBe(EMPTY_STATE_ROOT);
+    // The template's body carries no user transaction.
+    expect(tpl!.utxoTxTree.utxoTxIds).toHaveLength(1);
 
-    // Nothing applied: the cast's karma input survives and no VouchBox exists.
+    // The cast's rows are gone from the pool.
+    expect(mempool.getPendingEntries(10)).toHaveLength(0);
+
+    // The rejected body applied nothing and the rebuild's speculation left no
+    // trace: prover digest equals the pre-start digest, the voucher's summed
+    // karma is still 6n, no live vouch box exists.
+    expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
     expect(utxo.getBox(spent.id!)).not.toBeNull();
     expect(utxo.getKarmaBoxes(voucher.userId).reduce((sum, b) => sum + b.value, 0n)).toBe(6n);
     expect(
@@ -282,17 +282,11 @@ describe('block creator vs a body its own mutation phase rejects', () => {
         .prepare(`SELECT id FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL`)
         .all(),
     ).toHaveLength(0);
+    expect(ordering.getCurrentHeight()).toBe(0);
 
-    // The poisoned body's entries are evicted — the same cleanup a rejected
-    // finalize runs. Without this every later rebuild reassembles the identical
-    // body, and purgeExpired cannot break the loop because the chain height it
-    // keys on has stopped advancing.
-    expect(mempool.getPendingEntries(10)).toHaveLength(0);
-
-    // Next attempt self-heals: a clean block, carrying a real digest, applied.
-    const second = await mineNextBlock(bc);
-    expect(second).not.toBeNull();
-    expect(second!.header.stateRoot).not.toBe(EMPTY_STATE_ROOT);
+    // The held template mines through submitMinedBlock to height 1.
+    const nonce = solveHeaderPow(tpl!.header);
+    expect(bc.submitMinedBlock(nonce, tpl!.header.height)).not.toBeNull();
     expect(ordering.getCurrentHeight()).toBe(1);
   });
 
@@ -502,5 +496,95 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // The prover is untouched here for an unrelated reason — the injection
     // throws before the real mutation runs — so it says nothing either way.
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
+  });
+
+  it('the bound: K rejected bodies → K+1 speculation calls and a held template', async () => {
+    const K = 1;
+    let callCount = 0;
+    vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import('../../src/services/block-apply.js')>();
+      return {
+        ...actual,
+        computePostBlockStateRoot: (
+          ...args: Parameters<typeof actual.computePostBlockStateRoot>
+        ) => {
+          callCount++;
+          if (callCount <= K) return { kind: 'body-rejected' as const };
+          return actual.computePostBlockStateRoot(...args);
+        },
+      };
+    });
+
+    const db = await importDb();
+    db.initDb(':memory:');
+    await seedStaleVouchCast();
+    await activateProver();
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    expect(callCount).toBe(K + 1);
+    expect(bc.getCurrentTemplate()).not.toBeNull();
+  });
+
+  it('empty pool + always-reject → one speculation call, null template, one warn', async () => {
+    let callCount = 0;
+    vi.doMock('../../src/services/block-apply.js', async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import('../../src/services/block-apply.js')>();
+      return {
+        ...actual,
+        computePostBlockStateRoot: () => {
+          callCount++;
+          return { kind: 'body-rejected' as const };
+        },
+      };
+    });
+
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
+    await activateProver();
+
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((msg: unknown) => {
+      warns.push(String(msg));
+    });
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    expect(callCount).toBe(1);
+    expect(bc.getCurrentTemplate()).toBeNull();
+    const relevant = warns.filter((w) => w.includes('body-rejected'));
+    expect(relevant).toHaveLength(1);
+    expect(relevant[0]).toContain('no pool rows');
+  });
+
+  it('a prune row pooled beside the stale cast is evicted too', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const { mempool } = await seedStaleVouchCast();
+    await activateProver();
+
+    const author = makeTestIdentity();
+    const rootHash = 'aa'.repeat(32);
+    const childHash = 'bb'.repeat(32);
+    const entry = makePruneEntry(rootHash, [rootHash, childHash], author);
+    mempool.insertMempoolPrune(entry, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    const tpl = bc.getCurrentTemplate();
+    expect(tpl).not.toBeNull();
+    // The held template carries neither the stale cast nor the prune entry.
+    expect(tpl!.utxoTxTree.utxoTxIds).toHaveLength(1);
+    expect(tpl!.utxoTxTree.pruneEntries).toHaveLength(0);
+    // Both are gone from the pool.
+    expect(mempool.getPendingEntries(10)).toHaveLength(0);
   });
 });

@@ -209,14 +209,27 @@ touches CBOR.
 
 #### Template and submit
 
-**A miner node always holds a template.** It builds one at startup and rebuilds it whenever the tip
-moves — its own block finalizing, a peer's block applying, or a reorg committing. **A transaction
-arriving does not rebuild it**: what goes into a block and when one is produced are separate
-questions, and a rebuild mid-solve would void every miner's in-flight work.
+**A miner node holds a template, or has declined to build one and said why.** It builds one at
+startup and rebuilds it whenever the tip moves — its own block finalizing, a peer's block applying,
+or a reorg committing. **A transaction arriving does not rebuild it**: what goes into a block and
+when one is produced are separate questions, and a rebuild mid-solve would void every miner's
+in-flight work.
+
+**A build whose body the mutation phase rejects is repeated, not abandoned.** The creator evicts
+every pool row the rejected body carried — transaction and prune rows alike, the cleanup a rejected
+finalize runs — and fills again from what the pool still holds, until it holds a template or a body
+carrying **no pool row** is rejected. Every repetition strictly shrinks the pool, which is what bounds
+the loop. A rejected body that carried nothing is terminal: the chain state cannot back even the
+empty body, or a defect is throwing, and no repetition changes either — the creator logs it once
+(`Not producing block at height N: …`) and holds no template until the tip moves. A settlement this
+chain cannot build at all (no emission box at a height that releases, no karma pool at a height that
+draws on it) is terminal on the first attempt for the same reason. The loop runs only inside a build
+that holds no template, so the stability rule below is untouched.
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
-not yet met its peers withholds the template it holds. See *The peer-readiness gate* below — that is
-the only condition under which a 404 from a miner node is expected, and any other 404 is a defect.
+not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404
+from a miner node is one of two things** — that gate, or a terminal decline, which is on the node's
+log. Any other 404 is a defect.
 
 ⚠ **The template is stable for a height, and that is a load-bearing property, not an implementation
 detail.** `POST /mining/submit` reconstructs the header from *the node's current template* plus the
@@ -552,8 +565,9 @@ ASERT**, and carried register #5 still owns it.
    coinbase payout override (`?miner=`) is reachable only behind that auth.
    Internal mode mounts no mining routes. (audit M-7)
 9. A miner node **serves no template before it is peer-ready**, and gating happens at
-   serve rather than at creation — the node holds a template throughout, so invariant
-   9 never weakens "a miner node always holds a template". See *The peer-readiness gate*.
+   serve rather than at creation — the node holds a template throughout, or has declined
+   terminally (*Template and submit*), so the gate never weakens the holding rule. See *The
+   peer-readiness gate*.
 
 ## Miner Script
 

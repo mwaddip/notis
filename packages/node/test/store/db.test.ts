@@ -129,6 +129,14 @@ describe('db lifecycle', () => {
     expect(orderNames).toContain('validator_signature');
     expect(orderNames).toContain('created_at');
 
+    // mempool — the confirmed-entry cleanup columns (MEMPOOL_INTERFACE →
+    // Schema). Both `tx_id` and `prune_entry_id` are written at insert and
+    // indexed for the keyed delete that an applied block's cleanup runs.
+    const mempoolCols = db.pragma('table_info(mempool)') as Array<{ name: string }>;
+    const mempoolNames = mempoolCols.map((c) => c.name);
+    expect(mempoolNames).toContain('tx_id');
+    expect(mempoolNames).toContain('prune_entry_id');
+
     // like_records — the contract's exact three columns (NODE_INTERFACE →
     // Like-records), with the composite PK on (target_post_id, liker_id): the
     // structural dedup.

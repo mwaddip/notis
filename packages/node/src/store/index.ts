@@ -90,7 +90,7 @@ export {
   purgeExpired,
   removeEntry,
   removeUtxoTxEntry,
-  drainMempoolPrunes,
+  selectMempoolPrunes,
   removeMempoolPrunes,
   hasPendingLike,
   countPendingInvites,

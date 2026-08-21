@@ -169,7 +169,7 @@ export class TxTooLargeError extends ClientError {
 /**
  * In-memory representation of a pending pool entry (MEMPOOL_INTERFACE →
  * PoolEntry). Carries the `utxo_tx` payload only; a `prune` row's blob is
- * read by `drainMempoolPrunes` straight from the row, so the DTO loads no
+ * read by `selectMempoolPrunes` straight from the row, so the DTO loads no
  * blob that nothing consumes.
  */
 export interface PoolEntry {
@@ -599,7 +599,7 @@ const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_cbor,
  *
  * Nothing here bids, so arrival is the only basis for prioritisation there is
  * (MEMPOOL_INTERFACE → Ordering). Prune entries are in this class and are
- * yielded with it; the block creator draws them through `drainMempoolPrunes`
+ * yielded with it; the block creator draws them through `selectMempoolPrunes`
  * as a mandatory section and skips them here.
  */
 function* iterateKarmaFifo(): Generator<PoolEntry> {
@@ -759,10 +759,11 @@ export function insertMempoolPrune(
   // price.
   assertCapacity(db, 'karma', null, 0);
   const cbor = Buffer.from(cborEncode(entry));
+  const entryId = computePruneEntryId(entry);
   const result = db.prepare(
-    `INSERT INTO mempool (entry_type, prune_entry_cbor, expires_at_height)
-     VALUES ('prune', ?, ?)`,
-  ).run(cbor, expiresAtHeight);
+    `INSERT INTO mempool (entry_type, prune_entry_cbor, expires_at_height, prune_entry_id)
+     VALUES ('prune', ?, ?, ?)`,
+  ).run(cbor, expiresAtHeight, entryId);
   return Number(result.lastInsertRowid);
 }
 
@@ -788,60 +789,52 @@ function decodePruneRow(row: { rowid: number; prune_entry_cbor: Buffer }): Prune
   }
 }
 
-export function drainMempoolPrunes(limit: number): PruneEntry[] {
+/**
+ * Up to `limit` prune rows in FIFO order, decoded and paired with their rowid.
+ * Readable rows are returned without removing them — a prune row leaves the
+ * pool the way a transaction row does: `removeEntry(rowid)` when a body this
+ * node built carried it, `removeMempoolPrunes` when an applied block confirms
+ * it, or `purgeExpired` (MEMPOOL_INTERFACE → selectMempoolPrunes). A row this
+ * node cannot decode is dropped at the read and reported; its readable siblings
+ * are returned.
+ */
+export function selectMempoolPrunes(limit: number): Array<{ rowid: number; entry: PruneEntry }> {
   const db = getDb();
-  // Every row is decoded before the DELETE and inside one transaction: the
-  // blob is the entry's only copy, so nothing is removed until its own read has
-  // returned a verdict.
-  return db.transaction((): PruneEntry[] => {
-    const rows = db.prepare(
-      `SELECT rowid, prune_entry_cbor FROM mempool
-       WHERE entry_type = 'prune'
-       ORDER BY rowid ASC LIMIT ?`,
-    ).all(limit) as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
+  const rows = db.prepare(
+    `SELECT rowid, prune_entry_cbor FROM mempool
+     WHERE entry_type = 'prune'
+     ORDER BY rowid ASC LIMIT ?`,
+  ).all(limit) as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
 
-    if (rows.length === 0) return [];
-
-    const entries = rows.map(decodePruneRow);
-
-    const ids = rows.map(r => r.rowid);
+  const result: Array<{ rowid: number; entry: PruneEntry }> = [];
+  const toDrop: number[] = [];
+  for (const row of rows) {
+    const entry = decodePruneRow(row);
+    if (entry !== null) {
+      result.push({ rowid: row.rowid, entry });
+    } else {
+      toDrop.push(row.rowid);
+    }
+  }
+  if (toDrop.length > 0) {
     db.prepare(
-      `DELETE FROM mempool WHERE rowid IN (${ids.map(() => '?').join(',')})`,
-    ).run(...ids);
-
-    return entries.filter((e): e is PruneEntry => e !== null);
-  })();
+      `DELETE FROM mempool WHERE rowid IN (${toDrop.map(() => '?').join(',')})`,
+    ).run(...toDrop);
+  }
+  return result;
 }
 
 /**
- * Remove prune entries from the mempool by their computed entry IDs.
- * O(n) full scan over all prune entries in mempool — callsite is reorg(),
- * which is infrequent and typically operates on a small mempool.
+ * Delete prune rows by their `prune_entry_id` — an indexed delete, the
+ * prune-row twin of `removeUtxoTxEntry` (MEMPOOL_INTERFACE →
+ * "Confirmed-entry cleanup reaches every row, and it is a lookup rather
+ * than a scan").
  */
 export function removeMempoolPrunes(entryIds: string[]): void {
   if (entryIds.length === 0) return;
   const db = getDb();
-
-  // Read all prune entries, compute their IDs, and delete matches
-  const rows = db.prepare(
-    `SELECT rowid, prune_entry_cbor FROM mempool WHERE entry_type = 'prune'`,
-  ).all() as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
-
-  const toDelete: number[] = [];
-  for (const row of rows) {
-    // Same isolation as the drain, and here it also keeps a reorg from failing
-    // on a row it was not looking for.
-    const entry = decodePruneRow(row);
-    if (entry === null) continue;
-    const id = computePruneEntryId(entry);
-    if (entryIds.includes(id)) {
-      toDelete.push(row.rowid);
-    }
-  }
-
-  if (toDelete.length > 0) {
-    db.prepare(
-      `DELETE FROM mempool WHERE rowid IN (${toDelete.map(() => '?').join(',')})`,
-    ).run(...toDelete);
-  }
+  const placeholders = entryIds.map(() => '?').join(',');
+  db.prepare(
+    `DELETE FROM mempool WHERE prune_entry_id IN (${placeholders})`,
+  ).run(...entryIds);
 }
