@@ -542,7 +542,9 @@ export class NetNode {
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
-  private peerActiveHandlers: Array<(peerId: string) => void> = [];
+  private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
+  private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
+  private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
   private pendingBootstrapDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
 
@@ -617,6 +619,7 @@ export class NetNode {
       (peerId: string, data: Uint8Array) => this.sendToPeer(peerId, data),
       (peerId: string, reason: string) => {
         this.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, reason);
+        this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, reason);
       },
     );
     this.syncMachine.start();
@@ -684,6 +687,11 @@ export class NetNode {
       this.peerMgr.removePeer(peerId);
       this.lastGetPeersSentMs.delete(peerId);
       this.syncMachine?.onPeerDisconnect(peerId);
+      for (const cb of this.peerDisconnectedHandlers) {
+        try { cb(peerId, ''); } catch (err) {
+          console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+        }
+      }
     });
 
     // Log identify completion — confirms the connection was fully upgraded
@@ -812,8 +820,9 @@ export class NetNode {
             capabilities: result.peerCapabilities,
           });
           this.syncMachine?.onPeerActive(conn.remotePeer.toString(), result.peerHeight);
+          const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
           for (const cb of this.peerActiveHandlers) {
-            try { cb(conn.remotePeer.toString()); } catch (err) {
+            try { cb(conn.remotePeer.toString(), dir); } catch (err) {
               console.warn(`[net] peerActive handler error: ${String(err)}`);
             }
           }
@@ -851,6 +860,7 @@ export class NetNode {
             peerId,
             'handshake stream exceeds byte cap',
           );
+          this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'handshake stream exceeds byte cap');
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -876,11 +886,13 @@ export class NetNode {
           // malformed input is banned permanently, an unsupported version is
           // only cooled down (see `handshakePenalty`).
           console.warn(`[net] inbound handshake from ${peerId} rejected: ${result.error}`);
+          const hsPenKind = handshakePenalty(result.rejection);
           this.peerMgr.recordPenaltyKind(
-            handshakePenalty(result.rejection),
+            hsPenKind,
             peerId,
             `handshake: ${result.error}`,
           );
+          this.notifyPenalised(peerId, hsPenKind, `handshake: ${result.error}`);
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -901,8 +913,9 @@ export class NetNode {
 
         this.peerMgr.setPeerState(peerId, PeerState.Active);
         this.syncMachine?.onPeerActive(peerId, result.peerHeight);
+        const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
         for (const cb of this.peerActiveHandlers) {
-          try { cb(peerId); } catch (err) {
+          try { cb(peerId, dir); } catch (err) {
             console.warn(`[net] peerActive handler error: ${String(err)}`);
           }
         }
@@ -993,6 +1006,7 @@ export class NetNode {
             peerId,
             `malformed chain query (code ${code})`,
           );
+          this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, `malformed chain query (code ${code})`);
           await replyEmpty();
           return;
         }
@@ -1030,6 +1044,7 @@ export class NetNode {
             peerId,
             'sync stream exceeds byte cap',
           );
+          this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'sync stream exceeds byte cap');
           await stream.sink([new Uint8Array(0)]);
           return;
         }
@@ -1069,7 +1084,11 @@ export class NetNode {
               ?? null,
             magic,
           });
-          if (response) await stream.sink([response]);
+          if (response) {
+            await stream.sink([response]);
+          } else {
+            this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'malformed GetPeers');
+          }
           return;
         }
 
@@ -1170,6 +1189,7 @@ export class NetNode {
           peerId,
           'handshake stream exceeds byte cap',
         );
+        this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'handshake stream exceeds byte cap');
         return {
           ok: false,
           error: 'handshake response exceeds byte cap',
@@ -1202,11 +1222,13 @@ export class NetNode {
       const result = validateHandshake(parseHandshakeBody(body), [PROTOCOL_VERSION]);
       if (!result.ok) {
         console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
+        const outHsPenKind = handshakePenalty(result.rejection);
         this.peerMgr.recordPenaltyKind(
-          handshakePenalty(result.rejection),
+          outHsPenKind,
           peerId,
           `handshake: ${result.error}`,
         );
+        this.notifyPenalised(peerId, outHsPenKind, `handshake: ${result.error}`);
         return result;
       }
       console.log(`[net] outbound handshake with ${peerId}: ok=true height=${result.peerHeight} caps=${result.peerCapabilities.length}`);
@@ -1297,12 +1319,32 @@ export class NetNode {
     this.syncCompleteHandlers.push(cb);
   }
 
-  /**
-   * Register a callback that fires when a peer completes the handshake
-   * and becomes Active. The peer's ID is passed to the callback.
-   */
-  onPeerActive(cb: (peerId: string) => void): void {
+  /** NET_INTERFACE → API → Node Lifecycle. */
+  syncPhase(): 'idle' | 'syncing' | 'synced' {
+    return this.syncMachine?.getState().phase ?? 'idle';
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration. */
+  onPeerActive(cb: (peerId: string, direction: 'inbound' | 'outbound') => void): void {
     this.peerActiveHandlers.push(cb);
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration. */
+  onPeerDisconnected(cb: (peerId: string, reason: string) => void): void {
+    this.peerDisconnectedHandlers.push(cb);
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration. */
+  onPeerPenalised(cb: (peerId: string, kind: string, detail: string | null) => void): void {
+    this.peerPenalisedHandlers.push(cb);
+  }
+
+  private notifyPenalised(peerId: string, kind: string, detail: string | null): void {
+    for (const cb of this.peerPenalisedHandlers) {
+      try { cb(peerId, kind, detail); } catch (err) {
+        console.warn(`[net] peerPenalised handler error: ${String(err)}`);
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -1358,7 +1400,9 @@ export class NetNode {
         magic,
         nowMs: Date.now(),
       });
-      if (usable !== null && usable > 0) {
+      if (usable === null) {
+        this.notifyPenalised(peerId, PenaltyKind.ProtocolViolation, 'malformed Peers response');
+      } else if (usable > 0) {
         console.log(`[net] Peers from ${peerId}: recorded ${usable} address(es)`);
       }
     } catch (err) {
@@ -1408,6 +1452,7 @@ export class NetNode {
     } else {
       this.peerMgr.recordPenaltyKind(PenaltyKind.Transient, peerId, reason);
     }
+    this.notifyPenalised(peerId, kind, reason);
   }
 
   /**
