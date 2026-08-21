@@ -377,9 +377,9 @@ function derive(
     poolSink += bond.value - vested;
   }
 
-  // 3d. The escrow returns (NODE_INTERFACE → The settlement transaction).
-  // Value moves box to box — no pool leg: the escrow's value returns to its
-  // owner as karma, the shape of a bond's vested part.
+  // 3d. The escrow returns (NODE_INTERFACE → The settlement transaction, the
+  // PRE-BODY paragraph). Value moves box to box — no pool leg. A zero-value
+  // escrow is consumed but emits no karma output, like every sibling karma leg.
   const escrows = deps.getEscrowsReleasableAt(height);
   const escrowReturns: Array<{ owner: Uint8Array; value: bigint }> = [];
   for (const escrow of escrows) {
@@ -477,7 +477,9 @@ function derive(
     }
   }
   for (const ret of escrowReturns) {
-    outputs.push({ boxType: 'karma', value: ret.value, owner: ret.owner, nonActivity: true, createdAtBlock: height });
+    if (ret.value > 0n) {
+      outputs.push({ boxType: 'karma', value: ret.value, owner: ret.owner, nonActivity: true, createdAtBlock: height });
+    }
   }
   for (const plan of decayPlans) {
     if (plan.newValue > 0n) {

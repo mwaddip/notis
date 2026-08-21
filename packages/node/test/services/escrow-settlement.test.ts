@@ -366,16 +366,21 @@ describe('escrow settlement leg', () => {
     expect(returnBox).toBeDefined();
     expect(returnBox!.nonActivity).toBe(true);
 
-    // The settlement's output count: at minimum the escrow return, the
-    // emission successor, and the coinbase.
+    // Direct conservation: Σ input values == Σ output values. Inputs are
+    // spent, so read them including consumed boxes via raw SQL.
     const ordering = await importOrdering();
     const storedBlock = ordering.getOrderingBlock(1)!;
     const lastTxCbor = storedBlock.utxoTxTree.utxoTxs[storedBlock.utxoTxTree.utxoTxs.length - 1]!;
     const { decodeTx } = await import('@dagsocial/types');
     const settlement = decodeTx(lastTxCbor);
-    const karmaOutputs = settlement.outputs.filter((o) => o.boxType === 'karma');
-    expect(karmaOutputs.length).toBeGreaterThanOrEqual(1);
-    const escrowReturn = karmaOutputs.find((o) => o.value === stakeValue);
-    expect(escrowReturn).toBeDefined();
+    const rawDb = db.getDb();
+    let totalIn = 0n;
+    for (const inputId of settlement.inputs) {
+      const row = rawDb.prepare('SELECT value FROM utxo_boxes WHERE id = ?').safeIntegers().get(inputId) as { value: bigint } | undefined;
+      expect(row).toBeDefined();
+      totalIn += row!.value;
+    }
+    const totalOut = settlement.outputs.reduce((sum, o) => sum + o.value, 0n);
+    expect(totalIn).toBe(totalOut);
   });
 });

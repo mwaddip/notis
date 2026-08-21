@@ -1253,31 +1253,9 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(true);
     });
 
-    it('refuses an escrow spend before its releaseAtBlock (SPEND_TIMING)', () => {
-      const escrow = seedProvenance<VouchEscrowBox>(
-        {
-          boxType: 'vouch_escrow' as const,
-          value: VOUCH_KARMA_AMOUNT,
-          createdAtBlock: 0,
-          owner: ownerPubKey,
-          releaseAtBlock: 15,
-        },
-        1,
-      );
-      storeInsertBox(escrow);
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 10,
-        owner: ownerPubKey,
-      };
-      const tx = buildSignedTx([escrow.id!], [karmaOut as AnyBox], ownerPrivKey, ownerPubKey);
-      const result = validateAndApplyTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('locked until');
-    });
-
-    it('accepts an escrow spend at exactly releaseAtBlock, owner-signed', () => {
+    // §4.7 (g): a user transaction spending an escrow is refused by
+    // BLOCK_APPLICATION_ONLY — the settlement returns it.
+    it('refuses a user transaction spending an escrow (block application only)', () => {
       const escrow = seedProvenance<VouchEscrowBox>(
         {
           boxType: 'vouch_escrow' as const,
@@ -1297,36 +1275,8 @@ describe('validateAndApplyTx', () => {
       };
       const tx = buildSignedTx([escrow.id!], [karmaOut as AnyBox], ownerPrivKey, ownerPubKey);
       const result = validateAndApplyTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-      expect(deps.getBox(escrow.id!)).toBeNull();
-    });
-
-    it('refuses a stranger-signed escrow spend even at the right height', () => {
-      const { publicKey: strangerPub, privateKey: strangerPriv } = generateKeyPairSync('ed25519');
-      const escrow = seedProvenance<VouchEscrowBox>(
-        {
-          boxType: 'vouch_escrow' as const,
-          value: VOUCH_KARMA_AMOUNT,
-          createdAtBlock: 0,
-          owner: ownerPubKey,
-          releaseAtBlock: 10,
-        },
-        1,
-      );
-      storeInsertBox(escrow);
-      const karmaOut: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: 10,
-        owner: ownerPubKey,
-      };
-      const tx = buildSignedTx(
-        [escrow.id!], [karmaOut as AnyBox],
-        strangerPriv, rawPublicKey(strangerPub),
-      );
-      const result = validateAndApplyTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('Missing or invalid owner signature');
+      expect(result.error).toContain('consumed only by block application');
     });
 
     it('does not extend the zero-output exception to karma or like inputs', () => {

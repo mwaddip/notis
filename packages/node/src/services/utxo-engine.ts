@@ -115,10 +115,10 @@ export interface UtxoEngineDeps {
   /**
    * True while an unspent `VouchEscrowBox` exists for this voucher.
    *
-   * Consensus input (NODE_INTERFACE → "Vouch transition rules"): a vouch cast
-   * is invalid while the voucher holds an unreleased escrow. The escrow
-   * persists until the owner reclaims it via a signed transaction, so the
-   * vouch cycle is capped at one per cooldown window by construction.
+   * Consensus input (NODE_INTERFACE → Vouch transition rules): a vouch cast
+   * is invalid while the voucher holds an unreleased escrow. The settlement
+   * consumes it at the first block at or past `releaseAtBlock`, so the vouch
+   * cycle is capped at one per cooldown window by construction.
    */
   hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
   /**
@@ -691,35 +691,6 @@ function checkTransitions(
             `Unvouch escrow releaseAtBlock must be ${expected} ` +
             `(vouch cast at ${staked.createdAtBlock} + cooldown ` +
             `${deps.vouchCooldownBlocks}), got ${escrow.releaseAtBlock}`,
-        };
-      }
-      return { valid: true };
-    }
-
-    // ------------------------------------------------------------------
-    // VouchEscrowBox → KarmaBox — the voucher reclaims their stake
-    // ------------------------------------------------------------------
-    case 'vouch_escrow': {
-      if (inputs.length !== 1) {
-        return {
-          valid: false,
-          error: `Escrow reclaim must consume exactly one VouchEscrowBox`,
-        };
-      }
-      const escrow = inputs[0] as VouchEscrowBox;
-      const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
-      if (outputs.length !== 1 || karmaOutputs.length !== 1) {
-        return {
-          valid: false,
-          error: `Escrow reclaim must produce exactly one karma output`,
-        };
-      }
-      const karmaOut = karmaOutputs[0] as KarmaBox;
-      if (Buffer.from(karmaOut.owner).toString('hex') !==
-          Buffer.from(escrow.owner).toString('hex')) {
-        return {
-          valid: false,
-          error: `Escrow reclaim karma output owner must match escrow owner`,
         };
       }
       return { valid: true };
@@ -1491,7 +1462,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   bond: ALWAYS_SPENDABLE,
   post_lock: ALWAYS_SPENDABLE,
   vouch: ALWAYS_SPENDABLE,
-  vouch_escrow: { unlockHeight: (b) => (b as VouchEscrowBox).releaseAtBlock },
+  vouch_escrow: ALWAYS_SPENDABLE,
   emission: ALWAYS_SPENDABLE,
   treasury: ALWAYS_SPENDABLE,
   fee: ALWAYS_SPENDABLE,
@@ -1623,9 +1594,7 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
   // that key unlocks the box.
   like_accrual: BLOCK_APPLICATION_ONLY,
 
-  // Owner-signed: the voucher reclaims their own escrow once SPEND_TIMING
-  // allows it.
-  vouch_escrow: OWNER_SIGNATURE,
+  vouch_escrow: BLOCK_APPLICATION_ONLY,
 
   // The karma supply pool: grants draw it down and burns return to it, both the
   // settlement's, so no user transaction may name it in either position
