@@ -1,5 +1,3 @@
-// ARCHITECTURE → Build and test resolution, rule 4.
-//
 // Fixed port table: file k → base 11000 + 100·k; node i → http base + 10·i,
 // admin +1, p2p +2. A lingering node from a failed earlier file cannot collide
 // with the next file's mesh.

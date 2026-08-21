@@ -95,15 +95,19 @@ export async function waitHeight(
 ): Promise<void> {
   const deadline = Date.now() + windowMs;
   for (const node of nodes) {
+    let reached = false;
     while (Date.now() < deadline) {
       const res = await fetch(`${node.url}/blocks/current`);
       if (res.ok) {
         const data = (await res.json()) as { height: number };
-        if (data.height >= height) break;
+        if (data.height >= height) {
+          reached = true;
+          break;
+        }
       }
       await new Promise((r) => setTimeout(r, 200));
     }
-    if (Date.now() >= deadline) {
+    if (!reached) {
       const tails = nodes
         .map((n) => `--- :${n.httpPort} ---\n${n.logs.slice(-10).join('\n')}`)
         .join('\n');
