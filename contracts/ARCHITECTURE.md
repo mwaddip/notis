@@ -204,7 +204,7 @@ For the paths where value genuinely enters or leaves circulation, exactly three 
 
 | Shape | When it applies | Example |
 |---|---|---|
-| **the value is already in a box** the transaction consumes | the party holds it | bond return, post-lock vesting, unvouch escrow |
+| **the value is already in a box** the transaction consumes | the party holds it | bond return, escrow return, post-lock vesting, unvouch escrow |
 | **block application spends the pool** | no user transaction is involved | decay, bond forfeiture, the invite grant |
 | **a marker box** the user's transaction outputs, carrying the value | a user transaction moves value to a party it cannot name a box for | the like accrual — **and nothing else** |
 
@@ -540,8 +540,9 @@ is escrowed — not burned, not transferred to the target.
 **Withdrawal is instant, and that is a requirement rather than a side effect.**
 A voucher who concludes their target is untrustworthy stops endorsing at once:
 the vouch stops counting the moment the `VouchBox` is spent. Only the stake's
-return waits — the unvouch outputs a `VouchEscrowBox`, and the voucher reclaims
-it by their own signed transaction at or after `releaseAtBlock`.
+return waits — the unvouch outputs a `VouchEscrowBox`, and the block settlement
+returns it to the voucher at the first height at or past `releaseAtBlock`. No
+client action claims it.
 
 **The cooldown runs from the cast.**
 `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks`, an exact pin
@@ -549,14 +550,14 @@ derived from the consumed box alone (NODE_INTERFACE → Vouch transition rules).
 The stake is committed for one cooldown from **casting**, so no withdrawal
 pattern returns it sooner and holding an endorsement longer costs no extra
 lockup. A vouch held past one cooldown yields an escrow born past its release
-height — immediately reclaimable, the commitment having been served during the
-endorsement.
+height — the next block's settlement returns it, the commitment having been
+served during the endorsement.
 
 **The escrow is what rate-limits re-vouching.** A cast is invalid while any
-unspent escrow names the voucher, and the escrow cannot be reclaimed before
-`releaseAtBlock`, so the vouch/unvouch cycle is capped at one per cooldown
-window however briefly each vouch is held — the anti-spam property, priced
-identically for a rapid cycler and a long-term voucher.
+unspent escrow names the voucher, and the escrow stands until the settlement at
+`releaseAtBlock` spends it, so the vouch/unvouch cycle is capped at one per
+cooldown window however briefly each vouch is held — the anti-spam property,
+priced identically for a rapid cycler and a long-term voucher.
 
 Each identity may vouch for at most one target at a time. The minimum karma
 balance to cast a vouch is `VOUCH_MIN_BALANCE` (11) — **a balance, summed across
@@ -575,19 +576,21 @@ VouchEscrowBox {
 
 unvouch tx    VouchBox(V) → VouchEscrowBox(V, owner = voucherId,
                                            releaseAtBlock = vouch.createdAtBlock + cooldown)
-reclaim tx    VouchEscrowBox(V) → KarmaBox(V, owner)    owner-signed, at or after
-                                                        releaseAtBlock (SPEND_TIMING)
+settlement    VouchEscrowBox(V) → KarmaBox(V, owner)    block application, at the first
+                                                        height ≥ releaseAtBlock; no signature
 ```
 
 ✅ **The value never leaves a box**, so the pool is not involved on this path at
 all and no marker is needed — the escrow is an ordinary output of the voucher's
-own transaction, and the reclaim conserves the same way.
+own transaction, and the settlement's return conserves the same way, the escrow
+its input and the karma its output.
 
 ✅ **The obligation is committed state.** An escrow box is in the UTXO set and
 therefore in the `stateRoot`, so a node that synced without replaying every
 block holds the obligation itself rather than a root it cannot interpret. No
-node-local table remembers anything, and no block-application step touches a
-standing escrow.
+node-local table remembers anything: the settlement leg that returns it reads
+the escrow boxes of pre-body state and nothing else (NODE_INTERFACE → The
+settlement transaction).
 
 ⛔ **The value is the BOX'S, never `VOUCH_KARMA_AMOUNT`.** The round trip is
 conservation-structural, not true by coincidence, and it must not depend on the
@@ -1376,9 +1379,9 @@ before multi-node operation rather than after it.
    post-lock vesting evaluated (§Likes)
 8. **Pruning:** Author signs prune intent → stump constructed with deterministic
    karma deltas → committed in ordering block → DAG compacted
-9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; its owner
-   reclaims it by transaction once `releaseAtBlock` is reached — no per-block
-   step touches it
+9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; the first
+   block at or past `releaseAtBlock` returns it to the voucher through its
+   settlement transaction — no client action claims it
 10. **Net:** libp2p gossips ordering blocks and UTXO transactions.
    Stage 1 (stateless) validation via `@dagsocial/validation` runs before
    forwarding. Stage 2 (stateful) validation runs in the node after receipt.
