@@ -390,8 +390,8 @@ describe('the conservation axiom holds over a chain', () => {
     expect(escrow, 'the stake is held in a box, not destroyed').toBeDefined();
     expect(escrow!.value).toBe(vouchBox!.value);
 
-    // Mine past the release height. The settlement no longer sweeps escrows —
-    // the escrow survives and conservation still holds at every height.
+    // Mine past the release height. The settlement consumes the escrow at the
+    // first block at or past releaseAtBlock and conservation holds at every height.
     for (let h = 3; h <= 1 + COOLDOWN + 1; h++) {
       await applyAndConserve(
         await makeApplicableBlock({ height: h }),
@@ -400,8 +400,8 @@ describe('the conservation axiom holds over a chain', () => {
     }
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow'),
-      'the escrow survives — the owner reclaims it',
-    ).toBe(true);
+      'the settlement consumed the escrow',
+    ).toBe(false);
   });
 
   it('a bond forfeit returns the unvested remainder to the pool', async () => {
@@ -581,11 +581,11 @@ describe('the conservation axiom holds over a chain', () => {
     }
 
     // ⛔ Every path fired, and the total never moved.
-    // The escrow survives — the owner reclaims it, not the settlement.
+    // The settlement consumed the escrow at its release height.
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'vouch_escrow'),
-      'the escrow survives for owner reclaim',
-    ).toBe(true);
+      'the settlement consumed the escrow',
+    ).toBe(false);
     expect(
       utxo.getUnspentBoxes().some((b) => b.boxType === 'bond'),
       'the bond settled',

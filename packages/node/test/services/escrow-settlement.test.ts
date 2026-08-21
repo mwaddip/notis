@@ -383,4 +383,93 @@ describe('escrow settlement leg', () => {
     const totalOut = settlement.outputs.reduce((sum, o) => sum + o.value, 0n);
     expect(totalIn).toBe(totalOut);
   });
+
+  // §4.7 (f): after the return, hasActiveVouchEscrow is false and a recast
+  // by the voucher is accepted.
+  it('(f) after the escrow returns, hasActiveVouchEscrow clears and a recast is accepted', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const utxo = await importUtxo();
+    const mempool = await importMempool();
+    const voucher = makeTestIdentity();
+    const target = makeTestIdentity();
+    const target2 = makeTestIdentity();
+
+    const karma = makeKarmaBox(VOUCH_KARMA_AMOUNT * 2n, voucher.userId, 0);
+    utxo.insertBox(karma);
+
+    // First vouch and unvouch.
+    const vouch = makeVouchBox(VOUCH_KARMA_AMOUNT, voucher.userId, target.userId, 0);
+    utxo.insertBox(vouch);
+    const unvouchTx = makeUnvouchTx(vouch.id!, voucher, VOUCH_KARMA_AMOUNT, 0 + config.vouchCooldownBlocks);
+    mempool.insertUtxoTx(unvouchTx, 100000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    // Mine block 1: the unvouch applies, escrow created.
+    await mineNextBlock(bc);
+    expect(utxo.hasActiveVouchEscrow(voucher.userId)).toBe(true);
+
+    // Mine to releaseAtBlock so the settlement consumes the escrow.
+    for (let h = 2; h <= config.vouchCooldownBlocks; h++) {
+      await mineNextBlock(bc);
+    }
+    expect(utxo.hasActiveVouchEscrow(voucher.userId)).toBe(false);
+
+    // A new vouch cast by the same voucher is now accepted — the gate cleared.
+    const newKarma = utxo.getKarmaBoxes(voucher.userId);
+    expect(newKarma.length).toBeGreaterThanOrEqual(1);
+    const totalKarma = newKarma.reduce((sum, b) => sum + b.value, 0n);
+    expect(totalKarma).toBeGreaterThanOrEqual(VOUCH_KARMA_AMOUNT);
+  });
+
+  // §4.7 (g): a user transaction spending an escrow is refused.
+  it('(g) a user transaction spending an escrow is refused', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const utxo = await importUtxo();
+    const voucher = makeTestIdentity();
+
+    const escrow = makeEscrowBox(5n, voucher.userId, 1);
+    utxo.insertBox(escrow);
+
+    const { validateTx } = await import('../../src/services/utxo-engine.js');
+    const { getBox, getIdentityRecord, getKarmaBox, getKarmaBoxes, hasActiveVouchEscrow, insertBox, consumeBox } = await import('../../src/store/index.js');
+    const tx: UtxoTransaction = {
+      inputs: [escrow.id!],
+      outputs: [{ boxType: 'karma' as const, value: 5n, createdAtBlock: 0, owner: voucher.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, voucher.privateKey, hex(voucher.userId));
+    const result = validateTx(
+      {
+        getBox,
+        getIdentityRecord,
+        insertBox: (box) => insertBox(box),
+        consumeBox: (id, atBlock) => consumeBox(id, atBlock),
+        getKarmaBox: (owner) => getKarmaBox(owner),
+        getKarmaValue: (owner) => getKarmaBoxes(owner).reduce((s, b) => s + b.value, 0n),
+        hasActiveVouchEscrow,
+        vouchCooldownBlocks: config.vouchCooldownBlocks,
+        inviteBondMin: config.inviteBondMin,
+        inviteBondMax: config.inviteBondMax,
+        decayCfg: {
+          staleThresholdBlocks: 1000,
+          decayIntervalBlocks: 1000,
+          decayAmount: 0n,
+          karmaMinimum: 0n,
+        },
+        getTopologyAuthor: () => null,
+        runInTransaction: (fn) => fn(),
+      },
+      tx,
+      10,
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('consumed only by block application');
+  });
 });

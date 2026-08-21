@@ -1462,6 +1462,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   bond: ALWAYS_SPENDABLE,
   post_lock: ALWAYS_SPENDABLE,
   vouch: ALWAYS_SPENDABLE,
+  // NODE_INTERFACE → Spend timing: the settlement reads releaseAtBlock, not this gate.
   vouch_escrow: ALWAYS_SPENDABLE,
   emission: ALWAYS_SPENDABLE,
   treasury: ALWAYS_SPENDABLE,

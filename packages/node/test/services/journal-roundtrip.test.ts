@@ -556,7 +556,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   // digest identity, and re-apply identity.)
   // -----------------------------------------------------------------------
 
-  it('the escrow survives its release height — the settlement does not sweep it', async () => {
+  it('the settlement consumes a matured escrow and the round-trip holds', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -591,15 +591,15 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const classBlock = await makeApplicableBlock({ height: 2 });
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
-    // The escrow SURVIVES — the owner reclaims it via a user transaction.
-    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
-    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n);
+    // The settlement consumed the escrow and returned its value as karma.
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n + 7n);
 
     await assertRoundTrip(db, handle, pre, classBlock);
 
     // The re-applied block leaves the same applied state again.
-    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n);
-    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(1);
+    expect(utxo.getKarmaValue(voucher.userId)).toBe(50n + 7n);
+    expect(vouch.getVouchEscrowsFor(voucher.userId)).toHaveLength(0);
   });
 
   // -----------------------------------------------------------------------
