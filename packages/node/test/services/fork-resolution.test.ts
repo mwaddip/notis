@@ -120,6 +120,7 @@ async function importMempoolFresh() {
       createdAt: string;
     }>;
     removeEntry: (rowid: number) => void;
+    setMempoolCap: (n: number) => void;
   };
 }
 
@@ -1697,10 +1698,8 @@ describe('reorg', () => {
   // chain switch — mempool pressure turning into a consensus-liveness failure.
   // -------------------------------------------------------------------------
   it('drops re-inserted entries and still completes the reorg when the pool is full', async () => {
-    const originalCap = process.env['MAX_MEMPOOL_ENTRIES'];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      process.env['MAX_MEMPOOL_ENTRIES'] = '1';
       vi.resetModules();
 
       const db = await importDb();
@@ -1708,9 +1707,9 @@ describe('reorg', () => {
 
       const author = makeTestIdentity();
 
-  
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
+      mempool.setMempoolCap(1);
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
 
@@ -1744,8 +1743,6 @@ describe('reorg', () => {
       ).toBe(true);
     } finally {
       warn.mockRestore();
-      if (originalCap === undefined) delete process.env['MAX_MEMPOOL_ENTRIES'];
-      else process.env['MAX_MEMPOOL_ENTRIES'] = originalCap;
     }
   });
 
