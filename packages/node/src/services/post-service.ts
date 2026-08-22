@@ -133,7 +133,7 @@ export function createPost(
 
   // ---- Name the post from its creating transaction ----
   const postId = computePostId(txId, 0);
-  emitPostReceived(postId, 'local');
+  emitPostReceived(postId, 'local', 'packet');
   emitPostValidated(postId, validationDurationMs);
 
   // ---- admitTx and insertPost in one store transaction ----

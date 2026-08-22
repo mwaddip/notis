@@ -10,19 +10,21 @@ import {
 
 export interface AdminDeps {
   getConnectedPeers: () => string[];
-  syncPhase: () => 'idle' | 'syncing' | 'synced';
+  syncPhase: () => 'idle' | 'syncing' | 'backfill' | 'synced';
 }
 
 export function createAdminRouter(deps: AdminDeps): Router {
   const router = Router();
 
   router.get('/health', (_req, res) => {
+    const phase = deps.syncPhase();
     res.json({
       status: 'ok',
       dag_tip_height: getDagTipHeight(),
       peers_connected: deps.getConnectedPeers().length,
       last_post_received_ms_ago: getLastPostReceivedMsAgo(),
-      syncing: deps.syncPhase() === 'syncing',
+      syncing: phase === 'syncing' || phase === 'backfill',
+      sync_phase: phase,
       uptime_seconds: getUptimeSeconds(),
       apiVersion: '1.0',
       journalEventsVersion: '1.0',
@@ -40,6 +42,7 @@ export function createAdminRouter(deps: AdminDeps): Router {
         pow_verifications_total: c.powVerificationsTotal,
         pow_verification_failures_total: c.powVerificationFailuresTotal,
         http_requests_total: c.httpRequestsTotal,
+        post_bodies_pulled_total: c.postBodiesPulledTotal,
       },
     });
   });

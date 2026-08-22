@@ -16,6 +16,8 @@ export {
   getAncestors,
   getSubtree,
   isLivePost,
+  isStump,
+  isPrunedTombstone,
 } from './posts.js';
 export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './posts.js';
 

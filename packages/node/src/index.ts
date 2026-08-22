@@ -37,6 +37,8 @@ import {
   getIdentityRecord,
   getPost,
   insertPost,
+  setPostBody,
+  getMissingBodies,
   getBox,
   getCurrentHeight,
   MempoolFullError,
@@ -46,6 +48,8 @@ import {
 } from './store/index.js';
 import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
+import { initBackfill, registerPlaceholder, onBlockApplied } from './services/backfill.js';
+import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();
 const startTime = Date.now();
@@ -198,7 +202,7 @@ net.onTx((tx, content, fromPeerId) => {
       if (tx.post && result.txId) {
         const postId = computePostId(result.txId, 0);
         insertPost(postId, tx.post, content ?? null);
-        emitPostReceived(postId, fromPeerId);
+        emitPostReceived(postId, fromPeerId, 'packet');
         emitPostValidated(postId, performance.now() - validationStart);
       }
     })();
@@ -224,6 +228,45 @@ net.setBlocksHandler(pullBlocksHandler(net, dagService));
 // handshake and query as a peer's fault inside `net`'s contained catches.
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
+
+// NODE_INTERFACE → Backfill after sync: four seams the net layer reads bodies through.
+net.setPostBodyProvider((id: string) => {
+  const post = getPost(id);
+  if (post && 'content' in post && typeof (post as any).content === 'string') {
+    return (post as any).content;
+  }
+  return null;
+});
+
+net.setMissingBodiesProvider((limit: number) =>
+  getMissingBodies(limit).map(r => ({ id: r.id, contentHash: Buffer.from(r.contentHash, 'hex') })),
+);
+
+net.setPostBodyCommitmentProvider((id: string) => {
+  const post = getPost(id);
+  if (post && 'contentHash' in post && typeof (post as any).contentHash === 'string') {
+    return Buffer.from((post as any).contentHash, 'hex');
+  }
+  return null;
+});
+
+net.onPostBody((id: string, content: string, peerId: string) => {
+  const post = getPost(id);
+  if (!post || !('contentHash' in post)) return false;
+  const contentHash = Buffer.from((post as any).contentHash, 'hex');
+  const check = verifyPostBody(content, contentHash);
+  if (!check.valid) return false;
+  const stored = setPostBody(id, content);
+  if (stored) {
+    emitPostReceived(id, peerId, 'pull');
+  }
+  return stored;
+});
+
+initBackfill({
+  requestPostBodies: (wanted, peerId) => net.requestPostBodies(wanted.map(w => ({ id: w.id, contentHash: Buffer.from(w.contentHash, 'hex') })), peerId),
+  getConnectedPeers: () => net.getConnectedPeers(),
+});
 
 // 4. Start net
 //

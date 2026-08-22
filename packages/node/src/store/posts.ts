@@ -79,6 +79,14 @@ export function isLivePost(x: StoredPost | Stump | PrunedTombstone | null): x is
   return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x);
 }
 
+export function isStump(x: StoredPost | Stump | PrunedTombstone | null): x is Stump {
+  return x !== null && 'rootPostHash' in x && !('kind' in x);
+}
+
+export function isPrunedTombstone(x: StoredPost | Stump | PrunedTombstone | null): x is PrunedTombstone {
+  return x !== null && 'kind' in x && (x as PrunedTombstone).kind === 'pruned';
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

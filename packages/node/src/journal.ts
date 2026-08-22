@@ -93,9 +93,9 @@ export function emitApiListening(bindAddress: string, port: number): void {
 // Convenience emitters for core events
 // ---------------------------------------------------------------------------
 
-export function emitPostReceived(postId: string, source: string): void {
-  notePostReceived();
-  emitEvent({ event: 'post_received', level: 'INFO', post_id: postId, source });
+export function emitPostReceived(postId: string, source: string, via: 'packet' | 'pull' = 'packet'): void {
+  notePostReceived(via);
+  emitEvent({ event: 'post_received', level: 'INFO', post_id: postId, source, via });
 }
 
 export function emitPostValidated(postId: string, validationDurationMs: number): void {

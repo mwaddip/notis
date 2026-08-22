@@ -1,6 +1,6 @@
 import type { PostType, Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost, PrunedTombstone } from '../store/posts.js';
-import { isLivePost } from '../store/posts.js';
+import { isLivePost, isStump, isPrunedTombstone } from '../store/posts.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -133,10 +133,9 @@ export class FeedService {
       const likers = this.deps.getLikersForPost(id);
       return postToJson(result, likeCount, likers, this.blockCreatedAtFor(result));
     }
-    if ('rootPostHash' in result && !('kind' in result)) {
-      return stumpToJson(result as Stump);
-    }
-    return prunedToJson(result as PrunedTombstone);
+    if (isStump(result)) return stumpToJson(result);
+    if (isPrunedTombstone(result)) return prunedToJson(result);
+    return null;
   }
 
   queryPosts(opts: {
@@ -159,14 +158,14 @@ export class FeedService {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
-    if ('rootPostHash' in result && !('kind' in result)) {
-      return { post: stumpToJson(result as Stump), ancestors: [], descendants: [] };
+    if (isStump(result)) {
+      return { post: stumpToJson(result), ancestors: [], descendants: [] };
     }
-    if ('kind' in result && (result as PrunedTombstone).kind === 'pruned') {
-      return { post: prunedToJson(result as PrunedTombstone), ancestors: [], descendants: [] };
+    if (isPrunedTombstone(result)) {
+      return { post: prunedToJson(result), ancestors: [], descendants: [] };
     }
 
-    const post = result as StoredPost;
+    const post = result;
     const likeCount = this.deps.getLikeRecordCount(id);
     const likers = this.deps.getLikersForPost(id);
     const postJson = postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));

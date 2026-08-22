@@ -6,6 +6,7 @@ import { extendsOurTip, resolveFork } from './fork-resolution.js';
 import type { ForkResolutionNet } from './fork-resolution.js';
 import type { DagService } from './dag-service.js';
 import { failStopIfCorruptChain } from './corrupt-state.js';
+import { onBlockApplied } from './backfill.js';
 
 /**
  * Both entries — gossip and pull — converge here (NODE_INTERFACE → Relay
@@ -31,7 +32,13 @@ export function handleOrderingBlock(
 
   const currentHeight = getCurrentHeight();
   if (currentHeight === 0 || extendsOurTip(block)) {
-    return applyOrderingBlock(block, dagService);
+    const applied = applyOrderingBlock(block, dagService);
+    if (applied) {
+      onBlockApplied(block.header.height).catch((err) =>
+        console.warn(`Backfill error at height ${block.header.height}: ${String(err)}`),
+      );
+    }
+    return applied;
   }
 
   resolveFork(block, net, fromPeerId, dagService).catch(failStopIfCorruptChain);
