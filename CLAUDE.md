@@ -69,7 +69,9 @@ contract first, then implement against it, never the reverse.
 
 **The contract change rides the same branch as the code that implements it** — not merged ahead of it.
 One PR shows the rule and its implementation together, so a reviewer can check they agree instead of
-taking it on trust.
+taking it on trust. **The contract pass closes the branch, before its PR opens:** once the gate is
+green, the unit's dated `AHEAD OF CODE` markers are retired and every marker whose subject the unit
+touched is re-read against the code — a branch merges with no marker dated to its own unit.
 
 ## What we write down
 
